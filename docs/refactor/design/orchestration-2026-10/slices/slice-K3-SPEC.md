@@ -10,6 +10,8 @@
 > - 资源上限移出本片（L31），审查第 16–19 条原文转到 `D:/cc-lead-notes/specs/k3/resource-limits-notes.md`。
 > - 用户 2026-10-13 对第一版的意见（原话）：“所以你应该让模型再去检查，判断，一般来说对于文件仅仅类似gitdiff就差不多，但是对于环境相关，运行程序相关的就需要谨慎---对于不同的工具结果需要有不同的审查。”
 
+**后注（K3 合入，lead 2026-10-18）：** K3 已合入（`d3146d69`；补做 K3-07、K3-49 `5e83681b`）。四组施工、审查、决定 80 的全审和决定 81 的返工中定下的读法写在 [§10](#10-k3-施工和验收中的限定lead2026-10-18)，和前面各节冲突时以 §10 为准：核对按固定种类表；真实单条链保留，多条目转无存储纯测试，没有对应纯函数就删该不可达行；核对说明自成一节 `unknown_call_review`，调用仍是 `work`；平台工具按工具名固定分派，执行和 owner 共用一个请求号算法；改文件的比较按采集时的规则，符号链接只记 `not_text`；拦命令按静态解析认常见改写，允许只放行一种写法；创建预算 B = 158,720 保留 32 字节余量；决定 80 起一次全审、冻结问题表、每轮跑 D1 账本，决定 81 起 DSH 最多返工三轮；N-01 交 Codex 测试补丁，第二次通过，冻结变异挂在写明的两条断言上；形式行进 T；合入修复（M1）让 K3 在准备里的读取也按第 8 片 §13.8 传取消。经过见[证据](../../../reviews/evidence/orchestration-slice-K3-2026-10-18/README.md)。
+
 ## 0. 给用户看的要点
 
 **问题。** 一次执行被中断时，可能有一个工具调用“开始了、没结果”。今天平台把它记成“结果未知”，等你点“认定”。认定以后，接续说明按调用 ID、工具名和目标逐个列出这些调用（标“结果未知（可能已产生副作用）”），后面再加一句笼统的提醒：
@@ -1772,3 +1774,129 @@ lead 逐条对照代码和来源核过（基线 c2c05597），33 条说的代码
 - 原调用的工作目录能从 Kernel 记录读到：`requestedCall.arguments` 在 `vendor/coding-agent/dist/core/runtime/state/run-state.d.ts:290–294`，`shell` 从 `arguments.cwd` 取、没有时用 `"."`（`vendor/coding-agent/dist/tools/builtin/shell/shell-tool.js:162`）；缺省是执行时补的，记录里没有单独字段。
 
 **要 lead 定。** 三条代码事实都查到了，没有查不清的；上面“钩子要接工作区读口”是一处接线（复用已有端口，不新增读权限），留 lead 审。
+
+## 10. K3 施工和验收中的限定（lead，2026-10-18）
+
+本节记下 K3 四组施工、审查、决定 80 的全审和决定 81 的返工中定下的读法；和前面各节冲突时以本节为准。经过和证据见[证据](../../../reviews/evidence/orchestration-slice-K3-2026-10-18/README.md)；合入提交 `d3146d69`，补做 `5e83681b`。K3 是结果未知的工具调用按种类核对、拦下的命令可以请求重跑、Host 重启后自动收尾。第 8 片 §12、§13 的读法不变。
+
+### 10.1 分类、草稿和启动
+
+- **种类只有一张固定的表。** 只读、平台工具、改文件、跑程序四类，按工具名查；表外的名字算 `process`，不跟着 Host 停。（§1 L3；`books/k3-g1-impl.md`、`books/k3-g1-impl-2.md`）
+- **候选里的明细字段叫 `unresolvedCalls: { callId, toolName }[]`，不按种类拆成几个数组。** 种类只写在每一条上，由 `unknown-call-kinds` 的表查；守卫字段按 L25。释放原因用 `reconcile_takeover_unresolved`；租约释放带 `{ releasedBy, releasedByPurpose }`；`requeueConfirmedByReview` 可选、默认 false；`reviews` 可选，连续用纯函数 `streakOf`；写入口的名字是 `newUnknownCallReview`／`admitUnknownCallReview`；`isGoalStopCause` 导出；一个 `unparsed` 段就让整条命令 `unparsed`。`GoalStopCauseCode` 不含 `unknown_call_review`；`state/` 保持纯。（`books/k3-g1-impl.md:94–115`，§8 的 U1–U8 和其后未编号条目）
+- **真实单条链保留，多条目只走无存储的纯测试。** Kernel 把不独立的调用串行化，只在取消时记 `tool.outcome_unknown`；当前真实记录只有一条（`tests/runtime/K3-35-T-by-hand.test.ts:20–23`）。K3-06、K3-13、K3-35（一）的多条目部分转 codec、渲染、fit、排序的纯测试（`*-pure.test.ts`）；没有对应纯函数的那一行删除，不为凑合用篡改状态。（`books/k3-b3-rulings-v1.md:16–25`；`books/k3-g4b3-rework-5.md:27–30`；`codex/k3-multicall-facts.out.md`）
+- **K3-21 的“排队的插话”按 RUN-25 结算，没有换成暂停。** `steered` 指针没有写入方（`run-machine.ts:190–191`）；排队插话＋其余守卫成立 → RUN-25／W-26，Kernel 已接受就是 Applied，否则 Superseded，接续说明保留插话原文。（`books/k3-g2-impl-3.md:37–42`；`dsh/k3-g2c-final.md:13`）
+- **“已生效的暂停 + 在途调用”不可达。** `run-machine.ts:2161–2162`、`:2345` 拒绝有在途调用的 Turn；不写测试，按“只有篡改才造得出的状态不测”处理。（`dsh/k3-g2c-final.md:16、34`；AGENTS 第 4 条）
+- **`listUnappliedAnswers` 跟着唯一的用户进第 4 组。** 启动第 6b 步和 UR7b 用它，前面几组不提前建接口。（`books/k3-g3-impl.md:142–146`）
+- **第 4 组整体四段；g4b 从两段改成三段。** g4a：每个领取入口都拦、hold/release 不经卡、启动 2b／6b 的 1–2 种、没有答复时的恢复、`record_note` 进种类和查找表、512 KiB 的最终检查。g4b1：卡、处置、落实、UR7／UR7b、启动 6b 的 3–4 种。g4b2：方案轮（L20、K3-16、K3-35（二）（三）、K3-46、K3-48（二））。g4b3：L19a。每段约 1,000–1,400 行（决定 69）。（`books/k3-g4b-rulings.md:3–9`）
+- **截断在 WorkGraph 做，运行时的草稿不截。** `newUnknownCallReview` 按创建预算截条目并记 `too_large`；运行时交出的草稿是完整的，`G11` 不挡 `too_large`。（§1 L7；`books/k3-g2-impl.md:124–141`）
+- **自动收尾只在接手证明成立时做。** 没有 `takeover`、不是 git、没有开始基准、采集不稳定、改动超过 2,000，都回落 RUN-20(i)，各写自己的 `blockedBy`；Host 一直活着、Kernel 读不了、让出等回复的那一轮仍等人认定。（§1 L2、L25；`books/k3-g4a-impl.md`）
+
+### 10.2 平台工具的查找（L4）
+
+- **按工具名走固定分派表，不按 owner 注册顺序试。** 表里五组：mailbox、decision、plan、notes、CRR（`request_command_rerun`）；表里没有的名字回 `{ status: 'undetermined', reason: 'lookup_not_published' }`，不当成“没做”。（`src/composition/tool-commit-lookup.ts:19–35、48`；`books/k3-g3-impl.md:34–38`）
+- **执行和所有 owner 共用一个请求号算法 `toolCommitRequestId`。** 来历只取领取 Session 的 `{ projectId, sessionId }`；决定和计划的 payload 也按同一规则规范化，不各自散列原输入。（`books/k3-g3-impl.md:40–50`）
+- **只有权威的“没有这条回执”算没做。** 拒绝、读失败、owner 没发布查找都是 `undetermined`（`lookup_failed` 或冲突原因），不折成 `not_done`。没发布查找写 `lookup_not_published`，运行时没接读口写 `lookup_failed: lookup_not_wired`。（§1 L4；`books/k3-g2-impl-3.md`；`books/k3-g2-impl.md` §8 的 Q2）
+
+### 10.3 改文件的核对（L5、L6）
+
+- **采集时被规则忽略的路径，两边都不比。** 规则后来才改的，表现为规则文件自己的改动，不表现为那个被忽略路径的改动。（`books/k3-g3-impl.md:77–81`）
+- **符号链接在编辑路径上只记 `not_text`。** 受保护检查按规范化后的路径做；基准里本来有这个路径的任一条目，就是 `baseline_dirty`。采集 Artifact 读不了、路径不在样本里、样本确实截断（`changedCount > sample.length`），并且先排除 `notVisible`，改动标签才是 `unknown`；完整样本里没有这个路径就是 `unchanged`。（`books/k3-g3-impl.md:62–76`，其中 `unknown` 的裁定在 `:70–73`；`src/core/agent-runtime/continuation-brief-assembly.ts:244–255`）
+- **Run 里删掉、后来才被忽略的文件记 `deleted`。** 不因为现在的忽略规则把它当成不存在。（`books/k3-g3-impl-2.md` 的后注）
+- **两个在途编辑不会同时出现。** `edit` 是 `workspace_write`，不是独立调用；K3-04 的两条目是注入的验收例子。R1 用 `replace` 和 `create` 各一例走真实链，两条目的顺序只在纯测试里。（`books/k3-g3-impl.md:99–102`）
+- **K3-R1-second-cleanup 的先后。** A 的核对轮在准备 B 之前定稿成 `resolved`（L11 在 `pending_review` 时挡 B）；断言 `:175`、`:190` 一字不改。（`books/k3-g3-impl-2.md:128–139`）
+
+### 10.4 核对轮的上下文、准入和卡的读法
+
+- **核对说明自成一节 `unknown_call_review`，放在最后，只给 Work。** 调用本身仍是 `work`；不给 Query 加这一节。（`books/k3-g3-impl-2.md:32–34`（R1））
+- **“钉进 inputBinding 的摘要”就是绑定上的 `manifestDigest`／`inputDigest`，不加新字段。** 入口重新渲染，摘要对不上就重新准备。（`books/k3-g3-impl-2.md:35–37`（R2））
+- **`reviewCapability(ctx, { workspace, role })` 用同一个绑定查找和同一次 switch 收窄。** 它不解模型、不另读配置；Role 的开关在绑定里。（`books/k3-g3-impl-2.md:38–42`（R3））
+- **核对用途的准入由 L13 的一个工具常量加一个按用途的助手在四个准入点判。** 跳过 Role 上限；Host 的第 1、3 层照留；`record_unknown_call_review` 不进 Host 的工具清单。（`books/k3-g3-impl-2.md:43–50`（R4））
+- **K3-14 的入口拆开。** 模型写的几种经绑定（R2）；重放、冲突在 owner 层经真实适配器证明。不为一个入口造两套事实。（`books/k3-g3-impl-2.md:51–54`（R5））
+- **U3／U6／U7 按先建的一方接线。** K3 第 4 组和 4C-2 B 段谁先建，谁定形状，另一方接上；不另建一套证明、分派或卡来源。（决定 72；`books/k3-g4b-rulings.md` 开头）
+- **“记录没定”的三种结果各有名字。** `reviewBlocker: 'pending' | 'held' | 'unreadable'` 取代旧的 `reviewPending`；普通领取分别回 `busy`（pending）、`busy`（held）、`unavailable`（unreadable）。只有 `not_found` 算“没有记录”，别的读失败都是 `unreadable`。（`books/k3-g4a-impl.md` §8.1；`books/k3-g4a-rework.md` 第 2 条）
+- **hold 的守卫复用领取的读口；UR3h 就是钉住版本的 `cancel_review_round`。** `release-hold` 返回 `{ hold, requeue }`；围栏不是人时 `requeue` 才是 `null`；再点一次是重放。（`books/k3-g4a-impl.md` §8.2–8.4）
+- **启动第 2b 步把记录报成 `row: 'UCR'`，原因写 `<状态>[ reasons][ active_round]`；UR8 是 `skip`。** 记录读不出时不关、不写，保持等待。（`books/k3-g4a-impl.md` §8.7–8.8；`books/k3-g4a-rework-2.md` §2.1）
+- **`record_note` 复用已有的写助手；UR6 的 `waiting` 加类型化的 `source` 和 L18 的键。** 不为核对轮复制一套注记写入。（`books/k3-g4a-impl.md` §8.5–8.6）
+- **卡上的方案只读一次，标签固定。** 只有文字的答复是 `invalid`；② 和 ③ 共用一个函数；不是卡落实的变动省略 `proof`，只有 `disposition_applied`／`approval_applied` 必须带对象 proof，`proof: null` 会被解码拒绝。（`books/k3-g4b1-impl.md` §8 第 3–10 条、`:199–200`；`src/core/work-graph/tasks/unknown-call-review-codecs.ts:641–645`）
+- **T02 的答复不静默落实。** 内容基础变了就等准确的那句话；出路只有直接 hold 或取消 Goal。（`books/k3-g4b1-rework-1.md` §2.2）
+- **重启行只跑 SQLite 的真实 Host。** 内存存储活不过重启，行里也没写双后端。（`books/k3-g4b1-rework-1.md:113–115`）
+- **作用对象行总是出现；没有对象时写 `- 作用对象：无。`**（`books/k3-g4b1-rework-2.md:39–42`）
+- **失败卡集合只在内部推进里传。** 公开请求带这个键回 `invalid`；结果放在 `next` 旁边，不塞进 `next`。（`books/k3-g4b1-rework-4.md` §2.1）
+
+### 10.5 卡、处置和恢复
+
+- **卡上四个选项，允许只放行卡上那一种写法。** “换稳妥跑法”先提方案、再逐条列原命令和方案全文；同意后接续说明写方案全文、明确不跑原命令；反对回四个选项的卡。（§1 L19、L20；`books/k3-g4b1-impl.md`）
+- **“我来处理”可以直接点，不必经卡。** 核对轮进行中点：记录立即 `resolved`、`held`，这一轮照常跑完；之后点“继续”在 `activeRound` 不空时回 `busy`，收尾后放行。（§5.2 K3-15（四）（七）；`books/k3-g4a-impl.md`）
+- **重启第 4 种按答复自己的 `reviewRef` 找，不看选定 Run、不看 `open`。** 这样接续已经领取、记录成了历史时仍能补记；② 重放原回执，③ 补记一次。（§1 L29 第 5b 行；`books/k3-g4b1-impl.md:149–156`）
+- **② 的 Goal 守卫和这次读取进同一次提交。** 守卫是记录 revision 和这次读到的 Goal revision；内容基础变了（T02）等准确的那句话，并发暂停这类版本竞争也回 `revision_conflict`，暂停期间回 `busy`，重新读取后可在恢复时落实。（`books/k3-g4b1-rework-1.md:25–30`；`books/k3-g4b1-rework-2.md:29–37`）
+- **“已答、未落实”的答复由 Workflow 的同一个推进步骤做，两种卡共用。** 核对卡和请求重跑卡都走 UR7 的一般化；② 按答复算出的身份重放，③ 补记。（`books/k3-g4b-rulings.md` 第 4 条）
+- **审批答复自己的文字和批注留在 Session message。** 记录契约没有这两个字段；接续说明的附言仍用原 `safer_method` 答复的 `disposition.text`，不换成审批答复的文字。（`books/k3-g4b2-impl.md:166–170`，明确要求写成规格后注）
+- **落实失败不能当成成功推进。** 普通推进跳过这张卡、保留原因，继续选别的任务；指定这个任务才 `waiting`。失败集合只在本次可信推进里传，公开请求不能填写。（`books/k3-g4b1-rework-4.md`；`codex/k3g4b1-review4.out.md`）
+
+### 10.6 拦命令和请求重跑（L19a）
+
+- **允许的记录带这次调用的身份。** `consumeAllowance` 收 `{ runId, callId }`，记录里写 `usedBy` 和 `usedAt`；落实的证明挂在 CRR 的 changed 事件上（`proof` 为 null 表示不是卡落实）。（`books/k3-g4b-rulings.md` 第 2 条）
+- **不写的分支靠 Kernel 重放。** `not_blocked`、`pending`、`allowed`、`refused` 都回原来的工具结果，不写回执；崩溃后平台查 `request_command_rerun`，没有带这个请求号的 CRR 写就回 `not_committed`，因为确实什么都没发生。（`books/k3-g4b-rulings.md` 第 3 条）
+- **任务结束时 CRR 的 `closed` 读时算，不另改结束任务的所有者。** 任务不再活跃（做完、取消、被替代）时，读口、卡来源和钩子都当它 `closed`，没用的允许作废；持久化的 CRR-06 由下一次碰这条请求的 owner 操作写。（`books/k3-g4b-rulings.md` 第 4 条）
+- **脚本展开的静态 `cd` 由一个解析器给。** 每个动作带 `dirs`（前面静态 `cd` 的路径，按顺序）；有非静态 `cd`（`cd -`、无参、非静态参数）就是 `null`，这个动作不展开。`parseShellActions` 的公开 `{ words, text }` 不变，请求工具用 `"."` 加 `dirs`。（`books/k3-g4b-rulings.md` 第 5 条）
+- **接续说明只把 62 字节那句当必需。** 记录有 `blockedCommands` 时出现“平台拦下原命令；要再跑先请求并得到允许。”；逐条的行（最新请求状态、至多 3 种写法各截 160 字节、至多 16 行加一行计数）是可选的，超预算时从最后一行的省略开始收，算进今天的省略说明；没有拦下的命令时整段不出现、说明逐字节不变。（`books/k3-g4b-rulings.md` 第 6 条及 10-17 晚的替换）
+- **同意和不同意的卡文字固定。** 审批摘要由 B1 那一行、原命令、方案块和混合行按固定顺序拼；`summary.label` 不改成分散字段。方案输入多带 `annotations`，核对输入仍逐字节不变。（`books/k3-g4b2-impl.md` §8.1–3（`:139–161`））
+- **单位按字段定。** 方案理由按 UTF-16 数 1–2,000；命令按 UTF-8 数 1–4,000；`cwd` 按 UTF-8 数 1–512 字节。工具参数和 owner 的内部值分开：工具显式 `null` 是 `invalid_arguments`，省略则转成 owner 的 `null`、渲染为 `"."`；owner 接受 null、拒绝空串。（`books/k3-g4b2-impl.md` §8.7（`:171–173`）；`books/k3-g4b2-rework-1.md:38–40`；`src/core/work-graph/tasks/unknown-call-review-service.ts:690–702`）
+- **`blockedCommands` 由 B3 算，B2 只写空列表。** 方案和审批这两段先用 `[]` 占位，B3 把真实的拦下列表接上；不提前造第二份来源。（`books/k3-g4b2-impl.md` §8.9（`:177–181`））
+- **`listReviews` 加按目标和按任务的入参，不建新索引。** 卡和接续说明用同一个读口；按任务时只读这个任务的记录。（`books/k3-g4b3-impl.md` §2 第 12 条）
+- **请求工具的回执形状以 owner 的 `CommandRerunRequestReplyV1` 为准，取代规格 §2 的旧写法。** 它是 owner 的返回值，不是模型拿到的工具结果：工具把它映射成 L19a 的结果 union；无写的 `pending`／`allowed` 分支也带上等待中的 command。（`books/k3-g4b3-rework-1.md` §2 第 8 条（`:56–64`）；`src/core/work-graph/model/command-rerun-request-contracts.ts:22–36`；`src/core/agent-runtime/command-rerun-tools.ts:97–129`）
+- **关闭的任务在准备阶段仍可 `ready`，随后的 `startRun` 被拒，所以没有执行。** 不在准备阶段伪造一个拒绝。（`books/k3-g4b3-rework-5.md:31–34`）
+- **`run_crashed` 的接受范围。** `beforeReply` 故障被 Runtime 记成 `run_crashed`，可以用于 B2-16／B2-18 的 401-world 读取计数前置；普通做完的 Run 会让任务停在 `verifying`，requeue 是 `busy`。（`books/k3-g4b3-rework-5.md:44–46`）
+- **一次公开操作读 R 条请求的页数是 `max(1, ceil(R/200))`。** R＝0／1／200／201 时分别是 1／1／1／2；其它读（Task closure）不算在这里。（`books/k3-g4b3-rework-9.md:122–123`）
+- **`rewriteOf` 命中几条被拦命令时，写哪一条都算。** 识别器可以带一个已解析的 `preferred: { reviewRunId, alias }`，同一次解析和展开里命中它就返回它，否则仍返回第一条；owner 传 `preferred`，shell 钩子不传（仍按第一条拦、显示那条的处置）。持久化的 `match` 仍只有一条，不在 owner 里复制匹配，也不按每条记录各展开一次。卡显示选中的那条；接续说明仍按记录和别名连接；允许仍比整条命令的摘要。反例：命令只命中 A、`rewriteOf` 写合法的 B → `rewrite_of_mismatch`。（`books/k3-g4b3-rework-9b.md` §2 第 3 条（`:40–54`））
+- **Kernel 命令窗口读完才算 `ready`。** 恰好读完第 64 页可以 ready；还剩内容、cursor 不前进、窗口提前结束都不能返回部分事实，只能 `unavailable`；`cancelled` 仍是 `cancelled`。（`books/k3-g4b3-rework-9.md:146–154`）
+
+### 10.7 大小和预算
+
+- **创建预算 B 保留 32 字节余量。** 四行预留相加 R = 365,536，512 KiB − R = 158,752；规格的 B = 158,720 比它小 32 字节。代码按 B = 158,720，32 字节当额外余量；最后的 512 KiB 检查对每一次写入都做。（`books/k3-g4a-preread.md` 的 L7 表；`books/k3-g4a-impl.md`）
+- **创建时放不下的条目截掉，不挡 RUN-25。** 记录照建，`inventory: 'incomplete'`、`inventoryProblem: 'too_large'`、`itemsOmitted` 对得上，原因含 `inventory_incomplete`，出卡；`G11` 不把它挡回 RUN-20(i)。（§5.2 K3-48（一）；`books/k3-g2-impl-3.md`）
+- **可选模型文字超过门槛回 `capacity`，记录一个字节都不变。** 依据、方案理由都一样；写短就收下。必须写的定稿、处置和 hold/release 仍在 512 KiB 内放得下。（§5.2 K3-48（二）（三）；`books/k3-g1-impl-2.md`）
+
+### 10.8 测试、审查和验收
+
+- **决定 75 的标准不变：做完、整洁、可读、不出错。** 返工不设固定轮数，直到复核没有必须改；K3 B3 因此先返工 8 轮。（HANDOFF 决定 75；`checks/decisions-80-81.md`）
+- **决定 80 改成一次不设上限的全审。** Codex 按文件分组读完、每个文件留一行“读过”，一次列出全部实例、每条只给一种处理；第一次冻结的表到 F-097（`codex/k3-merge.out.md`）。书 9 追加 F-098–F-101（`books/k3-g4b3-rework-9.md:115–154`），书 9b 再追加 F-102（`books/k3-g4b3-rework-9b.md:40`）；“不再加裁定”从最终冻结起（`checks/k3-final-freeze.md:5`）。每轮跑 D1 账本和纯测试守卫。（`codex/k3-audit-*.out.md`；`checks/d1-ledger.py`）
+- **B3 的 8 轮和全审的数字。** 8 轮里必须改 75 条：生产 17 条，都在返工 2 之前；测试 58 条，每轮 5–9 条，一直不降。最终表 102 行：生产 26 行（6 行是行为问题、20 行只是整洁），测试 76 行（20 行缺保护、56 行只是写法）。F-102 是后加的生产行：分类材料原有 101 行（生产 25＋测试 76）。（`checks/decisions-80-81.md`；`checks/k3-business-classification.md:6、49、80、208`；`books/k3-g4b3-rework-9b.md:40–54`）
+- **决定 80-6：用户两次选“只做业务相关的行”。** B3 返工 9b 只做范围内 17 条缺保护的行加新发现的 F-102；只是写法的行进 T。L8 的最后一轮同样只做业务行。（`checks/decisions-80-81.md`；`checks/k3-business-classification.md`；`books/k3-g4b3-rework-9b.md` §1）
+- **决定 81：从决定 80 的冻结起算，DSH 最多返工三轮。** 9a+9b 合起来是第 1 轮，第 10 轮是第 2 轮；之后 Codex 全列一次，lead 冻结为最终表。最终表没有“会出错”行，只有 1 条缺保护 N-01，所以不开第 3 轮；测试行交 Codex 写补丁，不交 DSH。（`codex/k3-final-list.out.md`；`codex/k3-final-recheck.out.md`；`checks/k3-final-freeze.md`）
+- **任务书检查：** `codex/k3-book9.out.md` 核第 9 轮的 97 行和台账（`k3-book9.out.md:281–292` 把三条 `K3-16` 超时误写成默认，9b 要求恢复，但三条仍是默认，后按书 10 裁定 2 留 T，`codex/k3-verify9.out.md:85`）；`codex/k3-book9b.out.md` 的 6 个开放点由 book 9b §2／§3 闭合；`codex/k3-book10.out.md` 的 2 个开放点和逐行位置并进 book 10 §2。三份的措辞都以书为准。（`books/k3-g4b3-rework-9b.md` 开头；`books/k3-g4b3-rework-10.md` 开头）
+- **N-01 的补丁和变异。** Codex 第一次写的请求号撞了已提交的答复，改成 `<label>-crr-answer` 后第二次通过；新例只让公开 `answerDecision` 提交 ①，在 Workflow 的 `decisionMessages.readDecisionAnswer` 注入一次 `unavailable`，断言 `waiting`／`next: null`、准确原因和公开 revision／application 不变。冻结变异 M1 把非 ready 的已保存答复读改成 `continue`；N-01 的内存和 SQLite 都在写明的两条断言上失败，F-035 两例仍过；D1 本轮 0 条、D3 0。（`checks/k3-n01-check.txt`；`checks/k3-final-freeze.md`；`codex/k3-n01-fix.out.md`）
+- **最终冻结的更正。** N-02 接受 (a)：真实单条记录保留 `[1]`，多条目映射留在 `K3-review-input-pure:94`，记为获准替换。N-03 接受分工：两个真实 Host 例守自动交接和公开结果，`B2-UR7-crr-answer:162–174` 守真实的 ②③ 重放，旧的报告投影断言不恢复，记为局部删减。N-04 把这轮新增的五个超时记进 F-055／T 的记录，时限不改。F-021 保持关闭：只删 `command-expansion.ts:133` 的 catch 不是有效变异，读失败已经在 `command-recognition.ts:86` 转成 `unavailable`；两处都删才让 `B2-12-recognition:180` 收到 `rejected`。`K3-review-preparation` 和 `K3-12-review-round-tools` 的 claim-only 步骤是接受的本地写法。（`checks/k3-final-freeze.md`）
+- **全量的数字以 K3 副本为准。** 第 9b 轮的全量：712 个文件里 29 个、122 项失败；不全是“准备执行被拒”，失败表里还有 `tests/architecture/production-reach.test.ts`（`checks/r9b-full-suite.txt:31`）。书 10 要求把真实的 Task 审查读口接进共享夹具，并删掉四个过时的 allowlist 项（`books/k3-g4b3-rework-10.md:41–57`）。第 10 轮做完后，lead 的 20 文件失败集全过；375 文件子集里剩下的 68 项只缺 bwrap（15 个明写 `ENOENT /usr/bin/bwrap`，其余是检查没跑成），没有非 bwrap 失败。第 10 轮全量 716 个文件全过，9,559 项过、5 项跳过，2,834 秒，峰值 4.95 GB。K3-12、K3-review-preparation 的 12 项是之后合入 L8 时 `materials` 变成必需造成的夹具漂移，不是第 9b 轮的首例。合入后的全量：最终树（K3 代码 `d3146d69` 加补做 `5e83681b`；WSL、bubblewrap、systemd 用户会话、5 个并行、scope 6G）：771 个测试文件全过，10,082 项过、5 项跳过，2,787 秒，测试 scope 峰值 5.28 GB；类型检查、模块边界检查、构建都是 0（`checks/merge-full-suite-summary.txt`）。（`checks/r9b-full-suite.txt`；`checks/r10-full-suite.txt`；`books/k3-g4b3-rework-10.md` §2；`dsh/k3-g4b3-rework10-final.md:24`；`dsh/k3-merge-final.md:41`；`.dsh-ref/k3-docs.md:14`）
+- **接受的 UNSPECIFIED（按组）：** 第 1 组：`unresolvedCalls` 的命名、`too_large` 的类型、`baseline_dirty` 的判定。第 2 组：分类器读失败写成 `review_unavailable`、`inventory_incomplete` 的先后、`K3-21` 排队插话按 RUN-25 结算、`listUnappliedAnswers` 后移。第 3 组：R1–R5 的五条读法、`not_text` 和 `unknown` 的标签、`baseline_dirty`。第 4 组 A：读取失败一律 `unreadable`、Goal 读取失败不算不活跃、释放移到 `finally`、两处旧关闭断言按裁定替换。B1：`failedReviewRefs` 的字段名、空集不出现、外项目 `forbidden`。B2：混合卡在 owner 层、方案预算的字面值、`command` 优先取 Kernel 全文。B3：不写的分支不建回执、CRR 的 `closed` 读时算、`declaredForms`、只看 `usedBy`、`K3-48-3` 的构造记录。第 9b／10 轮：F-050 的 `pins: []`、F-064 的 512 字符按字节算、F-082 不需要行为测试、F-101 的页帽和停滞行、F-054 的 S3 行只跑单后端、几条真实 Host 行只跑 SQLite。这些都在各组回复的 UNSPECIFIED 里，lead 逐条接受或改判；最终冻结不再加裁定（`checks/k3-final-freeze.md:5`）。（`dsh/k3-g2a-final.md`–`k3-g2c-final.md`；`dsh/k3-g3a-final.md`–`k3-g3f-final.md`；`dsh/k3-g4a-final.md`、`dsh/k3-g4a-rework1-final.md`–`rework2-final.md`；`dsh/k3-g4b1-final.md`–`rework4-final.md`；`dsh/k3-g4b2-final.md`、`rework1-final.md`；`dsh/k3-g4b3-*-final.md`）
+- **固定自查文字是 `没有自查依据`。** 测试写这个字面值，不读生产常量。（`books/k3-g4b3-rework-9.md:124–126`）
+- **K3-46 的 UR7 扩展行保留并登记。** 失败后继续、FIRST failure、T02 中文映射这三类行在规格里登记；只按 `F-015` 的路径改。（`books/k3-g4b3-rework-9.md:133`）
+- **K3 在准备里的读取也按第 8 片 §13.8 传取消。** Codex 的合并核对只报一类必须修（M1，三处同根因）：prepare 里有三处 K3 读取把明确的 `cancelled` 变成“没有事实”——核对轮 Session 历史边界（`lastTerminalBoundary`／`reviewSessionBasis`）、接续的核对文件读取（`unknownCallReviewFilesFor` 的第二次 `resolveRoot`）、运行开始的 workspace 基准（`recordWorkspaceBaseline`：`resolveRoot` 取消 → `read_failed`；基准读取期间取消仍会写入基准正文）。K3 写在 L8 的规则之前，所以是合入层的缺口，不是冲突解决错误。lead 已修（`checks/k3-merge-fix.diff`，约 30 行，和 L8 的 `sessionBasisForContext`／`briefWorkspaceFactsFor` 同一写法；非取消的失败保留今天的回落）。Codex 的测试补丁是 `codex/k3-mfix-tests.*`：新文件 `tests/runtime/K3-merge-cancel-propagation.test.ts`，T1 只有 Session 依据窗口回 `cancelled`，T2 只有核对文件根，T3 只有基准根，T3b 在基准根解析时置 signal → 零条基准正文；内存和 SQLite 各一遍。lead 的检查 `checks/k3-mfix-check.txt`：第一次就过；未变异 24/24；四个变异各只让对应行在两个后端失败（T3b 是 `expected 1 to be +0`），其余行都过。同一次核对还确认 13 处冲突解决、11 个重叠文件、启动顺序和决定 82 的租约规则、materials 修复都对。（`codex/k3-merge-check.out.md`；`checks/k3-merge-fix.diff`；`codex/k3-mfix-tests.out.md`；`checks/k3-mfix-check.txt`）
+
+### 10.9 已知限制
+
+- **没有调用真实模型。** 所有模型都是脚本化或回放的；整个 MVP 仍未完成。
+- **Host 一直活着时的结果未知仍等人认定。** 进程还在，证明不了工具已停；非 git 工作区、采集不到改动、Kernel 读不了、等待重建不了、查询的恢复，也都照今天等人认定（§0、§8）。
+- **几条要真实 Host 记录的行只跑 SQLite。** 内存世界接不上平台的 Host 装配（它自己开 SQLite 账本）；第 9b 轮的裁定接受这一点，没有另造共享后端接缝。（`dsh/k3-g4b3-rework5-final.md` 的 UNSPECIFIED 1；`dsh/k3-g4b3-rework9b-final.md`）
+- **`F-054` 原点名的 S3 旧片行按范围裁定留 T。** 不是“无存储夹具”的豁免（`codex/k3-verify9.out.md:369` 驳回了这个理由）；`S4C2` 的行已修成双后端。（`books/k3-g4b3-rework-9.md:40`；`codex/k3-verify9.out.md:369`）
+- **Q-15：前 16 个动作本身仍超过 16 KiB 时，平台继续裁剪。** 规格只授权丢掉第 16 个以后的动作；继续删的格式和识别后果没有定义，本轮不改。（`codex/k3-merge.out.md:739`；`books/k3-g4b3-rework-9.md:145`）
+- **Q-17：必需段占满预算时，省略提示可能消失。** 现实现可能省略提示，还没有受支持极限的可达证明；记为已知限制，本轮不改。（`codex/k3-merge.out.md:741`；`books/k3-g4b3-rework-9.md:145`）
+- **K3-07 是 lead 的漏项，已补做。** 这一行在冻结规格第 1414 行，但 lead 没把它放进任何组的书。已补做（`5e83681b`，`books/k3-x07-book.md`）：真实平台 Host 跑在子进程里，在真实 `shell` 途中被 SIGKILL；沙箱里的命令随之停下（沙箱内的 pid 是隔离的，照 RL-08 查宿主机上的进程名），新 Host 走 RUN-25 收尾，`hl03_stale_lock` 带被杀进程的 pid。最终全量里这一行过了，exit 5 的修复后单跑又过一次（`checks/k3-makeup-check.txt`）。
+- **K3-49／L31b 也是 lead 的漏项，已补做。** K3-49 在冻结规格第 1441 行，L31b 在第 774 行。已补做（`5e83681b`）：命令在 systemd-run 已起、放行以前被取消时，Host 对自己建的单元跑一次 `systemctl --user stop`，停不掉只记一行 stderr；systemctl 退出 5（单元没加载）算没有东西可停，不记——这是 lead 在最终全量里看到 22 行这种误报后补的一行。RL-10c 断言每次这样的取消后单元 5 秒内不在了，最终全量和单跑都过。实测：今天此前的每次全量留下 28–55 个空单元，补做后的两次运行新留 0 个；机器上原有的 469 个空单元（0 个进程、0 字节）是 10-16 以来的旧运行留下的。
+- **K3-08（二）只有“同批 wait-send 和命令同时在途”不可达。** 冻结的 Kernel 批策略把每个非只读调用各自串行，wait-send 的 `after_group` 在下一个调用前让出，所以两者不能同批在途。核对轮期间向原 Session 投递待处理消息、核对轮不接受、接续接受，仍有真实测试。（`dsh/k3-g4a-final.md:33`；`tests/scenarios/K3-08-wait-reply.test.ts:192–199、231–233`）
+- **F-067 的容量保护成立，完整前置手算没做完。** 变异 M2 已经受现有断言保护；缺的是按完整记录字段列出前置 C 的独立算式，进 T。（`checks/k3-final-freeze.md`；`codex/k3-final-list.out.md`）
+- **形式行仍在 T。** 见 §10.10；它们不改变行为，测试仍然弱或重复。
+
+### 10.10 移到清理轮 T
+
+- **书 9b §1 的形式行：** `F-001`–`F-007`、`F-009`–`F-013`、`F-015`–`F-019`、`F-022`、`F-025`、`F-028`、`F-029`、`F-036`、`F-047`–`F-049`、`F-051`、`F-052`、`F-058`、`F-090`–`F-092`；`T-020`–`T-035`、`T-021`、`T-043` 的共享 helper 重做和纯形式项。（`books/k3-g4b3-rework-9b.md` §1）
+- **书 10 裁定 2 的形式行：** `F-014`、`F-027`、`F-046`（只保留裁定 5 已恢复的丢失断言）、`F-055`；`F-071`、`F-075`、`F-088` 的测试部分；`F-101` 的页帽和停滞分支。（`books/k3-g4b3-rework-10.md` 裁定 2）
+- **G3：** `K3-B3-runtime-fail-closed:28、48` 只测读者，没测 prepare 消费层；按冻结留在 T，不称已修。（`checks/k3-final-freeze.md`）
+- **G5：** `K3-B3-shared-rules-pure:56、59` 拿生产键和自己比；按冻结留在 T，不称已修。（`checks/k3-final-freeze.md`）
+- **F-066：** 接续说明超容量的准备步骤没有公开路径证明；book 10 裁定 6 保持 T，关闭依据是 lead 裁定。（`books/k3-g4b3-rework-10.md` 裁定 6；`checks/k3-final-freeze.md`）
+- **F-067 的剩余手算：** 预算保护已有变异 M2 守住，完整前置 C 的逐字段算术进 T；80-6 只做业务行，不为它开 Opus。（`checks/k3-final-freeze.md`；与 `codex/k3-final-list.out.md` 的“Opus”不同，以冻结为准）
+- **`K3-48-2:213–217`：** 手编码并提交 `UnknownCallReview` 造接近预算的记录；服务的是旧的结论／依据容量行，F-067 用的是 `nearBudgetProposalFixture`，不改。（`codex/k3-final-list.out.md`）
+- **`B2-blocked-runtime:260–271`：** 手造 `WorkspaceFile` 给默认识别器；F-021 点名的两处已修，这一处不在其中，保持 T。（`codex/k3-final-list.out.md`）
+- **N-04 的五个超时：** `K3-44-crr-kind4:290、340`；`B2-09-crr-owner:524、536、548`。记进 F-055／T，不恢复旧的时限，也不把扩时冒称等价移动。（`checks/k3-final-freeze.md`）
+- **书 9 §2.1 的 T 行：** `T-020`、`T-022`–`T-035`、`T-021`（在文件内）、`T-043` 在；`T-040`（`K3-mixed-seams.ts`）在 T；`T-001`–`T-091` 的其余按原样。`F-093`–`F-095` 是旧片（S3、S4C2）的保护缺口，`F-096` 是 form_only，和 `F-054` 的八条 S3／S4C2 行一起留 T。（`books/k3-g4b3-rework-9.md:49`；`checks/k3-business-classification.md:192–195`；`books/k3-g4b3-rework-9b.md` §2.2）
+- **书 7 §3 和书 9b 点名的旧 T：** `B2-execution-fixture.ts`、`B2-model-request.test.ts`、`B2-execution-result.test.ts`、`B2-runtime-fixture.ts`；`K3-11`、`K3-14`、`K3-45`、`K3-48-2` 的非方案部分、`K-R-close-open-turn`、`B2-execution-entry`；第 1–3 组里 B3 没动的文件。（`books/k3-b3-rulings-v1.md` §1；`books/k3-g4b3-rework-9b.md` §1）

@@ -1,0 +1,28 @@
+== 22:52 base 6dd6c9b
+ok
+kernel patch write+check 0
+typecheck 0
+build 0
+K3-07: marker pid 3 is namespace-local (bwrap --unshare-pid); asserting the host-visible argv[0] "k3-07-command" instead, as RL-08 does
+ ✓ tests/scenarios/K3-07-real-host-kill.test.ts (1 test) 1946ms
+     ✓ K3-07 (L2 premise): the sandboxed command dies with the Host, and the new Host auto-closes the Run with hl03_stale_lock carrying the killed pid  1945ms
+ ✓ tests/kernel/RL-06-11-stop.test.ts (22 tests) 16293ms
+     ✓ RL-07 a timeout after release stops the whole command and removes the scope  2050ms
+     ✓ RL-07b a slow launch with a short deadline fails as deadline_before_start and does not re-probe  1249ms
+     ✓ RL-08b a Host killed between bwrap exit and the final read still drains the keeper  2309ms
+     ✓ RL-09 a Host killed while the launcher is stuck cannot start the command  313ms
+     ✓ RL-09b a Host killed while the gate waits for g cannot start the command  1211ms
+     ✓ RL-10 (a) a launcher failure reports launch_failed without running the command, then re-probes  336ms
+     ✓ RL-10 (d) a command killed after release is reported as it is and never re-run  394ms
+     ✓ RL-10b a cancel while waiting for r is a not-started cancel and does not re-probe  758ms
+     ✓ RL-10c cancel racing release never runs the command twice and never leaks a line  4879ms
+     ✓ K3-49 (RE1) a failed scope stop logs once and leaves the not_started result byte-identical  1211ms
+ Test Files  2 passed (2)
+      Tests  23 passed (23)
+command scopes before 469, after 469
+ vendor/coding-agent/dist/sandbox/process/process-sandbox.d.ts.map | 2 +-
+ vendor/coding-agent/dist/sandbox/process/process-sandbox.js       | 4 +++-
+ vendor/coding-agent/dist/sandbox/process/process-sandbox.js.map   | 2 +-
+ vendor/coding-agent/patches/sandbox/process/process-sandbox.ts    | 4 +++-
+ 4 files changed, 8 insertions(+), 4 deletions(-)
+== done 22:53

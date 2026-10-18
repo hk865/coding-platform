@@ -1,0 +1,42 @@
+只读审查完成，未修改文件，未运行测试或构建。
+
+1. **必须改：后续 Run 的绑定会漏记录。**  
+   [execution-preparation.ts:285](D:/cxt/k3g4b3-review1/src/core/agent-runtime/execution-preparation.ts:285) 静默截取前 32 条。一个任务先有一份含 32 条被拦命令的记录，再产生另一份记录，后者就不会进入绑定；32 是单份记录的边界，不能充当任务历史总量边界。另有独立漏页：[unknown-call-review-service.ts:1564](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/unknown-call-review-service.ts:1564) 先过滤任务，再选合并游标。例如状态甲有 a001…a201，目标记录是 a201；状态乙返回其他任务的 z，第一页无匹配时游标跳到 z，a201 永久漏掉。**修改思路：**取消静默截断；先确定合并后的原始分页窗口及游标，再过滤任务，绑定和接续说明共用这一读取结果。
+
+2. **必须改：识别仍有两套规则，命中归属及降级行为不一致。**  
+   [execution-driver.ts:524](D:/cxt/k3g4b3-review1/src/core/agent-runtime/execution-driver.ts:524) 自行匹配整段、注明写法和动作；[command-recognition.ts:36](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-recognition.ts:36) 又先返回任何整段命中。早记录 A 拦 `migrate && cleanup`，晚记录 B 拦 `migrate`，调用 `migrate` 会归 B，违反任务书“多个命中按创建时间、别名取首个”。此外，[command-recognition.ts:122](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-recognition.ts:122) 把包文件读取失败变成整体拒绝，[command-rerun-request-service.ts:715](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-service.ts:715) 直接返回；因此有效 `rewriteOf` 配合不存在的 `npm run custom` 也无法请求。**修改思路：**真正合并成一个识别函数，统一候选排序；包文件失败只取消该展开，仍允许注明改写。请求侧也应识别已存 `declaredForms`，避免钩子拦、工具却回 `not_blocked`。
+
+3. **必须改：目录、展开依据和截断计量有遗漏。**  
+   [command-normalization.ts:452](D:/cxt/k3g4b3-review1/src/core/work-graph/state/command-normalization.ts:452) 结束管道时未恢复外层目录；`echo x | cd app; npm run x` 会错误读取 app 下的包文件。[command-expansion.ts:172](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-expansion.ts:172) 只按动作文字去重，两个目录中的同名脚本只展开第一个；[同文件:158](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-expansion.ts:158) 把第二层动作压入外层，却没有保存第二层包文件的依据。[同文件:197](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-expansion.ts:197) 截短脚本文字未置 `truncated`；[unknown-call-review-service.ts:104](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/unknown-call-review-service.ts:104) 的 16 KiB 计量漏了新增 `reviewRunId`。**修改思路：**管道退出恢复目录；按目录与脚本识别展开；每层保留自己的依据；统一统计全部新增字段及所有截断原因。否则会漏拦、记录错误来源或超过上限。
+
+4. **必须改：`closed` 没有覆盖所有决策读取。**  
+   [create-platform.ts:785](D:/cxt/k3g4b3-review1/src/composition/create-platform.ts:785)、[decision-read-model.ts:565](D:/cxt/k3g4b3-review1/src/core/work-graph/views/decision-read-model.ts:565) 只看计划中的 `disposition`，漏掉任务已经 `satisfied`；[execution-driver.ts:499](D:/cxt/k3g4b3-review1/src/core/agent-runtime/execution-driver.ts:499) 使用列表原始状态，[command-rerun-request-service.ts:1050](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-service.ts:1050) 消费允许时更写死 `taskActive: true`。任务结束后，卡仍可能待答、旧允许仍可消费。**修改思路：**复用 [plan-readers.ts:2200](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/plan-readers.ts:2200) 的规范任务事实，统一派生关闭，供列表、卡、工具、钩子和 prepare 使用；同一任务缓存一次，下一次 owner 操作经状态机落实关闭。读取失败不能回退为仍有效。
+
+5. **必须改：完整卡片文字没有进入公开卡片。**  
+   [command-rerun-request-card.ts:187](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-card.ts:187) 算出完整说明，却只把原命令放进 `objects.label`；[decision-read-model.ts:693](D:/cxt/k3g4b3-review1/src/core/work-graph/views/decision-read-model.ts:693) 不传说明。请求另一种写法时，人看不到请求命令、原因、匹配和注明内容就要批准。[B2-07-crr-card.test.ts:45](D:/cxt/k3g4b3-review1/tests/work-graph/B2-07-crr-card.test.ts:45) 还把这种结果断言成正确。**修改思路：**照现有 UCR 卡把完整说明放进展示对象，直接断言公开卡片；历史请求还应过滤“早于当前请求”，不能只排除自己（[card:158](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-card.ts:158)）。
+
+6. **必须改：UR7 的失败集合没有推广到 CRR。**  
+   [workflow.ts:2706](D:/cxt/k3g4b3-review1/src/business/workflow/workflow.ts:2706) 只把 UCR 失败记入集合，而且每次覆盖 `reviewFailure`；[同文件:2734](D:/cxt/k3g4b3-review1/src/business/workflow/workflow.ts:2734) 因此让 CRR 的②失败阻塞普通推进。最小例子是一张 CRR 落实失败、另一个任务可运行；混合卡中后来的 CRR 失败还会覆盖先前 UCR 失败标记。**修改思路：**按答案 7 改为内部判别联合集合，累积失败，普通推进排除两种失败卡，保持指定任务推进原有等待规则。
+
+7. **必须改：请求分页反复扫描，超过 B2-18 上界。**  
+   [command-rerun-request-service.ts:367](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-service.ts:367) 每次读完剩余所有别名页，[同文件:480](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-service.ts:480) 再截一页，外层 [同文件:567](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-service.ts:567) 又循环。401 条同别名历史会读 3＋2＋1 页，而不是 3 页。**修改思路：**分页接口只读一个物理页；请求侧按规格一次读取任务请求集，再用于注明写法和别名判断。完整扫描需要的公共部分可复用 [lookup-all.ts:32](D:/cxt/k3g4b3-review1/src/core/work-graph/persistence/lookup-all.ts:32)，不要嵌套全量扫描。
+
+8. **必须改：无写入结果伪装成提交成功。**  
+   [command-rerun-request-service.ts:623](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-service.ts:623) 给 `not_blocked` 等结果返回 `committed`，并强转空游标；这直接违反 [results.ts:5](D:/cxt/k3g4b3-review1/src/contracts/core/results.ts:5) 的真实提交游标约定。任一正常未命中请求就是反例。**修改思路：**扩大业务结果联合有必要，但当前签名不能直接接受；由 lead 冻结显式区分“已写入”和“未写入”的返回契约，工具再映射结果。无写入分支仍由 Kernel 重放，不补 receipt。
+
+9. **必须改：接续说明丢行顺序和省略计数不符。**  
+   [continuation-brief.ts:405](D:/cxt/k3g4b3-review1/src/contracts/continuation-brief.ts:405) 从保留 16 条直接减到 15 条，[同文件:532](D:/cxt/k3g4b3-review1/src/contracts/continuation-brief.ts:532) 同时去掉计数行。17 条命令、仅需移除计数行即可容纳时，会多丢第 16 条。第 408、419 行的提前返回又不写已删命令的省略计数。**修改思路：**把计数行作为独立末尾项；每次候选都连同省略注记计量，先删计数行，再逐条删命令。
+
+10. **必须改：K3-35 的 item 0 仍未完成，其他新夹具也注入事实。**  
+    [K3-35-prepare.ts:143](D:/cxt/k3g4b3-review1/tests/helpers/K3-35-prepare.ts:143) 手造接续 Run、claim、attempt；[同文件:192](D:/cxt/k3g4b3-review1/tests/helpers/K3-35-prepare.ts:192) 仍由替身 reader 返回；[K3-35-continuation-fixture.ts:136](D:/cxt/k3g4b3-review1/tests/helpers/K3-35-continuation-fixture.ts:136) 手造八个锚点及归档回执。唯一 ref 和真实计划采用不能证明这些状态可达。其他例子是 [K3-blocked-command-fixture.ts:74](D:/cxt/k3g4b3-review1/tests/helpers/K3-blocked-command-fixture.ts:74) 伪造 Kernel 命令事实、[B2-blocked-runtime.ts:230](D:/cxt/k3g4b3-review1/tests/helpers/B2-blocked-runtime.ts:230) 用未保存的答复引用落实允许。**修改思路：**共用真实 Work Run、Kernel、答复、归档、requeue、claim 路径；手造输入仅留给纯函数。手算的 15,761 和 16,396＝超出 12 字节成立（[K3-35-T-by-hand.test.ts:29](D:/cxt/k3g4b3-review1/tests/runtime/K3-35-T-by-hand.test.ts:29)），问题是可达性证据。
+
+11. **必须改：必需验收行缺失，部分旧断言变弱。**  
+    [B2-09-allowance-crash.test.ts:6](D:/cxt/k3g4b3-review1/tests/runtime/B2-09-allowance-crash.test.ts:6) 明确没有 09b；[B2-15-replay.test.ts:55](D:/cxt/k3g4b3-review1/tests/runtime/B2-15-replay.test.ts:55) 与第 63 行用了不同 callId，只是再次调用钩子。需要 L29 的 SQLite Host 崩溃夹具：真实批准→消费提交成功→shell 开始前崩溃→重启验证允许已用、结果未知、进入核对；另用原先经展开命中的同一 Kernel 调用，改包文件后重放，并覆盖无写入结果重放。R4 不能由 [B2-blocked-runtime.ts:214](D:/cxt/k3g4b3-review1/tests/helpers/B2-blocked-runtime.ts:214) 的直接调用代替。前缀歧义规则已实现（[service:547](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-service.ts:547)），应通过公开 claim 注入同前缀 UUID 验证；生产使用 UUID（[create-platform.ts:987](D:/cxt/k3g4b3-review1/src/composition/create-platform.ts:987)），不能称不可达。旧全文相等断言被删（[b3.diff:8871](D:/cxt/k3g4b3-review1/.lead-ref/b3.diff:8871)），现有分散包含断言会放过顺序错误，应恢复完整必需块的字面量比较。
+
+12. **建议：压缩机械重复，不按行数删功能。**  
+    CRR 的 revision guard（[service:125](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-service.ts:125)）重复 S5 的 [goal-settings-service.ts:97](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/goal-settings-service.ts:97)；两份回放函数（[service:247](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-service.ts:247)、278）重复 UCR 的 [service:465](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/unknown-call-review-service.ts:465)。最小抽取是“receipt 读取＋事件解码＋身份校验＋结果投影”，吸收 4C-2 已有异常处理（[note-service.ts:545](D:/cxt/k3g4b3-review1/src/core/work-graph/notes/note-service.ts:545)）。字段检查 [CRR codecs:53](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-codecs.ts:53) 重复 [UCR codecs:79](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/unknown-call-review-codecs.ts:79)；来源身份解析 [card:222](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-card.ts:222) 与 [codecs:448](D:/cxt/k3g4b3-review1/src/core/work-graph/tasks/command-rerun-request-codecs.ts:448) 应合一；索引名直接引用 [契约:64](D:/cxt/k3g4b3-review1/src/contracts/command-rerun-request.ts:64)。这些重复会让同一校验或存储修复漏改一份；共享小助手即可，CRR 专属字段、事件及三索引仍需要保留。
+
+13. **必须改：A8 非基线失败仍需解释，不能凭测试文件未改归为环境问题。**  
+    本次对所有普通 Work Run 新增了可能拒绝 prepare 的读取（[execution-preparation.ts:457](D:/cxt/k3g4b3-review1/src/core/agent-runtime/execution-preparation.ts:457)）；即使没有被拦命令，读取失败也会中断准备。`auto_rework_pending` 本身只是待重新入队或领取的投影（[goal-machine.ts:985](D:/cxt/k3g4b3-review1/src/core/work-graph/state/goal-machine.ts:985)），不能说明根因。因此本次改动存在造成停滞的路径，但静态证据尚不能证明该失败走了它。**修改思路：**按既定流程在独立副本追查实际 prepare／推进返回值，再判断回归或环境原因；保留原断言。
+
+先改完列出的几处

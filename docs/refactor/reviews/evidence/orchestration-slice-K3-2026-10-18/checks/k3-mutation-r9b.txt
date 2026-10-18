@@ -1,0 +1,15 @@
+Lead mutation runs on k3-g4b3-r9b (2026-10-18 18:35, WSL with bubblewrap, vitest --maxWorkers=2).
+Script: k3-mutate.sh / k3-mutate.py (one mutation at a time, reverted with git checkout after each).
+Baseline (no mutation): K3-44-crr-kind4 + B2-UR7-crr-answer + K3-B3-runtime-fail-closed + K3-B3-shared-rules-pure: 19/19 passed.
+
+G1 (F-020, F-035)  src/app/host.ts:1036  `await collaborationDriver.start(...)` -> `if (false as boolean) await collaborationDriver.start(...)`
+   tests/scenarios/K3-44-crr-kind4.test.ts + tests/work-graph/B2-UR7-crr-answer.test.ts: 6/6 PASSED  -> fake guard confirmed
+G2 (F-073)  src/core/work-graph/tasks/unknown-call-review-answers.ts:206  inserted `if (applied === null) continue;` after the receipt read
+   tests/scenarios/K3-44-crr-kind4.test.ts + tests/work-graph/B2-UR7-crr-answer.test.ts: 6/6 PASSED  -> fake guard confirmed
+G3 (F-071, F-075)  src/core/agent-runtime/execution-preparation.ts:412-413  `if (read.status !== 'ready') return read; taskReviews = read.value;` -> `taskReviews = read.status === 'ready' ? read.value : [];`
+   tests/runtime/K3-B3-runtime-fail-closed.test.ts: 7/7 PASSED  -> fake guard confirmed
+G5 (F-088)  src/core/work-graph/state/command-normalization.ts:48  `sha256Hex(JSON.stringify(words))` -> `sha256Hex(JSON.stringify(words.slice(0, 1)))`
+   tests/state/K3-B3-shared-rules-pure.test.ts: 6/6 PASSED  -> fake guard confirmed
+G6 (F-098)  src/core/agent-runtime/context-assembler.ts:1454-1456  the newest-first sort -> `const newest = forAlias[0];`
+   tests/runtime/K3-B3-runtime-fail-closed.test.ts: 7/7 PASSED  -> fake guard confirmed
+G4 (F-076, F-101) is a production defect (context-assembler.ts:1275 `if (read.status !== 'ready') return facts;` drops a cancelled read); no mutation needed.

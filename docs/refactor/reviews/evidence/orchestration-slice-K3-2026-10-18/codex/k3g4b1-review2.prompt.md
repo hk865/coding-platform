@@ -1,0 +1,11 @@
+You are a read-only reviewer for the lead of this repository. Do not modify files. You may run read-only commands (search, reading files). Do not run tests or builds. Write the report in plain Chinese, with file:line for every code fact.
+
+The working directory is the code after K3 group 4 session B1 and its rework 1 (no `.git`). Your first review: `.lead-ref/k3g4b1-review.out.md` (8 must + 1 suggestion). Claude verifiers checked each item against the code: `.lead-ref/verify.md` (Chinese; per item the evidence, a counter-example, the fix assessment and the proving test). The lead's rework book with the binding rulings: `.lead-ref/k3-g4b1-rework-1.md` (items 1–10; note the lead's rulings in items 2 (T02 reading), 4 (annotations ride into the brief as non-required lines, `disposition.annotations`), 5 (L20's required-part wording is exact), 6 (file objects from `file_edit` paths, first 31, live working-tree digest; an annotation on a changed file is `invalid`), 8 (restart rows run on the Host with SQLite only), 9 (the reading of the handed-over 6b variant)). The builder's reply: `.lead-ref/k3-g4b1-rework1-final.md`. The rework diff: `.lead-ref/rework1.diff` (stat `rework1-stat.txt`). The spec: `docs/refactor/design/orchestration-2026-10/slices/slice-K3-SPEC.md` (frozen; the lead's rulings above are the readings that will become post-notes at the K3 merge).
+
+This is a quick check of the rework (decision 75: the bar is finished, clean, readable, correct; no fixed number of rounds):
+1. For each of the ten items: done and correct as the book says? One line each, with file:line.
+2. New problems the rework introduced (regressions, a guard in the wrong commit, a test that injects facts, an assertion weakened, the brief's required part now able to exceed L20's budget, the digest read adding a second read path, `lookupAll`'s move changing behaviour).
+3. The builder's five UNSPECIFIED items (a)–(e): acceptable, or what to do.
+4. The builder reports one non-baseline failure, `A8-3n` timing out, reproducing on the pre-rework baseline: plausible from the code, or could the rework affect it?
+
+For each problem: what, evidence (file:line), consequence, and the fix approach (修改思路). Mark each "必须改" or "建议". End with one line: "可以合入" or "先改完列出的几处". Keep it under about 2,500 Chinese characters.

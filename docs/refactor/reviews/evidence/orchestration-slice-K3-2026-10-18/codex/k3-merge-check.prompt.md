@@ -1,0 +1,14 @@
+Read-only merge check for the lead. Do not write any file, do not run tests (the lead runs the bubblewrap full suite). Answer in Chinese with file:line.
+
+This copy is the K3 merge tree at tag `k3-merge-1`: lead `c7f7cb0` (with 8D `4041c30` and L8 `de70ff4` after K3's base `f15f25a4`) + the whole K3 change `f15f25a4..k3-g4b3-r10` applied 3-way + DSH's resolution of 13 conflict hunks in four files + the Codex N-01 test + a lead fix. Inputs under `./.lead-ref/`:
+- `k3-merge-overlap.txt`: the 15 files both sides changed since `f15f25a4`; `lead-side-overlap.diff` and `k3-side-overlap.diff`: each side's change to those 15 files;
+- `resolution.diff`: DSH's resolution (from the tree with conflict markers to the resolved tree); the raw files with markers `context-assembler.raw-with-markers.ts`, `execution-preparation.raw-with-markers.ts`; the book `k3-merge-book.md` and DSH's reply `k3-merge-final.md` (claims, not evidence);
+- `lead-fix.diff`: the lead passes the real material service in two K3 prepare tests (L8 made `materials` required in the default context assembler).
+
+Check:
+1. **The 13 resolved hunks**: is each side's behaviour kept exactly (checks, error codes and texts, order of checks and of assembled context sections, digest inputs, returned shapes)? Pay most attention to hunk 7 (`context-assembler.ts` `sessionBasisForContext` keeps lead's cancellation-aware loop while K3's `lastTerminalBoundary` stays for `reviewSessionBasis`): did K3 change `sessionBasisForContext`'s behaviour in any way that is now lost, and does `reviewSessionBasis` lose a cancellation that K3's own code (book 10's F-101 cancel propagation) or lead's code would report? Also hunk 10 (K3's `BriefWorkspaceFacts` import dropped after lead's return-type rename) and hunk 12.
+2. **The other 11 of the 15 overlap files merged without markers** (`host.ts`, `core-routes.ts`, `core-http-types.ts`, `continuation-brief-assembly.ts`, `execution-contracts.ts`, `execution-driver.ts`, `query-execution.ts`, `routes.ts`, `production-reach-allowlist.json`, `AG2b-collaboration-fixture.ts`, `scenarios/harness.ts`): any semantic conflict that a textual merge hides (one side calls something the other changed, an order both sides depend on, a start-up step both added, an allowlist entry one side removed and the other needs, the L8 capture settle helper vs K3's restarts)?
+3. **Across the merge**: L8's automatic capture and lease rule (decision 82) vs K3's start-up work (the collaboration driver's re-drive of handed-over answers at `host.ts` start): order at start-up, lease checks, `automation.resumeOnStartup`.
+4. The lead fix: is the real material service the right port there, and does it change what those tests prove?
+
+Output: per item, OK or a problem (file:line, what breaks, one fix). End with one line: must-fix count.

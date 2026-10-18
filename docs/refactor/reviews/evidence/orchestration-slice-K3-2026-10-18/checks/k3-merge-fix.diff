@@ -1,0 +1,173 @@
+diff --git a/src/core/agent-runtime/context-assembler.ts b/src/core/agent-runtime/context-assembler.ts
+index fda114a..cbcdc57 100644
+--- a/src/core/agent-runtime/context-assembler.ts
++++ b/src/core/agent-runtime/context-assembler.ts
+@@ -1068,27 +1068,34 @@ async function readReviewCaptureChanges(
+  * K3 L6: the run-start baseline and current content for every file-edit path of
+  * the afterRun's review. Every read is read-only and degrades; a missing reader
+  * or workspace yields an empty map (no diff), never a failure of the brief.
++ * Cancellation is not a failure (slice 8 §13.8): the signal, or a `resolveRoot`
++ * that names cancellation, answers `cancelled`.
+  */
+ async function unknownCallReviewFilesFor(
+   deps: ContextAssemblerDependencies, record: TaskExecutionRecord, previous: TaskExecutionRecord,
+-  review: UnknownCallReviewV1 | null,
+-): Promise<ReadonlyMap<string, { baseline: ReviewFileRead; current: ReviewFileRead }> | null> {
++  review: UnknownCallReviewV1 | null, signal: AbortSignal,
++): Promise<ReadonlyMap<string, { baseline: ReviewFileRead; current: ReviewFileRead }> | null | 'cancelled'> {
+   if (review === null) return null;
+   const paths = [...new Set(review.items.flatMap((item) => item.kind === 'file_edit' ? item.summary.paths : []))];
+   if (paths.length === 0) return null;
+   const source = deps.workspaceSource;
+   if (source?.readBaselineBlob === undefined || source.readCurrentFile === undefined
+     || deps.workspaceHost === undefined || deps.bodies === undefined) return new Map();
++  if (signal.aborted) return 'cancelled';
+   let root: string;
+   try {
+     const resolved = await deps.workspaceHost.resolveRoot({ aggregateType: 'Workspace', projectId: record.run.ref.projectId,
+       workspaceId: record.session.workspaceId });
++    if (resolved.status === 'rejected' && resolved.code === 'cancelled') return 'cancelled';
++    if (signal.aborted) return 'cancelled';
+     if (resolved.status !== 'ready') return new Map();
+     root = resolved.value.root;
+   } catch {
+-    return new Map();
++    return signal.aborted ? 'cancelled' : new Map();
+   }
+   const baseline = await readRunStartBaseline(deps.bodies, previous);
++  // The body and file reads have no cancelled result of their own: judge them by the signal.
++  if (signal.aborted) return 'cancelled';
+   const files = new Map<string, { baseline: ReviewFileRead; current: ReviewFileRead }>();
+   for (const path of paths) {
+     if (isProtectedWorkspacePath(path)) {
+@@ -1107,6 +1114,7 @@ async function unknownCallReviewFilesFor(
+       ? { status: 'unavailable', reason: 'baseline_dirty' }
+       : classifyReviewBytes(await source.readBaselineBlob(root, `${baseline.headCommit}:${path}`));
+     const currentRead = classifyReviewBytes(await source.readCurrentFile(root, path));
++    if (signal.aborted) return 'cancelled';
+     files.set(path, { baseline: baselineRead, current: currentRead });
+   }
+   return files;
+@@ -1115,20 +1123,25 @@ async function unknownCallReviewFilesFor(
+ /**
+  * K3 L12: the last completed-Turn boundary at or before `through`, from the same
+  * bounded Kernel window read. `undefined` means the history could not be read
+- * (the callers answer null/undefined); `null` means it held no terminal event.
++ * (the callers answer null/undefined); `null` means it held no terminal event;
++ * `cancelled` means the signal or the window owner named cancellation, which is
++ * never "no history" (slice 8 §13.8).
+  */
+ async function lastTerminalBoundary(
+   owner: SessionHistoryCursorOwner,
+   session: Parameters<SessionHistoryCursorOwner['readPositionWindow']>[0]['session'],
+   through: number, signal: AbortSignal,
+-): Promise<number | null | undefined> {
++): Promise<number | null | undefined | 'cancelled'> {
+   let boundary: number | null = null;
+   let cursor = 0;
+   for (let page = 0; page < 64 && cursor < through; page += 1) {
++    if (signal.aborted) return 'cancelled';
+     let window;
+     try {
+       window = await owner.readPositionWindow({ session, afterPosition: cursor, throughPosition: through, limit: 200, signal });
+-    } catch { return undefined; }
++    } catch { return signal.aborted ? 'cancelled' : undefined; }
++    if (signal.aborted) return 'cancelled';
++    if (window.status === 'rejected' && window.code === 'cancelled') return 'cancelled';
+     if (window.status !== 'ready') return undefined;
+     for (const entry of window.value.entries) {
+       const item = decodeKernelEntry(entry);
+@@ -1209,7 +1222,7 @@ async function sessionBasisForContext(
+  */
+ async function reviewSessionBasis(
+   deps: ContextAssemblerDependencies, record: TaskExecutionRecord, original: TaskExecutionRecord, signal: AbortSignal,
+-): Promise<PreparedTaskManifestV1['sessionBasis'] | undefined> {
++): Promise<PreparedTaskManifestV1['sessionBasis'] | undefined | 'cancelled'> {
+   const source = requeueHistorySourceOf(original.run, []);
+   if (source === null || deps.kernelStores === undefined) return undefined;
+   const claimSession = record.session;
+@@ -1229,7 +1242,7 @@ async function reviewSessionBasis(
+   const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores,
+     ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }) });
+   const boundary = await lastTerminalBoundary(owner, sourceSession, source.throughPosition, signal);
+-  if (boundary === undefined) return undefined;
++  if (boundary === undefined || boundary === 'cancelled') return boundary;
+   return { sourceKernelSessionId: source.kernelSessionId, throughPosition: boundary };
+ }
+ 
+@@ -1398,6 +1411,9 @@ async function assembleReviewForContext(
+   catch (error) { return { ok: false, rejection: rejected('unavailable', `the original Run read failed: ${messageOf(error)}`) }; }
+   if (original.status !== 'ready') return { ok: false, rejection: mapRead(original) };
+   const sessionBasis = await reviewSessionBasis(deps, record, original.value, ctx.signal);
++  if (sessionBasis === 'cancelled') {
++    return { ok: false, rejection: rejected('cancelled', 'the preparation was cancelled during the review session basis read') };
++  }
+   const commandFacts = await reviewCommandFacts(deps, review, original.value, ctx.signal);
+   // F-076/F-101: a cancelled Kernel command read is carried to prepare, which
+   // then ends `cancelled`; every other unreadable Kernel keeps the fallback.
+@@ -1621,7 +1637,10 @@ async function assembleBriefForContext(
+   const anomalies = assembleAnomalySection(basis.value.pendingAnomalies ?? []);
+   // K3 L20/L6: the afterRun's review record and the read-only file sides its diff needs.
+   const unknownCallReview = basis.value.unknownCallReview ?? null;
+-  const unknownCallReviewFiles = await unknownCallReviewFilesFor(deps, record, previous, unknownCallReview);
++  const unknownCallReviewFiles = await unknownCallReviewFilesFor(deps, record, previous, unknownCallReview, ctx.signal);
++  if (unknownCallReviewFiles === 'cancelled') {
++    return { ok: false, rejection: rejected('cancelled', 'the preparation was cancelled during the review file read') };
++  }
+   const unknownCallReviewCaptureChanges = await readReviewCaptureChanges(deps, unknownCallReview);
+   // K3 B3 item 7: the Task's blocked commands, including earlier records when the
+   // afterRun has none. A read failure is `unavailable`, never a silent drop.
+diff --git a/src/core/agent-runtime/execution-preparation.ts b/src/core/agent-runtime/execution-preparation.ts
+index 054f0d4..c475116 100644
+--- a/src/core/agent-runtime/execution-preparation.ts
++++ b/src/core/agent-runtime/execution-preparation.ts
+@@ -145,25 +145,33 @@ async function recordWorkspaceBaseline(
+   runRef: PreparedTaskManifestV1['claim']['runRef'],
+   deniedPrefixes: readonly string[],
+   sourceRefs: SourceRefV1[],
+-): Promise<PreparedTaskManifestV1['workspaceBaseline']> {
++): Promise<PreparedTaskManifestV1['workspaceBaseline'] | 'cancelled'> {
+   const unavailable = (reason: 'not_git' | 'too_many_changes' | 'read_failed', detail: string) => ({
+     status: 'unavailable' as const, reason, detail: detail.length > BASELINE_DETAIL_MAX ? detail.slice(0, BASELINE_DETAIL_MAX) : detail,
+   });
+   if (deps.workspaceHost === undefined) return undefined;
++  if (ctx.signal.aborted) return 'cancelled';
+   let root: string;
+   try {
+     const resolved = await deps.workspaceHost.resolveRoot({ aggregateType: 'Workspace', projectId: ctx.projectId, workspaceId });
++    // Slice 8 §13.8: a dependency that names cancellation is never a read failure.
++    if (resolved.status === 'rejected' && resolved.code === 'cancelled') return 'cancelled';
++    if (ctx.signal.aborted) return 'cancelled';
+     if (resolved.status !== 'ready') return unavailable('read_failed', `the workspace root could not be resolved: ${resolved.reason}`);
+     root = resolved.value.root;
+   } catch (error) {
++    if (ctx.signal.aborted) return 'cancelled';
+     return unavailable('read_failed', `the workspace root could not be resolved: ${messageOf(error)}`);
+   }
+   let read;
+   try {
+     read = await readWorkspaceBaseline({ root, deniedPrefixes });
+   } catch (error) {
++    if (ctx.signal.aborted) return 'cancelled';
+     return unavailable('read_failed', messageOf(error));
+   }
++  // The baseline read has no cancelled result: judge it by the signal, and never put after a cancellation.
++  if (ctx.signal.aborted) return 'cancelled';
+   if (read.status === 'unavailable') return unavailable(read.reason, read.detail);
+   let stored;
+   try {
+@@ -497,10 +505,13 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
+       // and only when the workspace root is the git work-tree top level (the same
+       // test `VerificationWorkspaceReader.capture` makes). A missing workspace
+       // host or any baseline failure leaves the field absent/unavailable and
+-      // NEVER fails preparation.
++      // NEVER fails preparation; a cancellation still ends it (slice 8 §13.8).
+       const workspaceBaseline = writeScopeResult.writeScope.length === 0
+         ? undefined
+         : await recordWorkspaceBaseline(deps, owned, session.workspaceId, runRef, hostConfig.deniedPrefixes, sourceRefs);
++      if (workspaceBaseline === 'cancelled') {
++        return rejected('cancelled', 'the preparation was cancelled during the workspace baseline capture');
++      }
+       // K3 D8: the review instruction is carried twice in the manifest (the
+       // structured field and the rendered `input`), so the whole manifest is
+       // measured and the instruction trimmed from the back while over budget.

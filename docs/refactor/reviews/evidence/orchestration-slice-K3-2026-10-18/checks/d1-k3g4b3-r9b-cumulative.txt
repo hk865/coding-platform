@@ -1,0 +1,517 @@
+# D1 assertion ledger k3-g4b3^..k3-g4b3-r9b (tests)
+
+## ADDED expected value from a constant: 20
+tests/runtime/B2-15-replay.test.ts:157: expect(JSON.stringify(replayed)).toBe(JSON.stringify(original));
+tests/runtime/B2-401-world.test.ts:63: expect(w.requestCount).toBe(B401_R);
+tests/runtime/B2-401-world.test.ts:81: expect(w.requestCount).toBe(B401_R);
+tests/runtime/K3-35-T-by-hand.test.ts:106: expect(facts.task.taskId).toBe(TASK_512);
+tests/runtime/K3-35-T-by-hand.test.ts:141: expect(requiredReviewBlock(suffix)).toBe(K3_35_REQUIRED_REVIEW_BLOCK_ONE);
+tests/runtime/K3-35-T-by-hand.test.ts:159: expect(facts.task.taskId).toBe(TASK_600);
+tests/runtime/K3-35-T-by-hand.test.ts:174: expect(requiredReviewBlock(suffix)).toBe(K3_35_REQUIRED_REVIEW_BLOCK_ONE);
+tests/runtime/K3-35-approved-methods-brief.test.ts:167: expect(requiredReviewBlock(suffix)).toBe(K3_35_REQUIRED_REVIEW_BLOCK_ONE);
+tests/runtime/K3-35-manifest-trim-pure.test.ts:286: expect(built.items).toHaveLength(ITEM_COUNT);
+tests/runtime/K3-35-manifest-trim-pure.test.ts:287: expect(built.items.map(item => item.alias)).toEqual(ITEMS.map(item => item.alias));
+tests/runtime/K3-35-manifest-trim-pure.test.ts:393: expect(measured.input).toBe(BASE_INPUT + rendered);
+tests/runtime/K3-35-manifest-trim-pure.test.ts:404: expect(fitted.items).toHaveLength(ITEM_COUNT);
+tests/runtime/K3-35-manifest-trim-pure.test.ts:405: expect(fitted.items.map(item => item.alias)).toEqual(ITEMS.map(item => item.alias));
+tests/scenarios/K3-20-review-card-paging.test.ts:195: expect(gateGoalId).toBe(GOAL_B.goalId);
+tests/scenarios/K3-20-review-card-paging.test.ts:197: expect(fifth.task.goalId).toBe(GOAL_B.goalId);
+tests/work-graph/B2-12-rewrite-prefix.test.ts:62: expect(first.record.task.taskId).toBe(TASK_ID);
+tests/work-graph/B2-12-rewrite-prefix.test.ts:63: expect(second.record.task.taskId).toBe(TASK_ID);
+tests/work-graph/B2-12-rewrite-prefix.test.ts:64: expect(first.record.runRef.runId).toBe(FIRST_RUN);
+tests/work-graph/B2-12-rewrite-prefix.test.ts:65: expect(second.record.runRef.runId).toBe(SECOND_RUN);
+tests/work-graph/K3-48-2-unknown-call-review-model-text-budget.test.ts:526: expect(JSON.stringify(afterLong.value)).toBe(JSON.stringify(before.value));
+
+## ADDED single-backend list: 1
+tests/work-graph/K3-48-2-unknown-call-review-model-text-budget.test.ts:459: it.each(['sqlite'] as const)('K3-48 (二) %s: a real awaiting_proposal record admits a 2,000-character rationale and the proposal is readable', async kind => {
+
+## LOOSENED (strict to loose on one subject): 2
+tests/work-graph/K3-16-approval-application.test.ts:236: expect(summary).toContain('npm run build:safer\n  npm run test:safer');   <- was :228 expect(summary).toBe(expectedApprovalSummary(awaiting, true));
+tests/work-graph/K3-48-2-unknown-call-review-model-text-budget.test.ts:473: expect(k3SerializedBytes(before.value)).toBeLessThan(B - 2_000);   <- was :269 expect(k3SerializedBytes(before.value)).toBe(B - 2_000);
+
+## MOVED: 167
+
+## NEW timeout in an existing file: 3
+tests/business/K3-15-ur3h.test.ts:389: }, 120_000);
+tests/runtime/K3-35-approved-methods-brief.test.ts:84: beforeAll(async () => { facts = await openK3_35PublicRecord(kind); }, 60_000);
+tests/work-graph/K3-48-2-unknown-call-review-model-text-budget.test.ts:488: }, 120_000);
+
+## REMOVED assertion: 353
+tests/app/K3-15-review-routes.test.ts:123: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed',
+tests/app/K3-15-review-routes.test.ts:133: expect(resolved, JSON.stringify(resolved)).toMatchObject({ status: 'committed',
+tests/app/K3-15-review-routes.test.ts:161: expect(CORE_ROUTE_SPECS['unknown-call-reviews/hold']).toEqual({
+tests/app/K3-15-review-routes.test.ts:164: expect(CORE_ROUTE_SPECS['unknown-call-reviews/release-hold']).toEqual({
+tests/app/K3-15-review-routes.test.ts:176: expect(claimed).toMatchObject({ status: 'committed' });
+tests/app/K3-15-review-routes.test.ts:200: expect(await readReview(f, reviewRef)).toMatchObject({ revision: 3, disposition: { hold: 'held' },
+tests/app/K3-15-review-routes.test.ts:210: expect(settled).toMatchObject({ revision: 1, status: 'resolved', activeRound: null });
+tests/business/K3-15-ur3h.test.ts:162: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed',
+tests/business/K3-15-ur3h.test.ts:174: expect(resolved, JSON.stringify(resolved)).toMatchObject({ status: 'committed',
+tests/business/K3-15-ur3h.test.ts:191: expect(read, JSON.stringify(read)).toMatchObject({ status: 'ready' });
+tests/business/K3-15-ur3h.test.ts:256: expect(isUnenteredReviewRoundForCancellation(roundBefore, roundRef)).toBe(true);
+tests/business/K3-15-ur3h.test.ts:276: expect(afterSettle.disposition?.targets).toEqual([processItem(1).callId]);
+tests/business/K3-15-ur3h.test.ts:277: expect(f.modelCalls.count, 'no model call').toBe(0);
+tests/business/K3-15-ur3h.test.ts:298: expect(f.modelCalls.count, 'no model call').toBe(0);
+tests/business/K3-15-ur3h.test.ts:315: expect(isUnenteredReviewRoundForCancellation(paused, roundRef)).toBe(true);
+tests/business/K3-15-ur3h.test.ts:341: expect(f.modelCalls.count, 'no model call').toBe(0);
+tests/business/K3-15-ur3h.test.ts:367: expect(await readReview(f, reviewRef)).toMatchObject({ status: 'resolved',
+tests/business/K3-15-ur3h.test.ts:369: expect(f.modelCalls.count, 'no model call').toBe(0);
+tests/business/K3-41-release-hold.test.ts:407: expect(unknown, JSON.stringify(unknown)).toMatchObject({ status: 'committed',
+tests/business/K3-41-release-hold.test.ts:415: expect(resolved, JSON.stringify(resolved)).toMatchObject({ status: 'committed',
+tests/business/K3-41-release-hold.test.ts:517: expect((await routeFacts(f)).requeuesByTaskId.get(f.b2.base.tasks.first.taskId) ?? [],
+tests/business/K3-41-release-hold.test.ts:557: expect(await goalControlThroughRoute(f, 'pause', `k3-41-route-goal-pause-${kind}`))
+tests/business/K3-41-release-hold.test.ts:559: expect(await goalControlThroughRoute(f, 'resume', `k3-41-route-goal-resume-${kind}`))
+tests/business/K3-46-review-advance-failures.test.ts:695: expect(continued.failedReviewRefs).toEqual([recordA.ref]);
+tests/business/K3-review-workflow-rows.test.ts:334: expect(result).toMatchObject({ status: 'ready', value: { state: 'waiting', reason: expect.stringContaining('review_round_in_flight') } });
+tests/business/K3-review-workflow-rows.test.ts:357: expect(result).toMatchObject({ status: 'ready', value: { state: 'waiting', reason: expect.stringContaining('review_round_unknown') } });
+tests/business/K3-review-workflow-rows.test.ts:408: expect(w.review).toMatchObject({ status: 'pending_review' });
+tests/business/K3-review-workflow-rows.test.ts:541: expect(request.meta.expected).toEqual(source.pins);
+tests/business/K3-review-workflow-rows.test.ts:546: expect(w.review).toMatchObject({ status: 'needs_decision', revision: review.revision });
+tests/business/K3-review-workflow-rows.test.ts:564: expect(w.applied[0]).toMatchObject({ source, selection: { kind: 'option', optionId: 'rerun_as_is' },
+tests/business/K3-review-workflow-rows.test.ts:593: expect(w.review).toMatchObject({ disposition: { hold: 'held' } });
+tests/business/K3-review-workflow-rows.test.ts:610: expect(w.applied[0]).toMatchObject({ source, selection: (message.response as { decision: { selection: unknown } })
+tests/business/K3-review-workflow-rows.test.ts:612: expect(w.applied[0]!.requestId).toMatch(/^wf-auto:review-application:/);
+tests/business/K3-review-workflow-rows.test.ts:613: expect(w.applied[0]!.expected).toEqual(source.pins);
+tests/business/K3-review-workflow-rows.test.ts:633: expect(w.applied[0]).toMatchObject({ source });
+tests/business/K3-review-workflow-rows.test.ts:645: expect(w.applied).toEqual([]);
+tests/business/K3-review-workflow-rows.test.ts:949: expect(f.counts.commits, 'the second selection writes nothing').toBe(commitsBefore);
+tests/runtime/K3-19-review-admission.test.ts:70: expect(started).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/runtime/K3-19-review-admission.test.ts:71: expect(started.status === 'rejected' ? started.reason : '').toContain('tool_set_mismatch');
+tests/runtime/K3-19-review-admission.test.ts:86: expect(started).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/runtime/K3-19-review-admission.test.ts:87: expect(started.status === 'rejected' ? started.reason : '').toContain('tool_set_mismatch');
+tests/runtime/K3-19-review-admission.test.ts:88: expect(modelCalls()).toBe(0);
+tests/runtime/K3-35-approved-methods-brief.test.ts:111: expect(review.items).toHaveLength(32);
+tests/runtime/K3-35-approved-methods-brief.test.ts:113: expect(review.items.slice(1).every(item => item.alias >= 2 && item.kind === 'platform'
+tests/runtime/K3-35-approved-methods-brief.test.ts:116: expect(review.dispositionTargets).toHaveLength(32);
+tests/runtime/K3-35-approved-methods-brief.test.ts:119: expect(review.disposition).not.toBeNull();
+tests/runtime/K3-35-approved-methods-brief.test.ts:120: expect(review.disposition).toMatchObject({ choice: 'safer_method', source: 'card',
+tests/runtime/K3-35-approved-methods-brief.test.ts:125: expect(facts.section.disposition!.targets).toHaveLength(32);
+tests/runtime/K3-35-approved-methods-brief.test.ts:126: expect(facts.section.disposition!.platformTargets).toHaveLength(31);
+tests/runtime/K3-35-approved-methods-brief.test.ts:137: expect(section.items).toHaveLength(32);
+tests/runtime/K3-35-approved-methods-brief.test.ts:138: expect(section.disposition!.approvedMethods).toHaveLength(1);
+tests/runtime/K3-35-approved-methods-brief.test.ts:139: expect(section.disposition!.platformTargets).toHaveLength(31);
+tests/runtime/K3-35-approved-methods-brief.test.ts:141: expect(brief.anomalies!.anchors.every(anchor => Buffer.byteLength(anchor.task.taskId, 'utf8') === 512)).toBe(true);
+tests/runtime/K3-35-approved-methods-brief.test.ts:143: expect(WORST_REASON.length).toBeGreaterThan(60);
+tests/runtime/K3-35-approved-methods-brief.test.ts:157: expect(mandatoryBytes).toBe(15_681);
+tests/runtime/K3-35-approved-methods-brief.test.ts:158: expect(utf8Bytes(expected)).toBe(15_750);
+tests/runtime/K3-35-approved-methods-brief.test.ts:160: expect(Buffer.byteLength(text, 'utf8')).toBe(15_750);
+tests/runtime/K3-35-approved-methods-brief.test.ts:164: expect(text).toContain(REVIEW_TITLE);
+tests/runtime/K3-35-approved-methods-brief.test.ts:165: expect(text).toContain('- 共 32 条（#1–#32），另有 0 条没有列出；各条的结论和依据见上文“核对结论”，可能被略去。');
+tests/runtime/K3-35-approved-methods-brief.test.ts:166: expect(text).toContain('- 处置：换个稳妥的跑法：不要跑原命令，照下面的方案原样跑（卡上选的）；附言：'
+tests/runtime/K3-35-approved-methods-brief.test.ts:168: expect(text).toContain(`- 作用对象：${aliases(1, 32)}。`);
+tests/runtime/K3-35-approved-methods-brief.test.ts:169: expect(text).toContain(`- 平台条目 ${aliases(2, 32)}：结果查不清，重做前先核实。`);
+tests/runtime/K3-35-approved-methods-brief.test.ts:170: expect(text).toContain(NOT_LISTED);
+tests/runtime/K3-35-approved-methods-brief.test.ts:171: expect(text).toContain(`- 方案 #1，目录 .：\n  ${APPROVED_COMMAND.replace(/\r\n|\n/g, '\n  ')}`);
+tests/runtime/K3-35-approved-methods-brief.test.ts:172: expect(BODY_OMITTED.length).toBeGreaterThan(0);
+tests/runtime/K3-35-approved-methods-brief.test.ts:173: expect(text).toContain(BODY_OMITTED);
+tests/runtime/K3-35-approved-methods-brief.test.ts:177: expect(text).not.toContain(facts.processCallId);
+tests/runtime/K3-35-approved-methods-brief.test.ts:178: expect(text).not.toContain('- #1 =');
+tests/runtime/K3-35-approved-methods-brief.test.ts:179: for (const callId of facts.platformCallIds) expect(text).not.toContain(callId);
+tests/runtime/K3-35-approved-methods-brief.test.ts:185: expect(targetsAt).toBeGreaterThan(-1);
+tests/runtime/K3-35-approved-methods-brief.test.ts:186: expect(methodAt).toBeGreaterThan(targetsAt);
+tests/runtime/K3-35-approved-methods-brief.test.ts:187: expect(platformAt).toBeGreaterThan(methodAt);
+tests/runtime/K3-35-approved-methods-brief.test.ts:191: expect(anomalyAnchors(600).every(anchor => Buffer.byteLength(anchor.task.taskId, 'utf8') === 600)).toBe(true);
+tests/runtime/K3-35-approved-methods-brief.test.ts:195: expect(() => renderContinuationBriefZh(brief, continuationBriefDigest(brief)))
+tests/runtime/K3-35-approved-methods-brief.test.ts:200: expect(fits).toBe(15_681);
+tests/runtime/K3-35-approved-methods-brief.test.ts:201: expect(overflows).toBe(16_385);
+tests/runtime/K3-35-approved-methods-brief.test.ts:202: expect(overflows).toBeGreaterThan(16_384);
+tests/runtime/K3-35-approved-methods-brief.test.ts:203: expect(overflows - fits).toBe(8 * (600 - 512));
+tests/runtime/K3-35-approved-methods-brief.test.ts:206: expect(result.status).toBe('rejected');
+tests/runtime/K3-35-approved-methods-brief.test.ts:208: expect(result.code).toBe('capacity');
+tests/runtime/K3-35-approved-methods-brief.test.ts:211: expect(under.status).toBe('ready');
+tests/runtime/K3-review-preparation.test.ts:101: expect(input.reviewRef).toEqual(REVIEW_REF);
+tests/runtime/K3-review-preparation.test.ts:132: expect(first.command!.truncated).toBe(true);
+tests/runtime/K3-review-preparation.test.ts:133: expect(Buffer.byteLength(first.command!.text, 'utf8') + Buffer.byteLength('/w', 'utf8')).toBeLessThanOrEqual(4096);
+tests/runtime/K3-review-preparation.test.ts:407: expect(oneTrim.ok && oneTrim.review.workspace.changedSample.length).toBe(2);
+tests/runtime/K3-review-preparation.test.ts:408: expect(oneTrim.ok && oneTrim.review.workspace.changedOmitted).toBe(3);
+tests/runtime/K3-review-preparation.test.ts:411: expect(floor.ok && floor.review.workspace.notVisible).toEqual([]);
+tests/runtime/K3-review-preparation.test.ts:412: expect(floor.ok && floor.review.items.every(item => item.display === 'unexpanded')).toBe(true);
+tests/scenarios/K3-16-approval-round.test.ts:163: expect(summary).toContain(approvedMethodLinesZh(awaiting.value.proposals).join('\n'));
+tests/scenarios/K3-20-review-card-paging.test.ts:214: expect(byKey.value.options.map(option => option.id)).toEqual(['rerun_as_is', 'skip_as_done', 'handle_myself']);
+tests/scenarios/K3-29-startup-answers.test.ts:106: expect(record).toMatchObject({ status: 'needs_decision', revision: 1, open: 'yes' });
+tests/scenarios/K3-29-startup-reconcile-2b.test.ts:122: expect(marked, JSON.stringify(marked)).toMatchObject({ status: 'committed' });
+tests/scenarios/K3-29-startup-reconcile-2b.test.ts:126: expect(resolved, JSON.stringify(resolved)).toMatchObject({ status: 'committed' });
+tests/scenarios/K3-29-startup-reconcile-2b.test.ts:136: expect(claimed, JSON.stringify(claimed)).toMatchObject({ status: 'committed' });
+tests/scenarios/K3-29-startup-reconcile-2b.test.ts:144: expect(read, JSON.stringify(read)).toMatchObject({ status: 'ready' });
+tests/scenarios/K3-29-startup-reconcile-2b.test.ts:151: expect(claimed, JSON.stringify(claimed)).toMatchObject({ status: 'committed' });
+tests/scenarios/K3-29-startup-reconcile-2b.test.ts:194: expect(emptyStartupReport(HOST).reviews).toEqual([]);
+tests/scenarios/K3-29-startup-reconcile-2b.test.ts:264: expect(round, JSON.stringify(round)).toMatchObject({ status: 'ready', value: { activeRound: { phase: 'review' } } });
+tests/state/command-normalization.test.ts:47: expect(commandSha256('tool\ta')).toBe(commandSha256('  tool a  '));
+tests/state/command-normalization.test.ts:48: expect(commandSha256('tool a')).not.toBe(commandSha256('tool b'));
+tests/state/command-rerun-request.test.ts:289: expect(full.declaredForms).toHaveLength(COMMAND_RERUN_REQUEST_MAX_FORMS);
+tests/state/command-rerun-request.test.ts:291: expect(rejected(result)).toMatchObject({ reason: 'guard_failed', code: 'capacity' });
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:106: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:170: expect(created, JSON.stringify(created)).toMatchObject({ status: 'committed', replayed: false,
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:174: expect(read.status).toBe('ready');
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:177: expect(record).toMatchObject({ status: 'pending_review', inventory: 'complete', inventoryProblem: null,
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:179: expect(record.items.map(entry => entry.alias)).toEqual([1, 2, 3]);
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:180: expect(record.items.map(entry => entry.toolName)).toEqual(['send_session_message', 'edit', 'shell']);
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:181: expect(record.items.map(entry => entry.kind)).toEqual(['platform', 'file_edit', 'process']);
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:182: expect(record.items.map(entry => entry.contained)).toEqual([true, true, true]);
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:184: expect(record.items.map(entry => entry.observed)).toEqual([SEND_OBSERVED, EDIT_OBSERVED, SHELL_OBSERVED]);
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:186: expect(new Set(record.items.map(entry => entry.kernel.turnId)).size).toBe(1);
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:187: expect(new Set(record.items.map(entry => entry.kernel.kernelRunId)).size).toBe(1);
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:188: expect(new Set(record.items.map(entry => entry.kernel.declaredPosition)).size).toBe(1);
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:196: expect(claimed, JSON.stringify(claimed)).toMatchObject({ status: 'committed', replayed: false });
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:200: expect(afterClaim).toMatchObject({ status: 'ready', value: { revision: 2, status: 'pending_review',
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:216: expect(recorded, JSON.stringify(recorded)).toMatchObject({ status: 'committed' });
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:218: expect(afterConclusion).toMatchObject({ status: 'ready', value: { items: [
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:236: expect(ended, JSON.stringify(ended)).toMatchObject({ status: 'committed', value: { status: 'ended' } });
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:243: expect(settled, JSON.stringify(settled)).toMatchObject({ status: 'committed', replayed: false, value: {
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:256: expect(resolved).toMatchObject({ status: 'ready', value: { status: 'resolved', open: 'no',
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:279: expect(await f.reviews.readReview(f.b2.ctx, { runRef: f.b2.claim.runRef })).toEqual({ status: 'not_found' });
+tests/work-graph/K3-13-two-items-owner.test.ts:117: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-13-two-items-owner.test.ts:181: expect(created, JSON.stringify(created)).toMatchObject({ status: 'committed', replayed: false,
+tests/work-graph/K3-13-two-items-owner.test.ts:185: expect(read.status).toBe('ready');
+tests/work-graph/K3-13-two-items-owner.test.ts:188: expect(record).toMatchObject({ status: 'pending_review', inventory: 'complete', inventoryProblem: null,
+tests/work-graph/K3-13-two-items-owner.test.ts:190: expect(record.items.map(entry => entry.alias)).toEqual([1, 2]);
+tests/work-graph/K3-13-two-items-owner.test.ts:191: expect(record.items.map(entry => entry.kind)).toEqual(['process', 'process']);
+tests/work-graph/K3-13-two-items-owner.test.ts:192: expect(record.items.map(entry => entry.observed)).toEqual([
+tests/work-graph/K3-13-two-items-owner.test.ts:194: expect(record.items.map(entry => entry.argumentsDigest)).toEqual(
+tests/work-graph/K3-13-two-items-owner.test.ts:203: expect(claimed, JSON.stringify(claimed)).toMatchObject({ status: 'committed', replayed: false });
+tests/work-graph/K3-13-two-items-owner.test.ts:207: expect(afterClaim).toMatchObject({ status: 'ready', value: { revision: 2, status: 'pending_review',
+tests/work-graph/K3-13-two-items-owner.test.ts:223: expect(recorded, JSON.stringify(recorded)).toMatchObject({ status: 'committed' });
+tests/work-graph/K3-13-two-items-owner.test.ts:225: expect(afterConclusion).toMatchObject({ status: 'ready', value: { items: [
+tests/work-graph/K3-13-two-items-owner.test.ts:240: expect(ended, JSON.stringify(ended)).toMatchObject({ status: 'committed', value: { status: 'ended' } });
+tests/work-graph/K3-13-two-items-owner.test.ts:245: expect(beforeSettle.value.items[1]!.observed).toEqual({ verdict: 'pending', by: null });
+tests/work-graph/K3-13-two-items-owner.test.ts:250: expect(settled, JSON.stringify(settled)).toMatchObject({ status: 'committed', replayed: false,
+tests/work-graph/K3-13-two-items-owner.test.ts:256: expect(final.status).toBe('ready');
+tests/work-graph/K3-13-two-items-owner.test.ts:258: expect(final.value.status).toBe('needs_decision');
+tests/work-graph/K3-13-two-items-owner.test.ts:259: expect(final.value.activeRound).toBe(null);
+tests/work-graph/K3-13-two-items-owner.test.ts:260: expect(final.value.items).toHaveLength(2);
+tests/work-graph/K3-13-two-items-owner.test.ts:261: expect(final.value.items.map(item => item.alias)).toEqual([1, 2]);
+tests/work-graph/K3-13-two-items-owner.test.ts:262: expect(final.value.items.map(item => item.kind)).toEqual(['process', 'process']);
+tests/work-graph/K3-13-two-items-owner.test.ts:263: expect(final.value.items[0]!.observed).toMatchObject({ verdict: 'done', by: 'review_round',
+tests/work-graph/K3-13-two-items-owner.test.ts:265: expect(final.value.items[1]!.observed).toMatchObject({
+tests/work-graph/K3-13-two-items-owner.test.ts:269: expect(final.value.decisionReasons).toEqual(['undetermined', 'crash_undetermined']);
+tests/work-graph/K3-15-disposition-effects.test.ts:172: expect(unknown).toMatchObject({ status: 'committed', value: { outcome: 'outcome_unknown' } });
+tests/work-graph/K3-15-disposition-effects.test.ts:181: expect(resolved).toMatchObject({ status: 'committed' });
+tests/work-graph/K3-15-disposition-effects.test.ts:213: expect(record).toMatchObject({ status: 'needs_decision', revision: 1,
+tests/work-graph/K3-15-disposition-effects.test.ts:255: expect(rendered).toContain(`- 处置：${optionText}（卡上选的）；附言：answer ${choice}。`);
+tests/work-graph/K3-15-disposition-effects.test.ts:256: expect(rendered).toContain('- 作用对象：#1、#2。');
+tests/work-graph/K3-15-disposition-effects.test.ts:257: expect(rendered).toContain('- 平台条目 #2：结果查不清，重做前先核实。');
+tests/work-graph/K3-15-disposition-effects.test.ts:264: expect(record).toMatchObject({ status: 'needs_decision', dispositionTargets: null });
+tests/work-graph/K3-15-disposition-effects.test.ts:271: expect(result).toMatchObject({ status: 'ready', value: { state: 'applied' } });
+tests/work-graph/K3-15-disposition-effects.test.ts:276: expect(section.disposition).toMatchObject({ targets: [], platformTargets: [] });
+tests/work-graph/K3-15-disposition-effects.test.ts:278: expect(rendered).toContain('- 处置：照原样重跑（卡上选的）。');
+tests/work-graph/K3-15-disposition-effects.test.ts:279: expect(rendered).toContain('- 作用对象：无。');
+tests/work-graph/K3-15-disposition-effects.test.ts:280: expect(rendered).not.toContain('- 平台条目');
+tests/work-graph/K3-15-disposition-effects.test.ts:290: expect(rendered).toContain('- 处置：照原样重跑（卡上选的）；附言：照写。');
+tests/work-graph/K3-15-disposition-effects.test.ts:291: expect(rendered).toContain('- 作用对象：#1、#2。');
+tests/work-graph/K3-15-disposition-effects.test.ts:292: expect(rendered).toContain('- 平台条目 #2：结果查不清，重做前先核实。');
+tests/work-graph/K3-15-disposition-effects.test.ts:293: expect(rendered).toContain('- 不在变动清单里，不证明没做。');
+tests/work-graph/K3-15-disposition-effects.test.ts:294: expect(rendered.indexOf('- 处置：')).toBeLessThan(rendered.indexOf('- 作用对象：'));
+tests/work-graph/K3-15-disposition-effects.test.ts:295: expect(rendered.indexOf('- 作用对象：')).toBeLessThan(rendered.indexOf('- 平台条目 #2：'));
+tests/work-graph/K3-15-disposition-effects.test.ts:296: expect(rendered.indexOf('- 平台条目 #2：')).toBeLessThan(rendered.indexOf('- 不在变动清单里，不证明没做。'));
+tests/work-graph/K3-15-disposition-effects.test.ts:304: expect(rendered).toContain('- 处置：跳过，当作已做：不要重跑这些命令（卡上选的）；附言：skip it。');
+tests/work-graph/K3-15-disposition-effects.test.ts:320: expect(rendered).toContain('- 处置：由人处理：操作者自己处理过这几条，先看当前状态（卡上选的）；附言：I handled it。');
+tests/work-graph/K3-15-disposition-effects.test.ts:331: expect(rendered).toContain('- 处置：核对自动定下，不用决定（自动）。');
+tests/work-graph/K3-15-disposition-effects.test.ts:332: expect(rendered).toContain('- 作用对象：无。');
+tests/work-graph/K3-15-disposition-effects.test.ts:333: expect(rendered).toContain('- 不在变动清单里，不证明没做。');
+tests/work-graph/K3-15-disposition-effects.test.ts:334: expect(rendered).not.toContain('- 平台条目');
+tests/work-graph/K3-15-disposition-effects.test.ts:357: expect(record).toMatchObject({ status: 'needs_decision', workspace: { status: 'captured' } });
+tests/work-graph/K3-15-disposition-effects.test.ts:382: expect(decoded.value.disposition?.annotations).toEqual(expectedAnnotations);
+tests/work-graph/K3-15-disposition-effects.test.ts:387: expect(rendered).toContain('- 批注（这份核对记录）：先核实远端迁移');
+tests/work-graph/K3-15-disposition-effects.test.ts:388: expect(rendered).toContain('- 批注（src/a.ts）：看迁移脚本');
+tests/work-graph/K3-15-hold-release.test.ts:113: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-15-hold-release.test.ts:124: expect(resolved, JSON.stringify(resolved)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-15-hold-release.test.ts:134: expect(claimed, JSON.stringify(claimed)).toMatchObject({ status: 'committed', replayed: false });
+tests/work-graph/K3-15-hold-release.test.ts:183: expect(settled, JSON.stringify(settled)).toMatchObject({ status: 'ready', value: {
+tests/work-graph/K3-15-hold-release.test.ts:214: expect(beforeHold.value.byTaskId.get(f.b2.claim.task.taskId)?.execution).toEqual(f.b2.claim.runRef);
+tests/work-graph/K3-15-hold-release.test.ts:226: expect(projected.value.byTaskId.get(f.b2.claim.task.taskId)?.unknownCallReview)
+tests/work-graph/K3-15-hold-release.test.ts:232: expect(await f.b2.base.service.claimTask(f.b2.base.ctx, blocked))
+tests/work-graph/K3-16-approval-application.test.ts:140: expect(dispositionRecord.proposalTargets).toHaveLength(2);
+tests/work-graph/K3-16-approval-application.test.ts:141: expect(dispositionRecord.dispositionTargets).toHaveLength(3);
+tests/work-graph/K3-16-approval-application.test.ts:228: expect(summary).toBe(expectedApprovalSummary(awaiting, true));
+tests/work-graph/K3-16-approval-application.test.ts:231: expect(summary).toContain('- 原命令 #2：pnpm db:migrate');
+tests/work-graph/K3-16-approval-application.test.ts:232: expect(summary).toContain(expectedApprovedMethodLines(setup.proposals).join('\n'));
+tests/work-graph/K3-16-approval-application.test.ts:234: expect(summary).toContain('- 方案 #2，目录 packages/db：\n  pnpm db:migrate --dry-run');
+tests/work-graph/K3-16-approval-application.test.ts:235: expect(summary.endsWith(UNKNOWN_CALL_REVIEW_MIXED_LINE)).toBe(true);
+tests/work-graph/K3-16-approval-application.test.ts:239: expect(summary).toContain(proposal.command.replace(/\r\n|\n/g, '\n  '));
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:59: expect(targetIds(state.proposalRecord)).toEqual(proposalIds(state.proposalRecord));
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:60: expect(state.toolResults).toHaveLength(targetIds(state.proposalRecord).length);
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:71: expect(proposalIds(final)).toEqual(targetIds(final));
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:82: expect(record.status).toBe('needs_decision');
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:86: expect(platform).toMatchObject({ alias: 3, kind: 'platform', observed: { verdict: 'undetermined' } });
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:87: expect(record.dispositionTargets).toContain(platform?.callId);
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:88: expect(record.proposalTargets).not.toContain(platform?.callId);
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:89: expect(state.proposalRecord).toMatchObject({ status: 'awaiting_proposal', activeRound: { phase: 'proposal' } });
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:106: expect(proposalIds(after)).toEqual(targetIds(after));
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:157: expect(record).toMatchObject({ status: 'needs_decision', inventory: 'incomplete', itemsOmitted: 3 });
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:158: expect(record.inventoryProblem).toBe('kernel_unreadable');
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:159: expect(k3SerializedBytes(record)).toBe(12_000);
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:165: expect(written.proposals).toHaveLength(12);
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:166: expect(written.proposals.every(proposal => typeof proposal.proposalId === 'string')).toBe(true);
+tests/work-graph/K3-16-proposal-write.test.ts:76: expect(before).toMatchObject({ status: 'awaiting_proposal', proposalTargets: ['k3-16-call-1', 'k3-16-call-2'],
+tests/work-graph/K3-16-proposal-write.test.ts:190: expect(utf8BytesOf([methodLine(1, 'a'.repeat(4_000)), methodLine(2, 'b'.repeat(1_064))].join('\n'))).toBe(5_121);
+tests/work-graph/K3-16-proposal-write.test.ts:191: expect(utf8BytesOf([methodLine(1, 'a'.repeat(4_000)), methodLine(2, 'b'.repeat(1_063))].join('\n'))).toBe(5_120);
+tests/work-graph/K3-16-proposal-write.test.ts:197: expect(second).toMatchObject({ status: 'committed' });
+tests/work-graph/K3-16-proposal-write.test.ts:201: expect(over).toMatchObject({ status: 'rejected', code: 'capacity' });
+tests/work-graph/K3-16-proposal-write.test.ts:202: expect(bytesOf(await readK3Review(fx.world, fx.round.record.ref))).toBe(bytesOf(before));
+tests/work-graph/K3-16-proposal-write.test.ts:208: expect(firstWrite).toMatchObject({ status: 'committed' });
+tests/work-graph/K3-16-proposal-write.test.ts:211: expect(edge).toMatchObject({ status: 'committed' });
+tests/work-graph/K3-16-proposal-write.test.ts:214: expect(edge.value.proposals.map(proposal => proposal.alias)).toEqual([1, 2]);
+tests/work-graph/K3-16-proposal-write.test.ts:215: expect(utf8BytesOf([methodLine(1, 'a'.repeat(4_000)), methodLine(2, 'b'.repeat(1_063))].join('\n'))).toBe(5_120);
+tests/work-graph/K3-16-second-unfinished-proposal.test.ts:70: expect(decision.items.map(item => item.observed.verdict)).toEqual(['done', 'done']);
+tests/work-graph/K3-16-second-unfinished-proposal.test.ts:119: expect(targetIds(final)).toHaveLength(2);
+tests/work-graph/K3-18-requeue-confirmed.test.ts:115: expect(automationConfirmationCause({ autonomy: 'every_step', action: 'system_requeue', countedNext: 1, cap: 3,
+tests/work-graph/K3-18-requeue-confirmed.test.ts:130: expect(paused.action).toBe('system_requeue');
+tests/work-graph/K3-18-review-card-queue.test.ts:294: expect(facts.summary).toContain(UNKNOWN_CALL_REVIEW_MIXED_LINE);
+tests/work-graph/K3-18-review-card-queue.test.ts:341: expect(facts.summary).not.toContain(UNKNOWN_CALL_REVIEW_MIXED_LINE);
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:186: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:198: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:286: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed', replayed: false,
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:289: expect(read).toMatchObject({ status: 'ready', value: {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:296: expect(read.value.items).toHaveLength(32);
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:297: expect(read.value.items.map(item => item.alias)).toEqual(items.map(item => item.alias));
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:301: expect(await f.reviews.readReview(f.b2.ctx, { ref: { aggregateType: 'UnknownCallReview',
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:306: expect(await f.reconcile.resolveUnknownRun(f.b2.ctx, request)).toEqual({ ...result, replayed: true });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:319: expect(await f.reviews.readReview(f.b2.ctx, { runRef: f.b2.claim.runRef })).toEqual({ status: 'not_found' });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:330: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed' });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:332: expect(read).toMatchObject({ status: 'ready', value: {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:354: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed' });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:356: expect(read).toMatchObject({ status: 'ready', value: {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:363: expect(JSON.stringify(read.value)).not.toContain(long);
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:380: expect(await f.reviews.readReview(f.b2.ctx, { runRef: f.b2.claim.runRef })).toEqual({ status: 'not_found' });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:392: expect(await f.reviews.readReview(f.b2.ctx, { runRef: f.b2.claim.runRef })).toEqual({ status: 'not_found' });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:404: expect(await f.reviews.readReview(f.b2.ctx, { runRef: f.b2.claim.runRef })).toEqual({ status: 'not_found' });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:416: expect(await f.reviews.readReview(f.b2.ctx, { runRef: f.b2.claim.runRef })).toEqual({ status: 'not_found' });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:446: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed', replayed: false,
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:449: expect(read).toMatchObject({ status: 'ready', value: {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:481: expect(first).toMatchObject({ status: 'committed', replayed: false });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:483: expect(replay).toEqual({ ...first, replayed: true });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:485: expect(await f.reconcile.reconcileRun(f.b2.ctx, { input, meta: { requestId: `${requestId}-stale`, expected: moved } }))
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:500: expect(await f.reconcile.resolveUnknownRun(f.b2.ctx, { input: { runRef: f.b2.claim.runRef, reason: 'x',
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:507: expect(await f.reconcile.resolveUnknownRun(f.b2.ctx, { input: { runRef: f.b2.claim.runRef, reason: 'x',
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:511: expect(await f.reviews.readReview(f.b2.ctx, { runRef: f.b2.claim.runRef }))
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:527: expect(resolved, JSON.stringify(resolved)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:547: expect(await f.reviews.readReview(f.b2.ctx, { ref: reviewRef })).toMatchObject({ status: 'ready', value: {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:553: expect(reviewRun.run.purpose).toEqual({ kind: 'unknown_call_review', reviewRef, phase: 'review', round: 1 });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:573: expect(await f.reviews.readReview(f.b2.ctx, { ref: reviewRef })).toMatchObject({ status: 'ready',
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:581: expect(goal.status).toBe('ready');
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:601: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed', value: { kind: 'requeued' } });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:618: expect(await f.reviews.readReview(f.b2.ctx, { ref: reviewRef })).toMatchObject({ status: 'ready', value: {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:647: expect(facts.value.byTaskId.get(f.b2.claim.task.taskId)).toMatchObject({ execution: origin,
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:665: expect(broken.value.byTaskId.get(f.b2.claim.task.taskId)?.unknownCallReview).toEqual({ status: 'unreadable' });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:709: expect(goal.status).toBe('ready');
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:746: expect(claimed, JSON.stringify(claimed)).toMatchObject({ status: 'committed', replayed: false });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:753: expect(facts.value.byTaskId.get(f.b2.claim.task.taskId)?.execution).toEqual(f.b2.claim.runRef);
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:754: expect((facts.value.runsByTaskId.get(f.b2.claim.task.taskId) ?? []).map(run => run.ref.runId))
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:771: expect(recorded, JSON.stringify(recorded)).toMatchObject({ status: 'committed' });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:783: expect(ended, JSON.stringify(ended)).toMatchObject({ status: 'committed', value: { status: 'ended' } });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:791: expect(settled, JSON.stringify(settled)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:794: expect(released.lease?.release).toMatchObject({ runRef: roundRunRef });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:798: expect(afterRelease.value.leasesByTaskId.get(f.b2.claim.task.taskId)?.release?.runRef).toEqual(roundRunRef);
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:801: expect(releasingRun?.purpose).toEqual({ kind: 'unknown_call_review', reviewRef,
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:813: expect(requeue.ref.afterRunId).toBe(f.b2.claim.runRef.runId);
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:827: expect(reheld.lease).toMatchObject({ holderRunId: claimed.value.runRef.runId });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:828: expect(reheld.lease?.release).toBeUndefined();
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:59: expect(fx.record.items).toHaveLength(32);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:60: expect(fx.record.items.map(item => item.alias)).toEqual(aliases1to32());
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:61: expect(fx.record.items.every(item => item.toolName === 'shell' && item.kind === 'process')).toBe(true);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:62: expect(fx.record.items.every(item => /^[a-f0-9]{64}$/.test(item.argumentsDigest))).toBe(true);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:63: expect(fx.record.items.every(item => (item.summary.command?.length ?? 0) <= 512)).toBe(true);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:64: expect(fx.record.status).toBe('pending_review');
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:65: expect(fx.record.inventory).toBe('complete');
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:67: expect(Buffer.byteLength(JSON.stringify(fx.record), 'utf8')).toBeLessThanOrEqual(158_720);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:74: expect(claimed, JSON.stringify(claimed)).toMatchObject({ status: 'committed', replayed: false });
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:78: expect(afterClaim).toMatchObject({ status: 'ready', value: { revision: 2,
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:115: expect(recorded, `conclusion #${String(alias)}: ${JSON.stringify(recorded)}`).toMatchObject({ status: 'committed' });
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:129: expect(ended, JSON.stringify(ended)).toMatchObject({ status: 'committed', value: { status: 'ended' } });
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:138: expect(settled, JSON.stringify(settled)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:142: expect(read.status).toBe('ready');
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:144: expect(read.value.items).toHaveLength(32);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:145: expect(read.value.items.map(item => item.alias)).toEqual(aliases1to32());
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:146: expect(read.value.items.every(item => item.observed.by === 'review_round'
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:148: expect(read.value.status).toBe('resolved');
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:169: expect(Buffer.byteLength(renderUnknownCallReviewZh(raw), 'utf8')).toBeGreaterThan(65_536);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:170: expect(Buffer.byteLength(JSON.stringify(raw), 'utf8')).toBeGreaterThan(262_144);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:179: expect(activeReview.value.activeRound?.runRef).toEqual(result.prepared.claim.runRef);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:183: expect(Buffer.byteLength(manifestJson, 'utf8')).toBeLessThanOrEqual(262_144);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:186: expect(Buffer.byteLength(renderUnknownCallReviewZh(result.input), 'utf8')).toBeLessThanOrEqual(65_536);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:187: expect(result.prepared.envelope.bundleRef.sizeBytes).toBeLessThanOrEqual(262_144);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:191: expect(result.input.items).toHaveLength(32);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:192: expect(result.input.items.map(item => item.alias)).toEqual(aliases1to32());
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:195: expect(result.manifest.input).toContain(`- #${String(item.alias)} shell`);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:197: expect(result.manifest.input).toContain(`- #${String(item.alias)} shell：没展开，按判断不了处理。`);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:207: expect(workspace.changedSample).toEqual(fullChanges.slice(0, workspace.changedSample.length));
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:208: expect(workspace.changedSample.length + workspace.changedOmitted).toBe(200);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:209: expect(workspace.changedOmitted).toBe(200 - workspace.changedSample.length);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:210: expect(workspace.notVisible).toEqual(notVisible.slice(0, workspace.notVisible.length));
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:211: expect(workspace.notVisible.length + workspace.notVisibleOmitted).toBe(notVisible.length);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:214: expect(displays[31]).toBe('unexpanded');
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:215: expect(displays.some(display => display !== 'unexpanded')).toBe(true);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:219: expect(workspace.changedSample).toHaveLength(0);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:220: expect(workspace.notVisible).toHaveLength(0);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:224: expect(workspace.changedSample).toHaveLength(0);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:228: expect(workspace.changedSample.length).toBeLessThan(200);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:229: expect(workspace.changedOmitted).toBeGreaterThan(0);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:232: for (const callId of fx.callIds) expect(manifestJson).not.toContain(callId);
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:233: expect(manifestJson).not.toContain('k335-callid-');
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:236: expect(result.manifest.input.endsWith(`\n\n${renderUnknownCallReviewZh(result.input)}`)).toBe(true);
+tests/work-graph/K3-43-continuation-vs-hold.test.ts:109: expect(unresolved, JSON.stringify(unresolved)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-43-continuation-vs-hold.test.ts:116: expect(resolved, JSON.stringify(resolved)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-43-continuation-vs-hold.test.ts:119: expect(await f.reviews.readReview(f.b2.ctx, { ref: reviewRef })).toMatchObject({ status: 'ready', value: {
+tests/work-graph/K3-43-continuation-vs-hold.test.ts:202: expect(held, JSON.stringify(held)).toMatchObject({ status: 'committed', value: {
+tests/work-graph/K3-43-continuation-vs-hold.test.ts:206: expect((await runsOf(f)).map(run => run.ref.runId)).toEqual([f.b2.claim.runRef.runId]);
+tests/work-graph/K3-43-continuation-vs-hold.test.ts:208: expect(await f.reviews.readReview(f.b2.ctx, { ref: reviewRef })).toMatchObject({ status: 'ready', value: {
+tests/work-graph/K3-43-continuation-vs-hold.test.ts:248: expect(await f.reviews.readReview(f.b2.ctx, { ref: reviewRef })).toMatchObject({ status: 'ready', value: {
+tests/work-graph/K3-43-continuation-vs-hold.test.ts:253: expect(facts.value.byTaskId.get(f.b2.claim.task.taskId)?.execution).toEqual(claimed.value.runRef);
+tests/work-graph/K3-43-continuation-vs-hold.test.ts:255: expect(execution.lease).toMatchObject({ holderRunId: claimed.value.runRef.runId });
+tests/work-graph/K3-43-continuation-vs-hold.test.ts:256: expect(execution.lease?.release).toBeUndefined();
+tests/work-graph/K3-43-review-claim-vs-hold.test.ts:94: expect(marked, JSON.stringify(marked)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-43-review-claim-vs-hold.test.ts:101: expect(resolved, JSON.stringify(resolved)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-43-review-claim-vs-hold.test.ts:137: expect(await reviewRuns(f)).toBe(before);
+tests/work-graph/K3-43-review-claim-vs-hold.test.ts:138: expect(await f.reviews.readReview(f.b2.ctx, { ref: reviewRef }))
+tests/work-graph/K3-43-review-claim-vs-hold.test.ts:148: expect(claimed, JSON.stringify(claimed)).toMatchObject({ status: 'committed', replayed: false });
+tests/work-graph/K3-43-review-claim-vs-hold.test.ts:154: expect(await f.reviews.readReview(f.b2.ctx, { ref: reviewRef })).toMatchObject({ status: 'ready', value: {
+tests/work-graph/K3-47-claim-gate.test.ts:143: expect(facts.runsByTaskId.get(b2.base.tasks.first.taskId) ?? []).toHaveLength(1);
+tests/work-graph/K3-47-claim-gate.test.ts:161: expect(result).toMatchObject({ status: 'rejected' });
+tests/work-graph/K3-47-claim-gate.test.ts:162: if (result.status === 'rejected') expect(result.reason).not.toContain('unknown_call_review');
+tests/work-graph/K3-47-claim-gate.test.ts:229: expect(facts.runsByTaskId.get(b2.base.tasks.first.taskId) ?? []).toHaveLength(1);
+tests/work-graph/K3-47-claim-gate.test.ts:242: expect(facts.requeuesByTaskId.get(base.tasks.first.taskId) ?? []).toHaveLength(0);
+tests/work-graph/K3-47-claim-gate.test.ts:243: expect(facts.runsByTaskId.get(base.tasks.first.taskId) ?? []).toHaveLength(1);
+tests/work-graph/K3-47-claim-gate.test.ts:258: expect(facts.requeuesByTaskId.get(base.tasks.first.taskId) ?? []).toHaveLength(0);
+tests/work-graph/K3-47-continuation-gate.test.ts:61: expect(f.writes, 'the refused claim commits nothing').toEqual(writesBefore);
+tests/work-graph/K3-47-continuation-gate.test.ts:62: expect((await runsOf(f)).map(run => run.ref.runId)).toEqual([f.b2.claim.runRef.runId]);
+tests/work-graph/K3-48-2-unknown-call-review-model-text-budget.test.ts:199: expect(k3SerializedBytes(created)).toBe(target);
+tests/work-graph/K3-48-2-unknown-call-review-model-text-budget.test.ts:269: expect(k3SerializedBytes(before.value)).toBe(B - 2_000);
+tests/work-graph/K3-48-2-unknown-call-review-model-text-budget.test.ts:277: expect(over).toMatchObject({ status: 'rejected', code: 'capacity' });
+tests/work-graph/K3-48-2-unknown-call-review-model-text-budget.test.ts:281: expect(JSON.stringify(after.value)).toBe(JSON.stringify(before.value));
+tests/work-graph/K3-48-3-required-writes.test.ts:110: expect(marked, JSON.stringify(marked)).toMatchObject({ status: 'committed',
+tests/work-graph/K3-48-3-required-writes.test.ts:139: expect(started.value.items).toHaveLength(32);
+tests/work-graph/K3-48-3-required-writes.test.ts:140: expect(started.value.workspace.status).toBe('captured');
+tests/work-graph/K3-48-3-required-writes.test.ts:142: expect(started.value.workspace.notVisible).toHaveLength(32);
+tests/work-graph/K3-48-3-required-writes.test.ts:144: expect(bytes(started.value)).toBe(CREATION_BUDGET_BYTES);
+tests/work-graph/K3-48-3-required-writes.test.ts:151: expect(settled, JSON.stringify(settled)).toMatchObject({ status: 'committed', replayed: false, value: {
+tests/work-graph/K3-48-3-required-writes.test.ts:155: expect(bytes(settled.value)).toBeGreaterThan(CREATION_BUDGET_BYTES);
+tests/work-graph/K3-48-3-required-writes.test.ts:156: expect(bytes(settled.value)).toBeLessThanOrEqual(RECORD_MAX_BYTES);
+tests/work-graph/K3-48-3-required-writes.test.ts:179: expect(reread).toMatchObject({ status: 'ready', value: { revision: 4 } });
+tests/work-graph/K3-48-3-required-writes.test.ts:181: expect(bytes(reread.value)).toBeLessThanOrEqual(RECORD_MAX_BYTES);
+tests/work-graph/K3-48-3-required-writes.test.ts:197: expect(resolved, JSON.stringify(resolved)).toMatchObject({ status: 'rejected', code: 'invalid' });
+tests/work-graph/K3-48-3-required-writes.test.ts:198: expect(await f.reviews.readReview(f.b2.ctx, { ref: reviewRef })).toEqual({ status: 'not_found' });
+tests/work-graph/K3-48-3-required-writes.test.ts:200: expect(run).toMatchObject({ status: 'ready', value: { run: { status: 'ended', outcome: 'outcome_unknown' } } });
+
+## REMOVED test or describe: 114
+tests/app/K3-15-review-routes.test.ts:160: it('K3-15 route table: hold and release-hold are graph writes on the two human owner methods', () => {
+tests/app/K3-15-review-routes.test.ts:169: it('K3-15 (四) route: a person holds a claimed-but-unentered round; a member is forbidden; release before settle is busy', async () => {
+tests/app/K3-15-review-routes.test.ts:204: it('K3-15 (五) route: release-hold returns { hold, requeue: null } when the original Run is not human-fenced, and replays', async () => {
+tests/business/K3-15-ur3h.test.ts:242: it('K3-15 (六) memory: hold then the next advance cancels the round (RUN-09(U)), UR4 settles it (UCR-08b), zero model calls', async () => {
+tests/business/K3-15-ur3h.test.ts:280: it('K3-15 (六) memory: UR3a read the record, the late start gets RUN-02 stale, the next advance goes UR3h', async () => {
+tests/business/K3-15-ur3h.test.ts:303: it('K3-15 (七) memory: a paused unentered round is cancelled (isUnadmittedStarting false), settled, released and continued', async () => {
+tests/business/K3-15-ur3h.test.ts:344: it('K3-15 (七) memory: a Run revision moved before the cancel commit returns revision_conflict and nothing changes', async () => {
+tests/business/K3-41-release-hold.test.ts:505: describe.each(['memory', 'sqlite'] as const)('K3-41 (二) route read failures (%s)', (kind) => {
+tests/business/K3-41-release-hold.test.ts:540: describe.each(['memory', 'sqlite'] as const)('K3-41 (二) release-hold replay (%s)', (kind) => {
+tests/business/K3-46-review-advance-failures.test.ts:404: it('K3-46 (一) ordinary: one advance claims task 2 and reports task 1\'s refused ② reason', async () => {
+tests/business/K3-46-review-advance-failures.test.ts:436: it('K3-46 (一) designated: a refused ② on the designated Task still answers waiting with the reason', async () => {
+tests/business/K3-46-review-advance-failures.test.ts:461: it('K3-46 (二) race: a concurrent Goal pause reports the real revision_conflict reason, not T02', async () => {
+tests/business/K3-46-review-advance-failures.test.ts:486: it('K3-46 (二) T02: a real Plan adoption after the answer still waits with the T02 sentence', async () => {
+tests/business/K3-46-review-advance-failures.test.ts:509: it('K3-46 (三) continuous: A and B fail ② once each and C is claimed in one drive', async () => {
+tests/business/K3-46-review-advance-failures.test.ts:604: it('K3-46 (三) input: every public failedReviewRefs is refused invalid, even a real same-project card', async () => {
+tests/business/K3-46-review-advance-failures.test.ts:638: it('K3-46 (三) route: a real answered card ref is refused invalid, then the card still applies without it', async () => {
+tests/business/K3-46-review-advance-failures.test.ts:667: it('K3-46 (三) route: a failed apply hands the set beside a continuing next, never inside it', async () => {
+tests/business/K3-review-workflow-rows.test.ts:292: it('K3 UR0/U4: an unreadable record skips the task and waits with review_unreadable for a named task', async () => {
+tests/business/K3-review-workflow-rows.test.ts:301: it('K3 UR3a/U4: a claimed-but-unentered review round is prepared with the same claim', async () => {
+tests/business/K3-review-workflow-rows.test.ts:313: it('K3 UR3a/U4: a non-unadmitted starting review round is skipped, not prepared', async () => {
+tests/business/K3-review-workflow-rows.test.ts:326: it('K3 UR3/U4: an entered review round in flight is skipped', async () => {
+tests/business/K3-review-workflow-rows.test.ts:337: it('K3 UR4/U4: a review round ended with a known result settles it', async () => {
+tests/business/K3-review-workflow-rows.test.ts:349: it('K3 UR5/U4: a review round with an unknown outcome waits for attestation', async () => {
+tests/business/K3-review-workflow-rows.test.ts:360: it('K3 UR2/U4: a pending record with the read-only command switch off settles review_unavailable', async () => {
+tests/business/K3-review-workflow-rows.test.ts:371: it('K3 UR1/U4: a pending record with the capability available claims the review round', async () => {
+tests/business/K3-review-workflow-rows.test.ts:383: it('K3 UR1/U4: a busy continuation Session skips this Task with review_session_busy', async () => {
+tests/business/K3-review-workflow-rows.test.ts:395: it('K3 UR1/U4 B2: no binding for the assignment role skips with review_binding_missing and keeps the record', async () => {
+tests/business/K3-review-workflow-rows.test.ts:411: it('K3 UR9/U4: no record keeps today\'s path', async () => {
+tests/business/K3-review-workflow-rows.test.ts:435: it('K3 UR8: a held record without an active round is skipped and the named task waits unknown_call_review_held', async () => {
+tests/business/K3-review-workflow-rows.test.ts:445: it('K3 UR8: a held record with a claimed round is skipped, never prepared or settled', async () => {
+tests/business/K3-review-workflow-rows.test.ts:465: it.each(['needs_decision', 'awaiting_approval'] as const)
+tests/business/K3-review-workflow-rows.test.ts:484: it('K3 L11 gatePerform: a requeue_task on an unsettled record waits and writes nothing', async () => {
+tests/business/K3-review-workflow-rows.test.ts:527: it('K3 UR7: an answered needs_decision card emits apply_review_disposition from the answer, writes nothing yet', async () => {
+tests/business/K3-review-workflow-rows.test.ts:549: it('K3 UR7: the apply step performs ② then ③ and returns to the normal selection', async () => {
+tests/business/K3-review-workflow-rows.test.ts:569: it('K3 UR7: a saved-answer read failure skips with review_unreadable and writes nothing', async () => {
+tests/business/K3-review-workflow-rows.test.ts:582: it('K3 UR8 before UR7: a held record with an answer is never applied and never released', async () => {
+tests/business/K3-review-workflow-rows.test.ts:596: it('K3 UR7b: an answers input performs apply_review_disposition and then select_work', async () => {
+tests/business/K3-review-workflow-rows.test.ts:617: it('K3 UR7b: one unreadable answer keeps the failure visible, applies the rest and never throws', async () => {
+tests/business/K3-review-workflow-rows.test.ts:740: it('K3 settle_review: the owner receipt is preserved and the next selection follows', async () => {
+tests/business/K3-review-workflow-rows.test.ts:755: it('K3 UR7 real owner: a real answered card emits the captured source and ② applies (not invalid)', async () => {
+tests/business/K3-review-workflow-rows.test.ts:952: it('K3-17 reverse order (a): the person applies ② and ③ first; UR7 replays ② and records no second ③', async () => {
+tests/business/K3-review-workflow-rows.test.ts:972: it('K3-17 reverse order (b): the person’s ③ fails; UR7 replays ② and repairs ③ under the operator', async () => {
+tests/business/K3-review-workflow-rows.test.ts:999: it('K3 UR7b: two real handed-over answers whose ③ fail report the FIRST failure and still advance', async () => {
+tests/runtime/K3-19-review-admission.test.ts:63: it('K3-19 a review-purpose Run whose accepted manifest is not the L13 fixed set is refused before the model (R4)', async () => {
+tests/runtime/K3-19-review-admission.test.ts:74: it('K3-19 L20: a proposal-phase review-purpose Run carrying the prepared ordinary/review permissions is refused tool_set_mismatch, is not entered and makes zero model calls', async () => {
+tests/runtime/K3-35-approved-methods-brief.test.ts:107: describe('K3-35 (L20): the continuation brief size worst case', () => {
+tests/runtime/K3-35-approved-methods-brief.test.ts:108: it('uses the public record facts: one process method, 31 platform entries and 32 targets', () => {
+tests/runtime/K3-35-approved-methods-brief.test.ts:134: it('K3-35 (二): renders the 16 KiB-bounded worst case with every mandatory line and no callId', () => {
+tests/runtime/K3-35-approved-methods-brief.test.ts:190: it('K3-35 (三): 600-byte anchor task ids make the renderer throw capacity and prepare reject', async () => {
+tests/runtime/K3-35-workspace-baseline-prepare.test.ts:199: it('K3-35 (四) prepare succeeds and records an unavailable too_many_changes baseline for a >2000-change workspace', async () => {
+tests/runtime/K3-review-preparation.test.ts:96: describe('K3 L13 review instruction', () => {
+tests/runtime/S4C2-assembly.test.ts:413: it('C-06 (memory) an ineligible understanding renders one warning line without a body', async () => {
+tests/scenarios/K3-29-startup-answers.test.ts:101: it('K3-29: a real ① answer hands the needs_decision Goal over with its Task id; unanswered, it is not handed over', async () => {
+tests/scenarios/K3-29-startup-answers.test.ts:132: it('K3-29: a real ② commit with a failed ③ is handed over by its own reviewRef after a direct hold closes the record', async () => {
+tests/scenarios/K3-29-startup-reconcile-2b.test.ts:193: it('K3-29: emptyStartupReport reports no reviews', () => {
+tests/scenarios/K3-29-startup-reconcile-2b.test.ts:198: it('K3-29: lists the real RUN-22 records and skips a real hold with no round', async () => {
+tests/scenarios/K3-29-startup-reconcile-2b.test.ts:229: it('K3-29: a first-page read failure is exactly one problem line and no review line', async () => {
+tests/scenarios/K3-29-startup-reconcile-2b.test.ts:255: it('K3-29: kind 1 and kind 2 hand an active Goal its record Task ids; a held record without a round is not handed off', async () => {
+tests/scenarios/K3-29-startup-reconcile-2b.test.ts:279: it('K3-29: an inactive Goal is not handed off even with an open record', async () => {
+tests/state/command-normalization.test.ts:46: it('B2-10 normalisation is digest-insensitive to whitespace only', () => {
+tests/state/command-rerun-request.test.ts:142: it('CRR-01 rejects a ninth declared form with capacity and writes nothing', () => {
+tests/state/command-rerun-request.test.ts:285: it('CRR-07 rejects the ninth form with capacity and writes nothing', () => {
+tests/work-graph/K3-06-mixed-kinds-owner.test.ts:158: describe('K3-06 owner: the three-item mixed record (R4)', () => {
+tests/work-graph/K3-13-two-items-owner.test.ts:169: describe('K3-13 owner: two process items, one conclusion (R4)', () => {
+tests/work-graph/K3-15-disposition-effects.test.ts:207: describe('K3-15 (一)(二)(三) card dispositions', () => {
+tests/work-graph/K3-15-disposition-effects.test.ts:260: it('K3-15: a disposition with no targets renders - 作用对象：无。', async () => {
+tests/work-graph/K3-15-disposition-effects.test.ts:299: it('K3-15 (L20): a card skip_as_done renders the fixed skip wording', async () => {
+tests/work-graph/K3-15-disposition-effects.test.ts:307: it('K3-15 (L20): a released handle_myself renders the human-handled wording and the card source', async () => {
+tests/work-graph/K3-15-disposition-effects.test.ts:323: it('K3-15 (L20): a review settled by itself still renders the disposition line, from "自动"', async () => {
+tests/work-graph/K3-15-disposition-effects.test.ts:337: it('K3-15 (L20): a 61-UTF-16-unit 附言 is clipped to 60 units with the truncation suffix', async () => {
+tests/work-graph/K3-15-hold-release.test.ts:141: it('K3-15 (四) memory: hold resolves and holds the record, keeps activeRound, replays, and refuses a new hold', async () => {
+tests/work-graph/K3-15-hold-release.test.ts:177: it('K3-15 (五) memory: hold stops the settled record, release unholds, and the continuation requeue claim passes', async () => {
+tests/work-graph/K3-15-hold-release.test.ts:249: it('K3-15 (四) memory: without the task projection the hold is unavailable and nothing is written', async () => {
+tests/work-graph/K3-16-approval-application.test.ts:371: it('K3-16 memory: when the round slots are used up, the declined card has only three options', async () => {
+tests/work-graph/K3-16-approval-application.test.ts:394: it('K3-16: answering the old disposition card is revision_conflict and writes nothing', async () => {
+tests/work-graph/K3-16-approval-application.test.ts:406: it('K3-16: an approval answer captured before the record moved is revision_conflict in ② and writes nothing',
+tests/work-graph/K3-16-approval-application.test.ts:437: it('K3-16: an option that is not on the approval card is invalid and writes nothing', async () => {
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:147: describe('K3 proposal-round fixture creation options (K3-48-2 setup)', () => {
+tests/work-graph/K3-16-proposal-write.test.ts:73: it.each(['memory', 'sqlite'] as const)('K3-16 %s: one proposal_recorded write, its receipt replay and the changed-argument conflict', async kind => {
+tests/work-graph/K3-16-proposal-write.test.ts:117: it('K3-16 a later call for the same item replaces the old proposal and gets a new id', async () => {
+tests/work-graph/K3-16-proposal-write.test.ts:136: it('K3-16 an item outside proposalTargets is invalid and writes nothing', async () => {
+tests/work-graph/K3-16-proposal-write.test.ts:146: it('K3-16 rejects the out-of-unit proposal fields as invalid', async () => {
+tests/work-graph/K3-16-proposal-write.test.ts:167: it('K3-16 accepts exactly 4,000 command bytes, a 512-byte cwd and a 2,000-character rationale', async () => {
+tests/work-graph/K3-16-proposal-write.test.ts:185: describe('K3-16 approved-method budget (L20: 5,120 UTF-8 bytes)', () => {
+tests/work-graph/K3-16-proposal-write.test.ts:186: it('K3-16 a 5,121-byte block is capacity with a byte-identical record; exactly 5,120 is accepted in alias order', async () => {
+tests/work-graph/K3-17-disposition-replay.test.ts:63: it('K3-17: a second resolveDecision replays ② with the original receipt and never records ③ twice', async () => {
+tests/work-graph/K3-17-disposition-replay.test.ts:83: it('K3-17: a retry after an injected ③ write failure returns the same original ② receipt, then records ③ once', async () => {
+tests/work-graph/K3-17-disposition-replay.test.ts:109: it('K3-17: a retry after an injected ③ receipt read failure keeps the same original ② receipt', async () => {
+tests/work-graph/K3-17-disposition-replay.test.ts:126: it('K3-17: an answer to an older card revision is revision_conflict and writes nothing', async () => {
+tests/work-graph/K3-18-autonomy-facts.test.ts:164: it('K3-18 (二): an auto-settled resolved record under after_plan_confirmation derives no confirmation cause', async () => {
+tests/work-graph/K3-18-autonomy-facts.test.ts:178: it('K3-18 (三): no review card, exactly the ordinary system_requeue confirmation', async () => {
+tests/work-graph/K3-18-autonomy-facts.test.ts:193: it('K3-18 (五): requeueConfirmed removes the system_requeue confirmation cause', async () => {
+tests/work-graph/K3-18-requeue-confirmed.test.ts:94: it('K3-18 (一): rerun_as_is confirms the original Run and suppresses the every_step confirmation card', async () => {
+tests/work-graph/K3-18-requeue-confirmed.test.ts:138: it('K3-18 (一): an auto-settled record with no disposition still gets the ordinary confirmation card', async () => {
+tests/work-graph/K3-18-review-card-queue.test.ts:283: describe('K3-18 (四) review card shape', () => {
+tests/work-graph/K3-18-review-card-queue.test.ts:405: it('K3-18: a file change between card and answer invalidates the old file annotation; a re-read shows the new digest', async () => {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:127: it('K3-26: the read port answers not_found for an absent key and invalid for a bad record', async () => {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:275: it.each(['memory', 'sqlite'] as const)('K3-26 (七) %s: a too_many_calls draft creates incomplete/needs_decision/inventory_incomplete', async kind => {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:309: it.each(['memory', 'sqlite'] as const)('K3-26 (七) %s: a complete draft that omits an item is invalid and writes nothing', async kind => {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:341: it.each(['memory', 'sqlite'] as const)('K3-26 (九) %s: the undecodable_call needs_decision record gets its card and the 513-byte callId is nowhere', async kind => {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:489: it.each(['memory', 'sqlite'] as const)('K3-26 (九) %s: a draft item callId over 512 bytes is invalid; 512 bytes is listed', async kind => {
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:51: describe('K3-35 (一) owner-level 32-item record (R4)', () => {
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:157: describe('K3-35 (一) manifest size and trim over the owner record', () => {
+tests/work-graph/K3-35-owner-manifest-trim.test.ts:158: it('K3-35 (一): the real prepare trims the sample, then notVisible, then items from the back, keeps all 32 aliases and carries no Kernel callId', async () => {
+tests/work-graph/K3-41-disposition-proof.test.ts:67: it('K3-41: the real disposition_applied event proves the answer, captured pins and both record revisions', async () => {
+tests/work-graph/K3-41-disposition-proof.test.ts:93: it("K3-41: another answer's real disposition receipt is invalid for this answer", async () => {
+tests/work-graph/K3-41-disposition-proof.test.ts:123: it('K3-41: a non-application UnknownCallReviewChanged stays incomplete', async () => {
+tests/work-graph/K3-47-claim-gate.test.ts:154: it('K3-47 (二): the record of a settled K3-before Run is absent and does not gate the claim', async () => {
+tests/work-graph/K3-47-claim-gate.test.ts:208: it('K3-47 (二): a human requeue of an unsettled Task is accepted (its claim still waits)', async () => {
+tests/work-graph/K3-48-2-unknown-call-review-model-text-budget.test.ts:261: it.each(['memory', 'sqlite'] as const)('K3-48 (二) %s: a long propose_safer_method rationale over budget is capacity and the record is byte-identical', async kind => {
+tests/work-graph/K3-48-3-required-writes.test.ts:129: describe('K3-48 (三) required writes on a near-threshold record', () => {
+tests/work-graph/K3-48-3-required-writes.test.ts:130: describe.each(['memory', 'sqlite'] as const)('%s', kind => {
+tests/work-graph/K3-48-3-required-writes.test.ts:131: it('K3-48 (三) settle, hold and release commit and every record stays at or under 512 KiB', async () => {
+tests/work-graph/K3-48-3-required-writes.test.ts:185: it('K3-48 (三) memory: a draft path over 512 characters is invalid and nothing is written', async () => {
+
+## DELETED test files: 2
+tests/helpers/K3-large-review-input.ts: 0 tests, 0 expects
+tests/runtime/K3-35-renderer-boundary.test.ts: 1 tests, 6 expects
+
+# lines to justify (excluding MOVED): 493, plus 2 deleted files
+
+# D3 pure-file guard: 23 *-pure.test.ts files
+# D3 hits: 0

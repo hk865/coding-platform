@@ -1,0 +1,98 @@
+== k3-merge-mfix 4ff52b2 21:41
+typecheck exit 0
+== unmutated
+ [32m✓[39m tests/runtime/K3-merge-cancel-propagation.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 16161[2mms[22m[39m
+     [33m[2m✓[22m[39m T1 / M-F1: only the review session-basis window answers cancelled [33m 1295[2mms[22m[39m
+     [33m[2m✓[22m[39m T2 / M-F2: only the continuation review-file root answers cancelled [33m 1142[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3' / 'M-F3': baseline cancellation stores neither baseline nor manifest [33m 583[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3b' / 'M-F3b': baseline cancellation stores neither baseline nor manifest [33m 551[2mms[22m[39m
+     [33m[2m✓[22m[39m T1 / M-F1: only the review session-basis window answers cancelled [33m 3993[2mms[22m[39m
+     [33m[2m✓[22m[39m T2 / M-F2: only the continuation review-file root answers cancelled [33m 3497[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3' / 'M-F3': baseline cancellation stores neither baseline nor manifest [33m 2460[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3b' / 'M-F3b': baseline cancellation stores neither baseline nor manifest [33m 2639[2mms[22m[39m
+ [32m✓[39m tests/runtime/K3-review-preparation.test.ts [2m([22m[2m10 tests[22m[2m)[22m[33m 23193[2mms[22m[39m
+     [33m[2m✓[22m[39m (memory) K3-L13-5 prepares with the L13 tools, empty write scope, sessionBasis and the review section [33m 1260[2mms[22m[39m
+     [33m[2m✓[22m[39m (sqlite) K3-L13-5 prepares with the L13 tools, empty write scope, sessionBasis and the review section [33m 3780[2mms[22m[39m
+     [33m[2m✓[22m[39m (memory) K3-L13-7 lists the first 200 changed paths from the FULL capture, not the 50-path sample [33m 1406[2mms[22m[39m
+     [33m[2m✓[22m[39m (sqlite) K3-L13-7 lists the first 200 changed paths from the FULL capture, not the 50-path sample [33m 3870[2mms[22m[39m
+     [33m[2m✓[22m[39m (memory) an unwired closure reader fails closed, never "absent means open" [33m 689[2mms[22m[39m
+     [33m[2m✓[22m[39m (sqlite) an unwired closure reader fails closed, never "absent means open" [33m 3258[2mms[22m[39m
+     [33m[2m✓[22m[39m (memory) a closure-read rejection makes prepare unavailable, never blocks as open [33m 837[2mms[22m[39m
+     [33m[2m✓[22m[39m (sqlite) a closure-read rejection makes prepare unavailable, never blocks as open [33m 3443[2mms[22m[39m
+     [33m[2m✓[22m[39m (memory) a closed Task carries no blocked binding/lines and its prepared start is refused busy [33m 814[2mms[22m[39m
+     [33m[2m✓[22m[39m (sqlite) a closed Task carries no blocked binding/lines and its prepared start is refused busy [33m 3831[2mms[22m[39m
+ [32m✓[39m tests/runtime/K3-B3-cancellation-cancelled.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 8857[2mms[22m[39m
+     [33m[2m✓[22m[39m a review prepare paused at the Kernel window read and then aborted ends cancelled, not unavailable [33m 1054[2mms[22m[39m
+     [33m[2m✓[22m[39m the public decision read keeps the cancelled sibling-request page result (no write) [33m 848[2mms[22m[39m
+     [33m[2m✓[22m[39m a review prepare paused at the Kernel window read and then aborted ends cancelled, not unavailable [33m 3520[2mms[22m[39m
+     [33m[2m✓[22m[39m the public decision read keeps the cancelled sibling-request page result (no write) [33m 3433[2mms[22m[39m
+ [32m✓[39m tests/runtime/K3-35-workspace-baseline-prepare.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 5466[2mms[22m[39m
+     [33m[2m✓[22m[39m (memory) K3-35 (四) prepare succeeds and records an unavailable too_many_changes baseline for a >2000-change workspace [33m 2062[2mms[22m[39m
+     [33m[2m✓[22m[39m (sqlite) K3-35 (四) prepare succeeds and records an unavailable too_many_changes baseline for a >2000-change workspace [33m 3402[2mms[22m[39m
+[2m Test Files [22m [1m[32m4 passed[39m[22m[90m (4)[39m
+[2m      Tests [22m [1m[32m24 passed[39m[22m[90m (24)[39m
+== M-F1
+M-F1 applied
+[31m     [31m×[31m T1 / M-F1: only the review session-basis window answers cancelled[39m[33m 991[2mms[22m[39m
+     [33m[2m✓[22m[39m T2 / M-F2: only the continuation review-file root answers cancelled [33m 830[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3' / 'M-F3': baseline cancellation stores neither baseline nor manifest [33m 449[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3b' / 'M-F3b': baseline cancellation stores neither baseline nor manifest [33m 459[2mms[22m[39m
+[31m     [31m×[31m T1 / M-F1: only the review session-basis window answers cancelled[39m[33m 2953[2mms[22m[39m
+     [33m[2m✓[22m[39m T2 / M-F2: only the continuation review-file root answers cancelled [33m 2948[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3' / 'M-F3': baseline cancellation stores neither baseline nor manifest [33m 2612[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3b' / 'M-F3b': baseline cancellation stores neither baseline nor manifest [33m 2303[2mms[22m[39m
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+[41m[1m FAIL [22m[49m tests/runtime/K3-merge-cancel-propagation.test.ts[2m > [22mK3 merge cancellation (memory)[2m > [22mT1 / M-F1: only the review session-basis window answers cancelled
+[41m[1m FAIL [22m[49m tests/runtime/K3-merge-cancel-propagation.test.ts[2m > [22mK3 merge cancellation (sqlite)[2m > [22mT1 / M-F1: only the review session-basis window answers cancelled
+[31m[1mAssertionError[22m: expected { status: 'ready', value: { …(4) } } to match object { status: 'rejected', …(1) }
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m6 passed[39m[22m[90m (8)[39m
+== M-F2
+M-F2 applied
+     [33m[2m✓[22m[39m T1 / M-F1: only the review session-basis window answers cancelled [33m 908[2mms[22m[39m
+[31m     [31m×[31m T2 / M-F2: only the continuation review-file root answers cancelled[39m[33m 817[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3' / 'M-F3': baseline cancellation stores neither baseline nor manifest [33m 499[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3b' / 'M-F3b': baseline cancellation stores neither baseline nor manifest [33m 463[2mms[22m[39m
+     [33m[2m✓[22m[39m T1 / M-F1: only the review session-basis window answers cancelled [33m 3107[2mms[22m[39m
+[31m     [31m×[31m T2 / M-F2: only the continuation review-file root answers cancelled[39m[33m 3617[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3' / 'M-F3': baseline cancellation stores neither baseline nor manifest [33m 2384[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3b' / 'M-F3b': baseline cancellation stores neither baseline nor manifest [33m 2383[2mms[22m[39m
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+[41m[1m FAIL [22m[49m tests/runtime/K3-merge-cancel-propagation.test.ts[2m > [22mK3 merge cancellation (memory)[2m > [22mT2 / M-F2: only the continuation review-file root answers cancelled
+[41m[1m FAIL [22m[49m tests/runtime/K3-merge-cancel-propagation.test.ts[2m > [22mK3 merge cancellation (sqlite)[2m > [22mT2 / M-F2: only the continuation review-file root answers cancelled
+[31m[1mAssertionError[22m: expected { status: 'ready', value: { …(4) } } to match object { status: 'rejected', …(1) }
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m6 passed[39m[22m[90m (8)[39m
+== M-F3
+M-F3 applied
+     [33m[2m✓[22m[39m T1 / M-F1: only the review session-basis window answers cancelled [33m 1077[2mms[22m[39m
+     [33m[2m✓[22m[39m T2 / M-F2: only the continuation review-file root answers cancelled [33m 823[2mms[22m[39m
+[31m     [31m×[31m 'T3' / 'M-F3': baseline cancellation stores neither baseline nor manifest[39m[33m 477[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3b' / 'M-F3b': baseline cancellation stores neither baseline nor manifest [33m 499[2mms[22m[39m
+     [33m[2m✓[22m[39m T1 / M-F1: only the review session-basis window answers cancelled [33m 3099[2mms[22m[39m
+     [33m[2m✓[22m[39m T2 / M-F2: only the continuation review-file root answers cancelled [33m 3170[2mms[22m[39m
+[31m     [31m×[31m 'T3' / 'M-F3': baseline cancellation stores neither baseline nor manifest[39m[33m 2384[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3b' / 'M-F3b': baseline cancellation stores neither baseline nor manifest [33m 2391[2mms[22m[39m
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+[41m[1m FAIL [22m[49m tests/runtime/K3-merge-cancel-propagation.test.ts[2m > [22mK3 merge cancellation (memory)[2m > [22m'T3' / 'M-F3': baseline cancellation stores neither baseline nor manifest
+[41m[1m FAIL [22m[49m tests/runtime/K3-merge-cancel-propagation.test.ts[2m > [22mK3 merge cancellation (sqlite)[2m > [22m'T3' / 'M-F3': baseline cancellation stores neither baseline nor manifest
+[31m[1mAssertionError[22m: T3: expected { status: 'ready', value: { …(4) } } to match object { status: 'rejected', …(1) }
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m6 passed[39m[22m[90m (8)[39m
+== M-F3b
+M-F3b applied
+     [33m[2m✓[22m[39m T1 / M-F1: only the review session-basis window answers cancelled [33m 945[2mms[22m[39m
+     [33m[2m✓[22m[39m T2 / M-F2: only the continuation review-file root answers cancelled [33m 835[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3' / 'M-F3': baseline cancellation stores neither baseline nor manifest [33m 424[2mms[22m[39m
+[31m     [31m×[31m 'T3b' / 'M-F3b': baseline cancellation stores neither baseline nor manifest[39m[33m 477[2mms[22m[39m
+     [33m[2m✓[22m[39m T1 / M-F1: only the review session-basis window answers cancelled [33m 2813[2mms[22m[39m
+     [33m[2m✓[22m[39m T2 / M-F2: only the continuation review-file root answers cancelled [33m 3094[2mms[22m[39m
+     [33m[2m✓[22m[39m 'T3' / 'M-F3': baseline cancellation stores neither baseline nor manifest [33m 2357[2mms[22m[39m
+[31m     [31m×[31m 'T3b' / 'M-F3b': baseline cancellation stores neither baseline nor manifest[39m[33m 2225[2mms[22m[39m
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+[41m[1m FAIL [22m[49m tests/runtime/K3-merge-cancel-propagation.test.ts[2m > [22mK3 merge cancellation (memory)[2m > [22m'T3b' / 'M-F3b': baseline cancellation stores neither baseline nor manifest
+[41m[1m FAIL [22m[49m tests/runtime/K3-merge-cancel-propagation.test.ts[2m > [22mK3 merge cancellation (sqlite)[2m > [22m'T3b' / 'M-F3b': baseline cancellation stores neither baseline nor manifest
+[31m[1mAssertionError[22m: T3b: expected 1 to be +0 // Object.is equality[39m
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m6 passed[39m[22m[90m (8)[39m
+== done 21:44

@@ -1,0 +1,24 @@
+You are a read-only researcher for the lead of this repository. This is RESEARCH plus a focused design evaluation, not a full spec review. You may use live web search and run read-only commands (search, git, reading files). Do not modify files. Write the final report in plain Chinese (technical terms may keep English names in parentheses), with a source link for every external claim, and say clearly when a source is old or you are unsure.
+
+# Context
+
+`.lead-ref/slice-K3-SPEC.v7.md` is an unfrozen spec draft (K3: tool calls whose outcome is unknown after an interruption). `.lead-ref/2026-10-16-k3-L19a.md` extracts the part that matters here. Situation: an agent ran a shell command (e.g. `npm run db:migrate`), the platform crashed mid-command, a read-only "check round" could not tell whether it took effect, and the user answered a decision card with "skip, treat as done" (`skip_as_done`) or approved a safer method instead of the original. The user's rule (decision 57): after that, the agent may run the original command again only after it writes a reason and a human knows and allows it. L19a implements this: the platform blocks, in that task, any `shell` call whose normalized text (trim, collapse whitespace runs to one space, sha256; cwd ignored) equals a blocked command; the agent calls `request_command_rerun {command, reason}`; a card offers allow once / deny / deny and do not ask again; autonomy settings never answer it. The block runs in a `before_tool` control hook (see `src/core/agent-runtime/execution-driver.ts` around :766 and :919). Rewritten equivalent commands are NOT caught today (e.g. `npx prisma migrate deploy` where `db:migrate` runs exactly that); the tool text and the card tell the agent to request those too.
+
+The user now asks: should we add a simple LLM call to judge whether a new command is equivalent to a blocked one, since it only concerns commands? This is model safety; how is it usually done?
+
+Repository constraints you must respect: tests never call a real model (a fake port is fine); platform tools are deterministic and replay-stable (the same tool call replayed must return the same result; K's replay rules); every model call today happens inside a Run/Session, there is no ad-hoc platform-side model call path (verify this in the code and say what you find); the sandbox already limits blast radius (bwrap + the resource-limit slice's memory/process caps).
+
+# Research (cite sources)
+1. How coding-agent tools decide whether a shell command may run, or matches a rule: Claude Code (permission rules, prefix matching, handling of compound commands and shell operators, any model-based classifier such as in auto mode), OpenAI Codex CLI (sandbox modes, approval policies, its known-safe-command parsing), Cursor (terminal allow/deny lists, auto-run), Gemini CLI, OpenHands (security analyzer / LLM risk analyzer), Aider, Cline/Roo, and similar. Only what you can source.
+2. LLM-based guardrails for actions: guard/classifier models (e.g. Llama Guard, prompt-injection classifiers), "LLM as judge" for tool calls, known failure modes (non-determinism, adversarial obfuscation, prompt injection through command text, cost and latency), and published recommendations on layering deterministic rules, sandboxing, model judges and human approval.
+3. Deterministic ways to detect "the same command in another form": shell parsing (e.g. tree-sitter-bash, shfmt/mvdan-sh, bashlex), splitting `&&`, `;`, `|`, unwrapping `bash -c` / `sh -c`, stripping env assignments and quoting differences, resolving package-manager scripts (`npm/pnpm/yarn run X` -> the script text in package.json), simple alias resolution; their limits.
+
+# Evaluate for our case (prevent re-running a command a human said to skip)
+Compare (A) today's normalized text match; (B) A plus deterministic parsing and script resolution, matching if any segment matches; (C) an LLM judge: when to call it (a cheap prefilter?), inputs, output (equivalent / not / unsure; unsure -> block and ask), how to keep replays deterministic (record the verdict with the call), cost and latency per shell call, robustness when the agent itself writes the command, how tests run with a fake judge, and where the call would live given the codebase; (D) combinations. For each: what it catches, false blocks, what it costs in code and runtime, and its effect on the user rule ("the human must know and allow"). Recommend what the MVP should do now and what can wait, and say whether the recommendation changes L19a's text (which sentences).
+
+# Deliverable (plain Chinese, under about 4,000 Chinese characters plus tables)
+1. 通常怎么做（各家做法、来源）。
+2. 用模型判断等价：好处、风险、要满足的条件。
+3. 不用模型、确定的做法能做到哪一步，以 `npm run db:migrate` / `npx prisma migrate deploy` 这类例子说明。
+4. 对比表和建议（MVP 现在做什么、什么以后做），要改 L19a 的哪几句。
+5. 不确定和没查到的地方。

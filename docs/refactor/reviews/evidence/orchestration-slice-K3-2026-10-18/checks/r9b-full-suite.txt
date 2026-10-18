@@ -1,0 +1,34 @@
+K3 r9b full suite (K3 copy, bubblewrap, 4 workers)
+ Test Files  29 failed | 683 passed (712)
+      Tests  122 failed | 9412 passed | 5 skipped (9539)
+   Duration  3658.09s (transform 26.82s, setup 0ms, import 469.04s, tests 14081.73s, environment 66ms)
+failing files:
+     30 tests/runtime/A2-reconcile-runtime.test.ts
+     21 tests/runtime/B2-runtime-execution.test.ts
+     14 tests/work-graph/WP1-goal-content-entry.test.ts
+      5 tests/runtime/S1-archive-files-brief.test.ts
+      5 tests/runtime/K-readonly-command.test.ts
+      4 tests/runtime/R4-control-runtime.test.ts
+      4 tests/app/S2B-r2-r6-probe-verdicts.test.ts
+      4 tests/app/S2B-be2-startup-reconcile-activity.test.ts
+      3 tests/runtime/S2B-38-run08-unknown-activity.test.ts
+      3 tests/runtime/S1-routed-replies.test.ts
+      3 tests/runtime/K3-24-unknown-outcome-stability.test.ts
+      3 tests/app/S2B-be2-late-evidence-activity.test.ts
+      2 tests/runtime/S3-context-assembler.test.ts
+      2 tests/runtime/R2e-git-source-loop.test.ts
+      2 tests/business/S1-archive-flow.test.ts
+      2 tests/app/S2B-r2-backfill-real-kernel.test.ts
+      2 tests/app/S2B-r2-backfill-probe-first.test.ts
+      2 tests/app/S2B-be2-run23-activity.test.ts
+      1 tests/work-graph/S2B-r2-activity-run-ended-at.test.ts
+      1 tests/runtime/S2B-r2-run08-current-revision.test.ts
+      1 tests/runtime/S2B-45-inprocess-run21-activity.test.ts
+      1 tests/runtime/S2B-44-backfill-late-evidence-race.test.ts
+      1 tests/runtime/S2B-37-observer-reread-failure.test.ts
+      1 tests/runtime/S2B-36-observer-cancel-reread.test.ts
+      1 tests/runtime/S2B-15-end-retry-activity.test.ts
+      1 tests/architecture/production-reach.test.ts
+      1 tests/app/S2B-be2-run18-activity.test.ts
+      1 tests/app/S2B-be2-run09-activity.test.ts
+      1 tests/app/S2B-41-decision54-backfill-bound.test.ts

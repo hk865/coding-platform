@@ -1,0 +1,99 @@
+# D1 assertion ledger k3-g4b3-r9a..k3-g4b3-r9b (tests)
+
+## ADDED expected value from a constant: 4
+tests/runtime/B2-401-world.test.ts:81: expect(w.requestCount).toBe(B401_R);
+tests/scenarios/K3-20-review-card-paging.test.ts:195: expect(gateGoalId).toBe(GOAL_B.goalId);
+tests/scenarios/K3-20-review-card-paging.test.ts:197: expect(fifth.task.goalId).toBe(GOAL_B.goalId);
+tests/work-graph/K3-48-2-unknown-call-review-model-text-budget.test.ts:526: expect(JSON.stringify(afterLong.value)).toBe(JSON.stringify(before.value));
+
+## NEW timeout in an existing file: 1
+tests/runtime/B2-401-world.test.ts:112: }, 1_200_000);
+
+## REMOVED assertion: 19
+tests/business/K3-review-workflow-rows.test.ts:1065: expect(f.counts.commits, 'the second selection writes nothing').toBe(commitsBefore);
+tests/runtime/B2-02-recognition-unified.test.ts:138: expect(early.record.ref.runId).not.toBe(later.record.ref.runId);
+tests/runtime/B2-02-recognition-unified.test.ts:139: expect(early.record.blockedCommands).toMatchObject([{ alias: 1 }]);
+tests/runtime/B2-02-recognition-unified.test.ts:140: expect(later.record.blockedCommands).toMatchObject([{ alias: 1 }]);
+tests/runtime/B2-02-recognition-unified.test.ts:156: expect(await runHook(hook, shell('migrate'))).toEqual({ point: 'before_tool', kind: 'block',
+tests/scenarios/K3-16-approval-round.test.ts:163: expect(summary).toContain(approvedMethodLinesZh(awaiting.value.proposals).join('\n'));
+tests/scenarios/K3-44-crr-kind4.test.ts:43: expect(answered).toMatchObject({ status: 'ready', value: { state: 'application_not_recorded' } });
+tests/scenarios/K3-44-crr-kind4.test.ts:91: expect(report.redriveGoals[0]!.answers).toContainEqual({
+tests/scenarios/K3-44-crr-kind4.test.ts:99: expect(advanced).toMatchObject({ status: 'ready', value: { state: 'applied',
+tests/work-graph/B2-07-crr-card.test.ts:157: expect(written.status).toBe('committed');
+tests/work-graph/B2-07-crr-card.test.ts:163: expect(reads.count).toBe(1);
+tests/work-graph/B2-07-crr-card.test.ts:172: expect(reads.count).toBe(1);
+tests/work-graph/B2-11-script-expansion.test.ts:157: expect(result.reads).toEqual(['/a/package.json', '/b/package.json', '/c/package.json', '/d/package.json']);
+tests/work-graph/B2-UR7-crr-answer.test.ts:54: expect(advanced).toMatchObject({ status: 'ready', value: { state: 'applied',
+tests/work-graph/B2-UR7-crr-answer.test.ts:59: expect(read).toMatchObject({ status: 'ready', value: { state: 'allowed', revision: request.revision + 1 } });
+tests/work-graph/B2-UR7-crr-answer.test.ts:66: expect(again).toMatchObject({ status: 'ready', value: { application: { status: 'committed' } } });
+tests/work-graph/B2-UR7-crr-answer.test.ts:67: expect(await world.commandRerun.readRequest(world.fixture.ctx, { ref: request.ref })).toMatchObject({
+tests/work-graph/K3-47-claim-gate.test.ts:261: expect(result).toMatchObject({ status: 'rejected' });
+tests/work-graph/K3-47-claim-gate.test.ts:262: if (result.status === 'rejected') expect(result.reason).not.toContain('unknown_call_review');
+
+## REMOVED test or describe: 59
+tests/business/K3-UR7-crr-failed-set.test.ts:354: describe('K3 UR7 (answer 7): the failed-card set covers both card kinds', () => {
+tests/business/K3-review-workflow-rows.test.ts:521: it('K3 UR9/U4: no record keeps today\'s path', async () => {
+tests/business/K3-review-workflow-rows.test.ts:856: it('K3 settle_review: the owner receipt is preserved and the next selection follows', async () => {
+tests/runtime/B2-01-shell-hook.test.ts:46: describe('B2-01 blocked rows', () => {
+tests/runtime/B2-02-approved-method.test.ts:42: it('B2-02: the approved method runs, the original and another blocked-action form are blocked', async () => {
+tests/runtime/B2-02-recognition-unified.test.ts:121: describe('B2-02 one recognizer: ordering by record creation (K8-6)', () => {
+tests/runtime/B2-02-recognition-unified.test.ts:122: it('B2-02: an earlier record’s action hit wins over a later record’s exact hit', async () => {
+tests/runtime/B2-02-recognition-unified.test.ts:161: describe('B2-02 one recognizer: declared forms and failures', () => {
+tests/runtime/B2-02-recognition-unified.test.ts:231: describe('B2-02 one recognizer: one call per shell call', () => {
+tests/runtime/B2-03-request-tool.test.ts:57: describe('B2-03 request tool', () => {
+tests/runtime/B2-03-request-tool.test.ts:115: describe('B2-14 declared forms', () => {
+tests/runtime/B2-04-allowance.test.ts:39: describe('B2-04 one-time allowance', () => {
+tests/runtime/B2-05-06-denial.test.ts:55: describe('B2-05 deny is per Run', () => {
+tests/runtime/B2-09-allowance-crash.test.ts:39: describe('B2-09 allowance crash before the command starts', () => {
+tests/runtime/B2-13-allow-one-form.test.ts:42: describe('B2-13 allowance is per card form', () => {
+tests/runtime/B2-15-replay.test.ts:118: describe('B2-15 Kernel replay', () => {
+tests/runtime/B2-16-hook-closure.test.ts:72: describe('B2-16 hook closure read per call', () => {
+tests/runtime/B2-16-hook-reads.test.ts:178: describe('B2-16 hook read bound', () => {
+tests/runtime/K3-35-T-by-hand.test.ts:97: describe('K3-35 (二) T = 512 through the public steps', () => {
+tests/runtime/K3-35-T-by-hand.test.ts:153: describe('K3-35 (三) T = 600 through the same public steps', () => {
+tests/runtime/K3-35-approved-methods-brief.test.ts:86: describe('K3-35 (L20): the real continuation brief with the 5,120-byte method block', () => {
+tests/runtime/K3-35-workspace-baseline-prepare.test.ts:205: it('K3-35 (四) prepare succeeds and records an unavailable too_many_changes baseline for a >2000-change workspace', async () => {
+tests/runtime/K3-review-preparation.test.ts:375: it('an unwired closure reader fails closed, never "absent means open"', async () => {
+tests/runtime/K3-review-preparation.test.ts:386: it('a closure-read rejection makes prepare unavailable, never blocks as open', async () => {
+tests/runtime/K3-review-preparation.test.ts:407: it('a closed Task carries no blocked binding/lines and its prepared start is refused busy', async () => {
+tests/runtime/S4C2-assembly.test.ts:417: it('C-06 (memory) an ineligible understanding renders one warning line without a body', async () => {
+tests/scenarios/K3-44-crr-kind4.test.ts:30: describe('K3-44 kind 4: a CRR answer at start-up', () => {
+tests/scenarios/K3-44-crr-kind4.test.ts:31: it('K3-44: 6b (c) kind 4 lists the CRR answer by Goal and the advance applies ③', async () => {
+tests/work-graph/B2-01-blocked-commands.test.ts:93: it('all-irrelevant (or unparsed) commands save the one whole-normalized-text action', async () => {
+tests/work-graph/B2-01-blocked-commands.test.ts:114: it('a platform-only skip_as_done writes an empty list and reads no Kernel commands', async () => {
+tests/work-graph/B2-01-blocked-commands.test.ts:139: it('rerun_as_is writes an empty list and reads no Kernel commands', async () => {
+tests/work-graph/B2-01-blocked-commands.test.ts:148: it('approve writes the ORIGINAL commands of proposalTargets, never the proposals', async () => {
+tests/work-graph/B2-03-crr-request.test.ts:78: describe('B2-03 request_command_rerun owner', () => {
+tests/work-graph/B2-07-crr-card-closed.test.ts:37: describe('B2-07: the CRR card derives closed from the canonical Task closure', () => {
+tests/work-graph/B2-07-crr-card.test.ts:40: it('B2-07: an exact rerun request produces the waiting_answer card with the three fixed options in order, at the highest autonomy', async () => {
+tests/work-graph/B2-07-crr-card.test.ts:117: it('B2-07/B2-15: a stored package.json expansion is kept, never re-read when the card is read', async () => {
+tests/work-graph/B2-08-crr-answer.test.ts:52: describe('B2-08/B2-09: CRR answers', () => {
+tests/work-graph/B2-08-crr-cancel.test.ts:28: describe('B2-08: task end closes the request', () => {
+tests/work-graph/B2-09-answer-replay.test.ts:27: describe('B2-09: repeated decisions/answer', () => {
+tests/work-graph/B2-09-crr-owner.test.ts:238: it('the same request identity and fingerprint replays the original write with its cursor', async () => {
+tests/work-graph/B2-09-crr-owner.test.ts:253: it('the same identity with different content is idempotency_conflict', async () => {
+tests/work-graph/B2-09-crr-owner.test.ts:263: it('applying the same answer twice replays the first application once', async () => {
+tests/work-graph/B2-09-crr-owner.test.ts:274: it('a moved request answers revision_conflict with the current revision', async () => {
+tests/work-graph/B2-09-crr-owner.test.ts:284: it('consumeAllowance records usedBy in the returned request state', async () => {
+tests/work-graph/B2-09-crr-owner.test.ts:299: it('a failed allowance commit leaves the allowance untouched and rejects the call', async () => {
+tests/work-graph/B2-09-crr-owner.test.ts:313: describe('B2-09 / rework 1 item 8: the no-write return contract', () => {
+tests/work-graph/B2-09-crr-owner.test.ts:386: describe('B2-09 / rework 1 item 4: closed derived from the one closure', () => {
+tests/work-graph/B2-11-expansion-levels.test.ts:101: it('keeps a per-entry basis unavailable on a read failure and never throws', async () => {
+tests/work-graph/B2-12-recognition.test.ts:125: it('creates a declared request through the real owner when package.json cannot be read', async () => {
+tests/work-graph/B2-12-rewrite-prefix.test.ts:103: describe('B2-12 rewriteOf prefix (L19a, Codex item 11)', () => {
+tests/work-graph/B2-14-crr-forms.test.ts:66: describe('B2-14 declared rewrite forms', () => {
+tests/work-graph/B2-17-disposition-reads.test.ts:33: describe('B2-17 disposition workspace reads', () => {
+tests/work-graph/B2-18-request-reads.test.ts:93: describe('rework 2 item 4 / B2-18 request reads', () => {
+tests/work-graph/B2-UR7-crr-answer.test.ts:28: describe('UR7: CRR answer applied by the one Workflow step', () => {
+tests/work-graph/B2-UR7-crr-answer.test.ts:29: it('UR7: a failed ③ is repaired by advanceReviewDisposition through ② replay and one ③', async () => {
+tests/work-graph/K3-15-disposition-effects.test.ts:147: describe('K3-15 (一)(二)(三) card dispositions', () => {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:158: it('K3-26: the read port answers not_found for an absent key and invalid for a bad record', async () => {
+tests/work-graph/K3-47-claim-gate.test.ts:254: it('K3-47 (二): the record of a settled K3-before Run is absent and does not gate the claim', async () => {
+tests/work-graph/K3-47-claim-gate.test.ts:276: it('K3-47 (二): a human requeue of an unsettled Task is accepted (its claim still waits)', async () => {
+
+## DELETED test files: 0
+
+# lines to justify (excluding MOVED): 83, plus 0 deleted files
+
+# D3 pure-file guard: 23 *-pure.test.ts files
+# D3 hits: 0
