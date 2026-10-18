@@ -1,6 +1,6 @@
 /**
- * F-074 (K3 B3 rework 9): the ONE pure global flatten + ordering rule for
- * blocked commands, shared by the recognizer (`command-recognition.ts`), the
+ * F-074: the ONE pure global flatten + ordering rule for blocked commands,
+ * shared by the recognizer (`command-recognition.ts`), the
  * execution preparation (`RT/execution-preparation.ts`) and the continuation
  * brief (`RT/context-assembler.ts`).
  *

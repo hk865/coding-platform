@@ -47,7 +47,10 @@ import { accept, reject, unreachable, type Rejected, type Transition } from './t
 // Records and nodes (§5.1)                                                    //
 // -------------------------------------------------------------------------- //
 
-/** V1 entered/settled dispatch phase; same shape as `TaskDispatchStateV1` (`claim-contracts.ts`). */
+/**
+ * V1 entered/settled dispatch phase. `entered`/`settled` must agree with the
+ * outer `TaskClaimOutbox.status`.
+ */
 export type DispatchStateV1 = {
   schemaVersion: 1;
   phase: 'entered' | 'settled';

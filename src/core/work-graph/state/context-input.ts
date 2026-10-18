@@ -24,7 +24,8 @@
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalOf } from '../../../contracts/fingerprint.js';
+import { isNonNeg, isRecord, utf8Bytes } from '../../../contracts/validation/common.js';
 import type {
   ContextAssemblyBindingV1, ContextCallKindV1, ContextSectionNameV1, InputDeclarationV1,
   InputSelectionV1, PlatformDutyV1, SelectedInputSourceV1,
@@ -78,23 +79,6 @@ function invalid(reason: string): CoreRejection {
 
 function forbidden(reason: string): CoreRejection {
   return { status: 'rejected', code: 'forbidden', reason };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
-
-function utf8Bytes(value: string): number {
-  return Buffer.byteLength(value, 'utf8');
-}
-
-/** A canonical JSON key; a value that cannot be canonicalized is `null`. */
-function canonicalKey(value: unknown): string | null {
-  try { return canonicalJson(value as JsonValue); } catch { return null; }
 }
 
 /** The UTF-8 bytes of a half-open section interval, decoded back as text. */
@@ -245,8 +229,8 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
   if (binding.formatVersion !== CONTEXT_FORMAT_VERSION) return invalid('the context assembly formatVersion is not s3-context-v1');
   if (!CALL_KINDS.includes(binding.callKind)) return invalid('the context assembly callKind is not recognized');
   if (!DUTIES.includes(binding.duty)) return invalid('the context assembly duty is not recognized');
-  if (!isNonNegativeSafeInteger(binding.residentBudgetBytes)) return invalid('residentBudgetBytes must be a non-negative safe integer');
-  if (!isNonNegativeSafeInteger(binding.residentBytes)) return invalid('residentBytes must be a non-negative safe integer');
+  if (!isNonNeg(binding.residentBudgetBytes)) return invalid('residentBudgetBytes must be a non-negative safe integer');
+  if (!isNonNeg(binding.residentBytes)) return invalid('residentBytes must be a non-negative safe integer');
   if (binding.residentBytes > binding.residentBudgetBytes) return invalid('residentBytes cannot exceed residentBudgetBytes');
   if (binding.totalBytes !== utf8Bytes(text)) return invalid('totalBytes must be the UTF-8 byte length of the input');
   if (!Array.isArray(binding.sections)) return invalid('the context assembly sections must be an array');
@@ -273,7 +257,7 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
     previousOrder = order;
     if (name === 'continuation') continuationIndex = index;
     if (name === 'unknown_call_review') reviewIndex = index;
-    if (!isNonNegativeSafeInteger(section.omitted)) return invalid('a section omitted count must be a non-negative safe integer');
+    if (!isNonNeg(section.omitted)) return invalid('a section omitted count must be a non-negative safe integer');
     const startByte = section.startByte;
     const endByte = section.endByte;
     const startNull = startByte === null;
@@ -285,8 +269,8 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
       budgetSections.push({ name, startByte: null, endByte: null, omitted: section.omitted });
       continue;
     }
-    if (!isNonNegativeSafeInteger(startByte)) return invalid('a section startByte must be a non-negative safe integer');
-    if (!isNonNegativeSafeInteger(endByte)) return invalid('a section endByte must be a non-negative safe integer');
+    if (!isNonNeg(startByte)) return invalid('a section startByte must be a non-negative safe integer');
+    if (!isNonNeg(endByte)) return invalid('a section endByte must be a non-negative safe integer');
     if (endByte < startByte) return invalid('a section endByte cannot precede its startByte');
     if (endByte > binding.totalBytes) return invalid('a section interval ends past the input');
     if (previousEnd !== null && startByte < previousEnd) return invalid('context section intervals overlap or are out of order');
@@ -334,12 +318,12 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
 
   let previousSource: string | null = null;
   for (const source of binding.sources) {
-    const key = canonicalKey(source);
+    const key = canonicalOf(source);
     if (key === null) return invalid('a context source is not canonicalizable');
     if (previousSource !== null && key <= previousSource) return invalid('context sources must be sorted and deduplicated');
     previousSource = key;
     if (isRecord(source) && source.kind === 'record'
-      && (!isNonNegativeSafeInteger(source.revision))) {
+      && (!isNonNeg(source.revision))) {
       return invalid('a record source revision must be a non-negative safe integer');
     }
   }
@@ -362,8 +346,8 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
     if (left.requirementId !== right.requirementId) {
       return invalid('the legacy selectedTaskInputs requirement ids do not match the binding');
     }
-    const leftRef = canonicalKey(left.ref);
-    const rightRef = canonicalKey(right.ref);
+    const leftRef = canonicalOf(left.ref);
+    const rightRef = canonicalOf(right.ref);
     if (leftRef === null || rightRef === null || leftRef !== rightRef) {
       return invalid('the legacy selectedTaskInputs Artifact refs do not match the binding');
     }
@@ -426,11 +410,11 @@ export function declaredInputProblem(input: DeclaredInputProblemInput): CoreReje
   const legacy = declaration.legacyArtifactRef !== null;
   // The declaration's plan/consumer/requirement/legacy ref must be that stored declaration;
   // an edge declaration must also carry the stored `upstream` (§3.5, §8.3).
-  if (canonicalKey(allowed.planRef) !== canonicalKey(declaration.planRef)
-    || canonicalKey(allowed.consumer) !== canonicalKey(declaration.consumer)
-    || canonicalKey(allowed.requires) !== canonicalKey(declaration.requires)
-    || canonicalKey(allowed.legacyArtifactRef) !== canonicalKey(declaration.legacyArtifactRef)
-    || (!legacy && canonicalKey(allowed.upstream) !== canonicalKey(declaration.upstream))) {
+  if (canonicalOf(allowed.planRef) !== canonicalOf(declaration.planRef)
+    || canonicalOf(allowed.consumer) !== canonicalOf(declaration.consumer)
+    || canonicalOf(allowed.requires) !== canonicalOf(declaration.requires)
+    || canonicalOf(allowed.legacyArtifactRef) !== canonicalOf(declaration.legacyArtifactRef)
+    || (!legacy && canonicalOf(allowed.upstream) !== canonicalOf(declaration.upstream))) {
     return forbidden('the declared input disagrees with the stored Plan declaration');
   }
   if (!Array.isArray(selections)) return invalid('the input selections must be an array');
@@ -476,8 +460,8 @@ export function declaredInputProblem(input: DeclaredInputProblemInput): CoreReje
         if (!isRecord(source) || source.kind !== 'artifact') {
           return invalid('a legacy Artifact selection must select the artifact source');
         }
-        const selectedRef = canonicalKey(source.ref);
-        const storedRef = canonicalKey(declaration.legacyArtifactRef);
+        const selectedRef = canonicalOf(source.ref);
+        const storedRef = canonicalOf(declaration.legacyArtifactRef);
         if (selectedRef === null || storedRef === null || selectedRef !== storedRef) {
           return forbidden('the selected Artifact is not the stored legacy declaration ref');
         }

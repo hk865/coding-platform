@@ -11,7 +11,8 @@ import type {
   NoteState, NoteVersionRef, NoteVersionSnapshot, PendingNoteHeadSnapshot, PendingNoteVersionSnapshot,
 } from '../../../contracts/note.js';
 import { NOTE_GENERAL_KINDS } from '../../../contracts/note.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
+import { hasOnlyKeys, invalid, isPos, isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
@@ -23,7 +24,8 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import { decisionChangeProofProblem } from './decision-record-codecs.js';
-import { actorRefProblem } from './rework-codecs.js';
+import { encodeEventEnvelope } from './event-envelope.js';
+import { actorRefProblem, sessionRefProblem } from './rework-codecs.js';
 
 export const NOTE_HEAD_SCHEMA_ID = 'NoteHead@1' as const;
 export const NOTE_VERSION_SCHEMA_ID = 'NoteVersion@1' as const;
@@ -58,7 +60,7 @@ export type NoteEventHeaderV1 = {
 };
 
 /**
- * P9 (R4, item 5): `NoteWritten { head; version; result }`. The head/version are
+ * P9 (R4): `NoteWritten { head; version; result }`. The head/version are
  * the PRE-BIND snapshots: an event is written before the Store knows the commit
  * cursor, so its `since` is always null. The commit cursor is the receipt cursor
  * (and the bound `since` of the NoteHead/NoteVersion records of the same commit).
@@ -68,7 +70,7 @@ export type NoteWrittenEventV1 = NoteEventHeaderV1 & {
 };
 
 /**
- * Item 5 step 7: the full success `WriteNoteResult` stored verbatim in the
+ * The full success `WriteNoteResult` stored verbatim in the
  * NoteWritten event, so a replay returns the ORIGINAL overQuota / warnings /
  * existingTopics instead of rebuilding them (R4).
  */
@@ -115,37 +117,7 @@ const VERSION_KEYS: readonly string[] = [...BODY_KEYS, 'ref', 'noteId', 'version
 /** 4C-2: the note classes a `NoteVersion` may carry; absent decodes as null. */
 const NOTICE_CLASSES: readonly string[] = ['user_affected', 'structural', 'scribe_result'];
 
-function isObject(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key));
-}
-function parseObject(json: string): UnknownRecord | null {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return isObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function canonicalOf(value: unknown): string | null {
-  try {
-    return canonicalJson(value as JsonValue);
-  } catch {
-    return null;
-  }
-}
-function invalid<T>(reason: string): DecodeResult<T> {
-  return { status: 'invalid', reason };
-}
-/** 4C-2: an absent `noticeClass` decodes as the explicit null of an old NoteVersion. */
+/** An absent `noticeClass` decodes as the explicit null of an old NoteVersion. */
 function withNoticeClass(body: UnknownRecord): UnknownRecord {
   return body['noticeClass'] === undefined ? { ...body, noticeClass: null } : body;
 }
@@ -155,15 +127,8 @@ function isCursorOrNull(value: unknown): boolean {
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
-function sessionRefProblem(value: unknown, label: string): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['projectId', 'sessionId'])
-    || !nonEmpty(value['projectId']) || !nonEmpty(value['sessionId'])) {
-    return `${label} must be a complete SessionRef`;
-  }
-  return null;
-}
 function runRefProblem(value: unknown): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'runId'])
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'runId'])
     || value['aggregateType'] !== 'Run' || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId'])
     || !nonEmpty(value['runId'])) {
     return 'runRef must be a complete RunRef';
@@ -171,7 +136,7 @@ function runRefProblem(value: unknown): string | null {
   return null;
 }
 function sessionMessageRefProblem(value: unknown): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
     || value['aggregateType'] !== 'SessionMessage' || !nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId'])
     || !nonEmpty(value['messageId'])) {
     return 'acknowledgementRef must be a complete SessionMessageRef';
@@ -184,7 +149,7 @@ function sessionMessageRefProblem(value: unknown): string | null {
 // --------------------------------------------------------------------------
 
 function symbolLocatorProblem(value: unknown): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['language', 'qualifiedName', 'signatureDigest', 'range', 'fileDigest'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['language', 'qualifiedName', 'signatureDigest', 'range', 'fileDigest'])) {
     return 'file anchor symbol carries unknown fields';
   }
   if (!nonEmpty(value['language']) || !nonEmpty(value['qualifiedName']) || !nonEmpty(value['signatureDigest'])
@@ -194,7 +159,7 @@ function symbolLocatorProblem(value: unknown): string | null {
   return rangeProblem(value['range'], 'file anchor symbol range');
 }
 function rangeProblem(value: unknown, label: string): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['startLine', 'endLine'])) return `${label} must be a range`;
+  if (!isRecord(value) || !hasOnlyKeys(value, ['startLine', 'endLine'])) return `${label} must be a range`;
   const start = value['startLine'];
   const end = value['endLine'];
   if (typeof start !== 'number' || typeof end !== 'number' || !Number.isSafeInteger(start) || !Number.isSafeInteger(end)
@@ -204,7 +169,7 @@ function rangeProblem(value: unknown, label: string): string | null {
   return null;
 }
 function noteAnchorProblem(value: unknown): string | null {
-  if (!isObject(value) || typeof value['kind'] !== 'string') return 'anchor must be an object with a kind';
+  if (!isRecord(value) || typeof value['kind'] !== 'string') return 'anchor must be an object with a kind';
   switch (value['kind']) {
     case 'module':
       return nonEmpty(value['moduleId']) && hasOnlyKeys(value, ['kind', 'moduleId']) ? null : 'module anchor is invalid';
@@ -220,7 +185,7 @@ function noteAnchorProblem(value: unknown): string | null {
     case 'goal':
       return nonEmpty(value['goalId']) && hasOnlyKeys(value, ['kind', 'goalId']) ? null : 'goal anchor is invalid';
     case 'stage':
-      return nonEmpty(value['goalId']) && nonEmpty(value['stageId']) && isPositiveSafeInteger(value['planRevision'])
+      return nonEmpty(value['goalId']) && nonEmpty(value['stageId']) && isPos(value['planRevision'])
         && hasOnlyKeys(value, ['kind', 'goalId', 'planRevision', 'stageId']) ? null : 'stage anchor is invalid';
     case 'task':
       return nonEmpty(value['goalId']) && nonEmpty(value['taskId']) && hasOnlyKeys(value, ['kind', 'goalId', 'taskId'])
@@ -232,7 +197,7 @@ function noteAnchorProblem(value: unknown): string | null {
   }
 }
 function sourceProblem(value: unknown, label: string): string | null {
-  if (!isObject(value)) return `${label} must be a NoteSourceV1`;
+  if (!isRecord(value)) return `${label} must be a NoteSourceV1`;
   if (value['kind'] === 'platform') return hasOnlyKeys(value, ['kind']) ? null : `${label} platform carries unknown fields`;
   if (value['kind'] === 'user') {
     return nonEmpty(value['principalId']) && hasOnlyKeys(value, ['kind', 'principalId']) ? null : `${label} user is invalid`;
@@ -251,20 +216,20 @@ function sourceProblem(value: unknown, label: string): string | null {
   return `${label} kind is not recognized`;
 }
 export function factProblem(value: unknown): string | null {
-  if (!isObject(value) || typeof value['kind'] !== 'string') return 'facts entries must be objects with a kind';
+  if (!isRecord(value) || typeof value['kind'] !== 'string') return 'facts entries must be objects with a kind';
   switch (value['kind']) {
     case 'record':
-      return isObject(value['ref']) && nonEmpty((value['ref'] as UnknownRecord)['aggregateType'])
-        && isPositiveSafeInteger(value['revision'])
+      return isRecord(value['ref']) && nonEmpty((value['ref'] as UnknownRecord)['aggregateType'])
+        && isPos(value['revision'])
         && (value['digest'] === null || typeof value['digest'] === 'string') ? null : 'record fact is invalid';
     case 'artifact':
-      return isObject(value['ref']) && isObject(value['provenance']) ? null : 'artifact fact is invalid';
+      return isRecord(value['ref']) && isRecord(value['provenance']) ? null : 'artifact fact is invalid';
     case 'kernel_history':
       return nonEmpty(value['adapterId']) && nonEmpty(value['kernelSessionId']) && nonEmpty(value['kernelRunId'])
         && nonEmpty(value['turnId']) && typeof value['fromPosition'] === 'number' && typeof value['throughPosition'] === 'number'
-        && isObject(value['runRef']) && isObject(value['sessionRef']) ? null : 'kernel_history fact is invalid';
+        && isRecord(value['runRef']) && isRecord(value['sessionRef']) ? null : 'kernel_history fact is invalid';
     case 'note':
-      return nonEmpty(value['noteId']) && isPositiveSafeInteger(value['version']) ? null : 'note fact is invalid';
+      return nonEmpty(value['noteId']) && isPos(value['version']) ? null : 'note fact is invalid';
     case 'file':
       return nonEmpty(value['path']) && typeof value['digest'] === 'string' ? null : 'file fact is invalid';
     case 'commit':
@@ -277,7 +242,7 @@ export function factProblem(value: unknown): string | null {
   }
 }
 function sectionsProblem(value: unknown): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['status', 'decided', 'open', 'next', 'risks'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['status', 'decided', 'open', 'next', 'risks'])) {
     return 'understanding sections carry unknown fields';
   }
   for (const key of ['status', 'decided', 'open', 'next', 'risks'] as const) {
@@ -286,12 +251,12 @@ function sectionsProblem(value: unknown): string | null {
   return null;
 }
 function basisProblem(value: unknown): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['planRevision', 'catalogRevision', 'files'])) return 'basis is invalid';
-  if (!(value['planRevision'] === null || isPositiveSafeInteger(value['planRevision']))) return 'basis.planRevision is invalid';
-  if (!(value['catalogRevision'] === null || isPositiveSafeInteger(value['catalogRevision']))) return 'basis.catalogRevision is invalid';
+  if (!isRecord(value) || !hasOnlyKeys(value, ['planRevision', 'catalogRevision', 'files'])) return 'basis is invalid';
+  if (!(value['planRevision'] === null || isPos(value['planRevision']))) return 'basis.planRevision is invalid';
+  if (!(value['catalogRevision'] === null || isPos(value['catalogRevision']))) return 'basis.catalogRevision is invalid';
   if (!Array.isArray(value['files'])) return 'basis.files must be an array';
   for (const file of value['files']) {
-    if (!isObject(file) || !nonEmpty(file['path']) || typeof file['digest'] !== 'string') return 'basis.files entries are invalid';
+    if (!isRecord(file) || !nonEmpty(file['path']) || typeof file['digest'] !== 'string') return 'basis.files entries are invalid';
   }
   return null;
 }
@@ -354,13 +319,13 @@ export function currentPointerRefKey(ref: CurrentPointerRef): string {
 function noteHeadBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null', requireEnvelopeRevision: boolean): string | null {
   if (!hasOnlyKeys(body, HEAD_KEYS)) return 'NoteHead record carries unknown fields';
   const ref = body['ref'];
-  if (!isObject(ref) || ref['aggregateType'] !== 'NoteHead' || !nonEmpty(ref['projectId']) || !nonEmpty(ref['noteId'])
+  if (!isRecord(ref) || ref['aggregateType'] !== 'NoteHead' || !nonEmpty(ref['projectId']) || !nonEmpty(ref['noteId'])
     || !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'noteId'])) return 'NoteHead ref is invalid';
   if (!nonEmpty(body['noteId']) || body['noteId'] !== ref['noteId']) return 'NoteHead noteId disagrees with its ref';
-  if (!isPositiveSafeInteger(body['version'])) return 'NoteHead version must be a positive safe integer';
+  if (!isPos(body['version'])) return 'NoteHead version must be a positive safe integer';
   // The RecordStore envelope (record-codec.ts) needs a top-level `revision`; the
   // head binds it to its own version so the RecordGuard CAS is the version guard.
-  if (requireEnvelopeRevision && (!isPositiveSafeInteger(body['revision']) || body['revision'] !== body['version'])) {
+  if (requireEnvelopeRevision && (!isPos(body['revision']) || body['revision'] !== body['version'])) {
     return 'NoteHead revision must be a positive safe integer equal to its version';
   }
   if (!NOTE_STATES.includes(body['state'] as NoteState)) return 'NoteHead state is not recognized';
@@ -369,7 +334,7 @@ function noteHeadBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null', r
   if (source !== null) return source;
   if (!(body['stagedRunKey'] === null || nonEmpty(body['stagedRunKey']))) return 'NoteHead stagedRunKey must be null or a string';
   // L3: only a `staged` head carries the staging run; every other state is null.
-  // Item 9a has landed (a human repair is forbidden), so the converse holds too:
+  // A human repair is forbidden, so the converse holds too:
   // a staged head (an agent/scribe repair) always names the run that staged it.
   if (body['state'] !== 'staged' && body['stagedRunKey'] !== null) {
     return 'NoteHead stagedRunKey is only for a staged note';
@@ -387,7 +352,7 @@ function noteHeadBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null', r
   }
   if (!nonEmpty(body['createdAt'])) return 'NoteHead createdAt is required';
   // A record carries the bound commit cursor; an event's pre-bind snapshot is
-  // strictly null (item 11c — the commit cursor is the receipt cursor instead).
+  // strictly null (the commit cursor is the receipt cursor instead).
   if (sinceMode === 'bound') {
     if (!isCursorOrNull(body['since']) || !nonEmpty(body['since'])) {
       return 'NoteHead since must be a ledger commit cursor';
@@ -401,12 +366,12 @@ function noteHeadBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null', r
 function noteVersionBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null', requireEnvelopeRevision: boolean): string | null {
   if (!hasOnlyKeys(body, VERSION_KEYS)) return 'NoteVersion record carries unknown fields';
   const ref = body['ref'];
-  if (!isObject(ref) || ref['aggregateType'] !== 'NoteVersion' || !nonEmpty(ref['projectId']) || !nonEmpty(ref['noteId'])
-    || !isPositiveSafeInteger(ref['version']) || !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'noteId', 'version'])) {
+  if (!isRecord(ref) || ref['aggregateType'] !== 'NoteVersion' || !nonEmpty(ref['projectId']) || !nonEmpty(ref['noteId'])
+    || !isPos(ref['version']) || !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'noteId', 'version'])) {
     return 'NoteVersion ref is invalid';
   }
   if (!nonEmpty(body['noteId']) || body['noteId'] !== ref['noteId']) return 'NoteVersion noteId disagrees with its ref';
-  if (!isPositiveSafeInteger(body['version']) || body['version'] !== ref['version']) {
+  if (!isPos(body['version']) || body['version'] !== ref['version']) {
     return 'NoteVersion version disagrees with its ref';
   }
   // A version row is immutable, so its envelope revision is always 1.
@@ -426,7 +391,7 @@ function noteVersionBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null'
     return 'NoteVersion noticeClass is not recognized';
   }
   const change = body['change'];
-  if (!isObject(change) || !hasOnlyKeys(change, ['kind', 'by', 'reason', 'decisionMessageRef'])
+  if (!isRecord(change) || !hasOnlyKeys(change, ['kind', 'by', 'reason', 'decisionMessageRef'])
     || !CHANGE_KINDS.includes(change['kind'] as NoteVersionSnapshot['change']['kind'])) return 'NoteVersion change is invalid';
   const by = sourceProblem(change['by'], 'NoteVersion change.by');
   if (by !== null) return by;
@@ -437,7 +402,7 @@ function noteVersionBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null'
   }
   if (!nonEmpty(body['at'])) return 'NoteVersion at is required';
   // A record carries the bound commit cursor; an event's pre-bind snapshot is
-  // strictly null (item 11c — the commit cursor is the receipt cursor instead).
+  // strictly null (the commit cursor is the receipt cursor instead).
   if (sinceMode === 'bound') {
     if (!isCursorOrNull(body['since']) || !nonEmpty(body['since'])) {
       return 'NoteVersion since must be a ledger commit cursor';
@@ -451,13 +416,13 @@ function noteVersionBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null'
 function currentPointerBodyProblem(body: UnknownRecord): string | null {
   if (!hasOnlyKeys(body, ['ref', 'anchorKey', 'noteId', 'revision'])) return 'CurrentPointer record carries unknown fields';
   const ref = body['ref'];
-  if (!isObject(ref) || ref['aggregateType'] !== 'CurrentPointer' || !nonEmpty(ref['projectId']) || !nonEmpty(ref['anchorKey'])
+  if (!isRecord(ref) || ref['aggregateType'] !== 'CurrentPointer' || !nonEmpty(ref['projectId']) || !nonEmpty(ref['anchorKey'])
     || !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'anchorKey'])) return 'CurrentPointer ref is invalid';
   if (!nonEmpty(body['anchorKey']) || body['anchorKey'] !== ref['anchorKey']) {
     return 'CurrentPointer anchorKey disagrees with its ref';
   }
   if (!(body['noteId'] === null || nonEmpty(body['noteId']))) return 'CurrentPointer noteId must be null or a string';
-  if (!isPositiveSafeInteger(body['revision'])) return 'CurrentPointer revision must be a positive safe integer';
+  if (!isPos(body['revision'])) return 'CurrentPointer revision must be a positive safe integer';
   return null;
 }
 
@@ -551,21 +516,20 @@ function eventEnvelopeProblem(event: EncodedDomainEvent, body: UnknownRecord, ev
 }
 
 export function encodeNoteWrittenEvent(event: NoteWrittenEventV1): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 const NOTE_WRITE_STATUSES: readonly NoteState[] = ['accepted', 'pending_review', 'staged'];
 const NOTE_WRITE_WARNINGS: readonly string[] = ['symbol_unresolved', 'anchor_ended'];
 
 /**
- * Item 5 step 7 / R4: the strict `NoteWritten.result` check. It must agree with
+ * R4: the strict `NoteWritten.result` check. It must agree with
  * the written head (status, noteId, version, reasons, confirmedByUser) and stay
  * inside the success shape (`overQuota` boolean, the two warning codes, at most
  * `NOTE_EXISTING_TOPICS_MAX` `{anchorKey, topic, count >= 1}` topics).
  */
 function noteWriteResultProblem(value: unknown, head: UnknownRecord): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['status', 'noteId', 'version', 'reasons', 'overQuota',
+  if (!isRecord(value) || !hasOnlyKeys(value, ['status', 'noteId', 'version', 'reasons', 'overQuota',
     'confirmedByUser', 'warnings', 'existingTopics'])) {
     return 'NoteWritten result carries unknown fields';
   }
@@ -576,7 +540,7 @@ function noteWriteResultProblem(value: unknown, head: UnknownRecord): string | n
   if (!nonEmpty(value['noteId']) || value['noteId'] !== head['noteId']) {
     return 'NoteWritten result noteId disagrees with the head';
   }
-  if (!isPositiveSafeInteger(value['version']) || value['version'] !== head['version']) {
+  if (!isPos(value['version']) || value['version'] !== head['version']) {
     return 'NoteWritten result version disagrees with the head';
   }
   if (!Array.isArray(value['reasons']) || !value['reasons'].every(reason => REVIEW_REASONS.includes(reason as NoteReviewReason))
@@ -596,8 +560,8 @@ function noteWriteResultProblem(value: unknown, head: UnknownRecord): string | n
     return 'NoteWritten result existingTopics is invalid';
   }
   for (const topic of topics) {
-    if (!isObject(topic) || !hasOnlyKeys(topic, ['anchorKey', 'topic', 'count']) || !nonEmpty(topic['anchorKey'])
-      || !nonEmpty(topic['topic']) || !isPositiveSafeInteger(topic['count'])) {
+    if (!isRecord(topic) || !hasOnlyKeys(topic, ['anchorKey', 'topic', 'count']) || !nonEmpty(topic['anchorKey'])
+      || !nonEmpty(topic['topic']) || !isPos(topic['count'])) {
       return 'NoteWritten result existingTopics entries are invalid';
     }
   }
@@ -612,7 +576,7 @@ export function noteWrittenEventFromEvent(event: EncodedDomainEvent): DecodeResu
   if (envelope !== null) return invalid(envelope);
   const head = body['head'];
   const version = body['version'];
-  if (!isObject(head) || !isObject(version)) return invalid('NoteWritten requires the written head and version');
+  if (!isRecord(head) || !isRecord(version)) return invalid('NoteWritten requires the written head and version');
   const headProblem = noteHeadBodyProblem(head, 'null', false);
   if (headProblem !== null) return invalid(`NoteWritten head is invalid: ${headProblem}`);
   const versionProblem = noteVersionBodyProblem(version, 'null', false);
@@ -627,8 +591,7 @@ export function noteWrittenEventFromEvent(event: EncodedDomainEvent): DecodeResu
 }
 
 export function encodeNoteDispositionChangedEvent(event: NoteDispositionChangedEventV1): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 export function noteDispositionChangedEventFromEvent(event: EncodedDomainEvent):
@@ -641,7 +604,7 @@ DecodeResult<NoteDispositionChangedEventV1> {
   if (envelope !== null) return invalid(envelope);
   const head = body['head'];
   const version = body['version'];
-  if (!isObject(head) || !isObject(version)) return invalid('NoteDispositionChanged requires the changed head and version');
+  if (!isRecord(head) || !isRecord(version)) return invalid('NoteDispositionChanged requires the changed head and version');
   const headProblem = noteHeadBodyProblem(head, 'null', false);
   if (headProblem !== null) return invalid(`NoteDispositionChanged head is invalid: ${headProblem}`);
   const versionProblem = noteVersionBodyProblem(version, 'null', false);
@@ -661,7 +624,7 @@ DecodeResult<NoteDispositionChangedEventV1> {
     const proofIssue = decisionChangeProofProblem(proof);
     if (proofIssue !== null) return invalid(`NoteDispositionChanged ${proofIssue}`);
     // The book: acknowledgementRef equals proof.acknowledgementRef when the proof is present.
-    if (!isObject(proof)
+    if (!isRecord(proof)
       || canonicalOf(body['acknowledgementRef']) !== canonicalOf(proof['acknowledgementRef'])) {
       return invalid('NoteDispositionChanged acknowledgementRef disagrees with proof.acknowledgementRef');
     }
@@ -672,8 +635,7 @@ DecodeResult<NoteDispositionChangedEventV1> {
 }
 
 export function encodeCurrentPointerMovedEvent(event: CurrentPointerMovedEventV1): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 export function currentPointerMovedEventFromEvent(event: EncodedDomainEvent): DecodeResult<CurrentPointerMovedEventV1> {
@@ -683,7 +645,7 @@ export function currentPointerMovedEventFromEvent(event: EncodedDomainEvent): De
     'schemaVersion', 'occurredAt', 'projectId', 'workspaceId', 'pointer']);
   if (envelope !== null) return invalid(envelope);
   const pointer = body['pointer'];
-  if (!isObject(pointer)) return invalid('CurrentPointerMoved requires the moved pointer');
+  if (!isRecord(pointer)) return invalid('CurrentPointerMoved requires the moved pointer');
   const problem = currentPointerBodyProblem(pointer);
   if (problem !== null) return invalid(`CurrentPointerMoved pointer is invalid: ${problem}`);
   return { status: 'decoded', value: body as unknown as CurrentPointerMovedEventV1 };

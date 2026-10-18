@@ -1,6 +1,6 @@
 /**
  * K3 model contracts: the `CommandRerunRequest` read/write ports (spec §2,
- * L19a). Types only in group 1; the owner service is group 4.
+ * L19a).
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../../contracts/core/identity.js';
@@ -15,14 +15,14 @@ import type {
 import type { GraphWrite } from './task-contracts.js';
 
 /**
- * Rework 1 item 8 (lead ruling): the request owner's return contract. A branch
- * that writes nothing says `not_written` and never fabricates a commit cursor;
- * CRR-01/CRR-07 writes return the real `WriteResult` (its own commit cursor).
+ * The request owner's return contract: a branch that writes nothing says
+ * `not_written` and never fabricates a commit cursor; CRR-01/CRR-07 writes
+ * return the real `WriteResult` (its own commit cursor).
  *
- * Rework 2 item 3 (lead ruling): the no-write `pending`/`allowed` outcomes
- * carry the WAITING request's `command` beside `requestId`, so the tool prints
- * the form already waiting without a second point read (the committed form
- * already carries it in `request.command`).
+ * The no-write `pending`/`allowed` outcomes carry the WAITING request's
+ * `command` beside `requestId`, so the tool prints the form already waiting
+ * without a second point read (the committed form already carries it in
+ * `request.command`).
  */
 export type CommandRerunRequestReplyV1 =
   | { status: 'not_written'; outcome:

@@ -1,7 +1,7 @@
 /**
  * Slice 5 §4.1/§4.2/F42: the ONE read-only decision aggregator.
  *
- * It joins the seven formal sources with the same canonical card identity
+ * It joins the formal sources with the same canonical card identity
  * (`contracts/goal-decisions.ts:decisionSourceKey`), delegates the conflict
  * source to F43 and the notices to the per-category `DecisionNoticeSourcePort`
  * readers (F44 for `automatic_rework`), pages each source continuously and
@@ -15,6 +15,7 @@ import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identit
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { UserMessageResponseV1 } from '../../../contracts/core/session-message.js';
 import { isUserMessageRecipient } from '../../../contracts/core/session-message.js';
+import { isRecord } from '../../../contracts/validation/common.js';
 import {
   decisionSourceKey,
   type DecisionSourceIdentityV1,
@@ -52,7 +53,6 @@ import {
 } from '../tasks/command-rerun-request-card.js';
 import type { PlanProposal } from '../model/plan-contracts.js';
 import {
-  compareProposalChainPositions,
   decodePlanProposalOrigin,
   decodePlanProposalRecord,
   S5_PLAN_PROPOSAL_BY_REQUEST,
@@ -71,7 +71,7 @@ import {
 import type { GoalDecisionCauseReader } from '../tasks/goal-decision-reader.js';
 import type { PlanningQuestionReader } from '../tasks/planning-question-reader.js';
 import { enumerateClosedGoalCandidates, enumerateGoalCandidates, readGoalPlanWindow,
-  readTaskClosure, type TaskClosureV1 } from '../tasks/plan-readers.js';
+  readTaskClosure, terminalProposalOf, type TaskClosureV1 } from '../tasks/plan-readers.js';
 import { findAnswerMessage } from '../tasks/decision-answer-lookup.js';
 import { UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX, unknownCallReviewCardFacts, unknownCallReviewTargetPaths,
   type UnknownCallReviewCardFactsV1 } from '../tasks/unknown-call-review-card.js';
@@ -235,7 +235,7 @@ export type CardCollectionSourceSpec<T> = {
   closedReasonOf(item: T): DecisionCardV1['closedReason'];
   readByKey(ctx: CoreCallContext, input: { workspace: WorkspaceScope; source: DecisionSourceV1 }):
     Promise<ReadResult<{ item: T } | { closed: DecisionCardV1['closedReason'] } | null>>;
-  /** K3-20: the maximum items one OFFSET page serves (1..200, default SOURCE_PAGE_LIMIT). */
+  /** The maximum items one OFFSET page serves (1..200, default SOURCE_PAGE_LIMIT). */
   pageLimit?: number;
 };
 
@@ -366,7 +366,7 @@ function noteReviewCard(card: NoteDecisionCardFactsV1, goalRef: GoalRef, goal: G
 }
 
 /**
- * K3 rework 1 item 4 (ruling 4): the ONE canonical Task-closure read the card
+ * The ONE canonical Task-closure read the card
  * sources share. `readTaskClosure` derives satisfied/cancelled/superseded from
  * the canonical Task facts (never only the Plan disposition); its rejection is
  * passed through unchanged, so a read failure is `unavailable` and never
@@ -388,10 +388,10 @@ async function readTaskClosureCached(
 }
 
 /**
- * K3 L18/U7: the `unknown_call_review` card source, registered on the generic
+ * The `unknown_call_review` card source, registered on the generic
  * collection adapter. It reads the Goal's `needs_decision`/`awaiting_approval`
  * records to the end, the Goal's current plan window ONCE per attempt (the Goal
- * basis), the ONE canonical Task closure once per Task (ruling 4) and each
+ * basis), the ONE canonical Task closure once per Task and each
  * original Run revision ONCE per attempt, then projects the open cards.
  * `readByKey` reads the review by ref directly (no paging), rejects a foreign
  * Goal and serves a closed projection as history.
@@ -400,12 +400,12 @@ export type UnknownCallReviewCardSourceDependencies = {
   records: S5RecordPort;
   reviews: Pick<UnknownCallReviewReadPort, 'listReviews' | 'readReview'>;
   /**
-   * K3 L18: the workspace owner's read seam for each target path's current
+   * The workspace owner's read seam for each target path's current
    * digest. Optional so existing constructions keep compiling; absent, every
    * digest is `null`.
    */
   workspace?: Pick<WorkspaceToolsPort, 'readWorkspace'>;
-  /** K3-20: the maximum items one offset page serves (1..200, default SOURCE_PAGE_LIMIT). */
+  /** The maximum items one offset page serves (1..200, default SOURCE_PAGE_LIMIT). */
   pageLimit?: number;
 };
 
@@ -527,14 +527,14 @@ export function createUnknownCallReviewCardSource(
 }
 
 /**
- * K3 L19a: the `command_rerun_request` card source, registered on the generic
+ * The `command_rerun_request` card source, registered on the generic
  * collection adapter. It pages the Goal's `pending` requests to the end
  * (`k3-crr-by-goal-state`), then re-derives each card from the request, its
  * review record, the original Run and the Goal's current plan window. The card
  * is NEVER filtered by autonomy: the human must know and allow the rerun
  * (B2-07). `readByKey` reads the request directly, rejects a moved revision
  * (a stale source key) and serves `closed` for a non-pending request or an
- * ended Task (B2-08, ruling 4).
+ * ended Task (B2-08).
  */
 export function createCommandRerunRequestCardSource(
   deps: CommandRerunRequestCardSourceDependencies,
@@ -1159,7 +1159,7 @@ async function readDecisionCard(
       if (record === null) return { status: 'not_found' };
       const decoded = decodeSessionMessageRecord(record);
       if (decoded.status !== 'decoded') return { status: 'rejected', code: 'unavailable', reason: decoded.reason };
-      // Lead (accept review NEW-4): the same eligibility as the queue's source-1 loop.
+      // The same eligibility as the queue's source-1 loop.
       const message = decoded.value;
       if (!isUserMessageRecipient(message.recipient) || message.decision === undefined
         || message.decision.syntheticAnswer || message.intent !== 'decision_request') {
@@ -1272,7 +1272,7 @@ function identityScopeProblem(ctx: CoreCallContext, identity: DecisionSourceIden
       return identity.goalRef.projectId !== ctx.projectId ? forbidden : null;
     case 'note_review':
       return null;
-    // K3 sources (L19a/L24): their refs carry their own project/workspace ids.
+    // These sources' refs carry their own project/workspace ids.
     case 'unknown_call_review':
       return identity.reviewRef.projectId !== ctx.projectId ? forbidden : null;
     case 'command_rerun_request':
@@ -1625,7 +1625,7 @@ async function findCandidateProposal(
       throw { status: 'rejected', code: 'unavailable',
         reason: `plan proposal ${record.refKey}: ${decoded.reason}` } as CoreRejection;
     }
-    // Lead (accept review NEW-4): an explicit proposal of another Goal is not this Goal's candidate.
+    // An explicit proposal of another Goal is not this Goal's candidate.
     if (canonicalJson(decoded.value.goalRef as unknown as JsonValue) !== canonicalJson(goal.ref as unknown as JsonValue)) {
       return null;
     }
@@ -1672,22 +1672,9 @@ async function findCandidateProposal(
     if ((candidate.notAdopted?.replacedBy ?? null) === null) continue;
     superseded.add(canonicalJson(candidate.ref as unknown as JsonValue));
   }
-  let head: PlanProposal | null = null;
-  for (const candidate of candidates) {
-    if (candidate.kind !== 'candidate_v2') continue;
-    if (superseded.has(canonicalJson(candidate.ref as unknown as JsonValue))) continue;
-    if (candidate.status !== 'accepted' && candidate.status !== 'not_adopted') continue;
-    if (head === null) {
-      head = candidate;
-      continue;
-    }
-    const position = compareProposalChainPositions(
-      { refKey: canonicalJson(candidate.ref as unknown as JsonValue),
-        since: positions.get(canonicalJson(candidate.ref as unknown as JsonValue)) ?? null },
-      { refKey: canonicalJson(head.ref as unknown as JsonValue),
-        since: positions.get(canonicalJson(head.ref as unknown as JsonValue)) ?? null });
-    if (position > 0) head = candidate;
-  }
+  const head: PlanProposal | null = terminalProposalOf(
+    candidates.filter((candidate) => !superseded.has(canonicalJson(candidate.ref as unknown as JsonValue))),
+    positions);
   if (head !== null) return head;
   return candidates.find((candidate) => candidate.status !== 'candidate') ?? null;
 }
@@ -1830,10 +1817,6 @@ function isNoticePosition(value: unknown): value is NoticePositionV1 {
   if (!isRecord(value) || typeof value['itemKey'] !== 'string') return false;
   if (value['kind'] === 'legacy') return typeof value['occurredAt'] === 'string';
   return value['kind'] === 'commit' && typeof value['cursor'] === 'string';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** The stable page point of one card, ordered exactly like the output sections. */

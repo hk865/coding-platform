@@ -13,6 +13,7 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -39,6 +40,9 @@ import { decodeSessionAnomalyAnchor } from '../tasks/session-anomaly-codecs.js';
 import { SESSION_ANOMALY_BY_TASK_LOOKUP } from '../model/session-facts-contracts.js';
 import { isPausedInterrupted } from '../state/run-machine.js';
 import { storeFailureToRejection } from './goal-conflicts.js';
+import {
+  Budget, CapacityError, readEqualityAll, readOneKeyed, readOrderedAll, readWatermark,
+} from './activity-read-helpers.js';
 
 // --------------------------------------------------------------------------
 // Public view types (spec §2 "WorkGraph views")
@@ -78,103 +82,11 @@ export type TaskTimelineDependencies = {
 };
 
 // --------------------------------------------------------------------------
-// Small shared helpers
+// Page limits and canonical keys
 // --------------------------------------------------------------------------
 
 const WINDOW_MAX_ATTEMPTS = 4;
 const PAGE_LIMIT = 200;
-const READ_PAGE_LIMIT = 200;
-
-class CapacityError extends Error {}
-
-function unavailable(reason: string): CoreRejection {
-  return { status: 'rejected', code: 'unavailable', reason };
-}
-function invalid(reason: string): CoreRejection {
-  return { status: 'rejected', code: 'invalid', reason };
-}
-function sourceStale(reason: string): CoreRejection {
-  return { status: 'rejected', code: 'source_stale', reason };
-}
-
-/** Counts the storage reads L17 names: one index row, one keyed record, one `eventAt`. */
-class Budget {
-  private left: number;
-  constructor(cap: number) { this.left = cap; }
-  spend(reads: number): void {
-    this.left -= reads;
-    if (this.left < 0) throw new CapacityError();
-  }
-}
-
-type OrderedPage = Awaited<ReturnType<RecordOrderedLookupPort['lookupOrdered']>>;
-type EqualityPage = Awaited<ReturnType<RecordLookupPort['lookup']>>;
-
-async function readOrderedAll(
-  records: TaskTimelineDependencies['records'],
-  request: { index: string; values: readonly string[]; direction: 'asc' | 'desc' },
-  budget: Budget,
-): Promise<EncodedRecord[]> {
-  const all: EncodedRecord[] = [];
-  let after: { order: string | number; refKey: string } | undefined;
-  for (;;) {
-    const page: OrderedPage = await records.lookupOrdered({
-      index: request.index, values: request.values, direction: request.direction,
-      ...(after === undefined ? {} : { after }), limit: READ_PAGE_LIMIT,
-    });
-    if (page.status !== 'ready') throw page;
-    budget.spend(page.value.records.length);
-    all.push(...page.value.records);
-    const next = page.value.next;
-    if (next === null) break;
-    after = next;
-  }
-  return all;
-}
-
-async function readEqualityAll(
-  records: TaskTimelineDependencies['records'],
-  index: string,
-  values: readonly (string | number | boolean | null)[],
-  budget: Budget,
-): Promise<EncodedRecord[]> {
-  const all: EncodedRecord[] = [];
-  let after: string | undefined;
-  for (;;) {
-    const page: EqualityPage = await records.lookup({
-      index, values, limit: READ_PAGE_LIMIT, ...(after === undefined ? {} : { after }),
-    });
-    if (page.status !== 'ready') throw page;
-    budget.spend(page.value.records.length);
-    all.push(...page.value.records);
-    const next = page.value.next;
-    if (next === null) break;
-    after = next;
-  }
-  return all;
-}
-
-/** One keyed record read; a genuine miss is `undefined`, never a read failure. */
-async function readOneKeyed(
-  records: TaskTimelineDependencies['records'],
-  refKey: string,
-  budget: Budget,
-): Promise<EncodedRecord | undefined> {
-  const page = await records.readMany([refKey]);
-  if (page.status !== 'ready') throw page;
-  // L17: each keyed record read counts once, whether it hits or misses; a
-  // miss must not under-count the cap (`page.value.records.length` is 0 then).
-  budget.spend(1);
-  return page.value.records[0];
-}
-
-async function readWatermark(
-  records: TaskTimelineDependencies['records'],
-): Promise<ReadResult<import('../../../contracts/command-event.js').CommitCursor | null>> {
-  const page = await records.readMany([]);
-  if (page.status !== 'ready') return storeFailureToRejection(page);
-  return { status: 'ready', value: page.value.readThrough };
-}
 
 function canonicalKey(value: unknown): string {
   return canonicalJson(value as JsonValue);
@@ -399,7 +311,7 @@ async function readTaskPoints(
   const runs: RunSnapshot[] = [];
   for (const record of runRecords) {
     const decoded = decodeRun(record);
-    if (!decoded.ok) throw unavailable(`Run record ${record.refKey}: ${decoded.reason}`);
+    if (!decoded.ok) throw rejected('unavailable', `Run record ${record.refKey}: ${decoded.reason}`);
     if (decoded.value.task.taskId !== task.taskId) continue;
     runs.push(decoded.value);
   }
@@ -411,9 +323,9 @@ async function readTaskPoints(
   const rounds: { record: EncodedRecord; round: RoundSnapshot; since: CommitCursor | null; finalizedAt: string | null }[] = [];
   for (const record of roundRecords) {
     const decoded = decodeVerificationRoundSnapshot(record);
-    if (decoded.status !== 'decoded') throw unavailable(`round ${record.refKey}: ${decoded.reason}`);
+    if (decoded.status !== 'decoded') throw rejected('unavailable', `round ${record.refKey}: ${decoded.reason}`);
     const origin = decodeNoticeOrigin(record);
-    if (origin.status !== 'decoded') throw unavailable(`round origin ${record.refKey}: ${origin.reason}`);
+    if (origin.status !== 'decoded') throw rejected('unavailable', `round origin ${record.refKey}: ${origin.reason}`);
     rounds.push({
       record, round: decoded.value,
       since: origin.value.since === undefined ? null : origin.value.since,
@@ -426,7 +338,7 @@ async function readTaskPoints(
     [projectId, workspaceId, goalId, task.taskId], budget);
   for (const record of anomalyRecords) {
     const decoded = decodeSessionAnomalyAnchor(record);
-    if (decoded.status !== 'decoded') throw unavailable(`anomaly ${record.refKey}: ${decoded.reason}`);
+    if (decoded.status !== 'decoded') throw rejected('unavailable', `anomaly ${record.refKey}: ${decoded.reason}`);
     if (decoded.value.task.taskId !== task.taskId) continue;
     points.push({ kind: 'anomaly', at: decoded.value.recordedAt, source: decoded.value.ref });
   }
@@ -460,7 +372,7 @@ async function readTaskPoints(
       budget);
     if (requeueRecord !== undefined) {
       const decoded = decodeTaskRequeueSnapshot(requeueRecord);
-      if (decoded.status !== 'decoded') throw unavailable(`requeue ${requeueRecord.refKey}: ${decoded.reason}`);
+      if (decoded.status !== 'decoded') throw rejected('unavailable', `requeue ${requeueRecord.refKey}: ${decoded.reason}`);
       if (decoded.value.afterRunRef.runId === run.ref.runId) {
         points.push({ kind: 'requeue', at: decoded.value.requestedAt, source: decoded.value.ref });
       }
@@ -469,7 +381,7 @@ async function readTaskPoints(
       [projectId, workspaceId, goalId, run.ref.runId], budget);
     for (const record of controlRecords) {
       const decoded = decodeControlIntentSnapshot(record);
-      if (decoded.status !== 'decoded') throw unavailable(`control intent ${record.refKey}: ${decoded.reason}`);
+      if (decoded.status !== 'decoded') throw rejected('unavailable', `control intent ${record.refKey}: ${decoded.reason}`);
       const intent = decoded.value;
       if (intent.status !== 'applied') continue;
       if (intent.runRef.runId !== run.ref.runId) continue;
@@ -544,9 +456,9 @@ function validateInput(ctx: CoreCallContext, input: TimelineInput): CoreRejectio
     return { status: 'rejected', code: 'forbidden', reason: 'the requested Goal is outside the bound call scope' };
   }
   if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > PAGE_LIMIT) {
-    return invalid(`limit must be an integer between 1 and ${String(PAGE_LIMIT)}`);
+    return rejected('invalid', `limit must be an integer between 1 and ${String(PAGE_LIMIT)}`);
   }
-  if (input.cursor !== null && typeof input.cursor !== 'string') return invalid('cursor must be a string or null');
+  if (input.cursor !== null && typeof input.cursor !== 'string') return rejected('invalid', 'cursor must be a string or null');
   return null;
 }
 
@@ -560,10 +472,10 @@ async function readTimelineWindow(
   const goalRecord = await readOneKeyed(records, canonicalKey(input.goalRef), budget);
   if (goalRecord === undefined) return { status: 'rejected', code: 'unavailable', reason: `the Goal ${input.goalRef.goalId} is missing` };
   const decodedGoal = decodeGoalSnapshot(goalRecord);
-  if (decodedGoal.status !== 'decoded') return unavailable(`the Goal ${input.goalRef.goalId}: ${decodedGoal.reason}`);
+  if (decodedGoal.status !== 'decoded') return rejected('unavailable', `the Goal ${input.goalRef.goalId}: ${decodedGoal.reason}`);
   const goal = decodedGoal.value;
   if (goal.ref.projectId !== input.goalRef.projectId || goal.ref.goalId !== input.goalRef.goalId) {
-    return unavailable(`the Goal record ${goalRecord.refKey} is not the requested Goal`);
+    return rejected('unavailable', `the Goal record ${goalRecord.refKey} is not the requested Goal`);
   }
   const workspaceId = goal.workspaceRef.workspaceId;
   // R4: the Goal it resolves must be the caller's bound workspace.
@@ -584,7 +496,7 @@ async function readTimelineWindow(
     const decoded = decodePlanRevisionSnapshot(record);
     if (decoded.status !== 'decoded') {
       if (activeKey !== null && record.refKey === activeKey) {
-        return unavailable(`the active Plan revision ${record.refKey}: ${decoded.reason}`);
+        return rejected('unavailable', `the active Plan revision ${record.refKey}: ${decoded.reason}`);
       }
       unreadable = true;
       continue;
@@ -595,16 +507,16 @@ async function readTimelineWindow(
   for (const plan of plans) byRefKey.set(planRevisionRefKey(plan.ref), plan);
   const current = activeKey === null ? null : (byRefKey.get(activeKey) ?? null);
   if (activeKey !== null && current === null) {
-    return unavailable(`the active Plan revision ${activeKey} is missing`);
+    return rejected('unavailable', `the active Plan revision ${activeKey} is missing`);
   }
 
   // Cursor: it carries the current Plan's version (originally read by the first page).
   let startIndex = 0;
   if (input.cursor !== null) {
     const cursor = decodeCursor(input.cursor);
-    if (cursor === null) return invalid('the cursor is not a task-timeline cursor');
+    if (cursor === null) return rejected('invalid', 'the cursor is not a task-timeline cursor');
     if (activeKey === null || cursor.planKey !== activeKey) {
-      return sourceStale('the Goal\'s active Plan changed between pages; read the timeline from the start');
+      return rejected('source_stale', 'the Goal\'s active Plan changed between pages; read the timeline from the start');
     }
     startIndex = cursor.index;
   }
@@ -613,7 +525,7 @@ async function readTimelineWindow(
   }
 
   const tasks = current.tasks;
-  if (startIndex > tasks.length) return invalid('the cursor points past the end of the current Plan');
+  if (startIndex > tasks.length) return rejected('invalid', 'the cursor points past the end of the current Plan');
   const pageTasks = tasks.slice(startIndex, startIndex + input.limit);
   const planContext: PlanContext = { plans, byRefKey, unreadable, current };
 
@@ -659,7 +571,7 @@ export function createTaskStateTimeline(deps: TaskTimelineDependencies): TaskTim
           return storeFailureToRejection(error as { code: string; reason: string });
         }
       }
-      return unavailable(`the task timeline read for ${window} did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts`);
+      return rejected('unavailable', `the task timeline read for ${window} did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts`);
     },
   };
 }

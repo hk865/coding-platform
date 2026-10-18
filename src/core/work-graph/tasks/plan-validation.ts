@@ -1,4 +1,4 @@
-/** Pure Plan admission rules extracted from plan-record-codecs, with one owner.
+/** Pure Plan admission rules with one owner.
  * Codecs validate persisted shape; this file judges obligations/DAG/assignments
  * plus the v2 whiteboard-relation and exact-input membership rules. */
 import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js';
@@ -8,16 +8,13 @@ import type {
 } from '../../../contracts/plan.js';
 import { planValidationError, revisionAssignments } from '../../../contracts/plan.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { isRecord } from '../../../contracts/validation/common.js';
 import type { FutureCarrierRemovalV1, FutureDispositionChangeV1 } from '../state/plan-machine.js';
 import {
   buildFrozenTaskDefinitions, executionDefinitionsAgree, frozenTaskDefinitionsAgree, isBasisUnsupported,
   type FrozenObligation, type FrozenTaskDefinition,
 } from './plan-task-basis.js';
 import { buildTaskAdjacency, hasCycleInEdges, hasDirectedCycle } from '../model/task-index.js';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** Task ids that actually carry an explicit `executionIntent` in this draft.
  * The new exemption branches must key on this, never on a raw legacy count. */
@@ -245,7 +242,7 @@ export function planPhaseGuardReasons(tasks: readonly RuntimeTask[]): string[] {
 }
 
 // --------------------------------------------------------------------------
-// W1 future-only change checks
+// future-only change checks
 // --------------------------------------------------------------------------
 
 /**
@@ -323,8 +320,8 @@ function draftDefinitionIndex(plan: PlanRevisionDraft): ReadonlyMap<string, Froz
 
 /** Derives the future-only change set from source+draft. The delta is computed
  * from the execution definition only; display hierarchy and advisory relations
- * are intentionally excluded. A physically removed task is unsupported: W1 keeps
- * the taskId and records disposition instead. */
+ * are intentionally excluded. A physically removed task is unsupported: the
+ * revision keeps the taskId and records disposition instead. */
 export function deriveFuturePlanDelta(
   source: PlanRevisionSnapshot,
   target: PlanRevisionDraft,

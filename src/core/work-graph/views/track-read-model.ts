@@ -9,7 +9,7 @@
  * `ACTIVITY_READ_RECORD_CAP` and the whole read is a 2A L7 stable window (at
  * most four attempts, a moving window -> `unavailable`).
  *
- * Round 2 R3: the page is read bounded. Segments are scanned in L12's order
+ * The page is read bounded. Segments are scanned in L12's order
  * (`runs_ended`, `runs_open`, `rounds_ended`, `rounds_open`, `rounds_unplaced`,
  * `queries`); each underlying index is read only until the page's `limit` is
  * full, and `next` is a segment-plus-index-position cursor that resumes exactly
@@ -23,8 +23,9 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
-import type { DispatchOutboxRef, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { VerificationRoundRef, RoundSnapshot } from '../../../contracts/verification.js';
@@ -33,7 +34,6 @@ import {
   ACTIVITY_READ_RECORD_CAP,
   provenNotEnteredKernel,
   type ActivityRecordingSnapshot,
-  type RunActivitySnapshot,
 } from '../../../contracts/run-activity.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
@@ -45,21 +45,16 @@ import {
   S2B_ROUND_BY_GOAL_UNFINALIZED_LOOKUP,
   VERIFICATION_ROUND_BY_STATUS_LOOKUP,
 } from '../persistence/evidence-record-codecs.js';
-import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { decodeControlIntentSnapshot, S2B_CONTROL_BY_RUN_LOOKUP } from '../persistence/control-record-codecs.js';
 import { decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord, S2B_QUERY_RUN_BY_SESSION_ENDED_LOOKUP } from '../queries/query-record-codecs.js';
 import { SESSION_BY_PROVENANCE_LOOKUP } from '../model/session-facts-contracts.js';
 import {
   decodeSessionRecord,
-  decodeSessionWorkLink,
-  SESSION_LINKS_BY_TASK_LOOKUP,
   sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import {
-  decodeDispatchOutboxEntry,
-  dispatchOutboxRefKey,
   decodeTaskRequeueSnapshot,
   taskRequeueRefKey,
 } from '../tasks/claim-record-codecs.js';
@@ -73,6 +68,10 @@ import { isPausedInterrupted } from '../state/run-machine.js';
 import { runErrorOf } from '../state/task-failure.js';
 import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
 import { storeFailureToRejection } from './goal-conflicts.js';
+import {
+  activityViewOf, Budget, CapacityError, claimingSessionOf, emptyView, gateInfoOf,
+  isQuarterInstant, readEqualityAll, readOneKeyed, readWatermark,
+} from './activity-read-helpers.js';
 import type { ActivityUncountedReason, RunActivityViewV1 } from './activity-read-model.js';
 
 // --------------------------------------------------------------------------
@@ -134,7 +133,7 @@ export type TrackReadModelDependencies = {
 const WINDOW_MAX_ATTEMPTS = 4;
 const PAGE_LIMIT = 200;
 /**
- * R3: the readonly-copy provenance lookup is paged too, so a `limit: 2` page
+ * The readonly-copy provenance lookup is paged too, so a `limit: 2` page
  * never reads every later copy before it can stop. Each page is small because
  * most Sessions have very few readonly copies; the cursor keeps the page's
  * position so the next call resumes inside it.
@@ -155,76 +154,13 @@ type SegmentId = (typeof SEGMENTS)[number];
 // Shared helpers
 // --------------------------------------------------------------------------
 
-class CapacityError extends Error {}
 /** R4: a record outside the caller's bound project/workspace must not leak. */
 class ForbiddenError extends Error {
   constructor(readonly reason: string) { super(reason); }
 }
 
-function unavailable(reason: string): CoreRejection {
-  return { status: 'rejected', code: 'unavailable', reason };
-}
-function invalid(reason: string): CoreRejection {
-  return { status: 'rejected', code: 'invalid', reason };
-}
-function forbidden(reason: string): CoreRejection {
-  return { status: 'rejected', code: 'forbidden', reason };
-}
-
-/** Counts the storage reads L17 names: one index row, one keyed record, one `eventAt`. */
-class Budget {
-  private left: number;
-  constructor(cap: number) { this.left = cap; }
-  spend(reads: number): void {
-    this.left -= reads;
-    if (this.left < 0) throw new CapacityError();
-  }
-}
-
 type OrderedPage = Awaited<ReturnType<RecordOrderedLookupPort['lookupOrdered']>>;
 type EqualityPage = Awaited<ReturnType<RecordLookupPort['lookup']>>;
-
-async function readEqualityAll(
-  records: TrackReadModelDependencies['records'],
-  index: string,
-  values: readonly (string | number | boolean | null)[],
-  budget: Budget,
-): Promise<EncodedRecord[]> {
-  const all: EncodedRecord[] = [];
-  let after: string | undefined;
-  for (;;) {
-    const page: EqualityPage = await records.lookup({
-      index, values, limit: PAGE_LIMIT, ...(after === undefined ? {} : { after }),
-    });
-    if (page.status !== 'ready') throw page;
-    budget.spend(page.value.records.length);
-    all.push(...page.value.records);
-    const next = page.value.next;
-    if (next === null) break;
-    after = next;
-  }
-  return all;
-}
-
-/** One keyed record read; a miss still costs one storage read (L17, round 2 R7). */
-async function readOneKeyed(
-  records: TrackReadModelDependencies['records'],
-  refKey: string,
-  budget: Budget,
-): Promise<EncodedRecord | undefined> {
-  const page = await records.readMany([refKey]);
-  if (page.status !== 'ready') throw page;
-  // R7: charge one per requested key, including a miss. Charging
-  // `records.length` made every miss free and let keyed reads bypass the cap.
-  budget.spend(1);
-  return page.value.records[0];
-}
-
-async function readWatermark(records: TrackReadModelDependencies['records']): Promise<ReadResult<CommitCursor | null>> {
-  const page = await records.readMany([]);
-  if (page.status !== 'ready') return storeFailureToRejection(page);
-  return { status: 'ready', value: page.value.readThrough };
-}
 
 function canonicalKey(value: unknown): string {
   return canonicalJson(value as JsonValue);
@@ -236,16 +172,8 @@ function byteOrder(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function isQuarterInstant(value: unknown): value is string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) return false;
-  const ms = Date.parse(value);
-  if (!Number.isFinite(ms)) return false;
-  const date = new Date(ms);
-  return date.getUTCMinutes() % 15 === 0 && date.getUTCSeconds() === 0 && date.getUTCMilliseconds() === 0;
-}
-
 // --------------------------------------------------------------------------
-// L12 page cursor (round 2 R3)
+// L12 page cursor
 // --------------------------------------------------------------------------
 
 /**
@@ -263,7 +191,7 @@ type QueryCursor = {
   o: string | null;
   k: string | null;
   occ: boolean;
-  /** R3: the provenance page token (`after`) that contained `c`, so a resumed page re-reads only that page. */
+  /** The provenance page token (`after`) that contained `c`, so a resumed page re-reads only that page. */
   ca: string | null;
 };
 
@@ -293,7 +221,7 @@ function decodeQueryCursor(value: unknown): QueryCursor | null {
   if (!isStringOrNull(c) || !isStringOrNull(o) || !isStringOrNull(k)) return null;
   if (p2 !== null && p2 !== 'copy_ended' && p2 !== 'copy_occ') return null;
   if (typeof occ !== 'boolean') return null;
-  // `ca` is absent on cursors written before round 3; tolerate it as null.
+  // `ca` is absent on cursors written by earlier versions; tolerate it as null.
   if (ca !== undefined && !isStringOrNull(ca)) return null;
   return { a: a as number, p, c, p2, o, k, occ, ca: (ca ?? null) as string | null };
 }
@@ -325,57 +253,6 @@ function activityRefKey(runRef: RunRef): string {
 }
 
 // --------------------------------------------------------------------------
-// L7 classification + L10 view (shared with the activity read model's shape)
-// --------------------------------------------------------------------------
-
-function activityViewOf(activity: RunActivitySnapshot, since: string | null): RunActivityViewV1 {
-  const late = since !== null && activity.recordedBy === 'backfill' && activity.runEndedAt >= since;
-  const facts = activity.facts;
-  if (facts.status === 'unknown') {
-    return { runRef: activity.runRef, status: 'unknown', reason: facts.reason, error: false,
-      totals: null, changedFiles: null, usage: null,
-      recordedBy: activity.recordedBy, recordedAt: activity.recordedAt,
-      countedThroughTurnEnd: null, unresolvedCalls: null };
-  }
-  return {
-    runRef: activity.runRef, status: 'counted', reason: late ? 'recorded_late' : null, error: late,
-    totals: facts.totals,
-    changedFiles: { definite: facts.changedFiles.definite.length, possible: facts.changedFiles.possible.length,
-      possiblyIncomplete: facts.changedFiles.possiblyIncomplete },
-    usage: { ...facts.usage.totals, complete: facts.usage.complete },
-    recordedBy: activity.recordedBy, recordedAt: activity.recordedAt,
-    countedThroughTurnEnd: facts.window.turnTerminal, unresolvedCalls: facts.window.unresolvedCalls,
-  };
-}
-
-function emptyView(
-  runRef: RunRef,
-  status: RunActivityViewV1['status'],
-  reason: ActivityUncountedReason | 'recorded_late' | null,
-  error: boolean,
-): RunActivityViewV1 {
-  return { runRef, status, reason, error, totals: null, changedFiles: null, usage: null,
-    recordedBy: null, recordedAt: null, countedThroughTurnEnd: null, unresolvedCalls: null };
-}
-
-/** L17: the claiming Session is the history's, else the dispatch claim's, else null. */
-async function claimingSessionOf(
-  records: TrackReadModelDependencies['records'],
-  run: RunSnapshot,
-  budget: Budget,
-): Promise<SessionRef | null> {
-  const history = run.executionHistory;
-  if (history !== undefined && history !== null) return history.sessionRef;
-  const ref: DispatchOutboxRef = { aggregateType: 'DispatchOutboxEntry', projectId: run.ref.projectId,
-    goalId: run.ref.goalId, taskId: run.task.taskId, attemptId: run.attemptId };
-  const record = await readOneKeyed(records, dispatchOutboxRefKey(ref), budget);
-  if (record === undefined) return null;
-  const decoded = decodeDispatchOutboxEntry(record);
-  if (decoded.status !== 'decoded') throw unavailable(`dispatch claim ${record.refKey}: ${decoded.reason}`);
-  return decoded.value.claim.sessionRef;
-}
-
-// --------------------------------------------------------------------------
 // Segment readers
 // --------------------------------------------------------------------------
 
@@ -392,7 +269,7 @@ type SegmentContext = {
   since: string | null;
 };
 
-/** R3: the metadata a bounded page's scan produced. */
+/** The metadata a bounded page's scan produced. */
 type PageOut = {
   bars: TrackBarV1[];
   hostRestarts: string[];
@@ -418,7 +295,7 @@ async function readActivityRecording(
   const record = await readOneKeyed(records, key, budget);
   if (record === undefined) return null;
   const decoded = decodeActivityRecordingSnapshot(record);
-  if (decoded.status !== 'decoded') throw unavailable(`ActivityRecording ${record.refKey}: ${decoded.reason}`);
+  if (decoded.status !== 'decoded') throw rejected('unavailable', `ActivityRecording ${record.refKey}: ${decoded.reason}`);
   return decoded.value;
 }
 
@@ -429,11 +306,11 @@ async function activityViewFor(
   const record = await readOneKeyed(ctx.records, activityRefKey(run.ref), ctx.budget);
   if (record !== undefined) {
     const decoded = decodeRunActivitySnapshot(record);
-    if (decoded.status !== 'decoded') throw unavailable(`RunActivity record ${record.refKey}: ${decoded.reason}`);
+    if (decoded.status !== 'decoded') throw rejected('unavailable', `RunActivity record ${record.refKey}: ${decoded.reason}`);
     return activityViewOf(decoded.value, ctx.since);
   }
   if (run.status === 'starting' || run.status === 'running') return emptyView(run.ref, 'in_progress', null, false);
-  // R5: the ONE shared L7 predicate (V2 authorization only, ended Runs only,
+  // The ONE shared L7 predicate (V2 authorization only, ended Runs only,
   // no position record). Starting/running Runs were handled above.
   if (provenNotEnteredKernel(run, ctx.since)) {
     return { runRef: run.ref, status: 'not_entered', reason: null, error: false,
@@ -458,7 +335,7 @@ async function requeueInfoOf(
   const record = await readOneKeyed(records, taskRequeueRefKey(requeueRef), budget);
   if (record === undefined) return null;
   const decoded = decodeTaskRequeueSnapshot(record);
-  if (decoded.status !== 'decoded') throw unavailable(`TaskRequeue ${record.refKey}: ${decoded.reason}`);
+  if (decoded.status !== 'decoded') throw rejected('unavailable', `TaskRequeue ${record.refKey}: ${decoded.reason}`);
   const value = decoded.value;
   return {
     actorClass: reworkActorClassOf(null, value.requestedBy) ?? value.requestedBy.kind,
@@ -491,7 +368,7 @@ async function pausesOf(
   const events: { kind: 'paused' | 'resumed'; at: string; ref: ControlIntentRef }[] = [];
   for (const record of refs) {
     const decoded = decodeControlIntentSnapshot(record);
-    if (decoded.status !== 'decoded') throw unavailable(`ControlIntent ${record.refKey}: ${decoded.reason}`);
+    if (decoded.status !== 'decoded') throw rejected('unavailable', `ControlIntent ${record.refKey}: ${decoded.reason}`);
     const intent: ControlIntentSnapshotV1 = decoded.value;
     if (intent.status !== 'applied') continue;
     const observation = intent.observation;
@@ -539,7 +416,7 @@ async function taskRunsOf(
   const runs: RunSnapshot[] = [];
   for (const record of rows) {
     const decoded = decodeRun(record);
-    if (!decoded.ok) throw unavailable(`Run record ${record.refKey}: ${decoded.reason}`);
+    if (!decoded.ok) throw rejected('unavailable', `Run record ${record.refKey}: ${decoded.reason}`);
     runs.push(decoded.value);
   }
   runs.sort((left, right) => {
@@ -620,7 +497,7 @@ async function scanRunsEnded(
     for (let index = 0; index < rows.length; index += 1) {
       const record = rows[index]!;
       const decoded = decodeRun(record);
-      if (!decoded.ok) throw unavailable(`Run record ${record.refKey}: ${decoded.reason}`);
+      if (!decoded.ok) throw rejected('unavailable', `Run record ${record.refKey}: ${decoded.reason}`);
       const run = decoded.value;
       if (run.ref.goalId !== goalRef.goalId) continue;
       // R4: never return data owned by another workspace of the same project.
@@ -676,7 +553,7 @@ async function scanRunsOpenStatus(
     for (let index = 0; index < rows.length; index += 1) {
       const record = rows[index]!;
       const decoded = decodeRun(record);
-      if (!decoded.ok) throw unavailable(`Run record ${record.refKey}: ${decoded.reason}`);
+      if (!decoded.ok) throw rejected('unavailable', `Run record ${record.refKey}: ${decoded.reason}`);
       const run = decoded.value;
       if (run.ref.goalId !== goalRef.goalId) continue;
       if (run.workspaceSnapshot.workspaceId !== ctx.workspaceId) {
@@ -720,7 +597,7 @@ async function subjectSessionOf(
   let session: SessionRef | null = null;
   if (record !== undefined) {
     const decoded = decodeRun(record);
-    if (!decoded.ok) throw unavailable(`Run record ${record.refKey}: ${decoded.reason}`);
+    if (!decoded.ok) throw rejected('unavailable', `Run record ${record.refKey}: ${decoded.reason}`);
     if (decoded.value.workspaceSnapshot.workspaceId !== workspaceId) {
       throw new ForbiddenError(`Run ${record.refKey} is outside the bound workspace`);
     }
@@ -737,31 +614,12 @@ async function gateOwnersOf(
   cache: Map<string, { owners: SessionRef[]; gate: boolean }>,
   budget: Budget,
 ): Promise<{ owners: SessionRef[]; gate: boolean }> {
-  const cacheKey = canonicalKey({ goalRef, taskId: round.subject.taskId, planRef: round.adoptedPlanRef });
-  const cached = cache.get(cacheKey);
-  if (cached !== undefined) return cached;
-  const planRecord = await readOneKeyed(records, canonicalKey(round.adoptedPlanRef), budget);
-  let gate = false;
-  if (planRecord !== undefined) {
-    const decoded = decodePlanRevisionSnapshot(planRecord);
-    if (decoded.status !== 'decoded') throw unavailable(`Plan ${planRecord.refKey}: ${decoded.reason}`);
-    gate = decoded.value.tasks.find((task) => task.taskId === round.subject.taskId)?.taskKind === 'gate';
-  }
-  let owners: SessionRef[] = [];
-  if (gate) {
-    const links = await readEqualityAll(records, SESSION_LINKS_BY_TASK_LOOKUP,
-      [goalRef.projectId, 'task', goalRef.goalId, round.subject.taskId, 'responsible'], budget);
-    for (const link of links) {
-      const decoded = decodeSessionWorkLink(link);
-      if (decoded.status !== 'decoded') throw unavailable(`SessionWorkLink ${link.refKey}: ${decoded.reason}`);
-      if (decoded.value.until !== null) continue;
-      owners.push({ projectId: decoded.value.ref.projectId, sessionId: decoded.value.ref.sessionId });
-    }
-    owners = owners.sort((left, right) => byteOrder(canonicalKey(left), canonicalKey(right)));
-  }
-  const info = { owners, gate };
-  cache.set(cacheKey, info);
-  return info;
+  const info = await gateInfoOf(records, goalRef, round, budget, cache);
+  // The shared gate read returns the owners unsorted; the track orders them by
+  // the canonical key (byte order) of each SessionRef.
+  return info.gate
+    ? { owners: [...info.owners].sort((left, right) => byteOrder(canonicalKey(left), canonicalKey(right))), gate: true }
+    : info;
 }
 
 function checksBegun(round: RoundSnapshot): number {
@@ -786,9 +644,9 @@ async function readCheckStart(
   record: EncodedRecord,
 ): Promise<{ since: CommitCursor | null; finalizedAt: string | null; round: RoundSnapshot }> {
   const origin = decodeNoticeOrigin(record);
-  if (origin.status !== 'decoded') throw unavailable(`round origin ${record.refKey}: ${origin.reason}`);
+  if (origin.status !== 'decoded') throw rejected('unavailable', `round origin ${record.refKey}: ${origin.reason}`);
   const decoded = decodeVerificationRoundSnapshot(record);
-  if (decoded.status !== 'decoded') throw unavailable(`round ${record.refKey}: ${decoded.reason}`);
+  if (decoded.status !== 'decoded') throw rejected('unavailable', `round ${record.refKey}: ${decoded.reason}`);
   return { since: origin.value.since ?? null, finalizedAt: origin.value.finalizedAt ?? null, round: decoded.value };
 }
 
@@ -941,7 +799,7 @@ async function scanQueries(
     const record = await readOneKeyed(records, canonicalKey(queryRun.run.queryJobRef), budget);
     if (record === undefined) return null;
     const decoded = decodeQueryJobSnapshot(record);
-    if (decoded.status !== 'decoded') throw unavailable(`QueryJob ${record.refKey}: ${decoded.reason}`);
+    if (decoded.status !== 'decoded') throw rejected('unavailable', `QueryJob ${record.refKey}: ${decoded.reason}`);
     return decoded.value.job.goalId;
   };
 
@@ -977,7 +835,7 @@ async function scanQueries(
       budget.spend(page.value.records.length);
       for (const record of page.value.records) {
         const decoded = decodeQueryRunSnapshotRecord(record);
-        if (decoded.status !== 'decoded') throw unavailable(`QueryRun ${record.refKey}: ${decoded.reason}`);
+        if (decoded.status !== 'decoded') throw rejected('unavailable', `QueryRun ${record.refKey}: ${decoded.reason}`);
         const emitted = await pushQuery(decoded.value, session, null, 'turn');
         if (emitted && out.bars.length - before >= need) return decoded.value;
       }
@@ -991,7 +849,7 @@ async function scanQueries(
       aggregateType: 'Session', projectId: goalRef.projectId, sessionId: session.sessionId }), budget);
     if (askedRecord === undefined) return null;
     const decoded = decodeSessionRecord(askedRecord);
-    if (decoded.status !== 'decoded') throw unavailable(`Session ${askedRecord.refKey}: ${decoded.reason}`);
+    if (decoded.status !== 'decoded') throw rejected('unavailable', `Session ${askedRecord.refKey}: ${decoded.reason}`);
     // R4: a Session record outside the bound workspace must not leak.
     if (decoded.value.workspaceId !== workspaceId) {
       throw new ForbiddenError(`Session ${askedRecord.refKey} is outside the bound workspace`);
@@ -1001,12 +859,12 @@ async function scanQueries(
     const record = await readOneKeyed(records, canonicalKey(occupant.executionRef), budget);
     if (record === undefined) return null;
     const running = decodeQueryRunSnapshotRecord(record);
-    if (running.status !== 'decoded') throw unavailable(`QueryRun ${record.refKey}: ${running.reason}`);
+    if (running.status !== 'decoded') throw rejected('unavailable', `QueryRun ${record.refKey}: ${running.reason}`);
     return running.value;
   };
 
   /**
-   * R3: one page of readonly copies of `session`, with the token to fetch the
+   * One page of readonly copies of `session`, with the token to fetch the
    * next page. The caller stops as soon as the requested bars are filled, so a
    * `limit: 2` page never reads every later copy.
    */
@@ -1024,7 +882,7 @@ async function scanQueries(
     const copies: QueryCopy[] = [];
     for (const copyRecord of page.value.records) {
       const decoded = decodeSessionRecord(copyRecord);
-      if (decoded.status !== 'decoded') throw unavailable(`Session ${copyRecord.refKey}: ${decoded.reason}`);
+      if (decoded.status !== 'decoded') throw rejected('unavailable', `Session ${copyRecord.refKey}: ${decoded.reason}`);
       if (decoded.value.workspaceId !== workspaceId) {
         throw new ForbiddenError(`Session ${copyRecord.refKey} is outside the bound workspace`);
       }
@@ -1065,7 +923,7 @@ async function scanQueries(
       }
     }
 
-    // R3: paged readonly-copy provenance. `copiesAfter` is the token of the
+    // Paged readonly-copy provenance. `copiesAfter` is the token of the
     // page currently being read; it is carried in the cursor (`ca`) so a
     // resumed page re-reads only the page that held `c`.
     let copiesAfter: string | undefined =
@@ -1105,7 +963,7 @@ async function scanQueries(
             budget.spend(page.value.records.length);
             for (const record of page.value.records) {
               const decoded = decodeQueryRunSnapshotRecord(record);
-              if (decoded.status !== 'decoded') throw unavailable(`QueryRun ${record.refKey}: ${decoded.reason}`);
+              if (decoded.status !== 'decoded') throw rejected('unavailable', `QueryRun ${record.refKey}: ${decoded.reason}`);
               const emitted = await pushQuery(decoded.value, copy.ref, copy.from, 'consultation');
               if (emitted && out.bars.length - before >= need) { filledQuery = decoded.value; break; }
             }
@@ -1180,9 +1038,9 @@ async function goalWorkspaceId(
   budget: Budget,
 ): Promise<string> {
   const record = await readOneKeyed(records, canonicalKey(goalRef), budget);
-  if (record === undefined) throw unavailable(`the Goal ${goalRef.goalId} is missing`);
+  if (record === undefined) throw rejected('unavailable', `the Goal ${goalRef.goalId} is missing`);
   const decoded = decodeGoalSnapshot(record);
-  if (decoded.status !== 'decoded') throw unavailable(`the Goal ${goalRef.goalId}: ${decoded.reason}`);
+  if (decoded.status !== 'decoded') throw rejected('unavailable', `the Goal ${goalRef.goalId}: ${decoded.reason}`);
   return decoded.value.workspaceRef.workspaceId;
 }
 
@@ -1196,18 +1054,18 @@ function validateTrackInput(ctx: CoreCallContext, input: TrackBarsInput): CoreRe
     || input.goalRef.aggregateType !== 'Goal' || input.goalRef.projectId !== ctx.projectId) {
     return { status: 'rejected', code: 'forbidden', reason: 'the requested goal is outside the bound call scope' };
   }
-  if (!isQuarterInstant(input.from)) return invalid('from must be a UTC quarter boundary ending in Z');
-  if (!isQuarterInstant(input.to)) return invalid('to must be a UTC quarter boundary ending in Z');
-  if (Date.parse(input.from) >= Date.parse(input.to)) return invalid('from must be before to');
+  if (!isQuarterInstant(input.from)) return rejected('invalid', 'from must be a UTC quarter boundary ending in Z');
+  if (!isQuarterInstant(input.to)) return rejected('invalid', 'to must be a UTC quarter boundary ending in Z');
+  if (Date.parse(input.from) >= Date.parse(input.to)) return rejected('invalid', 'from must be before to');
   if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > TRACK_LIMIT_MAX) {
-    return invalid(`limit must be an integer between 1 and ${String(TRACK_LIMIT_MAX)}`);
+    return rejected('invalid', `limit must be an integer between 1 and ${String(TRACK_LIMIT_MAX)}`);
   }
   if (input.cursor !== null && (typeof input.cursor !== 'string' || decodeCursor(input.cursor) === null)) {
-    return invalid('cursor is not a track-bars page cursor');
+    return rejected('invalid', 'cursor is not a track-bars page cursor');
   }
   if (input.sessionRefs !== undefined) {
     if (!Array.isArray(input.sessionRefs) || input.sessionRefs.length > SESSION_REF_LIMIT) {
-      return invalid(`sessionRefs may carry at most ${String(SESSION_REF_LIMIT)} references`);
+      return rejected('invalid', `sessionRefs may carry at most ${String(SESSION_REF_LIMIT)} references`);
     }
   }
   return null;
@@ -1237,7 +1095,7 @@ async function sessionProblemOf(
       projectId: ref.projectId, sessionId: ref.sessionId }), budget);
     if (record !== undefined) {
       const decoded = decodeSessionRecord(record);
-      if (decoded.status !== 'decoded') throw unavailable(`Session ${record.refKey}: ${decoded.reason}`);
+      if (decoded.status !== 'decoded') throw rejected('unavailable', `Session ${record.refKey}: ${decoded.reason}`);
       if (decoded.value.workspaceId !== workspaceId) {
         throw new ForbiddenError(`Session ${key} is outside the bound workspace`);
       }
@@ -1263,7 +1121,7 @@ async function readTrackBarsWindow(
   const workspaceId = await goalWorkspaceId(records, input.goalRef, budget);
   // R4: the Goal it resolves must be the caller's bound workspace.
   if (workspaceId !== ctx.workspaceId) {
-    return forbidden(`the Goal ${input.goalRef.goalId} is outside the bound workspace`);
+    return rejected('forbidden', `the Goal ${input.goalRef.goalId} is outside the bound workspace`);
   }
   const recording = await readActivityRecording(records, input.goalRef.projectId, workspaceId, budget);
   const sessionRefs = input.sessionRefs ?? null;
@@ -1340,11 +1198,11 @@ export function createTrackReadModel(deps: TrackReadModelDependencies): Pick<Tra
             return { status: 'rejected', code: 'capacity',
               reason: `the track read for window ${window} exceeds the storage-read cap of ${String(cap)}` };
           }
-          if (error instanceof ForbiddenError) return forbidden(error.reason);
+          if (error instanceof ForbiddenError) return rejected('forbidden', error.reason);
           return storeFailureToRejection(error as { code: string; reason: string });
         }
       }
-      return unavailable(`the track read for window ${window} did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts`);
+      return rejected('unavailable', `the track read for window ${window} did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts`);
     },
   };
 }

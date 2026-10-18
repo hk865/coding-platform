@@ -23,6 +23,7 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteHeadSnapshot } from '../../../contracts/note.js';
@@ -65,10 +66,6 @@ export type NoteDecisionSourceDeps = {
 const OPTION_LABELS: Readonly<Record<'accept' | 'reject' | 'supersede' | 'coexist', string>> = {
   accept: '收下', reject: '拒绝', supersede: '取代', coexist: '并存',
 };
-
-function unavailable<T>(reason: string): ReadResult<T> {
-  return { status: 'rejected', code: 'unavailable', reason };
-}
 
 function ready<T>(value: T): ReadResult<T> { return { status: 'ready', value }; }
 
@@ -142,11 +139,11 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
     async readNoteDecisions(ctx, input): Promise<ReadResult<NoteDecisionCardFactsV1[]>> {
       const goalRef: GoalRef = input.goalRef;
       const window = await readGoalPlanWindow(deps.records, goalRef);
-      if (window.status !== 'ready') return unavailable(window.reason);
+      if (window.status !== 'ready') return rejected('unavailable', window.reason);
       if (window.goal.desiredState === 'cancelled') return ready([]);
       const page = await readAllHeads(deps.records, S4_NOTE_BY_REVIEW_STATUS_LOOKUP,
         [ctx.projectId, goalRef.goalId, 'pending_review']);
-      if (!page.ok) return unavailable(page.reason);
+      if (!page.ok) return rejected('unavailable', page.reason);
       if (page.heads.length === 0) return ready([]);
 
       // ONE batched read of every pending note's relation targets, shared by
@@ -154,17 +151,17 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
       const targetIds = new Set<string>();
       for (const head of page.heads) for (const noteId of actualDispositionTargets(head)) targetIds.add(noteId);
       const targetRead = await readHeadBatch(deps.records, ctx.projectId, [...targetIds], { requireAll: true });
-      if (!targetRead.ok) return unavailable(targetRead.reason);
+      if (!targetRead.ok) return rejected('unavailable', targetRead.reason);
       const facts = await deps.userReasonFacts(ctx, [...targetRead.value.values()],
         [{ goalId: goalRef.goalId, window }], input.attempt);
       if (facts.status !== 'ready') {
-        return unavailable(facts.status === 'rejected' ? facts.reason : 'the user-reason facts are not readable');
+        return rejected('unavailable', facts.status === 'rejected' ? facts.reason : 'the user-reason facts are not readable');
       }
 
       // ONE batched pointer + pointed-head read across every pending anchor.
       const anchorKeys = [...new Set(page.heads.map(head => head.anchorKey0))];
       const pointerRead = await readPointerAndHeadBatch(deps.records, ctx.projectId, anchorKeys);
-      if (!pointerRead.ok) return unavailable(pointerRead.reason);
+      if (!pointerRead.ok) return rejected('unavailable', pointerRead.reason);
 
       const cards: NoteDecisionCardFactsV1[] = [];
       for (const head of page.heads) {
@@ -181,7 +178,7 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
     async readNoteDecision(ctx, input): Promise<ReadResult<{
       card: NoteDecisionCardFactsV1 | null; closedReason: NoteDecisionClosedReasonV1 | null }>> {
       const headRead = await readHeadBatch(deps.records, ctx.projectId, [input.pin.noteId]);
-      if (!headRead.ok) return unavailable(headRead.reason);
+      if (!headRead.ok) return rejected('unavailable', headRead.reason);
       const head = headRead.value.get(input.pin.noteId) ?? null;
       // A missing head, a moved version or a non-pending head is the
       // `source_stale` signal (null card and null closed reason).
@@ -191,12 +188,12 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
       if (head.goalId === null) return ready({ card: null, closedReason: null });
       const goalRef: GoalRef = { aggregateType: 'Goal', projectId: ctx.projectId, goalId: head.goalId };
       const window = await readGoalPlanWindow(deps.records, goalRef);
-      if (window.status !== 'ready') return unavailable(window.reason);
+      if (window.status !== 'ready') return rejected('unavailable', window.reason);
       if (window.goal.desiredState === 'cancelled') {
         return ready({ card: null, closedReason: 'goal_cancelled' });
       }
       const carded = await cardFor(ctx, head, { goalId: goalRef.goalId, window });
-      if (!carded.ok) return unavailable(carded.reason);
+      if (!carded.ok) return rejected('unavailable', carded.reason);
       return ready({ card: carded.card, closedReason: carded.closedReason });
     },
 

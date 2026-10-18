@@ -12,17 +12,20 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin, WorkLinkTarget, WorkspaceScope } from '../../../contracts/core/identity.js';
-import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import type {
   ArchiveTaskChoiceV1, ArchiveStepRefV1, SessionArchiveRequestV1,
 } from '../../../contracts/core/session-archive.js';
 import { deriveArchiveStepCommitIdentityV1 } from '../../../contracts/core/session-archive.js';
 import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalOf } from '../../../contracts/fingerprint.js';
+import { isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
-  CommitCursorBinding, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard,
+  CommitCursorBinding, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import type { GraphWrite } from '../model/session-contracts.js';
 import type { SessionResponsibilityBasisPort, SessionResponsibilityBasisV1 } from '../model/session-facts-contracts.js';
 import {
@@ -30,6 +33,10 @@ import {
   encodePendingSessionWorkLink, encodeSessionRecord, plainSessionRefToAggregate,
   sessionAggregateRefKey, sessionWorkLinkRefKey,
 } from './session-record-codecs.js';
+import {
+  eventIdOf, fingerprintOf, identityKeyOf, ownRequest, trustedContext,
+  type OwnedRequest, type TrustedContext,
+} from './trusted-context.js';
 import {
   SESSION_ARCHIVE_REQUESTED_EVENT, SESSION_RESPONSIBILITY_CHANGED_EVENT,
   encodeSessionResponsibilityChangedEvent, sessionArchiveChangedEventFromEvent,
@@ -58,124 +65,18 @@ export type SessionResponsibilityStores = {
   now(): string;
 };
 
-type UnknownRecord = Record<string, unknown>;
-type HostActor = { kind: 'human' | 'system'; id: string };
-type TrustedContext =
-  | { ok: true; scope: WorkspaceScope; actor: HostActor }
-  | { ok: false; rejection: CoreRejection };
-
-function isObject(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function canonicalOf(value: unknown): string | null {
-  try {
-    return canonicalJson(value as JsonValue);
-  } catch {
-    return null;
-  }
-}
-function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
-}
-function mapStoreFailure(failure: import('../../record-store/ports.js').StoreFailure): CoreRejection {
-  switch (failure.code) {
-    case 'invalid': return reject('invalid', failure.reason);
-    case 'not_found': return reject('not_found', failure.reason);
-    case 'idempotency_conflict': return reject('idempotency_conflict', failure.reason);
-    case 'revision_conflict': {
-      const current: VersionPin[] = [];
-      for (const entry of failure.current) {
-        if (entry.revision === null) continue;
-        try {
-          const ref = JSON.parse(entry.refKey) as unknown;
-          if (isObject(ref)) current.push({ ref: ref as VersionPin['ref'], revision: entry.revision });
-        } catch { /* an unreadable ref key is not a pin */ }
-      }
-      return reject('revision_conflict', failure.reason, current.length > 0 ? current : undefined);
-    }
-    case 'unique_conflict': return reject('revision_conflict', `${failure.reason} (the unique slot is held by another owner)`);
-    case 'unsupported': return reject('unsupported', failure.reason);
-    case 'corrupt': return reject('unavailable', `the record store reported damage: ${failure.reason}`);
-    default: return reject('unavailable', failure.reason);
-  }
+/** The shared map takes a version-pin `current`; a `unique_conflict` carries a claim slot instead. */
+function mapStoreFailure(failure: StoreFailure): CoreRejection {
+  return sessionStoreFailureToRejection({
+    code: failure.code,
+    reason: failure.reason,
+    ...(failure.code === 'revision_conflict' ? { current: failure.current } : {}),
+  });
 }
 function mapReadFailure<T>(result: ReadResult<T>): CoreRejection {
   if (result.status === 'rejected') return result;
   if (result.status === 'not_found') return reject('not_found', 'the responsibility facts do not exist');
   return reject('unavailable', 'the responsibility facts are not ready at the requested read window');
-}
-
-function trustedContext(ctx: CoreCallContext): TrustedContext {
-  const bound = ctx as unknown as {
-    projectId?: unknown; workspaceId?: unknown; principal?: unknown; signal?: unknown;
-  };
-  if (!nonEmpty(bound.projectId) || !nonEmpty(bound.workspaceId)) {
-    return { ok: false, rejection: reject('forbidden', 'a Session responsibility call requires a bound project/workspace context') };
-  }
-  const signal = bound.signal;
-  if (!isObject(signal) || typeof signal['aborted'] !== 'boolean' || typeof signal['addEventListener'] !== 'function') {
-    return { ok: false, rejection: reject('forbidden', 'a Session responsibility call requires the bound AbortSignal') };
-  }
-  const principal = bound.principal;
-  if (!isObject(principal) || principal['kind'] !== 'host') {
-    return { ok: false, rejection: reject('forbidden', 'a Session responsibility call requires a trusted Host principal') };
-  }
-  const actor = principal['actor'];
-  if (!isObject(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !nonEmpty(actor['id'])) {
-    return { ok: false, rejection: reject('forbidden', 'a Session responsibility call requires a trusted Host actor') };
-  }
-  return {
-    ok: true,
-    scope: { projectId: bound.projectId, workspaceId: bound.workspaceId },
-    actor: { kind: actor['kind'], id: actor['id'] },
-  };
-}
-
-type OwnedRequest<T> = {
-  ok: true; input: T; requestId: string; expected: readonly VersionPin[];
-} | { ok: false; reason: string };
-
-function ownRequest<T>(request: GraphWrite<T>, what: string): OwnedRequest<T> {
-  try {
-    const clone = structuredClone(request) as GraphWrite<T>;
-    const meta = clone.meta as unknown as UnknownRecord;
-    if (!isObject(meta) || !nonEmpty(meta['requestId'])) return { ok: false, reason: `${what} requires meta.requestId` };
-    if (!Array.isArray(meta['expected'])) return { ok: false, reason: `${what} requires meta.expected` };
-    return { ok: true, input: clone.input, requestId: meta['requestId'], expected: meta['expected'] as readonly VersionPin[] };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { ok: false, reason: `${what} request cannot be isolated from the caller: ${detail}` };
-  }
-}
-
-function actorIdentity(actor: HostActor): { kind: string; id: string } {
-  return { kind: actor.kind, id: actor.id };
-}
-function identityKeyOf(prefix: string, actor: HostActor, scope: WorkspaceScope, requestId: string): string {
-  return prefix + sha256Hex(canonicalJson({
-    actor: actorIdentity(actor), projectId: scope.projectId, workspaceId: scope.workspaceId, requestId,
-  } as unknown as JsonValue));
-}
-function fingerprintOf(
-  kind: string, actor: HostActor, scope: WorkspaceScope, payload: Record<string, unknown>,
-  expected: readonly VersionPin[],
-): string {
-  const pins = [...expected].map((pin) => ({ ref: pin.ref, revision: pin.revision }))
-    .sort((left, right) => {
-      const leftKey = canonicalOf(left.ref) ?? '';
-      const rightKey = canonicalOf(right.ref) ?? '';
-      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-    });
-  return sha256Hex(canonicalJson({
-    kind, actor: actorIdentity(actor), projectId: scope.projectId, workspaceId: scope.workspaceId,
-    ...payload, expected: pins,
-  } as unknown as JsonValue));
-}
-function eventIdOf(identityKey: string, suffix: string): string {
-  return sha256Hex(`${identityKey}|${suffix}`);
 }
 
 function responsibleLinkRef(session: SessionRef, target: WorkLinkTarget) {
@@ -360,11 +261,12 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     ctx: CoreCallContext,
     request: GraphWrite<{ from: SessionRef; to: SessionRef; target: WorkLinkTarget }>,
   ): Promise<WriteResult<{ from: SessionWorkLink; to: SessionWorkLink }>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session responsibility call');
     if (!trusted.ok) return trusted.rejection;
     const { scope, actor } = trusted;
     if (ctx.signal?.aborted) return reject('cancelled', 'the responsibility transfer was cancelled before validation');
-    const owned = ownRequest(request, 'transferSessionResponsibility');
+    const owned: OwnedRequest<{ from: SessionRef; to: SessionRef; target: WorkLinkTarget }> =
+      ownRequest(request, 'transferSessionResponsibility');
     if (!owned.ok) return reject('invalid', owned.reason);
     const input = owned.input;
     if (!isObject(input)) return reject('invalid', 'transferSessionResponsibility requires an input object');
@@ -627,7 +529,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     ctx: CoreCallContext,
     step: ArchiveStepRefV1,
   ): Promise<WriteResult<{ closed: SessionWorkLink; opened: SessionWorkLink | null }>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session responsibility call');
     if (!trusted.ok) return trusted.rejection;
     const { scope } = trusted;
     if (ctx.signal?.aborted) return reject('cancelled', 'the responsibility disposal was cancelled before validation');
@@ -776,7 +678,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     ctx: CoreCallContext,
     request: GraphWrite<{ sessionRef: SessionRef; target: WorkLinkTarget }>,
   ): Promise<WriteResult<SessionWorkLink>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session responsibility call');
     if (!trusted.ok) return trusted.rejection;
     const { scope, actor } = trusted;
     if (ctx.signal?.aborted) return reject('cancelled', 'the terminal responsibility close was cancelled before validation');

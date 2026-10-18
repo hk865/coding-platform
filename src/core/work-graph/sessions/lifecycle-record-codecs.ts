@@ -1,5 +1,5 @@
 /**
- * A1 Session lifecycle event codecs.
+ * Session lifecycle event codecs.
  *
  * SessionRecord/SessionWorkLink reuse `SESSION_RECORD_SCHEMAS` and their
  * existing encoders unchanged. This file registers ONLY the new events needed
@@ -15,6 +15,9 @@ import type { LegacyProvenanceBasisV1, SessionRecord } from '../../../contracts/
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
+import {
+  hasOnlyKeys, invalid, isPos, isRecord, nonEmpty, parseObject, type UnknownRecord,
+} from '../../../contracts/validation/common.js';
 import type {
   DecodeResult, EncodedDomainEvent, RecordBackendSchemas,
 } from '../../record-store/ports.js';
@@ -22,6 +25,7 @@ import {
   checkPlainSessionRef, checkSessionBody, checkWorkLinkBody, checkWorkLinkRef,
   type PendingSessionWorkLink, type Problem,
 } from './session-record-codecs.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 
 export const SESSION_WORK_LINK_CHANGED_EVENT = 'SessionWorkLinkChanged';
 export const SESSION_ARCHIVED_EVENT = 'SessionArchived';
@@ -120,32 +124,6 @@ export const SESSION_RESPONSIBILITY_CHANGED_EVENT = 'SessionResponsibilityChange
 // Small pure helpers (mirrors the Session codec style; no Store access)
 // --------------------------------------------------------------------------
 
-type UnknownRecord = Record<string, unknown>;
-
-function isObject(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isPositiveRevision(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key));
-}
-function parseObject(json: string): UnknownRecord | null {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return isObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function invalid(reason: string): { status: 'invalid'; reason: string } {
-  return { status: 'invalid', reason };
-}
-
 const WORK_LINK_CHANGED_EVENT_KEYS: readonly string[] = [
   'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId',
   'sessionRef', 'sessionRevision', 'active', 'link', 'boundField',
@@ -170,21 +148,21 @@ function checkWorkLinkChangedBody(body: UnknownRecord): Problem {
   const sessionRef = body['sessionRef'];
   const sessionProblem = checkPlainSessionRef(sessionRef);
   if (sessionProblem !== null) return `SessionWorkLinkChanged: ${sessionProblem}`;
-  if (!isObject(sessionRef) || sessionRef['projectId'] !== body['projectId']) {
+  if (!isRecord(sessionRef) || sessionRef['projectId'] !== body['projectId']) {
     return 'SessionWorkLinkChanged sessionRef disagrees with the event project';
   }
-  if (!isPositiveRevision(body['sessionRevision'])) {
+  if (!isPos(body['sessionRevision'])) {
     return 'SessionWorkLinkChanged sessionRevision must be a positive safe integer';
   }
   if (typeof body['active'] !== 'boolean') return 'SessionWorkLinkChanged active must be a boolean';
   const link = body['link'];
-  if (!isObject(link)) return 'SessionWorkLinkChanged requires a pending link body';
+  if (!isRecord(link)) return 'SessionWorkLinkChanged requires a pending link body';
   const linkProblem = checkWorkLinkBody(link, false);
   if (linkProblem !== null) return `SessionWorkLinkChanged link: ${linkProblem}`;
   const ref = link['ref'];
   const refProblem = checkWorkLinkRef(ref);
   if (refProblem !== null) return `SessionWorkLinkChanged link ref: ${refProblem}`;
-  if (!isObject(ref) || ref['projectId'] !== body['projectId'] || !isObject(sessionRef) ||
+  if (!isRecord(ref) || ref['projectId'] !== body['projectId'] || !isRecord(sessionRef) ||
     ref['sessionId'] !== sessionRef['sessionId']) {
     return 'SessionWorkLinkChanged link ref disagrees with the event Session';
   }
@@ -207,14 +185,14 @@ function checkLifecycleChangedBody(body: UnknownRecord, lifecycle: 'archived' | 
   if (!nonEmpty(body['projectId'])) return 'Session lifecycle event requires a projectId';
   if (!nonEmpty(body['reason'])) return 'Session lifecycle event requires a reason';
   const session = body['session'];
-  if (!isObject(session)) return 'Session lifecycle event requires the transitioned SessionRecord';
+  if (!isRecord(session)) return 'Session lifecycle event requires the transitioned SessionRecord';
   const sessionProblem = checkSessionBody(session);
   if (sessionProblem !== null) return `Session lifecycle event session: ${sessionProblem}`;
   if (session['lifecycle'] !== lifecycle) {
     return `Session lifecycle event requires lifecycle ${lifecycle}`;
   }
   const ref = session['ref'];
-  if (!isObject(ref) || ref['projectId'] !== body['projectId']) {
+  if (!isRecord(ref) || ref['projectId'] !== body['projectId']) {
     return 'Session lifecycle event Session disagrees with the event project';
   }
   if (lifecycle === 'archived' && session['archivedAt'] === null) {
@@ -241,7 +219,7 @@ function checkHealthObservedBody(body: UnknownRecord): Problem {
   }
   const header = body['kernelHeader'];
   if (probe === 'ready') {
-    if (!isObject(header) || !hasOnlyKeys(header, ['activeRunId'])
+    if (!isRecord(header) || !hasOnlyKeys(header, ['activeRunId'])
       || !(header['activeRunId'] === null || nonEmpty(header['activeRunId']))) {
       return 'a ready probe carries the Kernel session head {activeRunId}';
     }
@@ -249,11 +227,11 @@ function checkHealthObservedBody(body: UnknownRecord): Problem {
     return 'only a ready probe carries the Kernel session head';
   }
   const session = body['session'];
-  if (!isObject(session)) return 'SessionHealthObserved requires the observed SessionRecord';
+  if (!isRecord(session)) return 'SessionHealthObserved requires the observed SessionRecord';
   const sessionProblem = checkSessionBody(session);
   if (sessionProblem !== null) return `SessionHealthObserved session: ${sessionProblem}`;
   const ref = session['ref'];
-  if (!isObject(ref) || ref['projectId'] !== body['projectId']) {
+  if (!isRecord(ref) || ref['projectId'] !== body['projectId']) {
     return 'SessionHealthObserved Session disagrees with the event project';
   }
   if (session['health'] !== observed) return 'SessionHealthObserved session health disagrees with the observation';
@@ -284,14 +262,14 @@ const ARCHIVE_STEP_KINDS: readonly string[] = [
 ];
 
 function checkSlice1Receipt(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['identityKey', 'fingerprint'])
+  if (!isRecord(value) || !hasOnlyKeys(value, ['identityKey', 'fingerprint'])
     || !nonEmpty(value['identityKey']) || !nonEmpty(value['fingerprint'])) {
     return 'receipt must be {identityKey,fingerprint}';
   }
   return null;
 }
 function checkArchiveStep(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['sessionRef', 'archiveRequestId', 'requestReceipt', 'step', 'subjectKey'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['sessionRef', 'archiveRequestId', 'requestReceipt', 'step', 'subjectKey'])) {
     return 'archiveStep carries unknown fields';
   }
   const sessionProblem = checkPlainSessionRef(value['sessionRef']);
@@ -304,28 +282,28 @@ function checkArchiveStep(value: unknown): Problem {
   return null;
 }
 function checkPlanRef(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'planId'])
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'planId'])
     || value['aggregateType'] !== 'PlanRevision' || !nonEmpty(value['projectId']) || !nonEmpty(value['planId'])) {
     return 'planRef must be a complete PlanRevisionRef';
   }
   return null;
 }
 function checkTaskTriple(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['projectId', 'goalId', 'taskId'])
+  if (!isRecord(value) || !hasOnlyKeys(value, ['projectId', 'goalId', 'taskId'])
     || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['taskId'])) {
     return 'task must be a complete TaskTriple';
   }
   return null;
 }
 function checkOperationRef(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'operationId'])
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'operationId'])
     || value['aggregateType'] !== 'CoreOperation' || !nonEmpty(value['projectId']) || !nonEmpty(value['operationId'])) {
     return 'operationRef must be a complete OperationRef';
   }
   return null;
 }
 function checkMessageRef(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
     || value['aggregateType'] !== 'SessionMessage'
     || !nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId']) || !nonEmpty(value['messageId'])) {
     return 'messageRef must be a complete SessionMessageRef';
@@ -333,7 +311,7 @@ function checkMessageRef(value: unknown): Problem {
   return null;
 }
 function checkRequeueRef(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'taskId', 'afterRunId'])
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'taskId', 'afterRunId'])
     || value['aggregateType'] !== 'TaskRequeue'
     || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['taskId']) || !nonEmpty(value['afterRunId'])) {
     return 'requeueRef must be a complete TaskRequeueRef';
@@ -341,7 +319,7 @@ function checkRequeueRef(value: unknown): Problem {
   return null;
 }
 function checkRunRef(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'runId'])
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'runId'])
     || value['aggregateType'] !== 'Run'
     || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['runId'])) {
     return 'runRef must be a complete RunRef';
@@ -349,7 +327,7 @@ function checkRunRef(value: unknown): Problem {
   return null;
 }
 function checkOutboxRef(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'taskId', 'attemptId'])
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'taskId', 'attemptId'])
     || value['aggregateType'] !== 'DispatchOutboxEntry'
     || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['taskId']) || !nonEmpty(value['attemptId'])) {
     return 'firstClaimRef must be a complete DispatchOutboxRef';
@@ -357,15 +335,15 @@ function checkOutboxRef(value: unknown): Problem {
   return null;
 }
 function checkArtifactRef(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['kind', 'contentType', 'digest', 'sizeBytes', 'source'])
+  if (!isRecord(value) || !hasOnlyKeys(value, ['kind', 'contentType', 'digest', 'sizeBytes', 'source'])
     || value['kind'] !== 'artifact' || !nonEmpty(value['contentType']) || !nonEmpty(value['digest'])
-    || !Number.isSafeInteger(value['sizeBytes']) || !isObject(value['source'])) {
+    || !Number.isSafeInteger(value['sizeBytes']) || !isRecord(value['source'])) {
     return 'manifestRef must be a complete ArtifactRef';
   }
   return null;
 }
 function checkLegacyProvenanceBasis(value: unknown): Problem {
-  if (!isObject(value)) return 'basis must be an object';
+  if (!isRecord(value)) return 'basis must be an object';
   switch (value['kind']) {
     case 'consultation':
       if (!hasOnlyKeys(value, ['kind', 'messageRef'])) return 'consultation basis carries unknown fields';
@@ -402,16 +380,16 @@ function checkArchiveChangedBody(body: UnknownRecord, eventType: string): Proble
   if (!nonEmpty(body['archiveRequestId'])) return 'Session archive event requires an archiveRequestId';
   if (!nonEmpty(body['reason'])) return 'Session archive event requires a reason';
   const session = body['session'];
-  if (!isObject(session)) return 'Session archive event requires the transitioned SessionRecord';
+  if (!isRecord(session)) return 'Session archive event requires the transitioned SessionRecord';
   const sessionProblem = checkSessionBody(session);
   if (sessionProblem !== null) return `Session archive event session: ${sessionProblem}`;
   const ref = session['ref'];
-  if (!isObject(ref) || ref['projectId'] !== body['projectId'] || session['workspaceId'] !== body['workspaceId']) {
+  if (!isRecord(ref) || ref['projectId'] !== body['projectId'] || session['workspaceId'] !== body['workspaceId']) {
     return 'Session archive event Session disagrees with the event scope';
   }
   const request = session['archiveRequest'];
   if (eventType === SESSION_ARCHIVE_REQUESTED_EVENT) {
-    if (!isObject(request) || request['requestId'] !== body['archiveRequestId']) {
+    if (!isRecord(request) || request['requestId'] !== body['archiveRequestId']) {
       return 'SessionArchiveRequested must carry the recorded archive request';
     }
   } else if (request !== null && request !== undefined) {
@@ -425,11 +403,11 @@ function checkProvenanceBackfilledBody(body: UnknownRecord): Problem {
     return 'SessionProvenanceBackfilled requires projectId and workspaceId';
   }
   const session = body['session'];
-  if (!isObject(session)) return 'SessionProvenanceBackfilled requires the transitioned SessionRecord';
+  if (!isRecord(session)) return 'SessionProvenanceBackfilled requires the transitioned SessionRecord';
   const sessionProblem = checkSessionBody(session);
   if (sessionProblem !== null) return `SessionProvenanceBackfilled session: ${sessionProblem}`;
   const ref = session['ref'];
-  if (!isObject(ref) || ref['projectId'] !== body['projectId'] || session['workspaceId'] !== body['workspaceId']) {
+  if (!isRecord(ref) || ref['projectId'] !== body['projectId'] || session['workspaceId'] !== body['workspaceId']) {
     return 'SessionProvenanceBackfilled Session disagrees with the event scope';
   }
   if (session['provenance'] === null || session['provenance'] === undefined) {
@@ -440,7 +418,7 @@ function checkProvenanceBackfilledBody(body: UnknownRecord): Problem {
   return null;
 }
 function checkPendingLink(value: unknown): Problem {
-  if (!isObject(value)) return 'link must be a pending work-link body';
+  if (!isRecord(value)) return 'link must be a pending work-link body';
   return checkWorkLinkBody(value, false);
 }
 function checkResponsibilityChangedBody(body: UnknownRecord): Problem {
@@ -452,20 +430,20 @@ function checkResponsibilityChangedBody(body: UnknownRecord): Problem {
     return 'SessionResponsibilityChanged mode is not recognized';
   }
   const source = body['source'];
-  if (!isObject(source)) return 'SessionResponsibilityChanged requires the source SessionRecord';
+  if (!isRecord(source)) return 'SessionResponsibilityChanged requires the source SessionRecord';
   const sourceProblem = checkSessionBody(source);
   if (sourceProblem !== null) return `SessionResponsibilityChanged source: ${sourceProblem}`;
   const sourceRef = source['ref'];
-  if (!isObject(sourceRef) || sourceRef['projectId'] !== body['projectId'] || source['workspaceId'] !== body['workspaceId']) {
+  if (!isRecord(sourceRef) || sourceRef['projectId'] !== body['projectId'] || source['workspaceId'] !== body['workspaceId']) {
     return 'SessionResponsibilityChanged source disagrees with the event scope';
   }
   const destination = body['destination'];
   if (destination !== null) {
-    if (!isObject(destination)) return 'SessionResponsibilityChanged destination must be a SessionRecord or null';
+    if (!isRecord(destination)) return 'SessionResponsibilityChanged destination must be a SessionRecord or null';
     const destinationProblem = checkSessionBody(destination);
     if (destinationProblem !== null) return `SessionResponsibilityChanged destination: ${destinationProblem}`;
     const destinationRef = destination['ref'];
-    if (!isObject(destinationRef) || destinationRef['projectId'] !== body['projectId']
+    if (!isRecord(destinationRef) || destinationRef['projectId'] !== body['projectId']
       || destination['workspaceId'] !== body['workspaceId']) {
       return 'SessionResponsibilityChanged destination disagrees with the event scope';
     }
@@ -487,7 +465,7 @@ function checkResponsibilityChangedBody(body: UnknownRecord): Problem {
     if (step !== null) return `SessionResponsibilityChanged archiveStep: ${step}`;
   }
   const taskBasis = body['taskBasis'];
-  if (!isObject(taskBasis) || !hasOnlyKeys(taskBasis, ['task', 'planRef', 'terminalCause', 'finishedAt'])) {
+  if (!isRecord(taskBasis) || !hasOnlyKeys(taskBasis, ['task', 'planRef', 'terminalCause', 'finishedAt'])) {
     return 'SessionResponsibilityChanged taskBasis carries unknown fields';
   }
   const task = checkTaskTriple(taskBasis['task']);
@@ -591,63 +569,27 @@ export const SESSION_LIFECYCLE_RECORD_SCHEMAS: RecordBackendSchemas = {
 // --------------------------------------------------------------------------
 
 export function encodeSessionWorkLinkChangedEvent(event: SessionWorkLinkChangedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function encodeSessionLifecycleChangedEvent(event: SessionLifecycleChangedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function encodeSessionHealthObservedEvent(event: SessionHealthObservedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function encodeSessionArchiveChangedEvent(event: SessionArchiveChangedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function encodeSessionProvenanceBackfilledEvent(event: SessionProvenanceBackfilledEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function encodeSessionResponsibilityChangedEvent(event: SessionResponsibilityChangedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 // --------------------------------------------------------------------------

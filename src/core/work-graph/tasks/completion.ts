@@ -1,5 +1,5 @@
 /**
- * R3e.3 formal Task/Goal completion admission (implementation).
+ * Formal Task/Goal completion admission.
  *
  * `completeTaskFromHost` / `completeGoalFromHost` are the trusted Host entries
  * over the ONE `backend.records` instance passed in by `createGoalService`. Each
@@ -27,6 +27,7 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
+import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import type {
   EffectivityAnchorV1, EvidenceBindingV1, EvidenceRef, EvidenceSnapshot, TaskEvidenceIndexSnapshot,
@@ -38,7 +39,8 @@ import type { TaskReductionRef, TaskReductionSnapshot } from '../../../contracts
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
 import type { VerificationRoundRef, RoundSnapshot } from '../../../contracts/verification.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { isNonNeg as isNonNegativeSafeInteger, isPos as isPositiveSafeInteger } from '../../../contracts/validation/common.js';
 import type {
   DecodeResult, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
 } from '../../record-store/ports.js';
@@ -68,6 +70,7 @@ import {
   encodeGoalPhaseSnapshot, encodeTaskReductionSnapshot,
   type CompletionEvent, type GoalCompletedEvent, type TaskCompletedEvent,
 } from './completion-record-codecs.js';
+import { taskPhaseFactsOf } from './task-phase-facts.js';
 import type { GoalTaskPort } from '../model/task-contracts.js';
 
 type Records = GoalRecordTransactionPort & RecordLookupPort;
@@ -88,7 +91,7 @@ const GOAL_IDENTITY_PREFIX = 'r3e-complete-goal:';
 // -------------------------------------------------------------------------- //
 
 function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
+  return rejectedWithCurrent(code, reason, current);
 }
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
@@ -102,17 +105,11 @@ function mapRejected(rejection: Rejected): CoreRejection {
   return reject(rejection.code, rejection.reason);
 }
 function refKeyOf(value: unknown): string | null {
-  try { return canonicalJson(value as JsonValue); } catch { return null; }
+  return canonicalOf(value);
 }
 function fingerprintOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
 function identityKeyOf(prefix: string, actor: HostActor, projectId: string, workspaceId: string, requestId: string): string {
   return prefix + sha256Hex(canonicalJson({ actor: { kind: actor.kind, id: actor.id }, projectId, workspaceId, requestId } as unknown as JsonValue));
-}
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 function planRefProblem(value: unknown): string | null {
   if (!isRecord(value) || value['aggregateType'] !== 'PlanRevision' || !nonEmpty(value['projectId']) || !nonEmpty(value['planId'])) {
@@ -150,14 +147,14 @@ function completionPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read
   const selectedRun = execution === null ? null
     : (read.runsByTaskId.get(task.taskId) ?? []).find(run => sameRef(run.ref, execution)) ?? null;
   const applicableReduction = state.reductionRevision === null ? null : read.reductionsByTaskId.get(task.taskId) ?? null;
-  return {
+  return taskPhaseFactsOf({
     taskKind: task.taskKind,
     applicableReduction,
     selectedRun,
-    originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
+    effectivePhase: state.effectivePhase,
     round: read.roundsByTaskId.get(task.taskId) ?? { kind: 'none' },
     coveringRequeue: state.requeueRef,
-  };
+  });
 }
 
 /** TASK-14 (C5): the head the projection read for the selected Run's chain; null without a valid chain. */

@@ -7,12 +7,12 @@
  * is the W1-aware decision reused by the service, using the existing
  * `plan-task-basis` helpers directly.
  *
- * Supersession contract for the first batch: there is NO persisted, versioned
- * supersession rule yet, so EVERY applicable FAIL/INCONCLUSIVE stays in
+ * Supersession contract: there is NO persisted, versioned supersession rule
+ * yet, so EVERY applicable FAIL/INCONCLUSIVE stays in
  * `blockingByRequirement`; a later applicable PASS takes the PASS coverage slot
  * but MUST NOT delete a blocker. A claim remains neutral (neither PASS nor
- * blocker). Exact versioned supersession is a later R3e deliverable and must not
- * be guessed from list order, time or equal coverage.
+ * blocker). Exact versioned supersession must not be guessed from list order,
+ * time or equal coverage.
  */
 import type {
     EffectiveEvidenceSet, EvidenceApplicability, EvidenceBindingV1, EvidenceV1,

@@ -1,5 +1,5 @@
 /**
- * R3d observed-architecture codecs — the closed registration the observed graph owns.
+ * Observed-architecture codecs — the closed registration the observed graph owns.
  *
  * The record store keeps only mechanical envelopes; this file is the single place
  * that decides whether an observed capture record/event and the body it points at
@@ -17,7 +17,9 @@ import { architectureSourceIssues, pathOwnershipOf } from '../../../contracts/ar
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { PersistedSourceCaptureRef, SourceCaptureRef } from '../../../contracts/core/source.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { invalid, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { DecodeResult, EncodedDomainEvent, EncodedRecord, EncodedRecordSchema, RecordBackendSchemas } from '../../record-store/ports.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { isProjectInputPath } from '../../workspace/project-source-snapshot.js';
 import type { ObservedArchitectureRecord, ObservedArchitectureRef, ObservedFileGraphChunkScope,
   ObservedFileGraphChunkV2, ObservedFileGraphManifest, ObservedFileGraphManifestV2,
@@ -26,7 +28,7 @@ import type { ObservedArchitectureRecord, ObservedArchitectureRef, ObservedFileG
 
 export const OBSERVED_ARCHITECTURE_SCHEMA_ID = 'ObservedArchitecture@1';
 export const OBSERVATION_CURRENT_SCHEMA_ID = 'WorkspaceArchitectureObservationCurrent@1';
-/** L8 request record (book ruling 3); its state-layer writer is
+/** Automatic-capture request record; its state-layer writer is
  * `state/architecture-capture.ts`. */
 export const ARCHITECTURE_AUTO_CAPTURE_SCHEMA_ID = 'ArchitectureAutoCapture@1';
 export const ARCHITECTURE_AUTO_CAPTURE_REQUESTED_EVENT = 'ArchitectureAutoCaptureRequested';
@@ -35,7 +37,7 @@ export const ARCHITECTURE_AUTO_CAPTURE_EVENT_VERSION = 1;
 export const ARCHITECTURE_SOURCE_OBSERVED_EVENT = 'ArchitectureSourceObserved';
 export const ARCHITECTURE_SOURCE_OBSERVED_EVENT_VERSION = 1;
 export const OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE = 'application/vnd.coding-platform.observed-architecture+json';
-/** 8A file-level chunk body (spec L12; lead answer 1). One artifact per chunk. */
+/** File-level chunk body (spec L12). One artifact per chunk. */
 export const FILE_GRAPH_CHUNK_SCHEMA_ID = 'ObservedFileGraphChunk@1';
 export const FILE_GRAPH_CHUNK_CONTENT_TYPE = 'application/vnd.coding-platform.observed-file-graph-chunk+json';
 
@@ -96,12 +98,6 @@ export type ArchitectureAutoCaptureEventV1 = {
 
 type UnknownRecord = Record<string, unknown>;
 
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function isSafeRevision(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
@@ -111,9 +107,6 @@ function isSha256(value: unknown): value is string {
 function safeRelativePath(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 4096
     && !/[\\:\0]/.test(value) && value.split('/').every(segment => !!segment && segment !== '.' && segment !== '..');
-}
-function invalid(reason: string): { status: 'invalid'; reason: string } {
-  return { status: 'invalid', reason };
 }
 function parseObject(json: string, what: string): UnknownRecord | string {
   let parsed: unknown;
@@ -315,7 +308,7 @@ function readFileGraphManifest(value: unknown):
  * pre-put check) expects the body to carry. `nodeCount` is the manifest's global
  * node count; index pairs must stay inside it.
  *
- * This is THE one chunk-body validator (task book §2 item 4): the decoder calls
+ * This is THE one chunk-body validator: the decoder calls
  * it after parsing, and the writer calls it for every chunk body before the
  * first `bodies.put`, so a committed chunk is exactly one the decoder accepts. */
 export function validateObservedFileGraphChunkV2(parsed: unknown, scope: ObservedFileGraphChunkScope,
@@ -768,13 +761,13 @@ export function encodeObservationCurrent(record: WorkspaceArchitectureObservatio
   return { refKey: canonicalJson(record.ref as unknown as JsonValue), schemaId: OBSERVATION_CURRENT_SCHEMA_ID, revision: record.revision, json: JSON.stringify(record) };
 }
 export function encodeArchitectureSourceObservedEvent(event: ArchitectureSourceObservedEventV1): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion, occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 export function encodeArchitectureAutoCapture(record: ArchitectureAutoCaptureRecordV1): EncodedRecord {
   return { refKey: canonicalJson(record.ref as unknown as JsonValue), schemaId: ARCHITECTURE_AUTO_CAPTURE_SCHEMA_ID, revision: record.revision, json: JSON.stringify(record) };
 }
 export function encodeArchitectureAutoCaptureEvent(event: ArchitectureAutoCaptureEventV1): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion, occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 export function decodeArchitectureAutoCapture(record: EncodedRecord): DecodeResult<ArchitectureAutoCaptureRecordV1> {
   const checked = validateArchitectureAutoCapture(record);

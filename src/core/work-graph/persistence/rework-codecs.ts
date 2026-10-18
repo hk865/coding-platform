@@ -1,5 +1,5 @@
 /**
- * A.2 rework shape checks (spec §4.1, §9.1, §13.1).
+ * Shape checks (spec §4.1, §9.1, §13.1).
  *
  * The pure, closed shape validators shared by the claim codecs
  * (`TaskRequeue@1`, `TaskReworkRefusal@1` and their events, the Attempt
@@ -13,38 +13,21 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import { MAX_NEW_BASIS_INPUT_REFS } from '../../../contracts/no-progress.js';
 import { MAX_AUTO_REWORK_LIMIT, REWORK_FAILURE_CLASSES } from '../../../contracts/task-requeue.js';
 import { ROUND_CHECK_INCOMPLETE_CAUSES } from '../../../contracts/verification.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { hasOnlyKeys, isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty } from '../../../contracts/validation/common.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
 
 type UnknownRecord = Record<string, unknown>;
 /** `null` = the check passed; a string is the precise rejection reason. */
 export type Problem = string | null;
 
-export function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-export function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
+export { hasOnlyKeys, isRecord, isSha256Hex, nonEmpty } from '../../../contracts/validation/common.js';
+/** Canonical JSON equality; false when either side is not canonical JSON. */
+export { sameJson } from '../../../contracts/fingerprint.js';
 export function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+  return isNonNeg(value);
 }
 export function isPositiveSafeInteger(value: unknown): value is number {
-  return isNonNegativeSafeInteger(value) && value >= 1;
-}
-export function isSha256Hex(value: unknown): value is string {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
-}
-export function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
-  return Object.keys(value).every(key => allowed.includes(key));
-}
-/** Canonical JSON equality; false when either side is not canonical JSON. */
-export function sameJson(left: unknown, right: unknown): boolean {
-  try {
-    return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue);
-  } catch {
-    return false;
-  }
+  return isPos(value);
 }
 
 // --------------------------------------------------------------------------
@@ -63,9 +46,9 @@ export type NoticeOriginWireV1 = {
   since?: CommitCursor | null;
   noticeAutomationCap?: number;
   /**
-   * Slice 2B L14 end: the VR-07 finalization instant at the top level of a
-   * `VerificationRound` record. Only that aggregate may carry it; it is not part
-   * of the public `RoundSnapshot`.
+   * The VR-07 finalization instant at the top level of a `VerificationRound`
+   * record. Only that aggregate may carry it; it is not part of the public
+   * `RoundSnapshot`.
    */
   finalizedAt?: string;
 };
@@ -93,8 +76,8 @@ export function noticeOriginFieldsProblem(
   if (cap !== undefined && (!isNonNegativeSafeInteger(cap) || cap > MAX_AUTO_REWORK_LIMIT)) {
     return `${label}.noticeAutomationCap must be an integer between 0 and ${String(MAX_AUTO_REWORK_LIMIT)}`;
   }
-  // Slice 2B L14 end: only a VerificationRound may carry the finalization time,
-  // and only as a legal ISO UTC instant ending in `Z`.
+  // Only a VerificationRound may carry the finalization time, and only as a
+  // legal ISO UTC instant ending in `Z`.
   const finalizedAt = value['finalizedAt'];
   if (finalizedAt !== undefined) {
     if (options?.allowFinalizedAt !== true) {

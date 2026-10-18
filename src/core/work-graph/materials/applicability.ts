@@ -5,10 +5,9 @@ import type { MaterialAuthorityReads } from './record-ports.js';
 export type { MaterialAuthorityReads } from './record-ports.js';
 import type { RunSnapshot } from '../../../contracts/dispatch.js';
 import { sameArtifactOwnerRunRef } from '../../../contracts/material-access.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 
-/** Host provenance and the Run reader's own-material rule live here. Material
- * grants, and with them every read of another owner's material by a Run, were
- * deleted (decision 34). */
+/** Host provenance and the Run reader's own-material rule live here. */
 export type MaterialApplicability = {
   reader: MaterialReader;
   ref: ArtifactRef;
@@ -100,10 +99,6 @@ export function materialOwnerFromOrigin(origin: MaterialOrigin): MaterialOwner {
     return origin.owner.aggregateType === 'Run' || origin.owner.aggregateType === 'QueryRun' ? origin.owner : null;
   }
   return null;
-}
-
-function rejected(code: 'forbidden' | 'source_stale' | 'unsupported', reason: string): MaterialAdmission {
-  return { status: 'rejected', code, reason };
 }
 
 /** The recorded Run/QueryRun owner of a material, or none. */

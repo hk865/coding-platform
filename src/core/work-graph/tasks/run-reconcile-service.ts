@@ -25,10 +25,12 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import type { RunReconciliationBasisV1, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { hasOnlyKeys, inList, isNonNeg, utf8Bytes } from '../../../contracts/validation/common.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type { EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreCommitReceipt } from '../../record-store/ports.js';
 import {
@@ -110,7 +112,7 @@ const PROBE_VERDICTS: readonly string[] = ['ready', 'missing', 'damaged', 'host_
 const UNKNOWN_CAUSES: readonly string[] = ['tool_calls_unresolved', 'kernel_unreadable', 'continuation_unrebuildable'];
 
 function reject(code: CoreError, reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
+  return rejected(code, reason);
 }
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
@@ -140,15 +142,6 @@ function runRefusal(refused: Extract<RunTransition, { ok: false }>): CoreRejecti
 function isRunRef(value: unknown): boolean {
   return isRecord(value) && value['aggregateType'] === 'Run' && nonEmpty(value['projectId']) && nonEmpty(value['runId']);
 }
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key));
-}
-function inList<T extends string>(value: unknown, allowed: readonly T[]): value is T {
-  return typeof value === 'string' && (allowed as readonly string[]).includes(value);
-}
-function isNonNeg(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
 function attestationProblem(input: AttestationRequest): string | null {
   if (!isRunRef(input.runRef)) return 'resolveUnknownRun requires a complete RunRef';
   if (typeof input.reason !== 'string' || input.reason.length > MAX_ATTESTATION_REASON_CHARS) {
@@ -168,7 +161,7 @@ function attestationContent(input: AttestationRequest): unknown {
 }
 
 // --------------------------------------------------------------------------
-// K3 RUN-22 review draft (L8, UCR-02)
+// RUN-22 review draft (L8, UCR-02)
 // --------------------------------------------------------------------------
 
 const REVIEW_DRAFT_KEYS: readonly string[] = ['inventory', 'inventoryProblem', 'items', 'itemsOmitted', 'workspace'];
@@ -177,10 +170,6 @@ const DRAFT_INVENTORY_PROBLEMS: readonly UnknownCallInventoryProblemV1[] = [
 ];
 const CALL_ID_MAX_BYTES = 512;
 const MAX_DRAFT_ITEMS = 32;
-
-function utf8Bytes(value: string): number {
-  return new TextEncoder().encode(value).length;
-}
 
 type ValidatedReviewDraft = {
   inventory: 'complete' | 'incomplete';
@@ -394,7 +383,7 @@ function reconcileRunContext(
     exitProof: basis.kind, hostLease: hostLeaseOf(deps.hostInstance, basis), kernelProbe: probe,
     kernelPaused: turn?.kernelPaused ?? false, inputsConfirmed: turn === null ? null : turn.inputsConfirmed,
     actor: isAutomationActor(actor) ? 'system' : 'human', claim: null,
-    // K3 RUN-25 guards (U1/L25): G1 compares the Host's proof with the
+    // RUN-25 guards (U1/L25): G1 compares the Host's proof with the
     // candidate's own; G7/G9 are the WorkGraph side. `auto` carries the facts
     // this write read for a classifier candidate (Q5 G7, Q4 G9); every other
     // reconcile path leaves G9 unproven (so a candidate can never slip through).
@@ -406,7 +395,7 @@ function reconcileRunContext(
   };
 }
 
-/** K3 Q4/Q5: the facts one RUN-25 candidate needs from the WorkGraph side, read before the machine decides. */
+/** Q4/Q5: the facts one RUN-25 candidate needs from the WorkGraph side, read before the machine decides. */
 type AutoCleanupFacts = {
   /** Q5 G7: Session active, no archive request, no continuation and this Run still occupying it. */
   sessionClosable: boolean;
@@ -417,7 +406,7 @@ type AutoCleanupFacts = {
 };
 
 /**
- * K3 Q5 (G7): the Session is active, has no archive request, has no recorded
+ * Q5 (G7): the Session is active, has no archive request, has no recorded
  * continuation and no unchecked legacy predecessor, and the latest Work claim
  * is this Run at the same claim generation. A read failure is `unavailable`
  * (the caller writes nothing).
@@ -450,7 +439,7 @@ async function readSessionClosable(
 }
 
 /**
- * K3 Q4 (G9, L23): walk the Run's work chain backwards as `task-failure.ts`
+ * Q4 (G9, L23): walk the Run's work chain backwards as `task-failure.ts`
  * `chainRunIds` does, read every chain Run and its review record by key, and
  * compute `streakOf`. Every Run and record read becomes a version guard in the
  * same commit; an absent record key is guarded absent. Any read failure is
@@ -523,7 +512,7 @@ function reconcileEventOf(
     case 'not_entered':
       return { kind: 'reconcile_not_entered', claim, basis: input.basis, kernel: result.kernel, recordedAt };
     case 'unknown': {
-      // K3 (L25): the Runtime candidate is mapped onto the machine's shape,
+      // L25: the Runtime candidate is mapped onto the machine's shape,
       // which judges G3 on every unresolved call name (U1/Q1). A candidate runs
       // RUN-25 and carries the synthesized terminal event id.
       const auto = result.autoCleanup;
@@ -630,7 +619,7 @@ function attemptEventOfEnd(
         sequence, entry, turnStartedAt: facts.run.startedAt === null ? runEvent.turn?.entered?.enteredAt ?? null : null });
       break;
     case 'reconcile_unknown':
-      // K3 RUN-25: the machine's synthesized terminal ends the Attempt with a
+      // RUN-25: the machine's synthesized terminal ends the Attempt with a
       // known outcome, which is the `reconcile_terminal` row (ATT-08..10); the
       // RUN-20(i) unknown end keeps `reconcile_unknown`.
       mapped = attemptEventFromRunEvent({ kind: outcome === 'outcome_unknown' ? 'reconcile_unknown' : 'reconcile_terminal',
@@ -670,7 +659,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     receipt: Extract<StoreCommitReceipt, { status: 'committed' }>, identity: string, fingerprint: string, actor: HostActor,
     operation: Operation,
   ): Promise<WriteResult<RunSnapshot>> {
-    // K3 (L7): a record-creating commit carries the review's
+    // L7: a record-creating commit carries the review's
     // `UnknownCallReviewChanged@1` event too, so the original reconcile event
     // is the LAST one (the receipt cursor names it). Read it exactly.
     const at = await records.eventAt(receipt.cursor);
@@ -706,7 +695,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     /** Slice 2B L5: the tally written in this SAME commit (no extra event). */
     activity?: RunActivityFactsV1;
     /**
-     * K3 RUN-22: the review record the owner built from `input.review`, written
+     * RUN-22: the review record the owner built from `input.review`, written
      * in this SAME commit (UCR-02). RUN-25's record arrives as a
      * `create_review_record` effect instead.
      */
@@ -722,7 +711,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       if (!claimRecords.ok) return claimRecords.rejection;
       written.push(...claimRecords.records);
     }
-    // K3 (UCR-01/UCR-02, L7): the review record is created in the SAME commit
+    // UCR-01/UCR-02, L7: the review record is created in the SAME commit
     // as the Run end, guarded absent, and every change (creation included)
     // writes its own `UnknownCallReviewChanged@1` event carrying the whole
     // post-change record.
@@ -743,7 +732,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     let activityGuard: RecordGuard | null = null;
     if (input.activity !== undefined) {
       const planned = await planRunActivityForCommit(records, { activity: input.activity, run: nextRun,
-        // R10 (review item 10): a reconcile that books an already-ended Run
+        // A reconcile that books an already-ended Run
         // (RUN-21) keeps the Run's ORIGINAL `endedAt`; `input.nowIso` is only
         // the replacement time (`recordedAt`).
         runEndedAt: nextRun.endedAt ?? input.nowIso, sessionRef: nextRun.executionHistory?.sessionRef ?? facts.outbox.claim.sessionRef,
@@ -856,7 +845,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       const { input, facts, intents } = begun;
       const result = input.result;
       const turn = result.kind === 'not_entered' ? null : result.turn;
-      // K3 (Q4/Q5): a classifier candidate carries the WorkGraph-side guard
+      // Q4/Q5: a classifier candidate carries the WorkGraph-side guard
       // facts. Read them before the machine decides; a read failure writes
       // nothing. Every chain Run and record read is guarded in the commit.
       const candidate = result.kind === 'unknown' && result.autoCleanup !== undefined && 'proof' in result.autoCleanup
@@ -886,7 +875,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       const nodeBefore: RunNode = notEntered ? 'Revoked' : state.node;
       const takeover = input.basis.kind === 'host_instance_takeover';
       const hasClaimEffects = decided.effects.some(effect => effect.kind !== 'intent');
-      // K3 RUN-25: the takeover-unresolved close releases the Session with its
+      // RUN-25: the takeover-unresolved close releases the Session with its
       // own cause (U2); RUN-20(i) releases nothing (releaseCauseOf -> null).
       const takeoverUnresolved = decided.effects.some(effect => effect.kind === 'create_review_record');
       const pointerRef = facts.run.controlState?.intentRef ?? null;
@@ -936,7 +925,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
         if (!checked.ok) return invalid(checked.reason);
         draft = checked.value;
       }
-      // K3 Q4 (L23): the record carries the chain's streak; the chain Runs and
+      // Q4 (L23): the record carries the chain's streak; the chain Runs and
       // records read are guarded in this same commit.
       let streakFacts: Pick<AutoCleanupFacts, 'priorAutoCleanup' | 'priorUnknownProcess' | 'streakResetRunRef'> | null = null;
       let autoGuards: readonly RecordGuard[] = [];

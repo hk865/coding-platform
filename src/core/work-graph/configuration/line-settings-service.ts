@@ -17,19 +17,25 @@
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { WorkspaceSnapshot } from '../../../contracts/ledger.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sha256Hex, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { LineSettingsSessionRead, WorkLineSettingsPort } from '../model/work-line-contracts.js';
-import { canonicalRefKey, decodeWorkspaceSnapshot, encodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
+import { canonicalRefKey, encodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { WORKSPACE_LINE_PINS_CHANGED_EVENT,
   decodeWorkspaceLinePinsChangedEvent, encodeWorkspaceLinePinsChangedEvent } from '../persistence/line-settings-codecs.js';
 import type { LinePinGuardV1 } from '../state/line-pin-machine.js';
 import { transitionLinePins } from '../state/line-pin-machine.js';
+import {
+  isOwned, loadWorkspace, ownScope, replayWorkspace, sameActor,
+  workspacePinProblem as sharedWorkspacePinProblem, type Owned, type WorkspaceReplayTexts,
+} from './workspace-settings-reads.js';
 
 export type LineSettingsRecordsPort = GoalRecordTransactionPort & RecordLookupPort;
 
@@ -45,60 +51,13 @@ export type LineSettingsDependencies = {
 // Small shared value helpers
 // --------------------------------------------------------------------------
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function sameActor(left: unknown, right: unknown): boolean {
-  return isObject(left) && isObject(right) && left['kind'] === right['kind'] && left['id'] === right['id'];
-}
-function canonicalOf(value: unknown): string | null {
-  try {
-    return canonicalJson(value as JsonValue);
-  } catch {
-    return null;
-  }
-}
-function reject(code: CoreError, reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-
-type Owned = { projectId: string; workspaceId: string; principal: CoreCallContext['principal']; signal: AbortSignal };
-function ownScope(ctx: CoreCallContext): Owned | CoreRejection {
-  if (!isObject(ctx) || !nonEmpty(ctx.projectId) || !nonEmpty(ctx.workspaceId)
-    || !isObject(ctx.principal) || !isObject(ctx.signal)) {
-    return reject('forbidden', 'the line-settings owner requires a trusted bound call context');
-  }
-  return { projectId: ctx.projectId, workspaceId: ctx.workspaceId, principal: ctx.principal, signal: ctx.signal };
-}
-function isOwned(value: Owned | CoreRejection): value is Owned {
-  return 'projectId' in value;
-}
-
 /**
  * `meta.expected` must be exactly one well-formed pin for the bound Workspace:
  * no extras, no duplicates, a safe non-negative revision. A malformed pin is
  * `invalid`, never a stale-pin `revision_conflict`.
  */
 function boundWorkspacePin(expected: unknown, owned: Owned): { pin: VersionPin } | CoreRejection {
-  if (!Array.isArray(expected) || expected.length !== 1) {
-    return reject('invalid', 'meta.expected must carry exactly the bound Workspace version pin');
-  }
-  const pin = expected[0] as unknown;
-  if (!isObject(pin) || !isObject(pin['ref'])) {
-    return reject('invalid', 'meta.expected carries a malformed Workspace version pin');
-  }
-  const revision = pin['revision'];
-  if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) {
-    return reject('invalid', 'the Workspace version pin revision must be a safe non-negative integer');
-  }
-  const workspaceRef = { aggregateType: 'Workspace', projectId: owned.projectId, workspaceId: owned.workspaceId };
-  if (canonicalOf(pin['ref']) !== canonicalOf(workspaceRef)) {
-    return reject('invalid', 'meta.expected does not name the bound Workspace');
-  }
-  return { pin: pin as VersionPin };
+  return sharedWorkspacePinProblem(expected, owned);
 }
 
 function duplicateKeys(refs: readonly unknown[]): boolean {
@@ -111,78 +70,46 @@ function duplicateKeys(refs: readonly unknown[]): boolean {
   return false;
 }
 
+const LINE_REPLAY_TEXTS: WorkspaceReplayTexts = {
+  receipt: 'the line-pin receipt does not name exactly one event',
+  read: 'the recorded line-pin event could not be read',
+  disagree: 'the recorded line-pin event disagrees with the receipt',
+  damaged: 'the line-pin event is damaged: ',
+};
+
 // --------------------------------------------------------------------------
 // The factory
 // --------------------------------------------------------------------------
 
 export function createLineSettingsService(deps: LineSettingsDependencies): WorkLineSettingsPort {
   const records = deps.records;
-  type Receipt = Extract<Awaited<ReturnType<typeof records.commit>>, { status: 'committed' }>;
-
-  async function loadWorkspace(owned: Owned): Promise<ReadResult<WorkspaceSnapshot>> {
-    const key = canonicalRefKey({ aggregateType: 'Workspace', projectId: owned.projectId, workspaceId: owned.workspaceId });
-    let read: Awaited<ReturnType<typeof records.readMany>>;
-    try {
-      read = await records.readMany([key]);
-    } catch {
-      return reject('unavailable', 'the Workspace record could not be read');
-    }
-    if (read.status !== 'ready') {
-      return { status: 'rejected', code: read.code === 'not_found' ? 'not_found' : 'unavailable', reason: read.reason };
-    }
-    const record = read.value.records.find(candidate => candidate.refKey === key);
-    if (record === undefined) return { status: 'not_found' };
-    const decoded = decodeWorkspaceSnapshot(record);
-    if (decoded.status !== 'decoded') return reject('unavailable', `the Workspace record is damaged: ${decoded.reason}`);
-    return { status: 'ready', value: decoded.value };
-  }
-
-  async function replayWorkspace(receipt: Receipt): Promise<WriteResult<WorkspaceSnapshot>> {
-    if (receipt.eventIds.length !== 1 || !nonEmpty(receipt.eventIds[0])) {
-      return reject('unavailable', 'the line-pin receipt does not name exactly one event');
-    }
-    let located: Awaited<ReturnType<typeof records.eventAt>>;
-    try {
-      located = await records.eventAt(receipt.cursor);
-    } catch {
-      return reject('unavailable', 'the recorded line-pin event could not be read');
-    }
-    if (located.status !== 'ready') return { status: 'rejected', code: 'unavailable', reason: located.reason };
-    if (String(located.value.cursor) !== String(receipt.cursor) || located.value.event.eventId !== receipt.eventIds[0]) {
-      return reject('unavailable', 'the recorded line-pin event disagrees with the receipt');
-    }
-    const decoded = decodeWorkspaceLinePinsChangedEvent(located.value.event);
-    if (decoded.status !== 'decoded') return reject('unavailable', `the line-pin event is damaged: ${decoded.reason}`);
-    // The event carries the exact post-write Workspace, not the current one.
-    return { status: 'committed', value: decoded.value.payload.value, replayed: true, cursor: receipt.cursor };
-  }
 
   return {
     async setLinePins(ctx: CoreCallContext, request): Promise<WriteResult<WorkspaceSnapshot>> {
-      const owned = ownScope(ctx);
+      const owned = ownScope(ctx, 'the line-settings owner requires a trusted bound call context');
       if (!isOwned(owned)) return owned;
       const raw = request as unknown as Record<string, unknown> | null | undefined;
-      if (!isObject(raw) || !isObject(raw['meta']) || !nonEmpty(raw['meta']['requestId'])
-        || !Array.isArray(raw['meta']['expected']) || !isObject(raw['input'])) {
-        return reject('invalid', 'setLinePins requires an input object and meta.requestId/expected');
+      if (!isRecord(raw) || !isRecord(raw['meta']) || !nonEmpty(raw['meta']['requestId'])
+        || !Array.isArray(raw['meta']['expected']) || !isRecord(raw['input'])) {
+        return rejected('invalid', 'setLinePins requires an input object and meta.requestId/expected');
       }
       const input = raw['input'];
       const workspace = input['workspace'];
-      if (!isObject(workspace) || workspace['projectId'] !== owned.projectId
+      if (!isRecord(workspace) || workspace['projectId'] !== owned.projectId
         || workspace['workspaceId'] !== owned.workspaceId) {
-        return reject('forbidden', 'the line-pin workspace is outside the bound scope');
+        return rejected('forbidden', 'the line-pin workspace is outside the bound scope');
       }
       const add = input['add'];
       const remove = input['remove'];
       if (!Array.isArray(add) || !Array.isArray(remove)) {
-        return reject('invalid', 'setLinePins requires add and remove arrays');
+        return rejected('invalid', 'setLinePins requires add and remove arrays');
       }
-      if (owned.signal.aborted) return reject('cancelled', 'the pin change was cancelled before validation');
+      if (owned.signal.aborted) return rejected('cancelled', 'the pin change was cancelled before validation');
       const operator = deps.operatorActor;
-      if (operator === undefined) return reject('unsupported', 'no configured operator can pin work lines');
+      if (operator === undefined) return rejected('unsupported', 'no configured operator can pin work lines');
       if (owned.principal.kind !== 'host' || !sameActor(owned.principal.actor, operator)
         || isAutomationActor(owned.principal.actor)) {
-        return reject('forbidden', 'only the configured operator may pin work lines');
+        return rejected('forbidden', 'only the configured operator may pin work lines');
       }
       const requestId = raw['meta']['requestId'] as string;
       const expected = raw['meta']['expected'] as VersionPin[];
@@ -197,18 +124,20 @@ export function createLineSettingsService(deps: LineSettingsDependencies): WorkL
         projectId: owned.projectId, workspaceId: owned.workspaceId,
         payload: { add, remove }, expected,
       } as unknown as JsonValue));
-      if (owned.signal.aborted) return reject('cancelled', 'the pin change was cancelled before the idempotency lookup');
+      if (owned.signal.aborted) return rejected('cancelled', 'the pin change was cancelled before the idempotency lookup');
       const existing = await records.lookupCommit({ identityKey, fingerprint });
-      if (existing.status === 'ready') return replayWorkspace(existing.value);
+      if (existing.status === 'ready') {
+        return replayWorkspace(records, existing.value, LINE_REPLAY_TEXTS, decodeWorkspaceLinePinsChangedEvent);
+      }
       if (existing.code !== 'not_found') {
-        return reject(existing.code === 'idempotency_conflict' ? 'idempotency_conflict'
+        return rejected(existing.code === 'idempotency_conflict' ? 'idempotency_conflict'
           : existing.code === 'revision_conflict' ? 'revision_conflict' : 'unavailable', existing.reason);
       }
 
-      const workspaceRead = await loadWorkspace(owned);
+      const workspaceRead = await loadWorkspace(records, owned);
       if (workspaceRead.status !== 'ready') {
         if (workspaceRead.status === 'rejected') return workspaceRead;
-        return reject(workspaceRead.status === 'not_found' ? 'not_found' : 'incomplete',
+        return rejected(workspaceRead.status === 'not_found' ? 'not_found' : 'incomplete',
           'the Workspace record is not readable at the required watermark');
       }
       const current = workspaceRead.value;
@@ -226,14 +155,14 @@ export function createLineSettingsService(deps: LineSettingsDependencies): WorkL
         try {
           read = await deps.sessionRead(ctx, ref as SessionRef);
         } catch {
-          return reject('unavailable', 'the newly added Session could not be read');
+          return rejected('unavailable', 'the newly added Session could not be read');
         }
         if (read.status !== 'ready') {
           if (read.status === 'rejected' && read.code !== 'not_found') {
             return { status: 'rejected', code: read.code, reason: read.reason };
           }
           if (read.status === 'not_ready') {
-            return reject('unavailable', 'the newly added Session is not readable at the required watermark');
+            return rejected('unavailable', 'the newly added Session is not readable at the required watermark');
           }
           addedInWorkspace = false;
           continue;
@@ -261,7 +190,7 @@ export function createLineSettingsService(deps: LineSettingsDependencies): WorkL
       const transition = transitionLinePins(current, {
         type: 'line_pins_changed', add: add as SessionRef[], remove: remove as SessionRef[], at: occurredAt,
       }, facts);
-      if (!transition.ok) return reject(transition.code, transition.detail);
+      if (!transition.ok) return rejected(transition.code, transition.detail);
 
       const moved = transition.effects.length > 0;
       const encoded = encodeWorkspaceLinePinsChangedEvent({
@@ -287,16 +216,22 @@ export function createLineSettingsService(deps: LineSettingsDependencies): WorkL
         });
       } catch {
         const restored = await records.lookupCommit({ identityKey, fingerprint });
-        if (restored.status === 'ready') return replayWorkspace(restored.value);
-        return reject('unavailable', 'the line-pin commit failed before completing');
+        if (restored.status === 'ready') {
+          return replayWorkspace(records, restored.value, LINE_REPLAY_TEXTS, decodeWorkspaceLinePinsChangedEvent);
+        }
+        return rejected('unavailable', 'the line-pin commit failed before completing');
       }
       if (receipt.status !== 'committed') {
         const restored = await records.lookupCommit({ identityKey, fingerprint });
-        if (restored.status === 'ready') return replayWorkspace(restored.value);
-        return reject(receipt.code === 'revision_conflict' ? 'revision_conflict'
+        if (restored.status === 'ready') {
+          return replayWorkspace(records, restored.value, LINE_REPLAY_TEXTS, decodeWorkspaceLinePinsChangedEvent);
+        }
+        return rejected(receipt.code === 'revision_conflict' ? 'revision_conflict'
           : receipt.code === 'unique_conflict' ? 'revision_conflict' : 'unavailable', receipt.reason);
       }
-      if (receipt.replayed) return replayWorkspace(receipt);
+      if (receipt.replayed) {
+        return replayWorkspace(records, receipt, LINE_REPLAY_TEXTS, decodeWorkspaceLinePinsChangedEvent);
+      }
       return { status: 'committed', value: transition.next, replayed: false, cursor: receipt.cursor };
     },
   };

@@ -5,11 +5,12 @@
  * five exact legacy platform templates) and derives the single effective duty
  * with the pure `effectivePlatformDuty` rule. A read failure is never turned
  * into a default duty; only a genuinely absent duty pair falls back to
- * `executor`. The transitional mapping injection of slice 5 is gone.
+ * `executor`.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import { canonicalJson } from '../../../contracts/fingerprint.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import { roleSpecContentDigest, roleSpecRevisionFromBinding,
@@ -27,10 +28,6 @@ export type MessageDutiesAdapterDependencies = {
   legacyDuty: (role: Extract<RoleConfigurationRef, { kind: 'legacy_template' }>)
     => PlatformDutyV1 | undefined;
 };
-
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
 
 /** Same rule as the owner-side `mergeGuards`: one entry per refKey, conflicts rejected. */
 function mergeDutyGuards(guards: readonly RecordGuard[]):

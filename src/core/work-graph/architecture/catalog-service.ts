@@ -1,5 +1,5 @@
 /**
- * A1 formal architecture catalog service.
+ * Formal architecture catalog service.
  *
  * `adoptInitialArchitecture` is the thin initial Host acceptance entry for the
  * FIRST formal architecture. It refuses a project that already has an active
@@ -27,10 +27,12 @@ import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ModuleRef, VersionPin } from '../../../contracts/core/identity.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
 import type { ProjectRef, WorkspaceRef } from '../../../contracts/ledger.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { EncodedRecord, GoalRecordTransactionPort, RecordGuard, StoreFailure } from '../../record-store/ports.js';
 import type {
   AdoptInitialArchitectureInput, ArchitectureBaselineContentV1, ArchitectureBaselineRevisionSnapshot,
@@ -71,9 +73,6 @@ type CommitReceipt = Extract<Awaited<ReturnType<GoalRecordTransactionPort['commi
 // Result helpers
 // --------------------------------------------------------------------------
 
-function rejected(code: CoreError, reason: string): Rejection {
-  return { status: 'rejected', code, reason };
-}
 function forbidden(reason: string): Rejection { return rejected('forbidden', reason); }
 function invalid(reason: string): Rejection { return rejected('invalid', reason); }
 function unavailable(reason: string): Rejection { return rejected('unavailable', reason); }
@@ -102,12 +101,6 @@ function mapStoreFailure(failure: StoreFailure): Rejection {
 // Mechanical shape helpers
 // --------------------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   const keys = Object.keys(value).sort();
   const wanted = [...expected].sort();
@@ -742,7 +735,7 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
           { refKey: activeKey, schemaId: BASELINE_ACTIVE_SCHEMA_ID, revision: activeRecord.revision, json: JSON.stringify(activeRecord) },
         ],
         claims: [], indexGuards: [], indexChanges: [],
-        // 8A (decision 72 post-note 4B ①): the revision row records the cursor of
+        // 8A (decision 72): the revision row records the cursor of
         // this commit's last event (`ArchitectureCatalogRevised`), so
         // `listCatalogVersions` can read that event's real occurredAt and reason.
         commitCursorBindings: [{ refKey: catalogKey, field: 'since' }],

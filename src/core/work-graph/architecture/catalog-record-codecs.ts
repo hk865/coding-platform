@@ -1,5 +1,5 @@
 /**
- * A1 formal architecture catalog record/event codecs.
+ * Formal architecture catalog record/event codecs.
  *
  * This file owns the ONE registration for the immutable catalog row and its
  * adoption event. The baseline revision and the project active pointer are
@@ -16,6 +16,7 @@
  *     Unicode key is treated as an ordinary unknown field, never as a prototype.
  */
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { invalid, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
 import type { ModuleRef } from '../../../contracts/core/identity.js';
@@ -23,6 +24,7 @@ import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, EncodedRecordSchema, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { hasCycleInEdges } from '../model/task-index.js';
 import type {
   AdoptedArchitecture, ArchitectureBaselineContentV1, ArchitectureBaselineRevisionSnapshot,
@@ -33,7 +35,7 @@ import type {
 export const ARCHITECTURE_CATALOG_SCHEMA_ID = 'ArchitectureCatalog@1';
 export const ARCHITECTURE_CATALOG_ADOPTED_EVENT = 'ArchitectureCatalogAdopted';
 export const ARCHITECTURE_CATALOG_EVENT_VERSION = 1;
-/** Slice 4B L19/P8: catalog revisions ordered by revision number, per project. */
+/** Catalog revisions ordered by revision number, per project. */
 export const S4B_CATALOG_REVISION_BY_PROJECT_LOOKUP = 's4b-catalog-revision-by-project';
 
 /** Replay payload of one ArchitectureCatalogAdopted event. */
@@ -83,12 +85,6 @@ export type AdoptedArchitectureValidation =
 
 type UnknownRecord = Record<string, unknown>;
 
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function isSafeRevision(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
@@ -99,9 +95,6 @@ function isSha256(value: unknown): value is string {
  * opaque everywhere else. */
 function isCommitCursor(value: unknown): value is CommitCursor {
   return typeof value === 'string' && /^c\d{10}$/.test(value);
-}
-function invalid(reason: string): { status: 'invalid'; reason: string } {
-  return { status: 'invalid', reason };
 }
 function parseObject(json: string, what: string): UnknownRecord | string {
   let parsed: unknown;
@@ -539,7 +532,7 @@ const ARCHITECTURE_CATALOG_RECORD_SCHEMA: EncodedRecordSchema = {
   commitCursorFields: ['since'], validate: validateArchitectureCatalog,
 };
 
-/** Slice 4B L19: one project's `ArchitectureCatalog` rows, ascending by content revision. */
+/** One project's `ArchitectureCatalog` rows, ascending by content revision. */
 const CATALOG_REVISION_BY_PROJECT_LOOKUP: RecordLookupIndex = {
   name: S4B_CATALOG_REVISION_BY_PROJECT_LOOKUP,
   aggregateType: 'ArchitectureCatalog',
@@ -570,11 +563,11 @@ export function encodeArchitectureCatalog(record: ArchitectureCatalogRecord): En
 }
 
 export function encodeArchitectureCatalogAdoptedEvent(event: ArchitectureCatalogAdoptedEventV1): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion, occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 export function encodeArchitectureCatalogRevisedEvent(event: ArchitectureCatalogRevisedEventV1): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion, occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 export function decodeArchitectureCatalogRecord(record: EncodedRecord): DecodeResult<ArchitectureCatalogRecord> {

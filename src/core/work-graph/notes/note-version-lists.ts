@@ -15,6 +15,7 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { NoteErrorCode, VersionListPageV1 } from '../model/note-contracts.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { OrderedLookupValue, RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
@@ -36,10 +37,6 @@ export type PlanVersionsInput = { goalId: string; limit: number; cursor: string 
 export type CatalogVersionsInput = { limit: number; cursor: string | null };
 
 type CursorState = { order: OrderedLookupValue; refKey: string };
-
-function rejected(code: NoteErrorCode, reason: string): { status: 'rejected'; code: NoteErrorCode; reason: string } {
-  return { status: 'rejected', code, reason };
-}
 
 function pageLimit(limit: number): number | null {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > VERSION_LIST_PAGE_MAX) return null;

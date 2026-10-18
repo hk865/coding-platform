@@ -1,5 +1,5 @@
 /**
- * R3d observed-architecture service — the WorkGraph owner of persisted source observation.
+ * Observed-architecture service — the WorkGraph owner of persisted source observation.
  *
  * The chain is fixed and one-way: trusted Host scope + canonical Project/Workspace
  * facts -> WorkspaceTools capture/verify/export/architecture mapping -> immutable
@@ -27,12 +27,14 @@ import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
 import type { PersistedSourceCaptureRef, SourceCaptureRef } from '../../../contracts/core/source.js';
 import type { SourceRefV1 } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { WorkspaceRef } from '../../../contracts/ledger.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort, RecordGuard, StoreFailure } from '../../record-store/ports.js';
@@ -77,13 +79,13 @@ export type ObservedArchitectureDependencies = {
   bodies: RawArtifactStorePort;
   records: GoalRecordTransactionPort & RecordLookupPort;
   /** Trusted Host configuration, selected before any model or caller request.
-   * 8A: `configPath: null` captures with no project configuration (a project with
+   * `configPath: null` captures with no project configuration (a project with
    * no TS files, or a caller that wants the provider's default roots). */
   source: { provider: 'typescript'; configPath: string | null };
   /** Test injection for the file-graph chunk size; production uses
    * `ARTIFACT_MAX_SIZE_BYTES`. */
   fileGraph?: { chunkBytes?: number };
-  /** L8 book ruling 6 (one mapping rule): when a capture omits `mappings`, the
+  /** One mapping rule: when a capture omits `mappings`, the
    * service resolves them from the ACTIVE catalog with `moduleMappingsOf`.
    * Production passes the real catalog service. Optional so the many tests that
    * build this service directly keep compiling; an absent `mappings` with no
@@ -100,9 +102,6 @@ const AUTO_CAPTURE_REQUEST_ATTEMPTS = 4;
 type Rejection = { status: 'rejected'; code: CoreError; reason: string; current?: VersionPin[] };
 type Owned<T> = { status: 'owned'; value: T } | { status: 'invalid'; reason: string };
 
-function rejected(code: CoreError, reason: string): Rejection {
-  return { status: 'rejected', code, reason };
-}
 function forbidden(reason: string): Rejection {
   return rejected('forbidden', reason);
 }
@@ -116,16 +115,10 @@ function asReadResult<T>(rejection: Rejection): ReadResult<T> {
   if (rejection.code === 'not_found') return { status: 'not_found' };
   return rejection;
 }
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   const keys = Object.keys(value).sort();
   const wanted = [...expected].sort();
   return keys.length === wanted.length && keys.every((key, index) => key === wanted[index]);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
 }
 function safeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -169,7 +162,7 @@ function readAutoCaptureFailure(value: unknown): ArchitectureAutoCaptureFailureV
   return { code: value['code'], reason: value['reason'] };
 }
 function readMappings(value: unknown): ArchitectureSourceMapping[] | null {
-  // An empty list is legal (task book item 8): a TS project without an adopted
+  // An empty list is legal: a TS project without an adopted
   // catalog is captured with the file layer and an empty module layer.
   if (!Array.isArray(value) || value.length > 512) return null;
   const mappings: ArchitectureSourceMapping[] = [];
@@ -192,7 +185,7 @@ function readSelection(value: unknown): ObservedArchitectureSelection | null {
   const capture = readPersistedSourceCaptureRef(value['capture']);
   return capture === null ? null : { kind: 'observed', capture };
 }
-/** Formal baseline selections belong to a later sub-batch; they must not silently read as an empty observed graph. */
+/** Formal baseline selections are not implemented in the observed-source slice; they must not silently read as an empty observed graph. */
 const UNSUPPORTED_SELECTION_KINDS: readonly string[] = ['current', 'revision', 'draft'];
 function unsupportedSelection(value: unknown): string | null {
   if (!isRecord(value) || typeof value['kind'] !== 'string') return null;
@@ -268,7 +261,7 @@ function readCatalogPin(value: unknown): ArchitectureCatalogPinV1 | null {
   };
 }
 
-/** The empty module-level snapshot for a project with no TS/JS sources (task book item 8).
+/** The empty module-level snapshot for a project with no TS/JS sources.
  * `configPath` mirrors the capture's resolved configuration so the strict body reader accepts it. */
 function emptyArchitectureSnapshot(input: { scope: WorkspaceScope; capture: SourceCaptureRef;
   mappings: ArchitectureSourceMapping[]; configPath: string | null; commitHash: string | null }): ArchitectureSourceSnapshotV1 {
@@ -718,7 +711,7 @@ async function readFileGraphChunks(deps: { bodies: RawArtifactStorePort }, acces
   for (const node of nodes) if (!access.authorization.allowsRead(node.path)) {
     return forbidden('the current Host grant does not cover every frozen path of this observation');
   }
-  // 8A rework 2 item 5: language coverage carries issue paths that are not node
+  // Language coverage carries issue paths that are not node
   // paths (for example a skipped configuration or source file). The current
   // grant must cover them too, or the whole file page leaks them.
   for (const language of languages) for (const issue of language.issues) {
@@ -911,7 +904,7 @@ async function restoreAutoCapture(records: GoalRecordTransactionPort,
 export function createObservedArchitecture(deps: ObservedArchitectureDependencies): ObservedArchitecturePort {
   const { workspace, access, bodies, records, source } = deps;
 
-  /** 8A rework 2 item 6: the one file-page sequence. It loads the frozen graph,
+  /** The one file-page sequence. It loads the frozen graph,
    * runs the caller's paging function, attaches the whole-capture language
    * coverage, and maps a bad cursor to `invalid`. Each public entry keeps its
    * own argument checks and passes only its own paging function. Decision 79:
@@ -942,7 +935,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     // receipt the committed result (or the late restore's own failure/throw)
     // stands. No lost-reply recovery is added.
     let hasCommittedReceipt = false;
-    // Rework 3 ruling 2: a throw after the capture must be judged when it is
+    // A throw after the capture must be judged when it is
     // caught, before the finally cleanup; the cleanup never rewrites it.
     let decidedBeforeCleanup = false;
     try {
@@ -1101,15 +1094,15 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       const exported = await workspace.exportCapture(ctx, captureRef);
       if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       if (exported.status !== 'ready') return mapWorkspaceFailure(exported);
-      // 8A file layer: capture it before the module mapping so a project with no
-      // TS/JS sources never calls `mapArchitectureSource` with an empty source set
-      // (task book item 8). The persisted module-level body is still written first.
+      // File layer: capture it before the module mapping so a project with no
+      // TS/JS sources never calls `mapArchitectureSource` with an empty source set.
+      // The persisted module-level body is still written first.
       const fileGraphResult = await workspace.captureFileGraph(ctx, { capture: captureRef });
       if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       if (fileGraphResult.status !== 'ready') return mapWorkspaceFailure(fileGraphResult);
       const fileGraph = fileGraphResult.value;
       const tsCoverage = fileGraph.languages.find(language => language.language === 'typescript');
-      // §10 item 2 rework: decide by the language status AND the sources the scan
+      // §10 item 2: decide by the language status AND the sources the scan
       // actually walked (the capture's `indexedSourceCount`), never by the parsed
       // count. A walked file whose per-file parse failed is still a module source;
       // a failed/unsupported TS language or a zero-walked project keeps the
@@ -1178,7 +1171,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       if (put.status !== 'ready') return mapBodyPutFailure(put);
       const persistedRef: PersistedSourceCaptureRef = { capture: captureRef, material: put.value.ref };
 
-      // 8A file layer: one artifact per chunk, same sourceRefs/origin/requestedAt as
+      // File layer: one artifact per chunk, same sourceRefs/origin/requestedAt as
       // the module body. All chunks are published before the second verification so
       // a moved source leaves only unreachable bodies, never a published pointer.
       const chunkRefs: ObservedFileGraphManifestV2['chunks'] = [];
@@ -1255,7 +1248,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       if (restored.status !== 'restored') return restored;
       return { status: 'committed', value: restored.value, replayed: true, cursor: committed.cursor };
     } catch (error) {
-      // Rework 3 ruling 2: decide cancelled versus the throw HERE, when it is
+      // Decide cancelled versus the throw HERE, when it is
       // caught, before the cleanup runs; the cleanup cannot change the result.
       decidedBeforeCleanup = true;
       if (!hasCommittedReceipt && ctx?.signal?.aborted) return rejected('cancelled', 'the observation was cancelled');

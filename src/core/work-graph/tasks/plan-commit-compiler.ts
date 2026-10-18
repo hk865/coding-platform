@@ -256,7 +256,7 @@ export function compileInitialPlanAdoption(input: InitialPlanAdoptionInput): Com
 }
 
 // --------------------------------------------------------------------------
-// W1 future-only adoption
+// future-only adoption
 // --------------------------------------------------------------------------
 
 /** ONE grouping pass for a Plan's exact inputs, keyed by consumer Task. */
@@ -303,7 +303,7 @@ export type FuturePlanAdoptionCompile =
 /**
  * C7 `dispositionRecord` of the new Plan: the source Plan's entries with this
  * adoption's changes over them (the latest change per Task), in taskId order;
- * `null` while no Task's disposition was ever changed through W16.
+ * `null` while no Task's disposition was ever changed through a future adoption.
  */
 function mergeDispositionRecord(
   source: PlanRevisionSnapshot,
@@ -323,7 +323,7 @@ function mergeDispositionRecord(
 }
 
 /**
- * W1: compiles ONE accepted future-only Plan adoption. The target snapshot is
+ * Compiles ONE accepted future-only Plan adoption. The target snapshot is
  * constructed deterministically from the trusted immutable source plus the
  * validated future-only delta; the caller Draft is NEVER written over existing
  * Tasks. It writes the new Plan, the Goal pointer, the accepted proposal and

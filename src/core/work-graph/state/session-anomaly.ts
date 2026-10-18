@@ -9,6 +9,7 @@ import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import type { SessionAnomalyAnchorV1, SessionAnomalyViewV1, SessionAnomalyAnchorRef } from '../../../contracts/session-anomaly.js';
 import type { TaskPhaseCauseV1 } from '../../../contracts/task-failure.js';
 import type { TaskReworkRefusalCode } from '../../../contracts/task-requeue.js';
+import { sameRef } from './ref-equality.js';
 import { accept, reject, type Transition } from './transition.js';
 
 export type NewSessionAnomalyInputV1 = Omit<SessionAnomalyAnchorV1, 'revision' | 'schemaVersion'>;
@@ -87,19 +88,4 @@ export function deriveTaskArchiveState(input: {
         ? { kind: 'rework_blocked', code: input.reworkRefusal }
         : input.claimable ? { kind: 'dispatch' } : null;
   return { pending, label: '中断，待核对', next };
-}
-
-/** Key-order-free structural equality; refs are plain JSON records. */
-function sameRef(left: unknown, right: unknown): boolean {
-  if (left === right) return true;
-  if (typeof left !== 'object' || typeof right !== 'object' || left === null || right === null) return false;
-  if (Array.isArray(left) || Array.isArray(right)) {
-    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
-    return left.every((item, index) => sameRef(item, right[index]));
-  }
-  const leftRecord = left as Record<string, unknown>;
-  const rightRecord = right as Record<string, unknown>;
-  const keys = Object.keys(leftRecord);
-  if (keys.length !== Object.keys(rightRecord).length) return false;
-  return keys.every((key) => Object.hasOwn(rightRecord, key) && sameRef(leftRecord[key], rightRecord[key]));
 }

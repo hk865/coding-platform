@@ -23,10 +23,13 @@
 import type { ArtifactOwnerRunRef, ArtifactRef, ArtifactRecord } from '../../../contracts/artifact.js';
 import { artifactBodyDigest, artifactBodySize } from '../../../contracts/artifact.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { edgeDeclarationId, legacyDeclarationId } from '../../../contracts/input-declaration-id.js';
+import { nonEmpty as nonEmptyString } from '../../../contracts/validation/common.js';
 import type {
   InputArtifactProvenanceV1, InputDeclarationV1, InputSelectionV1,
   SelectedInputSourceV1, TaskInputPageRequestV1, TaskInputPageV1,
@@ -102,7 +105,7 @@ const CURSOR_PREFIX = 's3ip1.';
 const MAX_PAGE_BYTES = 4096;
 
 function rejection(code: CoreError, reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
+  return rejected(code, reason);
 }
 
 function cancelledRejection(): CoreRejection {
@@ -152,10 +155,6 @@ function cloneContext(ctx: CoreCallContext): CoreCallContext {
 // --------------------------------------------------------------------------
 // Shape/scope checks
 // --------------------------------------------------------------------------
-
-function nonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 
 function taskTripleProblem(value: unknown, field: string): string | null {
   if (typeof value !== 'object' || value === null) return `${field} must be a TaskTriple`;
@@ -370,7 +369,7 @@ function declarationsFor(plan: PlanRevisionSnapshot, consumer: TaskTriple): Inpu
   for (const requirement of legacyRequirements(plan)) {
     if (requirement.consumerTaskId !== consumer.taskId) continue;
     declarations.push({
-      declarationId: `legacy:${requirement.requirementId}`,
+      declarationId: legacyDeclarationId(requirement.requirementId),
       consumer: { projectId: plan.goalRef.projectId, goalId: plan.goalRef.goalId, taskId: requirement.consumerTaskId },
       planRef: plan.ref,
       upstream: null,
@@ -380,9 +379,7 @@ function declarationsFor(plan: PlanRevisionSnapshot, consumer: TaskTriple): Inpu
   }
   for (const edge of plan.executionDag.dependsOn) {
     if (edge.taskId !== consumer.taskId) continue;
-    const declarationId = 'edge:' + sha256Hex(canonicalJson({
-      planRef: plan.ref, consumerTaskId: edge.taskId, dependsOnId: edge.dependsOnId, requires: edge.requires,
-    } as unknown as JsonValue));
+    const declarationId = edgeDeclarationId(plan.ref, edge);
     declarations.push({
       declarationId,
       consumer: { projectId: plan.goalRef.projectId, goalId: plan.goalRef.goalId, taskId: edge.taskId },

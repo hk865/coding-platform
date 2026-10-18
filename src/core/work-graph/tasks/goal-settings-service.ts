@@ -1,5 +1,5 @@
 /**
- * Slice 5 §3.3 Goal-settings owner (F24).
+ * §3.3 Goal-settings owner.
  *
  * The owner of one Goal's settings, the workspace Goal order and the conflict
  * resolution. It follows the §3.3 check order exactly: input isolation / ctx /
@@ -14,6 +14,7 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
+import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import {
@@ -75,7 +76,7 @@ const LOOKUP_MAX_PAGES = 25;
 type SettingsValue = GoalSnapshot | { goals: GoalSnapshot[] };
 
 function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
+  return rejectedWithCurrent(code, reason, current);
 }
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
@@ -92,6 +93,38 @@ function phaseRefOf(goalRef: GoalRef): GoalPhaseRef {
 }
 function actorsAgree(left: { kind: string; id: string }, right: { kind: string; id: string }): boolean {
   return left.kind === right.kind && left.id === right.id;
+}
+
+/**
+ * S5-GS-03: the bounded wait-predecessor walk. `startRef` is the entrance's
+ * own Goal (already in `seen`) and `start` its first read predecessor. A failed
+ * successor read is returned (never read as "no cycle"); a revisited ref is a
+ * cycle; a walk that does not finish inside the 64-link bound is refused, never
+ * assumed acyclic.
+ */
+async function waitPredecessorWalk(
+  records: GoalRecordTransactionPort,
+  startRef: GoalRef,
+  start: GoalSnapshot,
+): Promise<{ waitingCycle: boolean } | CoreRejection> {
+  const seen = new Set<string>([refKeyOf(startRef)]);
+  let cursor: GoalSnapshot | null = start;
+  let walkFinished = false;
+  let waitingCycle = false;
+  for (let depth = 0; cursor !== null && depth < 64; depth += 1) {
+    const key = refKeyOf(cursor.ref);
+    if (seen.has(key)) { waitingCycle = true; walkFinished = true; break; }
+    seen.add(key);
+    const next = goalSettingsOf(cursor).waitForGoalRef;
+    if (next === null) { walkFinished = true; break; }
+    const nextRead = await readGoal(records, next);
+    if (nextRead.status !== 'ready') return nextRead;
+    cursor = nextRead.goal;
+  }
+  if (!walkFinished) {
+    return reject('capacity', 'the wait-predecessor chain exceeds the 64-link read window');
+  }
+  return { waitingCycle };
 }
 
 /**
@@ -380,22 +413,9 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
       // A bounded predecessor walk refuses a cycle before the state call. A
       // failed successor read is returned (never read as "no cycle"), and a walk
       // that does not finish inside the bound is refused, never assumed acyclic.
-      const seen = new Set<string>([refKeyOf(goalRef)]);
-      let cursor: GoalSnapshot | null = predecessor;
-      let walkFinished = false;
-      for (let depth = 0; cursor !== null && depth < 64; depth += 1) {
-        const key = refKeyOf(cursor.ref);
-        if (seen.has(key)) { waitingCycle = true; walkFinished = true; break; }
-        seen.add(key);
-        const next = goalSettingsOf(cursor).waitForGoalRef;
-        if (next === null) { walkFinished = true; break; }
-        const nextRead = await readGoal(records, next);
-        if (nextRead.status !== 'ready') return nextRead;
-        cursor = nextRead.goal;
-      }
-      if (!walkFinished) {
-        return reject('capacity', 'the wait-predecessor chain exceeds the 64-link read window');
-      }
+      const walk = await waitPredecessorWalk(records, goalRef, predecessor);
+      if ('status' in walk) return walk;
+      waitingCycle = walk.waitingCycle;
     }
 
     const settings: GoalSettingsV1 = { ...settingsOf(goal), autonomy: input.autonomy, waitForGoalRef: wait };
@@ -767,22 +787,9 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
       phaseGuard = phaseRead.guard;
       // S5-GS-03: a failed successor read is returned and an unfinished walk is
       // refused, never read as "no cycle".
-      const seen = new Set<string>([refKeyOf(laterRef)]);
-      let cursor: GoalSnapshot | null = earlierRead.goal;
-      let walkFinished = false;
-      for (let depth = 0; cursor !== null && depth < 64; depth += 1) {
-        const key = refKeyOf(cursor.ref);
-        if (seen.has(key)) { waitingCycle = true; walkFinished = true; break; }
-        seen.add(key);
-        const next = goalSettingsOf(cursor).waitForGoalRef;
-        if (next === null) { walkFinished = true; break; }
-        const nextRead = await readGoal(records, next);
-        if (nextRead.status !== 'ready') return nextRead;
-        cursor = nextRead.goal;
-      }
-      if (!walkFinished) {
-        return reject('capacity', 'the wait-predecessor chain exceeds the 64-link read window');
-      }
+      const walk = await waitPredecessorWalk(records, laterRef, earlierRead.goal);
+      if ('status' in walk) return walk;
+      waitingCycle = walk.waitingCycle;
     }
 
     // S5-GS-03/04: the answer captured both Goals' Plan pointers; a later Plan

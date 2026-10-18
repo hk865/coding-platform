@@ -1,5 +1,5 @@
 /**
- * R4.1 control-record codecs (implementation).
+ * Control-record codecs (implementation).
  *
  * This is the ONE owner of:
  *  - the immutable `ControlIntentSnapshot@1` record and its pure validator;
@@ -23,10 +23,15 @@
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { ControlIntentSnapshotV1, ControlObservationV1, SubmittedControl } from '../../../contracts/control-intent.js';
 import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-history.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalOf } from '../../../contracts/fingerprint.js';
+import {
+  hasOnlyKeys, invalid, isNonNeg as isNonNegativeSafeInteger, isPos as isPositiveSafeInteger,
+  isRecord as isJsonObject, nonEmpty, parseObject,
+} from '../../../contracts/validation/common.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
+import { encodeEventEnvelope } from './event-envelope.js';
 import { isRunExecutionHistoryV1 } from './execution-history-codecs.js';
 
 // -------------------------------------------------------------------------- //
@@ -49,15 +54,6 @@ export type ControlIntentSubmittedEvent = {
   submitted: SubmittedControl;
 };
 
-/**
- * R4.3a stage-1 seam name/type for the observation replay event.
- *
- * Declaring this compatible name is NOT the same as implementing its validator:
- * `CONTROL_RECORD_SCHEMAS` deliberately does not register it yet, no encode or
- * decode function accepts it, and the already-implemented queued snapshot/event
- * codecs above stay exactly as they are. The implementation step adds the
- * closed validator over `ControlObservationV1` and the observation read branch.
- */
 export const CONTROL_INTENT_OBSERVED_EVENT_TYPE = 'ControlIntentObserved' as const;
 export const CONTROL_INTENT_OBSERVED_EVENT_SCHEMA_VERSION = 1 as const;
 /** The replay event recorded for one real control observation. */
@@ -74,17 +70,10 @@ export type ControlIntentObservedEvent = {
 };
 
 // -------------------------------------------------------------------------- //
-// Run controlState seam (implemented; reused by materials/record-readers.ts)  //
+// Run controlState seam (reused by materials/record-readers.ts)              //
 // -------------------------------------------------------------------------- //
 
 type UnknownRecord = Record<string, unknown>;
-
-function isJsonObject(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 
 /**
  * Pure shape check for the optional `Run.controlState`.
@@ -129,27 +118,6 @@ export function runControlStateProblem(
 /** The reason ceiling is enforced on the exact UTF-8 bytes, never truncated. */
 const MAX_CONTROL_REASON_BYTES = 2048;
 
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
-  return Object.keys(value).every(key => allowed.includes(key));
-}
-function invalid<T>(reason: string): DecodeResult<T> {
-  return { status: 'invalid', reason };
-}
-function parseObject(json: string): UnknownRecord | null {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return isJsonObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function canonicalOf(value: object): string | null {
-  try { return canonicalJson(value as unknown as JsonValue); } catch { return null; }
-}
-
 function controlIntentRefProblem(value: unknown): string | null {
   if (!isJsonObject(value)) return 'ControlIntentSnapshot ref must be an object';
   if (!hasOnlyKeys(value, ['aggregateType', 'projectId', 'workspaceId', 'intentId'])) {
@@ -183,10 +151,6 @@ function reasonProblem(value: unknown): string | null {
     return 'ControlIntentSnapshot reason exceeds 2048 UTF-8 bytes';
   }
   return null;
-}
-
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 /**
@@ -438,8 +402,7 @@ export function decodeControlIntentSnapshot(record: EncodedRecord): DecodeResult
 
 /** Encode the `ControlIntentSubmitted` replay event. */
 export function encodeControlIntentSubmittedEvent(event: ControlIntentSubmittedEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 /** Decode and validate one `ControlIntentSubmitted` replay event. */
@@ -496,8 +459,7 @@ export function controlIntentSubmittedEventFromEvent(
 
 /** Encode the `ControlIntentObserved` replay event. */
 export function encodeControlIntentObservedEvent(event: ControlIntentObservedEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 /**

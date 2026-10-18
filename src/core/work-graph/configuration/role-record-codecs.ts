@@ -25,10 +25,12 @@ import type {
   RoleSpecInstalledEvent, RoleSpecRevisionRef, RoleSpecRevisionSnapshot,
 } from '../../../contracts/role-spec.js';
 import { roleSpecContentDigest } from '../../../contracts/role-spec.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
+import { invalid, isNonNeg, isPos, isRecord, nonEmpty, type UnknownRecord } from '../../../contracts/validation/common.js';
 import type { ValidationIssue } from '../../../contracts/validation/common.js';
 import { validateCoordinationRoleMatrix, validateRoleSpecContent } from '../../../contracts/validation/role.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 
 export const ROLE_SPEC_REVISION_SCHEMA_ID = 'RoleSpecRevisionSnapshot@1';
 export const PROJECT_ROLE_SPEC_ACTIVE_SCHEMA_ID = 'ProjectRoleSpecActiveSnapshot@1';
@@ -41,23 +43,6 @@ export const ROLE_SPEC_ACTIVATED_EVENT_TYPE = 'RoleSpecActivated';
 // Small pure helpers
 // --------------------------------------------------------------------------
 
-type UnknownRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isPositiveRevision(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function isNonNegativeInt(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
-function invalid(reason: string): { status: 'invalid'; reason: string } {
-  return { status: 'invalid', reason };
-}
 function parseJsonObject(json: string, what: string): DecodeResult<UnknownRecord> {
   let parsed: unknown;
   try {
@@ -67,13 +52,6 @@ function parseJsonObject(json: string, what: string): DecodeResult<UnknownRecord
   }
   if (!isRecord(parsed)) return invalid(`${what} JSON must be an object`);
   return { status: 'decoded', value: parsed };
-}
-function canonicalOf(value: unknown): string | null {
-  try {
-    return canonicalJson(value as JsonValue);
-  } catch {
-    return null;
-  }
 }
 function isActorRef(value: unknown): boolean {
   if (!isRecord(value) || !nonEmpty(value['id'])) return false;
@@ -90,8 +68,8 @@ function coordinationPolicyContentProblem(value: unknown): string | null {
   if (!isRecord(value)) return 'coordination policy content must be an object';
   if (value['schemaVersion'] !== 1) return 'coordination policy content.schemaVersion must be 1';
   const budget = value['budget'];
-  if (!isRecord(budget) || !isNonNegativeInt(budget['maxAutonomousReworks']) ||
-    !isNonNegativeInt(budget['maxClarifications'])) {
+  if (!isRecord(budget) || !isNonNeg(budget['maxAutonomousReworks']) ||
+    !isNonNeg(budget['maxClarifications'])) {
     return 'coordination policy content.budget is invalid';
   }
   const allowed = value['allowed'];
@@ -120,7 +98,7 @@ function coordinationPolicyContentProblem(value: unknown): string | null {
 
 export function roleSpecRevisionRefFromValue(value: unknown): RoleSpecRevisionRef | null {
   if (!isRecord(value) || value['aggregateType'] !== 'RoleSpecRevision') return null;
-  if (!nonEmpty(value['projectId']) || !nonEmpty(value['roleId']) || !isPositiveRevision(value['revision'])) {
+  if (!nonEmpty(value['projectId']) || !nonEmpty(value['roleId']) || !isPos(value['revision'])) {
     return null;
   }
   return {
@@ -135,7 +113,7 @@ export function projectRoleSpecActiveRefFromValue(value: unknown): ProjectRoleSp
 }
 export function coordinationPolicyRevisionRefFromValue(value: unknown): CoordinationPolicyRevisionRef | null {
   if (!isRecord(value) || value['aggregateType'] !== 'CoordinationPolicyRevision') return null;
-  if (!nonEmpty(value['projectId']) || !nonEmpty(value['policyId']) || !isPositiveRevision(value['revision'])) {
+  if (!nonEmpty(value['projectId']) || !nonEmpty(value['policyId']) || !isPos(value['revision'])) {
     return null;
   }
   return {
@@ -165,7 +143,7 @@ export function roleSpecRevisionSnapshotFromValue(value: unknown): DecodeResult<
   if (ref === null) return invalid('RoleSpecRevision snapshot has no valid RoleSpecRevisionRef');
   if (value['roleId'] !== ref.roleId) return invalid('RoleSpecRevision snapshot roleId disagrees with its ref');
   const contentRevision = value['contentRevision'];
-  if (!isPositiveRevision(contentRevision)) {
+  if (!isPos(contentRevision)) {
     return invalid('RoleSpecRevision snapshot contentRevision must be a positive integer');
   }
   if (contentRevision !== ref.revision) {
@@ -203,7 +181,7 @@ export function roleSpecRevisionSnapshotFromValue(value: unknown): DecodeResult<
 export function projectRoleSpecActiveSnapshotFromValue(value: unknown): DecodeResult<ProjectRoleSpecActiveSnapshot> {
   if (!isRecord(value)) return invalid('ProjectRoleSpecActive snapshot must be an object');
   const rowRevision = value['revision'];
-  if (!isPositiveRevision(rowRevision)) {
+  if (!isPos(rowRevision)) {
     return invalid('ProjectRoleSpecActive snapshot revision must be a positive integer');
   }
   const ref = projectRoleSpecActiveRefFromValue(value['ref']);
@@ -231,7 +209,7 @@ export function coordinationPolicyRevisionSnapshotFromValue(
   if (ref === null) return invalid('CoordinationPolicyRevision snapshot has no valid ref');
   if (value['policyId'] !== ref.policyId) return invalid('CoordinationPolicyRevision snapshot policyId disagrees with its ref');
   const contentRevision = value['contentRevision'];
-  if (!isPositiveRevision(contentRevision)) {
+  if (!isPos(contentRevision)) {
     return invalid('CoordinationPolicyRevision snapshot contentRevision must be a positive integer');
   }
   if (contentRevision !== ref.revision) {
@@ -271,7 +249,7 @@ export function projectCoordinationPolicyActiveSnapshotFromValue(
 ): DecodeResult<ProjectCoordinationPolicyActiveSnapshot> {
   if (!isRecord(value)) return invalid('ProjectCoordinationPolicyActive snapshot must be an object');
   const rowRevision = value['revision'];
-  if (!isPositiveRevision(rowRevision)) {
+  if (!isPos(rowRevision)) {
     return invalid('ProjectCoordinationPolicyActive snapshot revision must be a positive integer');
   }
   const ref = projectCoordinationPolicyActiveRefFromValue(value['ref']);
@@ -407,7 +385,7 @@ export function decodeRoleSpecActivatedEvent(event: EncodedDomainEvent): DecodeR
     return invalid('RoleSpecActivated event is missing project/role/idempotency identity');
   }
   if (body['aggregateType'] !== 'ProjectRoleSpecActive') return invalid('RoleSpecActivated aggregateType must be ProjectRoleSpecActive');
-  if (!isPositiveRevision(body['aggregateRevision'])) {
+  if (!isPos(body['aggregateRevision'])) {
     return invalid('RoleSpecActivated aggregateRevision must be a positive integer');
   }
   if (!isActorRef(body['actor'])) return invalid('RoleSpecActivated event actor is not a valid ActorRef');
@@ -457,12 +435,10 @@ export function encodeProjectRoleSpecActiveSnapshot(snapshot: ProjectRoleSpecAct
   };
 }
 export function encodeRoleSpecInstalledEvent(event: RoleSpecInstalledEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 export function encodeRoleSpecActivatedEvent(event: RoleSpecActivatedEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 // --------------------------------------------------------------------------

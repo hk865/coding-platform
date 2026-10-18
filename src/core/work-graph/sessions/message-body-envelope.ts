@@ -11,8 +11,9 @@
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { DecisionHostSenderV1 } from '../../../contracts/core/session-message.js';
 import type { SourceRefV1 } from '../../../contracts/dispatch.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { UserDecisionBodyV1 } from '../../../contracts/goal-decisions.js';
+import { hasOnlyKeys, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import { SESSION_MESSAGE_CONTENT_TYPE, SESSION_MESSAGE_MAX_TEXT_BYTES, type Problem } from './message-record-codecs.js';
 
@@ -49,20 +50,8 @@ const DECISION_ANNOTATION_MAX_BYTES = 2048;
 const DECISION_ANNOTATIONS_MAX = 32;
 const DECISION_ANNOTATIONS_TOTAL_MAX_BYTES = 16 * 1024;
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key));
-}
-
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-
 function decisionAnnotationProblem(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['objectKey', 'text'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['objectKey', 'text'])) {
     return 'a decision annotation must carry exactly objectKey and text';
   }
   if (!nonEmpty(value['objectKey'])) return 'a decision annotation requires objectKey';
@@ -72,7 +61,7 @@ function decisionAnnotationProblem(value: unknown): Problem {
 }
 
 function decisionGoalRefProblem(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId'])) {
     return 'a decision selection Goal must be a GoalRef';
   }
   return value['aggregateType'] === 'Goal' && nonEmpty(value['projectId']) && nonEmpty(value['goalId'])
@@ -80,7 +69,7 @@ function decisionGoalRefProblem(value: unknown): Problem {
 }
 
 function decisionSelectionProblem(value: unknown): Problem {
-  if (!isObject(value)) return 'a decision selection must be an object';
+  if (!isRecord(value)) return 'a decision selection must be an object';
   switch (value['kind']) {
     case 'option':
       return hasOnlyKeys(value, ['kind', 'optionId']) && nonEmpty(value['optionId'])
@@ -111,7 +100,7 @@ function decisionSelectionProblem(value: unknown): Problem {
 
 /** Strict `UserDecisionBodyV1` payload check; `null` when it passes. */
 export function checkUserDecisionBody(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['schemaVersion', 'kind', 'selection', 'text', 'annotations'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['schemaVersion', 'kind', 'selection', 'text', 'annotations'])) {
     return 'a user decision body must carry exactly schemaVersion, kind, selection, text and annotations';
   }
   if (value['schemaVersion'] !== 1) return 'a user decision body schemaVersion must be 1';
@@ -141,7 +130,7 @@ export function checkUserDecisionBody(value: unknown): Problem {
 export function isUserDecisionAnswerPart(message: SessionMessage, part: MessageBodyPart): boolean {
   if (part === 'response') {
     const response: unknown = message.response;
-    return isObject(response) && 'decision' in response;
+    return isRecord(response) && 'decision' in response;
   }
   // Only a synthetic answer stores the SAME payload in its own `message` part.
   return message.decision?.syntheticAnswer === true;
@@ -157,7 +146,7 @@ export function decodeStoredUserDecisionBody(
   message: SessionMessage, part: MessageBodyPart, stored: StoredMessageBody,
 ): { text: string; body: UserDecisionBodyV1 } | { reason: string } {
   const response: unknown = message.response;
-  if (!isObject(response) || !isObject(response['decision'])) {
+  if (!isRecord(response) || !isRecord(response['decision'])) {
     return { reason: `the message has no formal user decision answer for its ${part} body` };
   }
   const envelope = decodeStoredMessageBody(message, part, stored);
@@ -179,14 +168,6 @@ export function decodeStoredUserDecisionBody(
     return { reason: 'the stored user decision body annotations disagree with the formal response' };
   }
   return { text: body.text, body };
-}
-
-function canonicalOf(value: unknown): string | null {
-  try {
-    return canonicalJson(value as JsonValue);
-  } catch {
-    return null;
-  }
 }
 
 /**

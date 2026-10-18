@@ -17,6 +17,7 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult, CoreRejection } from '../../../contracts/core/results.js';
+import { okFalse } from '../../../contracts/core/rejections.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteAnchorV1, NoteFactV1, NoteHeadSnapshot, NoteSectionsV1, NoteVersionSnapshot } from '../../../contracts/note.js';
 import { renderNoteHeader } from '../../../contracts/note.js';
@@ -33,7 +34,8 @@ import type { NoteCheckPort, NoteCheckV1, NoteFileObservationV1, NoteHeadCheckIt
   NoteUpdateDueTriggerV1, UnderstandingStatusV1 } from '../model/note-contracts.js';
 import { NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILE_MAX_BYTES, NOTE_GOAL_QUOTA, NOTE_READ_FACTS_MAX, NOTE_READ_FILES_MAX,
   NOTE_SIMILAR_MAX, NOTE_SIMILAR_MIN, NOTE_SYMBOL_HITS_MAX, NOTE_SYMBOL_RECHECK_MAX } from '../model/note-contracts.js';
-import { anchorKeyOf, isSafeRelativePath, signatureDigestOf, type NoteAnchorWorkspace } from '../notes/note-anchors.js';
+import { anchorKeyOf, isSafeRelativePath, signatureDigestOf, symbolRangeText, type NoteAnchorWorkspace } from '../notes/note-anchors.js';
+import { anchorSlots } from '../notes/note-related-scope.js';
 import { foldInputOf, foldUpdateDue } from '../notes/note-update-due.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { CaptureSummary, SourceHit, SourceProvider } from '../../workspace/ports.js';
@@ -78,8 +80,6 @@ type Reject = { ok: false; code: CoreRejection['code']; reason: string };
 type Outcome<T> = { ok: true; value: T } | Reject;
 type StaleReason = NoteCheckV1['anchorRetiredReasons'][number];
 type UnresolvedReason = NoteCheckV1['unresolvedFacts'][number]['reason'];
-
-function reject(code: CoreRejection['code'], reason: string): Reject { return { ok: false, code, reason }; }
 
 /** A `ReadResult` that is not `ready` may be a bare `not_found`/`not_ready`. */
 function readFailureReason(value: unknown, fallback: string): string {
@@ -155,7 +155,7 @@ type CheckCaches = {
   /** U-3: the per-anchor understanding status, so a goal/stage pointer is read once. */
   understandings: Map<string, Outcome<UnderstandingStatusV1>>;
   /**
-   * Rework item 8: pointers and pointed heads the caller already read, keyed
+   * Pointers and pointed heads the caller already read, keyed
    * `${projectId}\0${anchorKey}` exactly as `understandings`. A seeded anchor
    * skips its own pointer and head reads.
    */
@@ -208,17 +208,6 @@ type SymbolRecheck = { status: 'live' } | { status: 'changed' } | { status: 'mis
 const SYMBOL_RECHECK_LANGUAGES: readonly string[] = ['typescript', 'python', 'cpp'];
 const SYMBOL_RECHECK_PAGE = 32;
 
-/** R4/§9: the one-based name-span text the stored `signatureDigest` hashes. */
-function symbolRangeText(content: string, start: { line: number; column: number },
-  end: { line: number; column: number }): string {
-  const lines = content.split('\n');
-  if (start.line === end.line) return lines[start.line - 1]!.slice(start.column - 1, end.column - 1);
-  const parts = [lines[start.line - 1]!.slice(start.column - 1)];
-  for (let line = start.line + 1; line < end.line; line += 1) parts.push(lines[line - 1]!);
-  parts.push(lines[end.line - 1]!.slice(0, end.column - 1));
-  return parts.join('\n');
-}
-
 /** L22: the bounded size of the one similar-notes anchor-lookup page. */
 export const NOTE_SIMILAR_SCAN = 100;
 
@@ -234,11 +223,11 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
   async function readHead(projectId: string, noteId: string): Promise<Outcome<NoteHeadSnapshot | null>> {
     const refKey = noteHeadRefKey({ aggregateType: 'NoteHead', projectId, noteId });
     const read = await deps.records.readMany([refKey]);
-    if (read.status !== 'ready') return reject(read.code === 'not_found' ? 'not_found' : 'unavailable', read.reason);
+    if (read.status !== 'ready') return okFalse(read.code === 'not_found' ? 'not_found' : 'unavailable', read.reason);
     const record = read.value.records.find(candidate => candidate.refKey === refKey);
     if (record === undefined) return { ok: true, value: null };
     const decoded = decodeNoteHeadSnapshot(record);
-    if (decoded.status !== 'decoded') return reject('unavailable', 'damaged note head');
+    if (decoded.status !== 'decoded') return okFalse('unavailable', 'damaged note head');
     return { ok: true, value: decoded.value };
   }
 
@@ -260,11 +249,11 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
   Promise<Outcome<NoteVersionSnapshot | null>> {
     const refKey = noteVersionRefKey({ aggregateType: 'NoteVersion', projectId, noteId, version });
     const read = await deps.records.readMany([refKey]);
-    if (read.status !== 'ready') return reject(read.code === 'not_found' ? 'not_found' : 'unavailable', read.reason);
+    if (read.status !== 'ready') return okFalse(read.code === 'not_found' ? 'not_found' : 'unavailable', read.reason);
     const record = read.value.records.find(candidate => candidate.refKey === refKey);
     if (record === undefined) return { ok: true, value: null };
     const decoded = decodeNoteVersionSnapshot(record);
-    if (decoded.status !== 'decoded') return reject('unavailable', 'damaged note version');
+    if (decoded.status !== 'decoded') return okFalse('unavailable', 'damaged note version');
     return { ok: true, value: decoded.value };
   }
 
@@ -413,7 +402,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     const window = await readGoalPlanWindow(deps.records, ref);
     const outcome: Outcome<PlanRevisionSnapshot | null> = window.status === 'ready'
       ? { ok: true, value: window.plan }
-      : reject('unavailable', readFailureReason(window, 'the goal plan cannot be read'));
+      : okFalse('unavailable', readFailureReason(window, 'the goal plan cannot be read'));
     caches.plans.set(key, outcome);
     return outcome;
   }
@@ -437,7 +426,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       const read = await readGoalTriggerRecords(deps.records, ref, plan.value);
       outcome = read.status === 'ready'
         ? { ok: true, value: { triggers: read.triggers, claimedArchiveKeys: read.claimedArchiveKeys } }
-        : reject('unavailable', readFailureReason(read, 'the goal triggers cannot be read'));
+        : okFalse('unavailable', readFailureReason(read, 'the goal triggers cannot be read'));
     }
     caches.triggers.set(key, outcome);
     return outcome;
@@ -487,8 +476,8 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
   async function computeUnderstandingOfAnchorKey(ctx: CoreCallContext, anchorKey: string, caches: CheckCaches):
   Promise<Outcome<UnderstandingStatusV1>> {
     const parsed = parseUnderstandingAnchorKey(anchorKey);
-    if (parsed === null) return reject('invalid', `not an understanding anchor: ${anchorKey}`);
-    // Rework item 8: when the caller already read this anchor's pointer and
+    if (parsed === null) return okFalse('invalid', `not an understanding anchor: ${anchorKey}`);
+    // When the caller already read this anchor's pointer and
     // pointed head, use them and skip both reads (the project branch too).
     const seed = caches.understandingSeed.get(`${ctx.projectId}\u0000${anchorKey}`);
     let pointer: { noteId: string | null; revision: number | null } = { noteId: null, revision: null };
@@ -499,12 +488,12 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       const pointerKey = currentPointerRefKey({ aggregateType: 'CurrentPointer', projectId: ctx.projectId, anchorKey });
       const pointerRead = await deps.records.readMany([pointerKey]);
       if (pointerRead.status !== 'ready') {
-        return reject('unavailable', readFailureReason(pointerRead, 'the current pointer cannot be read'));
+        return okFalse('unavailable', readFailureReason(pointerRead, 'the current pointer cannot be read'));
       }
       const pointerRecord = pointerRead.value.records.find(candidate => candidate.refKey === pointerKey);
       if (pointerRecord !== undefined) {
         const decoded = decodeCurrentPointerSnapshot(pointerRecord);
-        if (decoded.status !== 'decoded') return reject('unavailable', 'damaged current pointer');
+        if (decoded.status !== 'decoded') return okFalse('unavailable', 'damaged current pointer');
         pointer = { noteId: decoded.value.noteId, revision: decoded.value.revision };
       }
     }
@@ -523,7 +512,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       if (!read.ok) return read;
       head = read.value;
     }
-    // Rework item 5: the one baseline rule, shared with the to-dos and the reader.
+    // The one baseline rule, shared with the to-dos and the reader.
     const anchor = foldInputOf(anchorKey, head, plan.value, parsed.kind === 'stage' ? parsed.stageId : null);
     const folded = foldUpdateDue({ triggers: triggers.value.triggers, plan: plan.value, anchors: [anchor] })[0]!;
     return { ok: true, value: { anchorKey, pointer, updateDue: folded.updateDue,
@@ -541,7 +530,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     } else {
       const read = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
       outcome = read.status === 'ready' ? { ok: true, value: read.value }
-        : reject('unavailable', readFailureReason(read, 'the architecture catalog cannot be read'));
+        : okFalse('unavailable', readFailureReason(read, 'the architecture catalog cannot be read'));
     }
     caches.architecture.current = outcome;
     return outcome;
@@ -562,7 +551,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       { selection: { kind: 'revision', ref: { ...current.value.baseline.ref, revision } } });
     const outcome: Outcome<ArchitectureRevision | null> = read.status === 'ready'
       ? { ok: true, value: read.value }
-      : reject('unavailable', readFailureReason(read, 'the basis catalog revision cannot be read'));
+      : okFalse('unavailable', readFailureReason(read, 'the basis catalog revision cannot be read'));
     caches.architecture.byRevision.set(revision, outcome);
     return outcome;
   }
@@ -587,7 +576,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     for (;;) {
       const page = await deps.records.lookupOrdered({ index: S2B_PLAN_REVISION_BY_GOAL_LOOKUP,
         values: [ctx.projectId, goalId], direction: 'asc', ...(after === undefined ? {} : { after }), limit: 200 });
-      if (page.status !== 'ready') return reject('unavailable', page.reason);
+      if (page.status !== 'ready') return okFalse('unavailable', page.reason);
       for (const record of page.value.records) {
         const decoded = decodePlanRevisionSnapshot(record);
         if (decoded.status === 'decoded' && decoded.value.planRevision === planRevision) {
@@ -620,7 +609,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     for (;;) {
       const page = await deps.records.lookupOrdered({ index: S2B_PLAN_REVISION_BY_GOAL_LOOKUP,
         values: [ctx.projectId, goalId], direction: 'asc', ...(after === undefined ? {} : { after }), limit: 200 });
-      if (page.status !== 'ready') return reject('unavailable', page.reason);
+      if (page.status !== 'ready') return okFalse('unavailable', page.reason);
       for (const record of page.value.records) {
         const decoded = decodePlanRevisionSnapshot(record);
         if (decoded.status === 'decoded') revisions.set(decoded.value.planRevision, decoded.value);
@@ -824,19 +813,19 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     const hit = caches.runTaskScope.get(refKey);
     if (hit !== undefined) return hit;
     const read = await deps.records.readMany([refKey]);
-    if (read.status !== 'ready') return reject('unavailable', read.reason);
+    if (read.status !== 'ready') return okFalse('unavailable', read.reason);
     const record = read.value.records.find(candidate => candidate.refKey === refKey);
-    if (record === undefined) return reject('unavailable', 'the authoring Run cannot be read');
+    if (record === undefined) return okFalse('unavailable', 'the authoring Run cannot be read');
     const decoded = decodeRun(record);
-    if (!decoded.ok) return reject('unavailable', decoded.reason);
+    if (!decoded.ok) return okFalse('unavailable', decoded.reason);
     const run = decoded.value;
     const planKey = planRevisionRefKey(run.planRef);
     const planRead = await deps.records.readMany([planKey]);
-    if (planRead.status !== 'ready') return reject('unavailable', planRead.reason);
+    if (planRead.status !== 'ready') return okFalse('unavailable', planRead.reason);
     const planRecord = planRead.value.records.find(candidate => candidate.refKey === planKey);
-    if (planRecord === undefined) return reject('unavailable', 'the Run bound plan cannot be read');
+    if (planRecord === undefined) return okFalse('unavailable', 'the Run bound plan cannot be read');
     const planDecoded = decodePlanRevisionSnapshot(planRecord);
-    if (planDecoded.status !== 'decoded') return reject('unavailable', 'the Run bound plan is damaged');
+    if (planDecoded.status !== 'decoded') return okFalse('unavailable', 'the Run bound plan is damaged');
     const task = planDecoded.value.tasks.find(candidate => candidate.taskId === run.task.taskId);
     const scope = task?.scope;
     const outcome: Outcome<{ moduleRef: string | null }> = { ok: true,
@@ -853,12 +842,12 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       const refKey = canonicalJson(fact.ref as unknown as JsonValue);
       const read = await deps.records.readMany([refKey]);
       // R13: a failed read is `unavailable`, never "no proof".
-      if (read.status !== 'ready') return reject('unavailable', read.reason);
+      if (read.status !== 'ready') return okFalse('unavailable', read.reason);
       const record = read.value.records.find(candidate => candidate.refKey === refKey);
       if (record === undefined) continue;
       const decoded = decodeRunActivitySnapshot(record);
       // R13: an undecodable proof record is `unavailable`, never unproved.
-      if (decoded.status !== 'decoded') return reject('unavailable', decoded.reason);
+      if (decoded.status !== 'decoded') return okFalse('unavailable', decoded.reason);
       if (decoded.value.facts.status === 'counted'
         && decoded.value.facts.changedFiles.definite.includes(path)) return { ok: true, value: true };
     }
@@ -1026,11 +1015,11 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     const runId = stagedRunKey.slice(separator + 1);
     const refKey = canonicalJson({ aggregateType: 'Run', projectId: ctx.projectId, goalId, runId } as unknown as JsonValue);
     const read = await deps.records.readMany([refKey]);
-    if (read.status !== 'ready') return reject('unavailable', read.reason);
+    if (read.status !== 'ready') return okFalse('unavailable', read.reason);
     const record = read.value.records.find(candidate => candidate.refKey === refKey);
-    if (record === undefined) return reject('unavailable', 'the staged repair Run cannot be read');
+    if (record === undefined) return okFalse('unavailable', 'the staged repair Run cannot be read');
     const decoded = decodeRun(record);
-    if (!decoded.ok) return reject('unavailable', decoded.reason);
+    if (!decoded.ok) return okFalse('unavailable', decoded.reason);
     const outcome: Outcome<{ goalId: string; taskId: string } | null> = { ok: true,
       value: { goalId: decoded.value.task.goalId, taskId: decoded.value.task.taskId } };
     caches.stagedRepair.set(stagedRunKey, outcome);
@@ -1053,12 +1042,12 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       for (const index of S4_NOTE_BY_ANCHOR_LOOKUPS) {
         // L22: ONE bounded anchor-lookup page per index, never a next-loop.
         const page = await deps.records.lookup({ index, values: [ctx.projectId, key], limit: NOTE_SIMILAR_SCAN });
-        if (page.status !== 'ready') return reject('unavailable', page.reason);
+        if (page.status !== 'ready') return okFalse('unavailable', page.reason);
         for (const record of page.value.records) {
           const decoded = decodeNoteHeadSnapshot(record);
-          if (decoded.status !== 'decoded') return reject('unavailable', 'damaged note head');
+          if (decoded.status !== 'decoded') return okFalse('unavailable', 'damaged note head');
           const head = decoded.value;
-          if (![head.anchorKey0, head.anchorKey1, head.anchorKey2, head.anchorKey3, head.anchorKey4].includes(key)) continue;
+          if (!anchorSlots(head).includes(key)) continue;
           if (excluded.has(head.noteId)) continue;
           if (head.state !== 'accepted' && head.state !== 'reviewed' && head.state !== 'pending_review') continue;
           candidates.set(head.noteId, head);
@@ -1100,7 +1089,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       if (snapshot === undefined) {
         const version = await readVersion(ctx.projectId, head.noteId, item.version);
         if (!version.ok) return version;
-        if (version.value === null) return reject('not_found', 'the note version does not exist');
+        if (version.value === null) return okFalse('not_found', 'the note version does not exist');
         snapshot = version.value;
       }
       body = bodyOfVersion(snapshot);
@@ -1267,7 +1256,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         }
         const headOutcome = await readHeadCached(ctx, item.noteId, caches);
         if (!headOutcome.ok) return mapStoreFailure(headOutcome);
-        if (headOutcome.value === null) return mapStoreFailure(reject('not_found', 'the note does not exist'));
+        if (headOutcome.value === null) return mapStoreFailure(okFalse('not_found', 'the note does not exist'));
         const outcome = await checkItem(ctx,
           { head: headOutcome.value, version: item.version }, budget, input.withSimilar === true, caches);
         if (!outcome.ok) return mapStoreFailure(outcome);
@@ -1288,13 +1277,13 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         for (const [key, heads] of input.anchorSets) caches.heads.anchors.set(key, { ok: true, value: heads });
       }
       if (input.planWindows !== undefined) {
-        // Rework item 5(b): the read model's related-scope resolution already
+        // The read model's related-scope resolution already
         // read these goals' active plan windows; seed the check's own per-call
         // cache so `currentPlan` does not read the same window twice.
         for (const [key, plan] of input.planWindows) caches.plans.set(key, { ok: true, value: plan });
       }
       if (input.understandingPointers !== undefined) {
-        // Rework item 8: the caller already read these pointers and pointed
+        // The caller already read these pointers and pointed
         // heads; seed them so `computeUnderstandingOfAnchorKey` skips its own
         // per-anchor pointer and head reads for the whole call.
         for (const [key, seed] of input.understandingPointers) caches.understandingSeed.set(key, seed);

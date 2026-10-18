@@ -14,12 +14,10 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { renderNoteHeader, type NoteVersionSnapshot } from '../../../contracts/note.js';
-import type { EncodedRecord } from '../../record-store/ports.js';
-import type {
-  OrderedLookupValue, RecordOrderedLookupPage, RecordOrderedLookupPort,
-} from '../../record-store/lookup-ports.js';
+import type { RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type {
   DecisionNoticeSourcePort,
   DecisionSourceAttempt,
@@ -33,6 +31,7 @@ import {
 } from '../persistence/note-record-codecs.js';
 import { compareNoticePositions } from './notice-position.js';
 import { listWorkspaceGoals, readWatermark, storeFailureToRejection, type DecisionReadRecordsPort } from './goal-conflicts.js';
+import { readOrderedToEnd } from './automatic-rework-notices.js';
 
 /** The three registered notice classes, in read order. */
 const NOTE_NOTICE_CLASSES = ['user_affected', 'structural', 'scribe_result'] as const;
@@ -63,35 +62,6 @@ type ReadPageInput = {
   after?: NoticeItemV1['position'];
   page: { limit: number; cursor?: string; atLeastCursor?: unknown; attempt?: DecisionSourceAttempt };
 };
-
-/** One read of the ordered index to the end; `bound` is the inclusive lower bound. */
-async function readOrderedToEnd(
-  records: NoteReviewNoticeSourceDependencies['records'],
-  values: readonly string[],
-  bound: { value: OrderedLookupValue; inclusive: boolean } | null,
-): Promise<EncodedRecord[]> {
-  const all: EncodedRecord[] = [];
-  const lookupOrdered = records.lookupOrdered;
-  let after: { order: OrderedLookupValue; refKey: string } | undefined;
-  for (;;) {
-    const page = await lookupOrdered.call(records, {
-      index: S4C2_NOTE_VERSION_NOTICE_LOOKUP, values, direction: 'asc',
-      ...(bound === null ? {} : { bound }),
-      ...(after === undefined ? {} : { after }),
-      limit: 200,
-    });
-    if (page.status !== 'ready') throw page;
-    for (const record of page.value.records) all.push(record);
-    const next: RecordOrderedLookupPage['next'] = page.value.next;
-    if (next === null) break;
-    after = next;
-  }
-  return all;
-}
-
-function unavailable(reason: string): { status: 'rejected'; code: 'unavailable'; reason: string } {
-  return { status: 'rejected', code: 'unavailable', reason };
-}
 
 /** §11.6: the disposition verb shown in the notice summary, by change kind. */
 function noteChangeAction(kind: NoteVersionSnapshot['change']['kind']): string {
@@ -133,20 +103,20 @@ async function readNoteReviewPage(
     const listed = await listWorkspaceGoals(records, input.workspace);
     const goalIds = new Set(listed.goals.map((goal) => goal.ref.goalId));
     for (const noticeClass of NOTE_NOTICE_CLASSES) {
-      const recordsOfClass = await readOrderedToEnd(records, [input.workspace.projectId, noticeClass],
+      const recordsOfClass = await readOrderedToEnd(records, S4C2_NOTE_VERSION_NOTICE_LOOKUP, [input.workspace.projectId, noticeClass],
         seenCursor === null ? null : { value: seenCursor, inclusive: true });
       for (const record of recordsOfClass) {
         const decoded = decodeNoteVersionSnapshot(record);
         if (decoded.status !== 'decoded') {
-          return unavailable(`note review version: ${decoded.reason}`);
+          return rejected('unavailable', `note review version: ${decoded.reason}`);
         }
         const version = decoded.value;
         // `since` is `c` + zero-padded digits, so text order is commit order.
         if (typeof version.since !== 'string' || version.since.length === 0) {
-          return unavailable(`note review version ${record.refKey} has no commit position`);
+          return rejected('unavailable', `note review version ${record.refKey} has no commit position`);
         }
         if (seenCursor !== null && version.since < seenCursor) {
-          return unavailable(`note review version ${record.refKey} is outside the requested window`);
+          return rejected('unavailable', `note review version ${record.refKey} is outside the requested window`);
         }
         // 7D2: a version with no Goal is never a notice.
         if (version.goalId === null) continue;

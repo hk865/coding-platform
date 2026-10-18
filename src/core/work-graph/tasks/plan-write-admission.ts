@@ -1,7 +1,6 @@
 /**
  * W2 Agent delegated plan-write admission, generalized to every delegated
- * operation (`DelegatedWriteOperation`, spec §4.1); the rework operations are
- * declared but have no caller yet.
+ * operation (`DelegatedWriteOperation`, spec §4.1).
  *
  * The ONE narrow seam that turns a formal `work_run` caller into a real Agent
  * plan writer and re-checks the current Host/Role/Run/Session/Lease facts before
@@ -30,6 +29,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreError, ReadResult } from '../../../contracts/core/results.js';
 import type { RoleBindingRefV1, RunRef } from '../../../contracts/dispatch.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { RecordGuard } from '../../record-store/ports.js';
@@ -92,12 +92,6 @@ const INTERNAL_READ_ACTOR = { kind: 'system' as const, id: 'w2-plan-write-admiss
 
 type Rejection = { status: 'rejected'; code: CoreError; reason: string };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function forbidden(reason: string): Rejection {
   return { status: 'rejected', code: 'forbidden', reason };
 }

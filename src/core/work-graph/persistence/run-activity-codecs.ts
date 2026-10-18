@@ -1,31 +1,34 @@
 /**
- * Slice 2B §2: the ONE owner of the `RunActivity@1` and `ActivityRecording@1`
- * immutable records, their `RunActivityRecorded` / `ActivityRecordingStarted`
- * replay events, and the ordered `s2b-run-activity-by-goal-last` index (L4,
- * L14). It performs no I/O: the ending commit, RUN-21 and the backfill write
- * these records through it (L5, L8).
+ * The ONE owner of the `RunActivity@1` and `ActivityRecording@1` immutable
+ * records, their `RunActivityRecorded` / `ActivityRecordingStarted` replay
+ * events, and the ordered `s2b-run-activity-by-goal-last` index (L4, L14). It
+ * performs no I/O: the ending commit, RUN-21 and the backfill write these
+ * records through it (L5, L8).
  *
- * The two records are new independent aggregates, not Run state fields (L4,
- * L16), so this group registers them here and `execution-entry-codecs.ts` folds
- * the group into `EXECUTION_ENTRY_RECORD_SCHEMAS` (§5.3 last row). The event
- * header shape is copied from `session-anomaly-codecs.ts`, never imported.
- *
- * Architecture (integration fix): a `persistence` codec may not import a
- * `tasks` module, so the group lives here and the spec §6 path
- * `tasks/run-activity-codecs.ts` re-exports it for the task/views importers.
+ * The two records are independent aggregates, not Run state fields (L4, L16);
+ * `execution-entry-codecs.ts` folds them into `EXECUTION_ENTRY_RECORD_SCHEMAS`
+ * (§5.3 last row). The event header shape is copied from
+ * `session-anomaly-codecs.ts`, never imported: a `persistence` codec may not
+ * import a `tasks` module, so the spec §6 path `tasks/run-activity-codecs.ts`
+ * re-exports this file for the task/views importers.
  */
 import type {
   ActivityRecordingRef, ActivityRecordingSnapshot, ActivityTotalsV1, RunActivityBound,
   RunActivityFactsV1, RunActivityRef, RunActivitySnapshot, RunActivityUnknownReason,
 } from '../../../contracts/run-activity.js';
 import { ACTIVITY_QUARTER_CAP, RUN_CHANGED_FILES_CAP, RUN_USAGE_REQUESTS_CAP } from '../../../contracts/run-activity.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
+import {
+  hasOnlyKeys, invalid, isNonNeg as isNonNegativeSafeInteger, isPos as isPositiveSafeInteger,
+  isRecord as isObject, nonEmpty, parseObject,
+} from '../../../contracts/validation/common.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
+import { encodeEventEnvelope } from './event-envelope.js';
 
 export const RUN_ACTIVITY_SCHEMA_ID = 'RunActivity@1' as const;
 export const ACTIVITY_RECORDING_SCHEMA_ID = 'ActivityRecording@1' as const;
@@ -36,7 +39,7 @@ export const RUN_ACTIVITY_EVENT_SCHEMA_VERSION = 1 as const;
 /** L14: the ordered RunActivity index by Goal and `span.lastAt`. */
 export const S2B_RUN_ACTIVITY_BY_GOAL_LAST_LOOKUP = 's2b-run-activity-by-goal-last';
 
-/** Event header copied from the Slice 1 anchor codec (spec §2.9). */
+/** Event header shared by both replay events (spec §2.9). */
 export type RunActivityEventHeaderV1 = {
   eventId: string; schemaVersion: 1; occurredAt: string;
   projectId: string; workspaceId: string;
@@ -58,39 +61,6 @@ export type ActivityRecordingStartedEventV1 = RunActivityEventHeaderV1 & {
 
 type UnknownRecord = Record<string, unknown>;
 
-function isObject(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key));
-}
-function parseObject(json: string): UnknownRecord | null {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return isObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function canonicalOf(value: unknown): string | null {
-  try {
-    return canonicalJson(value as JsonValue);
-  } catch {
-    return null;
-  }
-}
-function invalid<T>(reason: string): DecodeResult<T> {
-  return { status: 'invalid', reason };
-}
 function refProblem(value: unknown, aggregateType: string, fields: readonly string[], label: string): string | null {
   if (!isObject(value) || value['aggregateType'] !== aggregateType
     || !hasOnlyKeys(value, ['aggregateType', ...fields])) {
@@ -429,13 +399,7 @@ function eventEnvelopeProblem(
 }
 
 export function encodeRunActivityRecordedEvent(event: RunActivityRecordedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function runActivityRecordedEventFromEvent(event: EncodedDomainEvent): DecodeResult<RunActivityRecordedEventV1> {
@@ -456,13 +420,7 @@ export function runActivityRecordedEventFromEvent(event: EncodedDomainEvent): De
 }
 
 export function encodeActivityRecordingStartedEvent(event: ActivityRecordingStartedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function activityRecordingStartedEventFromEvent(event: EncodedDomainEvent): DecodeResult<ActivityRecordingStartedEventV1> {

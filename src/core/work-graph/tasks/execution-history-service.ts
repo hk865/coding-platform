@@ -36,12 +36,14 @@
  * decision, record and effect, never from a literal here.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
-import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
+import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
-import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
+import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
+import { isPos as isPositiveRevision, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
   StoreFailure,
@@ -64,8 +66,10 @@ import type {
   RecordedExecutionHistory,
 } from '../model/execution-history-contracts.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
+import { executionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { sameCursor } from './plan-readers.js';
 import { createRunStateReader } from './run-state-service.js';
+import { isolatedWriteOf, trustedContextOf } from './trusted-context.js';
 
 const HISTORY_IDENTITY_PREFIX = 'execution-history:';
 
@@ -73,21 +77,8 @@ const HISTORY_IDENTITY_PREFIX = 'execution-history:';
 // Small pure helpers
 // --------------------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isPositiveRevision(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
-}
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
-function busy(reason: string): CoreRejection { return reject('busy', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
 function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
 function messageOf(error: unknown): string {
@@ -104,32 +95,11 @@ function isRunRef(value: unknown): value is RunRef {
   return isRecord(value) && value['aggregateType'] === 'Run'
     && nonEmpty(value['projectId']) && nonEmpty(value['goalId']) && nonEmpty(value['runId']);
 }
-function pinsFromCurrent(current: readonly { refKey: string; revision: number | null }[]): VersionPin[] {
-  const pins: VersionPin[] = [];
-  for (const entry of current) {
-    if (entry.revision === null) continue;
-    try {
-      const ref = JSON.parse(entry.refKey) as unknown;
-      if (isRecord(ref)) pins.push({ ref: ref as VersionPin['ref'], revision: entry.revision });
-    } catch { /* an unreadable ref key is not a pin */ }
-  }
-  return pins;
-}
 function mapStoreFailure(failure: StoreFailure): CoreRejection {
-  switch (failure.code) {
-    case 'revision_conflict': {
-      const current = pinsFromCurrent(failure.current);
-      return reject('revision_conflict', failure.reason, current.length > 0 ? current : undefined);
-    }
-    case 'unique_conflict':
-      return busy(`${failure.reason} (the Kernel identity slot is held by another Run)`);
-    case 'idempotency_conflict': return reject('idempotency_conflict', failure.reason);
-    case 'not_found': return reject('not_found', failure.reason);
-    case 'invalid': return invalid(failure.reason);
-    case 'unsupported': return unavailable(failure.reason);
-    case 'corrupt': return unavailable(failure.reason);
-    default: return unavailable(failure.reason);
-  }
+  // A Store `unique_conflict` current names claim slots, which this map never reads.
+  return executionStoreFailureToRejection(failure.code === 'unique_conflict'
+    ? { code: failure.code, reason: failure.reason }
+    : failure);
 }
 
 // --------------------------------------------------------------------------
@@ -141,62 +111,21 @@ type OwnedCtx =
       actor: Extract<ActorRef, { kind: 'human' | 'system' }> }
   | { ok: false; rejection: CoreRejection };
 
-function sameHostActor(left: unknown, right: unknown): boolean {
-  return isRecord(left) && isRecord(right) && left['kind'] === right['kind'] && left['id'] === right['id']
-    && (left['kind'] === 'human' || left['kind'] === 'system');
+function isSignal(signal: unknown): boolean {
+  return isRecord(signal) && typeof signal['aborted'] === 'boolean'
+    && typeof signal['addEventListener'] === 'function';
 }
 
 /** Bind the trusted Host scope and identity before the first await; the original
  * AbortSignal is kept by reference so cancellation can never be lost. */
 function ownCallContext(ctx: CoreCallContext): OwnedCtx {
-  const raw = ctx as unknown as {
-    projectId?: unknown; workspaceId?: unknown; principal?: unknown; materialReader?: unknown; signal?: unknown;
-  } | null | undefined;
-  if (raw === null || raw === undefined) {
-    return { ok: false, rejection: invalid('recordExecutionHistory requires a bound call context') };
-  }
-  const projectId = raw.projectId;
-  const workspaceId = raw.workspaceId;
-  if (!nonEmpty(projectId) || !nonEmpty(workspaceId)) {
-    return { ok: false, rejection: forbidden('recordExecutionHistory requires a bound project/workspace context') };
-  }
-  const signal = raw.signal;
-  if (!isRecord(signal) || typeof signal['aborted'] !== 'boolean'
-    || typeof signal['addEventListener'] !== 'function') {
-    return { ok: false, rejection: forbidden('recordExecutionHistory requires the bound AbortSignal') };
-  }
-  let principal: unknown;
-  let materialReader: unknown;
-  try {
-    principal = structuredClone(raw.principal);
-    materialReader = structuredClone(raw.materialReader);
-  } catch {
-    return { ok: false, rejection: invalid('the call context identity cannot be isolated from the caller') };
-  }
-  if (!isRecord(principal) || principal['kind'] !== 'host') {
-    return { ok: false, rejection: forbidden('recordExecutionHistory requires a trusted Host principal') };
-  }
-  const actor = principal['actor'];
-  if (!isRecord(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !nonEmpty(actor['id'])) {
-    return { ok: false, rejection: forbidden('recordExecutionHistory requires a trusted Host actor') };
-  }
-  if (!isRecord(materialReader) || materialReader['kind'] !== 'host'
-    || materialReader['projectId'] !== projectId
-    || (materialReader['workspaceId'] !== undefined && materialReader['workspaceId'] !== workspaceId)
-    || !sameHostActor(materialReader['actor'], actor)) {
-    return { ok: false, rejection: forbidden('the material reader is not the same trusted Host scope') };
-  }
-  return {
-    ok: true,
-    ctx: {
-      projectId, workspaceId,
-      principal: principal as CoreCallContext['principal'],
-      materialReader: materialReader as MaterialReader,
-      signal: signal as unknown as AbortSignal,
-    },
-    scope: { projectId, workspaceId },
-    actor: { kind: actor['kind'], id: actor['id'] },
-  };
+  const trusted = trustedContextOf(ctx, {
+    label: 'recordExecutionHistory',
+    reject,
+    isSignal,
+  });
+  if (!trusted.ok) return trusted;
+  return { ok: true, ctx: trusted.ctx, scope: trusted.scope, actor: trusted.actor };
 }
 
 type OwnedRequest =
@@ -204,26 +133,11 @@ type OwnedRequest =
   | { ok: false; rejection: CoreRejection };
 
 function ownRequest(request: GraphWrite<RecordExecutionHistoryInput>): OwnedRequest {
-  const raw = request as unknown as { input?: unknown; meta?: unknown } | null | undefined;
-  if (raw === null || raw === undefined || !isRecord(raw.input)) {
-    return { ok: false, rejection: invalid('recordExecutionHistory requires a request input object') };
-  }
-  const meta = raw.meta;
-  if (!isRecord(meta) || !nonEmpty(meta['requestId'])) {
-    return { ok: false, rejection: invalid('recordExecutionHistory requires meta.requestId') };
-  }
-  if (!Array.isArray(meta['expected'])) {
-    return { ok: false, rejection: invalid('meta.expected must be an array of version pins') };
-  }
-  let input: RecordExecutionHistoryInput;
-  let expected: readonly VersionPin[];
-  try {
-    input = structuredClone(raw.input) as RecordExecutionHistoryInput;
-    expected = structuredClone(meta['expected']) as VersionPin[];
-  } catch {
-    return { ok: false, rejection: invalid('the execution-history request cannot be isolated from the caller') };
-  }
-  return { ok: true, input, requestId: meta['requestId'], expected };
+  return isolatedWriteOf<RecordExecutionHistoryInput>(request, {
+    label: 'recordExecutionHistory',
+    reject,
+    cannotIsolate: 'the execution-history request cannot be isolated from the caller',
+  });
 }
 
 // --------------------------------------------------------------------------

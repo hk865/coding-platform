@@ -38,8 +38,9 @@
 import type { ActorRef, CommitCursor, CommandIdentity } from '../../../contracts/command-event.js';
 import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
-import type { VersionPin } from '../../../contracts/core/identity.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+import { rejectedWithCurrent as rejected } from '../../../contracts/core/rejections.js';
 import type { RoleBindingInadmissibleDetail, RoleBindingRefV1, TaskIneligibilityReason } from '../../../contracts/dispatch.js';
 import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
 import type {
@@ -84,18 +85,6 @@ const ROLE_ACTIVATE_IDENTITY_PREFIX = 'role-spec-activate:';
 /** Bounded watermark retry budget for one resolution read. */
 const MAX_RESOLUTION_ATTEMPTS = 4;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
-}
 function sameHostActor(a: HostActor, b: HostActor): boolean {
   return a.kind === b.kind && a.id === b.id;
 }
@@ -123,7 +112,7 @@ function roleBindingProblem(value: unknown): string | null {
   if (!nonEmpty(value['bindingId'])) return 'role binding bindingId must be a non-empty string';
   if (!nonEmpty(value['templateId'])) return 'role binding templateId must be a non-empty string';
   if (typeof value['templateRevision'] !== 'string') return 'role binding templateRevision must be a string';
-  if (!isPositiveInteger(value['bindingVersion'])) return 'role binding bindingVersion must be a positive integer';
+  if (!isPos(value['bindingVersion'])) return 'role binding bindingVersion must be a positive integer';
   if (!nonEmpty(value['policyRevision'])) return 'role binding policyRevision must be a non-empty string';
   return null;
 }
@@ -153,35 +142,35 @@ function roleActivateIdentityKey(identity: CommandIdentity): string {
  * capabilities by itself; each operation still checks scope and versions.
  */
 function trustedHost(ctx: CoreCallContext): TrustedHost {
-  if (!nonEmpty(ctx.projectId)) return { ok: false, rejection: reject('forbidden', 'a role call requires a bound project scope') };
+  if (!nonEmpty(ctx.projectId)) return { ok: false, rejection: rejected('forbidden', 'a role call requires a bound project scope') };
   const principal = ctx.principal;
-  if (principal.kind !== 'host') return { ok: false, rejection: reject('forbidden', 'a role call requires a trusted Host principal') };
+  if (principal.kind !== 'host') return { ok: false, rejection: rejected('forbidden', 'a role call requires a trusted Host principal') };
   const actor = principal.actor;
   if (!isRecord(actor) || !nonEmpty(actor['id']) || (actor['kind'] !== 'human' && actor['kind'] !== 'system')) {
-    return { ok: false, rejection: reject('forbidden', 'a role call requires a trusted Host actor') };
+    return { ok: false, rejection: rejected('forbidden', 'a role call requires a trusted Host actor') };
   }
   const reader = ctx.materialReader;
-  if (reader.kind !== 'host') return { ok: false, rejection: reject('forbidden', 'a role call requires a bound Host material reader') };
-  if (reader.projectId !== ctx.projectId) return { ok: false, rejection: reject('forbidden', 'the material reader belongs to another project') };
-  if (!sameHostActor(reader.actor, actor)) return { ok: false, rejection: reject('forbidden', 'the material reader actor differs from the Host principal') };
+  if (reader.kind !== 'host') return { ok: false, rejection: rejected('forbidden', 'a role call requires a bound Host material reader') };
+  if (reader.projectId !== ctx.projectId) return { ok: false, rejection: rejected('forbidden', 'the material reader belongs to another project') };
+  if (!sameHostActor(reader.actor, actor)) return { ok: false, rejection: rejected('forbidden', 'the material reader actor differs from the Host principal') };
   const signal = ctx.signal;
   if (!isRecord(signal) || typeof signal['aborted'] !== 'boolean') {
-    return { ok: false, rejection: reject('forbidden', 'a role call requires the bound AbortSignal') };
+    return { ok: false, rejection: rejected('forbidden', 'a role call requires the bound AbortSignal') };
   }
   return { ok: true, projectId: ctx.projectId, actor: { kind: actor['kind'], id: actor['id'] } };
 }
 
 function mapReadFailure(failure: StoreFailure): CoreRejection {
   switch (failure.code) {
-    case 'not_found': return reject('not_found', failure.reason);
-    case 'invalid': return reject('invalid', failure.reason);
-    case 'unsupported': return reject('unsupported', failure.reason);
-    case 'corrupt': return reject('unavailable', `the record store reported damage: ${failure.reason}`);
+    case 'not_found': return rejected('not_found', failure.reason);
+    case 'invalid': return rejected('invalid', failure.reason);
+    case 'unsupported': return rejected('unsupported', failure.reason);
+    case 'corrupt': return rejected('unavailable', `the record store reported damage: ${failure.reason}`);
     case 'revision_conflict':
     case 'unique_conflict':
     case 'idempotency_conflict':
     case 'unavailable':
-      return reject('unavailable', failure.reason);
+      return rejected('unavailable', failure.reason);
   }
 }
 function mapInstallStoreFailure(failure: StoreFailure, commandId: string): InstallRoleSpecRevisionReceipt {
@@ -544,18 +533,18 @@ export function createRoleConfigurationService(deps: RoleConfigurationDependenci
     // Input AND options are snapshotted together before the first await.
     const clonedInput = cloneJson(input);
     const clonedOptions = cloneJson(options);
-    if (!clonedInput.ok || !clonedOptions.ok) return reject('invalid', 'role spec read input cannot be isolated from the caller');
+    if (!clonedInput.ok || !clonedOptions.ok) return rejected('invalid', 'role spec read input cannot be isolated from the caller');
     const pin = isRecord(clonedInput.value) ? clonedInput.value['pin'] : undefined;
     const optionValue = isRecord(clonedOptions.value) ? clonedOptions.value : undefined;
     const atLeastCursor = optionValue === undefined ? undefined : optionValue['atLeastCursor'];
 
     const trusted = trustedHost(ctx);
     if (!trusted.ok) return trusted.rejection;
-    if (ctx.signal.aborted) return reject('cancelled', 'role spec read was cancelled');
-    if (!isRecord(pin)) return reject('invalid', 'role spec pin must be a RoleSpecPin');
+    if (ctx.signal.aborted) return rejected('cancelled', 'role spec read was cancelled');
+    if (!isRecord(pin)) return rejected('invalid', 'role spec pin must be a RoleSpecPin');
     const ref = roleSpecRevisionRefFromValue(pin['ref']);
-    if (ref === null || !nonEmpty(pin['digest'])) return reject('invalid', 'role spec pin is not a RoleSpecPin');
-    if (ref.projectId !== trusted.projectId) return reject('forbidden', 'the role spec pin belongs to another project');
+    if (ref === null || !nonEmpty(pin['digest'])) return rejected('invalid', 'role spec pin is not a RoleSpecPin');
+    if (ref.projectId !== trusted.projectId) return rejected('forbidden', 'the role spec pin belongs to another project');
     const digest = pin['digest'];
 
     const specKey = canonicalRefKey(ref);
@@ -574,7 +563,7 @@ export function createRoleConfigurationService(deps: RoleConfigurationDependenci
       try {
         required = seqOfCommitCursor(atLeastCursor as CommitCursor);
       } catch {
-        return reject('invalid', 'the requested atLeastCursor is not a ledger cursor');
+        return rejected('invalid', 'the requested atLeastCursor is not a ledger cursor');
       }
       if (current === null || current < required) {
         return {
@@ -586,11 +575,11 @@ export function createRoleConfigurationService(deps: RoleConfigurationDependenci
     }
     const lookup = lookupRecord(read.value, specKey);
     if (lookup.kind === 'missing') return { status: 'not_found' };
-    if (lookup.kind === 'unaccounted') return reject('unavailable', 'the record store neither returned nor reported missing the role spec');
+    if (lookup.kind === 'unaccounted') return rejected('unavailable', 'the record store neither returned nor reported missing the role spec');
     const decoded = decodeRoleSpecRevisionSnapshot(lookup.record);
-    if (decoded.status !== 'decoded') return reject('unavailable', `the pinned role spec is not decodable: ${decoded.reason}`);
-    if (decoded.value.ref.revision !== ref.revision) return reject('unavailable', 'the pinned role spec revision is not the stored revision');
-    if (decoded.value.contentDigest !== digest) return reject('invalid', 'the pinned role spec digest does not match the stored content');
+    if (decoded.status !== 'decoded') return rejected('unavailable', `the pinned role spec is not decodable: ${decoded.reason}`);
+    if (decoded.value.ref.revision !== ref.revision) return rejected('unavailable', 'the pinned role spec revision is not the stored revision');
+    if (decoded.value.contentDigest !== digest) return rejected('invalid', 'the pinned role spec digest does not match the stored content');
 
     return { status: 'ready', value: decoded.value };
   }
@@ -621,12 +610,12 @@ export function createRoleConfigurationService(deps: RoleConfigurationDependenci
     const clonedBinding = cloneJson(isRecord(source) ? source['roleBinding'] : undefined);
     const clonedPermissions = cloneJson(isRecord(source) ? source['declaredPermissions'] : undefined);
     if (!clonedBinding.ok || !clonedPermissions.ok) {
-      return { result: reject('invalid', 'role resolution input cannot be isolated from the caller'), guards: [] };
+      return { result: rejected('invalid', 'role resolution input cannot be isolated from the caller'), guards: [] };
     }
     const bindingProblem = roleBindingProblem(clonedBinding.value);
-    if (bindingProblem !== null) return { result: reject('invalid', bindingProblem), guards: [] };
+    if (bindingProblem !== null) return { result: rejected('invalid', bindingProblem), guards: [] };
     const permissionsIssue = permissionsProblem(clonedPermissions.value);
-    if (permissionsIssue !== null) return { result: reject('invalid', permissionsIssue), guards: [] };
+    if (permissionsIssue !== null) return { result: rejected('invalid', permissionsIssue), guards: [] };
     const roleBinding = clonedBinding.value as RoleBindingRefV1;
     const permissions = clonedPermissions.value as { tools: string[]; writeScope: string[] };
     const declaredTools: string[] = permissions.tools;
@@ -636,7 +625,7 @@ export function createRoleConfigurationService(deps: RoleConfigurationDependenci
 
     const trusted = trustedHost(ctx);
     if (!trusted.ok) return { result: trusted.rejection, guards: [] };
-    if (ctx.signal.aborted) return { result: reject('cancelled', 'role binding resolution was cancelled'), guards: [] };
+    if (ctx.signal.aborted) return { result: rejected('cancelled', 'role binding resolution was cancelled'), guards: [] };
     const trustedProjectId = trusted.projectId;
 
     const activePolicyKey = canonicalRefKey({ aggregateType: 'ProjectCoordinationPolicyActive', projectId: trustedProjectId });
@@ -663,10 +652,10 @@ export function createRoleConfigurationService(deps: RoleConfigurationDependenci
       // `unaccounted` is unknown, not absent. Reject before any guard can encode
       // a default absence for a pointer that was not actually read as missing.
       if (policyActiveLookup.kind === 'unaccounted') {
-        return { kind: 'failed', rejection: reject('unavailable', 'the active coordination policy pointer is unaccounted for') };
+        return { kind: 'failed', rejection: rejected('unavailable', 'the active coordination policy pointer is unaccounted for') };
       }
       if (roleActiveLookup.kind === 'unaccounted') {
-        return { kind: 'failed', rejection: reject('unavailable', 'the role active pointer is unaccounted for') };
+        return { kind: 'failed', rejection: rejected('unavailable', 'the role active pointer is unaccounted for') };
       }
       const phaseAGuards: RecordGuard[] = [
         guardOf(activePolicyKey, phaseA.batch),
@@ -678,7 +667,7 @@ export function createRoleConfigurationService(deps: RoleConfigurationDependenci
       }
       const decodedPolicyActive = decodeProjectCoordinationPolicyActiveSnapshot(policyActiveLookup.record);
       if (decodedPolicyActive.status !== 'decoded') {
-        return { kind: 'failed', rejection: reject('unavailable', `the active coordination policy pointer is not decodable: ${decodedPolicyActive.reason}`) };
+        return { kind: 'failed', rejection: rejected('unavailable', `the active coordination policy pointer is not decodable: ${decodedPolicyActive.reason}`) };
       }
       const policyRevisionRef = decodedPolicyActive.value.activeRevision;
 
@@ -689,18 +678,18 @@ export function createRoleConfigurationService(deps: RoleConfigurationDependenci
       if (String(phaseB.batch.readThrough) !== String(phaseACursor)) return { kind: 'retry' };
       const policyLookup = lookupRecord(phaseB.batch, policyRevisionKey);
       if (policyLookup.kind === 'missing') {
-        return { kind: 'failed', rejection: reject('unavailable', 'the active coordination policy revision is missing') };
+        return { kind: 'failed', rejection: rejected('unavailable', 'the active coordination policy revision is missing') };
       }
       if (policyLookup.kind === 'unaccounted') {
-        return { kind: 'failed', rejection: reject('unavailable', 'the active coordination policy revision is unaccounted for') };
+        return { kind: 'failed', rejection: rejected('unavailable', 'the active coordination policy revision is unaccounted for') };
       }
       const decodedPolicy = decodeCoordinationPolicyRevisionSnapshot(policyLookup.record);
       if (decodedPolicy.status !== 'decoded') {
-        return { kind: 'failed', rejection: reject('unavailable', `the active coordination policy is not decodable: ${decodedPolicy.reason}`) };
+        return { kind: 'failed', rejection: rejected('unavailable', `the active coordination policy is not decodable: ${decodedPolicy.reason}`) };
       }
       if (decodedPolicy.value.policyId !== policyRevisionRef.policyId ||
         decodedPolicy.value.contentRevision !== policyRevisionRef.revision) {
-        return { kind: 'failed', rejection: reject('unavailable', 'the active coordination policy pointer does not match the stored revision') };
+        return { kind: 'failed', rejection: rejected('unavailable', 'the active coordination policy pointer does not match the stored revision') };
       }
       const policyGuards: RecordGuard[] = [...phaseAGuards,
         { refKey: policyRevisionKey, expectedRevision: policyLookup.record.revision }];
@@ -728,7 +717,7 @@ export function createRoleConfigurationService(deps: RoleConfigurationDependenci
       if (String(phaseC.batch.readThrough) !== String(phaseACursor)) return { kind: 'retry' };
       const specLookup = lookupRecord(phaseC.batch, specKey);
       if (specLookup.kind === 'unaccounted') {
-        return { kind: 'failed', rejection: reject('unavailable', 'the matrix-pinned RoleSpecRevision is unaccounted for') };
+        return { kind: 'failed', rejection: rejected('unavailable', 'the matrix-pinned RoleSpecRevision is unaccounted for') };
       }
       if (specLookup.kind === 'missing') {
         return { kind: 'stable', guards: [...policyGuards, { refKey: specKey, expectedRevision: null }],
@@ -739,7 +728,7 @@ export function createRoleConfigurationService(deps: RoleConfigurationDependenci
         { refKey: specKey, expectedRevision: specLookup.record.revision }];
       const decodedSpec = decodeRoleSpecRevisionSnapshot(specLookup.record);
       if (decodedSpec.status !== 'decoded') {
-        return { kind: 'failed', rejection: reject('unavailable', `the matrix-pinned RoleSpecRevision is not decodable: ${decodedSpec.reason}`) };
+        return { kind: 'failed', rejection: rejected('unavailable', `the matrix-pinned RoleSpecRevision is not decodable: ${decodedSpec.reason}`) };
       }
       if (decodedSpec.value.ref.projectId !== trustedProjectId || decodedSpec.value.ref.roleId !== roleId ||
         decodedSpec.value.contentRevision !== pin.ref.revision || decodedSpec.value.contentDigest !== pin.digest) {
@@ -752,10 +741,10 @@ export function createRoleConfigurationService(deps: RoleConfigurationDependenci
       if (roleActiveLookup.kind === 'found') {
         const decodedRoleActive = decodeProjectRoleSpecActiveSnapshot(roleActiveLookup.record);
         if (decodedRoleActive.status !== 'decoded') {
-          return { kind: 'failed', rejection: reject('unavailable', `the role active pointer is not decodable: ${decodedRoleActive.reason}`) };
+          return { kind: 'failed', rejection: rejected('unavailable', `the role active pointer is not decodable: ${decodedRoleActive.reason}`) };
         }
         if (decodedRoleActive.value.projectId !== trustedProjectId || decodedRoleActive.value.roleId !== roleId) {
-          return { kind: 'failed', rejection: reject('unavailable', 'the role active pointer belongs to another scope') };
+          return { kind: 'failed', rejection: rejected('unavailable', 'the role active pointer belongs to another scope') };
         }
         activeRevision = decodedRoleActive.value.activeRevision;
       }
@@ -788,7 +777,7 @@ export function createRoleConfigurationService(deps: RoleConfigurationDependenci
       if (outcome.kind === 'stable') return { result: outcome.result, guards: outcome.guards };
       if (outcome.kind === 'failed') return { result: outcome.rejection, guards: [] };
     }
-    return { result: reject('unavailable', 'role governance did not stabilize within the bounded read retry budget'), guards: [] };
+    return { result: rejected('unavailable', 'role governance did not stabilize within the bounded read retry budget'), guards: [] };
   }
 
   async function resolveRoleBinding(

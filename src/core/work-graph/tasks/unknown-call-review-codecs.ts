@@ -12,8 +12,8 @@
  * (spec lines 912-917). The `created` record of RUN-25/RUN-22 is written in the
  * SAME commit as the Run's own `ExecutionRunReconciled` event, so that commit
  * carries no review event (the RecordStore's replay contract reads exactly one
- * event per commit); group 3's standalone disposition/approval/hold writes use
- * this event as their single replay event.
+ * event per commit); the standalone disposition/approval/hold writes use this
+ * event as their single replay event.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
@@ -29,6 +29,8 @@ import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import type { UnknownCallReviewChangeV1 } from '../state/unknown-call-review.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
+import { sessionRefProblem } from '../persistence/rework-codecs.js';
 import {
   canonicalOf, hasOnlyKeys, inList, invalid, isInt, isNonNeg, isObject, isPos, isSha256Hex,
   nonEmpty, parseObject, utf8Bytes, type UnknownRecord,
@@ -87,13 +89,6 @@ function actorProblem(value: unknown, label: string): string | null {
   if (!isObject(value) || !hasOnlyKeys(value, ['kind', 'id'])
     || (value['kind'] !== 'human' && value['kind'] !== 'system') || !nonEmpty(value['id'])) {
     return `${label} must be a trusted human/system actor`;
-  }
-  return null;
-}
-function plainSessionRefProblem(value: unknown, label: string): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['projectId', 'sessionId'])
-    || !nonEmpty(value['projectId']) || !nonEmpty(value['sessionId'])) {
-    return `${label} must be a complete SessionRef`;
   }
   return null;
 }
@@ -464,7 +459,7 @@ export function unknownCallReviewBodyProblem(value: unknown): string | null {
   const run = runRefProblem(body['runRef'], 'review runRef');
   if (run !== null) return run;
   const runValue = body['runRef'] as UnknownRecord;
-  const session = plainSessionRefProblem(body['sessionRef'], 'review sessionRef');
+  const session = sessionRefProblem(body['sessionRef'], 'review sessionRef');
   if (session !== null) return session;
   const sessionValue = body['sessionRef'] as UnknownRecord;
   const origin = originProblem(body['origin']);
@@ -594,7 +589,7 @@ export type UnknownCallReviewChangedEventV1 = {
   /**
    * L19: `disposition_applied` / `approval_applied` may carry the fifth-slice
    * `DecisionChangeProofV1`. The codec accepts it structurally (it is the
-   * decision-application owner's shape); a full validation is group 3/5.
+   * decision-application owner's shape).
    */
   proof?: DecisionChangeProofV1;
 };
@@ -605,13 +600,7 @@ const EVENT_KEYS: readonly string[] = [
 ];
 
 export function encodeUnknownCallReviewChangedEvent(event: UnknownCallReviewChangedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function unknownCallReviewChangedEventFromEvent(

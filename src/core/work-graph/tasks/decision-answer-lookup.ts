@@ -1,14 +1,12 @@
 /**
  * Slice 5 §4.1/§8.2: the ONE decision-answer lookup.
  *
- * It moved here from `views/decision-read-model.ts` (K3 group 4 B1) so both the
- * read model and the `tasks/` readers import the same function; there is no
- * second copy. Behaviour is unchanged: the synthetic answer index is paged to
- * its end (2A L6/L10) and a damaged stored answer is a read failure, never a
- * silent "this source has no answer". The stable-window pager itself is the
- * shared one in `persistence/lookup-all.ts`.
+ * The synthetic answer index is paged to its end (2A L6/L10) and a damaged
+ * stored answer is a read failure, never a silent "this source has no answer".
+ * The stable-window pager itself is the shared one in
+ * `persistence/lookup-all.ts`.
  */
-import type { CoreRejection } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import type { S5RecordPort } from '../model/decision-contracts.js';
@@ -40,8 +38,7 @@ export async function findAnswerMessage(
     if (decoded.status !== 'decoded') {
       // §8.2 data row: a damaged answer record is `unavailable`, never skipped
       // into the false fact "this source has no answer".
-      throw { status: 'rejected', code: 'unavailable',
-        reason: `answer message ${record.refKey}: ${decoded.reason}` } as CoreRejection;
+      throw rejected('unavailable', `answer message ${record.refKey}: ${decoded.reason}`);
     }
     const message = decoded.value;
     if (message.decision?.syntheticAnswer !== true || message.status !== 'responded') continue;

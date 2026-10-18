@@ -683,53 +683,60 @@ function evaluateDoneEvidence(facts: LineFactsV1, archived: boolean): DoneVerdic
 type AttentionState = { attention: LineAttentionV1 | null; counts: Record<LineAttentionCodeV1, number>; complete: boolean };
 type Candidate = { attention: LineAttentionV1; rank: number; order: number; key: string; source: LineSourceRefV1 | null };
 
+type AttentionCandidateEntry = {
+  attention: LineAttentionV1 | null; order: number; key: string;
+  /** A card's own source; null for task- and line-level candidates. */
+  cardSource: LineSourceRefV1 | null; incomplete: boolean;
+};
+
+/**
+ * Enumerates every attention source once, in task → card → line-level unknown
+ * → written-anchor order. The summary and the detail each project from it.
+ */
+function* attentionCandidates(facts: LineFactsV1): Generator<AttentionCandidateEntry> {
+  for (const task of facts.responsibleOpen) {
+    yield { attention: classifyTaskAttention(task), order: task.planOrder, key: taskKey(task.task),
+      cardSource: null, incomplete: !task.anomalyComplete };
+  }
+  for (const card of facts.lineCards) {
+    const cardSource: LineSourceRefV1 | null = card.codeReadable
+      ? { kind: 'card', source: card.source, cardKey: card.cardKey } : null;
+    yield {
+      attention: !card.codeReadable ? null : card.code === 'unknown_outcome'
+        ? attention('unknown', reason('run_outcome_unknown')) : attention('decide', cardReason(card)),
+      order: Number.MAX_SAFE_INTEGER, key: card.cardKey, cardSource, incomplete: !card.codeReadable,
+    };
+  }
+  // Line-level attention that is not tied to one task or card.
+  const lineUnknown = lineUnknownSource(facts);
+  yield { attention: lineUnknown === null ? null : attention('unknown', lineUnknown.reason),
+    order: Number.MAX_SAFE_INTEGER, key: lineUnknown === null ? '' : lineUnknown.key,
+    cardSource: null, incomplete: false };
+  const anchors = facts.writtenAnchorsPending;
+  const anchorPending = anchors.status === 'partial' ? anchors.atLeast > 0
+    : anchors.status === 'exact' ? anchors.value > 0 : false;
+  yield { attention: anchorPending ? attention('unknown', writtenAnchorsReason(facts)) : null,
+    order: Number.MAX_SAFE_INTEGER, key: 'written_anchors', cardSource: null,
+    incomplete: anchors.status === 'unavailable' || anchors.status === 'partial'
+      || facts.partialParts.some((part) => part.part === 'written_anchors') };
+}
+
 function deriveAttention(facts: LineFactsV1): AttentionState {
   const counts: Record<LineAttentionCodeV1, number> = { decide: 0, failed: 0, blocked: 0, unknown: 0 };
   let best: Candidate | null = null;
   let complete = facts.queueComplete;
-  const consider = (attentionValue: LineAttentionV1, order: number, key: string, source: LineSourceRefV1 | null): void => {
-    counts[attentionValue.code] += 1;
-    const candidate: Candidate = { attention: attentionValue, rank: ATTENTION_RANK[attentionValue.code], order, key, source };
+  for (const entry of attentionCandidates(facts)) {
+    if (entry.incomplete) complete = false;
+    if (entry.attention === null) continue;
+    counts[entry.attention.code] += 1;
+    const candidate: Candidate = { attention: entry.attention, rank: ATTENTION_RANK[entry.attention.code],
+      order: entry.order, key: entry.key, source: entry.cardSource };
     if (best === null || candidate.rank < best.rank
       || (candidate.rank === best.rank && candidate.order < best.order)
       || (candidate.rank === best.rank && candidate.order === best.order && candidate.key < best.key)) {
       best = candidate;
     }
-  };
-  for (const task of facts.responsibleOpen) {
-    if (!task.anomalyComplete) complete = false;
-    const attentionValue = classifyTaskAttention(task);
-    if (attentionValue !== null) consider(attentionValue, task.planOrder, taskKey(task.task), null);
   }
-  for (const card of facts.lineCards) {
-    if (!card.codeReadable) {
-      complete = false;
-      continue;
-    }
-    const source: LineSourceRefV1 = { kind: 'card', source: card.source, cardKey: card.cardKey };
-    if (card.code === 'unknown_outcome') {
-      consider(attention('unknown', reason('run_outcome_unknown')), Number.MAX_SAFE_INTEGER, card.cardKey, source);
-    } else {
-      consider(attention('decide', cardReason(card)), Number.MAX_SAFE_INTEGER, card.cardKey, source);
-    }
-  }
-  // Line-level attention that is not tied to one task or card.
-  const lineUnknown = lineUnknownSource(facts);
-  if (lineUnknown !== null) {
-    consider(attention('unknown', lineUnknown.reason), Number.MAX_SAFE_INTEGER, lineUnknown.key, null);
-  }
-  const anchors = facts.writtenAnchorsPending;
-  if (anchors.status === 'unavailable') {
-    complete = false;
-  } else if (anchors.status === 'partial') {
-    complete = false;
-    if (anchors.atLeast > 0) {
-      consider(attention('unknown', writtenAnchorsReason(facts)), Number.MAX_SAFE_INTEGER, 'written_anchors', null);
-    }
-  } else if (anchors.value > 0) {
-    consider(attention('unknown', writtenAnchorsReason(facts)), Number.MAX_SAFE_INTEGER, 'written_anchors', null);
-  }
-  if (facts.partialParts.some((part) => part.part === 'written_anchors')) complete = false;
   return { attention: best === null ? null : (best as Candidate).attention, counts, complete };
 }
 
@@ -742,23 +749,9 @@ export function deriveAttentionAll(facts: LineFactsV1): (LineAttentionV1 & { sou
   const headSource: LineSourceRefV1 = { kind: 'record',
     pin: { ref: { ...facts.head.ref }, revision: facts.head.revision } };
   const result: (LineAttentionV1 & { source: LineSourceRefV1 })[] = [];
-  const push = (attentionValue: LineAttentionV1 | null, source: LineSourceRefV1): void => {
-    if (attentionValue !== null) result.push({ ...attentionValue, source });
-  };
-  for (const task of facts.responsibleOpen) push(classifyTaskAttention(task), headSource);
-  for (const card of facts.lineCards) {
-    if (!card.codeReadable) continue;
-    const source: LineSourceRefV1 = { kind: 'card', source: card.source, cardKey: card.cardKey };
-    push(card.code === 'unknown_outcome'
-      ? attention('unknown', reason('run_outcome_unknown'))
-      : attention('decide', cardReason(card)), source);
+  for (const entry of attentionCandidates(facts)) {
+    if (entry.attention !== null) result.push({ ...entry.attention, source: entry.cardSource ?? headSource });
   }
-  const lineUnknown = lineUnknownSource(facts);
-  if (lineUnknown !== null) push(attention('unknown', lineUnknown.reason), headSource);
-  const anchors = facts.writtenAnchorsPending;
-  const anchorPending = anchors.status === 'partial' ? anchors.atLeast > 0
-    : anchors.status === 'exact' ? anchors.value > 0 : false;
-  if (anchorPending) push(attention('unknown', writtenAnchorsReason(facts)), headSource);
   return result;
 }
 
@@ -774,10 +767,6 @@ function lineUnknownSource(facts: LineFactsV1): { reason: LineReasonV1; key: str
   }
   if (holder !== null && holder.kind === 'query' && holder.query.run.executionState?.phase === 'unknown') {
     return { reason: reason('unknown_query'), key: 'occupancy' };
-  }
-  if (facts.head.health === 'unavailable' && holder !== null && holder.kind === 'run'
-    && holder.run.run.status === 'ended' && holder.run.run.outcome === 'outcome_unknown') {
-    return { reason: reason('unknown_run'), key: 'occupancy' };
   }
   if (facts.copies.some((copy) => copy.phase === 'unknown')) {
     return { reason: reason('copy_unknown'), key: 'copy' };

@@ -10,14 +10,11 @@
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { isRecord } from '../../../contracts/validation/common.js';
 import type {
   NoticeDisplayTokenPayloadV1,
   NoticeDisplayTokenPort,
 } from '../model/decision-contracts.js';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** Shape-check of the parsed body, so a forged/garbled payload never decodes. */
 function asPayload(value: unknown): NoticeDisplayTokenPayloadV1 | null {

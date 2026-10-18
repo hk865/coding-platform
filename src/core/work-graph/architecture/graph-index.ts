@@ -1,5 +1,5 @@
 /**
- * Pure R3d source-graph traversal. The graph is frozen observed evidence:
+ * Pure source-graph traversal. The graph is frozen observed evidence:
  * cycles and unresolved relations are preserved, no node is invented, and the
  * only direction asserted is the one the stored edges carry.
  *
@@ -43,7 +43,9 @@ function sourceKeyOf(selection: GraphSelection): string {
 function queryKeyOf(anchor: ObservedGraphAnchor | undefined, depth: number, relations: readonly string[]): string {
   return sha256Hex(canonicalJson({ anchor: (anchor ?? null) as unknown as JsonValue, depth, relations: relationsOf(relations as ('dependency' | 'interface')[]) }));
 }
-function encodeCursor(value: GraphCursorV1 | ImpactCursorV1): string {
+/** Pure cursor encoder shared with the file graph; the caller decides the JSON
+ * field order. */
+export function encodeCursor(value: object): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
 function decodeCursor(cursor: string): GraphCursorV1 | ImpactCursorV1 {

@@ -27,6 +27,7 @@ import {
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { RunRef, TaskTriple } from '../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { edgeDeclarationId, legacyDeclarationId } from '../../contracts/input-declaration-id.js';
 import type {
   AttentionChangesV1, AttentionGraphReadRequestV1, ContextAssemblyBindingV1,
   ContextExtensionsV1, ContextIndexRowV1, ContextSectionNameV1, ContextSourceV1, GraphAttentionFactsV1,
@@ -763,9 +764,7 @@ function declarationsForTask(plan: PlanRevisionSnapshot, taskId: string): InputD
   for (const edge of plan.executionDag.dependsOn) {
     if (edge.taskId !== taskId) continue;
     out.push({
-      declarationId: 'edge:' + sha256Hex(canonicalJson({
-        planRef: plan.ref, consumerTaskId: edge.taskId, dependsOnId: edge.dependsOnId, requires: edge.requires,
-      } as unknown as JsonValue)),
+      declarationId: edgeDeclarationId(plan.ref, edge),
       consumer: tripleOf(edge.taskId),
       planRef: plan.ref,
       upstream: tripleOf(edge.dependsOnId),
@@ -777,7 +776,7 @@ function declarationsForTask(plan: PlanRevisionSnapshot, taskId: string): InputD
     for (const requirement of plan.inputRequirements) {
       if (requirement.consumerTaskId !== taskId) continue;
       out.push({
-        declarationId: 'legacy:' + requirement.requirementId,
+        declarationId: legacyDeclarationId(requirement.requirementId),
         consumer: tripleOf(requirement.consumerTaskId),
         planRef: plan.ref,
         upstream: null,

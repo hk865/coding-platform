@@ -12,9 +12,11 @@
  * acceptance or Role binding, and it never turns an omitted optional field into
  * a required one.
  */
+import { rejected as coreRejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection } from '../../../contracts/core/results.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PlanRevisionDraft } from '../../../contracts/plan.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
   InitialPlanAssignment,
   InitialPlanOrigin,
@@ -37,13 +39,7 @@ export type InitialPlanNormalization =
   | { status: 'needs_decision'; summary: string; questions: string[] };
 
 function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
+  return coreRejected(code, reason);
 }
 
 /**

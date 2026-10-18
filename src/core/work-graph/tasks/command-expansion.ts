@@ -103,8 +103,8 @@ export async function expandShellScripts(input: {
   truncated: boolean;
 }> {
   const expansions: ShellScriptExpansionV1[] = [];
-  // Rework 1 item 3: a script is identified by (directory, script name), never by
-  // its action text, so two directories' same-named script each expand.
+  // A script is identified by (directory, script name), never by its action
+  // text, so two directories' same-named script each expand.
   const seenScripts = new Set<string>();
   const reads = new Map<string, PackageRead>();
   let readFiles = 0;

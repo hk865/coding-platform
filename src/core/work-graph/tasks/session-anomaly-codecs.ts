@@ -8,10 +8,13 @@
  * lifecycle codec, never imported from `sessions/` (spec §2.9).
  */
 import type { SessionAnomalyAnchorRef, SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
+import { hasOnlyKeys, invalid, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
+import { sessionRefProblem } from '../persistence/rework-codecs.js';
 import { checkRole } from '../sessions/session-record-codecs.js';
 import {
   SESSION_ANOMALY_BY_GOAL_LOOKUP, SESSION_ANOMALY_BY_TASK_LOOKUP,
@@ -42,32 +45,8 @@ type UnknownRecord = Record<string, unknown>;
 function isObject(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function isRevisionOne(value: unknown): value is number {
   return value === 1;
-}
-function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key));
-}
-function parseObject(json: string): UnknownRecord | null {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return isObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function canonicalOf(value: unknown): string | null {
-  try {
-    return canonicalJson(value as JsonValue);
-  } catch {
-    return null;
-  }
-}
-function invalid(reason: string): { status: 'invalid'; reason: string } {
-  return { status: 'invalid', reason };
 }
 
 function anomalyRefProblem(value: unknown, label: string): string | null {
@@ -77,13 +56,6 @@ function anomalyRefProblem(value: unknown, label: string): string | null {
   if (value['aggregateType'] !== 'SessionAnomalyAnchor'
     || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['runId'])) {
     return `${label} is not a valid SessionAnomalyAnchorRef`;
-  }
-  return null;
-}
-function plainRefProblem(value: unknown, label: string): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['projectId', 'sessionId'])
-    || !nonEmpty(value['projectId']) || !nonEmpty(value['sessionId'])) {
-    return `${label} must be a complete SessionRef`;
   }
   return null;
 }
@@ -236,9 +208,9 @@ function checkAnomalyAnchorBody(body: UnknownRecord): string | null {
   const taskValue = body['task'] as UnknownRecord;
   const plan = planRefProblem(body['planRef']);
   if (plan !== null) return plan;
-  const lineHead = plainRefProblem(body['lineHead'], 'anchor lineHead');
+  const lineHead = sessionRefProblem(body['lineHead'], 'anchor lineHead');
   if (lineHead !== null) return lineHead;
-  const session = plainRefProblem(body['sessionRef'], 'anchor sessionRef');
+  const session = sessionRefProblem(body['sessionRef'], 'anchor sessionRef');
   if (session !== null) return session;
   const role = checkRole(body['role']);
   if (role !== null) return `anchor role: ${role}`;
@@ -323,13 +295,7 @@ const ANOMALY_EVENT_KEYS: readonly string[] = [
 ];
 
 export function encodeSessionAnomalyRecordedEvent(event: SessionAnomalyRecordedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function sessionAnomalyRecordedEventFromEvent(

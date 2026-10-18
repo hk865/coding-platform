@@ -11,15 +11,16 @@
  * a `ready` probe never clears `kernel_turn_open` while the Kernel session
  * head still names an active Run (LA-1).
  *
- * SES-19a (2C-22(2), lead 2026-10-15): the Runtime Turn closure's own unreadable
+ * SES-19a (2C-22(2)): the Runtime Turn closure's own unreadable
  * probe carries `caller: 'turn_closure'` and may replace a `kernel_turn_open`
  * conclusion with the fresh `missing`/`damaged` verdict under the same lease
  * guard; every other caller (crucially the start reconcile) keeps SES-19.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
-import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRecordTransactionPort, StoreFailure } from '../../record-store/ports.js';
 import {
@@ -69,9 +70,6 @@ export type SessionHealthDependencies = {
   eventId(): string;
 };
 
-function rejected(code: CoreError, reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
 function storeFailure(failure: StoreFailure): CoreRejection {
   return failure.code === 'revision_conflict' ? rejected('revision_conflict', failure.reason)
     : rejected(failure.code === 'invalid' || failure.code === 'not_found' ? failure.code : 'unavailable', failure.reason);

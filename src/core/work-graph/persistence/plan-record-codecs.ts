@@ -1,5 +1,5 @@
 /**
- * R3c Plan/Proposal record codecs: persisted encoding, identity/version checks
+ * Plan/Proposal record codecs: persisted encoding, identity/version checks
  * and the v1/v2 discriminated decode. Domain admission of an initial plan lives
  * in `plan-validation.ts`; this file never judges obligations, DAG or assignment.
  *
@@ -17,6 +17,10 @@ import type { SessionMessageRef } from '../../../contracts/core/session-message.
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { RoleBindingRefV1, RunRef } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import {
+  invalid, isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty, parseTaggedObject,
+  type UnknownRecord,
+} from '../../../contracts/validation/common.js';
 import type { PlanProposalSnapshot } from '../../../contracts/goal-change.js';
 import type {
   ArchitectureBaselineRevisionRef,
@@ -32,6 +36,7 @@ import type {
 } from '../../../contracts/plan.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
 import { aggregateRefProblem } from './decision-record-codecs.js';
+import { encodeEventEnvelope } from './event-envelope.js';
 import {
   noticeOriginFieldsProblem, NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS, type NoticeOriginWireV1,
 } from './rework-codecs.js';
@@ -56,7 +61,7 @@ export const PLAN_PROPOSAL_RECORDED_SCHEMA_VERSION = 2;
 export const PLAN_REVISION_ACCEPTED_EVENT = 'PlanRevisionAccepted';
 export const PLAN_REVISION_ACCEPTED_SCHEMA_VERSION = 1;
 export const PLAN_PROPOSAL_LOOKUP_INDEX = 'plan-proposal-by-goal';
-/** Slice 5 §2.5 request-candidate index: one PlanProposal head per Goal+first QueryJob. */
+/** §2.5 request-candidate index: one PlanProposal head per Goal+first QueryJob. */
 export const S5_PLAN_PROPOSAL_BY_REQUEST = 's5-plan-proposal-by-goal-request';
 
 /** The event that records one candidate/status transition of a proposal. */
@@ -81,41 +86,12 @@ export type PlanProposalRecordedEvent = {
 // Small pure helpers
 // --------------------------------------------------------------------------
 
-type UnknownRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-
 function isSafeRevision(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+  return isNonNeg(value);
 }
 
 function isPositiveRevision(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-
-function isSha256Hex(value: unknown): value is string {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
-}
-
-function invalid(reason: string): { status: 'invalid'; reason: string } {
-  return { status: 'invalid', reason };
-}
-
-function parseJsonObject(json: string, what: string): UnknownRecord | string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    return `${what} is not valid JSON`;
-  }
-  if (!isRecord(parsed)) return `${what} JSON must be an object`;
-  return parsed;
+  return isPos(value);
 }
 
 function copyRecord(record: EncodedRecord): EncodedRecord {
@@ -138,7 +114,7 @@ export function planRevisionRefKey(ref: PlanRevisionRef): string {
 export type { NoticeOriginWireV1 } from './rework-codecs.js';
 
 /**
- * Slice 5 §2.4/T-R2-2 closed-request order. A proposal chain's position is its
+ * §2.4 closed-request order. A proposal chain's position is its
  * first candidate's creation commit (`since`); a chain with no `since` sorts
  * before every chain with one, and equal (or both absent) origins fall back to
  * the canonical refKey. Both the queue history and the direct read use exactly
@@ -162,9 +138,9 @@ export function compareProposalChainPositions(
 function planProposalRefFromValue(value: unknown): PlanProposalRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'PlanProposal') return null;
-  if (!isNonEmptyString(value['projectId'])) return null;
-  if (!isNonEmptyString(value['workspaceId'])) return null;
-  if (!isNonEmptyString(value['proposalId'])) return null;
+  if (!nonEmpty(value['projectId'])) return null;
+  if (!nonEmpty(value['workspaceId'])) return null;
+  if (!nonEmpty(value['proposalId'])) return null;
   return { aggregateType: 'PlanProposal', projectId: value['projectId'],
     workspaceId: value['workspaceId'], proposalId: value['proposalId'] };
 }
@@ -172,26 +148,26 @@ function planProposalRefFromValue(value: unknown): PlanProposalRef | null {
 function planRevisionRefFromValue(value: unknown, projectId: string): PlanRevisionRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'PlanRevision') return null;
-  if (!isNonEmptyString(value['projectId']) || value['projectId'] !== projectId) return null;
-  if (!isNonEmptyString(value['planId'])) return null;
+  if (!nonEmpty(value['projectId']) || value['projectId'] !== projectId) return null;
+  if (!nonEmpty(value['planId'])) return null;
   return { aggregateType: 'PlanRevision', projectId: value['projectId'], planId: value['planId'] };
 }
 
 function goalRefFromValue(value: unknown, projectId: string): GoalRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'Goal') return null;
-  if (!isNonEmptyString(value['projectId']) || value['projectId'] !== projectId) return null;
-  if (!isNonEmptyString(value['goalId'])) return null;
+  if (!nonEmpty(value['projectId']) || value['projectId'] !== projectId) return null;
+  if (!nonEmpty(value['goalId'])) return null;
   return { aggregateType: 'Goal', projectId: value['projectId'], goalId: value['goalId'] };
 }
 
-/** Slice 5 `QueryJobRef`: the first user request this candidate belongs to. */
+/** `QueryJobRef`: the first user request this candidate belongs to. */
 function queryJobRefFromValue(value: unknown, projectId: string, workspaceId: string): QueryJobRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'QueryJob') return null;
-  if (!isNonEmptyString(value['projectId']) || value['projectId'] !== projectId) return null;
-  if (!isNonEmptyString(value['workspaceId']) || value['workspaceId'] !== workspaceId) return null;
-  if (!isNonEmptyString(value['queryJobId'])) return null;
+  if (!nonEmpty(value['projectId']) || value['projectId'] !== projectId) return null;
+  if (!nonEmpty(value['workspaceId']) || value['workspaceId'] !== workspaceId) return null;
+  if (!nonEmpty(value['queryJobId'])) return null;
   return {
     aggregateType: 'QueryJob',
     projectId: value['projectId'],
@@ -203,8 +179,8 @@ function queryJobRefFromValue(value: unknown, projectId: string, workspaceId: st
 function sessionMessageRefFromValue(value: unknown): SessionMessageRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'SessionMessage') return null;
-  if (!isNonEmptyString(value['projectId']) || !isNonEmptyString(value['workspaceId'])
-    || !isNonEmptyString(value['messageId'])) return null;
+  if (!nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId'])
+    || !nonEmpty(value['messageId'])) return null;
   return {
     aggregateType: 'SessionMessage',
     projectId: value['projectId'],
@@ -216,8 +192,8 @@ function sessionMessageRefFromValue(value: unknown): SessionMessageRef | null {
 function completionPolicyRefFromValue(value: unknown, projectId: string): CompletionPolicyRevisionRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'CompletionPolicyRevision') return null;
-  if (!isNonEmptyString(value['projectId']) || value['projectId'] !== projectId) return null;
-  if (!isNonEmptyString(value['policyId'])) return null;
+  if (!nonEmpty(value['projectId']) || value['projectId'] !== projectId) return null;
+  if (!nonEmpty(value['policyId'])) return null;
   if (!isPositiveRevision(value['revision'])) return null;
   return { aggregateType: 'CompletionPolicyRevision', projectId: value['projectId'],
     policyId: value['policyId'], revision: value['revision'] };
@@ -226,8 +202,8 @@ function completionPolicyRefFromValue(value: unknown, projectId: string): Comple
 function architectureRefFromValue(value: unknown, projectId: string): ArchitectureBaselineRevisionRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'ArchitectureBaselineRevision') return null;
-  if (!isNonEmptyString(value['projectId']) || value['projectId'] !== projectId) return null;
-  if (!isNonEmptyString(value['baselineId'])) return null;
+  if (!nonEmpty(value['projectId']) || value['projectId'] !== projectId) return null;
+  if (!nonEmpty(value['baselineId'])) return null;
   if (!isPositiveRevision(value['revision'])) return null;
   return { aggregateType: 'ArchitectureBaselineRevision', projectId: value['projectId'],
     baselineId: value['baselineId'], revision: value['revision'] };
@@ -235,13 +211,13 @@ function architectureRefFromValue(value: unknown, projectId: string): Architectu
 
 function actorFromValue(value: unknown): ActorRef | null {
   if (!isRecord(value)) return null;
-  if (!isNonEmptyString(value['id'])) return null;
+  if (!nonEmpty(value['id'])) return null;
   const kind = value['kind'];
   if (kind === 'human' || kind === 'system') return { kind, id: value['id'] };
   if (kind !== 'agent') return null;
   const runRef = value['runRef'];
   if (!isRecord(runRef)) return null;
-  if (!isNonEmptyString(runRef['projectId']) || !isNonEmptyString(runRef['goalId']) || !isNonEmptyString(runRef['runId'])) return null;
+  if (!nonEmpty(runRef['projectId']) || !nonEmpty(runRef['goalId']) || !nonEmpty(runRef['runId'])) return null;
   return { kind: 'agent', id: value['id'], runRef: { aggregateType: 'Run', projectId: runRef['projectId'],
     goalId: runRef['goalId'], runId: runRef['runId'] } };
 }
@@ -249,21 +225,21 @@ function actorFromValue(value: unknown): ActorRef | null {
 function runRefFromValue(value: unknown): RunRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'Run') return null;
-  if (!isNonEmptyString(value['projectId']) || !isNonEmptyString(value['goalId']) || !isNonEmptyString(value['runId'])) return null;
+  if (!nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['runId'])) return null;
   return { aggregateType: 'Run', projectId: value['projectId'], goalId: value['goalId'], runId: value['runId'] };
 }
 
 function sessionRefFromValue(value: unknown): SessionRef | null {
   if (!isRecord(value)) return null;
-  if (!isNonEmptyString(value['projectId']) || !isNonEmptyString(value['sessionId'])) return null;
+  if (!nonEmpty(value['projectId']) || !nonEmpty(value['sessionId'])) return null;
   return { projectId: value['projectId'], sessionId: value['sessionId'] };
 }
 
 function roleBindingRefFromValue(value: unknown): RoleBindingRefV1 | null {
   if (!isRecord(value)) return null;
   if (value['schemaVersion'] !== 1) return null;
-  if (!isNonEmptyString(value['bindingId']) || !isNonEmptyString(value['templateId'])
-    || !isNonEmptyString(value['templateRevision']) || !isNonEmptyString(value['policyRevision'])) return null;
+  if (!nonEmpty(value['bindingId']) || !nonEmpty(value['templateId'])
+    || !nonEmpty(value['templateRevision']) || !nonEmpty(value['policyRevision'])) return null;
   if (!isSafeRevision(value['bindingVersion'])) return null;
   return { schemaVersion: 1, bindingId: value['bindingId'], templateId: value['templateId'],
     templateRevision: value['templateRevision'], bindingVersion: value['bindingVersion'],
@@ -271,7 +247,7 @@ function roleBindingRefFromValue(value: unknown): RoleBindingRefV1 | null {
 }
 
 /**
- * Strict, versioned Agent submission source (W2 §8.1). A candidate_v2 may omit
+ * Strict, versioned Agent submission source (§8.1). A candidate_v2 may omit
  * it for the Host/legacy path; when present every nested ref must be complete
  * and in the candidate project/Goal so an old candidate can never be read as an
  * Agent author. This is a persisted-shape check only; it grants nothing.
@@ -302,7 +278,7 @@ function planWriteProvenanceIssues(value: unknown, projectId: string, goalId: st
   if (!isPositiveRevision(value['authorizationRevision'])) {
     issues.push('candidate_v2.submittedBy.authorizationRevision must be a positive integer');
   }
-  if (!isNonEmptyString(value['configurationRevision'])) {
+  if (!nonEmpty(value['configurationRevision'])) {
     issues.push('candidate_v2.submittedBy.configurationRevision must be a non-empty string');
   }
   return issues;
@@ -335,12 +311,12 @@ function scopeIssues(value: unknown, path: string): string[] {
   const kind = value['kind'];
   if (kind === 'goal') return [];
   if (kind === 'stage') {
-    return isNonEmptyString(value['stageId']) ? [] : [`${path}.stageId must be a non-empty string`];
+    return nonEmpty(value['stageId']) ? [] : [`${path}.stageId must be a non-empty string`];
   }
   if (kind === 'module') {
     const issues: string[] = [];
-    if (!isNonEmptyString(value['stageId'])) issues.push(`${path}.stageId must be a non-empty string`);
-    if (!isNonEmptyString(value['moduleRef'])) issues.push(`${path}.moduleRef must be a non-empty string`);
+    if (!nonEmpty(value['stageId'])) issues.push(`${path}.stageId must be a non-empty string`);
+    if (!nonEmpty(value['moduleRef'])) issues.push(`${path}.moduleRef must be a non-empty string`);
     return issues;
   }
   return [`${path}.kind must be goal|stage|module`];
@@ -349,9 +325,9 @@ function scopeIssues(value: unknown, path: string): string[] {
 function runtimeTaskIssues(value: unknown, path: string): string[] {
   if (!isRecord(value)) return [`${path} must be an object`];
   const issues: string[] = [];
-  if (!isNonEmptyString(value['taskId'])) issues.push(`${path}.taskId must be a non-empty string`);
-  if (value['stageId'] !== undefined && !isNonEmptyString(value['stageId'])) issues.push(`${path}.stageId must be a non-empty string when present`);
-  if (!isNonEmptyString(value['title'])) issues.push(`${path}.title must be a non-empty string`);
+  if (!nonEmpty(value['taskId'])) issues.push(`${path}.taskId must be a non-empty string`);
+  if (value['stageId'] !== undefined && !nonEmpty(value['stageId'])) issues.push(`${path}.stageId must be a non-empty string when present`);
+  if (!nonEmpty(value['title'])) issues.push(`${path}.title must be a non-empty string`);
   if (!isEnum(value['requirementLevel'], REQUIREMENT_LEVELS)) issues.push(`${path}.requirementLevel must be required|optional`);
   if (!isEnum(value['taskKind'], TASK_KINDS)) issues.push(`${path}.taskKind must be work|gate`);
   if (!isEnum(value['disposition'], DISPOSITIONS)) issues.push(`${path}.disposition must be active|deferred|cancelled|superseded`);
@@ -370,19 +346,19 @@ function runtimeTaskIssues(value: unknown, path: string): string[] {
 function assignmentIssues(value: unknown, path: string): string[] {
   if (!isRecord(value)) return [`${path} must be an object`];
   const issues: string[] = [];
-  if (!isNonEmptyString(value['taskId'])) issues.push(`${path}.taskId must be a non-empty string`);
-  if (!isNonEmptyString(value['role'])) issues.push(`${path}.role must be a non-empty string`);
-  if (!isNonEmptyString(value['instruction'])) issues.push(`${path}.instruction must be a non-empty string`);
+  if (!nonEmpty(value['taskId'])) issues.push(`${path}.taskId must be a non-empty string`);
+  if (!nonEmpty(value['role'])) issues.push(`${path}.role must be a non-empty string`);
+  if (!nonEmpty(value['instruction'])) issues.push(`${path}.instruction must be a non-empty string`);
   return issues;
 }
 
 function obligationIssues(value: unknown, path: string): string[] {
   if (!isRecord(value)) return [`${path} must be an object`];
   const issues: string[] = [];
-  if (!isNonEmptyString(value['obligationId'])) issues.push(`${path}.obligationId must be a non-empty string`);
-  if (!isNonEmptyString(value['title'])) issues.push(`${path}.title must be a non-empty string`);
+  if (!nonEmpty(value['obligationId'])) issues.push(`${path}.obligationId must be a non-empty string`);
+  if (!nonEmpty(value['title'])) issues.push(`${path}.title must be a non-empty string`);
   if (!isEnum(value['requirementLevel'], REQUIREMENT_LEVELS)) issues.push(`${path}.requirementLevel must be required|optional`);
-  if (!Array.isArray(value['taskIds']) || !(value['taskIds'] as unknown[]).every(isNonEmptyString)) {
+  if (!Array.isArray(value['taskIds']) || !(value['taskIds'] as unknown[]).every(nonEmpty)) {
     issues.push(`${path}.taskIds must be an array of non-empty strings`);
   }
   const requirements = value['verificationRequirements'];
@@ -390,10 +366,10 @@ function obligationIssues(value: unknown, path: string): string[] {
   else requirements.forEach((requirement, index) => {
     const rpath = `${path}.verificationRequirements[${index}]`;
     if (!isRecord(requirement)) { issues.push(`${rpath} must be an object`); return; }
-    if (!isNonEmptyString(requirement['requirementId'])) issues.push(`${rpath}.requirementId must be a non-empty string`);
+    if (!nonEmpty(requirement['requirementId'])) issues.push(`${rpath}.requirementId must be a non-empty string`);
     if (!isEnum(requirement['requirementLevel'], REQUIREMENT_LEVELS)) issues.push(`${rpath}.requirementLevel must be required|optional`);
-    if (!isNonEmptyString(requirement['kind'])) issues.push(`${rpath}.kind must be a non-empty string`);
-    if (!isNonEmptyString(requirement['description'])) issues.push(`${rpath}.description must be a non-empty string`);
+    if (!nonEmpty(requirement['kind'])) issues.push(`${rpath}.kind must be a non-empty string`);
+    if (!nonEmpty(requirement['description'])) issues.push(`${rpath}.description must be a non-empty string`);
   });
   return issues;
 }
@@ -404,9 +380,9 @@ function planValidationErrorArrayIssues(value: unknown): string[] {
   value.forEach((entry, index) => {
     const path = `plan issues[${index}]`;
     if (!isRecord(entry)) { issues.push(`${path} must be an object`); return; }
-    if (!isNonEmptyString(entry['path'])) issues.push(`${path}.path must be a non-empty string`);
+    if (!nonEmpty(entry['path'])) issues.push(`${path}.path must be a non-empty string`);
     if (typeof entry['code'] !== 'string' || !PLAN_VALIDATION_CODES.has(entry['code'])) issues.push(`${path}.code is not a target PlanValidationCode`);
-    if (!isNonEmptyString(entry['message'])) issues.push(`${path}.message must be a non-empty string`);
+    if (!nonEmpty(entry['message'])) issues.push(`${path}.message must be a non-empty string`);
   });
   return issues;
 }
@@ -425,9 +401,9 @@ function taskStateBasisIssues(value: unknown, tasks: unknown, ref: unknown): str
     issues.push('plan taskStateBasis.entries must be an array');
     return issues;
   }
-  const projectId = isRecord(ref) && isNonEmptyString(ref['projectId']) ? ref['projectId'] : null;
+  const projectId = isRecord(ref) && nonEmpty(ref['projectId']) ? ref['projectId'] : null;
   const planTaskIds = Array.isArray(tasks)
-    ? (tasks as unknown[]).map((task) => isRecord(task) ? task['taskId'] : undefined).filter(isNonEmptyString)
+    ? (tasks as unknown[]).map((task) => isRecord(task) ? task['taskId'] : undefined).filter(nonEmpty)
     : [];
   const planIds = new Set(planTaskIds);
   const seen = new Set<string>();
@@ -436,7 +412,7 @@ function taskStateBasisIssues(value: unknown, tasks: unknown, ref: unknown): str
     const path = `plan taskStateBasis.entries[${index}]`;
     if (!isRecord(entry)) { issues.push(`${path} must be an object`); return; }
     const taskId = entry['taskId'];
-    if (!isNonEmptyString(taskId)) { issues.push(`${path}.taskId must be a non-empty string`); return; }
+    if (!nonEmpty(taskId)) { issues.push(`${path}.taskId must be a non-empty string`); return; }
     if (seen.has(taskId)) issues.push(`${path}.taskId duplicates ${taskId}`);
     seen.add(taskId);
     if (previous !== null && taskId < previous) issues.push(`${path}.taskId is not in stable ascending order`);
@@ -455,7 +431,7 @@ function taskStateBasisIssues(value: unknown, tasks: unknown, ref: unknown): str
   return issues;
 }
 
-/** Upper bound of `PlanChangeReason.affectedTaskIds` (spec §3.1, C7). */
+/** Upper bound of `PlanChangeReason.affectedTaskIds` (spec §3.1). */
 const MAX_AFFECTED_TASK_IDS = 200;
 
 /** `affectedTaskIds`: distinct non-empty task ids, at most 200, each a task of `tasks` when known. */
@@ -464,11 +440,11 @@ function affectedTaskIdsIssues(value: unknown, tasks: unknown, path: string): st
   const issues: string[] = [];
   if (value.length > MAX_AFFECTED_TASK_IDS) issues.push(`${path} must hold at most ${MAX_AFFECTED_TASK_IDS} task ids`);
   const taskIds = Array.isArray(tasks)
-    ? new Set((tasks as unknown[]).map((task) => isRecord(task) ? task['taskId'] : undefined).filter(isNonEmptyString))
+    ? new Set((tasks as unknown[]).map((task) => isRecord(task) ? task['taskId'] : undefined).filter(nonEmpty))
     : null;
   const seen = new Set<string>();
   value.forEach((taskId, index) => {
-    if (!isNonEmptyString(taskId)) { issues.push(`${path}[${index}] must be a non-empty string`); return; }
+    if (!nonEmpty(taskId)) { issues.push(`${path}[${index}] must be a non-empty string`); return; }
     if (seen.has(taskId)) issues.push(`${path}[${index}] duplicates ${taskId}`);
     seen.add(taskId);
     if (taskIds !== null && !taskIds.has(taskId)) issues.push(`${path}[${index}] is not a task of the draft`);
@@ -477,7 +453,7 @@ function affectedTaskIdsIssues(value: unknown, tasks: unknown, path: string): st
 }
 
 /**
- * C7 `TaskDispositionRecordV1` on an accepted snapshot: one entry per Task,
+ * `TaskDispositionRecordV1` on an accepted snapshot: one entry per Task,
  * stable ascending by taskId, each a real disposition change of a task of this
  * plan (or a superseded Task's new replacement, `from === to === 'superseded'`),
  * set in an adopted PlanRevision of this project by a recorded actor.
@@ -491,9 +467,9 @@ function dispositionRecordIssues(value: unknown, tasks: unknown, ref: unknown): 
     issues.push('plan dispositionRecord.entries must be an array');
     return issues;
   }
-  const projectId = isRecord(ref) && isNonEmptyString(ref['projectId']) ? ref['projectId'] : null;
+  const projectId = isRecord(ref) && nonEmpty(ref['projectId']) ? ref['projectId'] : null;
   const planIds = new Set(Array.isArray(tasks)
-    ? (tasks as unknown[]).map((task) => isRecord(task) ? task['taskId'] : undefined).filter(isNonEmptyString)
+    ? (tasks as unknown[]).map((task) => isRecord(task) ? task['taskId'] : undefined).filter(nonEmpty)
     : []);
   const seen = new Set<string>();
   let previous: string | null = null;
@@ -503,7 +479,7 @@ function dispositionRecordIssues(value: unknown, tasks: unknown, ref: unknown): 
     const allowed = ['taskId', 'from', 'to', 'replacedByTaskId', 'traced', 'setIn', 'proposalRef', 'reason', 'actor'];
     if (!Object.keys(entry).every((key) => allowed.includes(key))) issues.push(`${path} carries unknown fields`);
     const taskId = entry['taskId'];
-    if (!isNonEmptyString(taskId)) { issues.push(`${path}.taskId must be a non-empty string`); return; }
+    if (!nonEmpty(taskId)) { issues.push(`${path}.taskId must be a non-empty string`); return; }
     if (seen.has(taskId)) issues.push(`${path}.taskId duplicates ${taskId}`);
     seen.add(taskId);
     if (previous !== null && taskId < previous) issues.push(`${path}.taskId is not in stable ascending order`);
@@ -512,10 +488,10 @@ function dispositionRecordIssues(value: unknown, tasks: unknown, ref: unknown): 
     if (!isEnum(entry['from'], DISPOSITIONS) || !isEnum(entry['to'], DISPOSITIONS)) {
       issues.push(`${path}.from/to must be dispositions`);
     } else if (entry['from'] === entry['to'] && entry['to'] !== 'superseded') {
-      // C7: an entry with from === to only re-points a superseded Task's replacement.
+      // An entry with from === to only re-points a superseded Task's replacement.
       issues.push(`${path} must record a disposition change`);
     }
-    if (!(entry['replacedByTaskId'] === null || isNonEmptyString(entry['replacedByTaskId']))) {
+    if (!(entry['replacedByTaskId'] === null || nonEmpty(entry['replacedByTaskId']))) {
       issues.push(`${path}.replacedByTaskId must be null or a non-empty string`);
     }
     if (typeof entry['traced'] !== 'boolean') issues.push(`${path}.traced must be a boolean`);
@@ -528,7 +504,7 @@ function dispositionRecordIssues(value: unknown, tasks: unknown, ref: unknown): 
     }
     const reason = entry['reason'];
     if (!isRecord(reason) || !Object.keys(reason).every((key) => ['text', 'sources', 'affectedTaskIds'].includes(key))
-      || !isNonEmptyString(reason['text']) || !Array.isArray(reason['sources'])
+      || !nonEmpty(reason['text']) || !Array.isArray(reason['sources'])
       || !(reason['sources'] as unknown[]).every(isArtifactRef)) {
       issues.push(`${path}.reason must carry text, ArtifactRef sources and affectedTaskIds`);
     } else {
@@ -544,9 +520,9 @@ function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] 
   const issues: string[] = [];
   const schemaVersion = value['schemaVersion'];
   if (schemaVersion !== 1 && schemaVersion !== 2) issues.push('plan schemaVersion must be 1 or 2');
-  if (!isNonEmptyString(value['planId'])) issues.push('plan planId must be a non-empty string');
+  if (!nonEmpty(value['planId'])) issues.push('plan planId must be a non-empty string');
   if (!isPositiveRevision(value['planRevision'])) issues.push('plan planRevision must be a positive integer');
-  if (requireGoalId && !isNonEmptyString(value['goalId'])) issues.push('plan goalId must be a non-empty string');
+  if (requireGoalId && !nonEmpty(value['goalId'])) issues.push('plan goalId must be a non-empty string');
   const review = value['reviewAdmissionProtocol'];
   if (review !== undefined && review !== 'independent-review-v1') issues.push('plan reviewAdmissionProtocol must be independent-review-v1 when present');
   const stages = value['stages'];
@@ -554,8 +530,8 @@ function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] 
   else stages.forEach((stage, index) => {
     const path = `plan stages[${index}]`;
     if (!isRecord(stage)) { issues.push(`${path} must be an object`); return; }
-    if (!isNonEmptyString(stage['stageId'])) issues.push(`${path}.stageId must be a non-empty string`);
-    if (!isNonEmptyString(stage['title'])) issues.push(`${path}.title must be a non-empty string`);
+    if (!nonEmpty(stage['stageId'])) issues.push(`${path}.stageId must be a non-empty string`);
+    if (!nonEmpty(stage['title'])) issues.push(`${path}.title must be a non-empty string`);
   });
   const tasks = value['tasks'];
   if (!Array.isArray(tasks)) issues.push('plan tasks must be an array');
@@ -573,21 +549,21 @@ function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] 
   else (hierarchy['parentOf'] as unknown[]).forEach((edge, index) => {
     const path = `plan taskHierarchy.parentOf[${index}]`;
     if (!isRecord(edge)) { issues.push(`${path} must be an object`); return; }
-    if (!isNonEmptyString(edge['parentTaskId'])) issues.push(`${path}.parentTaskId must be a non-empty string`);
-    if (!isNonEmptyString(edge['childTaskId'])) issues.push(`${path}.childTaskId must be a non-empty string`);
+    if (!nonEmpty(edge['parentTaskId'])) issues.push(`${path}.parentTaskId must be a non-empty string`);
+    if (!nonEmpty(edge['childTaskId'])) issues.push(`${path}.childTaskId must be a non-empty string`);
   });
   const dag = value['executionDag'];
   if (!isRecord(dag) || !Array.isArray(dag['dependsOn'])) issues.push('plan executionDag.dependsOn must be an array');
   else (dag['dependsOn'] as unknown[]).forEach((edge, index) => {
     const path = `plan executionDag.dependsOn[${index}]`;
     if (!isRecord(edge)) { issues.push(`${path} must be an object`); return; }
-    if (!isNonEmptyString(edge['taskId'])) issues.push(`${path}.taskId must be a non-empty string`);
-    if (!isNonEmptyString(edge['dependsOnId'])) issues.push(`${path}.dependsOnId must be a non-empty string`);
+    if (!nonEmpty(edge['taskId'])) issues.push(`${path}.taskId must be a non-empty string`);
+    if (!nonEmpty(edge['dependsOnId'])) issues.push(`${path}.dependsOnId must be a non-empty string`);
     const requires = edge['requires'];
     if (!isRecord(requires)) issues.push(`${path}.requires must be an object`);
     else {
       if (!isEnum(requires['kind'], DEPENDENCY_KINDS)) issues.push(`${path}.requires.kind is not a legal dependency kind`);
-      if (!isNonEmptyString(requires['label'])) issues.push(`${path}.requires.label must be a non-empty string`);
+      if (!nonEmpty(requires['label'])) issues.push(`${path}.requires.label must be a non-empty string`);
     }
   });
   // A single stable store codec (`PlanRevisionSnapshot@1`) carries explicit
@@ -611,8 +587,8 @@ function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] 
       else relations.forEach((relation, index) => {
         const path = `plan taskRelations[${index}]`;
         if (!isRecord(relation)) { issues.push(`${path} must be an object`); return; }
-        if (!isNonEmptyString(relation['fromTaskId'])) issues.push(`${path}.fromTaskId must be a non-empty string`);
-        if (!isNonEmptyString(relation['toTaskId'])) issues.push(`${path}.toTaskId must be a non-empty string`);
+        if (!nonEmpty(relation['fromTaskId'])) issues.push(`${path}.fromTaskId must be a non-empty string`);
+        if (!nonEmpty(relation['toTaskId'])) issues.push(`${path}.toTaskId must be a non-empty string`);
         if (relation['kind'] !== 'coordination' && relation['kind'] !== 'expected_dependency') {
           issues.push(`${path}.kind must be coordination|expected_dependency`);
         }
@@ -625,13 +601,13 @@ function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] 
       else inputs.forEach((requirement, index) => {
         const path = `plan inputRequirements[${index}]`;
         if (!isRecord(requirement)) { issues.push(`${path} must be an object`); return; }
-        if (!isNonEmptyString(requirement['requirementId'])) issues.push(`${path}.requirementId must be a non-empty string`);
-        if (!isNonEmptyString(requirement['consumerTaskId'])) issues.push(`${path}.consumerTaskId must be a non-empty string`);
+        if (!nonEmpty(requirement['requirementId'])) issues.push(`${path}.requirementId must be a non-empty string`);
+        if (!nonEmpty(requirement['consumerTaskId'])) issues.push(`${path}.consumerTaskId must be a non-empty string`);
         if (requirement['kind'] !== 'artifact') issues.push(`${path}.kind must be artifact`);
         if (!isArtifactRef(requirement['artifactRef'])) issues.push(`${path}.artifactRef must be an ArtifactRef`);
       });
     }
-    // W1 compiler-owned accepted basis. A Draft/Proposal input must never carry
+    // Compiler-owned accepted basis. A Draft/Proposal input must never carry
     // it; on an accepted snapshot it must be complete, unique, stable-sorted and
     // in this project, so a caller-authored or damaged basis can never be
     // silently dropped and decoded as a valid older body.
@@ -643,7 +619,7 @@ function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] 
         issues.push(...taskStateBasisIssues(taskStateBasis, value['tasks'], value['ref']));
       }
     }
-    // C7 compiler-owned disposition record: same rule as `taskStateBasis`.
+    // Compiler-owned disposition record: same rule as `taskStateBasis`.
     const dispositionRecord = value['dispositionRecord'];
     if (dispositionRecord !== undefined) {
       if (requireGoalId) {
@@ -663,7 +639,7 @@ function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] 
 const NOT_ADOPTION_REASONS: readonly string[] = ['replaced', 'not_selected', 'abandoned'];
 
 /**
- * Slice 5 §2.4 `notAdopted`: the exact, saved non-adoption fact. Its shape is
+ * §2.4 `notAdopted`: the exact, saved non-adoption fact. Its shape is
  * pure data; whether the proposal may be abandoned is a service rule.
  */
 function notAdoptedIssues(value: unknown, projectId: string, workspaceId: string): string[] {
@@ -675,7 +651,7 @@ function notAdoptedIssues(value: unknown, projectId: string, workspaceId: string
   if (actorFromValue(value['requestedBy']) === null) {
     issues.push('candidate_v2.notAdopted.requestedBy must be an ActorRef');
   }
-  if (!isNonEmptyString(value['at'])) issues.push('candidate_v2.notAdopted.at must be a non-empty string');
+  if (!nonEmpty(value['at'])) issues.push('candidate_v2.notAdopted.at must be a non-empty string');
   const replacedBy = value['replacedBy'];
   if (replacedBy !== null) {
     const ref = planProposalRefFromValue(replacedBy);
@@ -722,7 +698,7 @@ function goalControlRebaseIssues(value: unknown, label: string): string[] {
 }
 
 /**
- * Slice 5 §2.8 `DecisionChangeProofV1` shape check. `PlanRevisionAccepted` may
+ * §2.8 `DecisionChangeProofV1` shape check. `PlanRevisionAccepted` may
  * carry it as `payload.decisionApplication`; the old event without the field
  * stays readable, so this is only invoked for a present value.
  */
@@ -757,7 +733,7 @@ function decisionChangeProofIssues(value: unknown, label: string): string[] {
 /**
  * The default-applying read of the request slot (spec §2.2/§2.4): a missing
  * `requestRef` reads as the explicit null "independent candidate". Behaviour is
- * owned by the tasks-side proposePlan service; part 1 fixes the signature.
+ * owned by the tasks-side proposePlan service.
  */
 export function candidateRequestRef(proposal: PlanProposal): QueryJobRef | null {
   // Only a v2 candidate can belong to a request; a legacy v1 candidate and an
@@ -787,7 +763,7 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
     if (basedOn !== null && planRevisionRefFromValue(basedOn, ref.projectId) === null) {
       issues.push('candidate_v2.basedOn must be null or a PlanRevisionRef in this project');
     }
-    // Slice 5 §2.4 request-candidate extension. Absent means an independent
+    // §2.4 request-candidate extension. Absent means an independent
     // candidate (never a Null candidate grouped into a request); present must be
     // a complete QueryJobRef of this project/workspace.
     const requestRef = value['requestRef'];
@@ -800,18 +776,18 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
     }
     issues.push(...structuralPlanIssues(value['draft'], true));
     const reason = value['reason'];
-    if (!isRecord(reason) || !isNonEmptyString(reason['text']) || !Array.isArray(reason['sources'])) {
+    if (!isRecord(reason) || !nonEmpty(reason['text']) || !Array.isArray(reason['sources'])) {
       issues.push('candidate_v2.reason must carry text and sources');
     } else {
       (reason['sources'] as unknown[]).forEach((source, index) => {
         const path = `candidate_v2.reason.sources[${index}]`;
-        if (!isRecord(source) || source['kind'] !== 'artifact' || !isNonEmptyString(source['contentType'])
-          || !isNonEmptyString(source['digest']) || typeof source['sizeBytes'] !== 'number'
+        if (!isRecord(source) || source['kind'] !== 'artifact' || !nonEmpty(source['contentType'])
+          || !nonEmpty(source['digest']) || typeof source['sizeBytes'] !== 'number'
           || !Number.isSafeInteger(source['sizeBytes']) || source['sizeBytes'] < 0 || !isRecord(source['source'])) {
           issues.push(`${path} must be an ArtifactRef`);
         }
       });
-      // C7: optional; absent on every candidate recorded before it existed.
+      // Optional; absent on every candidate recorded before it existed.
       if (reason['affectedTaskIds'] !== undefined) {
         const draft = value['draft'];
         issues.push(...affectedTaskIdsIssues(reason['affectedTaskIds'], isRecord(draft) ? draft['tasks'] : null,
@@ -838,7 +814,7 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
       issues.push('legacy PlanProposal sourcePlanRef must be a PlanRevisionRef in this project');
     }
   }
-  if (!isNonEmptyString(value['recordedAt'])) issues.push('legacy PlanProposal recordedAt must be a non-empty string');
+  if (!nonEmpty(value['recordedAt'])) issues.push('legacy PlanProposal recordedAt must be a non-empty string');
   return issues;
 }
 
@@ -846,9 +822,9 @@ function validatePlanProposalRecord(record: EncodedRecord): DecodeResult<Encoded
   if (record.schemaId !== PLAN_PROPOSAL_SCHEMA_ID) {
     return invalid(`expected schemaId ${PLAN_PROPOSAL_SCHEMA_ID}, got ${record.schemaId}`);
   }
-  const parsed = parseJsonObject(record.json, 'PlanProposal');
+  const parsed = parseTaggedObject(record.json, 'PlanProposal');
   if (typeof parsed === 'string') return invalid(parsed);
-  // Slice 5 §2.5/T-R2-2: the wire-only creation origin lives beside the body;
+  // §2.5: the wire-only creation origin lives beside the body;
   // the placeholder `null` is bound by the Store before this validator runs on
   // a bound record (see the record schema's `commitCursorFields`).
   const originProblem = noticeOriginFieldsProblem(parsed, 'PlanProposal');
@@ -887,11 +863,11 @@ function planRevisionSnapshotIssues(value: unknown): string[] {
   const ref = value['ref'];
   let projectId = '';
   if (!isRecord(ref) || ref['aggregateType'] !== 'PlanRevision'
-    || !isNonEmptyString(ref['projectId']) || !isNonEmptyString(ref['planId'])) {
+    || !nonEmpty(ref['projectId']) || !nonEmpty(ref['planId'])) {
     issues.push('PlanRevisionSnapshot.ref must be a full PlanRevision ref');
   } else {
     projectId = ref['projectId'];
-    if (!isNonEmptyString(value['planId']) || value['planId'] !== ref['planId']) {
+    if (!nonEmpty(value['planId']) || value['planId'] !== ref['planId']) {
       issues.push('PlanRevisionSnapshot.planId must agree with its ref');
     }
   }
@@ -899,7 +875,7 @@ function planRevisionSnapshotIssues(value: unknown): string[] {
   if (goalRefFromValue(value['goalRef'], projectId) === null) {
     issues.push('PlanRevisionSnapshot.goalRef must be a GoalRef in this project');
   }
-  if (!isNonEmptyString(value['acceptedAt'])) issues.push('PlanRevisionSnapshot.acceptedAt must be a non-empty string');
+  if (!nonEmpty(value['acceptedAt'])) issues.push('PlanRevisionSnapshot.acceptedAt must be a non-empty string');
   issues.push(...pinIssues(value['effectiveCompletionPolicy'], projectId, 'policy'));
   issues.push(...pinIssues(value['effectiveArchitectureBaseline'], projectId, 'architecture'));
   issues.push(...structuralPlanIssues(value, false));
@@ -910,7 +886,7 @@ function validatePlanRevisionRecord(record: EncodedRecord): DecodeResult<Encoded
   if (record.schemaId !== PLAN_REVISION_SCHEMA_ID) {
     return invalid(`expected schemaId ${PLAN_REVISION_SCHEMA_ID}, got ${record.schemaId}`);
   }
-  const parsed = parseJsonObject(record.json, 'PlanRevisionSnapshot');
+  const parsed = parseTaggedObject(record.json, 'PlanRevisionSnapshot');
   if (typeof parsed === 'string') return invalid(parsed);
   const ref = parsed['ref'];
   if (!isRecord(ref) || canonicalJson(ref as JsonValue) !== record.refKey) {
@@ -932,8 +908,8 @@ function eventEnvelopeIssues(event: EncodedDomainEvent, eventType: string, schem
   const issues: string[] = [];
   if (event.eventType !== eventType) issues.push(`eventType must be ${eventType}`);
   if (event.schemaVersion !== schemaVersion) issues.push(`schemaVersion must be ${schemaVersion}`);
-  if (!isNonEmptyString(event.eventId)) issues.push('eventId must be a non-empty string');
-  if (!isNonEmptyString(event.occurredAt)) issues.push('occurredAt must be a non-empty string');
+  if (!nonEmpty(event.eventId)) issues.push('eventId must be a non-empty string');
+  if (!nonEmpty(event.occurredAt)) issues.push('occurredAt must be a non-empty string');
   if (parsed['eventId'] !== event.eventId) issues.push('outer eventId disagrees with the event JSON');
   if (parsed['eventType'] !== event.eventType) issues.push('outer eventType disagrees with the event JSON');
   if (parsed['schemaVersion'] !== event.schemaVersion) issues.push('outer schemaVersion disagrees with the event JSON');
@@ -942,23 +918,23 @@ function eventEnvelopeIssues(event: EncodedDomainEvent, eventType: string, schem
 }
 
 function validatePlanProposalRecordedEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
-  const parsed = parseJsonObject(event.json, 'PlanProposalRecorded event');
+  const parsed = parseTaggedObject(event.json, 'PlanProposalRecorded event');
   if (typeof parsed === 'string') return invalid(parsed);
   const issues = eventEnvelopeIssues(event, PLAN_PROPOSAL_RECORDED_EVENT, PLAN_PROPOSAL_RECORDED_SCHEMA_VERSION, parsed);
-  if (!isNonEmptyString(parsed['projectId'])) issues.push('PlanProposalRecorded projectId must be a non-empty string');
-  if (!isNonEmptyString(parsed['workspaceId'])) issues.push('PlanProposalRecorded workspaceId must be a non-empty string');
+  if (!nonEmpty(parsed['projectId'])) issues.push('PlanProposalRecorded projectId must be a non-empty string');
+  if (!nonEmpty(parsed['workspaceId'])) issues.push('PlanProposalRecorded workspaceId must be a non-empty string');
   if (parsed['aggregateType'] !== 'PlanProposal') issues.push('PlanProposalRecorded aggregateType must be "PlanProposal"');
-  if (!isNonEmptyString(parsed['aggregateId'])) issues.push('PlanProposalRecorded aggregateId must be a non-empty string');
+  if (!nonEmpty(parsed['aggregateId'])) issues.push('PlanProposalRecorded aggregateId must be a non-empty string');
   if (!isPositiveRevision(parsed['aggregateRevision'])) issues.push('PlanProposalRecorded aggregateRevision must be a positive integer');
-  if (!isNonEmptyString(parsed['causationId'])) issues.push('PlanProposalRecorded causationId must be a non-empty string');
-  if (!isNonEmptyString(parsed['correlationId'])) issues.push('PlanProposalRecorded correlationId must be a non-empty string');
-  if (!isNonEmptyString(parsed['idempotencyKey'])) issues.push('PlanProposalRecorded idempotencyKey must be a non-empty string');
+  if (!nonEmpty(parsed['causationId'])) issues.push('PlanProposalRecorded causationId must be a non-empty string');
+  if (!nonEmpty(parsed['correlationId'])) issues.push('PlanProposalRecorded correlationId must be a non-empty string');
+  if (!nonEmpty(parsed['idempotencyKey'])) issues.push('PlanProposalRecorded idempotencyKey must be a non-empty string');
   if (actorFromValue(parsed['actor']) === null) issues.push('PlanProposalRecorded actor is not a valid ActorRef');
   const payload = parsed['payload'];
   if (!isRecord(payload)) issues.push('PlanProposalRecorded payload must be an object');
   else {
-    const expectedRef: PlanProposalRef | null = isNonEmptyString(parsed['projectId']) && isNonEmptyString(parsed['workspaceId'])
-      && isNonEmptyString(parsed['aggregateId'])
+    const expectedRef: PlanProposalRef | null = nonEmpty(parsed['projectId']) && nonEmpty(parsed['workspaceId'])
+      && nonEmpty(parsed['aggregateId'])
       ? { aggregateType: 'PlanProposal', projectId: parsed['projectId'], workspaceId: parsed['workspaceId'], proposalId: parsed['aggregateId'] }
       : null;
     const proposalIssues = proposalValueIssues(payload['proposal'], expectedRef);
@@ -973,32 +949,32 @@ function validatePlanProposalRecordedEvent(event: EncodedDomainEvent): DecodeRes
 }
 
 function validatePlanRevisionAcceptedEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
-  const parsed = parseJsonObject(event.json, 'PlanRevisionAccepted event');
+  const parsed = parseTaggedObject(event.json, 'PlanRevisionAccepted event');
   if (typeof parsed === 'string') return invalid(parsed);
   const issues = eventEnvelopeIssues(event, PLAN_REVISION_ACCEPTED_EVENT, PLAN_REVISION_ACCEPTED_SCHEMA_VERSION, parsed);
-  if (!isNonEmptyString(parsed['projectId'])) issues.push('PlanRevisionAccepted projectId must be a non-empty string');
-  if (!isNonEmptyString(parsed['workspaceId'])) issues.push('PlanRevisionAccepted workspaceId must be a non-empty string');
+  if (!nonEmpty(parsed['projectId'])) issues.push('PlanRevisionAccepted projectId must be a non-empty string');
+  if (!nonEmpty(parsed['workspaceId'])) issues.push('PlanRevisionAccepted workspaceId must be a non-empty string');
   if (parsed['aggregateType'] !== 'PlanRevision') issues.push('PlanRevisionAccepted aggregateType must be "PlanRevision"');
-  if (!isNonEmptyString(parsed['aggregateId'])) issues.push('PlanRevisionAccepted aggregateId must be a non-empty string');
+  if (!nonEmpty(parsed['aggregateId'])) issues.push('PlanRevisionAccepted aggregateId must be a non-empty string');
   if (parsed['aggregateRevision'] !== 1) issues.push('PlanRevisionAccepted aggregateRevision must be 1');
-  if (!isNonEmptyString(parsed['causationId'])) issues.push('PlanRevisionAccepted causationId must be a non-empty string');
-  if (!isNonEmptyString(parsed['correlationId'])) issues.push('PlanRevisionAccepted correlationId must be a non-empty string');
-  if (!isNonEmptyString(parsed['idempotencyKey'])) issues.push('PlanRevisionAccepted idempotencyKey must be a non-empty string');
+  if (!nonEmpty(parsed['causationId'])) issues.push('PlanRevisionAccepted causationId must be a non-empty string');
+  if (!nonEmpty(parsed['correlationId'])) issues.push('PlanRevisionAccepted correlationId must be a non-empty string');
+  if (!nonEmpty(parsed['idempotencyKey'])) issues.push('PlanRevisionAccepted idempotencyKey must be a non-empty string');
   if (actorFromValue(parsed['actor']) === null) issues.push('PlanRevisionAccepted actor is not a valid ActorRef');
   const payload = parsed['payload'];
   if (!isRecord(payload)) issues.push('PlanRevisionAccepted payload must be an object');
   else {
-    if (!isNonEmptyString(payload['goalId'])) issues.push('PlanRevisionAccepted payload.goalId must be a non-empty string');
+    if (!nonEmpty(payload['goalId'])) issues.push('PlanRevisionAccepted payload.goalId must be a non-empty string');
     if (!isPositiveRevision(payload['goalAggregateRevision'])) issues.push('PlanRevisionAccepted payload.goalAggregateRevision must be a positive integer');
     const snapshot = payload['planRevision'];
-    if (isRecord(snapshot) && isNonEmptyString(parsed['aggregateId'])) {
+    if (isRecord(snapshot) && nonEmpty(parsed['aggregateId'])) {
       const ref = snapshot['ref'];
       if (!isRecord(ref) || ref['planId'] !== parsed['aggregateId'] || ref['projectId'] !== parsed['projectId']) {
         issues.push('PlanRevisionAccepted snapshot ref disagrees with the event aggregate');
       }
     }
     issues.push(...planRevisionSnapshotIssues(snapshot));
-    // Slice 5 §2.8: the optional acknowledgement and the exact change proof a
+    // §2.8: the optional acknowledgement and the exact change proof a
     // recorded decision application carries. Absent on every old event.
     if (payload['acknowledgementRef'] !== undefined) {
       if (sessionMessageRefFromValue(payload['acknowledgementRef']) === null) {
@@ -1019,7 +995,7 @@ export function decodePlanProposalRecord(record: EncodedRecord): DecodeResult<Pl
   if (checked.status !== 'decoded') return checked;
   const parsed = JSON.parse(record.json) as UnknownRecord;
   if (parsed['kind'] === 'candidate_v2') {
-    // Slice 5 §2.5: the wire-only creation origin (`since`) is NOT part of the
+    // §2.5: the wire-only creation origin (`since`) is NOT part of the
     // public DTO; `decodePlanProposalOrigin` reads it separately.
     const wire = { ...parsed };
     delete wire['since'];
@@ -1045,13 +1021,13 @@ export function decodePlanProposalRecord(record: EncodedRecord): DecodeResult<Pl
 }
 
 /**
- * Slice 5 §2.5/T-R2-2: the wire-only creation origin of a stored PlanProposal,
+ * §2.5: the wire-only creation origin of a stored PlanProposal,
  * read beside `decodePlanProposalRecord` and never merged into its public DTO.
  * A record without `since` reads as `{}` (the legacy position); a persisted
  * `null` is the PreparedCommit placeholder and reads as unavailable.
  */
 export function decodePlanProposalOrigin(record: EncodedRecord): DecodeResult<NoticeOriginWireV1> {
-  const parsed = parseJsonObject(record.json, 'PlanProposal origin');
+  const parsed = parseTaggedObject(record.json, 'PlanProposal origin');
   if (typeof parsed === 'string') return invalid(parsed);
   const problem = noticeOriginFieldsProblem(parsed, 'PlanProposal origin');
   if (problem !== null) return invalid(problem);
@@ -1108,13 +1084,11 @@ export function encodePlanRevisionSnapshot(snapshot: PlanRevisionSnapshot): Enco
 }
 
 export function encodePlanProposalRecordedEvent(event: PlanProposalRecordedEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 export function encodePlanRevisionAcceptedEvent(event: PlanRevisionAcceptedEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 // --------------------------------------------------------------------------
@@ -1124,7 +1098,7 @@ export function encodePlanRevisionAcceptedEvent(event: PlanRevisionAcceptedEvent
 const PLAN_PROPOSAL_RECORD_SCHEMA: EncodedRecordSchema = {
   schemaId: PLAN_PROPOSAL_SCHEMA_ID,
   aggregateType: 'PlanProposal',
-  // Slice 5 §2.5/T-R2-2: a new candidate binds its creation commit cursor to
+  // §2.5: a new candidate binds its creation commit cursor to
   // the wire-only `since`; later updates copy it and never rebind.
   commitCursorFields: NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS,
   validate: validatePlanProposalRecord,
@@ -1144,14 +1118,14 @@ const PLAN_PROPOSAL_GOAL_LOOKUP: RecordLookupIndex = {
   paths: ['goalRef.projectId', 'goalRef.goalId'],
 };
 
-/** Slice 5 §2.5 request-head lookup; a missing `requestRef` is stored as null. */
+/** §2.5 request-head lookup; a missing `requestRef` is stored as null. */
 const PLAN_PROPOSAL_REQUEST_LOOKUP: RecordLookupIndex = {
   name: S5_PLAN_PROPOSAL_BY_REQUEST,
   aggregateType: 'PlanProposal',
   paths: ['ref.projectId', 'ref.workspaceId', 'goalRef.goalId', 'requestRef.queryJobId'],
 };
 
-/** Slice 2B L14: one Goal's PlanRevisions, ordered by `acceptedAt` (task timeline). */
+/** One Goal's PlanRevisions, ordered by `acceptedAt` (task timeline). */
 export const S2B_PLAN_REVISION_BY_GOAL_LOOKUP = 's2b-plan-revision-by-goal';
 const PLAN_REVISION_BY_GOAL_LOOKUP: RecordLookupIndex = {
   name: S2B_PLAN_REVISION_BY_GOAL_LOOKUP,

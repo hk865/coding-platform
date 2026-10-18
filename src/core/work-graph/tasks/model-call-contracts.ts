@@ -1,9 +1,7 @@
 /**
- * B2 narrow next model-request Port (skeleton).
+ * Narrow next model-request Port.
  *
- * Pure DTOs migrated from the read-only legacy reference
- * (`coding-platform/src/contracts/dispatch.ts`): stable permit identity and the
- * single-consumption semantics. No legacy Ledger/Control service is imported.
+ * Pure DTOs: stable permit identity and the single-consumption semantics.
  * `ModelRequestPermit` is the existing call-evidence aggregate; it is not a new
  * execution truth table. A permit is one-shot: @1 issued -> @2 consumed.
  */

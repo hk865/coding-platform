@@ -52,6 +52,7 @@ import { RUN_BY_TASK_INDEX, taskRecordRefKey } from '../tasks/plan-readers.js';
 import { readRequeueWindow } from '../tasks/requeue-service.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey, SESSION_MESSAGE_BY_RECIPIENT_LOOKUP } from '../sessions/message-record-codecs.js';
 import { decodeNoticeOrigin } from '../persistence/decision-record-codecs.js';
+import { storeFailureCode } from '../persistence/read-result-failures.js';
 import {
   decodeVerificationRoundSnapshot, VERIFICATION_ROUND_BY_TASK_LOOKUP,
   VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT, VERIFICATION_ROUND_ORIGINAL_LOOKUP,
@@ -182,26 +183,15 @@ type LineReadState = { problem: LineProblem | null };
 /** A store read that either succeeds or returns the port rejection (rule 3). */
 export type StoreRead<T> = { status: 'ready'; value: T } | CoreRejection;
 
-/** Map a store failure code onto the core error vocabulary. */
-function coreCode(code: string): CoreError {
-  switch (code) {
-    case 'invalid': case 'forbidden': case 'revision_conflict': case 'idempotency_conflict':
-    case 'not_found': case 'dependency_blocked': case 'cycle': case 'busy': case 'source_stale':
-    case 'incomplete': case 'capacity': case 'unsupported': case 'unavailable': case 'cancelled':
-      return code;
-    default: return 'unavailable';
-  }
-}
-
 /** A failed store read, as the port rejection the whole read returns. */
 function rejectionOf(failure: { code: string; reason: string }): CoreRejection {
-  return { status: 'rejected', code: coreCode(failure.code), reason: failure.reason };
+  return { status: 'rejected', code: storeFailureCode({ code: failure.code }), reason: failure.reason };
 }
 
 /** Record the first failed read for one line without overwriting an earlier one. */
 function noteProblem(state: LineReadState | null, failure: { code: string; reason: string }): void {
   if (state === null || state.problem !== null) return;
-  state.problem = { code: coreCode(failure.code), reason: failure.reason };
+  state.problem = { code: storeFailureCode({ code: failure.code }), reason: failure.reason };
 }
 
 /**
@@ -1883,7 +1873,7 @@ async function readHistoryParts(
   const partialParts: { part: 'written_anchors' | 'undelivered' | 'done_evidence'; reason: string }[] = [];
   let problem: LineProblem | null = null;
   const note = (failure: { code: string; reason: string }): void => {
-    if (problem === null) problem = { code: coreCode(failure.code), reason: failure.reason };
+    if (problem === null) problem = { code: storeFailureCode({ code: failure.code }), reason: failure.reason };
   };
 
   // §3.4 AT4: the outstanding written anchors' `next` comes from the authoritative
@@ -2642,7 +2632,7 @@ async function readExecutionsSection(
     let index = startSegment;
     let after = afterGeneration;
 
-    // L12 (sixth round): recheck every already-walked segment for a newer generation.
+    // L12: recheck every already-walked segment for a newer generation.
     for (let at = 0; at < startSegment; at += 1) {
       const sessionId = chainNow[at]!.ref.sessionId;
       const mark = seenNow[at] ?? { work: 0, query: 0 };

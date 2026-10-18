@@ -1,10 +1,7 @@
 // Slice 4C RW-5 / §11.6 R4 / L23: the ONE pure stage-continuity decision.
 // A stage anchor is retired for a non-file reason when the stage is absent from
 // some adopted plan revision between the anchor's own revision and the current
-// one. This freezes the loop previously duplicated in
-// `views/note-views.ts:559-569` (per revision) and `notes/note-service.ts:659-664`
-// (which dropped `planRevision`); both callers migrate to this function, and the
-// service-side caller later supplies the plan-window read.
+// one.
 
 export type StageContinuityV1 =
   | { status: 'continuous' }

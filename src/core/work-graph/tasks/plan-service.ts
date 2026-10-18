@@ -6,8 +6,8 @@
  * one atomic fold to `plan-commit-compiler.ts`. It starts no transaction of its
  * own and never re-implements those rules.
  *
- * Every lifecycle write (W13 Host/answer proposal, W14 Agent proposal, W15
- * initial and W16 future adoption) is decided by the state machines
+ * Every lifecycle write (Host/answer proposal, Agent proposal, initial and
+ * future adoption) is decided by the state machines
  * (STATE-MACHINES-SPEC §3 `state/plan-machine.ts`, §2 GOAL-02/03
  * `state/goal-machine.ts`): receipt lookup first; after each read the owner asks
  * `planProposalProblem` with the facts read so far, so a refusal stops the
@@ -15,23 +15,15 @@
  * candidate / accepted proposal (§14.1) and the CAS guards of the one commit,
  * and `transitionGoal` the moved Goal pointer.
  *
- * This slice implements the INITIAL plan path (candidate v2 -> accepted
- * PlanRevision) plus the six `PlanTaskPort` reads. A v2 candidate carries a full
- * draft, not the legacy restricted delta/target digest, so a CHANGE candidate
- * (`basedOn !== null`) is never authorized by a non-empty `decisionRefs`: apply
- * rejects it with `incomplete` (no accepted decision) or `unsupported`
- * (authorized delta compilation is not implemented yet). R3c is not closed here.
- *
- * W1 Stage 1 additionally RECOGNIZES the v2 future-plan revision
- * (`basedOn !== null`, schemaVersion 2) and routes it to ONE explicit
- * `unsupported` branch; it adopts no candidate and writes nothing. The initial
- * fold, the reads, replay and claim behavior are unchanged.
+ * A v2 candidate carries a full draft, not the legacy restricted delta/target
+ * digest; the initial and future-only adoption paths judge that same draft.
  */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { CoreCallContext, CorePrincipal } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
   DecisionActionV1,
   DecisionChangeProofV1,
@@ -40,6 +32,7 @@ import type {
   GoalDecisionBasisV1,
 } from '../../../contracts/goal-decisions.js';
 import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey } from '../../../contracts/goal-decisions.js';
+import { rejected as sharedRejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
 import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
@@ -253,9 +246,6 @@ function ownJsonInput<T>(value: T, what: string): Owned<T> {
     return { status: 'invalid', reason: `${what} cannot be isolated from the caller: ${detail}` };
   }
 }
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 /**
  * Bind the caller's scope, identity and the ORIGINAL AbortSignal synchronously,
  * before the first await. `principal`/`materialReader` are copied so a later
@@ -294,14 +284,11 @@ function ownCallContext(ctx: CoreCallContext): Owned<CoreCallContext> {
     signal,
   } as unknown as CoreCallContext };
 }
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 function rejected(code: CoreError, reason: string): Rejection {
-  return { status: 'rejected', code, reason };
+  return sharedRejected(code, reason);
 }
 function forbidden(reason: string): Rejection {
   return rejected('forbidden', reason);
@@ -912,7 +899,7 @@ function workFailureInput(definition: RuntimeTask, state: CanonicalTaskState, fa
     runs,
     requeues: facts.requeuesByTaskId.get(definition.taskId) ?? [],
     requeueRefusal: selectedRun === null ? null : facts.requeueRefusalsByRunId.get(selectedRun.ref.runId) ?? null,
-    // K3 L7/L22: the selected Task's full review records make AV-2b / AV-4c
+    // L7/L22: the selected Task's full review records make AV-2b / AV-4c
     // fire; the selected Run's key being present but unreadable (or its record
     // undecodable) is the fail-closed `reviewUnreadable` the Task row projects.
     reviews: facts.reviewsByTaskId.get(definition.taskId) ?? [],
@@ -1006,7 +993,7 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
     ...(dispositionChange === undefined ? {} : { dispositionChange }),
     currentAttempt: state.currentAttempt,
     execution: state.execution,
-    // K3 L7: the selected Run's review record, or its fail-closed `unreadable`.
+    // L7: the selected Run's review record, or its fail-closed `unreadable`.
     ...(state.unknownCallReview === null ? {} : { unknownCallReview: state.unknownCallReview }),
     eligibilityScope: 'task_state',
     eligibility,
@@ -2273,7 +2260,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
   }
 
   /**
-   * K3 L4: the read-only committed-receipt lookup the `propose_future_plan`
+   * L4: the read-only committed-receipt lookup the `propose_future_plan`
    * owner publishes. It reuses `proposePlanAsAgent`'s Agent identity (the
    * formal session-derived actor) and its fingerprint, rebuilding the request
    * from the Kernel-recorded arguments alone; it never writes and never reads
@@ -2320,8 +2307,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
 /**
  * Slice 5 §3.3 RequestCandidatePort (F30): the per-request candidate head read
  * and the abandon write. It is a named factory that uses the SAME Plan owner
- * dependencies, so part 2 can compile the request-slot commit without a second
- * plan service. Part 1 declares the port methods only; the factory never throws.
+ * dependencies, so the request-slot commit compiles without a second plan
+ * service; the factory never throws.
  */
 export function createRequestCandidateService(deps: PlanServiceDependencies): RequestCandidatePort {
   const { records } = deps;
@@ -2532,7 +2519,7 @@ function gateCoverage(plan: PlanRevisionSnapshot, gate: RuntimeTask): string[] {
 }
 
 // --------------------------------------------------------------------------
-// W2 delegated Agent admission seam (recognition only in this skeleton)
+// Delegated Agent admission seam
 // --------------------------------------------------------------------------
 
 /** True only for the formal work_run caller; Host/query-run keep the legacy path. */

@@ -1,7 +1,7 @@
 /**
  * R5b.1 record/event codecs for the QueryJob submitted pair.
  *
- * Wire shape (frozen in the stage-1 skeleton):
+ * Wire shape (frozen):
  *   QueryJobSnapshot@1 records reuse the existing `QueryJobSnapshot` contract
  *   body; a QueryJobSubmitted@1 event keeps the legacy shape
  *   `{eventId, eventType, schemaVersion: 1, ... QueryJobSubmittedEvent}` with
@@ -28,6 +28,9 @@ import type { QueryEntryTicket, QueryExecutionRecord } from './contracts.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { validQueryExecution } from '../../../contracts/query-job.js';
+import {
+  invalid, isPos, isRecord, isSha256Hex, nonEmpty, parseTaggedObject, type UnknownRecord,
+} from '../../../contracts/validation/common.js';
 import type {
   QueryExecutionStateV1,
   QueryJobAnswerRef,
@@ -50,6 +53,7 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import { QUERY_RUN_RECORD_SCHEMA, validateQueryRunSnapshot } from '../materials/record-readers.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { QUERY_RUN_BY_SESSION_LOOKUP } from '../model/session-facts-contracts.js';
 
 export const QUERY_JOB_SUBMITTED_EVENT = 'QueryJobSubmitted';
@@ -60,7 +64,7 @@ export const QUERY_JOB_ANSWER_SNAPSHOT_SCHEMA_ID = 'QueryJobAnswerSnapshot@1';
 export const S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP = 's2c-query-run-by-session-generation';
 /**
  * Slice 5 §4.2 source-5 index: the formal questions of one Goal's workspace.
- * The name/paths are frozen for later slices; a missing `job.goalId` is null.
+ * The name/paths are frozen; a missing `job.goalId` is null.
  */
 export const S5_QUERY_JOB_BY_GOAL = 'query-job-by-workspace-goal';
 export const QUERY_EXECUTION_EVENT = 'QueryExecutionRecorded';
@@ -131,39 +135,6 @@ export type QueryJobAnsweredEventV1 = {
 // Small pure shape helpers
 // --------------------------------------------------------------------------
 
-type UnknownRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-
-function isPositiveRevision(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-
-function isSha256Hex(value: unknown): value is string {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
-}
-
-function invalid(reason: string): { status: 'invalid'; reason: string } {
-  return { status: 'invalid', reason };
-}
-
-function parseJsonObject(json: string, what: string): UnknownRecord | string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    return `${what} is not valid JSON`;
-  }
-  if (!isRecord(parsed)) return `${what} JSON must be an object`;
-  return parsed;
-}
-
 function copyRecord(record: EncodedRecord): EncodedRecord {
   return { refKey: record.refKey, schemaId: record.schemaId, revision: record.revision, json: record.json };
 }
@@ -185,8 +156,8 @@ function copyEvent(event: EncodedDomainEvent): EncodedDomainEvent {
 function queryJobRefFromValue(value: unknown): QueryJobRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'QueryJob') return null;
-  if (!isNonEmptyString(value['projectId']) || !isNonEmptyString(value['workspaceId']) ||
-      !isNonEmptyString(value['queryJobId'])) return null;
+  if (!nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId']) ||
+      !nonEmpty(value['queryJobId'])) return null;
   return {
     aggregateType: 'QueryJob',
     projectId: value['projectId'],
@@ -198,8 +169,8 @@ function queryJobRefFromValue(value: unknown): QueryJobRef | null {
 function queryRunRefFromValue(value: unknown): QueryRunRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'QueryRun') return null;
-  if (!isNonEmptyString(value['projectId']) || !isNonEmptyString(value['workspaceId']) ||
-      !isNonEmptyString(value['queryJobId']) || !isNonEmptyString(value['runId'])) return null;
+  if (!nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId']) ||
+      !nonEmpty(value['queryJobId']) || !nonEmpty(value['runId'])) return null;
   return {
     aggregateType: 'QueryRun',
     projectId: value['projectId'],
@@ -212,21 +183,21 @@ function queryRunRefFromValue(value: unknown): QueryRunRef | null {
 function isTaskRef(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return value['aggregateType'] === 'Task' &&
-    isNonEmptyString(value['projectId']) &&
-    isNonEmptyString(value['goalId']) &&
-    isNonEmptyString(value['taskId']);
+    nonEmpty(value['projectId']) &&
+    nonEmpty(value['goalId']) &&
+    nonEmpty(value['taskId']);
 }
 
 function isActorRef(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (!isNonEmptyString(value['id'])) return false;
+  if (!nonEmpty(value['id'])) return false;
   const kind = value['kind'];
   if (kind === 'human' || kind === 'system') return true;
   if (kind !== 'agent') return false;
   const runRef = value['runRef'];
   return isRecord(runRef) && runRef['aggregateType'] === 'Run' &&
-    isNonEmptyString(runRef['projectId']) && isNonEmptyString(runRef['goalId']) &&
-    isNonEmptyString(runRef['runId']);
+    nonEmpty(runRef['projectId']) && nonEmpty(runRef['goalId']) &&
+    nonEmpty(runRef['runId']);
 }
 
 function isQueryJobStatus(value: unknown): boolean {
@@ -239,9 +210,9 @@ export function queryJobIntentIssues(value: unknown): string[] {
   const issues: string[] = [];
   if (value['schemaVersion'] !== 1) issues.push('intent.schemaVersion must be 1');
   for (const field of ['intentId', 'projectId', 'workspaceId', 'correlationId'] as const) {
-    if (!isNonEmptyString(value[field])) issues.push(`intent.${field} must be a non-empty string`);
+    if (!nonEmpty(value[field])) issues.push(`intent.${field} must be a non-empty string`);
   }
-  if (value['goalId'] !== null && !isNonEmptyString(value['goalId'])) {
+  if (value['goalId'] !== null && !nonEmpty(value['goalId'])) {
     issues.push('intent.goalId must be null or a non-empty string');
   }
   if (typeof value['question'] !== 'string') issues.push('intent.question must be a string');
@@ -253,13 +224,13 @@ export function queryJobIntentIssues(value: unknown): string[] {
   const budget = value['budget'];
   if (!isRecord(budget)) issues.push('intent.budget must be an object');
   else {
-    if (budget['maxTokens'] !== null && !isPositiveRevision(budget['maxTokens'])) issues.push('intent.budget.maxTokens must be null or a positive integer');
+    if (budget['maxTokens'] !== null && !isPos(budget['maxTokens'])) issues.push('intent.budget.maxTokens must be null or a positive integer');
     if (budget['deadline'] !== null && typeof budget['deadline'] !== 'string') {
       issues.push('intent.budget.deadline must be null or a string');
     }
   }
   const multiTurn = value['multiTurn'];
-  if (!isRecord(multiTurn) || !isPositiveRevision(multiTurn['maxRounds'])) {
+  if (!isRecord(multiTurn) || !isPos(multiTurn['maxRounds'])) {
     issues.push('intent.multiTurn.maxRounds must be a positive integer');
   }
   const execution = value['execution'];
@@ -276,9 +247,9 @@ function submissionIssues(value: unknown): string[] {
   if (!isRecord(value)) return ['submission must be an object'];
   const issues: string[] = [];
   if (value['schemaVersion'] !== 1) issues.push('submission.schemaVersion must be 1');
-  if (!isNonEmptyString(value['identityKey'])) issues.push('submission.identityKey must be a non-empty string');
+  if (!nonEmpty(value['identityKey'])) issues.push('submission.identityKey must be a non-empty string');
   if (!isSha256Hex(value['fingerprint'])) issues.push('submission.fingerprint must be a lowercase sha256 hex');
-  if (!isNonEmptyString(value['eventId'])) issues.push('submission.eventId must be a non-empty string');
+  if (!nonEmpty(value['eventId'])) issues.push('submission.eventId must be a non-empty string');
   return issues;
 }
 
@@ -287,8 +258,8 @@ function answerRefIssues(value: unknown): string[] {
   const issues: string[] = [];
   value.forEach((entry, index) => {
     if (!isRecord(entry) || entry['aggregateType'] !== 'QueryJobAnswer' ||
-        !isNonEmptyString(entry['projectId']) || !isNonEmptyString(entry['workspaceId']) ||
-        !isNonEmptyString(entry['queryJobId']) || !isNonEmptyString(entry['answerId'])) {
+        !nonEmpty(entry['projectId']) || !nonEmpty(entry['workspaceId']) ||
+        !nonEmpty(entry['queryJobId']) || !nonEmpty(entry['answerId'])) {
       issues.push(`job.answerRefs[${index}] is not a complete QueryJobAnswerRef`);
     }
   });
@@ -311,8 +282,8 @@ function closeReasonIssues(value: unknown): string[] {
 function queryJobAnswerRefFromValue(value: unknown): QueryJobAnswerRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'QueryJobAnswer') return null;
-  if (!isNonEmptyString(value['projectId']) || !isNonEmptyString(value['workspaceId']) ||
-      !isNonEmptyString(value['queryJobId']) || !isNonEmptyString(value['answerId'])) return null;
+  if (!nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId']) ||
+      !nonEmpty(value['queryJobId']) || !nonEmpty(value['answerId'])) return null;
   return {
     aggregateType: 'QueryJobAnswer',
     projectId: value['projectId'],
@@ -328,7 +299,7 @@ function answerIssues(value: unknown, expectedRef: QueryJobAnswerRef | null): st
   if (!isRecord(value)) return ['answer must be an object'];
   const issues: string[] = [];
   if (value['schemaVersion'] !== 1) issues.push('answer.schemaVersion must be 1');
-  if (!isNonEmptyString(value['answerId'])) issues.push('answer.answerId must be a non-empty string');
+  if (!nonEmpty(value['answerId'])) issues.push('answer.answerId must be a non-empty string');
   const jobRef = queryJobRefFromValue(value['queryJobRef']);
   if (jobRef === null) issues.push('answer.queryJobRef is not a complete QueryJobRef');
   const runRef = queryRunRefFromValue(value['runRef']);
@@ -349,7 +320,7 @@ function answerIssues(value: unknown, expectedRef: QueryJobAnswerRef | null): st
   if (!Array.isArray(sources)) issues.push('answer.sources must be an array');
   else if (sources.length > 64) issues.push('answer.sources exceeds 64 witnesses');
   else sources.forEach((source, index) => {
-    if (!isRecord(source) || !isNonEmptyString(source['kind']) || !isNonEmptyString(source['refKey']) ||
+    if (!isRecord(source) || !nonEmpty(source['kind']) || !nonEmpty(source['refKey']) ||
         !(source['version'] === null || typeof source['version'] === 'string') ||
         !(source['label'] === null || typeof source['label'] === 'string')) {
       issues.push(`answer.sources[${index}] is not a complete source witness`);
@@ -362,10 +333,10 @@ function answerIssues(value: unknown, expectedRef: QueryJobAnswerRef | null): st
   if (!(value['staleReason'] === null || typeof value['staleReason'] === 'string')) {
     issues.push('answer.staleReason must be null or a string');
   }
-  if (!isNonEmptyString(value['answeredAt'])) issues.push('answer.answeredAt must be a non-empty string');
+  if (!nonEmpty(value['answeredAt'])) issues.push('answer.answeredAt must be a non-empty string');
   const bodyRef = value['bodyRef'];
-  if (!isRecord(bodyRef) || bodyRef['kind'] !== 'artifact' || !isNonEmptyString(bodyRef['contentType']) ||
-      !isSha256Hex(bodyRef['digest']) || !isPositiveRevision(bodyRef['sizeBytes']) || !isRecord(bodyRef['source'])) {
+  if (!isRecord(bodyRef) || bodyRef['kind'] !== 'artifact' || !nonEmpty(bodyRef['contentType']) ||
+      !isSha256Hex(bodyRef['digest']) || !isPos(bodyRef['sizeBytes']) || !isRecord(bodyRef['source'])) {
     issues.push('answer.bodyRef is not a complete ArtifactRef');
   }
   return issues;
@@ -389,7 +360,7 @@ function executionStateIssues(value: unknown): string[] {
   const unknown = value['unknown'];
   if (unknown !== undefined) {
     const valid = isRecord(unknown) && ((unknown['kind'] === 'unresolved_tools' && Array.isArray(unknown['toolCallIds'])
-      && unknown['toolCallIds'].length > 0 && unknown['toolCallIds'].every(isNonEmptyString))
+      && unknown['toolCallIds'].length > 0 && unknown['toolCallIds'].every(nonEmpty))
       || (unknown['kind'] === 'kernel_unreadable' && (unknown['verdict'] === 'missing' || unknown['verdict'] === 'damaged')));
     if (!valid) issues.push('executionState.unknown must name the unresolved tool calls or the unreadable Kernel verdict');
   }
@@ -402,14 +373,14 @@ function envelopeIssues(parsed: UnknownRecord, event: EncodedDomainEvent, label:
   if (parsed['eventType'] !== event.eventType) issues.push(`${label} outer eventType disagrees with the event JSON`);
   if (parsed['schemaVersion'] !== event.schemaVersion) issues.push(`${label} outer schemaVersion disagrees with the event JSON`);
   if (parsed['occurredAt'] !== event.occurredAt) issues.push(`${label} outer occurredAt disagrees with the event JSON`);
-  if (!isNonEmptyString(parsed['projectId'])) issues.push(`${label} projectId must be a non-empty string`);
-  if (!isNonEmptyString(parsed['workspaceId'])) issues.push(`${label} workspaceId must be a non-empty string`);
-  if (!isNonEmptyString(parsed['aggregateId'])) issues.push(`${label} aggregateId must be a non-empty string`);
-  if (!isNonEmptyString(parsed['causationId'])) issues.push(`${label} causationId must be a non-empty string`);
-  if (!isNonEmptyString(parsed['correlationId'])) issues.push(`${label} correlationId must be a non-empty string`);
-  if (!isNonEmptyString(parsed['idempotencyKey'])) issues.push(`${label} idempotencyKey must be a non-empty string`);
+  if (!nonEmpty(parsed['projectId'])) issues.push(`${label} projectId must be a non-empty string`);
+  if (!nonEmpty(parsed['workspaceId'])) issues.push(`${label} workspaceId must be a non-empty string`);
+  if (!nonEmpty(parsed['aggregateId'])) issues.push(`${label} aggregateId must be a non-empty string`);
+  if (!nonEmpty(parsed['causationId'])) issues.push(`${label} causationId must be a non-empty string`);
+  if (!nonEmpty(parsed['correlationId'])) issues.push(`${label} correlationId must be a non-empty string`);
+  if (!nonEmpty(parsed['idempotencyKey'])) issues.push(`${label} idempotencyKey must be a non-empty string`);
   if (!isActorRef(parsed['actor'])) issues.push(`${label} actor is not a valid ActorRef`);
-  if (!isPositiveRevision(parsed['aggregateRevision'])) issues.push(`${label} aggregateRevision must be a positive integer`);
+  if (!isPos(parsed['aggregateRevision'])) issues.push(`${label} aggregateRevision must be a positive integer`);
   return issues;
 }
 
@@ -418,10 +389,10 @@ function jobIssues(value: unknown, expectedRef: QueryJobRef | null): string[] {
   if (!isRecord(value)) return ['job must be an object'];
   const issues: string[] = [];
   if (value['schemaVersion'] !== 1) issues.push('job.schemaVersion must be 1');
-  if (!isNonEmptyString(value['queryJobId'])) issues.push('job.queryJobId must be a non-empty string');
-  if (!isNonEmptyString(value['projectId'])) issues.push('job.projectId must be a non-empty string');
-  if (!isNonEmptyString(value['workspaceId'])) issues.push('job.workspaceId must be a non-empty string');
-  if (value['goalId'] !== null && !isNonEmptyString(value['goalId'])) {
+  if (!nonEmpty(value['queryJobId'])) issues.push('job.queryJobId must be a non-empty string');
+  if (!nonEmpty(value['projectId'])) issues.push('job.projectId must be a non-empty string');
+  if (!nonEmpty(value['workspaceId'])) issues.push('job.workspaceId must be a non-empty string');
+  if (value['goalId'] !== null && !nonEmpty(value['goalId'])) {
     issues.push('job.goalId must be null or a non-empty string');
   }
   if (expectedRef !== null) {
@@ -435,8 +406,8 @@ function jobIssues(value: unknown, expectedRef: QueryJobRef | null): string[] {
   if (runRef !== null) {
     const parsed = queryRunRefFromValue(runRef);
     if (parsed === null) issues.push('job.runRef is not a complete QueryRunRef');
-    else if (isNonEmptyString(value['projectId']) && isNonEmptyString(value['workspaceId']) &&
-        isNonEmptyString(value['queryJobId']) &&
+    else if (nonEmpty(value['projectId']) && nonEmpty(value['workspaceId']) &&
+        nonEmpty(value['queryJobId']) &&
         (parsed.projectId !== value['projectId'] || parsed.workspaceId !== value['workspaceId'] ||
          parsed.queryJobId !== value['queryJobId'])) {
       issues.push('job.runRef does not belong to this QueryJob');
@@ -444,8 +415,8 @@ function jobIssues(value: unknown, expectedRef: QueryJobRef | null): string[] {
   }
   issues.push(...answerRefIssues(value['answerRefs']));
   issues.push(...closeReasonIssues(value['closeReason']));
-  if (!isNonEmptyString(value['submittedAt'])) issues.push('job.submittedAt must be a non-empty string');
-  if (!isNonEmptyString(value['updatedAt'])) issues.push('job.updatedAt must be a non-empty string');
+  if (!nonEmpty(value['submittedAt'])) issues.push('job.submittedAt must be a non-empty string');
+  if (!nonEmpty(value['updatedAt'])) issues.push('job.updatedAt must be a non-empty string');
   return issues;
 }
 
@@ -457,14 +428,14 @@ function validateQueryJobSnapshot(record: EncodedRecord): DecodeResult<EncodedRe
   if (record.schemaId !== QUERY_JOB_SNAPSHOT_SCHEMA_ID) {
     return invalid(`expected schemaId ${QUERY_JOB_SNAPSHOT_SCHEMA_ID}, got ${record.schemaId}`);
   }
-  const parsed = parseJsonObject(record.json, 'QueryJob snapshot');
+  const parsed = parseTaggedObject(record.json, 'QueryJob snapshot');
   if (typeof parsed === 'string') return invalid(parsed);
   const ref = queryJobRefFromValue(parsed['ref']);
   if (ref === null) return invalid('QueryJob snapshot has no complete QueryJobRef');
   if (canonicalJson(ref as unknown as JsonValue) !== record.refKey) {
     return invalid('QueryJob snapshot ref is not the outer canonical ref_key');
   }
-  if (!isPositiveRevision(parsed['revision'])) {
+  if (!isPos(parsed['revision'])) {
     return invalid('QueryJob snapshot revision must be a safe integer >= 1');
   }
   if (parsed['revision'] !== record.revision) {
@@ -512,29 +483,29 @@ function validateQueryJobSubmittedEvent(event: EncodedDomainEvent): DecodeResult
   if (event.schemaVersion !== QUERY_JOB_EVENT_SCHEMA_VERSION) {
     return invalid(`expected schemaVersion ${QUERY_JOB_EVENT_SCHEMA_VERSION}, got ${event.schemaVersion}`);
   }
-  if (!isNonEmptyString(event.eventId)) return invalid('eventId must be a non-empty string');
-  if (!isNonEmptyString(event.occurredAt)) return invalid('occurredAt must be a non-empty string');
-  const parsed = parseJsonObject(event.json, 'QueryJobSubmitted event');
+  if (!nonEmpty(event.eventId)) return invalid('eventId must be a non-empty string');
+  if (!nonEmpty(event.occurredAt)) return invalid('occurredAt must be a non-empty string');
+  const parsed = parseTaggedObject(event.json, 'QueryJobSubmitted event');
   if (typeof parsed === 'string') return invalid(parsed);
   if (parsed['eventId'] !== event.eventId) return invalid('outer eventId disagrees with the event JSON');
   if (parsed['eventType'] !== event.eventType) return invalid('outer eventType disagrees with the event JSON');
   if (parsed['schemaVersion'] !== event.schemaVersion) return invalid('outer schemaVersion disagrees with the event JSON');
   if (parsed['occurredAt'] !== event.occurredAt) return invalid('outer occurredAt disagrees with the event JSON');
-  if (!isNonEmptyString(parsed['projectId'])) return invalid('QueryJobSubmitted projectId must be a non-empty string');
-  if (!isNonEmptyString(parsed['workspaceId'])) return invalid('QueryJobSubmitted workspaceId must be a non-empty string');
+  if (!nonEmpty(parsed['projectId'])) return invalid('QueryJobSubmitted projectId must be a non-empty string');
+  if (!nonEmpty(parsed['workspaceId'])) return invalid('QueryJobSubmitted workspaceId must be a non-empty string');
   if (parsed['aggregateType'] !== 'QueryJob') return invalid('QueryJobSubmitted aggregateType must be "QueryJob"');
-  if (!isNonEmptyString(parsed['aggregateId'])) return invalid('QueryJobSubmitted aggregateId must be a non-empty string');
+  if (!nonEmpty(parsed['aggregateId'])) return invalid('QueryJobSubmitted aggregateId must be a non-empty string');
   if (parsed['aggregateRevision'] !== 1) return invalid('QueryJobSubmitted aggregateRevision must be 1');
-  if (!isNonEmptyString(parsed['causationId'])) return invalid('QueryJobSubmitted causationId must be a non-empty string');
-  if (!isNonEmptyString(parsed['correlationId'])) return invalid('QueryJobSubmitted correlationId must be a non-empty string');
-  if (!isNonEmptyString(parsed['idempotencyKey'])) return invalid('QueryJobSubmitted idempotencyKey must be a non-empty string');
+  if (!nonEmpty(parsed['causationId'])) return invalid('QueryJobSubmitted causationId must be a non-empty string');
+  if (!nonEmpty(parsed['correlationId'])) return invalid('QueryJobSubmitted correlationId must be a non-empty string');
+  if (!nonEmpty(parsed['idempotencyKey'])) return invalid('QueryJobSubmitted idempotencyKey must be a non-empty string');
   if (!isActorRef(parsed['actor'])) return invalid('QueryJobSubmitted actor is not a valid ActorRef');
-  if (!isNonEmptyString(parsed['identityKey'])) return invalid('QueryJobSubmitted identityKey must be a non-empty string');
+  if (!nonEmpty(parsed['identityKey'])) return invalid('QueryJobSubmitted identityKey must be a non-empty string');
   if (!isSha256Hex(parsed['fingerprint'])) return invalid('QueryJobSubmitted fingerprint must be a lowercase sha256 hex');
   const payload = parsed['payload'];
   if (!isRecord(payload)) return invalid('QueryJobSubmitted payload must be an object');
-  const ref = isNonEmptyString(parsed['projectId']) && isNonEmptyString(parsed['workspaceId']) &&
-    isNonEmptyString(parsed['aggregateId'])
+  const ref = nonEmpty(parsed['projectId']) && nonEmpty(parsed['workspaceId']) &&
+    nonEmpty(parsed['aggregateId'])
     ? { aggregateType: 'QueryJob' as const, projectId: parsed['projectId'], workspaceId: parsed['workspaceId'],
         queryJobId: parsed['aggregateId'] }
     : null;
@@ -545,13 +516,7 @@ function validateQueryJobSubmittedEvent(event: EncodedDomainEvent): DecodeResult
 
 /** Encodes the submitted event with its writer-generated locator mirror. */
 export function encodeQueryJobSubmittedEvent(event: QueryJobSubmittedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 /** Decodes a stored submitted event; the locator mirror is optional for old rows. */
@@ -583,7 +548,7 @@ function validateQueryJobAnswerSnapshot(record: EncodedRecord): DecodeResult<Enc
   if (record.schemaId !== QUERY_JOB_ANSWER_SNAPSHOT_SCHEMA_ID) {
     return invalid(`expected schemaId ${QUERY_JOB_ANSWER_SNAPSHOT_SCHEMA_ID}, got ${record.schemaId}`);
   }
-  const parsed = parseJsonObject(record.json, 'QueryJobAnswer snapshot');
+  const parsed = parseTaggedObject(record.json, 'QueryJobAnswer snapshot');
   if (typeof parsed === 'string') return invalid(parsed);
   const ref = queryJobAnswerRefFromValue(parsed['ref']);
   if (ref === null) return invalid('QueryJobAnswer snapshot has no complete QueryJobAnswerRef');
@@ -613,13 +578,7 @@ export function decodeQueryJobAnswerSnapshot(record: EncodedRecord): DecodeResul
 /** Encodes one operation event whose local discriminant is an approved operation
  * and whose payload carries the same QueryRun's persisted execution state. */
 export function encodeQueryExecutionRecordedEvent(event: QueryExecutionRecordedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 function validateQueryExecutionRecordedEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
@@ -629,12 +588,12 @@ function validateQueryExecutionRecordedEvent(event: EncodedDomainEvent): DecodeR
   if (event.schemaVersion !== QUERY_EXECUTION_EVENT_SCHEMA_VERSION) {
     return invalid(`expected schemaVersion ${QUERY_EXECUTION_EVENT_SCHEMA_VERSION}, got ${event.schemaVersion}`);
   }
-  if (!isNonEmptyString(event.eventId)) return invalid('eventId must be a non-empty string');
-  if (!isNonEmptyString(event.occurredAt)) return invalid('occurredAt must be a non-empty string');
-  const parsed = parseJsonObject(event.json, 'QueryExecutionRecorded event');
+  if (!nonEmpty(event.eventId)) return invalid('eventId must be a non-empty string');
+  if (!nonEmpty(event.occurredAt)) return invalid('occurredAt must be a non-empty string');
+  const parsed = parseTaggedObject(event.json, 'QueryExecutionRecorded event');
   if (typeof parsed === 'string') return invalid(parsed);
   const issues = envelopeIssues(parsed, event, 'QueryExecutionRecorded');
-  if (!isNonEmptyString(parsed['identityKey']) || !isSha256Hex(parsed['fingerprint'])) {
+  if (!nonEmpty(parsed['identityKey']) || !isSha256Hex(parsed['fingerprint'])) {
     issues.push('QueryExecutionRecorded must carry the exact operation identity and fingerprint');
   }
   if (parsed['aggregateType'] !== 'QueryRun') issues.push('QueryExecutionRecorded aggregateType must be "QueryRun"');
@@ -667,13 +626,7 @@ export function decodeQueryExecutionRecordedEvent(event: EncodedDomainEvent): De
 
 /** Encodes the terminal answered event carrying the formal answer snapshot. */
 export function encodeQueryJobAnsweredEvent(event: QueryJobAnsweredEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 function validateQueryJobAnsweredEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
@@ -683,9 +636,9 @@ function validateQueryJobAnsweredEvent(event: EncodedDomainEvent): DecodeResult<
   if (event.schemaVersion !== QUERY_JOB_EVENT_SCHEMA_VERSION) {
     return invalid(`expected schemaVersion ${QUERY_JOB_EVENT_SCHEMA_VERSION}, got ${event.schemaVersion}`);
   }
-  if (!isNonEmptyString(event.eventId)) return invalid('eventId must be a non-empty string');
-  if (!isNonEmptyString(event.occurredAt)) return invalid('occurredAt must be a non-empty string');
-  const parsed = parseJsonObject(event.json, 'QueryJobAnswered event');
+  if (!nonEmpty(event.eventId)) return invalid('eventId must be a non-empty string');
+  if (!nonEmpty(event.occurredAt)) return invalid('occurredAt must be a non-empty string');
+  const parsed = parseTaggedObject(event.json, 'QueryJobAnswered event');
   if (typeof parsed === 'string') return invalid(parsed);
   const issues = envelopeIssues(parsed, event, 'QueryJobAnswered');
   if (parsed['aggregateType'] !== 'QueryJobAnswer') issues.push('QueryJobAnswered aggregateType must be "QueryJobAnswer"');

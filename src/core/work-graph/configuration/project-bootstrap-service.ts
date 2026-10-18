@@ -32,6 +32,8 @@ import type {
   ProjectCompletionPolicyActiveSnapshot,
 } from '../../../contracts/governance.js';
 import type { ProjectRef, ProjectSnapshot, WorkspaceRef, WorkspaceSnapshot } from '../../../contracts/ledger.js';
+import { isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty } from '../../../contracts/validation/common.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type {
   DecodeResult,
   EncodedDomainEvent,
@@ -85,9 +87,6 @@ type Owned<T> = { status: 'owned'; value: T } | { status: 'invalid'; reason: str
 // Result helpers
 // --------------------------------------------------------------------------
 
-function rejected(code: CoreError, reason: string): Rejection {
-  return { status: 'rejected', code, reason };
-}
 function invalid(reason: string): Rejection {
   return rejected('invalid', reason);
 }
@@ -132,21 +131,6 @@ function mapStoreFailure(failure: StoreFailure): Rejection {
 // Mechanical shape helpers
 // --------------------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isSafeRevision(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
-function isPositiveInt(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function isSha256(value: unknown): value is string {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
-}
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   const keys = Object.keys(value).sort();
   const wanted = [...expected].sort();
@@ -216,7 +200,7 @@ type ExpectedScope = { projectId: string; workspaceId?: string; policyId?: strin
 function parsePin(entry: unknown, scope: ExpectedScope): BootstrapPin | Rejection {
   if (!isRecord(entry)) return invalid('every version pin must be an object');
   const revision = entry['revision'];
-  if (!isSafeRevision(revision)) return invalid('a version pin revision must be a safe non-negative integer');
+  if (!isNonNeg(revision)) return invalid('a version pin revision must be a safe non-negative integer');
   const ref = entry['ref'];
   if (!isRecord(ref)) return invalid('a version pin ref must be an object');
   const aggregateType = ref['aggregateType'];
@@ -241,7 +225,7 @@ function parsePin(entry: unknown, scope: ExpectedScope): BootstrapPin | Rejectio
   }
   if (aggregateType === 'CompletionPolicyRevision') {
     if (!exactKeys(ref, ['aggregateType', 'projectId', 'policyId', 'revision'])
-      || !nonEmpty(ref['projectId']) || !nonEmpty(ref['policyId']) || !isPositiveInt(ref['revision'])) {
+      || !nonEmpty(ref['projectId']) || !nonEmpty(ref['policyId']) || !isPos(ref['revision'])) {
       return invalid('a CompletionPolicyRevision version pin is malformed');
     }
     if (ref['projectId'] !== scope.projectId) return invalid('a version pin belongs to another project');
@@ -520,7 +504,7 @@ async function readProjectRevision(records: GoalRecordTransactionPort, projectId
 
 function localPolicyRefFromValue(value: unknown, projectId: string): CompletionPolicyRevisionRef | null {
   if (!isRecord(value) || value['aggregateType'] !== 'CompletionPolicyRevision') return null;
-  if (!nonEmpty(value['projectId']) || !nonEmpty(value['policyId']) || !isPositiveInt(value['revision'])) return null;
+  if (!nonEmpty(value['projectId']) || !nonEmpty(value['policyId']) || !isPos(value['revision'])) return null;
   if (value['projectId'] !== projectId) return null;
   return {
     aggregateType: 'CompletionPolicyRevision', projectId: value['projectId'], policyId: value['policyId'], revision: value['revision'],
@@ -731,7 +715,7 @@ async function installCompletionPolicy(
   const policyId = rawInput['policyId'];
   if (!nonEmpty(policyId)) return invalid('installCompletionPolicy requires a non-empty policyId');
   const contentRevision = rawInput['contentRevision'];
-  if (!isPositiveInt(contentRevision)) return invalid('installCompletionPolicy requires a positive integer contentRevision');
+  if (!isPos(contentRevision)) return invalid('installCompletionPolicy requires a positive integer contentRevision');
   const content = rawInput['content'];
   const contentProblem = completionPolicyContentProblem(content);
   if (contentProblem !== null) return invalid(contentProblem);
@@ -845,11 +829,11 @@ async function activateCompletionPolicy(
   }
   const targetRef = target['ref'];
   const targetDigest = target['digest'];
-  if (!isRecord(targetRef) || !nonEmpty(targetRef['policyId']) || !isPositiveInt(targetRef['revision'])
+  if (!isRecord(targetRef) || !nonEmpty(targetRef['policyId']) || !isPos(targetRef['revision'])
     || !nonEmpty(targetRef['projectId']) || targetRef['aggregateType'] !== 'CompletionPolicyRevision') {
     return invalid('activateCompletionPolicy requires a complete CompletionPolicyRevisionRef');
   }
-  if (!isSha256(targetDigest)) return invalid('activateCompletionPolicy requires a lowercase sha256 target digest');
+  if (!isSha256Hex(targetDigest)) return invalid('activateCompletionPolicy requires a lowercase sha256 target digest');
   const requestId = rawMeta['requestId'];
   if (!nonEmpty(requestId)) return invalid('activateCompletionPolicy requires meta.requestId');
   const projectId = bound.projectId;
@@ -1026,10 +1010,10 @@ async function readWorkspaceRegistration(
  * MVP UI connection: one narrow read of ONLY the already-registered Project.
  * It is deliberately separate from `readWorkspaceRegistration` because a
  * cold-start UI must be able to tell "the Project is absent" apart from "the
- * Workspace is absent" without parsing a failure message. Stage one freezes the
- * exact scope check and reports the unimplemented read; stage two reuses the
- * existing directed `readProjectRevision` read and the shared Project codec,
- * so the REAL revision is returned and revision 1 is never assumed.
+ * Workspace is absent" without parsing a failure message. It reuses the same
+ * directed `readProjectRevision` read the bootstrap writers use and the shared
+ * Project codec, so the REAL revision is returned and revision 1 is never
+ * assumed.
  */
 async function readProject(
   deps: ProjectBootstrapDependencies,

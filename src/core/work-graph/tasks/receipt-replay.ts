@@ -1,5 +1,5 @@
 /**
- * K3 rework 1 item 12.2 (decision 75): the ONE committed-receipt replay helper.
+ * The ONE committed-receipt replay helper.
  *
  * A store commit replays by locating the ORIGINAL event at the receipt cursor,
  * proving that event is the one the receipt names, decoding it, checking its
@@ -7,8 +7,8 @@
  * failure is a `CoreRejection`; a constructed success is never returned and a
  * branch that writes nothing never reports `committed`.
  *
- * The helper absorbs the 4C-2 exception handling: an `eventAt` throw is caught
- * and surfaced as `event_unreadable`, never propagated.
+ * An `eventAt` throw is caught and surfaced as `event_unreadable`, never
+ * propagated.
  *
  * `identity` is optional because a legacy event (the Note replay events) carries
  * no identityKey/fingerprint. When `expected` is supplied, both extractors are
@@ -16,10 +16,12 @@
  * the optional `validate` checks always run.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import type {
-  DecodeResult, EncodedDomainEvent, StoreFailure, StoreResult,
+  DecodeResult, EncodedDomainEvent, StoreResult,
 } from '../../record-store/ports.js';
+import { ownerWriteStoreFailureToRejection } from '../persistence/read-result-failures.js';
 
 /** The receipt facts replay needs: the real commit cursor and the event ids it wrote. */
 export type CommittedReceiptLike = { cursor: CommitCursor; eventIds: readonly string[] };
@@ -63,24 +65,6 @@ export type ReceiptReplayInput<
   onFailure?(failure: ReceiptReplayFailure): CoreRejection;
 } & IdentityCheck<TDecoded>;
 
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-
-/** The same mapping the UCR/CRR owners use: a store failure keeps its meaning. */
-function mapStoreFailure(failure: StoreFailure): CoreRejection {
-  switch (failure.code) {
-    case 'revision_conflict': return rejected('revision_conflict', failure.reason);
-    case 'unique_conflict': return rejected('busy', failure.reason);
-    case 'idempotency_conflict': return rejected('idempotency_conflict', failure.reason);
-    case 'not_found': return rejected('not_found', failure.reason);
-    case 'invalid': return rejected('invalid', failure.reason);
-    case 'corrupt': return rejected('unavailable', failure.reason);
-    case 'unsupported': return rejected('unavailable', failure.reason);
-    default: return rejected('unavailable', failure.reason);
-  }
-}
-
 function defaultFailure(failure: ReceiptReplayFailure): CoreRejection {
   switch (failure.kind) {
     case 'event_unreadable':
@@ -112,7 +96,7 @@ Promise<WriteResult<TValue>> {
     return failure({ kind: 'event_unreadable', error });
   }
   if (located.status !== 'ready') {
-    return failure({ kind: 'event_rejected', rejection: mapStoreFailure(located) });
+    return failure({ kind: 'event_rejected', rejection: ownerWriteStoreFailureToRejection(located) });
   }
   const event = located.value.event;
   if (event.eventType !== input.expectedEventType) {

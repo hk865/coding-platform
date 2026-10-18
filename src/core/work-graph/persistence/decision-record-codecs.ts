@@ -1,5 +1,5 @@
 /**
- * Slice 5 decision write-event codecs (spec §2.2, §2.5, §2.7, §2.8).
+ * Decision write-event codecs (spec §2.2, §2.5, §2.7, §2.8).
  *
  * This is the ONE codec owner of the two NEW decision write events:
  *   - `GoalSettingsChanged@1` (one Goal's settings, or a whole workspace reorder);
@@ -27,10 +27,17 @@ import type {
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import {
+  hasOnlyKeys, invalid, isRecord, nonEmpty, parseTaggedObject, type UnknownRecord,
+} from '../../../contracts/validation/common.js';
+import {
   goalSettingsProblem,
   goalSnapshotValueProblem,
   workspaceSnapshotValueProblem,
 } from './record-codecs.js';
+import { encodeEventEnvelope } from './event-envelope.js';
+import {
+  eventBodyEnvelopeProblem, eventBodyProblem, eventEnvelopeProblem,
+} from './event-validation.js';
 import { noticeOriginFieldsProblem, type NoticeOriginWireV1 } from './rework-codecs.js';
 export type { NoticeOriginWireV1 } from './rework-codecs.js';
 
@@ -51,23 +58,17 @@ export const WORKSPACE_NOTICE_SEEN_CHANGED_SCHEMA_ID = 'WorkspaceNoticeSeenChang
 // --------------------------------------------------------------------------
 
 export function encodeGoalSettingsChangedEvent(event: GoalSettingsChangedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function decodeGoalSettingsChangedEvent(
   event: EncodedDomainEvent,
 ): DecodeResult<GoalSettingsChangedEventV1> {
-  const problem = decisionEventEnvelopeProblem(event, GOAL_SETTINGS_CHANGED_EVENT);
+  const problem = eventEnvelopeProblem(event, GOAL_SETTINGS_CHANGED_EVENT, DECISION_EVENT_SCHEMA_VERSION);
   if (problem !== null) return invalid(problem);
-  const parsed = parseJsonObject(event.json, 'GoalSettingsChanged event');
+  const parsed = parseTaggedObject(event.json, 'GoalSettingsChanged event');
   if (typeof parsed === 'string') return invalid(parsed);
-  const bindingProblem = decisionEventBodyEnvelopeProblem(parsed, event, GOAL_SETTINGS_CHANGED_EVENT);
+  const bindingProblem = eventBodyEnvelopeProblem(parsed, event, GOAL_SETTINGS_CHANGED_EVENT);
   if (bindingProblem !== null) return invalid(bindingProblem);
   const bodyProblem = goalSettingsChangedEventProblem(parsed);
   if (bodyProblem !== null) return invalid(bodyProblem);
@@ -77,23 +78,17 @@ export function decodeGoalSettingsChangedEvent(
 export function encodeWorkspaceNoticeSeenChangedEvent(
   event: WorkspaceNoticeSeenChangedEventV1,
 ): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function decodeWorkspaceNoticeSeenChangedEvent(
   event: EncodedDomainEvent,
 ): DecodeResult<WorkspaceNoticeSeenChangedEventV1> {
-  const problem = decisionEventEnvelopeProblem(event, WORKSPACE_NOTICE_SEEN_CHANGED_EVENT);
+  const problem = eventEnvelopeProblem(event, WORKSPACE_NOTICE_SEEN_CHANGED_EVENT, DECISION_EVENT_SCHEMA_VERSION);
   if (problem !== null) return invalid(problem);
-  const parsed = parseJsonObject(event.json, 'WorkspaceNoticeSeenChanged event');
+  const parsed = parseTaggedObject(event.json, 'WorkspaceNoticeSeenChanged event');
   if (typeof parsed === 'string') return invalid(parsed);
-  const bindingProblem = decisionEventBodyEnvelopeProblem(parsed, event, WORKSPACE_NOTICE_SEEN_CHANGED_EVENT);
+  const bindingProblem = eventBodyEnvelopeProblem(parsed, event, WORKSPACE_NOTICE_SEEN_CHANGED_EVENT);
   if (bindingProblem !== null) return invalid(bindingProblem);
   const bodyProblem = workspaceNoticeSeenChangedEventProblem(parsed);
   if (bodyProblem !== null) return invalid(bodyProblem);
@@ -104,78 +99,7 @@ export function decodeWorkspaceNoticeSeenChangedEvent(
 // Shared pure shape helpers (the events are the only new persisted bodies)
 // --------------------------------------------------------------------------
 
-type UnknownRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isSha256Hex(value: unknown): value is string {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
-}
-function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key));
-}
-function invalid(reason: string): { status: 'invalid'; reason: string } {
-  return { status: 'invalid', reason };
-}
-function parseJsonObject(json: string, what: string): UnknownRecord | string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    return `${what} is not valid JSON`;
-  }
-  return isRecord(parsed) ? parsed : `${what} JSON must be an object`;
-}
-
 const DECISION_EVENT_ENVELOPE_KEYS: readonly string[] = ['eventId', 'eventType', 'schemaVersion', 'occurredAt'];
-
-function decisionEventEnvelopeProblem(event: EncodedDomainEvent, eventType: string): string | null {
-  if (event.eventType !== eventType) return `expected eventType ${eventType}, got ${event.eventType}`;
-  if (event.schemaVersion !== DECISION_EVENT_SCHEMA_VERSION) {
-    return `expected schemaVersion ${String(DECISION_EVENT_SCHEMA_VERSION)}, got ${String(event.schemaVersion)}`;
-  }
-  if (!nonEmpty(event.eventId)) return `${eventType} eventId must be a non-empty string`;
-  if (!nonEmpty(event.occurredAt)) return `${eventType} occurredAt must be a non-empty string`;
-  return null;
-}
-
-/**
- * §2.8/§8.2: the outer `EncodedDomainEvent` envelope and the persisted JSON body
- * must agree on event id/type/version/time; the body alone is never trusted
- * because the decoder returns it as the event value.
- */
-function decisionEventBodyEnvelopeProblem(
-  body: UnknownRecord, event: EncodedDomainEvent, eventType: string,
-): string | null {
-  if (body['eventId'] !== event.eventId) return `${eventType} body eventId disagrees with the encoded event`;
-  if (body['eventType'] !== event.eventType) return `${eventType} body eventType disagrees with the encoded event`;
-  if (body['schemaVersion'] !== event.schemaVersion) {
-    return `${eventType} body schemaVersion disagrees with the encoded event`;
-  }
-  if (body['occurredAt'] !== event.occurredAt) return `${eventType} body occurredAt disagrees with the encoded event`;
-  return null;
-}
-
-/** Mirrors `contracts/validation/identity.ts::validateActor` at the wire boundary. */
-function actorProblem(value: unknown): string | null {
-  if (!isRecord(value) || !nonEmpty(value['id'])) return 'the event actor must be an ActorRef';
-  if (value['kind'] === 'human' || value['kind'] === 'system') {
-    return hasOnlyKeys(value, ['kind', 'id']) ? null : 'the event actor carries unknown fields';
-  }
-  if (value['kind'] !== 'agent') return 'the event actor kind must be human, system or agent';
-  if (!hasOnlyKeys(value, ['kind', 'id', 'runRef'])) return 'the event agent actor carries unknown fields';
-  const runRef = value['runRef'];
-  if (!isRecord(runRef) || !hasOnlyKeys(runRef, ['aggregateType', 'projectId', 'goalId', 'runId'])
-    || runRef['aggregateType'] !== 'Run' || !nonEmpty(runRef['projectId'])
-    || !nonEmpty(runRef['goalId']) || !nonEmpty(runRef['runId'])) {
-    return 'the event agent actor runRef must be a complete RunRef';
-  }
-  return null;
-}
 
 function sessionMessageRefProblem(value: unknown): string | null {
   if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])) {
@@ -217,9 +141,9 @@ const AGGREGATE_REF_RULES: Readonly<Record<string, AggregateRefRule>> = {
   VerificationRound: { strings: ['projectId', 'workspaceId', 'goalId', 'taskId', 'runId', 'roundId'] },
   TaskReduction: { strings: ['projectId', 'goalId', 'taskId'] },
   GoalPhase: { strings: ['projectId', 'goalId'] },
-  // K3 L18: a review card's source pins name the review record itself.
+  // A review card's source pins name the review record itself.
   UnknownCallReview: { strings: ['projectId', 'goalId', 'runId'] },
-  // K3 L19a: a request card's source pins name the CommandRerunRequest record.
+  // A request card's source pins name the CommandRerunRequest record.
   CommandRerunRequest: { strings: ['projectId', 'goalId', 'taskId', 'requestId'] },
   WorkContextBinding: { strings: ['projectId', 'workspaceId', 'workId'] },
   ControlIntent: { strings: ['projectId', 'workspaceId', 'intentId'] },
@@ -239,10 +163,9 @@ const AGGREGATE_REF_RULES: Readonly<Record<string, AggregateRefRule>> = {
   SessionMessage: { strings: ['projectId', 'workspaceId', 'messageId'] },
   TaskRequeue: { strings: ['projectId', 'goalId', 'taskId', 'afterRunId'] },
   TaskReworkRefusal: { strings: ['projectId', 'goalId', 'taskId', 'operation', 'subjectId'] },
-  // 4C-2 U3: the note-card proof pins name the note aggregates (the card's
-  // captured note and each superseded head). Rework item 4: every changed
-  // object is the SAME NoteHead aggregate (`@v -> @v+1`), so no NoteVersion
-  // ref rule is needed.
+  // The note-card proof pins name the note aggregates (the card's captured note
+  // and each superseded head). Every changed object is the SAME NoteHead
+  // aggregate (`@v -> @v+1`), so no NoteVersion ref rule is needed.
   NoteHead: { strings: ['projectId', 'noteId'] },
   CurrentPointer: { strings: ['projectId', 'anchorKey'] },
 };
@@ -411,25 +334,6 @@ const DECISION_EVENT_BODY_KEYS: readonly string[] = [
   'identityKey', 'fingerprint', 'projectId', 'workspaceId', 'actor', 'requestId', 'payload',
 ];
 
-function decisionEventBodyProblem(value: unknown): UnknownRecord | string {
-  if (!isRecord(value)) return 'the event body must be an object';
-  if (!hasOnlyKeys(value, [...DECISION_EVENT_ENVELOPE_KEYS, ...DECISION_EVENT_BODY_KEYS])) {
-    return 'the event body carries unknown fields';
-  }
-  if (!nonEmpty(value['identityKey'])) return 'the event identityKey must be a non-empty string';
-  if (!isSha256Hex(value['fingerprint'])) return 'the event fingerprint must be a lowercase sha256 hex';
-  if (!nonEmpty(value['projectId'])) return 'the event projectId must be a non-empty string';
-  if (!nonEmpty(value['workspaceId'])) return 'the event workspaceId must be a non-empty string';
-  if (!nonEmpty(value['requestId'])) return 'the event requestId must be a non-empty string';
-  const actor = actorProblem(value['actor']);
-  if (actor !== null) return actor;
-  const payload = value['payload'];
-  if (!isRecord(payload) || !hasOnlyKeys(payload, ['value', 'proof'])) {
-    return 'the event payload must carry exactly value and proof';
-  }
-  return value;
-}
-
 function goalSettingsChangedValueProblem(value: unknown): string | null {
   // A reorder writes the whole `{goals: GoalSnapshot[]}` result; a single
   // settings write writes one exact Goal snapshot. Anything else is invalid.
@@ -452,7 +356,7 @@ function proofProblem(value: unknown): string | null {
 
 /** Pure `GoalSettingsChanged@1` body check, excluding the normal event envelope. */
 export function goalSettingsChangedEventProblem(value: unknown): string | null {
-  const body = decisionEventBodyProblem(value);
+  const body = eventBodyProblem(value, DECISION_EVENT_ENVELOPE_KEYS, DECISION_EVENT_BODY_KEYS);
   if (typeof body === 'string') return body;
   const valueProblem = goalSettingsChangedValueProblem((body['payload'] as UnknownRecord)['value']);
   if (valueProblem !== null) return valueProblem;
@@ -461,7 +365,7 @@ export function goalSettingsChangedEventProblem(value: unknown): string | null {
 
 /** Pure `WorkspaceNoticeSeenChanged@1` body check, excluding the normal event envelope. */
 export function workspaceNoticeSeenChangedEventProblem(value: unknown): string | null {
-  const body = decisionEventBodyProblem(value);
+  const body = eventBodyProblem(value, DECISION_EVENT_ENVELOPE_KEYS, DECISION_EVENT_BODY_KEYS);
   if (typeof body === 'string') return body;
   const payload = body['payload'] as UnknownRecord;
   if (payload['proof'] !== null) return 'a WorkspaceNoticeSeenChanged proof must be null';
@@ -479,9 +383,9 @@ export function workspaceNoticeSeenChangedEventProblem(value: unknown): string |
  * `since` reads as the legacy `(occurredAt, itemKey)` position in the reader.
  */
 export function decodeNoticeOrigin(record: EncodedRecord): DecodeResult<NoticeOriginWireV1> {
-  const parsed = parseJsonObject(record.json, 'notice origin record');
+  const parsed = parseTaggedObject(record.json, 'notice origin record');
   if (typeof parsed === 'string') return invalid(parsed);
-  // Slice 2B L14 end: `finalizedAt` is a round-only top-level field, so the
+  // `finalizedAt` is a round-only top-level field, so the
   // shared reader accepts it exactly when the record is a VerificationRound.
   const ref = parsed['ref'];
   const isRound = typeof ref === 'object' && ref !== null && !Array.isArray(ref)

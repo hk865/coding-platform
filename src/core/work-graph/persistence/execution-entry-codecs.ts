@@ -1,8 +1,8 @@
 /**
- * B2 nested execution-entry codecs (implementation).
+ * Nested execution-entry codecs (implementation).
  *
  * Responsibility of THIS file:
- *  - own the PURE strict validators for the versioned nested facts B2 adds to
+ *  - own the PURE strict validators for the versioned nested facts carried by
  *    the existing @1 bodies: `ExecutionAuthorizationV2`, the retained
  *    `ExecutionAuthorizationV1` compatibility shape, `RuntimeInputBindingV1`,
  *    `TaskLeaseReleaseV1`, the @1 TaskLease snapshot including its optional
@@ -32,8 +32,13 @@ import type {
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
+import {
+  hasOnlyKeys, invalid, isNonNeg as isNonNegativeSafeInteger, isPos as isPositiveSafeInteger,
+  isRecord as isJsonObject, isSha256Hex, nonEmpty, parseObject,
+} from '../../../contracts/validation/common.js';
 import type { TaskDispatchStateV1 } from '../model/claim-contracts.js';
 import type { RuntimeEntryRecord, TaskEntryPermit } from '../model/execution-entry-contracts.js';
+import { encodeEventEnvelope } from './event-envelope.js';
 import { controlIntentRefProblem } from './rework-codecs.js';
 import { RUN_ACTIVITY_RECORD_SCHEMAS } from './run-activity-codecs.js';
 
@@ -50,28 +55,6 @@ export const EXECUTION_RUN_RECONCILED_EVENT_TYPE = 'ExecutionRunReconciled' as c
 // --------------------------------------------------------------------------
 // Small pure helpers
 // --------------------------------------------------------------------------
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
-function isSha256Hex(value: unknown): value is string {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
-}
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  return Object.keys(value).every(key => allowed.includes(key));
-}
-function invalid<T>(reason: string): DecodeResult<T> {
-  return { status: 'invalid', reason };
-}
 
 function runRefProblem(value: unknown, label: string): string | null {
   if (!isJsonObject(value) || value['aggregateType'] !== 'Run'
@@ -706,15 +689,6 @@ export type ExecutionRunReconciledEvent = ExecutionEntryEventBase & {
 };
 const RECONCILED_OPERATIONS: readonly string[] = ['reconcile_run', 'resolve_unknown', 'reconcile_controls'];
 
-function parseObject(json: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return isJsonObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 function decodeEventBase<EventType extends string>(
   event: EncodedDomainEvent,
   expectedType: EventType,
@@ -770,8 +744,7 @@ function entryProjectionProblem(value: unknown): string | null {
 }
 
 export function encodeExecutionEntryAuthorizedEvent(event: ExecutionEntryAuthorizedEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 export function executionEntryAuthorizedEventFromEvent(event: EncodedDomainEvent): DecodeResult<ExecutionEntryAuthorizedEvent> {
   const decoded = decodeEventBase(event, EXECUTION_ENTRY_AUTHORIZED_EVENT_TYPE, EXECUTION_ENTRY_EVENT_SCHEMA_VERSION);
@@ -791,8 +764,7 @@ export function executionEntryAuthorizedEventFromEvent(event: EncodedDomainEvent
 }
 
 export function encodeExecutionEntryBegunEvent(event: ExecutionEntryBegunEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 export function executionEntryBegunEventFromEvent(event: EncodedDomainEvent): DecodeResult<ExecutionEntryBegunEvent> {
   const decoded = decodeEventBase(event, EXECUTION_ENTRY_BEGUN_EVENT_TYPE, EXECUTION_ENTRY_EVENT_SCHEMA_VERSION);
@@ -822,8 +794,7 @@ function runSnapshotProblem(value: unknown): string | null {
 }
 
 export function encodeExecutionEntryEnteredEvent(event: ExecutionEntryEnteredEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 export function executionEntryEnteredEventFromEvent(event: EncodedDomainEvent): DecodeResult<ExecutionEntryEnteredEvent> {
   const decoded = decodeEventBase(event, EXECUTION_ENTRY_ENTERED_EVENT_TYPE, EXECUTION_ENTRY_EVENT_SCHEMA_VERSION);
@@ -837,8 +808,7 @@ export function executionEntryEnteredEventFromEvent(event: EncodedDomainEvent): 
 }
 
 export function encodeExecutionRunResultRecordedEvent(event: ExecutionRunResultRecordedEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 export function executionRunResultRecordedEventFromEvent(event: EncodedDomainEvent): DecodeResult<ExecutionRunResultRecordedEvent> {
   const decoded = decodeEventBase(event, EXECUTION_RUN_RESULT_RECORDED_EVENT_TYPE, EXECUTION_ENTRY_EVENT_SCHEMA_VERSION);
@@ -856,8 +826,7 @@ export function executionRunResultRecordedEventFromEvent(event: EncodedDomainEve
 }
 
 export function encodeExecutionRunReconciledEvent(event: ExecutionRunReconciledEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 export function executionRunReconciledEventFromEvent(event: EncodedDomainEvent): DecodeResult<ExecutionRunReconciledEvent> {
   const decoded = decodeEventBase(event, EXECUTION_RUN_RECONCILED_EVENT_TYPE, EXECUTION_ENTRY_EVENT_SCHEMA_VERSION);

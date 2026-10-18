@@ -1,18 +1,15 @@
 /**
- * K3 rework 1 item 12.1 (decision 75): the ONE generic revision-pin guard.
+ * The ONE generic revision-pin guard.
  *
  * `pinRevision` answers a single question: does `meta.expected` carry exactly
  * ONE non-negative safe revision for this exact ref? It returns that revision or
  * null (absent, repeated, malformed). It deliberately owns no rejection message:
  * S5 Goal-setting messages stay with the Goal-setting owner, and the F2 owners
- * bring their own. Behavior is byte-identical to the former
- * `goal-settings-service.ts` private helper.
+ * bring their own.
  */
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import { isObject, type UnknownRecord } from './codec-fields.js';
-
-const isRecord = isObject;
+import { isRecord } from '../../../contracts/validation/common.js';
 
 function refKeyOf(value: unknown): string {
   return canonicalJson(value as JsonValue);

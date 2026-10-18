@@ -21,6 +21,7 @@
  * (notes may not import views, and that reader reads far too widely).
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import { okFalse } from '../../../contracts/core/rejections.js';
 import type { NoteAnchorV1, NoteHeadSnapshot, NoteKind } from '../../../contracts/note.js';
 import { NOTE_GENERAL_KINDS } from '../../../contracts/note.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
@@ -36,6 +37,7 @@ import { runActivityRefKey, decodeRunActivitySnapshot } from '../tasks/run-activ
 import { readGoalPlanWindow, readPlan, RUN_BY_TASK_INDEX } from '../tasks/plan-readers.js';
 import { runActivityRefOf } from '../tasks/run-activity-service.js';
 import { moduleOfAnchor } from './scribe-scope.js';
+import { asOutcome } from './store-failures.js';
 
 /** The note-port failure codes a related-scope read can produce. */
 export type RelatedReadCode = 'invalid' | 'not_found' | 'revision_conflict' | 'unavailable';
@@ -78,12 +80,13 @@ function byteOrder(left: string, right: string): number { return left < right ? 
 
 function isGeneralKind(kind: string): boolean { return (NOTE_GENERAL_KINDS as readonly string[]).includes(kind); }
 
-function matchesPathPrefix(key: string, prefix: string): boolean {
+export function matchesPathPrefix(key: string, prefix: string): boolean {
   const base = `file:${prefix}`;
   return key === base || key.startsWith(`${base}/`);
 }
 
-function anchorSlots(head: NoteHeadSnapshot): string[] {
+export function anchorSlots(head: { anchorKey0: string; anchorKey1: string | null; anchorKey2: string | null;
+  anchorKey3: string | null; anchorKey4: string | null }): string[] {
   return [head.anchorKey0, head.anchorKey1, head.anchorKey2, head.anchorKey3, head.anchorKey4]
     .filter((key): key is string => key !== null);
 }
@@ -177,21 +180,11 @@ export function isRelatedHead(head: { kind: NoteKind; anchorKey0: string; anchor
 const PAGE_LIMIT = 200;
 
 function unavailable(reason: string): { ok: false; code: RelatedReadCode; reason: string } {
-  return { ok: false, code: 'unavailable', reason };
+  return okFalse('unavailable', reason);
 }
 
 function notFound(reason: string): { ok: false; code: RelatedReadCode; reason: string } {
-  return { ok: false, code: 'not_found', reason };
-}
-
-/** The one store-failure mapping (mirrors the read model's `mapStoreFailure`). */
-function storeFailure(failure: { code: string; reason: string }): { ok: false; code: RelatedReadCode; reason: string } {
-  switch (failure.code) {
-    case 'revision_conflict': return { ok: false, code: 'revision_conflict', reason: failure.reason };
-    case 'invalid': return { ok: false, code: 'invalid', reason: failure.reason };
-    case 'not_found': return { ok: false, code: 'not_found', reason: failure.reason };
-    default: return { ok: false, code: 'unavailable', reason: failure.reason };
-  }
+  return okFalse('not_found', reason);
 }
 
 function readPlanFailure(read: { status: string; code?: string; reason?: string }): { ok: false; code: RelatedReadCode; reason: string } {
@@ -217,7 +210,7 @@ Promise<{ ok: true; value: NoteHeadSnapshot[] } | { ok: false; code: RelatedRead
     for (;;) {
       const page = await records.lookupOrdered({ index, values: [projectId], direction: 'asc',
         bound: { value: prefix, inclusive: true }, ...(after === undefined ? {} : { after }), limit: PAGE_LIMIT });
-      if (page.status !== 'ready') return storeFailure(page);
+      if (page.status !== 'ready') return asOutcome(page);
       let leftRange = false;
       for (const record of page.value.records) {
         const decoded = decodeNoteHeadSnapshot(record);
@@ -251,7 +244,7 @@ Promise<{ ok: true; value: RelatedRunFact[] } | { ok: false; code: RelatedReadCo
     const page = await deps.records.lookup({ index: RUN_BY_TASK_INDEX, values: [ctx.projectId, goalId, taskId],
       ...(after === undefined ? {} : { after }), limit: PAGE_LIMIT });
     if (page.status !== 'ready') {
-      return storeFailure(page);
+      return asOutcome(page);
     }
     for (const record of page.value.records) {
       const runRef = runRefOfKey(record.refKey);
@@ -262,7 +255,7 @@ Promise<{ ok: true; value: RelatedRunFact[] } | { ok: false; code: RelatedReadCo
     after = page.value.next;
   }
   const activities = await deps.records.readMany([...new Set(runs.map(entry => entry.activityKey))]);
-  if (activities.status !== 'ready') return storeFailure(activities);
+  if (activities.status !== 'ready') return asOutcome(activities);
   const byKey = new Map(activities.value.records.map(record => [record.refKey, record]));
   const facts: RelatedRunFact[] = [];
   for (const { activityKey } of runs) {
@@ -336,8 +329,8 @@ Promise<{ ok: true; value: string[] } | { ok: false; code: RelatedReadCode; reas
     // The root `.` owns every file no concrete prefix claims, so it scans the
     // whole `file:` range and lets `moduleOfAnchor` decide each candidate.
     const isRoot = stripped === '.';
-    // RW-12(c): the one generalised five-slot prefix scan; the directory
-    // boundary filter is the same one the old duplicate applied per slot.
+    // RW-12(c): the one generalised five-slot prefix scan, with the directory
+    // boundary filter applied per slot.
     const scanned = await headsOnKeyPrefix(deps.records, ctx.projectId, isRoot ? 'file:' : `file:${stripped}`);
     if (!scanned.ok) return scanned;
     for (const head of scanned.value) {
@@ -384,7 +377,7 @@ Promise<RelatedScopeOutcome> {
 }
 
 /**
- * Rework item 8: the same task-scope resolution as `resolveRelatedScope`'s
+ * The same task-scope resolution as `resolveRelatedScope`'s
  * explicit-task branch, but with the goal's plan window already read by the
  * caller. `readMemoryMaterial` uses this so one call reads one plan window.
  */
@@ -404,7 +397,7 @@ async function explicitTaskScope(deps: RelatedScopeDeps, ctx: CoreCallContext,
   }
   if (window.goal.workspaceRef.workspaceId !== ctx.workspaceId) return notFound('related_not_found');
   if (window.plan === null) return notFound('related_not_found');
-  // Rework item 5(b): hand the window this resolution just read to the caller's
+  // Hand the window this resolution just read to the caller's
   // per-call cache, so the page's `checkHeads` reuses it instead of re-reading
   // the same goal window. The key matches the check's `caches.plans`.
   plans?.set(`${ctx.projectId}\u0000${goalId}`, window.plan);

@@ -1,14 +1,13 @@
 /**
  * WorkGraph material record readers — the target RecordStore implementation of
- * `MaterialAuthorityReads` (N0 / R3c).
+ * `MaterialAuthorityReads`.
  *
  * This file owns exactly two things:
  *  - the read-only encodings for the canonical facts material access actually
  *    consumes (`RunSnapshot@1`, `QueryRunSnapshot@1`) layered on top of the
  *    existing Goal registration; and
  *  - the reader implementation over the injected RecordStore (`readMany` for
- *    exact canonical facts). The material grant snapshot, its reader lookups
- *    and the candidate reader were deleted with the grants (decision 34).
+ *    exact canonical facts).
  *
  * Boundaries deliberately enforced here:
  *  - no StateLedger / ReadModelIndex import, no second SQLite/Map, no old
@@ -37,6 +36,7 @@ import {
 import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
 import { runControlStateProblem } from '../persistence/control-record-codecs.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { invalid } from '../../../contracts/validation/common.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
@@ -58,10 +58,6 @@ const QUERY_RUN_SNAPSHOT_SCHEMA_ID = 'QueryRunSnapshot@1';
 // --------------------------------------------------------------------------
 
 type UnknownRecord = Record<string, unknown>;
-
-function invalid(reason: string): { status: 'invalid'; reason: string } {
-  return { status: 'invalid', reason };
-}
 
 function isRunRef(value: unknown): value is RunRef {
   if (!isJsonObject(value)) return false;
@@ -139,8 +135,8 @@ function isQueryRunOutcome(value: unknown): boolean {
     value === 'not_entered';
 }
 
-/** R5b.2 compatibility extension: the ONE QueryRun schema accepts the optional
- * versioned execution state without re-registering QueryRun anywhere else. */
+/** The ONE QueryRun schema accepts the optional versioned execution state
+ * without re-registering QueryRun anywhere else. */
 function isQueryExecutionPhase(value: unknown): boolean {
   return value === 'claimed' || value === 'prepared' || value === 'entering' ||
     value === 'entered' || value === 'unknown' || value === 'settled';
@@ -207,7 +203,7 @@ function validateRunSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord>
       (!isRunExecutionHistoryV1(body['executionHistory']) || body['executionHistory'].sessionRef.projectId !== ref.projectId)) {
     return invalid('Run executionHistory is malformed or outside the project');
   }
-  // B2: the Run's exact authorization and input binding are validated by their
+  // The Run's exact authorization and input binding are validated by their
   // single owning helpers. An absent binding stays a historical Run; a present
   // V2/input binding with a bad or inconsistent shape is damaged, not readable.
   const authorizationProblem = runExecutionAuthorizationProblem(body['executionAuthorization']);
@@ -236,7 +232,7 @@ function validateRunSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord>
   if (!isWorkspacePin(body['workspaceSnapshot'])) {
     return invalid('Run snapshot workspaceSnapshot is not a complete workspace pin');
   }
-  // R4.1: the optional Run controlState is validated by its one pure helper.
+  // The optional Run controlState is validated by its one pure helper.
   // A historical Run with no field stays readable; a present field must be a
   // complete, scope-aligned control pointer. This is a shape check only: it does
   // not admit or fence execution.

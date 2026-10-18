@@ -48,19 +48,22 @@ import type {
 } from '../../../contracts/core/session-archive.js';
 import { deriveArchiveStepCommitIdentityV1 } from '../../../contracts/core/session-archive.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
+import { canonicalOf } from '../../../contracts/fingerprint.js';
+import { hasOnlyKeys, isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
+import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
 } from '../../record-store/ports.js';
+import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import type { GraphWrite } from '../model/session-contracts.js';
 import type {
   ArchiveSessionInput, LinkSessionWorkInput, ReactivateSessionInput, SessionLifecyclePort,
   SessionLifecycleStores,
 } from './lifecycle-contracts.js';
 import {
-  SESSION_WORK_LINKS_LOOKUP, checkPlainSessionRef, checkSessionArchiveRequest, checkTarget, decodeSessionRecord,
+  checkPlainSessionRef, checkSessionArchiveRequest, checkTarget, decodeSessionRecord,
   decodeSessionWorkLink, encodePendingSessionWorkLink, encodeSessionRecord,
   plainSessionRefToAggregate, sessionAggregateRefKey, sessionWorkLinkRefKey,
   type PendingSessionWorkLink,
@@ -73,6 +76,11 @@ import {
   type SessionArchiveChangedEventV1, type SessionLifecycleChangedEventV1, type SessionWorkLinkChangedEventV1,
 } from './lifecycle-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
+import { readSessionWorkLinks } from './session-links.js';
+import {
+  eventIdOf, fingerprintOf, identityKeyOf, ownRequest, trustedContext,
+  type HostActor, type OwnedRequest, type TrustedContext,
+} from './trusted-context.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
 import {
@@ -81,21 +89,19 @@ import {
   type SessionDomainEventType, type SessionEffect, type SessionEvent, type SessionGuardContext, type SessionTransition,
 } from '../state/session-availability.js';
 
-type UnknownRecord = Record<string, unknown>;
-
 // --------------------------------------------------------------------------
 // Preamble helpers
 // --------------------------------------------------------------------------
 
-function isObject(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+/** The shared map takes a version-pin `current`; a `unique_conflict` carries a claim slot instead. */
+function mapStoreFailure(failure: StoreFailure): CoreRejection {
+  return sessionStoreFailureToRejection({
+    code: failure.code,
+    reason: failure.reason,
+    ...(failure.code === 'revision_conflict' ? { current: failure.current } : {}),
+  });
 }
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key));
-}
+
 /** A6: the complete RunRef the wait choice requires, before any store read. */
 function waitRunRefProblem(value: unknown): string | null {
   if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'runId'])
@@ -123,99 +129,8 @@ function normalizeSessionRef(value: unknown): { ok: true; ref: SessionRef } | { 
   }
   return { ok: true, ref: { projectId: value['projectId'], sessionId: value['sessionId'] } };
 }
-function canonicalOf(value: unknown): string | null {
-  try {
-    return canonicalJson(value as JsonValue);
-  } catch {
-    return null;
-  }
-}
 function relation(value: unknown): value is WorkLinkRelation {
   return value === 'responsible' || value === 'participates' || value === 'investigated';
-}
-function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
-}
-function mapStoreFailure(failure: StoreFailure): CoreRejection {
-  switch (failure.code) {
-    case 'invalid': return reject('invalid', failure.reason);
-    case 'not_found': return reject('not_found', failure.reason);
-    case 'idempotency_conflict': return reject('idempotency_conflict', failure.reason);
-    case 'revision_conflict': {
-      const current: VersionPin[] = [];
-      for (const entry of failure.current) {
-        if (entry.revision === null) continue;
-        try {
-          const ref = JSON.parse(entry.refKey) as unknown;
-          if (isObject(ref)) current.push({ ref: ref as VersionPin['ref'], revision: entry.revision });
-        } catch { /* an unreadable ref key is not a pin */ }
-      }
-      return reject('revision_conflict', failure.reason, current.length > 0 ? current : undefined);
-    }
-    case 'unique_conflict': return reject('revision_conflict', `${failure.reason} (the unique slot is held by another owner)`);
-    case 'unsupported': return reject('unsupported', failure.reason);
-    case 'corrupt': return reject('unavailable', `the record store reported damage: ${failure.reason}`);
-    default: return reject('unavailable', failure.reason);
-  }
-}
-
-type TrustedContext =
-  | { ok: true; scope: WorkspaceScope; actor: { kind: 'human' | 'system'; id: string } }
-  | { ok: false; rejection: CoreRejection };
-
-/** Same trusted Host boundary the Session directory enforces: a bound
- * project/workspace, a real AbortSignal and a Host human/system actor. */
-function trustedContext(ctx: CoreCallContext): TrustedContext {
-  const bound = ctx as unknown as {
-    projectId?: unknown; workspaceId?: unknown; principal?: unknown; signal?: unknown;
-  };
-  if (!nonEmpty(bound.projectId) || !nonEmpty(bound.workspaceId)) {
-    return { ok: false, rejection: reject('forbidden', 'a Session lifecycle call requires a bound project/workspace context') };
-  }
-  const signal = bound.signal;
-  if (!isObject(signal) || typeof signal['aborted'] !== 'boolean' || typeof signal['addEventListener'] !== 'function') {
-    return { ok: false, rejection: reject('forbidden', 'a Session lifecycle call requires the bound AbortSignal') };
-  }
-  const principal = bound.principal;
-  if (!isObject(principal) || principal['kind'] !== 'host') {
-    return { ok: false, rejection: reject('forbidden', 'a Session lifecycle call requires a trusted Host principal') };
-  }
-  const actor = principal['actor'];
-  if (!isObject(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !nonEmpty(actor['id'])) {
-    return { ok: false, rejection: reject('forbidden', 'a Session lifecycle call requires a trusted Host actor') };
-  }
-  return {
-    ok: true,
-    scope: { projectId: bound.projectId, workspaceId: bound.workspaceId },
-    actor: { kind: actor['kind'], id: actor['id'] },
-  };
-}
-
-type OwnedRequest<T> = {
-  ok: true;
-  input: T;
-  requestId: string;
-  expected: readonly VersionPin[];
-} | { ok: false; reason: string };
-
-/** Isolate the whole request synchronously, before the first await, so a caller
- * mutating its input cannot change what is committed. */
-function ownRequest<T>(request: GraphWrite<T>, what: string): OwnedRequest<T> {
-  try {
-    const clone = structuredClone(request) as GraphWrite<T>;
-    const meta = clone.meta as unknown as UnknownRecord;
-    if (!isObject(meta) || !nonEmpty(meta['requestId'])) return { ok: false, reason: `${what} requires meta.requestId` };
-    if (!Array.isArray(meta['expected'])) return { ok: false, reason: `${what} requires meta.expected` };
-    return {
-      ok: true,
-      input: clone.input,
-      requestId: meta['requestId'],
-      expected: meta['expected'] as readonly VersionPin[],
-    };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { ok: false, reason: `${what} request cannot be isolated from the caller: ${detail}` };
-  }
 }
 
 type ExpectedOutcome =
@@ -265,9 +180,6 @@ function normalizeExpected(
 // --------------------------------------------------------------------------
 // Link reading (archive guard)
 // --------------------------------------------------------------------------
-
-const MAX_LINKS_PER_SESSION = 2000;
-const LINK_PAGE_LIMIT = 200;
 
 type LinkRead = { ok: true; links: SessionWorkLink[] } | { ok: false; rejection: CoreRejection };
 
@@ -347,73 +259,12 @@ function sessionWrite(
 export function createSessionLifecycleService(stores: SessionLifecycleStores): SessionLifecyclePort {
   const records: GoalRecordTransactionPort = stores.records;
   const lookups: RecordLookupPort = stores.lookups;
-  // Slice 1 §3.3 (L1): the injected Session facts port the archive entries use.
+  // Slice 1 §3.3: the injected Session facts port the archive entries use.
   const sessionFacts = stores.sessionFacts;
 
   async function readSessionLinks(projectId: string, sessionId: string): Promise<LinkRead> {
-    const links: SessionWorkLink[] = [];
-    let after: string | undefined;
-    for (;;) {
-      const request: RecordLookupRequest = {
-        index: SESSION_WORK_LINKS_LOOKUP,
-        values: [projectId, sessionId],
-        ...(after === undefined ? {} : { after }),
-        limit: LINK_PAGE_LIMIT,
-      };
-      const page = await lookups.lookup(request);
-      if (page.status !== 'ready') return { ok: false, rejection: mapStoreFailure(page) };
-      for (const record of page.value.records) {
-        if (links.length >= MAX_LINKS_PER_SESSION) {
-          return { ok: false, rejection: reject('capacity', `Session ${sessionId} exceeds the bounded work-link read budget`) };
-        }
-        const decoded = decodeSessionWorkLink(record);
-        if (decoded.status !== 'decoded') {
-          return { ok: false, rejection: reject('unavailable', `session work link ${record.refKey} is damaged: ${decoded.reason}`) };
-        }
-        links.push(decoded.value);
-      }
-      if (page.value.next === null) break;
-      after = page.value.next;
-    }
-    return { ok: true, links };
-  }
-
-  function actorIdentity(actor: { kind: 'human' | 'system'; id: string }): { kind: string; id: string } {
-    return { kind: actor.kind, id: actor.id };
-  }
-
-  function identityKeyOf(
-    prefix: string,
-    actor: { kind: 'human' | 'system'; id: string },
-    scope: WorkspaceScope,
-    requestId: string,
-  ): string {
-    return prefix + sha256Hex(canonicalJson({
-      actor: actorIdentity(actor), projectId: scope.projectId, workspaceId: scope.workspaceId, requestId,
-    } as unknown as JsonValue));
-  }
-
-  function fingerprintOf(
-    kind: string,
-    actor: { kind: 'human' | 'system'; id: string },
-    scope: WorkspaceScope,
-    payload: Record<string, unknown>,
-    expected: readonly VersionPin[],
-  ): string {
-    const pins = [...expected].map((pin) => ({ ref: pin.ref, revision: pin.revision }))
-      .sort((left, right) => {
-        const leftKey = canonicalOf(left.ref) ?? '';
-        const rightKey = canonicalOf(right.ref) ?? '';
-        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-      });
-    return sha256Hex(canonicalJson({
-      kind, actor: actorIdentity(actor), projectId: scope.projectId, workspaceId: scope.workspaceId,
-      ...payload, expected: pins,
-    } as unknown as JsonValue));
-  }
-
-  function eventIdOf(identityKey: string, suffix: string): string {
-    return sha256Hex(`${identityKey}|${suffix}`);
+    const read = await readSessionWorkLinks(lookups, projectId, sessionId);
+    return read.ok ? { ok: true, links: read.links } : read;
   }
 
   // ------------------------------------------------------------------------
@@ -590,11 +441,11 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     ctx: CoreCallContext,
     request: GraphWrite<LinkSessionWorkInput>,
   ): Promise<WriteResult<SessionWorkLink>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session lifecycle call');
     if (!trusted.ok) return trusted.rejection;
     const { scope, actor } = trusted;
     if (ctx.signal?.aborted) return reject('cancelled', 'the Session link was cancelled before validation');
-    const owned = ownRequest(request, 'linkSessionWork');
+    const owned: OwnedRequest<LinkSessionWorkInput> = ownRequest(request, 'linkSessionWork');
     if (!owned.ok) return reject('invalid', owned.reason);
     const input = owned.input;
     if (!isObject(input)) return reject('invalid', 'linkSessionWork requires an input object');
@@ -768,7 +619,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     request: GraphWrite<ArchiveSessionInput>,
     kind: 'archive' | 'reactivate',
   ): Promise<WriteResult<SessionRecord>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session lifecycle call');
     if (!trusted.ok) return trusted.rejection;
     const { scope, actor } = trusted;
     if (ctx.signal?.aborted) return reject('cancelled', `the Session ${kind} was cancelled before validation`);
@@ -930,7 +781,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
   }
 
   /**
-   * Lead decision L-a: `stopQueued` is a durable fact, not a constant. A cancel
+   * `stopQueued` is a durable fact, not a constant. A cancel
    * intent on the request's execution Run that the Run has not terminally
    * observed (the intent is still `queued`) keeps the release `busy`. A Query is
    * never cancelled by an archive, and a missing/undecodable intent means the
@@ -1083,7 +934,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
   }
 
   async function runArchiveRequestAttempt(args: {
-    ctx: CoreCallContext; scope: WorkspaceScope; actor: { kind: 'human' | 'system'; id: string };
+    ctx: CoreCallContext; scope: WorkspaceScope; actor: HostActor;
     input: RequestSessionArchiveInput; mode: SessionArchiveRequestV1['mode']; requestId: string;
     identityKey: string; fingerprint: string; expectedSession: VersionPin;
   }): Promise<WriteResult<SessionRecord>> {
@@ -1160,7 +1011,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     ctx: CoreCallContext,
     request: GraphWrite<RequestSessionArchiveInput>,
   ): Promise<WriteResult<SessionRecord>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session lifecycle call');
     if (!trusted.ok) return trusted.rejection;
     const { scope, actor } = trusted;
     if (sessionFacts === undefined) {
@@ -1207,7 +1058,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     ctx: CoreCallContext,
     request: GraphWrite<RequestSessionArchiveInput>,
   ): Promise<ReadResult<{ session: SessionRecord; cursor: CommitCursor }>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session lifecycle call');
     if (!trusted.ok) return trusted.rejection;
     const { scope, actor } = trusted;
     if (ctx.signal?.aborted) return reject('cancelled', 'the archive request receipt read was cancelled before validation');
@@ -1351,7 +1202,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     ctx: CoreCallContext,
     step: ArchiveStepRefV1,
   ): Promise<WriteResult<SessionRecord>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session lifecycle call');
     if (!trusted.ok) return trusted.rejection;
     const { scope } = trusted;
     if (sessionFacts === undefined) {
@@ -1406,7 +1257,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     ctx: CoreCallContext,
     request: GraphWrite<{ sessionRef: SessionRef; archiveRequestId: string; reason: string }>,
   ): Promise<WriteResult<SessionRecord>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session lifecycle call');
     if (!trusted.ok) return trusted.rejection;
     const { scope, actor } = trusted;
     if (sessionFacts === undefined) {

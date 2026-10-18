@@ -38,6 +38,7 @@ import {
   type RunSnapshot, type RuntimeEventV1, type RuntimeInputBindingV1, type TaskBudgetV1, type TaskLeaseSnapshot,
 } from '../../../contracts/dispatch.js';
 import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
   HostTakeoverProofV1, UnknownCallReviewDraftV1, UnknownCallReviewRef, WorkspaceCaptureV1,
 } from '../../../contracts/unknown-call-review.js';
@@ -762,8 +763,8 @@ export type RunGuardContext = {
   /** Every `run.input_accepted` of the Turn is confirmed; `null` when the Kernel is unreadable. */
   inputsConfirmed: boolean | null;
   /**
-   * K3 RUN-25 guards (U1), filled by group 2. G1: the HostInstanceFacts.takeover
-   * read by WorkGraph, compared with the candidate's proof (absent = no proof).
+   * K3 RUN-25 guard G1 (U1): the HostInstanceFacts.takeover read by WorkGraph,
+   * compared with the candidate's proof (absent = no proof).
    */
   takeoverProof?: HostTakeoverProofV1 | null;
   /** K3 G7: Session active, no archive request, no handover successor, occupancy is this Run. */
@@ -1210,14 +1211,10 @@ export function entryPermitGuard(auth: ExecutionAuthorizationV2, permit: RunEntr
   return null;
 }
 
-function isPositiveSafeInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) > 0;
-}
-
 /** `isKernelObservationSource` (`execution-entry-service.ts:170-172`): the four-field identity and a positive position. */
 function isKernelSource(value: unknown): value is RunKernelSource {
   return isRecord(value) && nonEmpty(value['adapterId']) && nonEmpty(value['kernelSessionId'])
-    && nonEmpty(value['runId']) && nonEmpty(value['turnId']) && isPositiveSafeInteger(value['position']);
+    && nonEmpty(value['runId']) && nonEmpty(value['turnId']) && isPos(value['position']);
 }
 
 /** `isRunExecutionHistoryV1` shape (`persistence/execution-history-codecs.ts:100-122`). */
@@ -1226,8 +1223,8 @@ function locatorShapeOk(history: RunExecutionHistoryV1): boolean {
   if (!isRecord(sessionRef) || !nonEmpty(sessionRef.projectId) || !nonEmpty(sessionRef.sessionId)) return false;
   if (!isRecord(kernel) || !nonEmpty(kernel.adapterId) || !nonEmpty(kernel.kernelSessionId)
     || !nonEmpty(kernel.runId) || !nonEmpty(kernel.turnId)) return false;
-  if (!isPositiveSafeInteger(start) || !isPositiveSafeInteger(through)) return false;
-  if (!(end === null || isPositiveSafeInteger(end))) return false;
+  if (!isPos(start) || !isPos(through)) return false;
+  if (!(end === null || isPos(end))) return false;
   if (start > through) return false;
   return !(end !== null && (end < start || end > through));
 }
@@ -2605,17 +2602,5 @@ function onUnknownAttested(
     ...endReleaseEffects(claim, ctx, event.kernelTurnOpen ? { kernelTurnOpen: true }
       : { kernelTurnOpen: false, historyCursor: { kind: 'keep' } }),
   ]);
-}
-
-// -------------------------------------------------------------------------- //
-// Helpers                                                                     //
-// -------------------------------------------------------------------------- //
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
 }
 

@@ -1,7 +1,6 @@
 /**
- * Slice 2B L13: the real `GoalExecutedFilesPort`, replacing the slice-5 stub
- * (`executed-files-stub.ts`). The DTO and algorithm are the frozen slice-5
- * contract; only the implementation changes.
+ * Slice 2B L13: the real `GoalExecutedFilesPort`. The DTO and algorithm are the
+ * frozen slice-5 contract.
  *
  * Reads one Goal's Runs through the existing by-Goal index and its
  * `RunActivity` records through `s2b-run-activity-by-goal-last`, both paged to

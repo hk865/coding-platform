@@ -1,5 +1,5 @@
 /**
- * R3e.1 VerificationPlan compiler (implementation).
+ * VerificationPlan compiler.
  *
  * The SINGLE deterministic, content-addressed pure compiler. The same accepted
  * Plan + policy + source tuple always compiles to the same `planDigest`. It

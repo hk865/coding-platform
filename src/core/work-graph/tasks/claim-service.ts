@@ -28,10 +28,10 @@
  * ATT-01/14/15/24, SES-02) and all are written in the one commit.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
-import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
+import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, SessionWorkLinkRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
-import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type {
   ConsumedWaitV1, DispatchOutboxRef, RoleBindingRefV1, RunContinuationV1, RunRef, RunSnapshot, TaskAttemptRef,
   TaskEligibility, TaskLeaseSnapshot, TaskTriple,
@@ -94,6 +94,11 @@ import type { SessionMessage } from '../model/communication-contracts.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
+import { pinsFromStoreCurrent } from '../persistence/read-result-failures.js';
+import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
+import { isNonNeg as isSafeRevision, isPos as isPositiveBudget, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+import { isolatedWriteOf, trustedContextOf } from './trusted-context.js';
+import { taskPhaseFactsOf } from './task-phase-facts.js';
 import { createSessionFactsService } from './session-facts.js';
 import { createLegacySessionProvenanceReader } from './session-provenance-facts.js';
 
@@ -108,51 +113,21 @@ type Records = GoalRecordTransactionPort & RecordLookupPort;
 // Small pure helpers
 // --------------------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isSafeRevision(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
-function isPositiveBudget(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
-}
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
 function busy(reason: string): CoreRejection { return reject('busy', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
 function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
 
-function sameHostActor(left: unknown, right: unknown): boolean {
-  return isRecord(left) && isRecord(right) && left['kind'] === right['kind'] && left['id'] === right['id']
-    && (left['kind'] === 'human' || left['kind'] === 'system');
-}
 function refKeyOf(ref: unknown): string {
   return canonicalJson(ref as JsonValue);
 }
 function sameRef(left: unknown, right: unknown): boolean {
   try { return refKeyOf(left) === refKeyOf(right); } catch { return false; }
 }
-function pinsFromCurrent(current: readonly { refKey: string; revision: number | null }[]): VersionPin[] {
-  const pins: VersionPin[] = [];
-  for (const entry of current) {
-    if (entry.revision === null) continue;
-    try {
-      const ref = JSON.parse(entry.refKey) as unknown;
-      if (isRecord(ref)) pins.push({ ref: ref as VersionPin['ref'], revision: entry.revision });
-    } catch { /* unreadable ref key is not a pin */ }
-  }
-  return pins;
-}
 function mapStoreFailure(failure: StoreFailure): CoreRejection {
   switch (failure.code) {
     case 'revision_conflict': {
-      const current = pinsFromCurrent(failure.current);
+      const current = pinsFromStoreCurrent(failure.current);
       return reject('revision_conflict', failure.reason, current.length > 0 ? current : undefined);
     }
     case 'unique_conflict':
@@ -260,14 +235,14 @@ function claimPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: Can
   if (execution !== null && selectedRun === null) return null;
   const applicableReduction = state.reductionRevision === null ? null : read.reductionsByTaskId.get(task.taskId) ?? null;
   if (state.reductionRevision !== null && applicableReduction === null) return null;
-  return {
+  return taskPhaseFactsOf({
     taskKind: task.taskKind,
     applicableReduction,
     selectedRun,
-    originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
+    effectivePhase: state.effectivePhase,
     round: read.roundsByTaskId.get(task.taskId) ?? { kind: 'none' },
     coveringRequeue: state.requeueRef,
-  };
+  });
 }
 
 /**
@@ -517,75 +492,29 @@ function claimRecords(effects: readonly TaskEffect[], write: {
 type OwnedCtx = { ok: true; ctx: CoreCallContext; actor: Extract<ActorRef, { kind: 'human' | 'system' }> }
   | { ok: false; rejection: CoreRejection };
 
+function isSignal(signal: unknown): boolean {
+  return typeof signal === 'object' && signal !== null
+    && typeof (signal as { aborted?: unknown }).aborted === 'boolean'
+    && typeof (signal as { addEventListener?: unknown }).addEventListener === 'function';
+}
+
 /** Bind the trusted Host scope and identity before the first await; the
  * AbortSignal is preserved by reference so cancellation is never lost. */
 function ownCallContext(ctx: CoreCallContext): OwnedCtx {
-  const raw = ctx as unknown as {
-    projectId?: unknown; workspaceId?: unknown; principal?: unknown; materialReader?: unknown; signal?: unknown;
-  } | null | undefined;
-  if (raw === null || raw === undefined) return { ok: false, rejection: reject('invalid', 'a Task claim requires a bound call context') };
-  const projectId = raw.projectId;
-  const workspaceId = raw.workspaceId;
-  if (!nonEmpty(projectId) || !nonEmpty(workspaceId)) {
-    return { ok: false, rejection: forbidden('a Task claim requires a bound project/workspace context') };
-  }
-  const signal = raw.signal;
-  if (typeof signal !== 'object' || signal === null
-    || typeof (signal as { aborted?: unknown }).aborted !== 'boolean'
-    || typeof (signal as { addEventListener?: unknown }).addEventListener !== 'function') {
-    return { ok: false, rejection: forbidden('a Task claim requires the bound AbortSignal') };
-  }
-  let principal: unknown;
-  let materialReader: unknown;
-  try {
-    principal = structuredClone(raw.principal);
-    materialReader = structuredClone(raw.materialReader);
-  } catch {
-    return { ok: false, rejection: reject('invalid', 'the call context identity cannot be isolated from the caller') };
-  }
-  if (!isRecord(principal) || principal['kind'] !== 'host') {
-    return { ok: false, rejection: forbidden('a Task claim requires a trusted Host principal') };
-  }
-  const actor = principal['actor'];
-  if (!isRecord(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !nonEmpty(actor['id'])) {
-    return { ok: false, rejection: forbidden('a Task claim requires a trusted Host actor') };
-  }
-  if (!isRecord(materialReader) || materialReader['kind'] !== 'host'
-    || materialReader['projectId'] !== projectId
-    || (materialReader['workspaceId'] !== undefined && materialReader['workspaceId'] !== workspaceId)
-    || !sameHostActor(materialReader['actor'], actor)) {
-    return { ok: false, rejection: forbidden('the material reader is not the same trusted Host scope') };
-  }
-  return { ok: true,
-    ctx: { projectId, workspaceId, principal: principal as CoreCallContext['principal'],
-      materialReader: materialReader as MaterialReader, signal: signal as AbortSignal },
-    actor: { kind: actor['kind'], id: actor['id'] } };
+  const trusted = trustedContextOf(ctx, { label: 'a Task claim', reject, isSignal });
+  if (!trusted.ok) return trusted;
+  return { ok: true, ctx: trusted.ctx, actor: trusted.actor };
 }
 
 type OwnedRequest = { ok: true; input: ClaimTaskInput; requestId: string; expected: readonly VersionPin[] }
   | { ok: false; rejection: CoreRejection };
 
 function ownRequest(request: GraphWrite<ClaimTaskInput>): OwnedRequest {
-  const raw = request as unknown as { input?: unknown; meta?: unknown } | null | undefined;
-  if (raw === null || raw === undefined || !isRecord(raw.input)) {
-    return { ok: false, rejection: reject('invalid', 'a Task claim requires a request input object') };
-  }
-  const meta = raw.meta;
-  if (!isRecord(meta) || !nonEmpty(meta['requestId'])) {
-    return { ok: false, rejection: reject('invalid', 'a Task claim requires meta.requestId') };
-  }
-  if (!Array.isArray(meta['expected'])) {
-    return { ok: false, rejection: reject('invalid', 'meta.expected must be an array of version pins') };
-  }
-  let input: ClaimTaskInput;
-  let expected: readonly VersionPin[];
-  try {
-    input = structuredClone(raw.input) as ClaimTaskInput;
-    expected = structuredClone(meta['expected']) as VersionPin[];
-  } catch {
-    return { ok: false, rejection: reject('invalid', 'the Task claim request cannot be isolated from the caller') };
-  }
-  return { ok: true, input, requestId: meta['requestId'], expected };
+  return isolatedWriteOf<ClaimTaskInput>(request, {
+    label: 'a Task claim',
+    reject,
+    cannotIsolate: 'the Task claim request cannot be isolated from the caller',
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -785,7 +714,7 @@ function roleMatchRejection(
 
 /**
  * Slice 5 §3.2/§8.2: the optional Goal-settings seam the claim entry reads
- * before it starts new modifying work (the waiting/autonomy guards are part 2).
+ * before it starts new modifying work.
  * The intersection only ADDS an optional field, so every existing composition
  * parameter keeps compiling and the factory never throws.
  */

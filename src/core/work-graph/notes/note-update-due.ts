@@ -16,14 +16,14 @@
  * - `latestTriggerCursor` is the newest qualifying trigger by `at` descending,
  *   ties broken by `key` ascending (UTF-8 byte order), `null` when none qualify.
  *
- * Rework item 10 (ruling 7): `readGoalUnderstandingAnchors` is the ONE reader
+ * Ruling 7: `readGoalUnderstandingAnchors` is the ONE reader
  * of an anchor set (goal + stage anchors, pointers, heads, triggers) shared by
- * the scribe to-dos and the view. `createNoteUpdateDue`/`NoteUpdateDuePort` are
- * gone — they had no production caller.
+ * the scribe to-dos and the view.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { NoteHeadSnapshot } from '../../../contracts/note.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
@@ -38,7 +38,7 @@ export type NoteUpdateDueAnchorInputV1 = { anchorKey: string; baseline: string |
   stageId?: string | null; includePlanTrigger?: boolean };
 
 /**
- * Rework item 5 (ruling 4): the ONE baseline rule. `current` is
+ * Ruling 4: the ONE baseline rule. `current` is
  * `head !== null && (accepted || reviewed)`.
  * - goal anchor (`stageId` null/undefined):
  *   `{ baseline: current ? createdAt : null, includePlanTrigger: current }`;
@@ -119,7 +119,7 @@ export type GoalUnderstandingAnchorsV1 = {
 };
 
 /**
- * Rework item 4: the returned array also carries the ONE pointer batch and the
+ * The returned array also carries the ONE pointer batch and the
  * ONE head batch the reader performed (goal/stage anchors plus any extra
  * anchors), so a caller (the scribe to-dos) never reads them again.
  */
@@ -127,10 +127,6 @@ export type GoalUnderstandingAnchorsReadV1 = GoalUnderstandingAnchorsV1[] & {
   pointers: ReadonlyMap<string, { noteId: string | null; revision: number | null }>;
   heads: ReadonlyMap<string, NoteHeadSnapshot>;
 };
-
-function unavailable<T>(reason: string): ReadResult<T> {
-  return { status: 'rejected', code: 'unavailable', reason };
-}
 
 /**
  * §11.5/§11.7: one plan window read per goal; anchors = `goal:<goalId>` plus one
@@ -158,7 +154,7 @@ export async function readGoalUnderstandingAnchors(
   for (const goalId of goalIds) {
     const goalRef: GoalRef = { aggregateType: 'Goal', projectId: ctx.projectId, goalId };
     const window = await readGoalPlanWindow(records, goalRef);
-    if (window.status !== 'ready') return unavailable(window.reason);
+    if (window.status !== 'ready') return rejected('unavailable', window.reason);
     const plan = window.plan;
     const anchorKeys: string[] = [`goal:${goalId}`];
     const stageIds = new Map<string, string>();
@@ -173,13 +169,13 @@ export async function readGoalUnderstandingAnchors(
   }
 
   // ONE batched pointer read and ONE batched pointed-head read for every goal's
-  // anchors plus the caller's extra anchors (rework item 4).
+  // anchors plus the caller's extra anchors.
   const allAnchorKeys = windows.flatMap(window => window.anchorKeys);
   for (const anchorKey of extraAnchorKeys) {
     if (!allAnchorKeys.includes(anchorKey)) allAnchorKeys.push(anchorKey);
   }
   const batch = await readPointerAndHeadBatch(records, ctx.projectId, allAnchorKeys);
-  if (!batch.ok) return unavailable(batch.reason);
+  if (!batch.ok) return rejected('unavailable', batch.reason);
   const pointers = batch.value.pointers;
   const heads = batch.value.heads;
 
@@ -191,7 +187,7 @@ export async function readGoalUnderstandingAnchors(
     if (window.plan !== null) {
       // U-9: one trigger read per goal with a current plan.
       const triggerRead = await readGoalTriggerRecords(records, goalRef, window.plan);
-      if (triggerRead.status !== 'ready') return unavailable(triggerRead.reason);
+      if (triggerRead.status !== 'ready') return rejected('unavailable', triggerRead.reason);
       triggers = triggerRead.triggers;
       claimedArchiveKeys = triggerRead.claimedArchiveKeys;
     }

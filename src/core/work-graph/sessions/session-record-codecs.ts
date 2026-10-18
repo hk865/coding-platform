@@ -1,5 +1,5 @@
 /**
- * R4b canonical Session-family schema registration and pure encode/decode.
+ * Canonical Session-family schema registration and pure encode/decode.
  *
  * The WorkGraph owns this closed schemaId list; the RecordStore only selects a
  * codec from the aggregateType of the full ref and applies mechanical CAS,
@@ -17,7 +17,10 @@
  *     cursor in the same transaction. A typed read requires `since` to be bound.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
+import {
+  hasOnlyKeys, invalid, isNonNeg, isPos, isRecord, nonEmpty, parseObject, type UnknownRecord,
+} from '../../../contracts/validation/common.js';
 import type {
   SessionAggregateRef, SessionRef, SessionWorkLinkRef, WorkLinkRelation,
 } from '../../../contracts/core/identity.js';
@@ -28,6 +31,7 @@ import type {
 } from '../../record-store/ports.js';
 import type { SessionOperationRecord } from '../model/session-contracts.js';
 import { SESSION_BY_PROVENANCE_LOOKUP } from '../model/session-facts-contracts.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 
 // --------------------------------------------------------------------------
 // Fixed registration identifiers
@@ -108,22 +112,9 @@ export type PendingSessionWorkLink = {
 // Pure shape helpers
 // --------------------------------------------------------------------------
 
-type UnknownRecord = Record<string, unknown>;
 /** `null` = the check passed; a string is the precise rejection reason. */
 export type Problem = string | null;
 
-function isObject(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isSafeRevision(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
-function isPositiveRevision(value: unknown): value is number {
-  return isSafeRevision(value) && value >= 1;
-}
 /** Platform ledger cursor, opaque to the domain except for this shape rule. */
 export function isPlatformCursor(value: unknown): value is string {
   return nonEmpty(value) && /^c\d{10}$/.test(value);
@@ -139,34 +130,13 @@ function isNullableCursor(value: unknown): boolean {
 function isNullableKernelCursor(value: unknown): boolean {
   return value === null || nonEmpty(value);
 }
-function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key));
-}
-function canonicalOf(value: unknown): string | null {
-  try {
-    return canonicalJson(value as JsonValue);
-  } catch {
-    return null;
-  }
-}
-function parseObject(json: string): UnknownRecord | null {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return isObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function invalid(reason: string): { status: 'invalid'; reason: string } {
-  return { status: 'invalid', reason };
-}
 
 // --------------------------------------------------------------------------
 // Primitive checks
 // --------------------------------------------------------------------------
 
 export function checkOperationRef(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'operationId'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'operationId'])) {
     return 'operation ref must be {aggregateType,projectId,operationId}';
   }
   if (value['aggregateType'] !== 'CoreOperation' || !nonEmpty(value['projectId']) || !nonEmpty(value['operationId'])) {
@@ -176,7 +146,7 @@ export function checkOperationRef(value: unknown): Problem {
 }
 
 export function checkPlainSessionRef(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['projectId', 'sessionId'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['projectId', 'sessionId'])) {
     return 'plannedSessionRef must be a plain SessionRef without aggregateType';
   }
   if (!nonEmpty(value['projectId']) || !nonEmpty(value['sessionId'])) {
@@ -186,7 +156,7 @@ export function checkPlainSessionRef(value: unknown): Problem {
 }
 
 function checkSessionAggregateRef(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'sessionId'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'sessionId'])) {
     return 'session ref must be a SessionAggregateRef';
   }
   if (value['aggregateType'] !== 'Session' || !nonEmpty(value['projectId']) || !nonEmpty(value['sessionId'])) {
@@ -196,7 +166,7 @@ function checkSessionAggregateRef(value: unknown): Problem {
 }
 
 function checkWorkspace(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['projectId', 'workspaceId'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['projectId', 'workspaceId'])) {
     return 'workspace must be {projectId,workspaceId}';
   }
   if (!nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId'])) {
@@ -207,7 +177,7 @@ function checkWorkspace(value: unknown): Problem {
 
 /** The trusted Host route pinned by the first durable admission. */
 function checkKernelStore(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['adapterId', 'storeKey'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['adapterId', 'storeKey'])) {
     return 'kernelStore must be {adapterId,storeKey}';
   }
   if (!nonEmpty(value['adapterId']) || !nonEmpty(value['storeKey'])) {
@@ -217,7 +187,7 @@ function checkKernelStore(value: unknown): Problem {
 }
 
 export function checkRole(value: unknown): Problem {
-  if (!isObject(value)) return 'role must be an object';
+  if (!isRecord(value)) return 'role must be an object';
   if (value['kind'] === 'legacy_template') {
     if (!hasOnlyKeys(value, ['kind', 'templateId', 'templateRevision'])) return 'legacy_template role carries unknown fields';
     if (!nonEmpty(value['templateId']) || !nonEmpty(value['templateRevision'])) {
@@ -228,14 +198,14 @@ export function checkRole(value: unknown): Problem {
   if (value['kind'] === 'role_spec') {
     if (!hasOnlyKeys(value, ['kind', 'pin'])) return 'role_spec role carries unknown fields';
     const pin = value['pin'];
-    if (!isObject(pin) || !hasOnlyKeys(pin, ['ref', 'digest'])) return 'role_spec pin must be {ref,digest}';
+    if (!isRecord(pin) || !hasOnlyKeys(pin, ['ref', 'digest'])) return 'role_spec pin must be {ref,digest}';
     if (!nonEmpty(pin['digest'])) return 'role_spec pin digest must be a non-empty string';
     const ref = pin['ref'];
-    if (!isObject(ref) || !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'roleId', 'revision'])) {
+    if (!isRecord(ref) || !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'roleId', 'revision'])) {
       return 'role_spec pin.ref must be a RoleSpecRevisionRef';
     }
     if (ref['aggregateType'] !== 'RoleSpecRevision' || !nonEmpty(ref['projectId']) ||
-      !nonEmpty(ref['roleId']) || !isPositiveRevision(ref['revision'])) {
+      !nonEmpty(ref['roleId']) || !isPos(ref['revision'])) {
       return 'role_spec pin.ref is not a valid RoleSpecRevisionRef';
     }
     return null;
@@ -248,9 +218,9 @@ function relation(value: unknown): boolean {
 }
 
 export function checkTarget(value: unknown): Problem {
-  if (!isObject(value)) return 'work link target must be an object';
+  if (!isRecord(value)) return 'work link target must be an object';
   const ref = value['ref'];
-  if (!isObject(ref)) return 'work link target.ref must be an object';
+  if (!isRecord(ref)) return 'work link target.ref must be an object';
   if (value['kind'] === 'module') {
     if (!hasOnlyKeys(value, ['kind', 'ref']) || !hasOnlyKeys(ref, ['projectId', 'moduleId'])) return 'module target must be a ModuleRef';
     if (!nonEmpty(ref['projectId']) || !nonEmpty(ref['moduleId'])) return 'module target requires projectId and moduleId';
@@ -280,7 +250,7 @@ export function checkTarget(value: unknown): Problem {
 const SOURCE_KINDS: readonly string[] = ['plan-revision', 'workspace', 'governance', 'artifact', 'memory'];
 
 function checkSourceRef(value: unknown): Problem {
-  if (!isObject(value) || !Object.keys(value).every((key) => ['kind', 'refId', 'revision', 'digest'].includes(key))) {
+  if (!isRecord(value) || !Object.keys(value).every((key) => ['kind', 'refId', 'revision', 'digest'].includes(key))) {
     return 'artifact source carries unknown fields';
   }
   if (!SOURCE_KINDS.includes(String(value['kind']))) return 'artifact source kind is not recognized';
@@ -292,7 +262,7 @@ function checkSourceRef(value: unknown): Problem {
 }
 
 export function checkArtifactRef(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['kind', 'contentType', 'digest', 'sizeBytes', 'source'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['kind', 'contentType', 'digest', 'sizeBytes', 'source'])) {
     return 'ArtifactRef carries unknown fields';
   }
   if (value['kind'] !== 'artifact') return 'ArtifactRef.kind must be "artifact"';
@@ -305,7 +275,7 @@ export function checkArtifactRef(value: unknown): Problem {
 }
 
 function checkExecutionRef(value: unknown): Problem {
-  if (!isObject(value)) return 'execution ref must be an object';
+  if (!isRecord(value)) return 'execution ref must be an object';
   if (value['aggregateType'] === 'Run') {
     if (!hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'runId'])) return 'RunRef carries unknown fields';
     if (!nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['runId'])) {
@@ -328,8 +298,8 @@ function checkExecutionRef(value: unknown): Problem {
 
 function checkOccupancy(value: unknown): Problem {
   if (value === null) return null;
-  if (!isObject(value)) return 'occupancy must be an object or null';
-  if (!isPositiveRevision(value['generation'])) return 'occupancy.generation must be a positive integer';
+  if (!isRecord(value)) return 'occupancy must be an object or null';
+  if (!isPos(value['generation'])) return 'occupancy.generation must be a positive integer';
   if (value['kind'] === 'execution') {
     if (!hasOnlyKeys(value, ['kind', 'executionRef', 'generation'])) return 'execution occupancy carries unknown fields';
     return checkExecutionRef(value['executionRef']);
@@ -342,7 +312,7 @@ function checkOccupancy(value: unknown): Problem {
 }
 
 function checkObservation(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value,
+  if (!isRecord(value) || !hasOnlyKeys(value,
     ['observedAt', 'adapterId', 'kernelSessionId', 'beforeCursor', 'afterCursor', 'resultRef'])) {
     return 'operation observation carries unknown fields';
   }
@@ -360,13 +330,13 @@ function checkObservation(value: unknown): Problem {
 }
 
 function checkFailure(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['code', 'reason'])) return 'operation failure must be {code,reason}';
+  if (!isRecord(value) || !hasOnlyKeys(value, ['code', 'reason'])) return 'operation failure must be {code,reason}';
   if (!nonEmpty(value['code']) || !nonEmpty(value['reason'])) return 'operation failure requires code and reason';
   return null;
 }
 
 export function checkWorkLinkRef(value: unknown): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'sessionId', 'target', 'relation'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'sessionId', 'target', 'relation'])) {
     return 'work link ref carries unknown fields';
   }
   if (value['aggregateType'] !== 'SessionWorkLink' || !nonEmpty(value['projectId']) || !nonEmpty(value['sessionId'])) {
@@ -375,7 +345,7 @@ export function checkWorkLinkRef(value: unknown): Problem {
   const targetValue = value['target'];
   const target = checkTarget(targetValue);
   if (target !== null) return target;
-  if (isObject(targetValue) && isObject(targetValue['ref']) &&
+  if (isRecord(targetValue) && isRecord(targetValue['ref']) &&
     value['projectId'] !== targetValue['ref']['projectId']) {
     return 'work link target project disagrees with the link ref project';
   }
@@ -409,7 +379,7 @@ const WORK_LINK_BODY_KEYS: readonly string[] = ['ref', 'revision', 'since', 'unt
  * predecessor may never be.
  */
 export function checkSessionProvenance(value: unknown, ownProjectId: string, ownSessionId: string | null): Problem {
-  if (!isObject(value)) return 'provenance must be an object';
+  if (!isRecord(value)) return 'provenance must be an object';
   if (value['schemaVersion'] !== 1) return 'provenance schemaVersion must be 1';
   const from = (): Problem => {
     const problem = checkPlainSessionRef(value['from']);
@@ -434,7 +404,7 @@ export function checkSessionProvenance(value: unknown, ownProjectId: string, own
         return 'continuation provenance reason is not recognized';
       }
       const task = value['task'];
-      if (!isObject(task) || !hasOnlyKeys(task, ['projectId', 'goalId', 'taskId'])
+      if (!isRecord(task) || !hasOnlyKeys(task, ['projectId', 'goalId', 'taskId'])
         || !nonEmpty(task['projectId']) || !nonEmpty(task['goalId']) || !nonEmpty(task['taskId'])) {
         return 'continuation provenance task must be a complete TaskTriple';
       }
@@ -452,7 +422,7 @@ export function checkSessionProvenance(value: unknown, ownProjectId: string, own
       const predecessor = from();
       if (predecessor !== null) return predecessor;
       const message = value['messageRef'];
-      if (!isObject(message) || !hasOnlyKeys(message, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
+      if (!isRecord(message) || !hasOnlyKeys(message, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
         || message['aggregateType'] !== 'SessionMessage' || !nonEmpty(message['projectId'])
         || !nonEmpty(message['workspaceId']) || !nonEmpty(message['messageId'])) {
         return 'readonly_copy provenance messageRef must be a complete SessionMessageRef';
@@ -466,13 +436,13 @@ export function checkSessionProvenance(value: unknown, ownProjectId: string, own
 }
 
 function checkArchiveTaskChoice(value: unknown, ownProjectId: string): Problem {
-  if (!isObject(value) || !hasOnlyKeys(value, ['target', 'disposition'])) return 'archive task choice carries unknown fields';
+  if (!isRecord(value) || !hasOnlyKeys(value, ['target', 'disposition'])) return 'archive task choice carries unknown fields';
   const target = value['target'];
-  if (!isObject(target) || (target['kind'] !== 'task' && target['kind'] !== 'work')) {
+  if (!isRecord(target) || (target['kind'] !== 'task' && target['kind'] !== 'work')) {
     return 'archive task choice target must be a task or work target';
   }
   const targetRef = target['ref'];
-  if (!isObject(targetRef)) return 'archive task choice target ref must be an object';
+  if (!isRecord(targetRef)) return 'archive task choice target ref must be an object';
   if (target['kind'] === 'task') {
     if (!hasOnlyKeys(targetRef, ['projectId', 'goalId', 'taskId'])
       || !nonEmpty(targetRef['projectId']) || !nonEmpty(targetRef['goalId']) || !nonEmpty(targetRef['taskId'])) {
@@ -485,7 +455,7 @@ function checkArchiveTaskChoice(value: unknown, ownProjectId: string): Problem {
   }
   if (targetRef['projectId'] !== ownProjectId) return 'archive task choice target belongs to another project';
   const disposition = value['disposition'];
-  if (!isObject(disposition)) return 'archive task choice disposition must be an object';
+  if (!isRecord(disposition)) return 'archive task choice disposition must be an object';
   if (disposition['kind'] === 'drop') {
     return hasOnlyKeys(disposition, ['kind']) ? null : 'drop disposition carries unknown fields';
   }
@@ -502,7 +472,7 @@ function checkArchiveTaskChoice(value: unknown, ownProjectId: string): Problem {
 }
 
 function checkArchiveWaitChoice(value: unknown, ownProjectId: string): Problem {
-  if (!isObject(value)) return 'archive wait choice must be an object';
+  if (!isRecord(value)) return 'archive wait choice must be an object';
   const cancel = value['kind'] === 'cancel';
   const transfer = value['kind'] === 'transfer';
   if (!cancel && !transfer) return 'archive wait choice kind is not recognized';
@@ -510,13 +480,13 @@ function checkArchiveWaitChoice(value: unknown, ownProjectId: string): Problem {
     return 'archive wait choice carries unknown fields';
   }
   const run = value['runRef'];
-  if (!isObject(run) || !hasOnlyKeys(run, ['aggregateType', 'projectId', 'goalId', 'runId'])
+  if (!isRecord(run) || !hasOnlyKeys(run, ['aggregateType', 'projectId', 'goalId', 'runId'])
     || run['aggregateType'] !== 'Run' || !nonEmpty(run['projectId']) || !nonEmpty(run['goalId']) || !nonEmpty(run['runId'])) {
     return 'archive wait choice runRef must be a complete RunRef';
   }
   if (run['projectId'] !== ownProjectId) return 'archive wait choice runRef belongs to another project';
   const message = value['messageRef'];
-  if (!isObject(message) || !hasOnlyKeys(message, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
+  if (!isRecord(message) || !hasOnlyKeys(message, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
     || message['aggregateType'] !== 'SessionMessage' || !nonEmpty(message['projectId'])
     || !nonEmpty(message['workspaceId']) || !nonEmpty(message['messageId'])) {
     return 'archive wait choice messageRef must be a complete SessionMessageRef';
@@ -535,19 +505,19 @@ function checkArchiveWaitChoice(value: unknown, ownProjectId: string): Problem {
 }
 
 function checkArchiveExecution(value: unknown): Problem {
-  if (!isObject(value)) return 'archive execution must be an object';
+  if (!isRecord(value)) return 'archive execution must be an object';
   switch (value['kind']) {
     case 'none':
       return hasOnlyKeys(value, ['kind']) ? null : 'none execution carries unknown fields';
     case 'work': {
       if (!hasOnlyKeys(value, ['kind', 'runRef', 'attemptRef'])) return 'work execution carries unknown fields';
       const run = value['runRef'];
-      if (!isObject(run) || !hasOnlyKeys(run, ['aggregateType', 'projectId', 'goalId', 'runId'])
+      if (!isRecord(run) || !hasOnlyKeys(run, ['aggregateType', 'projectId', 'goalId', 'runId'])
         || run['aggregateType'] !== 'Run' || !nonEmpty(run['projectId']) || !nonEmpty(run['goalId']) || !nonEmpty(run['runId'])) {
         return 'work execution runRef must be a complete RunRef';
       }
       const attempt = value['attemptRef'];
-      if (!isObject(attempt)
+      if (!isRecord(attempt)
         || !hasOnlyKeys(attempt, ['aggregateType', 'projectId', 'goalId', 'taskId', 'attemptId'])
         || attempt['aggregateType'] !== 'TaskAttempt' || !nonEmpty(attempt['projectId'])
         || !nonEmpty(attempt['goalId']) || !nonEmpty(attempt['taskId']) || !nonEmpty(attempt['attemptId'])) {
@@ -558,7 +528,7 @@ function checkArchiveExecution(value: unknown): Problem {
     case 'query': {
       if (!hasOnlyKeys(value, ['kind', 'queryRunRef'])) return 'query execution carries unknown fields';
       const queryRun = value['queryRunRef'];
-      if (!isObject(queryRun)
+      if (!isRecord(queryRun)
         || !hasOnlyKeys(queryRun, ['aggregateType', 'projectId', 'workspaceId', 'queryJobId', 'runId'])
         || queryRun['aggregateType'] !== 'QueryRun' || !nonEmpty(queryRun['projectId'])
         || !nonEmpty(queryRun['workspaceId']) || !nonEmpty(queryRun['queryJobId']) || !nonEmpty(queryRun['runId'])) {
@@ -577,7 +547,7 @@ function checkArchiveExecution(value: unknown): Problem {
  * business bounds (task count, reason length) before writing.
  */
 export function checkSessionArchiveRequest(value: unknown, ownProjectId: string): Problem {
-  if (!isObject(value)) return 'archiveRequest must be an object';
+  if (!isRecord(value)) return 'archiveRequest must be an object';
   if (!hasOnlyKeys(value, ['schemaVersion', 'requestId', 'requestedBy', 'requestedAt', 'reason', 'mode',
     'tasks', 'wait', 'execution', 'executionPins', 'confirmUnknownStopped', 'receipt'])) {
     return 'archiveRequest carries unknown fields';
@@ -585,7 +555,7 @@ export function checkSessionArchiveRequest(value: unknown, ownProjectId: string)
   if (value['schemaVersion'] !== 1) return 'archiveRequest schemaVersion must be 1';
   if (!nonEmpty(value['requestId'])) return 'archiveRequest requestId is required';
   const requestedBy = value['requestedBy'];
-  if (!isObject(requestedBy) || !hasOnlyKeys(requestedBy, ['kind', 'id'])
+  if (!isRecord(requestedBy) || !hasOnlyKeys(requestedBy, ['kind', 'id'])
     || (requestedBy['kind'] !== 'human' && requestedBy['kind'] !== 'system') || !nonEmpty(requestedBy['id'])) {
     return 'archiveRequest requestedBy must be a trusted human/system actor';
   }
@@ -610,7 +580,7 @@ export function checkSessionArchiveRequest(value: unknown, ownProjectId: string)
   if (pins.length > 2) return 'archiveRequest executionPins must carry at most two Run/QueryRun pins';
   const pinKeys: string[] = [];
   for (const pin of pins) {
-    if (!isObject(pin) || !hasOnlyKeys(pin, ['ref', 'revision']) || !isObject(pin['ref'])
+    if (!isRecord(pin) || !hasOnlyKeys(pin, ['ref', 'revision']) || !isRecord(pin['ref'])
       || !Number.isSafeInteger(pin['revision']) || (pin['revision'] as number) < 0) {
       return 'archiveRequest executionPins entries must be complete VersionPins';
     }
@@ -651,7 +621,7 @@ export function checkSessionArchiveRequest(value: unknown, ownProjectId: string)
   }
   if (typeof value['confirmUnknownStopped'] !== 'boolean') return 'archiveRequest confirmUnknownStopped must be a boolean';
   const receipt = value['receipt'];
-  if (!isObject(receipt) || !hasOnlyKeys(receipt, ['identityKey', 'fingerprint'])
+  if (!isRecord(receipt) || !hasOnlyKeys(receipt, ['identityKey', 'fingerprint'])
     || !nonEmpty(receipt['identityKey']) || !nonEmpty(receipt['fingerprint'])) {
     return 'archiveRequest receipt must be {identityKey,fingerprint}';
   }
@@ -662,9 +632,9 @@ function checkSessionOperationBody(body: UnknownRecord): Problem {
   if (!hasOnlyKeys(body, OPERATION_BODY_KEYS)) return 'operation record carries unknown fields';
   const ref = checkOperationRef(body['ref']);
   if (ref !== null) return ref;
-  if (!isPositiveRevision(body['revision'])) return 'operation record revision must be a positive integer';
+  if (!isPos(body['revision'])) return 'operation record revision must be a positive integer';
   const action = body['action'];
-  if (!isObject(action) || !hasOnlyKeys(action, ACTION_KEYS) || action['kind'] !== 'create') {
+  if (!isRecord(action) || !hasOnlyKeys(action, ACTION_KEYS) || action['kind'] !== 'create') {
     return 'operation action must be a create action';
   }
   const plannedValue = action['plannedSessionRef'];
@@ -679,7 +649,7 @@ function checkSessionOperationBody(body: UnknownRecord): Problem {
   if (kernelStore !== null) return kernelStore;
   // The frozen scope equality is re-checked from the formal record (and from an
   // embedded event payload) rather than assumed from one write path.
-  if (isObject(body['ref']) && isObject(plannedValue) && isObject(workspaceValue)) {
+  if (isRecord(body['ref']) && isRecord(plannedValue) && isRecord(workspaceValue)) {
     const refProject = body['ref']['projectId'];
     if (refProject !== workspaceValue['projectId']) {
       return 'operation ref project disagrees with the action workspace project';
@@ -702,7 +672,7 @@ function checkSessionOperationBody(body: UnknownRecord): Problem {
   const links = action['initialLinks'];
   if (!Array.isArray(links)) return 'operation initialLinks must be an array';
   for (const entry of links) {
-    if (!isObject(entry) || !hasOnlyKeys(entry, ['target', 'relation'])) return 'initialLink must be {target,relation}';
+    if (!isRecord(entry) || !hasOnlyKeys(entry, ['target', 'relation'])) return 'initialLink must be {target,relation}';
     const target = checkTarget(entry['target']);
     if (target !== null) return `initialLink target: ${target}`;
     if (!relation(entry['relation'])) return 'initialLink relation is not recognized';
@@ -724,9 +694,9 @@ export function checkSessionBody(body: UnknownRecord, requireBoundUnavailableSin
   if (!hasOnlyKeys(body, SESSION_BODY_KEYS)) return 'session record carries unknown fields';
   const ref = checkSessionAggregateRef(body['ref']);
   if (ref !== null) return ref;
-  if (!isPositiveRevision(body['revision'])) return 'session record revision must be a positive integer';
+  if (!isPos(body['revision'])) return 'session record revision must be a positive integer';
   const kernel = body['kernel'];
-  if (!isObject(kernel) || !hasOnlyKeys(kernel, ['adapterId', 'kernelSessionId'])) {
+  if (!isRecord(kernel) || !hasOnlyKeys(kernel, ['adapterId', 'kernelSessionId'])) {
     return 'session kernel must be {adapterId,kernelSessionId}';
   }
   if (!nonEmpty(kernel['adapterId']) || !nonEmpty(kernel['kernelSessionId'])) {
@@ -792,7 +762,7 @@ export function checkWorkLinkBody(body: UnknownRecord, requireBoundSince: boolea
   if (!hasOnlyKeys(body, WORK_LINK_BODY_KEYS)) return 'work link record carries unknown fields';
   const ref = checkWorkLinkRef(body['ref']);
   if (ref !== null) return ref;
-  if (!isPositiveRevision(body['revision'])) return 'work link revision must be a positive integer';
+  if (!isPos(body['revision'])) return 'work link revision must be a positive integer';
   const since = body['since'];
   if (since === null) {
     if (requireBoundSince) return 'work link since must be bound to a real commit cursor';
@@ -816,7 +786,7 @@ function validateRecord(
   if (record.schemaId !== schemaId) return invalid(`expected schemaId ${schemaId}, got ${record.schemaId}`);
   const body = parseObject(record.json);
   if (body === null) return invalid(`${aggregateType} record json is not an object`);
-  if (!isObject(body['ref']) || !isSafeRevision(body['revision']) || body['revision'] !== record.revision) {
+  if (!isRecord(body['ref']) || !isNonNeg(body['revision']) || body['revision'] !== record.revision) {
     return invalid(`${aggregateType} record envelope is invalid`);
   }
   const canonical = canonicalOf(body['ref']);
@@ -864,7 +834,7 @@ function checkAdmittedEventBody(body: UnknownRecord): Problem {
   const operationRef = checkOperationRef(body['operationRef']);
   if (operationRef !== null) return operationRef;
   const operation = body['operation'];
-  if (!isObject(operation)) return 'admitted event requires the full operation record';
+  if (!isRecord(operation)) return 'admitted event requires the full operation record';
   const operationProblem = checkSessionOperationBody(operation);
   if (operationProblem !== null) return operationProblem;
   if (operation['revision'] !== 1) return 'admitted operation must be revision 1';
@@ -875,7 +845,7 @@ function checkAdmittedEventBody(body: UnknownRecord): Problem {
     return 'admitted event operationRef disagrees with the embedded operation';
   }
   const action = operation['action'];
-  if (!isObject(action) || !isObject(action['workspace'])) return 'admitted operation action is invalid';
+  if (!isRecord(action) || !isRecord(action['workspace'])) return 'admitted operation action is invalid';
   if (action['workspace']['projectId'] !== body['projectId'] ||
     action['workspace']['workspaceId'] !== body['workspaceId']) {
     return 'admitted event scope disagrees with the admitted operation workspace';
@@ -891,13 +861,13 @@ function checkCreatedEventBody(body: UnknownRecord): Problem {
   const operationRef = checkOperationRef(body['operationRef']);
   if (operationRef !== null) return operationRef;
   const session = body['session'];
-  if (!isObject(session)) return 'created event requires the created SessionRecord';
+  if (!isRecord(session)) return 'created event requires the created SessionRecord';
   const sessionProblem = checkSessionBody(session);
   if (sessionProblem !== null) return sessionProblem;
   if (session['revision'] !== 1) return 'created SessionRecord must be revision 1';
   if (session['lifecycle'] !== 'active') return 'created SessionRecord must be active';
   const ref = session['ref'];
-  if (!isObject(ref) || ref['projectId'] !== body['projectId'] || !nonEmpty(ref['sessionId'])) {
+  if (!isRecord(ref) || ref['projectId'] !== body['projectId'] || !nonEmpty(ref['sessionId'])) {
     return 'created SessionRecord ref disagrees with the event project';
   }
   if (session['workspaceId'] !== body['workspaceId']) {
@@ -1029,23 +999,11 @@ export function encodePendingSessionWorkLink(link: PendingSessionWorkLink): Enco
 }
 
 export function encodeSessionCreationAdmittedEvent(event: SessionCreationAdmittedEvent): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function encodeSessionCreatedEvent(event: SessionCreatedEvent): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 // --------------------------------------------------------------------------
@@ -1065,7 +1023,7 @@ export function decodeSessionRecord(record: EncodedRecord): DecodeResult<Session
   if (checked.status !== 'decoded') return checked;
   const body = parseObject(record.json);
   if (body === null) return invalid('Session record json is not an object');
-  // R2 exception (reported): the frozen S1 test `S1-codecs-indexes` SV01 and
+  // R2 exception: the frozen S1 test `S1-codecs-indexes` SV01 and
   // `S1-dispatch-guards` SV58 assert an explicit `null` on a decoded old record,
   // so this codec keeps the §2.9 null default instead of leaving the key absent.
   return { status: 'decoded', value: { ...(body as unknown as SessionRecord),
@@ -1113,7 +1071,7 @@ export function sessionCreatedPayloadFromEvent(event: EncodedDomainEvent): Decod
     status: 'decoded',
     value: {
       operationRef: body['operationRef'] as unknown as OperationRef,
-      // Rule 1 (lead fix 2026-10-09): a replay returns the ORIGINAL event value, so
+      // Rule 1: a replay returns the ORIGINAL event value, so
       // the payload keeps exactly the keys it was written with; only the record
       // decoder applies the §2.9 null default (SV01). Readers use `?? null`.
       session: body['session'] as unknown as SessionRecord,

@@ -27,7 +27,9 @@ import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
-import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { consultationQueryRefs, validQueryExecution } from '../../../contracts/query-job.js';
@@ -74,24 +76,8 @@ export const QUERY_JOB_SUBMIT_IDENTITY_PREFIX = 'query-job-submit:';
 const MAX_QUESTION_BYTES = 16 * 1024;
 const MAX_FOCUS_REFS = 64;
 
-type UnknownRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return current === undefined || current.length === 0
-    ? { status: 'rejected', code, reason }
-    : { status: 'rejected', code, reason, current };
 }
 
 /** Ownership of a caller-supplied request: one clone before any await. */
@@ -208,101 +194,101 @@ function normalizeExpectedPins(
 
 function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
   const owned = ownInput(request, 'submitQueryJob request');
-  if (owned.status === 'invalid') return { status: 'rejected', rejection: reject('invalid', owned.reason) };
-  if (!isRecord(owned.value)) return { status: 'rejected', rejection: reject('invalid', 'submitQueryJob request must be an object') };
+  if (owned.status === 'invalid') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', owned.reason) };
+  if (!isRecord(owned.value)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'submitQueryJob request must be an object') };
   const input = owned.value['input'];
   const meta = owned.value['meta'];
-  if (!isRecord(input)) return { status: 'rejected', rejection: reject('invalid', 'submitQueryJob requires an input object') };
-  if (!isRecord(meta)) return { status: 'rejected', rejection: reject('invalid', 'submitQueryJob requires a request meta') };
+  if (!isRecord(input)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'submitQueryJob requires an input object') };
+  if (!isRecord(meta)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'submitQueryJob requires a request meta') };
   const queryJobId = input['queryJobId'];
   const runId = input['runId'];
   const intent = input['intent'];
   const requestId = meta['requestId'];
-  if (!isNonEmptyString(queryJobId)) return { status: 'rejected', rejection: reject('invalid', 'queryJobId must be a non-empty string') };
-  if (!isNonEmptyString(runId)) return { status: 'rejected', rejection: reject('invalid', 'runId must be a non-empty string') };
-  if (!isRecord(intent)) return { status: 'rejected', rejection: reject('invalid', 'intent must be an object') };
-  if (!isNonEmptyString(requestId)) return { status: 'rejected', rejection: reject('invalid', 'meta.requestId must be a non-empty string') };
+  if (!nonEmpty(queryJobId)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'queryJobId must be a non-empty string') };
+  if (!nonEmpty(runId)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'runId must be a non-empty string') };
+  if (!isRecord(intent)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent must be an object') };
+  if (!nonEmpty(requestId)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'meta.requestId must be a non-empty string') };
 
   const bound = ctx as unknown as
     | { projectId?: unknown; workspaceId?: unknown; principal?: { kind?: unknown; actor?: unknown } }
     | null
     | undefined;
   if (bound === null || bound === undefined) {
-    return { status: 'rejected', rejection: reject('forbidden', 'submitQueryJob requires a bound call context') };
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'submitQueryJob requires a bound call context') };
   }
   const principal = bound.principal;
   if (principal === undefined || principal.kind !== 'host') {
     return {
       status: 'rejected',
-      rejection: reject('forbidden', 'submitQueryJob requires a trusted Host human/system call context in this batch'),
+      rejection: rejectedWithNonEmptyCurrent('forbidden', 'submitQueryJob requires a trusted Host human/system call context in this batch'),
     };
   }
   const projectId = bound.projectId;
   const workspaceId = bound.workspaceId;
-  if (!isNonEmptyString(projectId) || !isNonEmptyString(workspaceId)) {
-    return { status: 'rejected', rejection: reject('forbidden', 'submitQueryJob requires a bound project/workspace scope') };
+  if (!nonEmpty(projectId) || !nonEmpty(workspaceId)) {
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'submitQueryJob requires a bound project/workspace scope') };
   }
   const actor = principal.actor;
-  if (!isRecord(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !isNonEmptyString(actor['id'])) {
-    return { status: 'rejected', rejection: reject('forbidden', 'the Host actor must be a real human or system actor') };
+  if (!isRecord(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !nonEmpty(actor['id'])) {
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'the Host actor must be a real human or system actor') };
   }
 
   if (intent['projectId'] !== projectId || intent['workspaceId'] !== workspaceId) {
-    return { status: 'rejected', rejection: reject('forbidden', 'intent project/workspace does not match the Host call context') };
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'intent project/workspace does not match the Host call context') };
   }
   const goalId = intent['goalId'];
-  if (goalId === null) return { status: 'rejected', rejection: reject('unsupported', 'this batch requires a real goalId') };
-  if (!isNonEmptyString(goalId)) return { status: 'rejected', rejection: reject('invalid', 'intent.goalId must be a non-empty string') };
-  if (intent['schemaVersion'] !== 1) return { status: 'rejected', rejection: reject('invalid', 'intent.schemaVersion must be 1') };
+  if (goalId === null) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'this batch requires a real goalId') };
+  if (!nonEmpty(goalId)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.goalId must be a non-empty string') };
+  if (intent['schemaVersion'] !== 1) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.schemaVersion must be 1') };
   // The intent id is bound to the ACTUAL job identity, not to meta.requestId.
   if (intent['intentId'] !== queryJobId) {
-    return { status: 'rejected', rejection: reject('invalid', 'intent.intentId must equal the actual queryJobId') };
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.intentId must equal the actual queryJobId') };
   }
   const question = intent['question'];
   if (typeof question !== 'string' || question.length === 0) {
-    return { status: 'rejected', rejection: reject('invalid', 'intent.question must be non-empty') };
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.question must be non-empty') };
   }
   if (Buffer.byteLength(question, 'utf8') > MAX_QUESTION_BYTES) {
-    return { status: 'rejected', rejection: reject('invalid', 'intent.question must be at most 16 KiB of UTF-8') };
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.question must be at most 16 KiB of UTF-8') };
   }
-  if (!isNonEmptyString(intent['correlationId'])) {
-    return { status: 'rejected', rejection: reject('invalid', 'intent.correlationId must be a non-empty string') };
+  if (!nonEmpty(intent['correlationId'])) {
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.correlationId must be a non-empty string') };
   }
   const budget = intent['budget'];
-  if (!isRecord(budget)) return { status: 'rejected', rejection: reject('invalid', 'intent.budget must be an object') };
+  if (!isRecord(budget)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.budget must be an object') };
   const maxTokens = budget['maxTokens'];
   // An explicit null budget means no cumulative Query token cap; a real number
   // must still be a positive safe integer (0/negative/non-integer stay invalid).
   if (maxTokens !== null && (typeof maxTokens !== 'number' || !Number.isSafeInteger(maxTokens) || maxTokens <= 0)) {
-    return { status: 'rejected', rejection: reject('invalid', 'intent.budget.maxTokens must be null or a positive safe integer') };
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.budget.maxTokens must be null or a positive safe integer') };
   }
   const deadline = budget['deadline'];
   if (deadline !== null &&
       !(typeof deadline === 'string' && deadline.length > 0 && !Number.isNaN(Date.parse(deadline)))) {
-    return { status: 'rejected', rejection: reject('invalid', 'intent.budget.deadline must be null or a valid time') };
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.budget.deadline must be null or a valid time') };
   }
   const multiTurn = intent['multiTurn'];
-  if (!isRecord(multiTurn)) return { status: 'rejected', rejection: reject('invalid', 'intent.multiTurn must be an object') };
+  if (!isRecord(multiTurn)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.multiTurn must be an object') };
   const maxRounds = multiTurn['maxRounds'];
   if (typeof maxRounds !== 'number' || !Number.isSafeInteger(maxRounds) || maxRounds < 1) {
-    return { status: 'rejected', rejection: reject('invalid', 'intent.multiTurn.maxRounds must be a positive safe integer') };
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.multiTurn.maxRounds must be a positive safe integer') };
   }
-  if (maxRounds !== 1) return { status: 'rejected', rejection: reject('unsupported', 'this batch only accepts maxRounds=1') };
+  if (maxRounds !== 1) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'this batch only accepts maxRounds=1') };
 
   const execution = intent['execution'];
   if (execution !== undefined) {
-    if (!isRecord(execution)) return { status: 'rejected', rejection: reject('invalid', 'intent.execution must be an object when present') };
+    if (!isRecord(execution)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.execution must be an object when present') };
     if (execution['kind'] === 'execution_coordination') {
-      return { status: 'rejected', rejection: reject('unsupported', 'execution_coordination is not delivered in this batch') };
+      return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'execution_coordination is not delivered in this batch') };
     }
     if (execution['implementationAuthorization'] !== undefined) {
-      return { status: 'rejected', rejection: reject('unsupported', 'implementationAuthorization is not delivered in this batch') };
+      return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'implementationAuthorization is not delivered in this batch') };
     }
     if (!validQueryExecution(execution as unknown as QueryJobIntentV1['execution'])) {
-      return { status: 'rejected', rejection: reject('invalid', 'intent.execution is not a valid execution binding shape') };
+      return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.execution is not a valid execution binding shape') };
     }
     if (execution['kind'] !== 'initial_coordination' && execution['kind'] !== 'semantic_query') {
-      return { status: 'rejected', rejection: reject('unsupported', 'this execution kind is not delivered in this batch') };
+      return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'this execution kind is not delivered in this batch') };
     }
   }
   let consultation: ConsultationBinding | null = null;
@@ -314,14 +300,14 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
     };
     const messageRef = rawConsultation.messageRef;
     if (messageRef.projectId !== projectId || messageRef.workspaceId !== workspaceId) {
-      return { status: 'rejected', rejection: reject('forbidden', 'the consultation message is outside the Host call scope') };
+      return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'the consultation message is outside the Host call scope') };
     }
     if (rawConsultation.recipient.projectId !== projectId) {
-      return { status: 'rejected', rejection: reject('forbidden', 'the consultation recipient is outside the Host call project') };
+      return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'the consultation recipient is outside the Host call project') };
     }
     const refs = consultationQueryRefs(messageRef, rawConsultation.part);
     if (refs.queryJobRef.queryJobId !== queryJobId || refs.queryRunRef.runId !== runId) {
-      return { status: 'rejected', rejection: reject('invalid', 'a consultation submit must use the deterministic identity of its message') };
+      return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'a consultation submit must use the deterministic identity of its message') };
     }
     const rawDerivation = (rawConsultation as { derivation?: unknown }).derivation;
     if (rawDerivation !== undefined) {
@@ -330,7 +316,7 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
       const source = derivation === null ? null : derivation['sourceSessionRef'];
       if (child === null || source === null || !isRecord(child) || !isRecord(source)
         || child['projectId'] !== projectId || source['projectId'] !== projectId) {
-        return { status: 'rejected', rejection: reject('forbidden', 'the consultation derivation Sessions are outside the bound project') };
+        return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'the consultation derivation Sessions are outside the bound project') };
       }
     }
     consultation = {
@@ -341,17 +327,17 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
   }
 
   const rawFocus = intent['focusTaskRefs'];
-  if (!Array.isArray(rawFocus)) return { status: 'rejected', rejection: reject('invalid', 'intent.focusTaskRefs must be an array') };
+  if (!Array.isArray(rawFocus)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.focusTaskRefs must be an array') };
   if (rawFocus.length > MAX_FOCUS_REFS) {
-    return { status: 'rejected', rejection: reject('invalid', 'intent.focusTaskRefs must contain at most 64 refs') };
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.focusTaskRefs must contain at most 64 refs') };
   }
   const focusRefs: FocusTaskRef[] = [];
   const seenFocus = new Set<string>();
   for (const entry of rawFocus) {
     if (!isRecord(entry) || entry['aggregateType'] !== 'Task' ||
-        !isNonEmptyString(entry['projectId']) || !isNonEmptyString(entry['goalId']) ||
-        !isNonEmptyString(entry['taskId'])) {
-      return { status: 'rejected', rejection: reject('invalid', 'every focusTaskRef must be a complete Task triple') };
+        !nonEmpty(entry['projectId']) || !nonEmpty(entry['goalId']) ||
+        !nonEmpty(entry['taskId'])) {
+      return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'every focusTaskRef must be a complete Task triple') };
     }
     const ref: FocusTaskRef = {
       aggregateType: 'Task',
@@ -359,16 +345,16 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
       goalId: entry['goalId'],
       taskId: entry['taskId'],
     };
-    if (ref.projectId !== projectId) return { status: 'rejected', rejection: reject('forbidden', 'a focusTaskRef belongs to another project') };
-    if (ref.goalId !== goalId) return { status: 'rejected', rejection: reject('forbidden', 'a focusTaskRef belongs to another Goal') };
+    if (ref.projectId !== projectId) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'a focusTaskRef belongs to another project') };
+    if (ref.goalId !== goalId) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'a focusTaskRef belongs to another Goal') };
     const key = canonicalJson(ref as unknown as JsonValue);
-    if (seenFocus.has(key)) return { status: 'rejected', rejection: reject('invalid', 'focusTaskRefs must not repeat a full task ref') };
+    if (seenFocus.has(key)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'focusTaskRefs must not repeat a full task ref') };
     seenFocus.add(key);
     focusRefs.push(ref);
   }
 
   const expected = normalizeExpectedPins(meta['expected'], { projectId, workspaceId, goalId, queryJobId, runId });
-  if (expected.status === 'invalid') return { status: 'rejected', rejection: reject('invalid', expected.reason) };
+  if (expected.status === 'invalid') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', expected.reason) };
 
   return {
     status: 'ok',
@@ -524,7 +510,7 @@ async function committedFromReceipt(
   replayed: boolean,
 ): Promise<WriteResult<{ job: QueryJobSnapshot; run: QueryRunSnapshot }>> {
   const recovered = await recoverOriginalRecord(deps, receipt, identityKey, fingerprint, queryJobRef, queryRunRef);
-  if (recovered.status !== 'recovered') return reject('unavailable', recovered.reason);
+  if (recovered.status !== 'recovered') return rejectedWithNonEmptyCurrent('unavailable', recovered.reason);
   return { status: 'committed', value: recovered.record, replayed, cursor: receipt.cursor };
 }
 
@@ -562,22 +548,22 @@ async function readScopeFacts(
 ): Promise<ScopeRead> {
   const read = await deps.records.readMany([projectKey, workspaceKey, goalKey]);
   if (read.status !== 'ready') {
-    if (read.code === 'not_found') return { status: 'rejected', rejection: reject('not_found', read.reason) };
-    return { status: 'rejected', rejection: reject('unavailable', `${read.code}: ${read.reason}`) };
+    if (read.code === 'not_found') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('not_found', read.reason) };
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unavailable', `${read.code}: ${read.reason}`) };
   }
   const present = new Map<string, EncodedRecord>();
   for (const record of read.value.records) present.set(record.refKey, record);
   const missing = new Set(read.value.missing);
 
   const project = decodeOne(projectKey, present, missing, decodeProjectSnapshot);
-  if (project.status === 'missing') return { status: 'rejected', rejection: reject('not_found', 'the Project does not exist') };
-  if (project.status === 'unavailable') return { status: 'rejected', rejection: reject('unavailable', `the Project is not readable: ${project.reason}`) };
+  if (project.status === 'missing') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('not_found', 'the Project does not exist') };
+  if (project.status === 'unavailable') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unavailable', `the Project is not readable: ${project.reason}`) };
   const workspace = decodeOne(workspaceKey, present, missing, decodeWorkspaceSnapshot);
-  if (workspace.status === 'missing') return { status: 'rejected', rejection: reject('not_found', 'the Workspace does not exist') };
-  if (workspace.status === 'unavailable') return { status: 'rejected', rejection: reject('unavailable', `the Workspace is not readable: ${workspace.reason}`) };
+  if (workspace.status === 'missing') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('not_found', 'the Workspace does not exist') };
+  if (workspace.status === 'unavailable') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unavailable', `the Workspace is not readable: ${workspace.reason}`) };
   const goal = decodeOne(goalKey, present, missing, decodeGoalSnapshot);
-  if (goal.status === 'missing') return { status: 'rejected', rejection: reject('not_found', 'the Goal does not exist') };
-  if (goal.status === 'unavailable') return { status: 'rejected', rejection: reject('unavailable', `the Goal is not readable: ${goal.reason}`) };
+  if (goal.status === 'missing') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('not_found', 'the Goal does not exist') };
+  if (goal.status === 'unavailable') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unavailable', `the Goal is not readable: ${goal.reason}`) };
   return { status: 'ready', facts: { project: project.value, workspace: workspace.value, goal: goal.value } };
 }
 
@@ -604,7 +590,7 @@ async function submit(
   request: unknown,
 ): Promise<WriteResult<{ job: QueryJobSnapshot; run: QueryRunSnapshot }>> {
   const signal = (ctx as unknown as { signal?: AbortSignal } | null | undefined)?.signal;
-  if (signal?.aborted) return reject('cancelled', 'submitQueryJob was cancelled before admission');
+  if (signal?.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'submitQueryJob was cancelled before admission');
 
   const prepared = prepareSubmit(ctx, request);
   if (prepared.status === 'rejected') return prepared.rejection;
@@ -632,10 +618,10 @@ async function submit(
   if (early.status === 'found') {
     return committedFromReceipt(deps, early.receipt, identityKey, fingerprint, queryJobRef, queryRunRef, true);
   }
-  if (early.status === 'conflict') return reject('idempotency_conflict', early.reason);
-  if (early.status === 'invalid') return reject('invalid', early.reason);
-  if (early.status === 'unavailable') return reject('unavailable', early.reason);
-  if (signal?.aborted) return reject('cancelled', 'submitQueryJob was cancelled before reading the Goal');
+  if (early.status === 'conflict') return rejectedWithNonEmptyCurrent('idempotency_conflict', early.reason);
+  if (early.status === 'invalid') return rejectedWithNonEmptyCurrent('invalid', early.reason);
+  if (early.status === 'unavailable') return rejectedWithNonEmptyCurrent('unavailable', early.reason);
+  if (signal?.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'submitQueryJob was cancelled before reading the Goal');
 
   // (3) exact real facts.
   const projectKey = canonicalRefKey({ aggregateType: 'Project', projectId: draft.projectId } satisfies ProjectRef);
@@ -651,14 +637,14 @@ async function submit(
   const facts = scope.facts;
   if (facts.project.revision !== draft.pins.project || facts.workspace.revision !== draft.pins.workspace ||
       facts.goal.revision !== draft.pins.goal) {
-    return reject('revision_conflict', 'the supplied version pins do not match the versions read in this call', [
+    return rejectedWithNonEmptyCurrent('revision_conflict', 'the supplied version pins do not match the versions read in this call', [
       { ref: { aggregateType: 'Project', projectId: draft.projectId }, revision: facts.project.revision },
       { ref: { aggregateType: 'Workspace', projectId: draft.projectId, workspaceId: draft.workspaceId }, revision: facts.workspace.revision },
       { ref: { aggregateType: 'Goal', projectId: draft.projectId, goalId: draft.goalId }, revision: facts.goal.revision },
     ]);
   }
   if (facts.goal.workspaceRef.projectId !== draft.projectId || facts.goal.workspaceRef.workspaceId !== draft.workspaceId) {
-    return reject('invalid', 'the Goal belongs to another workspace');
+    return rejectedWithNonEmptyCurrent('invalid', 'the Goal belongs to another workspace');
   }
 
   // (3a) an explicit consultation submit is admitted only through the injected
@@ -670,12 +656,12 @@ async function submit(
   let consultationMessageGuard: RecordGuard | null = null;
   if (draft.consultation !== null) {
     if (deps.consultations === undefined) {
-      return reject('unsupported', 'a consultation submit requires the read-only mailbox dependency');
+      return rejectedWithNonEmptyCurrent('unsupported', 'a consultation submit requires the read-only mailbox dependency');
     }
-    if (signal?.aborted) return reject('cancelled', 'submitQueryJob was cancelled before reading the consultation message');
+    if (signal?.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'submitQueryJob was cancelled before reading the consultation message');
     const messageRead = await deps.consultations.readMessage(ctx, draft.consultation.messageRef);
-    if (messageRead.status === 'not_found') return reject('not_found', 'the consultation message does not exist');
-    if (messageRead.status === 'not_ready') return reject('incomplete', 'the consultation message is not readable at the required watermark');
+    if (messageRead.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the consultation message does not exist');
+    if (messageRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the consultation message is not readable at the required watermark');
     if (messageRead.status !== 'ready') return messageRead;
     const message = messageRead.value;
     const target = draft.consultation.part === 'response'
@@ -683,26 +669,26 @@ async function submit(
       : ('kind' in message.recipient ? null : message.recipient);
     if (target === null || target.projectId !== draft.consultation.recipient.projectId
       || target.sessionId !== draft.consultation.recipient.sessionId) {
-      return reject('forbidden', 'the consultation recipient is not the original message recipient');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the consultation recipient is not the original message recipient');
     }
     if (draft.consultation.part === 'response' ? message.response === null : message.status === 'responded') {
-      return reject('invalid', 'the original consultation message already has a response');
+      return rejectedWithNonEmptyCurrent('invalid', 'the original consultation message already has a response');
     }
     const bodyRead = await deps.consultations.readMessageBody(ctx,
       { messageRef: draft.consultation.messageRef, part: draft.consultation.part ?? 'message' });
-    if (bodyRead.status === 'not_found') return reject('not_found', 'the consultation message body does not exist');
-    if (bodyRead.status === 'not_ready') return reject('incomplete', 'the consultation message body is not readable at the required watermark');
+    if (bodyRead.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the consultation message body does not exist');
+    if (bodyRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the consultation message body is not readable at the required watermark');
     if (bodyRead.status !== 'ready') return bodyRead;
     const originalInquiry = message.intent === 'inquiry' || (message.intent === undefined && message.replyMode === 'wait');
     if ((originalInquiry || draft.consultation.part === 'response') && bodyRead.value.text !== draft.intent.question) {
-      return reject('invalid', 'the consultation question must be the original message body text');
+      return rejectedWithNonEmptyCurrent('invalid', 'the consultation question must be the original message body text');
     }
     consultationMessageGuard = { refKey: sessionMessageRefKey(message.ref), expectedRevision: message.revision };
   }
 
   const execution = draft.intent.execution;
   if (execution !== undefined && execution.kind === 'initial_coordination' && facts.goal.activePlanRevision !== null) {
-    return reject('invalid', 'initial_coordination requires a Goal without an active Plan');
+    return rejectedWithNonEmptyCurrent('invalid', 'initial_coordination requires a Goal without an active Plan');
   }
 
   // (4a) non-empty focus proves exact membership in the Goal's CURRENT Plan.
@@ -710,32 +696,32 @@ async function submit(
   if (draft.focusRefs.length > 0) {
     const activePlan: PlanRevisionRef | null = facts.goal.activePlanRevision;
     if (activePlan === null) {
-      return reject('invalid', 'focusTaskRefs cannot be proven members of the Goal without an active Plan');
+      return rejectedWithNonEmptyCurrent('invalid', 'focusTaskRefs cannot be proven members of the Goal without an active Plan');
     }
     const planKey = planRevisionRefKey(activePlan);
     const planRead = await deps.records.readMany([planKey]);
     if (planRead.status !== 'ready') {
-      return reject('unavailable', `the Goal active Plan is not readable: ${planRead.code}: ${planRead.reason}`);
+      return rejectedWithNonEmptyCurrent('unavailable', `the Goal active Plan is not readable: ${planRead.code}: ${planRead.reason}`);
     }
     const planRecord = planRead.value.records.find((record) => record.refKey === planKey);
     if (planRecord === undefined) {
-      if (planRead.value.missing.includes(planKey)) return reject('invalid', 'the Goal active Plan is missing');
-      return reject('unavailable', 'the read batch neither returned nor reported missing the Goal active Plan');
+      if (planRead.value.missing.includes(planKey)) return rejectedWithNonEmptyCurrent('invalid', 'the Goal active Plan is missing');
+      return rejectedWithNonEmptyCurrent('unavailable', 'the read batch neither returned nor reported missing the Goal active Plan');
     }
     const decodedPlan = decodePlanRevisionSnapshot(planRecord);
     if (decodedPlan.status !== 'decoded') {
-      return reject('unavailable', `the Goal active Plan is not decodable: ${decodedPlan.reason}`);
+      return rejectedWithNonEmptyCurrent('unavailable', `the Goal active Plan is not decodable: ${decodedPlan.reason}`);
     }
     const memberIds = new Set(decodedPlan.value.tasks.map((task) => task.taskId));
     for (const ref of draft.focusRefs) {
       if (!memberIds.has(ref.taskId)) {
-        return reject('invalid', `focusTaskRefs task ${ref.taskId} is not a member of the Goal active Plan`);
+        return rejectedWithNonEmptyCurrent('invalid', `focusTaskRefs task ${ref.taskId} is not a member of the Goal active Plan`);
       }
     }
     planGuard = { refKey: planKey, revision: planRecord.revision };
   }
 
-  if (signal?.aborted) return reject('cancelled', 'submitQueryJob was cancelled before commit');
+  if (signal?.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'submitQueryJob was cancelled before commit');
 
   // (4b) compile the ONE pending pair (Q-a, `newPendingQueryRecords`) + submitted event.
   const occurredAt = deps.now();
@@ -798,20 +784,20 @@ async function submit(
     if (recovered.status === 'found') {
       return committedFromReceipt(deps, recovered.receipt, identityKey, fingerprint, queryJobRef, queryRunRef, true);
     }
-    return reject('unavailable', `submitQueryJob commit failed and its receipt could not be confirmed: ${messageOf(error)}`);
+    return rejectedWithNonEmptyCurrent('unavailable', `submitQueryJob commit failed and its receipt could not be confirmed: ${messageOf(error)}`);
   }
   if (committed.status === 'committed') {
     return committedFromReceipt(deps, committed, identityKey, fingerprint, queryJobRef, queryRunRef, committed.replayed);
   }
   switch (committed.code) {
     case 'revision_conflict':
-      return reject('revision_conflict', committed.reason, pinsFromCurrent(committed.current));
+      return rejectedWithNonEmptyCurrent('revision_conflict', committed.reason, pinsFromCurrent(committed.current));
     case 'idempotency_conflict':
-      return reject('idempotency_conflict', committed.reason);
+      return rejectedWithNonEmptyCurrent('idempotency_conflict', committed.reason);
     case 'invalid':
-      return reject('invalid', committed.reason);
+      return rejectedWithNonEmptyCurrent('invalid', committed.reason);
     default:
-      return reject('unavailable', `${committed.code}: ${committed.reason}`);
+      return rejectedWithNonEmptyCurrent('unavailable', `${committed.code}: ${committed.reason}`);
   }
 }
 
@@ -820,7 +806,7 @@ async function submit(
 // --------------------------------------------------------------------------
 
 function storeReadFailure(code: string, reason: string): CoreRejection {
-  return reject('unavailable', `${code}: ${reason}`);
+  return rejectedWithNonEmptyCurrent('unavailable', `${code}: ${reason}`);
 }
 
 async function read(
@@ -832,16 +818,16 @@ async function read(
     | { projectId?: unknown; workspaceId?: unknown; principal?: { kind?: unknown } }
     | null
     | undefined;
-  if (bound === null || bound === undefined) return reject('forbidden', 'readQueryJob requires a bound call context');
+  if (bound === null || bound === undefined) return rejectedWithNonEmptyCurrent('forbidden', 'readQueryJob requires a bound call context');
   if (bound.principal === undefined || bound.principal.kind !== 'host') {
-    return reject('forbidden', 'readQueryJob is a Host-scope exact read in this batch');
+    return rejectedWithNonEmptyCurrent('forbidden', 'readQueryJob is a Host-scope exact read in this batch');
   }
   if (ref === null || ref === undefined || ref.aggregateType !== 'QueryJob' ||
-      !isNonEmptyString(ref.projectId) || !isNonEmptyString(ref.workspaceId) || !isNonEmptyString(ref.queryJobId)) {
-    return reject('invalid', 'readQueryJob requires a complete QueryJobRef');
+      !nonEmpty(ref.projectId) || !nonEmpty(ref.workspaceId) || !nonEmpty(ref.queryJobId)) {
+    return rejectedWithNonEmptyCurrent('invalid', 'readQueryJob requires a complete QueryJobRef');
   }
   if (bound.projectId !== ref.projectId || bound.workspaceId !== ref.workspaceId) {
-    return reject('forbidden', 'the QueryJob ref is outside the Host call scope');
+    return rejectedWithNonEmptyCurrent('forbidden', 'the QueryJob ref is outside the Host call scope');
   }
 
   const jobKey = canonicalJson(ref as unknown as JsonValue);
@@ -853,30 +839,30 @@ async function read(
   const jobRecord = jobRead.value.records.find((record) => record.refKey === jobKey);
   if (jobRecord === undefined) {
     if (jobRead.value.missing.includes(jobKey)) return { status: 'not_found' };
-    return reject('unavailable', 'the read batch neither returned nor reported missing the QueryJob');
+    return rejectedWithNonEmptyCurrent('unavailable', 'the read batch neither returned nor reported missing the QueryJob');
   }
   const decodedJob = decodeQueryJobSnapshot(jobRecord);
   if (decodedJob.status !== 'decoded') {
-    return reject('unavailable', `the QueryJob snapshot is not decodable: ${decodedJob.reason}`);
+    return rejectedWithNonEmptyCurrent('unavailable', `the QueryJob snapshot is not decodable: ${decodedJob.reason}`);
   }
   const jobSnapshot = decodedJob.value;
   const runRef = jobSnapshot.job.runRef;
-  if (runRef === null) return reject('incomplete', 'the QueryJob has no run ref');
+  if (runRef === null) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryJob has no run ref');
 
   const runKey = canonicalJson(runRef as unknown as JsonValue);
   const runRead = await deps.records.readMany([runKey]);
   if (runRead.status !== 'ready') {
-    if (runRead.code === 'not_found') return reject('incomplete', 'the QueryJob run is missing');
+    if (runRead.code === 'not_found') return rejectedWithNonEmptyCurrent('incomplete', 'the QueryJob run is missing');
     return storeReadFailure(runRead.code, runRead.reason);
   }
   const runRecord = runRead.value.records.find((record) => record.refKey === runKey);
   if (runRecord === undefined) {
-    if (runRead.value.missing.includes(runKey)) return reject('incomplete', 'the QueryJob run is missing');
-    return reject('unavailable', 'the read batch neither returned nor reported missing the QueryRun');
+    if (runRead.value.missing.includes(runKey)) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryJob run is missing');
+    return rejectedWithNonEmptyCurrent('unavailable', 'the read batch neither returned nor reported missing the QueryRun');
   }
   const decodedRun = decodeQueryRunSnapshotRecord(runRecord);
   if (decodedRun.status !== 'decoded') {
-    return reject('unavailable', `the QueryRun snapshot is not decodable: ${decodedRun.reason}`);
+    return rejectedWithNonEmptyCurrent('unavailable', `the QueryRun snapshot is not decodable: ${decodedRun.reason}`);
   }
   return { status: 'ready', value: { job: jobSnapshot, run: decodedRun.value } };
 }
@@ -886,7 +872,7 @@ async function read(
 // --------------------------------------------------------------------------
 
 /**
- * Stage-one Query execution seam: without the injected internal writer only the
+ * The Query execution seam: without the injected internal writer only the
  * NEW Query methods are unsupported; pending submit/read keep their behavior.
  */
 function queryExecutionAbsent(operation: string): CoreRejection {

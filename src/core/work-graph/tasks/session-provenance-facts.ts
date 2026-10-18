@@ -31,6 +31,7 @@ import type { ContinuationBriefV1 } from '../../../contracts/continuation-brief.
 import { continuationBriefShapeProblem } from '../../../contracts/continuation-brief.js';
 import { MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { EncodedRecord, GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
 import type { LookupValue, RecordLookupPort } from '../../record-store/lookup-ports.js';
@@ -57,12 +58,6 @@ const CLAIM_SCAN_MAX_PAGES = 25;
 const LINK_SCAN_MAX_PAGES = 25;
 const CYCLE_MAX_DEPTH = 64;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function refKeyOf(value: unknown): string {
   return canonicalJson(value as JsonValue);
 }

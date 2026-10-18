@@ -36,10 +36,12 @@ import type { ControlIntentRef } from '../../../contracts/control-intent.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import type { SessionArchiveRequestV1 } from '../../../contracts/core/session-archive.js';
 import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { GoalRef, GoalSnapshot, WorkspaceRef } from '../../../contracts/ledger.js';
 import {
   MAX_NEW_BASIS_INPUT_REFS, newBasisInputProblem, type NewBasisInputObservationV1, type NewBasisInputRefV1,
@@ -132,7 +134,7 @@ export type TaskRequeueDependencies = {
   /**
    * Slice 5 §3.2/§4.4: the Goal-settings read seam for the automatic-rework
    * autonomy policy and the notice origin. Absent keeps the existing requeue
-   * behaviour; the waiting/autonomy guards are part 2.
+   * behaviour.
    */
   goalSettings?: GoalSettingsPort;
   /** W2/TD-6: the delegated-write admission an Agent requeue goes through; absent refuses an Agent. */
@@ -152,12 +154,6 @@ const INTERNAL_READ_ACTOR = Object.freeze({ kind: 'system' as const, id: 'task-r
 type Rejection = CoreRejection;
 type Rejected = { ok: false; rejection: Rejection };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 /**
  * The plain `{projectId,sessionId}` of an archive-origin Session, whether the
  * caller held a plain `SessionRef` or a full `SessionAggregateRef`
@@ -189,7 +185,7 @@ function originMessageRefProblem(value: unknown): string | null {
   return null;
 }
 function reject(code: CoreError, reason: string, current?: VersionPin[]): Rejection {
-  return { status: 'rejected', code, reason, ...(current === undefined || current.length === 0 ? {} : { current }) };
+  return rejectedWithNonEmptyCurrent(code, reason, current);
 }
 function refusalOf(refused: MachineRefusal | null): Rejection | null {
   return refused === null || refused.ok ? null : reject(refused.code, refused.detail);
@@ -395,7 +391,7 @@ export type RequeueWindow = {
  * chain whatever its outcome (I-12 clause 2). A watermark that moved between
  * the reads reads the whole window again.
  *
- * Exported (L16, spec §2) so the read-only views share this canonical window
+ * Exported (spec §2) so the read-only views share this canonical window
  * instead of duplicating a reduced copy.
  */
 export async function readRequeueWindow(
@@ -453,7 +449,7 @@ export async function readRequeueWindow(
 }
 
 /**
- * K3 L11: the selected Run's review fact as the requeue owner reads it, from
+ * The selected Run's review fact as the requeue owner reads it, from
  * the ONE canonical window (`readCanonicalTaskFacts`). `null` is only the
  * authoritative `not_found` (a K3-before Run) and no blocker; `held` wins over
  * the status; any non-`resolved` status is `pending`; every failed read is the
@@ -589,7 +585,7 @@ function stateRefusal(refused: MachineRefusal, window: RequeueWindow): Rejection
 }
 
 /**
- * K3 L22: whether the person's applied review-card disposition already
+ * Whether the person's applied review-card disposition already
  * confirmed the ONE system requeue after `afterRunId`. The full record is in
  * the same canonical window (`reviewsByTaskId`); a missing record is not a
  * confirmation. `handle_myself` counts only after its release.
@@ -883,7 +879,7 @@ export function createTaskRequeueService(
         currentRefusal === null ? undefined : [{ ref: refusalRef, revision: currentRefusal.revision }]);
     }
     // The Lease was released by the afterRun (or by one of the afterRun's
-    // review rounds, L10) and its claim Session is no longer held by it. The
+    // review rounds) and its claim Session is no longer held by it. The
     // releasing Run's purpose is read in this same window.
     const lease = window.facts.leasesByTaskId.get(task.taskId) ?? null;
     const release = lease?.release;
@@ -894,7 +890,7 @@ export function createTaskRequeueService(
     }, afterRun.ref)) {
       return reject('busy', 'the Task lease is not released by the afterRun');
     }
-    // K3 L11: the selected Run's review record gates every requeue. A system or
+    // The selected Run's review record gates every requeue. A system or
     // agent requeue is refused while it is unsettled or held; a human requeue is
     // accepted while merely unsettled (its claim still waits), but a held
     // record without an archive origin is refused — release-hold is the only
@@ -990,7 +986,7 @@ export function createTaskRequeueService(
     // the existing budget/cap fences stay first. The injected settings owner is
     // read when present; otherwise the Goal already read (and guarded) here is
     // the current settings source.
-    // K3 L22: an applied review-card disposition (rerun_as_is/skip_as_done, an
+    // An applied review-card disposition (rerun_as_is/skip_as_done, an
     // approved safer method, or a released "I'll handle it") IS the person's
     // confirmation of this ONE system requeue, so every_step does not ask again.
     const requeueConfirmedByCard = actorClass === 'system'
@@ -1179,7 +1175,7 @@ export function createTaskRequeueService(
   }
 
   /**
-   * K3 L21 D9 (ruling 4, K3-41 replay): the no-write read of the derived
+   * Ruling 4: the no-write read of the derived
    * release-hold requeue. A `TaskRequeue(task, R)` is immutable and its `since`
    * commit cursor names the one `TaskRequeued` event; that event's
    * `identityKey` is compared with `identityOf(actor, scope, requestId)` — the

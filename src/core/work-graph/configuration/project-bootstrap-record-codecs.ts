@@ -1,7 +1,7 @@
 /**
  * R5a record/event codecs for the four initialization operations.
  *
- * Wire shape (frozen in the stage-1 skeleton):
+ * Wire shape:
  *   {eventId, eventType, schemaVersion: 1, occurredAt, identityKey, fingerprint,
  *    projectId, actor, requestId, payload: {value}}
  * `value` is the exact snapshot the operation returns. It deliberately carries
@@ -32,6 +32,8 @@ import type {
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import { workspaceDecisionSettingsProblem } from '../persistence/record-codecs.js';
+import { invalid, isPos, isRecord, isSha256Hex, nonEmpty, type UnknownRecord } from '../../../contracts/validation/common.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 
 export const PROJECT_REGISTERED_EVENT = 'ProjectRegistered';
 export const PROJECT_WORKSPACE_REGISTERED_EVENT = 'ProjectWorkspaceRegistered';
@@ -79,23 +81,6 @@ export type ProjectBootstrapEventFact<TValue> = {
 // Mechanical shape helpers
 // --------------------------------------------------------------------------
 
-type UnknownRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isPositiveInt(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function isSha256(value: unknown): value is string {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
-}
-function invalid(reason: string): { status: 'invalid'; reason: string } {
-  return { status: 'invalid', reason };
-}
 function parseJsonObject(json: string, what: string): DecodeResult<UnknownRecord> {
   let parsed: unknown;
   try {
@@ -111,7 +96,7 @@ function parseJsonObject(json: string, what: string): DecodeResult<UnknownRecord
  * The four events are written only through the trusted Host binding, so their
  * actor is always a host human/system actor. The public event type keeps the
  * legacy `ActorRef` compatibility; this validator does not invent an `agent`
- * branch that has no producer in this batch.
+ * branch that has no producer.
  */
 function hostActorFromValue(value: unknown): ActorRef | null {
   if (!isRecord(value)) return null;
@@ -133,7 +118,7 @@ function workspaceRefFromValue(value: unknown): WorkspaceRef | null {
 }
 function policyRefFromValue(value: unknown): CompletionPolicyRevisionRef | null {
   if (!isRecord(value) || value['aggregateType'] !== 'CompletionPolicyRevision') return null;
-  if (!nonEmpty(value['projectId']) || !nonEmpty(value['policyId']) || !isPositiveInt(value['revision'])) return null;
+  if (!nonEmpty(value['projectId']) || !nonEmpty(value['policyId']) || !isPos(value['revision'])) return null;
   return {
     aggregateType: 'CompletionPolicyRevision',
     projectId: value['projectId'],
@@ -168,7 +153,7 @@ export function completionPolicyContentProblem(value: unknown): string | null {
   if (kinds.length === 0) {
     return 'CompletionPolicy content.requirementKinds must be non-empty (a policy with no kinds cannot compile obligations)';
   }
-  if (!isPositiveInt(value['minimumRequiredRequirementsPerObligation'])) {
+  if (!isPos(value['minimumRequiredRequirementsPerObligation'])) {
     return 'CompletionPolicy content.minimumRequiredRequirementsPerObligation must be a positive integer';
   }
   const fastPath = value['fastPathDiffClasses'];
@@ -230,7 +215,7 @@ function policySnapshotFromValue(value: unknown, projectId: string): DecodeResul
     return invalid('CompletionPolicy snapshot contentRevision disagrees with its ref revision');
   }
   const digest = value['contentDigest'];
-  if (!isSha256(digest)) return invalid('CompletionPolicy snapshot contentDigest must be a lowercase sha256 hex');
+  if (!isSha256Hex(digest)) return invalid('CompletionPolicy snapshot contentDigest must be a lowercase sha256 hex');
   const problem = completionPolicyContentProblem(value['content']);
   if (problem !== null) return invalid(problem);
   let recomputed: string;
@@ -267,7 +252,7 @@ function activeSnapshotFromValue(value: unknown, projectId: string): DecodeResul
   if (ref === null) return invalid('ProjectCompletionPolicyActivated value has no valid active ref');
   if (ref.projectId !== projectId) return invalid('ProjectCompletionPolicyActivated value belongs to another project');
   if (value['projectId'] !== projectId) return invalid('ProjectCompletionPolicyActivated projectId disagrees with its ref');
-  if (!isPositiveInt(value['revision'])) return invalid('an active pointer revision must be a positive integer');
+  if (!isPos(value['revision'])) return invalid('an active pointer revision must be a positive integer');
   const activeRevision = policyRefFromValue(value['activeRevision']);
   if (activeRevision === null) return invalid('the active pointer does not name a legal CompletionPolicyRevisionRef');
   if (activeRevision.projectId !== projectId) {
@@ -300,7 +285,7 @@ function eventEnvelope(event: EncodedDomainEvent, what: string): DecodeResult<Bo
   if (body['schemaVersion'] !== event.schemaVersion) return invalid(`${what} schemaVersion disagrees with the encoded event`);
   if (body['occurredAt'] !== event.occurredAt) return invalid(`${what} occurredAt disagrees with the encoded event`);
   if (!nonEmpty(body['identityKey'])) return invalid(`${what} identityKey must be a non-empty string`);
-  if (!isSha256(body['fingerprint'])) return invalid(`${what} fingerprint must be a lowercase sha256 hex`);
+  if (!isSha256Hex(body['fingerprint'])) return invalid(`${what} fingerprint must be a lowercase sha256 hex`);
   if (!nonEmpty(body['projectId'])) return invalid(`${what} projectId must be a non-empty string`);
   if (!nonEmpty(body['requestId'])) return invalid(`${what} requestId must be a non-empty string`);
   if (hostActorFromValue(body['actor']) === null) return invalid(`${what} actor is not a trusted host actor`);
@@ -381,44 +366,20 @@ export function decodeProjectCompletionPolicyActivatedEvent(
 // --------------------------------------------------------------------------
 
 export function encodeProjectRegisteredEvent(event: ProjectRegisteredEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 export function encodeProjectWorkspaceRegisteredEvent(event: ProjectWorkspaceRegisteredEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 export function encodeProjectCompletionPolicyInstalledEvent(
   event: ProjectCompletionPolicyInstalledEventV1,
 ): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 export function encodeProjectCompletionPolicyActivatedEvent(
   event: ProjectCompletionPolicyActivatedEventV1,
 ): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 // --------------------------------------------------------------------------

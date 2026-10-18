@@ -9,10 +9,11 @@
  *   - The persisted operation workspace is re-checked on every read/registration
  *     path; a same-project different-workspace caller is never given a workspace
  *     A operation or an old registration receipt.
- *   - Initial links are validated against the real canonical target (Goal +
- *     active accepted Plan task membership) before anything is written. Module
- *     and WorkContext targets have no canonical provider in this batch and are
- *     explicitly `unsupported` instead of writing a fabricated association.
+ *   - Initial links are validated against the real canonical target before
+ *     anything is written: a Task against the Goal's current active accepted
+ *     Plan membership, a Module against the current adopted architecture
+ *     directory, while a WorkContext target still has no canonical provider and
+ *     is explicitly `unsupported` instead of writing a fabricated association.
  *   - The directory candidate stream is chosen from registered exact lookups
  *     (workspace / lifecycle / role). A target filter is resolved through the
  *     registered target link index first, so no per-Session link scan is needed.
@@ -29,8 +30,9 @@
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import type {
   RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope, WorkLinkRelation, WorkLinkTarget,
 } from '../../../contracts/core/identity.js';
@@ -38,12 +40,18 @@ import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionRecord, SessionWorkLink, SessionProvenanceV1, LegacyProvenanceBasisV1 } from '../../../contracts/core/session.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
-import type { AggregateRef } from '../../../contracts/ledger.js';
+import { isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
   CommitCursorBinding, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard,
   StoreFailure, UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
+import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
+import { readSessionWorkLinks } from './session-links.js';
+import {
+  actorIdentity, fingerprintOf, identityKeyOf, trustedContext,
+  type HostActor, type TrustedContext,
+} from './trusted-context.js';
 import type { LegacySessionProvenancePort } from '../model/session-facts-contracts.js';
 import type {
   GraphWrite, SessionCard, SessionCreationInput, SessionCreationResult, SessionDirectoryPort,
@@ -53,7 +61,7 @@ import {
   SESSION_BY_WORKSPACE_LOOKUP, SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
   SESSION_BY_WORKSPACE_LEGACY_ROLE_LOOKUP, SESSION_BY_WORKSPACE_SPEC_ROLE_LOOKUP,
   SESSION_CREATED_EVENT_TYPE, SESSION_LINKS_BY_MODULE_LOOKUP, SESSION_LINKS_BY_TASK_LOOKUP,
-  SESSION_LINKS_BY_WORK_LOOKUP, SESSION_WORK_LINK_RELATIONS, SESSION_WORK_LINKS_LOOKUP,
+  SESSION_LINKS_BY_WORK_LOOKUP, SESSION_WORK_LINK_RELATIONS,
   checkArtifactRef, checkOperationRef,
   checkPlainSessionRef, checkRole, checkSessionProvenance, checkTarget, decodeSessionOperationRecord, decodeSessionRecord,
   decodeSessionWorkLink, encodePendingSessionWorkLink, encodeSessionCreationAdmittedEvent,
@@ -73,6 +81,8 @@ import {
 } from '../state/session-availability.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 
+export type { HostActor } from './trusted-context.js';
+
 /** R4b's required physical surface. WorkGraph remains the sole domain writer;
  * Store implements only mechanical guards, claims, index reads and commits. */
 export type SessionDirectoryStores = {
@@ -87,10 +97,6 @@ export type SessionDirectoryStores = {
 // --------------------------------------------------------------------------
 
 type UnknownRecord = Record<string, unknown>;
-export type HostActor = { kind: 'human' | 'system'; id: string };
-type TrustedContext =
-  | { ok: true; scope: WorkspaceScope; actor: HostActor }
-  | { ok: false; rejection: CoreRejection };
 /** A read-only directory binding: the Host keeps `trustedContext`; a work_run
  * binds only its own Run workspace. `not_found` stays a ReadResult, not a
  * rejection, so an absent Run never grants a workspace read. */
@@ -98,70 +104,21 @@ type ReadBinding =
   | { ok: true; scope: WorkspaceScope; actorKey: string }
   | { ok: false; result: CoreRejection | { status: 'not_found' } };
 
-function isObject(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function relation(value: unknown): value is WorkLinkRelation {
   return value === 'responsible' || value === 'participates' || value === 'investigated';
-}
-function canonicalOf(value: unknown): string | null {
-  try {
-    return canonicalJson(value as JsonValue);
-  } catch {
-    return null;
-  }
 }
 /** A complete RunRef, the only work_run identity a read-only directory call may claim. */
 function isRunRef(value: unknown): value is RunRef {
   return isObject(value) && value['aggregateType'] === 'Run'
     && nonEmpty(value['projectId']) && nonEmpty(value['goalId']) && nonEmpty(value['runId']);
 }
-function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
-}
-function parseAggregateRef(refKey: string): AggregateRef | null {
-  try {
-    const parsed: unknown = JSON.parse(refKey);
-    return isObject(parsed) ? (parsed as unknown as AggregateRef) : null;
-  } catch {
-    return null;
-  }
-}
-function pinsFromRevisionConflict(
-  current: readonly { refKey: string; revision: number | null }[],
-): VersionPin[] {
-  const pins: VersionPin[] = [];
-  for (const entry of current) {
-    if (entry.revision === null) continue;
-    const ref = parseAggregateRef(entry.refKey);
-    if (ref !== null) pins.push({ ref, revision: entry.revision });
-  }
-  return pins;
-}
+/** The shared map takes a version-pin `current`; a `unique_conflict` carries a claim slot instead. */
 function mapStoreFailure(failure: StoreFailure): CoreRejection {
-  switch (failure.code) {
-    case 'invalid':
-      return reject('invalid', failure.reason);
-    case 'not_found':
-      return reject('not_found', failure.reason);
-    case 'idempotency_conflict':
-      return reject('idempotency_conflict', failure.reason);
-    case 'revision_conflict': {
-      const current = pinsFromRevisionConflict(failure.current);
-      return reject('revision_conflict', failure.reason, current.length > 0 ? current : undefined);
-    }
-    case 'unique_conflict':
-      return reject('revision_conflict', `${failure.reason} (the unique slot is held by another owner)`);
-    case 'unsupported':
-      return reject('unsupported', failure.reason);
-    case 'corrupt':
-      return reject('unavailable', `the record store reported damage: ${failure.reason}`);
-    default:
-      return reject('unavailable', failure.reason);
-  }
+  return sessionStoreFailureToRejection({
+    code: failure.code,
+    reason: failure.reason,
+    ...(failure.code === 'revision_conflict' ? { current: failure.current } : {}),
+  });
 }
 function ownRequest<T>(value: unknown, what: string): { ok: true; value: T } | { ok: false; reason: string } {
   try {
@@ -172,37 +129,6 @@ function ownRequest<T>(value: unknown, what: string): { ok: true; value: T } | {
   }
 }
 
-/**
- * The trusted component boundary. A Session entry point runs only for a Host
- * principal that carries a real AbortSignal and a bound project/workspace; an
- * unbound caller is rejected BEFORE any store or Kernel access.
- */
-function trustedContext(ctx: CoreCallContext): TrustedContext {
-  const bound = ctx as unknown as {
-    projectId?: unknown; workspaceId?: unknown; principal?: unknown; signal?: unknown;
-  };
-  if (!nonEmpty(bound.projectId) || !nonEmpty(bound.workspaceId)) {
-    return { ok: false, rejection: reject('forbidden', 'a Session call requires a bound project/workspace context') };
-  }
-  const signal = bound.signal;
-  if (!isObject(signal) || typeof signal['aborted'] !== 'boolean' || typeof signal['addEventListener'] !== 'function') {
-    return { ok: false, rejection: reject('forbidden', 'a Session call requires the bound AbortSignal') };
-  }
-  const principal = bound.principal;
-  if (!isObject(principal) || principal['kind'] !== 'host') {
-    return { ok: false, rejection: reject('forbidden', 'a Session call requires a trusted Host principal') };
-  }
-  const actor = principal['actor'];
-  if (!isObject(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !nonEmpty(actor['id'])) {
-    return { ok: false, rejection: reject('forbidden', 'a Session call requires a trusted Host actor') };
-  }
-  return {
-    ok: true,
-    scope: { projectId: bound.projectId, workspaceId: bound.workspaceId },
-    actor: { kind: actor['kind'], id: actor['id'] },
-  };
-}
-
 // --------------------------------------------------------------------------
 // Actor-scoped identity and fingerprints
 // --------------------------------------------------------------------------
@@ -210,9 +136,6 @@ function trustedContext(ctx: CoreCallContext): TrustedContext {
 const SESSION_CREATE_IDENTITY_PREFIX = 'session-create:';
 const SESSION_REGISTER_IDENTITY_PREFIX = 'session-register:';
 
-function actorIdentity(actor: HostActor): { kind: string; id: string } {
-  return { kind: actor.kind, id: actor.id };
-}
 function sessionCreateIdentityKey(actor: HostActor, projectId: string, requestId: string): string {
   return SESSION_CREATE_IDENTITY_PREFIX +
     sha256Hex(canonicalJson({ actor: actorIdentity(actor), projectId, requestId } as unknown as JsonValue));
@@ -558,7 +481,6 @@ function targetRelationPlan(scope: WorkspaceScope, target: WorkLinkTarget, relat
 
 const MAX_DIRECTORY_SCAN = 1000;
 const MAX_TARGET_LINKS = 2000;
-const MAX_LINKS_PER_SESSION = 2000;
 const LINK_PAGE_LIMIT = 200;
 /** Valid non-fabricated minimum token; only used for an empty-ledger not_ready. */
 const MIN_CURSOR: CommitCursor = makeCommitCursor(1);
@@ -757,7 +679,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     ctx: CoreCallContext,
     request: GraphWrite<SessionCreationInput>,
   ): Promise<WriteResult<SessionOperationRecord>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session call');
     if (!trusted.ok) return trusted.rejection;
     const { scope, actor } = trusted;
     if (ctx.signal?.aborted) return reject('cancelled', 'session admission was cancelled before validation');
@@ -782,12 +704,12 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     // Slice 1 §2.2: the caller may name the new Session's provenance, but only
     // the accepted operation's normalized value is authoritative. A present but
     // malformed value is refused here with zero writes (SV05); an absent one is
-    // today's `new` and, for a truly old caller, keeps the historical
+    // the `new` default and, for a truly old caller, keeps the historical
     // fingerprint key set (no invented provenance key).
     const rawInput = raw['input'];
-    // N5/K3: "present" means the key exists, not that its value is non-null. An
+    // "present" means the key exists, not that its value is non-null. An
     // explicit `provenance: null` is a present but malformed field and is refused
-    // below; only a missing key gets today's `new` default and the compatibility
+    // below; only a missing key gets the `new` default and the compatibility
     // fingerprint (no invented provenance key).
     const hasProvenance = isObject(rawInput) && 'provenance' in rawInput;
     const providedProvenance = hasProvenance ? rawInput['provenance'] : undefined;
@@ -922,7 +844,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     ctx: CoreCallContext,
     request: GraphWrite<SessionCreationResult>,
   ): Promise<WriteResult<SessionRecord>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session call');
     if (!trusted.ok) return trusted.rejection;
     const { scope, actor } = trusted;
     if (ctx.signal?.aborted) return reject('cancelled', 'session registration was cancelled before validation');
@@ -1015,8 +937,9 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     }
 
     // Validate every requested initial link against its real canonical target
-    // before writing anything. Module/WorkContext have no canonical provider in
-    // R4b, so they fail explicitly instead of writing a fake association.
+    // before writing anything: a Task against the current Plan, a Module against
+    // the current architecture directory, while WorkContext has no canonical
+    // provider and fails explicitly instead of writing a fake association.
     const targetGuards = new Map<string, RecordGuard>();
     const pendingLinks: PendingSessionWorkLink[] = [];
     for (const link of storedOperation.action.initialLinks) {
@@ -1148,7 +1071,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     ctx: CoreCallContext,
     ref: OperationRef,
   ): Promise<ReadResult<SessionOperationRecord>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session call');
     if (!trusted.ok) return trusted.rejection;
     const { scope } = trusted;
     const problem = checkOperationRef(ref);
@@ -1183,35 +1106,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     sessionId: string,
     observe?: (readThrough: CommitCursor | null) => void,
   ): Promise<RestoreOutcome<SessionWorkLink[]>> {
-    const links: SessionWorkLink[] = [];
-    let after: string | undefined;
-    for (;;) {
-      const request: RecordLookupRequest = {
-        index: SESSION_WORK_LINKS_LOOKUP,
-        values: [projectId, sessionId],
-        ...(after === undefined ? {} : { after }),
-        limit: LINK_PAGE_LIMIT,
-      };
-      const page = await lookups.lookup(request);
-      if (page.status !== 'ready') return { ok: false, rejection: mapStoreFailure(page) };
-      observe?.(page.value.readThrough);
-      for (const record of page.value.records) {
-        if (links.length >= MAX_LINKS_PER_SESSION) {
-          return {
-            ok: false,
-            rejection: reject('capacity', `Session ${sessionId} exceeds the bounded work-link read budget`),
-          };
-        }
-        const decoded = decodeSessionWorkLink(record);
-        if (decoded.status !== 'decoded') {
-          return { ok: false, rejection: reject('unavailable', `session work link ${record.refKey} is damaged: ${decoded.reason}`) };
-        }
-        links.push(decoded.value);
-      }
-      if (page.value.next === null) break;
-      after = page.value.next;
-    }
-    return { ok: true, value: links };
+    const read = await readSessionWorkLinks(lookups, projectId, sessionId, observe);
+    return read.ok ? { ok: true, value: read.links } : read;
   }
 
   /**
@@ -1228,7 +1124,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     };
     const principal = isObject(bound) ? bound['principal'] : undefined;
     if (isObject(principal) && principal['kind'] === 'host') {
-      const trusted = trustedContext(ctx);
+      const trusted: TrustedContext = trustedContext(ctx, 'a Session call');
       if (!trusted.ok) return { ok: false, result: trusted.rejection };
       const actorKey = canonicalOf(actorIdentity(trusted.actor));
       if (actorKey === null) return { ok: false, result: reject('invalid', 'the Host actor cannot be canonically encoded') };
@@ -1718,25 +1614,6 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     return reject('unavailable', 'the legacy provenance facts are not ready at the requested read window');
   }
 
-  function provenanceFingerprint(
-    actor: HostActor, scope: WorkspaceScope, payload: Record<string, unknown>, expected: readonly VersionPin[],
-  ): string {
-    const pins = [...expected].map((pin) => ({ ref: pin.ref, revision: pin.revision }))
-      .sort((left, right) => {
-        const leftKey = canonicalOf(left.ref) ?? '';
-        const rightKey = canonicalOf(right.ref) ?? '';
-        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-      });
-    return sha256Hex(canonicalJson({
-      kind: 'session-provenance-backfill-request',
-      actor: actorIdentity(actor),
-      projectId: scope.projectId,
-      workspaceId: scope.workspaceId,
-      ...payload,
-      expected: pins,
-    } as unknown as JsonValue));
-  }
-
   function normalizeSessionExpected(
     raw: unknown, scope: WorkspaceScope, sessionRef: SessionRef,
   ): { ok: true; session: VersionPin } | { ok: false; reason: string } {
@@ -1800,7 +1677,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     ctx: CoreCallContext,
     request: GraphWrite<{ sessionRef: SessionRef; provenance: SessionProvenanceV1; basis: LegacyProvenanceBasisV1 }>,
   ): Promise<WriteResult<SessionRecord>> {
-    const trusted = trustedContext(ctx);
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session call');
     if (!trusted.ok) return trusted.rejection;
     const { scope, actor } = trusted;
     if (legacyProvenance === undefined) {
@@ -1831,10 +1708,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     if (!isObject(basis)) return reject('invalid', 'backfillSessionProvenance requires a legacy provenance basis');
     const expected = normalizeSessionExpected(meta['expected'], scope, sessionRef);
     if (!expected.ok) return reject('invalid', expected.reason);
-    const identityKey = 'session-provenance:' + sha256Hex(canonicalJson({
-      actor: actorIdentity(actor), projectId: scope.projectId, workspaceId: scope.workspaceId, requestId,
-    } as unknown as JsonValue));
-    const fingerprint = provenanceFingerprint(actor, scope, {
+    const identityKey = identityKeyOf('session-provenance:', actor, scope, requestId);
+    const fingerprint = fingerprintOf('session-provenance-backfill-request', actor, scope, {
       sessionRef, provenance, basis,
     }, Array.isArray(meta['expected']) ? (meta['expected'] as VersionPin[]) : []);
     if (ctx.signal?.aborted) return reject('cancelled', 'the legacy provenance backfill was cancelled before lookup');

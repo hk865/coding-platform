@@ -15,7 +15,9 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { isRecord, nonEmpty, parseObject as parseJsonObject } from '../../../contracts/validation/common.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { ArchiveStepRefV1, SessionArchiveRequestV1 } from '../../../contracts/core/session-archive.js';
 import { deriveArchiveStepCommitIdentityV1 } from '../../../contracts/core/session-archive.js';
@@ -88,28 +90,16 @@ const SESSION_EXECUTION_MAX_PAGES = 25;
 // Small pure helpers
 // --------------------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function sameRef(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
 }
 function reject(code: CoreError, reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
+  return rejected(code, reason);
 }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
 function mapReader(failure: Rejected): CoreRejection { return reject(failure.code, failure.reason); }
-function parseJsonObject(json: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return isRecord(parsed) ? parsed : null;
-  } catch { return null; }
-}
 function plainSessionRef(ref: { projectId: string; sessionId: string }): SessionRef {
   return { projectId: ref.projectId, sessionId: ref.sessionId };
 }

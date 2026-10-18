@@ -190,9 +190,9 @@ export function recordNoteRequestOf(args: RecordNoteArgs, commandId: string): Re
 /**
  * 4C-2 §2 item 4: the note card's application entry, exposed on the note
  * service so the composition root can pass it to `createNoteDecisionSource`.
- * It is shape-identical to `NoteDecisionSourcePort.applyNoteDecision`; the
- * local declaration avoids a `model/note-contracts` ← `model/decision-contracts`
- * type cycle.
+ * It is shape-identical to `NoteDecisionSourcePort.applyNoteDecision`;
+ * `model/decision-contracts.ts` imports it, so there is one declaration and no
+ * reverse dependency from notes into decisions.
  */
 export type NoteDecisionApplicationInputV1 = {
   commandId: string; cardId: string;

@@ -24,11 +24,13 @@ import type { CreateGoalCommand } from "../../../contracts/command-event.js";
 import { normalizeObjective } from "../../../contracts/command-event.js";
 import type { CoreCallContext } from "../../../contracts/core/call-context.js";
 import type { VersionPin } from "../../../contracts/core/identity.js";
+import { rejected as sharedRejected } from "../../../contracts/core/rejections.js";
 import type { CoreError, WriteResult } from "../../../contracts/core/results.js";
 import { canonicalJson, type JsonValue } from "../../../contracts/fingerprint.js";
 import type { AggregateRef, GoalSnapshot } from "../../../contracts/ledger.js";
 import { reworkActorClassOf } from "../../../contracts/task-requeue.js";
 import { validateCreateGoalCommand } from "../../../contracts/validation/goal.js";
+import { isRecord as isRecordValue, nonEmpty as isNonEmptyString, parseObject } from "../../../contracts/validation/common.js";
 import type { GoalRecordTransactionPort, RecordGuard } from "../../record-store/ports.js";
 import type { RecordLookupPort } from "../../record-store/lookup-ports.js";
 import type { CompletionDependencies } from "./completion.js";
@@ -64,7 +66,7 @@ export type GoalAdmission =
   | GoalAdmissionRejection;
 
 function reject(code: CoreError, reason: string): GoalAdmissionRejection {
-  return { status: "rejected", code, reason };
+  return sharedRejected(code, reason);
 }
 
 /**
@@ -102,14 +104,7 @@ function expectedIdentityOf(command: CreateGoalCommand): GoalCreateIdentity {
 }
 
 function refFromRefKey(refKey: string): AggregateRef | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(refKey);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
-  return parsed as AggregateRef;
+  return parseObject(refKey) as unknown as AggregateRef | null;
 }
 
 /**
@@ -295,14 +290,6 @@ function deriveGoalCommandIdentity(input: {
     commandId: `goal-create-command:${digest}`,
     correlationId: `goal-create-request:${digest}`,
   };
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function createGoalFromHost(

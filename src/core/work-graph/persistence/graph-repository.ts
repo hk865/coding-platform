@@ -6,7 +6,7 @@
  *   - ONE read snapshot for the canonical Project/Workspace/Goal keys;
  *   - the legal early idempotency lookup;
  *   - the single commit call;
- *   - R3a §6 replay recovery: a stored receipt's `cursor` locates exactly the
+ *   - §6 replay recovery: a stored receipt's `cursor` locates exactly the
  *     one `GoalCreated` event, so `eventAt(cursor)` is the O(1) read that
  *     rebuilds the ORIGINAL created Goal. A missing event, an unknown schema or
  *     a receipt pointing at another event is reported as `corrupt` — never a
@@ -188,7 +188,7 @@ export function createGoalGraphRepository(records: GoalRecordTransactionPort): G
   }
 
   /**
-   * R3a §6. `receipt.cursor` locates exactly the one GoalCreated event; every
+   * §6. `receipt.cursor` locates exactly the one GoalCreated event; every
    * check below is a pure agreement check against the recorded fact.
    */
   async function readCreatedGoal(

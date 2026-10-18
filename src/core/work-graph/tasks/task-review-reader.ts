@@ -9,6 +9,7 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../../contracts/core/identity.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
@@ -19,10 +20,6 @@ export type TaskReviewPagingPort = Pick<UnknownCallReviewReadPort, 'listReviews'
 
 const PAGE_LIMIT = 200;
 const MAX_PAGES = 10_000;
-
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

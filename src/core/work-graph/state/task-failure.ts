@@ -730,8 +730,7 @@ export type WorkFailureInputV1 = FailureInputCommonV1 & {
   requeueRefusal: TaskReworkRefusalSnapshotV1 | null;
   /**
    * K3 (U5): the UnknownCallReview records read for this Task; the selected
-   * Run's record (matched by `runRef.runId`) drives AV-2b / AV-4c. The owner
-   * reader wiring is group 4.
+   * Run's record (matched by `runRef.runId`) drives AV-2b / AV-4c.
    */
   reviews?: readonly UnknownCallReviewV1[];
   /**

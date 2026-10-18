@@ -10,11 +10,11 @@
  * four attempts, all moving -> `unavailable`). Any read failure fails the whole
  * read; partial numbers are never reported as complete.
  */
-import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
-import type { DispatchOutboxRef, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+import { rejected } from '../../../contracts/core/rejections.js';
+import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
@@ -34,10 +34,8 @@ import {
   S2B_ROUND_BY_GOAL_LEGACY_LOOKUP,
   S2B_ROUND_BY_GOAL_LOOKUP,
 } from '../persistence/evidence-record-codecs.js';
-import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
-import { dispatchOutboxRefKey, decodeDispatchOutboxEntry } from '../tasks/claim-record-codecs.js';
 import {
   decodeActivityRecordingSnapshot,
   decodeRunActivitySnapshot,
@@ -50,11 +48,13 @@ import {
 } from '../tasks/plan-readers.js';
 import {
   decodeSessionRecord,
-  decodeSessionWorkLink,
   sessionAggregateRefKey,
-  SESSION_LINKS_BY_TASK_LOOKUP,
 } from '../sessions/session-record-codecs.js';
 import { storeFailureToRejection } from './goal-conflicts.js';
+import {
+  activityViewOf, Budget, CapacityError, claimingSessionOf, emptyView, gateInfoOf,
+  isQuarterInstant, readEqualityAll, readOneKeyed, readOrderedAll, readWatermark, scanOrdered,
+} from './activity-read-helpers.js';
 
 // --------------------------------------------------------------------------
 // Public view types (spec §2 "WorkGraph views")
@@ -128,7 +128,6 @@ const HOUR_SPAN_LIMIT_MS = 15 * DAY_MS;
 const DAY_SPAN_LIMIT_MS = 400 * DAY_MS;
 const SESSION_REF_LIMIT = 33;
 const RUN_REF_LIMIT = 200;
-const PAGE_LIMIT = 200;
 /** The calendar's fourth step stops one hour before `from` (commit-order skew). */
 const ROUND_STOP_SKEW_MS = HOUR_MS;
 /**
@@ -136,128 +135,6 @@ const ROUND_STOP_SKEW_MS = HOUR_MS;
  * counts against `ACTIVITY_READ_RECORD_CAP`, rounds older than `from - 1h`.
  */
 const ROUND_READ_PAGE_LIMIT = 1;
-
-// --------------------------------------------------------------------------
-// Small shared helpers
-// --------------------------------------------------------------------------
-
-class CapacityError extends Error {}
-
-function unavailable(reason: string): CoreRejection {
-  return { status: 'rejected', code: 'unavailable', reason };
-}
-function invalid(reason: string): CoreRejection {
-  return { status: 'rejected', code: 'invalid', reason };
-}
-
-/** Counts the storage reads L17 names: one index row, one keyed record, one `eventAt`. */
-class Budget {
-  private left: number;
-  constructor(cap: number) { this.left = cap; }
-  spend(reads: number): void {
-    this.left -= reads;
-    if (this.left < 0) throw new CapacityError();
-  }
-}
-
-type OrderedRequest = { index: string; values: readonly string[]; direction: 'asc' | 'desc';
-  bound?: { value: string | number; inclusive: boolean } };
-type OrderedPage = Awaited<ReturnType<RecordOrderedLookupPort['lookupOrdered']>>;
-type EqualityPage = Awaited<ReturnType<RecordLookupPort['lookup']>>;
-
-/**
- * Lazy keyset scan over one ordered index. `limit` bounds how many index rows
- * one storage read returns, so a caller that stops early (L9 step 4) never
- * reads the older rows; the budget is spent per returned row.
- */
-async function* scanOrdered(
-  records: ActivityReadModelDependencies['records'],
-  request: OrderedRequest,
-  limit: number,
-  budget: Budget,
-): AsyncGenerator<EncodedRecord> {
-  let after: { order: string | number; refKey: string } | undefined;
-  for (;;) {
-    const page: OrderedPage = await records.lookupOrdered({
-      index: request.index, values: request.values, direction: request.direction,
-      ...(request.bound === undefined ? {} : { bound: request.bound }),
-      ...(after === undefined ? {} : { after }),
-      limit,
-    });
-    if (page.status !== 'ready') throw page;
-    budget.spend(page.value.records.length);
-    for (const record of page.value.records) yield record;
-    const next = page.value.next;
-    if (next === null) return;
-    after = next;
-  }
-}
-
-async function readOrderedAll(
-  records: ActivityReadModelDependencies['records'],
-  request: OrderedRequest,
-  budget: Budget,
-): Promise<EncodedRecord[]> {
-  const all: EncodedRecord[] = [];
-  for await (const record of scanOrdered(records, request, PAGE_LIMIT, budget)) all.push(record);
-  return all;
-}
-
-async function readEqualityAll(
-  records: ActivityReadModelDependencies['records'],
-  index: string,
-  values: readonly (string | number | boolean | null)[],
-  budget: Budget,
-): Promise<EncodedRecord[]> {
-  const all: EncodedRecord[] = [];
-  let after: string | undefined;
-  for (;;) {
-    const page: EqualityPage = await records.lookup({
-      index, values, limit: PAGE_LIMIT, ...(after === undefined ? {} : { after }),
-    });
-    if (page.status !== 'ready') throw page;
-    budget.spend(page.value.records.length);
-    all.push(...page.value.records);
-    const next = page.value.next;
-    if (next === null) break;
-    after = next;
-  }
-  return all;
-}
-
-/** One keyed record read; a genuine miss is `undefined`, never a read failure. */
-async function readOneKeyed(
-  records: ActivityReadModelDependencies['records'],
-  refKey: string,
-  budget: Budget,
-): Promise<EncodedRecord | undefined> {
-  const page = await records.readMany([refKey]);
-  if (page.status !== 'ready') throw page;
-  // R7 (L17): a keyed read costs one storage read per requested key, whether or
-  // not a record came back. Charging `records.length` made every miss free.
-  budget.spend(1);
-  return page.value.records[0];
-}
-
-async function readWatermark(
-  records: ActivityReadModelDependencies['records'],
-): Promise<ReadResult<CommitCursor | null>> {
-  const page = await records.readMany([]);
-  if (page.status !== 'ready') return storeFailureToRejection(page);
-  return { status: 'ready', value: page.value.readThrough };
-}
-
-// --------------------------------------------------------------------------
-// Time helpers
-// --------------------------------------------------------------------------
-
-function isQuarterInstant(value: unknown): value is string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) return false;
-  const ms = Date.parse(value);
-  if (!Number.isFinite(ms)) return false;
-  const date = new Date(ms);
-  return date.getUTCMinutes() % 15 === 0 && date.getUTCSeconds() === 0 && date.getUTCMilliseconds() === 0;
-}
 
 function knownTimeZone(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0) return false;
@@ -306,23 +183,23 @@ function validateCalendarInput(ctx: CoreCallContext, input: CalendarInput): Core
     || input.goalRef.aggregateType !== 'Goal' || input.goalRef.projectId !== ctx.projectId) {
     return { status: 'rejected', code: 'forbidden', reason: 'the requested goal is outside the bound call scope' };
   }
-  if (input.granularity !== 'hour' && input.granularity !== 'day') return invalid('granularity must be hour or day');
-  if (!knownTimeZone(input.timeZone)) return invalid(`unknown IANA time zone: ${String(input.timeZone)}`);
-  if (!isQuarterInstant(input.from)) return invalid('from must be a UTC quarter boundary ending in Z');
-  if (!isQuarterInstant(input.to)) return invalid('to must be a UTC quarter boundary ending in Z');
+  if (input.granularity !== 'hour' && input.granularity !== 'day') return rejected('invalid', 'granularity must be hour or day');
+  if (!knownTimeZone(input.timeZone)) return rejected('invalid', `unknown IANA time zone: ${String(input.timeZone)}`);
+  if (!isQuarterInstant(input.from)) return rejected('invalid', 'from must be a UTC quarter boundary ending in Z');
+  if (!isQuarterInstant(input.to)) return rejected('invalid', 'to must be a UTC quarter boundary ending in Z');
   const fromMs = Date.parse(input.from);
   const toMs = Date.parse(input.to);
-  if (fromMs >= toMs) return invalid('from must be before to');
+  if (fromMs >= toMs) return rejected('invalid', 'from must be before to');
   const span = toMs - fromMs;
   if (input.granularity === 'hour' && span > HOUR_SPAN_LIMIT_MS) {
-    return invalid('an hour-granularity window may span at most 15 days');
+    return rejected('invalid', 'an hour-granularity window may span at most 15 days');
   }
   if (input.granularity === 'day' && span > DAY_SPAN_LIMIT_MS) {
-    return invalid('a day-granularity window may span at most 400 days');
+    return rejected('invalid', 'a day-granularity window may span at most 400 days');
   }
   if (input.sessionRefs !== undefined) {
     if (!Array.isArray(input.sessionRefs) || input.sessionRefs.length > SESSION_REF_LIMIT) {
-      return invalid(`sessionRefs may carry at most ${String(SESSION_REF_LIMIT)} references`);
+      return rejected('invalid', `sessionRefs may carry at most ${String(SESSION_REF_LIMIT)} references`);
     }
   }
   return null;
@@ -401,7 +278,7 @@ async function readCalendarWindow(
       touched.add(key);
       cell[field] += 1;
     };
-    // L9 step 1 / round-3 R8: an inclusive span is the closed interval
+    // L9 step 1: an inclusive span is the closed interval
     // `[startAt, lastAt]`. When clamping leaves a zero-width `[lo, lo]` but the
     // original span was non-zero, the inclusive endpoint still lies inside
     // `[from, to)` and marks the cell that contains it (e.g. `[09:00, 10:00]`
@@ -412,7 +289,7 @@ async function readCalendarWindow(
       if (inclusive && endMs >= fromMs && endMs < toMs) bump(endMs);
       return;
     }
-    // R8 (b): an inclusive span is the closed interval `[startAt, lastAt]`, so a
+    // An inclusive span is the closed interval `[startAt, lastAt]`, so a
     // span whose `lastAt` is exactly on a quarter boundary also marks the cell
     // at that boundary. A half-open span stops before `hi`, and a `hi` clamped
     // to the exclusive window end is never marked.
@@ -451,7 +328,7 @@ async function readCalendarWindow(
   const recordActivityRunIds = new Set<string>();
   for (const record of activityRecords) {
     const decoded = decodeRunActivitySnapshot(record);
-    if (decoded.status !== 'decoded') throw unavailable(`RunActivity record ${record.refKey}: ${decoded.reason}`);
+    if (decoded.status !== 'decoded') throw rejected('unavailable', `RunActivity record ${record.refKey}: ${decoded.reason}`);
     const activity = decoded.value;
     // R4: a record (and the Session it carries) must belong to the bound
     // workspace/project; a foreign record is never returned.
@@ -509,7 +386,7 @@ async function readCalendarWindow(
   const classified = new Set<string>();
   for (const record of endedRuns) {
     const runDecoded = decodeRun(record);
-    if (!runDecoded.ok) throw unavailable(`Run record ${record.refKey}: ${runDecoded.reason}`);
+    if (!runDecoded.ok) throw rejected('unavailable', `Run record ${record.refKey}: ${runDecoded.reason}`);
     const run = runDecoded.value;
     if (run.ref.goalId !== input.goalRef.goalId) continue;
     const startedAt = run.startedAt;
@@ -532,7 +409,7 @@ async function readCalendarWindow(
       });
       continue;
     }
-    // R8 (L9 step 2): every Run that has an activity record is SKIPPED here,
+    // L9 step 2: every Run that has an activity record is SKIPPED here,
     // regardless of step 1's set. The ordered step already counted the records
     // inside its window; a record whose `span.lastAt` is before `from` is
     // outside this window and must not be counted by this fallback either.
@@ -546,7 +423,7 @@ async function readCalendarWindow(
       [input.goalRef.projectId, workspaceId, status], budget);
     for (const record of rows) {
       const decoded = decodeRun(record);
-      if (!decoded.ok) throw unavailable(`Run record ${record.refKey}: ${decoded.reason}`);
+      if (!decoded.ok) throw rejected('unavailable', `Run record ${record.refKey}: ${decoded.reason}`);
       if (decoded.value.ref.goalId === input.goalRef.goalId) openRuns.push(decoded.value);
     }
   }
@@ -572,9 +449,9 @@ async function readCalendarWindow(
     direction: 'desc',
   }, ROUND_READ_PAGE_LIMIT, budget)) {
     const origin = decodeNoticeOrigin(record);
-    if (origin.status !== 'decoded') throw unavailable(`round origin ${record.refKey}: ${origin.reason}`);
+    if (origin.status !== 'decoded') throw rejected('unavailable', `round origin ${record.refKey}: ${origin.reason}`);
     const cursor = origin.value.since;
-    if (cursor === undefined || cursor === null) throw unavailable(`round ${record.refKey} is missing its since cursor`);
+    if (cursor === undefined || cursor === null) throw rejected('unavailable', `round ${record.refKey} is missing its since cursor`);
     const at = await records.eventAt(cursor);
     if (at.status !== 'ready') throw at;
     budget.spend(1);
@@ -582,7 +459,7 @@ async function readCalendarWindow(
     const startedMs = Date.parse(startedAt);
     if (startedMs < stopAt) break;
     const decoded = decodeVerificationRoundSnapshot(record);
-    if (decoded.status !== 'decoded') throw unavailable(`round ${record.refKey}: ${decoded.reason}`);
+    if (decoded.status !== 'decoded') throw rejected('unavailable', `round ${record.refKey}: ${decoded.reason}`);
     if (startedMs < fromMs || startedMs >= toMs) continue;
     await attributeRound(decoded.value, record, startedMs, {
       records, budget, goalRef: input.goalRef, workspaceId, bySession,
@@ -605,7 +482,7 @@ async function readCalendarWindow(
     [input.goalRef.projectId, workspaceId, input.goalRef.goalId, null], budget);
   for (const record of legacyRows) {
     const decoded = decodeVerificationRoundSnapshot(record);
-    if (decoded.status !== 'decoded') throw unavailable(`round ${record.refKey}: ${decoded.reason}`);
+    if (decoded.status !== 'decoded') throw rejected('unavailable', `round ${record.refKey}: ${decoded.reason}`);
     checksUnplaced += checksBegun(decoded.value);
   }
 
@@ -625,7 +502,7 @@ async function readCalendarWindow(
         projectId: session.projectId, sessionId: session.sessionId }), budget);
       if (record !== undefined) {
         const decoded = decodeSessionRecord(record);
-        if (decoded.status !== 'decoded') throw unavailable(`Session ${record.refKey}: ${decoded.reason}`);
+        if (decoded.status !== 'decoded') throw rejected('unavailable', `Session ${record.refKey}: ${decoded.reason}`);
         if (decoded.value.workspaceId !== ctx.workspaceId) {
           return { status: 'rejected', code: 'forbidden',
             reason: `Session ${key} is outside the bound workspace` };
@@ -725,9 +602,9 @@ async function goalWorkspaceId(
   budget: Budget,
 ): Promise<string> {
   const record = await readOneKeyed(records, canonicalKey(goalRef), budget);
-  if (record === undefined) throw unavailable(`the Goal ${goalRef.goalId} is missing`);
+  if (record === undefined) throw rejected('unavailable', `the Goal ${goalRef.goalId} is missing`);
   const decoded = decodeGoalSnapshot(record);
-  if (decoded.status !== 'decoded') throw unavailable(`the Goal ${goalRef.goalId}: ${decoded.reason}`);
+  if (decoded.status !== 'decoded') throw rejected('unavailable', `the Goal ${goalRef.goalId}: ${decoded.reason}`);
   return decoded.value.workspaceRef.workspaceId;
 }
 
@@ -741,25 +618,8 @@ async function activityRecordingOf(
     canonicalKey({ aggregateType: 'ActivityRecording', projectId, workspaceId }), budget);
   if (record === undefined) return null;
   const decoded = decodeActivityRecordingSnapshot(record);
-  if (decoded.status !== 'decoded') throw unavailable(`ActivityRecording ${record.refKey}: ${decoded.reason}`);
+  if (decoded.status !== 'decoded') throw rejected('unavailable', `ActivityRecording ${record.refKey}: ${decoded.reason}`);
   return decoded.value;
-}
-
-/** L17: the claiming Session is the history's, else the dispatch claim's, else null. */
-async function claimingSessionOf(
-  records: ActivityReadModelDependencies['records'],
-  run: RunSnapshot,
-  budget: Budget,
-): Promise<SessionRef | null> {
-  const history = run.executionHistory;
-  if (history !== undefined && history !== null) return history.sessionRef;
-  const ref: DispatchOutboxRef = { aggregateType: 'DispatchOutboxEntry', projectId: run.ref.projectId,
-    goalId: run.ref.goalId, taskId: run.task.taskId, attemptId: run.attemptId };
-  const record = await readOneKeyed(records, dispatchOutboxRefKey(ref), budget);
-  if (record === undefined) return null;
-  const decoded = decodeDispatchOutboxEntry(record);
-  if (decoded.status !== 'decoded') throw unavailable(`dispatch claim ${record.refKey}: ${decoded.reason}`);
-  return decoded.value.claim.sessionRef;
 }
 
 /** One round's checks: the task, the attributed Sessions, and the gate fallthrough. */
@@ -782,15 +642,20 @@ async function attributeRound(
   const begun = checksBegun(round);
   const subjectKey = canonicalKey(round.subjectRunRef);
   const session = await subjectSessionCached(deps.records, deps.subjectSessionCache, round.subjectRunRef, deps.budget);
-  const gate = await gateInfoOf(round, deps);
+  const gate = await gateInfoOf(deps.records, deps.goalRef, round, deps.budget, deps.gateSessionCache);
+  // The shared gate read returns the owners unsorted; the calendar orders them
+  // by `sessionId`.
+  const owners = gate.gate
+    ? [...gate.owners].sort((left, right) => left.sessionId < right.sessionId ? -1 : left.sessionId > right.sessionId ? 1 : 0)
+    : gate.owners;
   if (deps.bySession === null) {
     deps.onChecks(round.subject.taskId, begun, session === null ? [] : [session], false);
     return;
   }
   if (gate.gate) {
-    if (gate.owners.length === 0) { deps.onChecks(round.subject.taskId, begun, [], true); return; }
-    if (!gate.owners.some((owner) => deps.bySession!.has(sessionKey(owner)))) return;
-    deps.onChecks(round.subject.taskId, begun, gate.owners, false);
+    if (owners.length === 0) { deps.onChecks(round.subject.taskId, begun, [], true); return; }
+    if (!owners.some((owner) => deps.bySession!.has(sessionKey(owner)))) return;
+    deps.onChecks(round.subject.taskId, begun, owners, false);
     return;
   }
   void subjectKey;
@@ -810,52 +675,11 @@ async function subjectSessionCached(
   let session: SessionRef | null = null;
   if (record !== undefined) {
     const decoded = decodeRun(record);
-    if (!decoded.ok) throw unavailable(`Run record ${record.refKey}: ${decoded.reason}`);
+    if (!decoded.ok) throw rejected('unavailable', `Run record ${record.refKey}: ${decoded.reason}`);
     session = await claimingSessionOf(records, decoded.value, budget);
   }
   cache.set(key, session);
   return session;
-}
-
-/** L12/L9: a Goal-gate check's owning Sessions are the open `responsible` links on the gate task. */
-async function gateInfoOf(
-  round: import('../../../contracts/verification.js').RoundSnapshot,
-  deps: {
-    records: ActivityReadModelDependencies['records'];
-    budget: Budget;
-    goalRef: GoalRef;
-    workspaceId: string;
-    gateSessionCache: Map<string, { owners: SessionRef[]; gate: boolean }>;
-  },
-): Promise<{ owners: SessionRef[]; gate: boolean }> {
-  const cacheKey = canonicalKey({ goalRef: deps.goalRef, taskId: round.subject.taskId,
-    planRef: round.adoptedPlanRef });
-  const cached = deps.gateSessionCache.get(cacheKey);
-  if (cached !== undefined) return cached;
-  const planRecord = await readOneKeyed(deps.records, canonicalKey(round.adoptedPlanRef), deps.budget);
-  let gate = false;
-  if (planRecord !== undefined) {
-    const decoded = decodePlanRevisionSnapshot(planRecord);
-    if (decoded.status !== 'decoded') throw unavailable(`Plan ${planRecord.refKey}: ${decoded.reason}`);
-    const task = decoded.value.tasks.find((candidate) => candidate.taskId === round.subject.taskId);
-    gate = task?.taskKind === 'gate';
-  }
-  let owners: SessionRef[] = [];
-  if (gate) {
-    const links = await readEqualityAll(deps.records, SESSION_LINKS_BY_TASK_LOOKUP,
-      [deps.goalRef.projectId, 'task', deps.goalRef.goalId, round.subject.taskId, 'responsible'], deps.budget);
-    for (const link of links) {
-      const decoded = decodeSessionWorkLink(link);
-      if (decoded.status !== 'decoded') throw unavailable(`SessionWorkLink ${link.refKey}: ${decoded.reason}`);
-      if (decoded.value.until !== null) continue;
-      owners.push({ projectId: decoded.value.ref.projectId, sessionId: decoded.value.ref.sessionId });
-    }
-    owners = owners
-      .sort((left, right) => left.sessionId < right.sessionId ? -1 : left.sessionId > right.sessionId ? 1 : 0);
-  }
-  const info = { owners, gate };
-  deps.gateSessionCache.set(cacheKey, info);
-  return info;
 }
 
 function canonicalKey(value: unknown): string {
@@ -886,7 +710,7 @@ async function readRunActivitiesWindow(
     let run: RunSnapshot | null = null;
     if (runRecord !== undefined) {
       const decoded = decodeRun(runRecord);
-      if (!decoded.ok) return unavailable(`Run record ${runRecord.refKey}: ${decoded.reason}`);
+      if (!decoded.ok) return rejected('unavailable', `Run record ${runRecord.refKey}: ${decoded.reason}`);
       run = decoded.value;
       // R4: a Run record names its own workspace; the caller is bound to
       // `ctx.workspaceId`. A same-project Run in another workspace is
@@ -907,7 +731,7 @@ async function readRunActivitiesWindow(
     }
     if (activityRecord !== undefined) {
       const decoded = decodeRunActivitySnapshot(activityRecord);
-      if (decoded.status !== 'decoded') return unavailable(`RunActivity record ${activityRecord.refKey}: ${decoded.reason}`);
+      if (decoded.status !== 'decoded') return rejected('unavailable', `RunActivity record ${activityRecord.refKey}: ${decoded.reason}`);
       // R4: the record itself must belong to the bound workspace, even when the
       // Run record is missing or names a different one.
       if (decoded.value.workspaceId !== ctx.workspaceId) {
@@ -936,36 +760,6 @@ async function readRunActivitiesWindow(
     views.push(emptyView(runRef, 'unknown', reason, reason === 'not_recorded'));
   }
   return { status: 'ready', value: views };
-}
-
-function activityViewOf(activity: RunActivitySnapshot, since: string | null): RunActivityViewV1 {
-  const late = since !== null && activity.recordedBy === 'backfill' && activity.runEndedAt >= since;
-  const facts = activity.facts;
-  if (facts.status === 'unknown') {
-    return { runRef: activity.runRef, status: 'unknown', reason: facts.reason, error: false,
-      totals: null, changedFiles: null, usage: null,
-      recordedBy: activity.recordedBy, recordedAt: activity.recordedAt,
-      countedThroughTurnEnd: null, unresolvedCalls: null };
-  }
-  return {
-    runRef: activity.runRef, status: 'counted', reason: late ? 'recorded_late' : null, error: late,
-    totals: facts.totals,
-    changedFiles: { definite: facts.changedFiles.definite.length, possible: facts.changedFiles.possible.length,
-      possiblyIncomplete: facts.changedFiles.possiblyIncomplete },
-    usage: { ...facts.usage.totals, complete: facts.usage.complete },
-    recordedBy: activity.recordedBy, recordedAt: activity.recordedAt,
-    countedThroughTurnEnd: facts.window.turnTerminal, unresolvedCalls: facts.window.unresolvedCalls,
-  };
-}
-
-function emptyView(
-  runRef: RunRef,
-  status: RunActivityViewV1['status'],
-  reason: ActivityUncountedReason | 'recorded_late' | null,
-  error: boolean,
-): RunActivityViewV1 {
-  return { runRef, status, reason, error, totals: null, changedFiles: null, usage: null,
-    recordedBy: null, recordedAt: null, countedThroughTurnEnd: null, unresolvedCalls: null };
 }
 
 // --------------------------------------------------------------------------
@@ -1001,12 +795,12 @@ export function createActivityReadModel(
           return storeFailureToRejection(error as { code: string; reason: string });
         }
       }
-      return unavailable(`the activity read for window ${window} did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts`);
+      return rejected('unavailable', `the activity read for window ${window} did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts`);
     },
 
     async readRunActivities(ctx, input): Promise<ReadResult<RunActivityViewV1[]>> {
       if (!Array.isArray(input.runRefs) || input.runRefs.length < 1 || input.runRefs.length > RUN_REF_LIMIT) {
-        return invalid(`runRefs must carry between 1 and ${String(RUN_REF_LIMIT)} references`);
+        return rejected('invalid', `runRefs must carry between 1 and ${String(RUN_REF_LIMIT)} references`);
       }
       for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
         const budget = new Budget(cap);
@@ -1026,7 +820,7 @@ export function createActivityReadModel(
           return storeFailureToRejection(error as { code: string; reason: string });
         }
       }
-      return unavailable(`the Run activity read did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts`);
+      return rejected('unavailable', `the Run activity read did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts`);
     },
   };
 }

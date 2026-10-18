@@ -26,13 +26,14 @@
  * the same commit. The model barrier (`admitEnteredRun`) asks the same
  * machine's V2 binding, persisted claim, permit and claim Session/Lease guards.
  */
-import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
+import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import {
   renderUnknownCallReviewZh, type PreparedTaskExecution, type PreparedTaskManifestV1,
 } from '../../../contracts/core/prepared-execution.js';
 import type { SessionAnomalyAnchorRef } from '../../../contracts/session-anomaly.js';
-import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import { ARTIFACT_MAX_SIZE_BYTES, artifactBodyDigest, artifactBodySize, type ArtifactRef } from '../../../contracts/artifact.js';
@@ -43,7 +44,12 @@ import type {
 import {
   continuationBriefDigest, continuationBriefShapeProblem, renderContinuationBriefZh,
 } from '../../../contracts/continuation-brief.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { edgeDeclarationId, legacyDeclarationId } from '../../../contracts/input-declaration-id.js';
+import {
+  isNonNeg as isSafeInteger, isPos as isPositiveSafeInteger, isRecord, isSha256Hex, nonEmpty,
+  parseObject as parseJsonObject,
+} from '../../../contracts/validation/common.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { sameArtifactRef, validMaterialSourcePin, type MaterialBasisV1 } from '../../../contracts/material-access.js';
 import { MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
@@ -109,7 +115,9 @@ import { planRunActivityForCommit } from './run-activity-service.js';
 import { readGoal, readGoalPhase, readGoalScope, sameCursor } from './plan-readers.js';
 import { goalStartPolicy } from '../state/goal-settings-machine.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
+import { executionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { contextAssemblyProblem, contextGoalContentProblem, declaredInputProblem, effectivePlatformDuty } from '../state/context-input.js';
+import { isolatedWriteOf, trustedContextOf } from './trusted-context.js';
 
 // --------------------------------------------------------------------------
 // Small pure helpers
@@ -119,24 +127,7 @@ type HostActor = { kind: 'human' | 'system'; id: string };
 type Rejected = { ok: false; rejection: CoreRejection };
 type OwnedContext = { ok: true; ctx: CoreCallContext; scope: WorkspaceScope; actor: HostActor; signal: AbortSignal };
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-export function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function isSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
-export function isSha256Hex(value: unknown): value is string {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
-}
-function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
-}
+export { isRecord, nonEmpty, isSha256Hex };
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
 function busy(reason: string): CoreRejection { return reject('busy', reason); }
@@ -147,38 +138,13 @@ export function sameRef(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
 }
 function refKeyOf(value: object): string | null {
-  try { return canonicalJson(value as unknown as JsonValue); } catch { return null; }
-}
-function parseJsonObject(json: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return isRecord(parsed) ? parsed : null;
-  } catch { return null; }
-}
-function pinsFromCurrent(current: readonly { refKey: string; revision: number | null }[]): VersionPin[] {
-  const pins: VersionPin[] = [];
-  for (const entry of current) {
-    if (entry.revision === null) continue;
-    try {
-      const ref = JSON.parse(entry.refKey) as unknown;
-      if (isRecord(ref)) pins.push({ ref: ref as VersionPin['ref'], revision: entry.revision });
-    } catch { /* an unreadable ref key is not a pin */ }
-  }
-  return pins;
+  return canonicalOf(value);
 }
 export function mapStoreFailure(failure: StoreFailure): CoreRejection {
-  switch (failure.code) {
-    case 'revision_conflict': {
-      const current = pinsFromCurrent(failure.current);
-      return reject('revision_conflict', failure.reason, current.length > 0 ? current : undefined);
-    }
-    case 'unique_conflict': return busy(`${failure.reason} (the Kernel identity slot is held by another Run)`);
-    case 'idempotency_conflict': return reject('idempotency_conflict', failure.reason);
-    case 'not_found': return notFound(failure.reason);
-    case 'invalid': return invalid(failure.reason);
-    case 'unsupported': return unavailable(failure.reason);
-    default: return unavailable(failure.reason);
-  }
+  // A Store `unique_conflict` current names claim slots, which this map never reads.
+  return executionStoreFailureToRejection(failure.code === 'unique_conflict'
+    ? { code: failure.code, reason: failure.reason }
+    : failure);
 }
 function mapReadResult<T>(result: Exclude<ReadResult<T>, { status: 'ready' }>): CoreRejection {
   if (result.status === 'not_found') return notFound('the requested record does not exist');
@@ -229,79 +195,25 @@ function goalRefOf(task: TaskTriple): GoalRef {
 // Trusted Host context and request isolation
 // --------------------------------------------------------------------------
 
-function sameHostActor(left: unknown, right: unknown): boolean {
-  return isRecord(left) && isRecord(right) && left['kind'] === right['kind'] && left['id'] === right['id']
-    && (left['kind'] === 'human' || left['kind'] === 'system');
+function isSignal(signal: unknown): boolean {
+  return isRecord(signal) && typeof signal['aborted'] === 'boolean'
+    && typeof signal['addEventListener'] === 'function';
 }
 
 export function bindTrustedContext(ctx: CoreCallContext): OwnedContext | Rejected {
-  const raw = ctx as unknown as {
-    projectId?: unknown; workspaceId?: unknown; principal?: unknown; materialReader?: unknown; signal?: unknown;
-  } | null | undefined;
-  if (raw === null || raw === undefined) return { ok: false, rejection: invalid('a B2 execution write requires a bound call context') };
-  const projectId = raw.projectId;
-  const workspaceId = raw.workspaceId;
-  if (!nonEmpty(projectId) || !nonEmpty(workspaceId)) {
-    return { ok: false, rejection: forbidden('a B2 execution write requires a bound project/workspace context') };
-  }
-  const signal = raw.signal;
-  if (!isRecord(signal) || typeof signal['aborted'] !== 'boolean' || typeof signal['addEventListener'] !== 'function') {
-    return { ok: false, rejection: forbidden('a B2 execution write requires the bound AbortSignal') };
-  }
-  let principal: unknown;
-  let materialReader: unknown;
-  try {
-    principal = structuredClone(raw.principal);
-    materialReader = structuredClone(raw.materialReader);
-  } catch {
-    return { ok: false, rejection: invalid('the call context identity cannot be isolated from the caller') };
-  }
-  if (!isRecord(principal) || principal['kind'] !== 'host') {
-    return { ok: false, rejection: forbidden('a B2 execution write requires a trusted Host principal') };
-  }
-  const actor = principal['actor'];
-  if (!isRecord(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !nonEmpty(actor['id'])) {
-    return { ok: false, rejection: forbidden('a B2 execution write requires a trusted Host actor') };
-  }
-  if (!isRecord(materialReader) || materialReader['kind'] !== 'host'
-    || materialReader['projectId'] !== projectId
-    || (materialReader['workspaceId'] !== undefined && materialReader['workspaceId'] !== workspaceId)
-    || !sameHostActor(materialReader['actor'], actor)) {
-    return { ok: false, rejection: forbidden('the material reader is not the same trusted Host scope') };
-  }
-  return {
-    ok: true,
-    ctx: { projectId, workspaceId, principal: principal as CoreCallContext['principal'],
-      materialReader: materialReader as MaterialReader, signal: signal as unknown as AbortSignal },
-    scope: { projectId, workspaceId },
-    actor: { kind: actor['kind'], id: actor['id'] },
-    signal: signal as unknown as AbortSignal,
-  };
+  const result = trustedContextOf(ctx, { label: 'a B2 execution write', reject, isSignal });
+  if (!result.ok) return result;
+  return { ok: true, ctx: result.ctx, scope: result.scope, actor: result.actor, signal: result.signal };
 }
 
 type OwnedWrite<T> = { ok: true; input: T; requestId: string; expected: readonly VersionPin[] } | Rejected;
 
 export function isolateWrite<T>(request: GraphWrite<T>): OwnedWrite<T> {
-  const raw = request as unknown as { input?: unknown; meta?: unknown } | null | undefined;
-  if (raw === null || raw === undefined || !isRecord(raw.input)) {
-    return { ok: false, rejection: invalid('a B2 execution write requires a request input object') };
-  }
-  const meta = raw.meta;
-  if (!isRecord(meta) || !nonEmpty(meta['requestId'])) {
-    return { ok: false, rejection: invalid('a B2 execution write requires meta.requestId') };
-  }
-  if (!Array.isArray(meta['expected'])) {
-    return { ok: false, rejection: invalid('meta.expected must be an array of version pins') };
-  }
-  let input: T;
-  let expected: readonly VersionPin[];
-  try {
-    input = structuredClone(raw.input) as T;
-    expected = structuredClone(meta['expected']) as VersionPin[];
-  } catch {
-    return { ok: false, rejection: invalid('the B2 execution request cannot be isolated from the caller') };
-  }
-  return { ok: true, input, requestId: meta['requestId'], expected };
+  return isolatedWriteOf<T>(request, {
+    label: 'a B2 execution write',
+    reject,
+    cannotIsolate: 'the B2 execution request cannot be isolated from the caller',
+  });
 }
 
 export function checkRunPin(expected: readonly VersionPin[], runRef: RunRef): { ok: true; pin: VersionPin } | Rejected {
@@ -1079,7 +991,7 @@ function inputDeclarationsOf(plan: PlanRevisionSnapshot, consumer: TaskTriple): 
   for (const requirement of plan.inputRequirements ?? []) {
     if (requirement.consumerTaskId !== consumer.taskId) continue;
     declarations.push({
-      declarationId: `legacy:${requirement.requirementId}`,
+      declarationId: legacyDeclarationId(requirement.requirementId),
       consumer: { ...consumer },
       planRef: plan.ref,
       upstream: null,
@@ -1090,9 +1002,7 @@ function inputDeclarationsOf(plan: PlanRevisionSnapshot, consumer: TaskTriple): 
   for (const edge of plan.executionDag.dependsOn) {
     if (edge.taskId !== consumer.taskId) continue;
     declarations.push({
-      declarationId: `edge:${sha256Hex(canonicalJson({
-        planRef: plan.ref, consumerTaskId: edge.taskId, dependsOnId: edge.dependsOnId, requires: edge.requires,
-      } as unknown as JsonValue))}`,
+      declarationId: edgeDeclarationId(plan.ref, edge),
       consumer: { ...consumer },
       planRef: plan.ref,
       upstream: { projectId: consumer.projectId, goalId: consumer.goalId, taskId: edge.dependsOnId },
@@ -1304,7 +1214,7 @@ function continuationBriefVerdict(
  * the Run machine's `anomalyRefsMatch` guard. It compares the brief's actual
  * `anomalies.anchors` with the binding's `anomalyAnchorRefs` in canonical
  * order; an old brief without the section and an old binding without the refs
- * both read as true. The comparison itself is part 2.
+ * both read as true.
  */
 export function anomalyAnchorRefsMatch(
   brief: PreparedTaskManifestV1['continuationBrief'],
@@ -1381,7 +1291,7 @@ const ENTRY_RESULT_PREFIX = 'b2-entry-result:';
 
 /**
  * Slice 5 §3.2/§8.2: the optional Goal-settings seam the execution entry reads
- * before it starts a new continuation (the waiting guard is part 2). The
+ * before it starts a new continuation. The
  * intersection only ADDS an optional field, so existing composition parameters
  * keep compiling and the factory never throws.
  */
@@ -2014,7 +1924,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
       let activityGuard: RecordGuard | null = null;
       if (observation.activity !== undefined) {
         const planned = await planRunActivityForCommit(records, { activity: observation.activity, run: nextRun,
-          // R10 (review item 10): RUN-21 preserves the Run's ORIGINAL `endedAt`;
+          // RUN-21 preserves the Run's ORIGINAL `endedAt`;
           // the activity snapshot must keep it, and `recordedAt` alone carries
           // the replacement time. The fallback is defensive only (the Run is
           // ending in this commit).

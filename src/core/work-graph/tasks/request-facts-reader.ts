@@ -18,13 +18,8 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
 import { decodeQueryJobSnapshot, decodeQueryJobSubmittedEvent } from '../queries/query-record-codecs.js';
 import type { CandidateRequestFactsPort } from '../model/decision-contracts.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

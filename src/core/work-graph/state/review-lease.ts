@@ -2,7 +2,7 @@
  * K3 (spec §2, L10/L21/M1): the two pure review-lease helpers shared by
  * `requeue-service`, `claim-service` and `attempt-machine`.
  *
- * - `leaseReleasedForContinuation`: the three sites that today demand "the
+ * - `leaseReleasedForContinuation`: the three sites that demand "the
  *   lease was released by the afterRun" must also accept a release by one of
  *   the afterRun's review rounds (the most recent holder, L12).
  * - `isUnenteredReviewRoundForCancellation`: the UR3h cancellation judgment
@@ -10,7 +10,7 @@
  *   `Claimed`/`Authorized`/`Revoked` authorization and any pointer except a
  *   committed `cancelled` (a `paused` pointer is accepted, unlike
  *   `isUnadmittedStarting` in workflow.ts).
- * - `reviewRoundEndedKnown`: the ONE (item C) "known end" rule.
+ * - `reviewRoundEndedKnown`: the ONE "known end" rule.
  *
  * Pure: imports only `src/contracts` and this directory.
  */
@@ -54,7 +54,7 @@ export function isUnenteredReviewRoundForCancellation(run: RunSnapshot, runRef: 
 }
 
 /**
- * K3 item C (L15/L16, §3.4 UR4/UR5): the ONE "known end" rule shared by the
+ * K3 (L15/L16, §3.4 UR4/UR5): the ONE "known end" rule shared by the
  * owner (`settleReview`), the Workflow's UR4/UR5 gate and the review-purpose
  * `start`/`observe` settlement helper. A Run that has ended with an outcome
  * that is neither null nor `outcome_unknown` is a known end. A Run that is

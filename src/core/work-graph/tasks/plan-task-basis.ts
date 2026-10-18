@@ -1,5 +1,5 @@
 /**
- * W1 pure task-state-basis helpers.
+ * Pure task-state-basis helpers.
  *
  * This module owns ONLY pure resolution/generation/consistency logic shared by
  * the future-only adoption compiler and the Plan reader:
@@ -14,8 +14,8 @@
  *  - verify one Plan's declared basis for a Task (`verifyBasisDelegation`) and
  *    decide whether a Run/Reduction fact pinned to an origin Plan describes a
  *    Task of the selected Plan (`taskOriginVerdict`), over the per-Plan index
- *    `planTaskFacts` (moved from `plan-readers.ts`, STATE-MACHINES-SPEC
- *    §3.3 point 5 / §15.2 step 3). Both compare EXECUTION definitions
+ *    `planTaskFacts` (STATE-MACHINES-SPEC §3.3 point 5 / §15.2 step 3).
+ *    Both compare EXECUTION definitions
  *    (`executionDefinitionsAgree`, A.2 step 5.4b): a Task's disposition is not
  *    part of what its Runs and evidence describe;
  *  - decide whether a claim pinned to an older Plan may still enter while the

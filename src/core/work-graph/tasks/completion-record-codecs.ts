@@ -1,5 +1,5 @@
 /**
- * R3e.3 completion record codecs (implementation).
+ * Completion record codecs (implementation).
  *
  * The ONE owner of:
  *  - the `TaskReductionSnapshot@1` ENCODER (the schema stays registered ONLY by
@@ -20,10 +20,12 @@ import type {
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalOf } from '../../../contracts/fingerprint.js';
 import type { GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
+import { hasOnlyKeys, invalid, isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
 import type { VerificationRoundRef } from '../../../contracts/verification.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 
 // -------------------------------------------------------------------------- //
 // Schema / event names (frozen)                                              //
@@ -74,31 +76,8 @@ export const COMPLETION_EVENT_TYPES: readonly CompletionEvent['eventType'][] = [
 
 type UnknownRecord = Record<string, unknown>;
 
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function isSafeRevision(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function invalid<T>(reason: string): DecodeResult<T> {
-  return { status: 'invalid', reason };
-}
-function parseObject(json: string): UnknownRecord | null {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function canonicalOf(value: unknown): string | null {
-  try { return canonicalJson(value as JsonValue); } catch { return null; }
-}
-function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
-  return Object.keys(value).every(key => allowed.includes(key));
 }
 function actorProblem(value: unknown): string | null {
   if (!isRecord(value) || (value['kind'] !== 'human' && value['kind'] !== 'system') || !nonEmpty(value['id'])) {
@@ -231,8 +210,7 @@ export function decodeGoalPhaseSnapshot(record: EncodedRecord): DecodeResult<Goa
 
 /** Encode one completion replay event, including its original result. */
 export function encodeCompletionEvent(event: CompletionEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 function eventEnvelopeProblem(body: UnknownRecord, event: EncodedDomainEvent): string | null {
@@ -296,7 +274,7 @@ function validateCompletionEvent(event: EncodedDomainEvent): DecodeResult<Encode
 }
 
 /**
- * The ONE R3e.3 completion registration: `GoalPhaseSnapshot@1` plus the two
+ * The ONE completion registration: `GoalPhaseSnapshot@1` plus the two
  * completion replay events. `TaskReductionSnapshot@1` stays exclusively in
  * `PLAN_STATE_RECORD_SCHEMAS`.
  */

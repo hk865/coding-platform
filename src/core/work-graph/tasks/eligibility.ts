@@ -1,4 +1,4 @@
-/** R3c shared rule seam for queryReadyTasks and future R4c claim admission. */
+/** R3c shared rule seam for queryReadyTasks and R4c claim admission. */
 import type { TaskEligibility, TaskIneligibilityReason } from '../../../contracts/dispatch.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import { revisionAssignments, type Phase, type PlanRevisionSnapshot } from '../../../contracts/plan.js';

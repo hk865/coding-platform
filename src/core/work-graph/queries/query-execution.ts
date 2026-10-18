@@ -21,6 +21,8 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { SessionProvenanceV1, SessionRecord } from '../../../contracts/core/session.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { ContextCallKindV1, PlatformDutyV1 } from '../../../contracts/graph-context.js';
@@ -80,22 +82,11 @@ type RecoveryStep = {
   turnSeen: boolean;
 };
 
-function rejected(code: CoreRejection['code'], reason: string, current?: VersionPin[]): CoreRejection {
-  return current === undefined || current.length === 0
-    ? { status: 'rejected', code, reason }
-    : { status: 'rejected', code, reason, current };
-}
 /** The store refuses duplicate guards; keep the first pin of each record. */
 function dedupeGuards(guards: readonly RecordGuard[]): RecordGuard[] {
   const seen = new Map<string, RecordGuard>();
   for (const guard of guards) if (!seen.has(guard.refKey)) seen.set(guard.refKey, guard);
   return [...seen.values()];
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
 }
 function sameRef(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
@@ -140,15 +131,15 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 function mapRead(result: ReadResult<unknown>): CoreRejection {
-  if (result.status === 'ready') return rejected('unavailable', 'a must-fail read unexpectedly returned a value');
-  if (result.status === 'not_found') return rejected('not_found', 'the required Query fact was not found');
-  if (result.status === 'not_ready') return rejected('incomplete', 'the required Query fact is not readable at the required watermark');
+  if (result.status === 'ready') return rejectedWithNonEmptyCurrent('unavailable', 'a must-fail read unexpectedly returned a value');
+  if (result.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the required Query fact was not found');
+  if (result.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the required Query fact is not readable at the required watermark');
   return { status: 'rejected', code: result.code, reason: result.reason, ...(result.current === undefined ? {} : { current: result.current }) };
 }
 function toRejection(result: ReadResult<unknown>): CoreRejection {
-  if (result.status === 'ready') return rejected('unavailable', 'a must-fail read unexpectedly returned a value');
-  if (result.status === 'not_found') return rejected('not_found', 'the required Query fact was not found');
-  if (result.status === 'not_ready') return rejected('incomplete', 'the required Query fact is not readable at the required watermark');
+  if (result.status === 'ready') return rejectedWithNonEmptyCurrent('unavailable', 'a must-fail read unexpectedly returned a value');
+  if (result.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the required Query fact was not found');
+  if (result.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the required Query fact is not readable at the required watermark');
   return result;
 }
 function ownContext(ctx: CoreCallContext): CoreCallContext | null {
@@ -182,13 +173,13 @@ function pinsFromCurrent(current: readonly { refKey: string; revision: number | 
 function mapCommitFailure(receipt: Extract<StoreCommitReceipt, { status: 'rejected' }>): CoreRejection {
   switch (receipt.code) {
     case 'revision_conflict':
-      return rejected('revision_conflict', receipt.reason, pinsFromCurrent(receipt.current));
+      return rejectedWithNonEmptyCurrent('revision_conflict', receipt.reason, pinsFromCurrent(receipt.current));
     case 'idempotency_conflict':
-      return rejected('idempotency_conflict', receipt.reason);
+      return rejectedWithNonEmptyCurrent('idempotency_conflict', receipt.reason);
     case 'invalid':
-      return rejected('invalid', receipt.reason);
+      return rejectedWithNonEmptyCurrent('invalid', receipt.reason);
     default:
-      return rejected('unavailable', `${receipt.code}: ${receipt.reason}`);
+      return rejectedWithNonEmptyCurrent('unavailable', `${receipt.code}: ${receipt.reason}`);
   }
 }
 
@@ -242,7 +233,7 @@ export function queryClaimDispatchProblem(
     readonlyQueryMatches,
     legacyProvenance,
   });
-  return refusal === null || refusal.ok ? null : rejected(refusal.code, refusal.detail);
+  return refusal === null || refusal.ok ? null : rejectedWithNonEmptyCurrent(refusal.code, refusal.detail);
 }
 
 // --------------------------------------------------------------------------
@@ -279,28 +270,28 @@ async function readCore(
   try {
     read = await deps.records.readMany(keys);
   } catch (error) {
-    return rejected('unavailable', `the Query records read failed: ${messageOf(error)}`);
+    return rejectedWithNonEmptyCurrent('unavailable', `the Query records read failed: ${messageOf(error)}`);
   }
   if (read.status !== 'ready') {
-    return read.code === 'not_found' ? { status: 'not_found' } : rejected('unavailable', `${read.code}: ${read.reason}`);
+    return read.code === 'not_found' ? { status: 'not_found' } : rejectedWithNonEmptyCurrent('unavailable', `${read.code}: ${read.reason}`);
   }
   const present = new Map<string, EncodedRecord>();
   for (const record of read.value.records) present.set(record.refKey, record);
   const missing = new Set(read.value.missing);
   const job = decodeOne(jobKey, present, missing, decodeQueryJobSnapshot);
   if (job.status === 'missing') return { status: 'not_found' };
-  if (job.status === 'unavailable') return rejected('unavailable', `the QueryJob is not readable: ${job.reason}`);
+  if (job.status === 'unavailable') return rejectedWithNonEmptyCurrent('unavailable', `the QueryJob is not readable: ${job.reason}`);
   const run = decodeOne(runKey, present, missing, decodeQueryRunSnapshotRecord);
-  if (run.status === 'missing') return rejected('incomplete', 'the QueryRun is missing');
-  if (run.status === 'unavailable') return rejected('unavailable', `the QueryRun is not readable: ${run.reason}`);
+  if (run.status === 'missing') return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun is missing');
+  if (run.status === 'unavailable') return rejectedWithNonEmptyCurrent('unavailable', `the QueryRun is not readable: ${run.reason}`);
   if (sessionRef === null) {
     const state = run.value.run.executionState;
-    if (state === undefined) return rejected('incomplete', 'the QueryRun has no persisted Session binding');
+    if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted Session binding');
     return readCore(deps, queryRunRef, state.sessionRef);
   }
   const session = decodeOne(sessionKeyOf(plainSessionRefToAggregate(sessionRef)), present, missing, decodeSessionRecord);
   if (session.status === 'missing') return { status: 'not_found' };
-  if (session.status === 'unavailable') return rejected('unavailable', `the Session is not readable: ${session.reason}`);
+  if (session.status === 'unavailable') return rejectedWithNonEmptyCurrent('unavailable', `the Session is not readable: ${session.reason}`);
   return { status: 'ready', value: { job: job.value, run: run.value, session: session.value } };
 }
 
@@ -310,18 +301,18 @@ async function readAnswerByRef(deps: QueryExecutionDependencies, ref: QueryJobAn
   try {
     read = await deps.records.readMany([key]);
   } catch (error) {
-    return rejected('unavailable', `the Query answer read failed: ${messageOf(error)}`);
+    return rejectedWithNonEmptyCurrent('unavailable', `the Query answer read failed: ${messageOf(error)}`);
   }
   if (read.status !== 'ready') {
-    return read.code === 'not_found' ? { status: 'not_found' } : rejected('unavailable', `${read.code}: ${read.reason}`);
+    return read.code === 'not_found' ? { status: 'not_found' } : rejectedWithNonEmptyCurrent('unavailable', `${read.code}: ${read.reason}`);
   }
   const record = read.value.records.find((candidate) => candidate.refKey === key);
   if (record === undefined) {
     if (read.value.missing.includes(key)) return { status: 'not_found' };
-    return rejected('unavailable', 'the read batch neither returned nor reported missing the Query answer');
+    return rejectedWithNonEmptyCurrent('unavailable', 'the read batch neither returned nor reported missing the Query answer');
   }
   const decoded = decodeQueryJobAnswerSnapshot(record);
-  if (decoded.status !== 'decoded') return rejected('unavailable', `the Query answer snapshot is not decodable: ${decoded.reason}`);
+  if (decoded.status !== 'decoded') return rejectedWithNonEmptyCurrent('unavailable', `the Query answer snapshot is not decodable: ${decoded.reason}`);
   return { status: 'ready', value: decoded.value };
 }
 
@@ -342,33 +333,33 @@ async function readExecutionRecord(deps: QueryExecutionDependencies, queryRunRef
  * and never a fixed system actor. */
 async function readInitiator(deps: QueryExecutionDependencies, job: QueryJobSnapshot): Promise<ReadResult<HostActor>> {
   const submission = job.submission;
-  if (submission === undefined) return rejected('unsupported', 'the QueryJob has no exact submission locator');
+  if (submission === undefined) return rejectedWithNonEmptyCurrent('unsupported', 'the QueryJob has no exact submission locator');
   let found;
   try {
     found = await deps.records.lookupCommit({ identityKey: submission.identityKey, fingerprint: submission.fingerprint });
   } catch (error) {
-    return rejected('unavailable', `the submission idempotency lookup failed: ${messageOf(error)}`);
+    return rejectedWithNonEmptyCurrent('unavailable', `the submission idempotency lookup failed: ${messageOf(error)}`);
   }
   if (found.status !== 'ready') {
     return found.code === 'not_found'
-      ? rejected('not_found', 'the original QueryJob submission was not found')
-      : rejected('unavailable', `${found.code}: ${found.reason}`);
+      ? rejectedWithNonEmptyCurrent('not_found', 'the original QueryJob submission was not found')
+      : rejectedWithNonEmptyCurrent('unavailable', `${found.code}: ${found.reason}`);
   }
   let located;
   try {
     located = await deps.records.eventAt(found.value.cursor);
   } catch (error) {
-    return rejected('unavailable', `the original QueryJobSubmitted event could not be read: ${messageOf(error)}`);
+    return rejectedWithNonEmptyCurrent('unavailable', `the original QueryJobSubmitted event could not be read: ${messageOf(error)}`);
   }
-  if (located.status !== 'ready') return rejected('unavailable', `the original QueryJobSubmitted event is not readable: ${located.code}: ${located.reason}`);
+  if (located.status !== 'ready') return rejectedWithNonEmptyCurrent('unavailable', `the original QueryJobSubmitted event is not readable: ${located.code}: ${located.reason}`);
   const decoded = decodeQueryJobSubmittedEvent(located.value.event);
-  if (decoded.status !== 'decoded') return rejected('unavailable', `the original event is not a legal QueryJobSubmitted@1: ${decoded.reason}`);
+  if (decoded.status !== 'decoded') return rejectedWithNonEmptyCurrent('unavailable', `the original event is not a legal QueryJobSubmitted@1: ${decoded.reason}`);
   const event = decoded.value;
   if (event.identityKey !== submission.identityKey || event.fingerprint !== submission.fingerprint) {
-    return rejected('unavailable', 'the original submission identity disagrees with the Job locator');
+    return rejectedWithNonEmptyCurrent('unavailable', 'the original submission identity disagrees with the Job locator');
   }
   const actor = event.actor;
-  if (actor.kind !== 'human' && actor.kind !== 'system') return rejected('unsupported', 'the original Query initiator kind is unsupported');
+  if (actor.kind !== 'human' && actor.kind !== 'system') return rejectedWithNonEmptyCurrent('unsupported', 'the original Query initiator kind is unsupported');
   return { status: 'ready', value: { kind: actor.kind, id: actor.id } };
 }
 
@@ -376,56 +367,56 @@ async function readPreparationFacts(deps: QueryExecutionDependencies, queryRunRe
   const record = await readExecutionRecord(deps, queryRunRef);
   if (record.status !== 'ready') return record;
   const state = record.value.run.run.executionState;
-  if (state === undefined) return rejected('incomplete', 'the QueryRun has no persisted execution state');
+  if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state');
   const goalId = record.value.job.job.goalId;
-  if (goalId === null) return rejected('incomplete', 'the QueryJob has no Goal');
+  if (goalId === null) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryJob has no Goal');
   const goalKey = canonicalRefKey({ aggregateType: 'Goal', projectId: queryRunRef.projectId, goalId });
   let read;
   try {
     read = await deps.records.readMany([goalKey]);
   } catch (error) {
-    return rejected('unavailable', `the Query Goal read failed: ${messageOf(error)}`);
+    return rejectedWithNonEmptyCurrent('unavailable', `the Query Goal read failed: ${messageOf(error)}`);
   }
-  if (read.status !== 'ready') return read.code === 'not_found' ? { status: 'not_found' } : rejected('unavailable', `${read.code}: ${read.reason}`);
+  if (read.status !== 'ready') return read.code === 'not_found' ? { status: 'not_found' } : rejectedWithNonEmptyCurrent('unavailable', `${read.code}: ${read.reason}`);
   const goalRecord = read.value.records.find((candidate) => candidate.refKey === goalKey);
   if (goalRecord === undefined) {
-    return read.value.missing.includes(goalKey) ? { status: 'not_found' } : rejected('unavailable', 'the Goal read was not reported');
+    return read.value.missing.includes(goalKey) ? { status: 'not_found' } : rejectedWithNonEmptyCurrent('unavailable', 'the Goal read was not reported');
   }
   const decodedGoal = decodeGoalSnapshot(goalRecord);
-  if (decodedGoal.status !== 'decoded') return rejected('unavailable', `the Goal snapshot is not decodable: ${decodedGoal.reason}`);
+  if (decodedGoal.status !== 'decoded') return rejectedWithNonEmptyCurrent('unavailable', `the Goal snapshot is not decodable: ${decodedGoal.reason}`);
   const goal: GoalSnapshot = decodedGoal.value;
   const workspaceKey = canonicalRefKey(goal.workspaceRef);
   let workspaceRead;
   try {
     workspaceRead = await deps.records.readMany([workspaceKey]);
   } catch (error) {
-    return rejected('unavailable', `the Query Workspace read failed: ${messageOf(error)}`);
+    return rejectedWithNonEmptyCurrent('unavailable', `the Query Workspace read failed: ${messageOf(error)}`);
   }
-  if (workspaceRead.status !== 'ready') return workspaceRead.code === 'not_found' ? { status: 'not_found' } : rejected('unavailable', `${workspaceRead.code}: ${workspaceRead.reason}`);
+  if (workspaceRead.status !== 'ready') return workspaceRead.code === 'not_found' ? { status: 'not_found' } : rejectedWithNonEmptyCurrent('unavailable', `${workspaceRead.code}: ${workspaceRead.reason}`);
   const workspaceRecord = workspaceRead.value.records.find((candidate) => candidate.refKey === workspaceKey);
   if (workspaceRecord === undefined) {
-    return workspaceRead.value.missing.includes(workspaceKey) ? { status: 'not_found' } : rejected('unavailable', 'the Workspace read was not reported');
+    return workspaceRead.value.missing.includes(workspaceKey) ? { status: 'not_found' } : rejectedWithNonEmptyCurrent('unavailable', 'the Workspace read was not reported');
   }
   const decodedWorkspace = decodeWorkspaceSnapshot(workspaceRecord);
-  if (decodedWorkspace.status !== 'decoded') return rejected('unavailable', `the Workspace snapshot is not decodable: ${decodedWorkspace.reason}`);
+  if (decodedWorkspace.status !== 'decoded') return rejectedWithNonEmptyCurrent('unavailable', `the Workspace snapshot is not decodable: ${decodedWorkspace.reason}`);
   const workspace: WorkspaceSnapshot = decodedWorkspace.value;
 
   let focusPlan: PlanRevisionSnapshot | null = null;
   if (record.value.job.job.intent.focusTaskRefs.length > 0) {
     const activePlan = goal.activePlanRevision;
-    if (activePlan === null) return rejected('invalid', 'the Query focus is not provable without an active Plan');
+    if (activePlan === null) return rejectedWithNonEmptyCurrent('invalid', 'the Query focus is not provable without an active Plan');
     const planKey = planRevisionRefKey(activePlan);
     let planRead;
     try {
       planRead = await deps.records.readMany([planKey]);
     } catch (error) {
-      return rejected('unavailable', `the Query focus Plan read failed: ${messageOf(error)}`);
+      return rejectedWithNonEmptyCurrent('unavailable', `the Query focus Plan read failed: ${messageOf(error)}`);
     }
-    if (planRead.status !== 'ready') return planRead.code === 'not_found' ? { status: 'not_found' } : rejected('unavailable', `${planRead.code}: ${planRead.reason}`);
+    if (planRead.status !== 'ready') return planRead.code === 'not_found' ? { status: 'not_found' } : rejectedWithNonEmptyCurrent('unavailable', `${planRead.code}: ${planRead.reason}`);
     const planRecord = planRead.value.records.find((candidate) => candidate.refKey === planKey);
-    if (planRecord === undefined) return rejected('unavailable', 'the Query focus Plan was not reported');
+    if (planRecord === undefined) return rejectedWithNonEmptyCurrent('unavailable', 'the Query focus Plan was not reported');
     const decodedPlan = decodePlanRevisionSnapshot(planRecord);
-    if (decodedPlan.status !== 'decoded') return rejected('unavailable', `the focus Plan is not decodable: ${decodedPlan.reason}`);
+    if (decodedPlan.status !== 'decoded') return rejectedWithNonEmptyCurrent('unavailable', `the focus Plan is not decodable: ${decodedPlan.reason}`);
     focusPlan = decodedPlan.value;
   }
   const initiator = await readInitiator(deps, record.value.job);
@@ -444,39 +435,39 @@ function loadQueryManifest(
   return (async () => {
     if (!isRecord(prepared) || !isRecord(prepared.bundleRef) || !nonEmpty(prepared.bundleRef.digest)
       || !Number.isSafeInteger(prepared.bundleRef.sizeBytes) || !nonEmpty(prepared.bundleRef.contentType)) {
-      return rejected('invalid', 'the Prepared Query value is incomplete');
+      return rejectedWithNonEmptyCurrent('invalid', 'the Prepared Query value is incomplete');
     }
     const bundleRef = prepared.bundleRef;
     if (bundleRef.contentType !== QUERY_MANIFEST_CONTENT_TYPE) {
-      return rejected('invalid', 'the Prepared Query envelope does not reference a bounded Query manifest body');
+      return rejectedWithNonEmptyCurrent('invalid', 'the Prepared Query envelope does not reference a bounded Query manifest body');
     }
     let stored;
     try {
       stored = await bodies.read(bundleRef);
     } catch (error) {
-      return rejected('unavailable', `reading the Query manifest failed: ${messageOf(error)}`);
+      return rejectedWithNonEmptyCurrent('unavailable', `reading the Query manifest failed: ${messageOf(error)}`);
     }
-    if (stored.status !== 'ready') return rejected('invalid', 'the Query manifest body is not readable');
+    if (stored.status !== 'ready') return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest body is not readable');
     const record: RawArtifactRecord = stored.value;
     if (record.ref.contentType !== bundleRef.contentType || record.ref.digest !== bundleRef.digest || record.ref.sizeBytes !== bundleRef.sizeBytes) {
-      return rejected('invalid', 'the stored Query manifest reference disagrees with the Prepared envelope');
+      return rejectedWithNonEmptyCurrent('invalid', 'the stored Query manifest reference disagrees with the Prepared envelope');
     }
     if (sha256Hex(record.body) !== bundleRef.digest || Buffer.byteLength(record.body, 'utf8') !== bundleRef.sizeBytes) {
-      return rejected('invalid', 'the stored Query manifest bytes do not match their content digest');
+      return rejectedWithNonEmptyCurrent('invalid', 'the stored Query manifest bytes do not match their content digest');
     }
     if (record.origin.kind !== 'run' || !sameRef(record.origin.owner, prepared.queryRunRef)) {
-      return rejected('forbidden', 'the stored Query manifest is not owned by this QueryRun');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the stored Query manifest is not owned by this QueryRun');
     }
     let parsed: unknown;
-    try { parsed = JSON.parse(record.body); } catch { return rejected('invalid', 'the Query manifest is not valid JSON'); }
+    try { parsed = JSON.parse(record.body); } catch { return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest is not valid JSON'); }
     if (!isRecord(parsed) || parsed['schemaVersion'] !== 1 || parsed['kind'] !== 'query_execution'
       || !isRecord(parsed['queryRunRef']) || typeof parsed['input'] !== 'string' || !nonEmpty(parsed['inputDigest'])) {
-      return rejected('invalid', 'the Query manifest is not a complete query-execution manifest');
+      return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest is not a complete query-execution manifest');
     }
     const manifest = parsed as unknown as PreparedQueryManifestV1;
-    if (!sameRef(manifest.queryRunRef, prepared.queryRunRef)) return rejected('invalid', 'the Query manifest disagrees with the requested QueryRun');
-    if (sha256Hex(manifest.input) !== manifest.inputDigest) return rejected('invalid', 'the Query manifest input digest is not the digest of its input');
-    if (manifest.inputDigest !== prepared.inputDigest) return rejected('invalid', 'the Query manifest digest disagrees with the Prepared value');
+    if (!sameRef(manifest.queryRunRef, prepared.queryRunRef)) return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest disagrees with the requested QueryRun');
+    if (sha256Hex(manifest.input) !== manifest.inputDigest) return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest input digest is not the digest of its input');
+    if (manifest.inputDigest !== prepared.inputDigest) return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest digest disagrees with the Prepared value');
     return { status: 'ready', value: { manifest, bundleRef } };
   })();
 }
@@ -617,12 +608,12 @@ async function commitOperation<T extends QueryEventResult>(input: {
       const replayed = await loadRecordedResult<T>(input.deps, recovered.value, input.identityKey, input.fingerprint, input.operation);
       if (replayed !== null) return replayed;
     }
-    return rejected('unavailable', `the Query ${input.operation} commit failed and its receipt could not be confirmed: ${messageOf(error)}`);
+    return rejectedWithNonEmptyCurrent('unavailable', `the Query ${input.operation} commit failed and its receipt could not be confirmed: ${messageOf(error)}`);
   }
   if (receipt.status !== 'committed') return mapCommitFailure(receipt);
   if (receipt.replayed) {
     const replayed = await loadRecordedResult<T>(input.deps, receipt, input.identityKey, input.fingerprint, input.operation);
-    if (replayed === null) return rejected('unavailable', `the replayed Query ${input.operation} receipt is not readable`);
+    if (replayed === null) return rejectedWithNonEmptyCurrent('unavailable', `the replayed Query ${input.operation} receipt is not readable`);
     return replayed;
   }
   return { status: 'committed', value: bindResultSession(input.value, receipt.cursor), replayed: false, cursor: receipt.cursor };
@@ -656,7 +647,7 @@ function sessionStep(
       kernelTurnSeen: true, inputsConfirmed: true, kernelTurnOpen: step.release.kernelTurnOpen,
       historyBoundaryCursor: step.release.historyCursor.kind === 'advance' ? step.release.historyCursor.cursor : null,
     } });
-  if (!result.ok) return rejected(result.code, result.detail);
+  if (!result.ok) return rejectedWithNonEmptyCurrent(result.code, result.detail);
   const [effect] = result.effects;
   if (effect?.kind === 'occupy_session') return occupySessionRecord(session, effect);
   if (effect?.kind === 'release_session') return releaseSessionRecord(session, effect);
@@ -789,7 +780,7 @@ function attestationContent(input: Pick<ResolveUnknownQueryRunInput, 'queryRunRe
 }
 
 function revisionConflict(reads: readonly { refKey: string; revision: number }[]): CoreRejection {
-  return rejected('revision_conflict', 'the supplied version pins do not match the versions read in this call', pinsFromCurrent(reads));
+  return rejectedWithNonEmptyCurrent('revision_conflict', 'the supplied version pins do not match the versions read in this call', pinsFromCurrent(reads));
 }
 
 /** Restore the ORIGINAL receipt before any fresh check. `null` means there is no
@@ -804,13 +795,13 @@ async function replayOriginal<T extends QueryEventResult>(
   try {
     found = await deps.records.lookupCommit({ identityKey, fingerprint });
   } catch (error) {
-    return rejected('unavailable', `the Query ${operation} idempotency lookup failed: ${messageOf(error)}`);
+    return rejectedWithNonEmptyCurrent('unavailable', `the Query ${operation} idempotency lookup failed: ${messageOf(error)}`);
   }
   if (found.status === 'ready') return loadRecordedResult<T>(deps, found.value, identityKey, fingerprint, operation);
   if (found.code === 'not_found') return null;
-  if (found.code === 'idempotency_conflict') return rejected('idempotency_conflict', found.reason);
-  if (found.code === 'invalid') return rejected('invalid', found.reason);
-  return rejected('unavailable', `${found.code}: ${found.reason}`);
+  if (found.code === 'idempotency_conflict') return rejectedWithNonEmptyCurrent('idempotency_conflict', found.reason);
+  if (found.code === 'invalid') return rejectedWithNonEmptyCurrent('invalid', found.reason);
+  return rejectedWithNonEmptyCurrent('unavailable', `${found.code}: ${found.reason}`);
 }
 
 // --------------------------------------------------------------------------
@@ -825,13 +816,13 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     budget: RuntimeBudget;
   }>> {
     const state = core.run.run.executionState;
-    if (state === undefined) return rejected('incomplete', 'the QueryRun has no persisted execution state to authorize');
+    if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state to authorize');
     try {
       return await deps.authorizeConfiguration(ctx, {
         job: core.job, run: core.run, sessionRole: state.role, roleResolution: state.roleResolution,
       });
     } catch (error) {
-      return rejected('unavailable', `the trusted Query Host projection failed: ${messageOf(error)}`);
+      return rejectedWithNonEmptyCurrent('unavailable', `the trusted Query Host projection failed: ${messageOf(error)}`);
     }
   }
 
@@ -840,24 +831,24 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     request: GraphWrite<{ queryRunRef: QueryRunRef; sessionRef: SessionRef }>,
   ): Promise<WriteResult<QueryExecutionRecord>> {
     const owned = ownContext(ctx);
-    if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');
+    if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
     const actor = hostActor(owned);
-    if (actor === null) return rejected('forbidden', 'claimQuery requires a trusted Host call context');
+    if (actor === null) return rejectedWithNonEmptyCurrent('forbidden', 'claimQuery requires a trusted Host call context');
     const signal = owned.signal;
-    if (signal.aborted) return rejected('cancelled', 'the Query claim was cancelled before the records read');
+    if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query claim was cancelled before the records read');
     let ownedRequest: GraphWrite<{ queryRunRef: QueryRunRef; sessionRef: SessionRef }>;
-    try { ownedRequest = structuredClone(request); } catch { return rejected('invalid', 'the claim request cannot be isolated from the caller'); }
+    try { ownedRequest = structuredClone(request); } catch { return rejectedWithNonEmptyCurrent('invalid', 'the claim request cannot be isolated from the caller'); }
     const input = ownedRequest?.input;
     const meta = ownedRequest?.meta;
     if (!isRecord(input) || !isRecord(input.queryRunRef) || !isRecord(input.sessionRef) || !isRecord(meta) || !nonEmpty(meta.requestId)) {
-      return rejected('invalid', 'claimQuery requires a complete QueryRunRef, SessionRef and requestId');
+      return rejectedWithNonEmptyCurrent('invalid', 'claimQuery requires a complete QueryRunRef, SessionRef and requestId');
     }
     const rawRun = input.queryRunRef;
     const rawSession = input.sessionRef;
     if (rawRun['aggregateType'] !== 'QueryRun' || !nonEmpty(rawRun['projectId']) || !nonEmpty(rawRun['workspaceId'])
       || !nonEmpty(rawRun['queryJobId']) || !nonEmpty(rawRun['runId'])
       || !nonEmpty(rawSession['projectId']) || !nonEmpty(rawSession['sessionId'])) {
-      return rejected('invalid', 'claimQuery requires a complete QueryRunRef and SessionRef');
+      return rejectedWithNonEmptyCurrent('invalid', 'claimQuery requires a complete QueryRunRef and SessionRef');
     }
     let queryRunRef: QueryRunRef;
     let sessionRef: SessionRef;
@@ -868,19 +859,19 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       // pass the full SessionAggregateRef); the fixed state keeps that identity.
       sessionRef = structuredClone(rawSession) as unknown as SessionRef;
       requestId = meta.requestId;
-    } catch { return rejected('invalid', 'the claim request cannot be isolated from the caller'); }
+    } catch { return rejectedWithNonEmptyCurrent('invalid', 'the claim request cannot be isolated from the caller'); }
     if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
-      return rejected('forbidden', 'the QueryRun is outside the Host call scope');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
     }
     const queryJobRef = queryJobRefFor(queryRunRef);
     const expected = validateExpected(meta.expected,
       { projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, queryJobId: queryRunRef.queryJobId, runId: queryRunRef.runId },
       { job: true, run: true, session: true });
-    if (expected.status === 'invalid') return rejected('invalid', expected.reason);
-    if (expected.sessionId !== sessionRef.sessionId) return rejected('invalid', 'the Session pin does not name the requested Session');
+    if (expected.status === 'invalid') return rejectedWithNonEmptyCurrent('invalid', expected.reason);
+    if (expected.sessionId !== sessionRef.sessionId) return rejectedWithNonEmptyCurrent('invalid', 'the Session pin does not name the requested Session');
     const identityKey = operationIdentity('claimed', actor, queryRunRef, requestId);
     const fingerprint = requestFingerprint('claimed', requestId, expected, input);
-    if (fingerprint === null) return rejected('invalid', 'the claim request is not serializable');
+    if (fingerprint === null) return rejectedWithNonEmptyCurrent('invalid', 'the claim request is not serializable');
     const replay = await replayOriginal<QueryExecutionRecord>(deps, identityKey, fingerprint, 'claimed');
     if (replay !== null) return replay;
 
@@ -896,17 +887,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       ]);
     }
     if (job.job.status !== 'pending' || run.run.status !== 'pending') {
-      return rejected('busy', 'the QueryRun is not awaiting a first claim');
+      return rejectedWithNonEmptyCurrent('busy', 'the QueryRun is not awaiting a first claim');
     }
-    if (job.job.runRef === null || !sameRef(job.job.runRef, queryRunRef)) return rejected('invalid', 'the QueryJob is not bound to this QueryRun');
+    if (job.job.runRef === null || !sameRef(job.job.runRef, queryRunRef)) return rejectedWithNonEmptyCurrent('invalid', 'the QueryJob is not bound to this QueryRun');
     if (session.ref.projectId !== queryRunRef.projectId || session.workspaceId !== queryRunRef.workspaceId) {
-      return rejected('forbidden', 'the target Session belongs to another scope');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the target Session belongs to another scope');
     }
     // SES-03: lifecycle, health, occupancy and the generation `revision + 1`, which the occupied record carries as its revision.
     const nextSession = sessionStep(session, { kind: 'occupy', holder: queryRunRef });
     if ('status' in nextSession) return nextSession;
     const execution = job.job.intent.execution;
-    if (execution === undefined) return rejected('unsupported', 'claimQuery requires an explicit read-only execution binding');
+    if (execution === undefined) return rejectedWithNonEmptyCurrent('unsupported', 'claimQuery requires an explicit read-only execution binding');
     if (execution.consultation !== undefined) {
       // The FIRST occupancy point re-checks the bound recipient against the
       // ACTUAL claimed Session and the deterministic message identity. The
@@ -918,11 +909,11 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         : execution.consultation.derivation.childSessionRef;
       if (claimSession.projectId !== session.ref.projectId
         || claimSession.sessionId !== session.ref.sessionId) {
-        return rejected('forbidden', 'the consultation binding recipient is not the claimed Session');
+        return rejectedWithNonEmptyCurrent('forbidden', 'the consultation binding recipient is not the claimed Session');
       }
       const refs = consultationQueryRefs(execution.consultation.messageRef, execution.consultation.part);
       if (refs.queryJobRef.queryJobId !== queryRunRef.queryJobId || refs.queryRunRef.runId !== queryRunRef.runId) {
-        return rejected('invalid', 'the consultation Query is not the deterministic identity of its message');
+        return rejectedWithNonEmptyCurrent('invalid', 'the consultation Query is not the deterministic identity of its message');
       }
     }
     // S1-DISPATCH-02: when the trusted Session-facts reader is injected, a
@@ -931,8 +922,8 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     let derivedDispatchGuards: readonly RecordGuard[] = [];
     if (deps.sessionFacts !== undefined) {
       const factsRead = await deps.sessionFacts.readSessionFacts(owned, sessionRef);
-      if (factsRead.status === 'not_found') return rejected('not_found', 'the target Session does not exist');
-      if (factsRead.status === 'not_ready') return rejected('incomplete', 'the Session facts are not readable at the required watermark');
+      if (factsRead.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the target Session does not exist');
+      if (factsRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the Session facts are not readable at the required watermark');
       if (factsRead.status !== 'ready') return factsRead;
       const facts = factsRead.value;
       const recorded = facts.session.provenance ?? null;
@@ -942,8 +933,8 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       let legacyProvenance: SessionProvenanceV1 | null = null;
       if (recorded === null && deps.legacyProvenance !== undefined) {
         const derived = await deps.legacyProvenance.deriveLegacySessionProvenance(owned, sessionRef);
-        if (derived.status === 'not_found') return rejected('not_found', 'the target Session does not exist');
-        if (derived.status === 'not_ready') return rejected('incomplete', 'the legacy provenance is not readable at the required watermark');
+        if (derived.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the target Session does not exist');
+        if (derived.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the legacy provenance is not readable at the required watermark');
         if (derived.status !== 'ready') return derived;
         legacyProvenance = derived.value.provenance;
         derivedDispatchGuards = derived.value.guards;
@@ -955,7 +946,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       const problem = queryClaimDispatchProblem(facts, readonlyQueryMatches, legacyProvenance);
       if (problem !== null) return problem;
     }
-    if (signal.aborted) return rejected('cancelled', 'the Query claim was cancelled before Role resolution');
+    if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query claim was cancelled before Role resolution');
 
     let roleFacts;
     try {
@@ -963,17 +954,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         roleBinding: execution.roleBinding, declaredPermissions: { tools: [], writeScope: [] },
       });
     } catch (error) {
-      return rejected('unavailable', `Role resolution failed: ${messageOf(error)}`);
+      return rejectedWithNonEmptyCurrent('unavailable', `Role resolution failed: ${messageOf(error)}`);
     }
     if (roleFacts.result.status !== 'ready') return mapRead(roleFacts.result);
     const roleResolution = roleFacts.result.value;
-    if (roleResolution.status === 'inadmissible') return rejected('forbidden', 'the Role binding is inadmissible');
+    if (roleResolution.status === 'inadmissible') return rejectedWithNonEmptyCurrent('forbidden', 'the Role binding is inadmissible');
     if (roleResolution.status === 'resolved') {
       if (session.role.kind !== 'role_spec'
         || session.role.pin.ref.projectId !== roleResolution.revision.projectId
         || session.role.pin.ref.roleId !== roleResolution.revision.roleId
         || session.role.pin.ref.revision !== roleResolution.revision.revision) {
-        return rejected('forbidden', 'the resolved Role does not match the Session Role pin');
+        return rejectedWithNonEmptyCurrent('forbidden', 'the resolved Role does not match the Session Role pin');
       }
     } else {
       // First selection, not a runtime Role hot-swap: the Job's legacy binding
@@ -981,14 +972,14 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       if (session.role.kind !== 'legacy_template'
         || session.role.templateId !== execution.roleBinding.templateId
         || session.role.templateRevision !== execution.roleBinding.templateRevision) {
-        return rejected('forbidden', 'the legacy Session role does not match the Job execution role binding');
+        return rejectedWithNonEmptyCurrent('forbidden', 'the legacy Session role does not match the Job execution role binding');
       }
     }
-    if (signal.aborted) return rejected('cancelled', 'the Query claim was cancelled before commit');
+    if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query claim was cancelled before commit');
 
     const occurredAt = deps.now();
     const eventId = deps.eventId();
-    if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejected('unsupported', 'the injected clock/id source produced an empty value');
+    if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejectedWithNonEmptyCurrent('unsupported', 'the injected clock/id source produced an empty value');
     const nextRun = advanceQueryExecutionRecord({ job, run }, { phase: 'claimed', claim: {
       sessionRef, sessionGeneration: nextSession.revision, role: session.role, roleBinding: execution.roleBinding, roleResolution,
       priorHistoryCursor: session.historyCursor,
@@ -1018,35 +1009,35 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     request: GraphWrite<{ prepared: PreparedQueryExecution }>,
   ): Promise<WriteResult<QueryExecutionRecord>> {
     const owned = ownContext(ctx);
-    if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');
+    if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
     const actor = hostActor(owned);
-    if (actor === null) return rejected('forbidden', 'bindPreparedQuery requires a trusted Host call context');
+    if (actor === null) return rejectedWithNonEmptyCurrent('forbidden', 'bindPreparedQuery requires a trusted Host call context');
     const signal = owned.signal;
-    if (signal.aborted) return rejected('cancelled', 'the Query bind was cancelled before the records read');
+    if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query bind was cancelled before the records read');
     let ownedRequest: GraphWrite<{ prepared: PreparedQueryExecution }>;
-    try { ownedRequest = structuredClone(request); } catch { return rejected('invalid', 'the bind request cannot be isolated from the caller'); }
+    try { ownedRequest = structuredClone(request); } catch { return rejectedWithNonEmptyCurrent('invalid', 'the bind request cannot be isolated from the caller'); }
     const input = ownedRequest?.input;
     const meta = ownedRequest?.meta;
     const prepared = input?.prepared;
     if (!isRecord(prepared) || !isRecord(prepared.queryRunRef) || !isRecord(meta) || !nonEmpty(meta.requestId)) {
-      return rejected('invalid', 'bindPreparedQuery requires a complete PreparedQueryExecution and requestId');
+      return rejectedWithNonEmptyCurrent('invalid', 'bindPreparedQuery requires a complete PreparedQueryExecution and requestId');
     }
     let queryRunRef: QueryRunRef;
     let requestId: string;
     try {
       queryRunRef = structuredClone(prepared.queryRunRef) as QueryRunRef;
       requestId = meta.requestId;
-    } catch { return rejected('invalid', 'the bind request cannot be isolated from the caller'); }
+    } catch { return rejectedWithNonEmptyCurrent('invalid', 'the bind request cannot be isolated from the caller'); }
     if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
-      return rejected('forbidden', 'the QueryRun is outside the Host call scope');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
     }
     const expected = validateExpected(meta.expected,
       { projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, queryJobId: queryRunRef.queryJobId, runId: queryRunRef.runId },
       { job: false, run: true, session: true });
-    if (expected.status === 'invalid') return rejected('invalid', expected.reason);
+    if (expected.status === 'invalid') return rejectedWithNonEmptyCurrent('invalid', expected.reason);
     const identityKey = operationIdentity('prepared', actor, queryRunRef, requestId);
     const fingerprint = requestFingerprint('prepared', requestId, expected, input);
-    if (fingerprint === null) return rejected('invalid', 'the bind request is not serializable');
+    if (fingerprint === null) return rejectedWithNonEmptyCurrent('invalid', 'the bind request is not serializable');
     const replay = await replayOriginal<QueryExecutionRecord>(deps, identityKey, fingerprint, 'prepared');
     if (replay !== null) return replay;
 
@@ -1054,7 +1045,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (read.status !== 'ready') return toRejection(read);
     const { job, run, session } = read.value;
     const state = run.run.executionState;
-    if (state === undefined) return rejected('incomplete', 'the QueryRun has no persisted execution state');
+    if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state');
     if (expected.run !== run.revision || expected.session !== session.revision || expected.sessionId !== session.ref.sessionId) {
       return revisionConflict([
         { refKey: queryRunRefKey(queryRunRef), revision: run.revision },
@@ -1062,18 +1053,18 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       ]);
     }
     if (!ownsQuery(session, queryRunRef, state)) {
-      return rejected('busy', 'the target Session is no longer occupied by this QueryRun generation');
+      return rejectedWithNonEmptyCurrent('busy', 'the target Session is no longer occupied by this QueryRun generation');
     }
-    if (state.phase !== 'claimed' && state.phase !== 'prepared') return rejected('busy', `the QueryRun is not awaiting preparation (phase ${state.phase})`);
+    if (state.phase !== 'claimed' && state.phase !== 'prepared') return rejectedWithNonEmptyCurrent('busy', `the QueryRun is not awaiting preparation (phase ${state.phase})`);
     const loaded = await loadQueryManifest(deps.bodies, prepared as unknown as PreparedQueryExecution);
     if (loaded.status !== 'ready') return toRejection(loaded);
     const manifest = loaded.value.manifest;
     if (!sameRef(manifest.queryRunRef, queryRunRef) || !sameRef(manifest.sessionRef, state.sessionRef)) {
-      return rejected('invalid', 'the Query manifest does not name this QueryRun/Session');
+      return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest does not name this QueryRun/Session');
     }
-    if (manifest.sessionGeneration !== state.sessionGeneration) return rejected('invalid', 'the Query manifest Session generation disagrees');
+    if (manifest.sessionGeneration !== state.sessionGeneration) return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest Session generation disagrees');
     if (!sameRef(manifest.roleBinding, state.roleBinding) || !sameRef(manifest.sessionRole, state.role)) {
-      return rejected('forbidden', 'the Query manifest Role disagrees with the claimed Role');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the Query manifest Role disagrees with the claimed Role');
     }
     // CTX-03 G-CTX: a saved Query context binding must be a legal s3-context-v1
     // value. A Query manifest carries no legacy `selectedTaskInputs`, so its
@@ -1092,17 +1083,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       // `expectedQueryCallKinds`); every other Query kind requires `copy`.
       const fixedDuty = expectedQueryDuty(manifest);
       if (fixedDuty !== undefined && manifest.contextAssembly.duty !== fixedDuty) {
-        return rejected('forbidden', 'the assembled Query context duty disagrees with the resolved Role');
+        return rejectedWithNonEmptyCurrent('forbidden', 'the assembled Query context duty disagrees with the resolved Role');
       }
       if (!expectedQueryCallKinds(job).includes(manifest.contextAssembly.callKind)) {
-        return rejected('forbidden', 'the assembled Query context callKind disagrees with the Query execution kind');
+        return rejectedWithNonEmptyCurrent('forbidden', 'the assembled Query context callKind disagrees with the Query execution kind');
       }
     }
     if (state.phase === 'prepared') {
       if (state.prepared === null || !sameRef(state.prepared.bundleRef, loaded.value.bundleRef)) {
-        return rejected('idempotency_conflict', 'the QueryRun is already bound to another manifest request');
+        return rejectedWithNonEmptyCurrent('idempotency_conflict', 'the QueryRun is already bound to another manifest request');
       }
-      return rejected('busy', 'the QueryRun is already prepared');
+      return rejectedWithNonEmptyCurrent('busy', 'the QueryRun is already prepared');
     }
     const facts = await readPreparationFacts(deps, queryRunRef);
     if (facts.status !== 'ready') return toRejection(facts);
@@ -1110,7 +1101,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       || !sameRef(manifest.goal.ref, facts.value.goal.ref)
       || manifest.workspace.revision !== facts.value.workspace.revision
       || !sameRef(manifest.workspace.ref, facts.value.workspace.ref)) {
-      return rejected('source_stale', 'the Goal/Workspace moved since the Query manifest was prepared');
+      return rejectedWithNonEmptyCurrent('source_stale', 'the Goal/Workspace moved since the Query manifest was prepared');
     }
     const authorized = await authorizeCurrent(owned, { job, run, session });
     if (authorized.status !== 'ready') return toRejection(authorized);
@@ -1119,12 +1110,12 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       || authorized.value.permissions.writeScope.length !== 0
       || !sameRef({ template: authorized.value.hostTemplate }, { template: manifest.hostTemplate })
       || !sameRef(authorized.value.budget, manifest.runtimeBudget)) {
-      return rejected('forbidden', 'the accepted Query permissions no longer fit the current Host and Role ceilings');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the accepted Query permissions no longer fit the current Host and Role ceilings');
     }
-    if (signal.aborted) return rejected('cancelled', 'the Query bind was cancelled before commit');
+    if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query bind was cancelled before commit');
     const occurredAt = deps.now();
     const eventId = deps.eventId();
-    if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejected('unsupported', 'the injected clock/id source produced an empty value');
+    if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejectedWithNonEmptyCurrent('unsupported', 'the injected clock/id source produced an empty value');
     const nextRun = advanceQueryExecutionRecord({ job, run }, { phase: 'prepared',
       prepared: { bundleRef: loaded.value.bundleRef, inputDigest: (prepared as unknown as PreparedQueryExecution).inputDigest } }).run;
     const nextRecord: QueryExecutionRecord = { job, run: nextRun, session, answer: null };
@@ -1149,23 +1140,23 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     request: GraphWrite<{ prepared: PreparedQueryExecution; consumerId: string; kernel: QueryEntryIdentity['kernel'] }>,
   ): Promise<WriteResult<QueryEntryTicket>> {
     const owned = ownContext(ctx);
-    if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');
+    if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
     const actor = hostActor(owned);
-    if (actor === null) return rejected('forbidden', 'beginQueryEntry requires a trusted Host call context');
+    if (actor === null) return rejectedWithNonEmptyCurrent('forbidden', 'beginQueryEntry requires a trusted Host call context');
     const signal = owned.signal;
-    if (signal.aborted) return rejected('cancelled', 'the Query entry was cancelled before the records read');
+    if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query entry was cancelled before the records read');
     let ownedRequest: GraphWrite<{ prepared: PreparedQueryExecution; consumerId: string; kernel: QueryEntryIdentity['kernel'] }>;
-    try { ownedRequest = structuredClone(request); } catch { return rejected('invalid', 'the begin request cannot be isolated from the caller'); }
+    try { ownedRequest = structuredClone(request); } catch { return rejectedWithNonEmptyCurrent('invalid', 'the begin request cannot be isolated from the caller'); }
     const input = ownedRequest?.input;
     const meta = ownedRequest?.meta;
-    if (!isRecord(meta) || !nonEmpty(meta.requestId)) return rejected('invalid', 'beginQueryEntry requires a requestId');
+    if (!isRecord(meta) || !nonEmpty(meta.requestId)) return rejectedWithNonEmptyCurrent('invalid', 'beginQueryEntry requires a requestId');
     const prepared = input?.prepared;
     const consumerId = input?.consumerId;
     const kernel = input?.kernel;
     if (!isRecord(prepared) || !isRecord(prepared.queryRunRef) || !nonEmpty(consumerId)
       || !isRecord(kernel) || !nonEmpty(kernel['adapterId']) || !nonEmpty(kernel['kernelSessionId'])
       || !nonEmpty(kernel['runId']) || !nonEmpty(kernel['turnId'])) {
-      return rejected('invalid', 'beginQueryEntry requires a complete prepared value, consumerId and kernel');
+      return rejectedWithNonEmptyCurrent('invalid', 'beginQueryEntry requires a complete prepared value, consumerId and kernel');
     }
     let queryRunRef: QueryRunRef;
     let requestId: string;
@@ -1177,17 +1168,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         adapterId: String(kernel['adapterId']), kernelSessionId: String(kernel['kernelSessionId']),
         runId: String(kernel['runId']), turnId: String(kernel['turnId']),
       };
-    } catch { return rejected('invalid', 'the begin request cannot be isolated from the caller'); }
+    } catch { return rejectedWithNonEmptyCurrent('invalid', 'the begin request cannot be isolated from the caller'); }
     if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
-      return rejected('forbidden', 'the QueryRun is outside the Host call scope');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
     }
     const expected = validateExpected(meta.expected,
       { projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, queryJobId: queryRunRef.queryJobId, runId: queryRunRef.runId },
       { job: true, run: true, session: true });
-    if (expected.status === 'invalid') return rejected('invalid', expected.reason);
+    if (expected.status === 'invalid') return rejectedWithNonEmptyCurrent('invalid', expected.reason);
     const identityKey = operationIdentity('entering', actor, queryRunRef, requestId);
     const fingerprint = requestFingerprint('entering', requestId, expected, input);
-    if (fingerprint === null) return rejected('invalid', 'the begin request is not serializable');
+    if (fingerprint === null) return rejectedWithNonEmptyCurrent('invalid', 'the begin request is not serializable');
     const replay = await replayOriginal<QueryEntryTicket>(deps, identityKey, fingerprint, 'entering');
     if (replay !== null) return replay;
 
@@ -1195,7 +1186,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (read.status !== 'ready') return toRejection(read);
     const { job, run, session } = read.value;
     const state = run.run.executionState;
-    if (state === undefined) return rejected('incomplete', 'the QueryRun has no persisted execution state');
+    if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state');
     if (expected.job !== job.revision || expected.run !== run.revision || expected.session !== session.revision
       || expected.sessionId !== state.sessionRef.sessionId) {
       return revisionConflict([
@@ -1206,20 +1197,20 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     }
     if (state.phase !== 'prepared') {
       if (state.entry !== null && state.entry.consumerId !== consumerId) {
-        return rejected('busy', 'another consumer already entered this QueryRun');
+        return rejectedWithNonEmptyCurrent('busy', 'another consumer already entered this QueryRun');
       }
-      return rejected('busy', `the QueryRun is not awaiting a fresh entry (phase ${state.phase})`);
+      return rejectedWithNonEmptyCurrent('busy', `the QueryRun is not awaiting a fresh entry (phase ${state.phase})`);
     }
     if (state.prepared === null || !sameRef(state.prepared.bundleRef, prepared.bundleRef)) {
-      return rejected('invalid', 'the begin request disagrees with the persisted prepared manifest');
+      return rejectedWithNonEmptyCurrent('invalid', 'the begin request disagrees with the persisted prepared manifest');
     }
-    if (state.prepared.inputDigest !== prepared.inputDigest) return rejected('invalid', 'the begin input digest disagrees with the persisted preparation');
+    if (state.prepared.inputDigest !== prepared.inputDigest) return rejectedWithNonEmptyCurrent('invalid', 'the begin input digest disagrees with the persisted preparation');
     if (!ownsQuery(session, queryRunRef, state)) {
-      return rejected('busy', 'the target Session is no longer occupied by this QueryRun generation');
+      return rejectedWithNonEmptyCurrent('busy', 'the target Session is no longer occupied by this QueryRun generation');
     }
-    if (job.job.status !== 'pending' && job.job.status !== 'running') return rejected('busy', 'the QueryJob is not awaiting a fresh entry');
+    if (job.job.status !== 'pending' && job.job.status !== 'running') return rejectedWithNonEmptyCurrent('busy', 'the QueryJob is not awaiting a fresh entry');
     const execution = job.job.intent.execution;
-    if (execution === undefined) return rejected('unsupported', 'beginQueryEntry requires an explicit read-only execution binding');
+    if (execution === undefined) return rejectedWithNonEmptyCurrent('unsupported', 'beginQueryEntry requires an explicit read-only execution binding');
     const loaded = await loadQueryManifest(deps.bodies, prepared as unknown as PreparedQueryExecution);
     if (loaded.status !== 'ready') return toRejection(loaded);
     const manifest = loaded.value.manifest;
@@ -1230,15 +1221,15 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       || authorized.value.permissions.writeScope.length !== 0
       || !sameRef({ template: authorized.value.hostTemplate }, { template: manifest.hostTemplate })
       || !sameRef(authorized.value.budget, manifest.runtimeBudget)) {
-      return rejected('forbidden', 'the prepared Query permissions no longer fit the current Host and Role ceilings');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the prepared Query permissions no longer fit the current Host and Role ceilings');
     }
     if (kernelBinding.adapterId !== session.kernel.adapterId || kernelBinding.kernelSessionId !== session.kernel.kernelSessionId) {
-      return rejected('unavailable', 'the fixed Kernel identity disagrees with the Session mapping');
+      return rejectedWithNonEmptyCurrent('unavailable', 'the fixed Kernel identity disagrees with the Session mapping');
     }
-    if (signal.aborted) return rejected('cancelled', 'the Query entry was cancelled before commit');
+    if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query entry was cancelled before commit');
     const occurredAt = deps.now();
     const eventId = deps.eventId();
-    if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejected('unsupported', 'the injected clock/id source produced an empty value');
+    if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejectedWithNonEmptyCurrent('unsupported', 'the injected clock/id source produced an empty value');
     // QueryRun and QueryJob become running with the fixed entry and the round-0 execution binding.
     const { job: nextJob, run: nextRun } = advanceQueryExecutionRecord({ job, run }, {
       phase: 'entering', occurredAt,
@@ -1291,16 +1282,16 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     request: GraphWrite<{ entry: QueryEntryIdentity; entries: QueryModelUsageV1[] }>,
   ): Promise<WriteResult<QueryRunSnapshot>> {
     const owned = ownContext(ctx);
-    if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');
+    if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
     const actor = hostActor(owned);
-    if (actor === null) return rejected('forbidden', 'recordQueryUsage requires a trusted Host call context');
+    if (actor === null) return rejectedWithNonEmptyCurrent('forbidden', 'recordQueryUsage requires a trusted Host call context');
     let ownedRequest: GraphWrite<{ entry: QueryEntryIdentity; entries: QueryModelUsageV1[] }>;
-    try { ownedRequest = structuredClone(request); } catch { return rejected('invalid', 'the usage request cannot be isolated from the caller'); }
+    try { ownedRequest = structuredClone(request); } catch { return rejectedWithNonEmptyCurrent('invalid', 'the usage request cannot be isolated from the caller'); }
     const input = ownedRequest?.input;
     const meta = ownedRequest?.meta;
     if (!isRecord(input) || !isRecord(input.entry) || !isRecord(input.entry.queryRunRef) || !Array.isArray(input.entries)
       || !isRecord(meta) || !nonEmpty(meta.requestId)) {
-      return rejected('invalid', 'recordQueryUsage requires a complete entry, usage entries and requestId');
+      return rejectedWithNonEmptyCurrent('invalid', 'recordQueryUsage requires a complete entry, usage entries and requestId');
     }
     const entry = input.entry as unknown as QueryEntryIdentity;
     let queryRunRef: QueryRunRef;
@@ -1308,17 +1299,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     try {
       queryRunRef = structuredClone(input.entry.queryRunRef) as QueryRunRef;
       requestId = meta.requestId;
-    } catch { return rejected('invalid', 'the usage request cannot be isolated from the caller'); }
+    } catch { return rejectedWithNonEmptyCurrent('invalid', 'the usage request cannot be isolated from the caller'); }
     if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
-      return rejected('forbidden', 'the QueryRun is outside the Host call scope');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
     }
     const expected = validateExpected(meta.expected,
       { projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, queryJobId: queryRunRef.queryJobId, runId: queryRunRef.runId },
       { job: false, run: true, session: false });
-    if (expected.status === 'invalid') return rejected('invalid', expected.reason);
+    if (expected.status === 'invalid') return rejectedWithNonEmptyCurrent('invalid', expected.reason);
     const identityKey = operationIdentity('usage', actor, queryRunRef, requestId);
     const fingerprint = requestFingerprint('usage', requestId, expected, input);
-    if (fingerprint === null) return rejected('invalid', 'the usage request is not serializable');
+    if (fingerprint === null) return rejectedWithNonEmptyCurrent('invalid', 'the usage request is not serializable');
     const replay = await replayOriginal<QueryRunSnapshot>(deps, identityKey, fingerprint, 'usage');
     if (replay !== null) return replay;
 
@@ -1326,18 +1317,18 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (read.status !== 'ready') return toRejection(read);
     const { job, run, session } = read.value;
     const state = run.run.executionState;
-    if (state === undefined) return rejected('incomplete', 'the QueryRun has no persisted execution state');
+    if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state');
     if (expected.run !== run.revision) {
       return revisionConflict([{ refKey: queryRunRefKey(queryRunRef), revision: run.revision }]);
     }
-    if (state.phase === 'settled') return rejected('busy', 'the QueryRun is already settled');
-    if (!sameRef(entryIdentity(state, queryRunRef), entry)) return rejected('forbidden', 'the usage entry disagrees with the fixed Query entry');
+    if (state.phase === 'settled') return rejectedWithNonEmptyCurrent('busy', 'the QueryRun is already settled');
+    if (!sameRef(entryIdentity(state, queryRunRef), entry)) return rejectedWithNonEmptyCurrent('forbidden', 'the usage entry disagrees with the fixed Query entry');
     const byId = new Map<string, QueryModelRequestV1>();
     for (const existing of state.requests) byId.set(existing.requestId, existing);
     for (const incoming of input.entries) {
       if (!isRecord(incoming) || !nonEmpty(incoming['requestId']) || !nonEmpty(incoming['requestDigest'])
         || !['reserved', 'reported', 'unknown'].includes(incoming['usageStatus'] as string)) {
-        return rejected('invalid', 'a usage entry is not a complete reserved/reported/unknown record');
+        return rejectedWithNonEmptyCurrent('invalid', 'a usage entry is not a complete reserved/reported/unknown record');
       }
       const existing = byId.get(incoming['requestId'] as string);
       byId.set(incoming['requestId'] as string, { ...structuredClone(incoming as unknown as QueryModelUsageV1), admitted: existing?.admitted ?? false });
@@ -1363,17 +1354,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     request: GraphWrite<{ entry: QueryEntryIdentity; requestId: string; requestDigest: string; contextInputDigest: string; manifestDigest: string }>,
   ): Promise<WriteResult<QueryRunSnapshot>> {
     const owned = ownContext(ctx);
-    if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');
+    if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
     const actor = hostActor(owned);
-    if (actor === null) return rejected('forbidden', 'admitQueryModelRequest requires a trusted Host call context');
+    if (actor === null) return rejectedWithNonEmptyCurrent('forbidden', 'admitQueryModelRequest requires a trusted Host call context');
     let ownedRequest: GraphWrite<{ entry: QueryEntryIdentity; requestId: string; requestDigest: string; contextInputDigest: string; manifestDigest: string }>;
-    try { ownedRequest = structuredClone(request); } catch { return rejected('invalid', 'the admit request cannot be isolated from the caller'); }
+    try { ownedRequest = structuredClone(request); } catch { return rejectedWithNonEmptyCurrent('invalid', 'the admit request cannot be isolated from the caller'); }
     const input = ownedRequest?.input;
     const meta = ownedRequest?.meta;
     if (!isRecord(input) || !isRecord(input.entry) || !isRecord(input.entry.queryRunRef) || !nonEmpty(input.requestId)
       || !nonEmpty(input.requestDigest) || !nonEmpty(input.contextInputDigest) || !nonEmpty(input.manifestDigest)
       || !isRecord(meta) || !nonEmpty(meta.requestId)) {
-      return rejected('invalid', 'admitQueryModelRequest requires a complete entry and request identity');
+      return rejectedWithNonEmptyCurrent('invalid', 'admitQueryModelRequest requires a complete entry and request identity');
     }
     const entry = input.entry as unknown as QueryEntryIdentity;
     const modelRequestId = input.requestId;
@@ -1382,17 +1373,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     try {
       queryRunRef = structuredClone(input.entry.queryRunRef) as QueryRunRef;
       requestId = meta.requestId;
-    } catch { return rejected('invalid', 'the admit request cannot be isolated from the caller'); }
+    } catch { return rejectedWithNonEmptyCurrent('invalid', 'the admit request cannot be isolated from the caller'); }
     if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
-      return rejected('forbidden', 'the QueryRun is outside the Host call scope');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
     }
     const expected = validateExpected(meta.expected,
       { projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, queryJobId: queryRunRef.queryJobId, runId: queryRunRef.runId },
       { job: false, run: true, session: false });
-    if (expected.status === 'invalid') return rejected('invalid', expected.reason);
+    if (expected.status === 'invalid') return rejectedWithNonEmptyCurrent('invalid', expected.reason);
     const identityKey = operationIdentity('admitted', actor, queryRunRef, requestId);
     const fingerprint = requestFingerprint('admitted', requestId, expected, input);
-    if (fingerprint === null) return rejected('invalid', 'the admit request is not serializable');
+    if (fingerprint === null) return rejectedWithNonEmptyCurrent('invalid', 'the admit request is not serializable');
     const replay = await replayOriginal<QueryRunSnapshot>(deps, identityKey, fingerprint, 'admitted');
     if (replay !== null) return replay;
 
@@ -1400,28 +1391,28 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (read.status !== 'ready') return toRejection(read);
     const { job, run, session } = read.value;
     const state = run.run.executionState;
-    if (state === undefined) return rejected('incomplete', 'the QueryRun has no persisted execution state');
+    if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state');
     if (expected.run !== run.revision) {
       return revisionConflict([{ refKey: queryRunRefKey(queryRunRef), revision: run.revision }]);
     }
     if (state.phase !== 'entering' && state.phase !== 'entered' && state.phase !== 'unknown') {
-      return rejected('busy', `the QueryRun cannot admit a model request in phase ${state.phase}`);
+      return rejectedWithNonEmptyCurrent('busy', `the QueryRun cannot admit a model request in phase ${state.phase}`);
     }
     if (!ownsQuery(session, queryRunRef, state)) {
-      return rejected('busy', 'the target Session is no longer occupied by this QueryRun generation');
+      return rejectedWithNonEmptyCurrent('busy', 'the target Session is no longer occupied by this QueryRun generation');
     }
-    if (!sameRef(entryIdentity(state, queryRunRef), entry)) return rejected('forbidden', 'the admit entry disagrees with the fixed Query entry');
+    if (!sameRef(entryIdentity(state, queryRunRef), entry)) return rejectedWithNonEmptyCurrent('forbidden', 'the admit entry disagrees with the fixed Query entry');
     const reserved = state.requests.find(candidate => candidate.requestId === modelRequestId);
-    if (reserved === undefined) return rejected('incomplete', 'the model request was not reserved before admission');
-    if (reserved.requestDigest !== input.requestDigest) return rejected('invalid', 'the model request digest disagrees with the reservation');
+    if (reserved === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the model request was not reserved before admission');
+    if (reserved.requestDigest !== input.requestDigest) return rejectedWithNonEmptyCurrent('invalid', 'the model request digest disagrees with the reservation');
     if (state.prepared === null || input.manifestDigest !== state.prepared.bundleRef.digest
       || input.contextInputDigest !== state.prepared.inputDigest) {
-      return rejected('invalid', 'the model request binding disagrees with the persisted preparation');
+      return rejectedWithNonEmptyCurrent('invalid', 'the model request binding disagrees with the persisted preparation');
     }
     const authorized = await authorizeCurrent(owned, { job, run, session });
     if (authorized.status !== 'ready') return toRejection(authorized);
     if (!state.entry!.permissions.tools.every(tool => authorized.value.permissions.tools.includes(tool))) {
-      return rejected('forbidden', 'the model request no longer fits the current Host and Role ceilings');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the model request no longer fits the current Host and Role ceilings');
     }
     const requests = state.requests.map(candidate => candidate.requestId === modelRequestId ? { ...candidate, admitted: true } : candidate);
     const executionState: QueryExecutionStateV1 = { ...structuredClone(state), requests };
@@ -1444,31 +1435,31 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     request: GraphWrite<QueryHistoryObservation>,
   ): Promise<WriteResult<QueryExecutionRecord>> {
     const owned = ownContext(ctx);
-    if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');
+    if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
     const actor = hostActor(owned);
-    if (actor === null) return rejected('forbidden', 'recordQueryObservation requires a trusted Host call context');
+    if (actor === null) return rejectedWithNonEmptyCurrent('forbidden', 'recordQueryObservation requires a trusted Host call context');
     let ownedRequest: GraphWrite<QueryHistoryObservation>;
-    try { ownedRequest = structuredClone(request); } catch { return rejected('invalid', 'the observation request cannot be isolated from the caller'); }
+    try { ownedRequest = structuredClone(request); } catch { return rejectedWithNonEmptyCurrent('invalid', 'the observation request cannot be isolated from the caller'); }
     const observation = ownedRequest?.input;
     const meta = ownedRequest?.meta;
     if (!isRecord(observation) || !isRecord(observation.entry) || !isRecord(observation.entry.queryRunRef)
       || !isRecord(observation.history) || !isRecord(observation.source) || !isRecord(observation.observation)
       || !isRecord(meta) || !nonEmpty(meta.requestId)) {
-      return rejected('invalid', 'recordQueryObservation requires a complete history observation and requestId');
+      return rejectedWithNonEmptyCurrent('invalid', 'recordQueryObservation requires a complete history observation and requestId');
     }
     let queryRunRef: QueryRunRef;
     let requestId: string;
     try {
       queryRunRef = structuredClone(observation.entry.queryRunRef) as QueryRunRef;
       requestId = meta.requestId;
-    } catch { return rejected('invalid', 'the observation request cannot be isolated from the caller'); }
+    } catch { return rejectedWithNonEmptyCurrent('invalid', 'the observation request cannot be isolated from the caller'); }
     if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
-      return rejected('forbidden', 'the QueryRun is outside the Host call scope');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
     }
     const expected = validateExpected(meta.expected,
       { projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, queryJobId: queryRunRef.queryJobId, runId: queryRunRef.runId },
       { job: false, run: true, session: false });
-    if (expected.status === 'invalid') return rejected('invalid', expected.reason);
+    if (expected.status === 'invalid') return rejectedWithNonEmptyCurrent('invalid', expected.reason);
     const kind = observation.observation.kind;
     const operation: QueryExecutionOperation = kind === 'entered' ? 'entered' : 'observed';
     const identityKey = kind === 'entered'
@@ -1477,7 +1468,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         ? `r5b-query-execution:observed:${queryRunRef.runId}:unknown:${String(observation.source.position)}`
         : `r5b-query-execution:observed:${queryRunRef.runId}:${String(observation.source.position)}`;
     const fingerprint = requestFingerprint(operation, requestId, expected, observation);
-    if (fingerprint === null) return rejected('invalid', 'the observation request is not serializable');
+    if (fingerprint === null) return rejectedWithNonEmptyCurrent('invalid', 'the observation request is not serializable');
     const replay = await replayOriginal<QueryExecutionRecord>(deps, identityKey, fingerprint, operation);
     if (replay !== null) return replay;
 
@@ -1485,20 +1476,20 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (read.status !== 'ready') return toRejection(read);
     const { job, run, session } = read.value;
     const state = run.run.executionState;
-    if (state === undefined) return rejected('incomplete', 'the QueryRun has no persisted execution state');
+    if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state');
     if (expected.run !== run.revision) {
       return revisionConflict([{ refKey: queryRunRefKey(queryRunRef), revision: run.revision }]);
     }
     // Every kind checks the fixed entry first; the terminal machine (QRR-03) gets it as already matched.
     if (!sameRef(entryIdentity(state, queryRunRef), observation.entry)) {
-      return rejected('forbidden', 'the observation entry disagrees with the fixed Query entry');
+      return rejectedWithNonEmptyCurrent('forbidden', 'the observation entry disagrees with the fixed Query entry');
     }
     const guards: RecordGuard[] = [{ refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! }];
-    if (kind === 'progress') return rejected('unsupported', 'progress observations are not persisted in this batch');
+    if (kind === 'progress') return rejectedWithNonEmptyCurrent('unsupported', 'progress observations are not persisted in this batch');
     if (kind === 'entered') {
-      if (state.phase !== 'entering') return rejected('busy', `the QueryRun cannot record entered in phase ${state.phase}`);
-      if (observation.history.endPosition !== null) return rejected('invalid', 'an entered observation must not claim a terminal boundary');
-      if (observation.history.startPosition > observation.source.position) return rejected('invalid', 'the entered observation source precedes its start');
+      if (state.phase !== 'entering') return rejectedWithNonEmptyCurrent('busy', `the QueryRun cannot record entered in phase ${state.phase}`);
+      if (observation.history.endPosition !== null) return rejectedWithNonEmptyCurrent('invalid', 'an entered observation must not claim a terminal boundary');
+      if (observation.history.startPosition > observation.source.position) return rejectedWithNonEmptyCurrent('invalid', 'the entered observation source precedes its start');
       const occurredAt = deps.now();
       const nextRun = advanceQueryExecutionRecord({ job, run }, { phase: 'entered', history: observation.history }).run;
       const nextRecord: QueryExecutionRecord = { job, run: nextRun, session, answer: null };
@@ -1516,9 +1507,9 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const fact = observation.observation;
     if (fact.kind !== 'terminal') {
       // The owner `unknown` branch has no QRR row; it and a malformed kind meet the settled refusal first, as before.
-      if (state.phase === 'settled') return rejected('busy', 'the QueryRun is already settled');
-      if (fact.kind !== 'unknown') return rejected('invalid', 'the observation is not a terminal fact');
-      if (!nonEmpty(fact.reason)) return rejected('invalid', 'an unknown observation requires a reason');
+      if (state.phase === 'settled') return rejectedWithNonEmptyCurrent('busy', 'the QueryRun is already settled');
+      if (fact.kind !== 'unknown') return rejectedWithNonEmptyCurrent('invalid', 'the observation is not a terminal fact');
+      if (!nonEmpty(fact.reason)) return rejectedWithNonEmptyCurrent('invalid', 'an unknown observation requires a reason');
       const nextRun = markQueryRunUnknownRecord(run, { history: { kind: 'set', history: observation.history } });
       const nextRecord: QueryExecutionRecord = { job, run: nextRun, session, answer: null };
       const event = buildRecordedEvent({
@@ -1541,7 +1532,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       caller: 'service', hostLease: null, probe: null, kernel: null, inputsConfirmed: true, actor: actor.kind, reason: null,
       sessionOwned: ownsQuery(session, queryRunRef, state), sessionGeneration: state.sessionGeneration, queryRunRef, entryMatches: true,
     });
-    if (!settled.ok) return rejected(settled.code, settled.detail);
+    if (!settled.ok) return rejectedWithNonEmptyCurrent(settled.code, settled.detail);
     const occurredAt = deps.now();
     const next = settledRecords({ job, run, session }, state.phase, settled.effects, occurredAt);
     if ('status' in next) return next;
@@ -1579,17 +1570,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     ctx: CoreCallContext, queryRunRef: QueryRunRef, requestId: string, expectedRun: number, content: unknown,
   ): { ok: true; actor: HostActor; identityKey: string; fingerprint: string } | { ok: false; rejection: CoreRejection } {
     const owned = ownContext(ctx);
-    if (owned === null) return { ok: false, rejection: rejected('invalid', 'the call context cannot be isolated from the caller') };
+    if (owned === null) return { ok: false, rejection: rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller') };
     const actor = hostActor(owned);
     if (actor === null) {
-      return { ok: false, rejection: rejected('forbidden', 'a QueryRun reconcile requires a trusted Host call context') };
+      return { ok: false, rejection: rejectedWithNonEmptyCurrent('forbidden', 'a QueryRun reconcile requires a trusted Host call context') };
     }
     if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
-      return { ok: false, rejection: rejected('forbidden', 'the QueryRun is outside the Host call scope') };
+      return { ok: false, rejection: rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope') };
     }
     const identityKey = `a2-query-recovery:${queryRunRef.runId}:${sha256Hex(canonicalJson({ actor, requestId } as unknown as JsonValue))}`;
     const fingerprint = requestFingerprint('observed', requestId, { job: null, run: expectedRun, session: null }, content);
-    if (fingerprint === null) return { ok: false, rejection: rejected('invalid', 'the reconcile request is not serializable') };
+    if (fingerprint === null) return { ok: false, rejection: rejectedWithNonEmptyCurrent('invalid', 'the reconcile request is not serializable') };
     return { ok: true, actor, identityKey, fingerprint };
   }
 
@@ -1614,12 +1605,12 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const { job, run, session } = read.value;
     const state = run.run.executionState;
     const recovery = queryRecoveryStateOf(job.job, run.run);
-    if (state === undefined || recovery === null) return rejected('incomplete', 'the QueryRun has no persisted execution state');
+    if (state === undefined || recovery === null) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state');
     if (expectedRun !== run.revision) return revisionConflict([{ refKey: queryRunRefKey(queryRunRef), revision: run.revision }]);
     const { event, guard, cause, turnSeen } = eventOf(state);
     const decided = transitionQueryRunRecovery(recovery, event, { ...guard, sessionOwned: ownsQuery(session, queryRunRef, state),
       sessionGeneration: state.sessionGeneration, queryRunRef, entryMatches: entryIdentity(state, queryRunRef) !== null });
-    if (!decided.ok) return rejected(decided.code, decided.detail);
+    if (!decided.ok) return rejectedWithNonEmptyCurrent(decided.code, decided.detail);
     const occurredAt = deps.now();
     let nextRun: QueryRunSnapshot = run;
     let nextJob: QueryJobSnapshot = job;
@@ -1643,7 +1634,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
               kernelTurnOpen: effect.kernelTurnOpen },
             probe: guard.probe === null ? null : guard.probe, kernelHeader: null, openResponsibleLink: null, creation: null, link: null,
           });
-          if (!released.ok) return rejected(released.code, released.detail);
+          if (!released.ok) return rejectedWithNonEmptyCurrent(released.code, released.detail);
           for (const sessionEffect of released.effects) {
             if (sessionEffect.kind === 'release_session') nextSession = releaseSessionRecord(session, sessionEffect);
           }
@@ -1675,11 +1666,11 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       input = structuredClone(request.input);
       requestId = request.meta.requestId;
       const pin = queryRunPinOf(request.meta.expected, (input as { queryRunRef?: unknown } | null)?.queryRunRef);
-      if (pin === null) return rejected('invalid', 'meta.expected must be exactly the QueryRun pin');
+      if (pin === null) return rejectedWithNonEmptyCurrent('invalid', 'meta.expected must be exactly the QueryRun pin');
       expectedRun = pin;
-    } catch { return rejected('invalid', 'the reconcile request cannot be isolated from the caller'); }
+    } catch { return rejectedWithNonEmptyCurrent('invalid', 'the reconcile request cannot be isolated from the caller'); }
     if (!isRecord(input) || !isRecord(input.queryRunRef) || !nonEmpty(input.hostInstanceId) || !isRecord(input.result) || !nonEmpty(requestId)) {
-      return rejected('invalid', 'reconcileQueryRun requires the QueryRun, the Host instance and the classification');
+      return rejectedWithNonEmptyCurrent('invalid', 'reconcileQueryRun requires the QueryRun, the Host instance and the classification');
     }
     const host = deps.hostInstance;
     const hostLease: 'owned' | 'held_by_other' | null = host === undefined ? null
@@ -1723,15 +1714,15 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       input = structuredClone(request.input);
       requestId = request.meta.requestId;
       const pin = queryRunPinOf(request.meta.expected, (input as { queryRunRef?: unknown } | null)?.queryRunRef);
-      if (pin === null) return rejected('invalid', 'meta.expected must be exactly the QueryRun pin');
+      if (pin === null) return rejectedWithNonEmptyCurrent('invalid', 'meta.expected must be exactly the QueryRun pin');
       expectedRun = pin;
-    } catch { return rejected('invalid', 'the attestation request cannot be isolated from the caller'); }
+    } catch { return rejectedWithNonEmptyCurrent('invalid', 'the attestation request cannot be isolated from the caller'); }
     if (!isRecord(input) || !isRecord(input.queryRunRef) || typeof input.reason !== 'string' || typeof input.kernelTurnOpen !== 'boolean'
       || !nonEmpty(requestId)) {
-      return rejected('invalid', 'resolveUnknownQueryRun requires the QueryRun, a reason and the Kernel facts');
+      return rejectedWithNonEmptyCurrent('invalid', 'resolveUnknownQueryRun requires the QueryRun, a reason and the Kernel facts');
     }
     if (input.reason.length > MAX_ATTESTATION_REASON_CHARS) {
-      return rejected('invalid', `the attestation reason must be at most ${String(MAX_ATTESTATION_REASON_CHARS)} characters`);
+      return rejectedWithNonEmptyCurrent('invalid', `the attestation reason must be at most ${String(MAX_ATTESTATION_REASON_CHARS)} characters`);
     }
     const actor = hostActor(ctx);
     const host = deps.hostInstance;
@@ -1778,31 +1769,31 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     async replayResolveUnknownQueryRun(ctx, request) { return replayResolveUnknownQuery(ctx, request); },
     async readQueryExecution(ctx, ref) {
       const owned = ownContext(ctx);
-      if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');
-      if (hostActor(owned) === null) return rejected('forbidden', 'readQueryExecution requires a trusted Host call context');
+      if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
+      if (hostActor(owned) === null) return rejectedWithNonEmptyCurrent('forbidden', 'readQueryExecution requires a trusted Host call context');
       if (!isRecord(ref) || ref.aggregateType !== 'QueryRun' || !nonEmpty(ref.projectId)
         || !nonEmpty(ref.workspaceId) || !nonEmpty(ref.queryJobId) || !nonEmpty(ref.runId)) {
-        return rejected('invalid', 'readQueryExecution requires a complete QueryRunRef');
+        return rejectedWithNonEmptyCurrent('invalid', 'readQueryExecution requires a complete QueryRunRef');
       }
       let queryRunRef: QueryRunRef;
-      try { queryRunRef = structuredClone(ref) as QueryRunRef; } catch { return rejected('invalid', 'the read request cannot be isolated from the caller'); }
+      try { queryRunRef = structuredClone(ref) as QueryRunRef; } catch { return rejectedWithNonEmptyCurrent('invalid', 'the read request cannot be isolated from the caller'); }
       if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
-        return rejected('forbidden', 'the QueryRun is outside the Host call scope');
+        return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
       }
       return readExecutionRecord(deps, queryRunRef);
     },
     async readPreparationFacts(ctx, ref) {
       const owned = ownContext(ctx);
-      if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');
-      if (hostActor(owned) === null) return rejected('forbidden', 'readPreparationFacts requires a trusted Host call context');
+      if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
+      if (hostActor(owned) === null) return rejectedWithNonEmptyCurrent('forbidden', 'readPreparationFacts requires a trusted Host call context');
       if (!isRecord(ref) || ref.aggregateType !== 'QueryRun' || !nonEmpty(ref.projectId)
         || !nonEmpty(ref.workspaceId) || !nonEmpty(ref.queryJobId) || !nonEmpty(ref.runId)) {
-        return rejected('invalid', 'readPreparationFacts requires a complete QueryRunRef');
+        return rejectedWithNonEmptyCurrent('invalid', 'readPreparationFacts requires a complete QueryRunRef');
       }
       let queryRunRef: QueryRunRef;
-      try { queryRunRef = structuredClone(ref) as QueryRunRef; } catch { return rejected('invalid', 'the read request cannot be isolated from the caller'); }
+      try { queryRunRef = structuredClone(ref) as QueryRunRef; } catch { return rejectedWithNonEmptyCurrent('invalid', 'the read request cannot be isolated from the caller'); }
       if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
-        return rejected('forbidden', 'the QueryRun is outside the Host call scope');
+        return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
       }
       return readPreparationFacts(deps, queryRunRef);
     },
@@ -1814,14 +1805,14 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     async recordQueryObservation(ctx, request) { return recordObservation(ctx, request); },
     async readQueryAnswer(ctx, ref) {
       const owned = ownContext(ctx);
-      if (owned === null) return rejected('invalid', 'the call context cannot be isolated from the caller');
-      if (hostActor(owned) === null) return rejected('forbidden', 'readQueryAnswer requires a trusted Host call context');
+      if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
+      if (hostActor(owned) === null) return rejectedWithNonEmptyCurrent('forbidden', 'readQueryAnswer requires a trusted Host call context');
       if (!isRecord(ref) || ref.aggregateType !== 'QueryJobAnswer' || !nonEmpty(ref.projectId)
         || !nonEmpty(ref.workspaceId) || !nonEmpty(ref.queryJobId) || !nonEmpty(ref.answerId)) {
-        return rejected('invalid', 'readQueryAnswer requires a complete QueryJobAnswerRef');
+        return rejectedWithNonEmptyCurrent('invalid', 'readQueryAnswer requires a complete QueryJobAnswerRef');
       }
       if (ref.projectId !== owned.projectId || ref.workspaceId !== owned.workspaceId) {
-        return rejected('forbidden', 'the Query answer ref is outside the Host call scope');
+        return rejectedWithNonEmptyCurrent('forbidden', 'the Query answer ref is outside the Host call scope');
       }
       return readAnswerByRef(deps, ref);
     },

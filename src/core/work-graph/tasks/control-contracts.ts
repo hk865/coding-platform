@@ -48,8 +48,7 @@ export type RecordControlObservationInput = {
  * The internal observation writer. It is part of the same raw control service
  * as `RunControlPort` (the factory returns their intersection) but is NOT
  * published through the public `platform.controls` surface. The R4.3a
- * implementation owner is `control-service.ts`; the stage-1 skeleton returns an
- * explicit `unsupported`.
+ * implementation owner is `control-service.ts`.
  */
 export interface ControlObservationPort {
   recordControlObservation(

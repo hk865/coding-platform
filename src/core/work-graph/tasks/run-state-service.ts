@@ -26,7 +26,7 @@
  * never authorizes, starts, writes or releases anything.
  */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
-import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
+import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type {
@@ -37,8 +37,10 @@ import type {
   TaskTriple,
 } from '../../../contracts/dispatch.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
+import { isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
+import { rejected as reject } from '../../../contracts/core/rejections.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import { CONTINUATION_BRIEF_LIMITS } from '../../../contracts/continuation-brief.js';
 import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
@@ -89,6 +91,7 @@ import type {
   TaskExecutionRecord,
   TaskExecutionPage,
 } from '../model/execution-read-contracts.js';
+import { trustedContextOf } from './trusted-context.js';
 
 const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
 /** Bounded final-window retries before a read is reported `busy`. */
@@ -103,18 +106,6 @@ const LEASE_VALIDATE = PLAN_STATE_RECORD_SCHEMAS.records
 // Small pure helpers
 // --------------------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function sameHostActor(left: unknown, right: unknown): boolean {
-  return isRecord(left) && isRecord(right) && left['kind'] === right['kind'] && left['id'] === right['id'];
-}
-function reject(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
@@ -123,15 +114,10 @@ function mapRejected(rejection: Rejected): CoreRejection {
   return reject(rejection.code, rejection.reason);
 }
 function refKeyOf(value: object): string | null {
-  try { return canonicalJson(value as unknown as JsonValue); } catch { return null; }
+  return canonicalOf(value);
 }
 function parseBody(json: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(json) as unknown;
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  return parseObject(json);
 }
 function unique(keys: readonly string[]): string[] {
   return [...new Set(keys)];
@@ -199,56 +185,21 @@ type OwnedCtx =
   | { ok: true; ctx: CoreCallContext; actor: Extract<ActorRef, { kind: 'human' | 'system' }> }
   | { ok: false; rejection: CoreRejection };
 
+function isSignal(signal: unknown): boolean {
+  return isRecord(signal) && typeof signal['aborted'] === 'boolean'
+    && typeof signal['addEventListener'] === 'function';
+}
+
 /** Bind the trusted Host scope and identity before the first await; the original
  * AbortSignal is kept by reference so cancellation can never be lost. */
 function ownCallContext(ctx: CoreCallContext): OwnedCtx {
-  const raw = ctx as unknown as {
-    projectId?: unknown; workspaceId?: unknown; principal?: unknown; materialReader?: unknown; signal?: unknown;
-  } | null | undefined;
-  if (raw === null || raw === undefined) {
-    return { ok: false, rejection: invalid('readExecution requires a bound call context') };
-  }
-  const projectId = raw.projectId;
-  const workspaceId = raw.workspaceId;
-  if (!nonEmpty(projectId) || !nonEmpty(workspaceId)) {
-    return { ok: false, rejection: forbidden('readExecution requires a bound project/workspace context') };
-  }
-  const signal = raw.signal;
-  if (!isRecord(signal) || typeof signal['aborted'] !== 'boolean'
-    || typeof signal['addEventListener'] !== 'function') {
-    return { ok: false, rejection: forbidden('readExecution requires the bound AbortSignal') };
-  }
-  let principal: unknown;
-  let materialReader: unknown;
-  try {
-    principal = structuredClone(raw.principal);
-    materialReader = structuredClone(raw.materialReader);
-  } catch {
-    return { ok: false, rejection: invalid('the call context identity cannot be isolated from the caller') };
-  }
-  if (!isRecord(principal) || principal['kind'] !== 'host') {
-    return { ok: false, rejection: forbidden('readExecution requires a trusted Host principal') };
-  }
-  const actor = principal['actor'];
-  if (!isRecord(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !nonEmpty(actor['id'])) {
-    return { ok: false, rejection: forbidden('readExecution requires a trusted Host actor') };
-  }
-  if (!isRecord(materialReader) || materialReader['kind'] !== 'host'
-    || materialReader['projectId'] !== projectId
-    || (materialReader['workspaceId'] !== undefined && materialReader['workspaceId'] !== workspaceId)
-    || !sameHostActor(materialReader['actor'], actor)) {
-    return { ok: false, rejection: forbidden('the material reader is not the same trusted Host scope') };
-  }
-  return {
-    ok: true,
-    ctx: {
-      projectId, workspaceId,
-      principal: principal as CoreCallContext['principal'],
-      materialReader: materialReader as MaterialReader,
-      signal: signal as unknown as AbortSignal,
-    },
-    actor: { kind: actor['kind'], id: actor['id'] },
-  };
+  const trusted = trustedContextOf(ctx, {
+    label: 'readExecution',
+    reject,
+    isSignal,
+  });
+  if (!trusted.ok) return trusted;
+  return { ok: true, ctx: trusted.ctx, actor: trusted.actor };
 }
 
 // --------------------------------------------------------------------------

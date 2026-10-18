@@ -665,8 +665,7 @@ function taskRequeueCombinationProblem(
     }
     if (!(trigger.pausedEpoch < trigger.resumedEpoch)) return 'the goal_resume trigger pause is not before its resume';
   }
-  if (afterRun.outcome === 'budget_exhausted' && input.newInputRefs.length === 0
-    && !(input.budget !== null && input.budget.tokenBudget > afterRun.budget.tokenBudget)) {
+  if (!requeueBudgetIncreased(afterRun, input.budget, input.newInputRefs.length)) {
     return 'a budget_exhausted requeue needs a larger token budget or a new input (budget_not_increased)';
   }
   return null;

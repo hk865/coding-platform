@@ -41,11 +41,13 @@ import type {
   ControlIntentKindV1, ControlIntentRef, ControlIntentSnapshotV1, SubmitControlInput, SubmittedControl,
 } from '../../../contracts/control-intent.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
+import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
+import { isPos as isPositiveSafeInteger } from '../../../contracts/validation/common.js';
 import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
 } from '../../record-store/ports.js';
@@ -102,7 +104,7 @@ const MAX_CONTROL_REASON_BYTES = 2048;
 // -------------------------------------------------------------------------- //
 
 function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
+  return rejectedWithCurrent(code, reason, current);
 }
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
@@ -187,7 +189,7 @@ function fingerprintOf(value: unknown): string {
   return sha256Hex(canonicalJson(value as JsonValue));
 }
 function refKeyOf(value: object): string | null {
-  try { return canonicalJson(value as unknown as JsonValue); } catch { return null; }
+  return canonicalOf(value);
 }
 function encodeRun(run: RunSnapshot): EncodedRecord {
   return { refKey: refKeyOf(run.ref) as string, schemaId: RUN_SNAPSHOT_SCHEMA_ID,
@@ -396,9 +398,6 @@ async function loadRun(deps: RunControlServiceDependencies, runRef: RunRef): Pro
 // R4.3a observation write helpers                                             //
 // -------------------------------------------------------------------------- //
 
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
 function recordControlObservationInputProblem(value: unknown): string | null {
   if (!isRecord(value)) return 'a control observation requires an input object';
   if (Object.keys(value).some(key => key !== 'intentRef' && key !== 'runRef' && key !== 'observation')) {

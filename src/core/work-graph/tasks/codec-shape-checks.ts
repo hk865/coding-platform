@@ -1,6 +1,6 @@
 /**
- * K3 rework 2 item 12.2 (decision 75): the ONE set of `RunRef`, `TaskTriple`
- * and `SessionMessageRef` field checks the UCR and CRR record codecs share.
+ * The `RunRef` and `TaskTriple` field checks are shared with the strict record
+ * codecs; `SessionMessageRef` keeps its own protocol here.
  *
  * The label is part of the decoded rejection reason, so the caller passes it:
  * the UCR decoder says "review task"/"review runRef", the CRR decoder says
@@ -9,21 +9,8 @@
  */
 import { hasOnlyKeys, isObject, nonEmpty } from './codec-fields.js';
 
-export function runRefProblem(value: unknown, label: string): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'runId'])
-    || value['aggregateType'] !== 'Run'
-    || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['runId'])) {
-    return `${label} must be a complete RunRef`;
-  }
-  return null;
-}
-export function taskTripleProblem(value: unknown, label: string): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['projectId', 'goalId', 'taskId'])
-    || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['taskId'])) {
-    return `${label} must be a complete TaskTriple`;
-  }
-  return null;
-}
+export { runRefProblem, taskTripleProblem } from '../persistence/rework-codecs.js';
+
 export function sessionMessageRefProblem(value: unknown, label: string): string | null {
   if (!isObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
     || value['aggregateType'] !== 'SessionMessage'

@@ -1,5 +1,5 @@
 /**
- * Slice 3 WorkGraph `views` read model (part 2).
+ * Slice 3 WorkGraph `views` read model.
  *
  * `createGraphContextReader(deps)` is the ONE read-only graph/context view. It
  * never writes a record, never calls a transition and never opens material
@@ -23,6 +23,8 @@ import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/co
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { edgeDeclarationId, legacyDeclarationId } from '../../../contracts/input-declaration-id.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
   AttentionGraphReadRequestV1, ContextExtensionsV1, ContextSourceV1,
   GraphAttentionDetailV1, GraphAttentionFactsV1, GraphNodeRefV1,
@@ -92,12 +94,6 @@ const ROUND_LOOKUP_LIMIT = 50;
 const SESSION_PAGE_LIMIT = 200;
 const EXECUTION_PAGE_LIMIT = 100;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -694,7 +690,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     return { status: 'ready', value: cache };
   }
 
-  /** G4.3: a requested/listed Run is resolved by its exact canonical record,
+  /** A requested/listed Run is resolved by its exact canonical record,
    * rechecked against the Goal and workspace, and only then carded. A missing
    * record is `not_found`, a corrupt one `unavailable`; never an empty card. */
   async function ensureRuns(
@@ -867,7 +863,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     return sha256Hex(canonicalJson(basis as unknown as JsonValue));
   }
 
-  /** G4.4: a cursor whose basis moved is `revision_conflict`; `current` names
+  /** A cursor whose basis moved is `revision_conflict`; `current` names
    * the Goal's CURRENT active Plan (not the pinned `planHint`) and the current
    * Workspace pin, so the caller can retarget exactly. */
   async function revisionConflict(universe: Universe, ctx: CoreCallContext, goalRef: GoalRef): Promise<CoreRejection> {
@@ -907,9 +903,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     for (const edge of plan.executionDag.dependsOn) {
       if (edge.taskId !== taskId) continue;
       out.push({
-        declarationId: 'edge:' + sha256Hex(canonicalJson({
-          planRef: plan.ref, consumerTaskId: edge.taskId, dependsOnId: edge.dependsOnId, requires: edge.requires,
-        } as unknown as JsonValue)),
+        declarationId: edgeDeclarationId(plan.ref, edge),
         consumer: taskTripleOf(plan, edge.taskId),
         planRef: plan.ref,
         upstream: taskTripleOf(plan, edge.dependsOnId),
@@ -921,7 +915,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       for (const requirement of plan.inputRequirements) {
         if (requirement.consumerTaskId !== taskId) continue;
         out.push({
-          declarationId: 'legacy:' + requirement.requirementId,
+          declarationId: legacyDeclarationId(requirement.requirementId),
           consumer: taskTripleOf(plan, requirement.consumerTaskId),
           planRef: plan.ref,
           upstream: null,
@@ -1035,7 +1029,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     return sources;
   }
 
-  /** G4.4: the records THIS card was actually built from, with their revisions.
+  /** The records THIS card was actually built from, with their revisions.
    * The same records are hashed into the page `basisKey`; the card lists only
    * its own so one executions page does not repeat the whole Run set. */
   function cardSources(universe: Universe, node: GraphNodeRefV1): ContextSourceV1[] {

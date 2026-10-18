@@ -7,14 +7,15 @@
  * stored heads because N-06 and N-07 assert them. The database is never read to
  * answer a test: every assertion goes through this port.
  *
- * Round 2 item 3: a read failure is never flattened into a definite answer.
+ * A read failure is never flattened into a definite answer.
  * `readAllHeads`/`readAllRecords` page an index to the end and return any
  * failure; a page that is not ready is mapped through `mapStoreFailure`, and an
  * undecodable record is `unavailable`. Every head/version/pointer read tells a
  * miss apart from a failure, and `readNote`/`listByAnchor` return the failure.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { NoteIndexRowV1, NotesUnderstandingRowV1 } from '../../../contracts/graph-context.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteAnchorV1, NoteDraftAnchorV1, NoteHeadSnapshot, NoteState, NoteVersionSnapshot } from '../../../contracts/note.js';
@@ -55,9 +56,12 @@ import { GOAL_BY_WORKSPACE_INDEX, readGoalPlanWindow } from '../tasks/plan-reade
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { anchorKeyOf, resolveNoteAnchors, topicKeyOf, type NoteAnchorFactsDeps } from './note-anchors.js';
 import { renderUnderstandingBody } from './note-service.js';
-import { headsOnKeyPrefix, isRelatedHead, resolveRelatedScope, resolveTaskScopeWithPlan, stageIdOf,
-  type RelatedScope, type RelatedScopeDeps } from './note-related-scope.js';
+import { anchorSlots, headsOnKeyPrefix, isRelatedHead, matchesPathPrefix, resolveRelatedScope, resolveTaskScopeWithPlan,
+  stageIdOf, type RelatedScope, type RelatedScopeDeps } from './note-related-scope.js';
 import { readPointerAndHeadBatch } from './note-batch-reader.js';
+import { asOutcome, mapStoreFailure } from './store-failures.js';
+
+export { mapStoreFailure, type MappedStoreFailure } from './store-failures.js';
 
 export type NoteReadDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordTextSearchPort;
@@ -107,10 +111,6 @@ type AnchorExistence = { ok: true; exists: true }
   | { ok: true; exists: false; anchorCandidates?: NoteAnchorCandidateV1[]; candidatesUnavailable?: boolean }
   | { ok: false; code: ReadFailureCode | 'forbidden'; reason: string };
 
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-
 function isGeneral(kind: string): boolean { return (NOTE_GENERAL_KINDS as readonly string[]).includes(kind); }
 
 /** RW-7: a request object carries exactly the named keys, no extras. */
@@ -119,27 +119,10 @@ function hasOnlyKeys(value: object, allowed: readonly string[]): boolean {
   return keys.length === allowed.length && keys.every(key => allowed.includes(key));
 }
 
-/** Item 3 fix 1: the one store-failure mapping shared by the note reads and the writer. */
-export type MappedStoreFailure = { status: 'rejected'; code: ReadFailureCode; reason: string };
-
-export function mapStoreFailure(failure: { code: string; reason: string }): MappedStoreFailure {
-  switch (failure.code) {
-    case 'revision_conflict': return { status: 'rejected', code: 'revision_conflict', reason: failure.reason };
-    case 'invalid': return { status: 'rejected', code: 'invalid', reason: failure.reason };
-    case 'not_found': return { status: 'rejected', code: 'not_found', reason: failure.reason };
-    default: return { status: 'rejected', code: 'unavailable', reason: failure.reason };
-  }
-}
-
-function asOutcome(failure: { code: string; reason: string }): { ok: false; code: ReadFailureCode; reason: string } {
-  const mapped = mapStoreFailure(failure);
-  return { ok: false, code: mapped.code, reason: mapped.reason };
-}
-
 /**
- * Item 3 fix 1: page one lookup index to completion (`next` to the end). Any
- * page that is not `ready` is returned as the mapped store failure; a partial
- * set is never handed back.
+ * Page one lookup index to completion (`next` to the end). Any page that is not
+ * `ready` is returned as the mapped store failure; a partial set is never handed
+ * back.
  */
 export async function readAllRecords(records: RecordLookupPort, index: string,
   values: readonly (string | null)[]): Promise<ReadOutcome<EncodedRecord[]>> {
@@ -154,7 +137,7 @@ export async function readAllRecords(records: RecordLookupPort, index: string,
   }
 }
 
-/** Item 3 fix 1: every note head on one index, or the failure; an undecodable head is `unavailable`. */
+/** Every note head on one index, or the failure; an undecodable head is `unavailable`. */
 export async function readAllHeads(records: RecordLookupPort, index: string,
   values: readonly (string | null)[]): Promise<{ ok: true; heads: NoteHeadSnapshot[] } | { ok: false; code: ReadFailureCode; reason: string }> {
   const page = await readAllRecords(records, index, values);
@@ -247,7 +230,7 @@ Promise<ReadOutcome<NoteHeadSnapshot[]>> {
 }
 
 /**
- * Item 4 fix 2: within one port call the anchor-keyed and goal-keyed head sets
+ * Within one port call the anchor-keyed and goal-keyed head sets
  * are read once and memoised, so `conflictingOf`/`overQuotaOf` do not re-read
  * the store for every item of a page.
  */
@@ -302,8 +285,7 @@ export function createNoteHeadDerivations(records: GoalRecordTransactionPort & R
         return { ok: true, value: true };
       }
     }
-    const keys = [head.anchorKey0, head.anchorKey1, head.anchorKey2, head.anchorKey3, head.anchorKey4]
-      .filter((key): key is string => key !== null);
+    const keys = anchorSlots(head);
     // L9/should-2: the inferred same-topic conflict needs BOTH general notes to be
     // current; the contradicts branch above keeps L9's own wording (the other is
     // current) and is not guarded by the subject's state.
@@ -329,8 +311,7 @@ export function createNoteHeadDerivations(records: GoalRecordTransactionPort & R
     // current general note (accepted/reviewed); the goal quota flags any counted
     // state (accepted/reviewed/pending_review/staged) of a note that has a goal.
     if (isGeneral(head.kind) && (head.state === 'accepted' || head.state === 'reviewed')) {
-      const keys = [head.anchorKey0, head.anchorKey1, head.anchorKey2, head.anchorKey3, head.anchorKey4]
-        .filter((key): key is string => key !== null);
+      const keys = anchorSlots(head);
       for (const key of keys) {
         const heads = await cachedHeadsByAnchorKey(cache, records, projectId, key);
         if (!heads.ok) return heads;
@@ -423,14 +404,13 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
 
   /**
    * Slice 4B R3/L22: replace an item's 4A unchecked fields with the injected
-   * check's derived fields, including the check-owned `observedFiles` (the read
-   * model no longer reads files itself). A rejected check is returned, never
+   * check's derived fields, including the check-owned `observedFiles`. A rejected check is returned, never
    * flattened into the unchecked defaults. `headVersions` names the head version
    * of each item's note; any other version is a historical item (R11: only the
    * head version can be `currentEligible`).
    */
   /**
-   * Rework item 8: the pointers and pointed heads `readMemoryMaterial` already
+   * The pointers and pointed heads `readMemoryMaterial` already
    * read, keyed `${projectId}\u0000${anchorKey}` exactly as the check's
    * `understandingSeed`. Handing them over lets `computeUnderstandingOfAnchorKey`
    * skip its own per-anchor pointer and head reads.
@@ -460,7 +440,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       checked = result.value;
     } else {
       const result = await deps.check.checkHeads(ctx, {
-        // F4 (review item 4): the heads (and non-head version snapshots) already
+        // F4: the heads (and non-head version snapshots) already
         // read in this call go straight to the check; it never reads them again.
         // §11.3 (b11): a derivation the read model already made (conflicts) is
         // handed over so the check does not recompute it. U-3: understanding
@@ -527,11 +507,11 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   }
 
   /**
-   * Rework item 8/§11.7: the ONE batched pointer read of several understanding
+   * §11.7: the ONE batched pointer read of several understanding
    * anchors (project/goal/stage). Every anchor gets an entry; a missing pointer
    * is `{ noteId: null, revision: null }` exactly as `pointerOf`.
    */
-  // Rework item 4: the batched pointer/head read/decode lives in the shared
+  // The batched pointer/head read/decode lives in the shared
   // leaf `note-batch-reader.ts`; this call site keeps its failure mapping.
   async function pointersAndHeadsOf(projectId: string, anchorKeys: readonly string[]):
   Promise<ReadOutcome<{ pointers: Map<string, { noteId: string | null; revision: number | null }>;
@@ -550,7 +530,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       ? { kind: 'file', path: anchor.path, ...(anchor.deleted === true ? { deleted: true as const } : {}) }
       : anchor;
     const goalId = 'goalId' in anchor ? anchor.goalId : null;
-    // Item 7: the same narrow anchor-facts reader as the writer, with no L11
+    // The same narrow anchor-facts reader as the writer, with no L11
     // basis reads (an existence check needs none).
     const resolved = await resolveNoteAnchors(ctx,
       { main: draft, extraAnchors: [], goalId, includeBasis: false }, anchorFacts);
@@ -564,7 +544,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   }
 
   // ========================================================================
-  // Slice 4B G3: the six memory reads (L9–L12). Every candidate comes from the
+  // Slice 4B: the six memory reads (L9–L12). Every candidate comes from the
   // existing head indexes; the full-text port is only consulted when terms are
   // given. Reads go to the end of the candidate set and page over candidates
   // with L12's stable cursor (request + record cursor + last key).
@@ -686,30 +666,19 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     return goalId !== null && item.goalId !== goalId;
   }
 
-  function anchorKeysOf(head: NoteHeadSnapshot): string[] {
-    return [head.anchorKey0, head.anchorKey1, head.anchorKey2, head.anchorKey3, head.anchorKey4]
-      .filter((key): key is string => key !== null);
-  }
-
-  function matchesPathPrefix(key: string, prefix: string): boolean {
-    const base = `file:${prefix}`;
-    return key === base || key.startsWith(`${base}/`);
-  }
-
   /**
    * P7/R6/MF6a: range-read the five ordered path indexes from the file key of
-   * the prefix. RW-12(c) moved the five-slot range read into the general
-   * `headsOnKeyPrefix`; this keeps the file directory-boundary filter. The
-   * ordered text order is UTF-8 byte order, so `file:src/a-b/y.ts` and
-   * `file:src/a.ts` sort between `file:src/a` and `file:src/a/x.ts`. Stop only
-   * when the key leaves the whole `file:<prefix>*` range; a sibling that merely
-   * fails the directory boundary is skipped, not treated as the end.
+   * the prefix. This keeps the file directory-boundary filter. The ordered text
+   * order is UTF-8 byte order, so `file:src/a-b/y.ts` and `file:src/a.ts` sort
+   * between `file:src/a` and `file:src/a/x.ts`. Stop only when the key leaves
+   * the whole `file:<prefix>*` range; a sibling that merely fails the directory
+   * boundary is skipped, not treated as the end.
    */
   async function headsOnPathPrefix(projectId: string, prefix: string): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
     const scanned = await headsOnKeyPrefix(deps.records, projectId, `file:${prefix}`);
     if (!scanned.ok) return { ok: false, code: scanned.code, reason: scanned.reason };
     return { ok: true, value: scanned.value.filter(head =>
-      anchorKeysOf(head).some(key => key.startsWith('file:') && matchesPathPrefix(key, prefix))) };
+      anchorSlots(head).some(key => key.startsWith('file:') && matchesPathPrefix(key, prefix))) };
   }
 
   async function headsOnReviewStatus(projectId: string, goalId: string | null,
@@ -897,7 +866,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   }
 
   /**
-   * S1.10/S2.1/F2 (review item 2): the shared per-term rule is the one
+   * S1.10/S2.1/F2: the shared per-term rule is the one
    * implementation on both the scoped and the port path. Per term, in order:
    * today's type and well-formed checks, the first `decodeTextTerms` pass (the
    * read model's own normalization) and then the second pass (the port's second
@@ -952,10 +921,10 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   function headInScope(head: NoteHeadSnapshot, input: MemoryFindRequest, goalId: string | null): boolean {
     if (!findVisible(head, input, goalId)) return false;
     if (!headMatchesFilters(head, input)) return false;
-    if (input.anchor !== undefined && !anchorKeysOf(head).includes(anchorKeyOf(input.anchor))) return false;
+    if (input.anchor !== undefined && !anchorSlots(head).includes(anchorKeyOf(input.anchor))) return false;
     if (input.pathPrefix !== undefined) {
       const prefix = input.pathPrefix;
-      if (!anchorKeysOf(head).some(key => key.startsWith('file:') && matchesPathPrefix(key, prefix))) return false;
+      if (!anchorSlots(head).some(key => key.startsWith('file:') && matchesPathPrefix(key, prefix))) return false;
     }
     return true;
   }
@@ -1020,8 +989,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
 
   /**
    * MF7b, amended by decision 66: `unsupported` stays only for an unregistered
-   * or non-text index; "FTS5 unavailable" no longer exists, so it can no longer
-   * surface here.
+   * or non-text index.
    */
   async function searchPage(projectId: string, terms: readonly string[], limit: number,
     after: string | undefined, match: 'all' | 'any' = 'all'): Promise<SearchPageOutcome> {
@@ -1039,9 +1007,8 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
    * port call per memory page, from the caller's last examined refKey. The
    * page returns the filtered matches of that port page (fewer than `limit` is
    * fine, as is empty); whenever the port page was not complete the memory page
-   * is `complete: false` with the port's next cursor. The old short-page
-   * heuristic is removed: a short page is not evidence of candidate-budget
-   * exhaustion.
+   * is `complete: false` with the port's next cursor. A short page is not
+   * evidence of candidate-budget exhaustion.
    */
   async function allTermHeads(ctx: CoreCallContext, input: MemoryFindRequest, terms: readonly string[],
     limit: number, cursorAfter: string | null, skipRelated?: (head: NoteHeadSnapshot) => boolean):
@@ -1293,7 +1260,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       for (const key of keyList) {
         if (!key.startsWith(prefix)) continue;
         anchorSets.set(`${ctx.projectId}\u0000${key}`,
-          scanned.value.filter(head => anchorKeysOf(head).includes(key)));
+          scanned.value.filter(head => anchorSlots(head).includes(key)));
       }
       for (const head of scanned.value) seen.set(head.noteId, head);
     }
@@ -1322,11 +1289,11 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   };
 
   /**
-   * Rework item 8/§11.7: the project pointer and pointed head
+   * §11.7: the project pointer and pointed head
    * `readMemoryMaterial` already read in its one batched pair of reads. Passing
    * them here keeps `selectProjectHeader` from reading the pointer again.
    *
-   * Rework 4 item 3/§11.7: the project anchor set is read once per call and
+   * §11.7: the project anchor set is read once per call and
    * shared with the check. If a caller already read it (the related read of a
    * segmented find, the unscoped anchor find, or this material's own call), it
    * is taken from `anchorSets`; otherwise the unfiltered 5-slot set (never
@@ -1375,7 +1342,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   }
 
   /**
-   * Rework item 6: the ONE norm projection shared by `buildFindPage` and
+   * The ONE norm projection shared by `buildFindPage` and
    * `readMemoryMaterial`. Keep the `currentEligible` heads up to
    * `PROJECT_NORMS_MAX`; `omitted` counts the eligible remainder.
    */
@@ -1669,7 +1636,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     seg1Exhausted: boolean;
     seg1Placed: number;
     anchorSets: Map<string, NoteHeadSnapshot[]>;
-    /** Rework item 5(b): plan windows the related-scope resolution already read. */
+    /** Plan windows the related-scope resolution already read. */
     planWindows?: ReadonlyMap<string, PlanRevisionSnapshot | null>;
   };
 
@@ -1765,7 +1732,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     while (header !== null && header.norms.length > 0 && bytes(page) > resultMaxBytes) {
       header = { ...header, norms: header.norms.slice(0, -1), omitted: header.omitted + 1 };
       dropped = true;
-      // RW-10/rework item 3: a norm trimmed from the SHOWN header list is still
+      // RW-10: a norm trimmed from the SHOWN header list is still
       // checked, so it stays in coverage/filesRead/observedFiles. Only when the
       // whole project header is absent (`built.value.header === null`, so
       // `headerCoverageItems` is empty) do no norms count.
@@ -1811,7 +1778,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     // F4: seed the check's anchor cache with the raw set this read just loaded.
     const anchorSets = new Map<string, NoteHeadSnapshot[]>();
     anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, headSet.value);
-    const onAnchor = headSet.value.filter(head => anchorKeysOf(head).includes(anchorKey));
+    const onAnchor = headSet.value.filter(head => anchorSlots(head).includes(anchorKey));
     if (onAnchor.length === 0) {
       const exists = await anchorExistsNow(ctx, input.anchor);
       if (!exists.ok) return rejected(exists.code, exists.reason);
@@ -1932,7 +1899,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
    * read, `readHeadsForKeys` and ONE `checkedPage` call, so project header,
    * local understandings, general rows and reminders come from the same check
    * caches. The project anchor set is read once per call and shared with the
-   * check (rework 4 item 3); an includeInputs Query's general keys never hold
+   * check; an includeInputs Query's general keys never hold
    * `project`, so that one header read is the only project-key scan. A null
    * goal is 6A's branch (`unsupported`, reason `6A`); any read failure is
    * `unavailable`.
@@ -1949,7 +1916,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     const planWindows = new Map<string, PlanRevisionSnapshot | null>();
     planWindows.set(`${ctx.projectId}\u0000${goalId}`, plan);
 
-    // Item 1: an explicit stage wins; otherwise the task's stage comes from the
+    // An explicit stage wins; otherwise the task's stage comes from the
     // plan window this call already read, through the shared `stageIdOf`.
     const goalAnchorKey = `goal:${goalId}`;
     let stageId = input.stageId ?? null;
@@ -1961,7 +1928,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       && plan.stages.some(stage => stage.stageId === stageId)
       ? `stage:${goalId}/${String(plan.planRevision)}/${stageId}` : null;
 
-    // Item 5/§11.7 + rework item 4: ONE batched pointer read for the project,
+    // §11.7: ONE batched pointer read for the project,
     // goal and stage anchors plus ONE batched head read of their pointed notes,
     // through the shared leaf reader.
     const anchorKeys = ['project', goalAnchorKey, ...(stageAnchorKey === null ? [] : [stageAnchorKey])];
@@ -1979,7 +1946,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     const goalHead = seedOf(goalAnchorKey).head;
     const stageHead = stageAnchorKey === null ? null : seedOf(stageAnchorKey).head;
 
-    // Rework 4 item 3/§11.7: the per-call anchor-set map exists BEFORE the
+    // §11.7: the per-call anchor-set map exists BEFORE the
     // header selection, so the one project set it reads is stored here and the
     // check below reuses it instead of scanning the five slots a second time.
     const anchorSets = new Map<string, NoteHeadSnapshot[]>();
@@ -1987,7 +1954,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       { pointer: projectPreRead.pointer, head: projectPreRead.head });
     if (!selected.ok) return rejected(selected.code, selected.reason);
 
-    // Item 7 (ruling 9): a Query assembly (`includeInputs === false`) skips the
+    // Ruling 9: a Query assembly (`includeInputs === false`) skips the
     // related scope and the whole general part; understanding + norms remain.
     const generalKeys: string[] = [];
     const generalKeySet = new Set<string>();
@@ -2010,7 +1977,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       for (const key of generalKeys) generalKeySet.add(key);
       const generalRead = await readHeadsForKeys(ctx, generalKeys, anchorSets);
       if (!generalRead.ok) return rejected(generalRead.code, generalRead.reason);
-      // Item 1: the stage-prefix scan collects every stage AND revision of the
+      // The stage-prefix scan collects every stage AND revision of the
       // goal; keep only the heads whose anchors intersect THIS call's keys.
       generalHeads = generalRead.value.filter(head => isRelatedHead(head, generalKeySet));
     }
@@ -2053,7 +2020,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     const norms = normsResult.rows;
     const normsOmitted = normsResult.omitted;
 
-    // Item 1: the goal row is ALWAYS present and the stage row whenever the
+    // The goal row is ALWAYS present and the stage row whenever the
     // task's stage is in the plan; each carries its real status even without a
     // current understanding (version/conclusion/body null, currentEligible false).
     const localUnderstanding: NotesUnderstandingRowV1[] = [];
@@ -2076,13 +2043,13 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     if (selected.value.understanding !== null) excluded.add(selected.value.understanding.head.noteId);
     for (const row of norms) excluded.add(row.noteId);
 
-    // Item 3: the source rank is the CLASS of the matched key (L20 order), not
+    // The source rank is the CLASS of the matched key (L20 order), not
     // the key's array position; the array order of `generalKeys` only picks the
     // display anchor within the same class. The tier is the L20 tier
     // (confirmed -> own-goal -> cross).
     const classRankOf = (head: NoteHeadSnapshot): number => {
       let rank = Number.MAX_SAFE_INTEGER;
-      for (const key of anchorKeysOf(head)) {
+      for (const key of anchorSlots(head)) {
         if (!generalKeySet.has(key)) continue;
         const candidate = generalKeyRank(key);
         if (candidate < rank) rank = candidate;
@@ -2090,7 +2057,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       return rank;
     };
     const displayAnchorOf = (head: NoteHeadSnapshot): string => {
-      const keys = anchorKeysOf(head);
+      const keys = anchorSlots(head);
       for (const key of generalKeys) {
         if (generalKeySet.has(key) && keys.includes(key)) return key;
       }
@@ -2114,7 +2081,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       })) {
       const item = itemOfHead(head);
       if (item === undefined) continue;
-      // Item 2: only a current conclusion, or one warning row for an
+      // Only a current conclusion, or one warning row for an
       // accepted/reviewed stale/conflicting/source-unavailable head; every
       // other ineligible head contributes no row at all.
       if (item.currentEligible) {
@@ -2207,7 +2174,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       let start = 0;
       if (after !== null) {
         const index = all.findIndex(head => head.noteId === after);
-        // Item 4 fix 2: a cursor naming a note not on this anchor is a mismatch;
+        // A cursor naming a note not on this anchor is a mismatch;
         // never silently restart at the first page.
         if (index < 0) return rejected('invalid', 'cursor_mismatch');
         start = index + 1;
@@ -2388,7 +2355,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         if (!head.ok) return rejected(head.code, head.reason);
         if (head.value === null) return { status: 'not_found' };
         seen.set(head.value.noteId, head.value);
-        for (const key of anchorKeysOf(head.value)) {
+        for (const key of anchorSlots(head.value)) {
           const heads = await headsByAnchorKey(deps.records, ctx.projectId, key);
           if (!heads.ok) return rejected(heads.code, heads.reason);
           anchorSets.set(`${ctx.projectId}\u0000${key}`, heads.value);
@@ -2400,7 +2367,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         if (!heads.ok) return rejected(heads.code, heads.reason);
         anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, heads.value);
         for (const candidate of heads.value) {
-          if (anchorKeysOf(candidate).includes(anchorKey)) seen.set(candidate.noteId, candidate);
+          if (anchorSlots(candidate).includes(anchorKey)) seen.set(candidate.noteId, candidate);
         }
         // R9: an anchor with no heads still owes the caller its existence answer.
         if (seen.size === 0) {
@@ -2475,7 +2442,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         anchorsOfSubject = [version.value.anchor, ...version.value.extraAnchors].map(anchorKeyOf);
       } else {
         references = new Set<string>([...head.value.replaces, ...head.value.contradicts]);
-        anchorsOfSubject = anchorKeysOf(head.value);
+        anchorsOfSubject = anchorSlots(head.value);
       }
       const seen = new Map<string, NoteHeadSnapshot>();
       // F4: seed every anchor read below into the check's cache.
@@ -2537,7 +2504,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         const heads = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
         if (!heads.ok) return rejected(heads.code, heads.reason);
         anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, heads.value);
-        candidates = heads.value.filter(head => anchorKeysOf(head).includes(anchorKey)
+        candidates = heads.value.filter(head => anchorSlots(head).includes(anchorKey)
           && head.goalId === input.goalId && (head.state === 'accepted' || head.state === 'reviewed'));
       } else if (input.goalId !== undefined) {
         const heads = await headsOnReviewStatus(ctx.projectId, input.goalId, ['accepted', 'reviewed']);
@@ -2549,7 +2516,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         if (!heads.ok) return rejected(heads.code, heads.reason);
         anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, heads.value);
         // R6: anchor-scoped stale covers accepted and reviewed, like the goal route.
-        candidates = heads.value.filter(head => anchorKeysOf(head).includes(anchorKey)
+        candidates = heads.value.filter(head => anchorSlots(head).includes(anchorKey)
           && (head.state === 'accepted' || head.state === 'reviewed'));
       }
       const ordered = [...candidates].sort((left, right) => compareText(left.noteId, right.noteId));
@@ -2615,7 +2582,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       // §11.2 check order: shape -> cursor -> ledger cursor -> the resolution
       // table -> read. The resolved node is bound into the cursor; a changed
       // `related` is `cursor_mismatch` before any resolution read.
-      // Rework item 5(b): one per-call map of the plan windows the related-scope
+      // One per-call map of the plan windows the related-scope
       // resolution reads, handed to the page's `checkHeads` so each goal's
       // window is read once per call.
       const relatedPlans = new Map<string, PlanRevisionSnapshot | null>();
@@ -2664,7 +2631,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         const heads = await headsByAnchorKey(deps.records, ctx.projectId, key);
         if (!heads.ok) return rejected(heads.code, heads.reason);
         anchorSets.set(`${ctx.projectId}\u0000${key}`, heads.value);
-        anchorOnAnchor = heads.value.filter(head => anchorKeysOf(head).includes(key));
+        anchorOnAnchor = heads.value.filter(head => anchorSlots(head).includes(key));
         if (anchorOnAnchor.length === 0) {
           const exists = await anchorExistsNow(ctx, input.anchor);
           if (!exists.ok) return rejected(exists.code, exists.reason);
@@ -2703,7 +2670,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
           // Accepted change (decision 66): on this path `index_not_ready` and
           // text-port store failures cannot surface; a damaged head under the
           // prefix, or a failing `lookupOrdered`, is `unavailable`.
-          // F3 (review item 3): the scoped `'all'` path bypasses the port, so
+          // F3: the scoped `'all'` path bypasses the port, so
           // the port's continuation-key rule is applied here, after the term
           // validation and before the prefix heads are read. A canonical key
           // that names no record is still a valid position.

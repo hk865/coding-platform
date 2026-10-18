@@ -42,7 +42,7 @@
  */
 import type { ArtifactRecord, ArtifactRef } from '../../../contracts/artifact.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { DecisionHostSenderV1, MessageRecipient, SessionMessageRef, UserMessageRecipientV1,
@@ -58,6 +58,8 @@ import {
 } from '../../../contracts/core/session-archive.js';
 import type { PreparedTaskManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
+import { isNonNeg as isNonNegativeInt, isPos as isPositiveInt, isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
 import {
@@ -73,6 +75,7 @@ import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.j
 import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
 import { decodeEvidenceSnapshot } from '../persistence/evidence-record-codecs.js';
+import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { checkPlainSessionRef, decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import {
   SESSION_ARCHIVE_REQUESTED_EVENT, sessionArchiveChangedEventFromEvent, type SessionArchiveChangedEventV1,
@@ -123,37 +126,14 @@ type HostActor = Extract<CorePrincipal, { kind: 'host' }>['actor'];
 // Small pure helpers
 // --------------------------------------------------------------------------
 
-function isObject(value: unknown): value is Unknown {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isPositiveInt(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-/** §2.1: revision 0 is the legal absence pin of a non-stored aggregate (Task). */
-function isNonNegativeInt(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
-function canonicalOf(value: unknown): string | null {
-  try {
-    return canonicalJson(value as JsonValue);
-  } catch {
-    return null;
-  }
-}
 function sameActor(left: unknown, right: unknown): boolean {
   return isObject(left) && isObject(right) && left['kind'] === right['kind'] && left['id'] === right['id'];
 }
 
 /**
- * Slice 5 widened `SessionMessage.recipient` to
- * `SessionRef | UserMessageRecipientV1`. The historical mailbox paths here
- * address a Session, so this pure discriminator narrows the union without
- * changing any Session behaviour; the new member's behaviour lands in part 2.
- * It deliberately does not call the shared `isUserMessageRecipient` helper,
- * which is itself still a part-1 stub.
+ * The historical mailbox paths here address a Session. This pure discriminator
+ * narrows the `SessionRef | UserMessageRecipientV1` union without changing any
+ * Session behaviour.
  */
 function isUserRecipient(recipient: MessageRecipient): recipient is UserMessageRecipientV1 {
   return 'kind' in recipient && recipient.kind === 'user';
@@ -171,30 +151,13 @@ function isRoleBindingRef(value: unknown): boolean {
     && nonEmpty(value['bindingId']) && nonEmpty(value['templateId']) && nonEmpty(value['templateRevision'])
     && isPositiveInt(value['bindingVersion']) && nonEmpty(value['policyRevision']);
 }
-function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
-}
+/** The Session store-failure map; a `unique_conflict` also carries a claim slot, not a version pin. */
 function mapStoreFailure(failure: StoreFailure): CoreRejection {
-  switch (failure.code) {
-    case 'invalid': return reject('invalid', failure.reason);
-    case 'not_found': return reject('not_found', failure.reason);
-    case 'idempotency_conflict': return reject('idempotency_conflict', failure.reason);
-    case 'revision_conflict': {
-      const current: VersionPin[] = [];
-      for (const entry of failure.current) {
-        if (entry.revision === null) continue;
-        try {
-          const ref = JSON.parse(entry.refKey) as unknown;
-          if (isObject(ref)) current.push({ ref: ref as unknown as VersionPin['ref'], revision: entry.revision });
-        } catch { /* an unreadable ref key is not a pin */ }
-      }
-      return reject('revision_conflict', failure.reason, current.length > 0 ? current : undefined);
-    }
-    case 'unique_conflict': return reject('revision_conflict', `${failure.reason} (the unique slot is held by another owner)`);
-    case 'unsupported': return reject('unsupported', failure.reason);
-    case 'corrupt': return reject('unavailable', `the record store reported damage: ${failure.reason}`);
-    default: return reject('unavailable', failure.reason);
-  }
+  return sessionStoreFailureToRejection({
+    code: failure.code,
+    reason: failure.reason,
+    ...(failure.code === 'revision_conflict' ? { current: failure.current } : {}),
+  });
 }
 function mapReadResult<T>(result: ReadResult<T>): ReadResult<T> | CoreRejection {
   if (result.status === 'not_found') return reject('not_found', 'the requested record does not exist');
@@ -242,7 +205,7 @@ async function preservedNoticeOrigin(records: SessionMailboxDependencies['record
 // --------------------------------------------------------------------------
 //
 // The original `sendMessage`/`respond*`/`ack`/`sendUserMessage` path and the
-// slice-5 `MessageWriteOwnerPort.persist` facade share exactly this commit
+// `MessageWriteOwnerPort.persist` facade share exactly this commit
 // tail: the decoded receipt replay, the creation/update origin, the message
 // CAS (from the caller's ACCEPTED pin, never a re-read `before.revision`), the
 // single PreparedCommit and the receipt re-check. Body storage stays outside
@@ -272,8 +235,8 @@ async function replaySessionMessageReceipt(
   if (located.value.event.eventId !== receipt.eventIds[0]) {
     return reject('unavailable', 'the recorded mailbox event id disagrees with the receipt');
   }
-  // Slice 1 §2.9 (kept on the rebase onto slice 5): the wait-disposal replay
-  // event carries the changed message under its own field.
+  // Slice 1 §2.9: the wait-disposal replay event carries the changed message
+  // under its own field.
   const disposal = located.value.event.eventType === 'ArchiveWaitDisposed';
   const decoded = disposal
     ? archiveWaitDisposedEventFromEvent(located.value.event)
@@ -725,9 +688,9 @@ type MessageEventEnvelope = { schemaVersion: 1; occurredAt: string; projectId: s
  * Slice 1 §2.9: the wait-disposal replay event carries the changed message
  * and source Session plus the exact step. It has no actor/requestId; the
  * commit identity (and the original operator) come from the durable request.
- * Rebase onto slice 5 (lead): every other message event is encoded by the one
- * writer's `encodePersistEvent`; this is the only event outside it, because the
- * disposal commit also writes the source Session.
+ * Every other message event is encoded by the one writer's `encodePersistEvent`;
+ * this is the only event outside it, because the disposal commit also writes
+ * the source Session.
  */
 function encodeArchiveWaitDisposalEvent(eventId: string, envelope: MessageEventEnvelope, message: SessionMessage,
   disposal: { source: SessionRecord; archiveStep: ArchiveStepRefV1 }): EncodedDomainEvent {
@@ -1096,6 +1059,71 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     } catch {
       return null;
     }
+  }
+
+  /** A synchronously snapshotted `atLeastCursor`: its comparable sequence and the raw cursor. */
+  type AtLeastCursor = { seq: number; cursor: CommitCursor };
+
+  /**
+   * The page-base checks every paginated mailbox read shares, in order: the page
+   * object, no extra fields, an integer limit 1..100. Each read supplies its own
+   * exact texts; the raw cursor values are snapshotted here, synchronously.
+   */
+  function pageProblem(page: unknown, texts: {
+    requiresObject: string;
+    extraFields: string;
+    limit: string;
+  }): { ok: true; limit: number; rawCursor: unknown; rawAtLeast: unknown }
+    | { ok: false; rejection: CoreRejection } {
+    if (!isObject(page)) return { ok: false, rejection: reject('invalid', texts.requiresObject) };
+    if (Object.keys(page).some((key) => key !== 'limit' && key !== 'cursor' && key !== 'atLeastCursor')) {
+      return { ok: false, rejection: reject('invalid', texts.extraFields) };
+    }
+    const limit = page['limit'];
+    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return { ok: false, rejection: reject('invalid', texts.limit) };
+    }
+    return { ok: true, limit, rawCursor: page['cursor'], rawAtLeast: page['atLeastCursor'] };
+  }
+
+  /** Parses the snapshotted `atLeastCursor`; its invalid text is the same for all four reads. */
+  function atLeastCursorOf(rawAtLeast: unknown):
+  { ok: true; atLeast: AtLeastCursor | undefined } | { ok: false; rejection: CoreRejection } {
+    if (rawAtLeast === undefined) return { ok: true, atLeast: undefined };
+    const seq = cursorSequence(rawAtLeast);
+    if (seq === null) return { ok: false, rejection: reject('invalid', 'atLeastCursor is not a ledger commit cursor') };
+    return { ok: true, atLeast: { seq, cursor: rawAtLeast as CommitCursor } };
+  }
+
+  /**
+   * §4.1 line 772: a fresh page must have observed at least the caller's
+   * `atLeastCursor`; a null read-through is below every watermark and reports
+   * the minimum. The comparison is the numeric commit sequence, never string order.
+   */
+  function readProgress(
+    readThrough: CommitCursor | null,
+    atLeast: AtLeastCursor | undefined,
+  ): { ok: true; readThrough: CommitCursor } | { ok: false; result: ReadResult<never> } {
+    if (atLeast !== undefined) {
+      const observed = readThrough === null ? null : cursorSequence(readThrough);
+      if (observed === null || observed < atLeast.seq) {
+        return {
+          ok: false,
+          result: {
+            status: 'not_ready',
+            observed: readThrough === null ? null : { kind: 'platform', cursor: readThrough },
+            required: { kind: 'platform', cursor: atLeast.cursor },
+          },
+        };
+      }
+    }
+    if (readThrough === null) {
+      return {
+        ok: false,
+        result: { status: 'not_ready', observed: null, required: { kind: 'platform', cursor: MIN_CURSOR } },
+      };
+    }
+    return { ok: true, readThrough };
   }
 
   // ---- exact Run/outbox/Session identity (historical reads) ---------------
@@ -2228,25 +2256,20 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (status !== undefined && status !== 'pending' && status !== 'read' && status !== 'responded') {
       return reject('invalid', 'the inbox status filter is not recognized');
     }
-    const page = raw['page'];
-    if (!isObject(page)) return reject('invalid', 'readInbox requires a page object');
-    if (Object.keys(page).some((key) => key !== 'limit' && key !== 'cursor' && key !== 'atLeastCursor')) {
-      return reject('invalid', 'readInbox page does not accept extra fields');
-    }
-    const limit = page['limit'];
-    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) {
-      return reject('invalid', 'readInbox limit must be an integer between 1 and 100');
-    }
+    const page = pageProblem(raw['page'], {
+      requiresObject: 'readInbox requires a page object',
+      extraFields: 'readInbox page does not accept extra fields',
+      limit: 'readInbox limit must be an integer between 1 and 100',
+    });
+    if (!page.ok) return page.rejection;
     // Snapshot the complete page synchronously. No later await may re-read a
     // caller-mutable `page`; the decoded cursor below is the accepted one.
-    const rawCursor = page['cursor'];
-    const rawAtLeast = page['atLeastCursor'];
-    if (rawCursor !== undefined && !nonEmpty(rawCursor)) {
+    if (page.rawCursor !== undefined && !nonEmpty(page.rawCursor)) {
       return reject('invalid', 'the inbox cursor must be a non-empty string');
     }
     let decodedCursor: InboxCursorV1 | null = null;
-    if (rawCursor !== undefined) {
-      decodedCursor = decodeInboxCursor(rawCursor);
+    if (page.rawCursor !== undefined) {
+      decodedCursor = decodeInboxCursor(page.rawCursor);
       if (decodedCursor === null) return reject('invalid', 'the inbox cursor is not a valid continuation token');
       if (decodedCursor.projectId !== owned.projectId || decodedCursor.workspaceId !== owned.workspaceId
         || canonicalOf(decodedCursor.recipient) !== canonicalOf(recipient)
@@ -2254,12 +2277,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         return reject('invalid', 'the inbox cursor belongs to another scope, recipient or filter');
       }
     }
-    let atLeastSeq: number | undefined;
-    if (rawAtLeast !== undefined) {
-      const parsed = cursorSequence(rawAtLeast);
-      if (parsed === null) return reject('invalid', 'atLeastCursor is not a ledger commit cursor');
-      atLeastSeq = parsed;
-    }
+    const atLeast = atLeastCursorOf(page.rawAtLeast);
+    if (!atLeast.ok) return atLeast.rejection;
     const after = decodedCursor?.after;
 
     let callerKey: string;
@@ -2290,7 +2309,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       values: filtered
         ? [owned.projectId, owned.workspaceId, recipient.sessionId, status]
         : [owned.projectId, owned.workspaceId, recipient.sessionId],
-      limit,
+      limit: page.limit,
       ...(after === undefined ? {} : { after }),
     };
     let pageResult: StoreResult<{ records: EncodedRecord[]; next: string | null; readThrough: CommitCursor | null }>;
@@ -2300,20 +2319,9 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       return reject('unavailable', 'the inbox lookup failed');
     }
     if (pageResult.status !== 'ready') return mapStoreFailure(pageResult);
-    const readThrough = pageResult.value.readThrough;
-    if (atLeastSeq !== undefined) {
-      const observed = readThrough === null ? null : cursorSequence(readThrough);
-      if (observed === null || observed < atLeastSeq) {
-        return {
-          status: 'not_ready',
-          observed: readThrough === null ? null : { kind: 'platform', cursor: readThrough },
-          required: { kind: 'platform', cursor: rawAtLeast as CommitCursor },
-        };
-      }
-    }
-    if (readThrough === null) {
-      return { status: 'not_ready', observed: null, required: { kind: 'platform', cursor: MIN_CURSOR } };
-    }
+    const progress = readProgress(pageResult.value.readThrough, atLeast.atLeast);
+    if (!progress.ok) return progress.result;
+    const readThrough = progress.readThrough;
     const items: SessionMessage[] = [];
     for (const record of pageResult.value.records) {
       const decoded = decodeSessionMessageRecord(record);
@@ -2371,35 +2379,26 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const senderRun = raw['senderRun'] === undefined ? undefined : structuredClone(raw['senderRun']) as RunRef;
     const senderSession = raw['senderSession'] === undefined ? undefined : structuredClone(raw['senderSession']) as SessionRef;
     if ((senderRun ?? senderSession)!.projectId !== owned.projectId) return reject('forbidden', 'the outbox sender belongs to another project');
-    const page = raw['page'];
-    if (!isObject(page)) return reject('invalid', 'readOutbox requires a page object');
-    if (Object.keys(page).some((key) => key !== 'limit' && key !== 'cursor' && key !== 'atLeastCursor')) {
-      return reject('invalid', 'readOutbox page does not accept extra fields');
-    }
-    const limit = page['limit'];
-    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) {
-      return reject('invalid', 'readOutbox limit must be an integer between 1 and 100');
-    }
-    const rawCursor = page['cursor'];
-    const rawAtLeast = page['atLeastCursor'];
-    if (rawCursor !== undefined && !nonEmpty(rawCursor)) {
+    const page = pageProblem(raw['page'], {
+      requiresObject: 'readOutbox requires a page object',
+      extraFields: 'readOutbox page does not accept extra fields',
+      limit: 'readOutbox limit must be an integer between 1 and 100',
+    });
+    if (!page.ok) return page.rejection;
+    if (page.rawCursor !== undefined && !nonEmpty(page.rawCursor)) {
       return reject('invalid', 'the outbox cursor must be a non-empty string');
     }
     let decodedCursor: OutboxCursorV1 | null = null;
-    if (rawCursor !== undefined) {
-      decodedCursor = decodeOutboxCursor(rawCursor);
+    if (page.rawCursor !== undefined) {
+      decodedCursor = decodeOutboxCursor(page.rawCursor);
       if (decodedCursor === null) return reject('invalid', 'the outbox cursor is not a valid continuation token');
       if (decodedCursor.projectId !== owned.projectId || decodedCursor.workspaceId !== owned.workspaceId
         || canonicalOf(decodedCursor.senderRun ?? decodedCursor.senderSession) !== canonicalOf(senderRun ?? senderSession)) {
         return reject('invalid', 'the outbox cursor belongs to another scope or sender Run');
       }
     }
-    let atLeastSeq: number | undefined;
-    if (rawAtLeast !== undefined) {
-      const parsed = cursorSequence(rawAtLeast);
-      if (parsed === null) return reject('invalid', 'atLeastCursor is not a ledger commit cursor');
-      atLeastSeq = parsed;
-    }
+    const atLeast = atLeastCursorOf(page.rawAtLeast);
+    if (!atLeast.ok) return atLeast.rejection;
     const after = decodedCursor?.after;
 
     let callerKey: string;
@@ -2424,7 +2423,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       index: senderRun === undefined ? SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP : SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP,
       values: senderRun === undefined ? [owned.projectId, owned.workspaceId, senderSession!.sessionId]
         : [owned.projectId, owned.workspaceId, senderRun.goalId, senderRun.runId],
-      limit,
+      limit: page.limit,
       ...(after === undefined ? {} : { after }),
     };
     let pageResult: StoreResult<{ records: EncodedRecord[]; next: string | null; readThrough: CommitCursor | null }>;
@@ -2434,20 +2433,9 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       return reject('unavailable', 'the outbox lookup failed');
     }
     if (pageResult.status !== 'ready') return mapStoreFailure(pageResult);
-    const readThrough = pageResult.value.readThrough;
-    if (atLeastSeq !== undefined) {
-      const observed = readThrough === null ? null : cursorSequence(readThrough);
-      if (observed === null || observed < atLeastSeq) {
-        return {
-          status: 'not_ready',
-          observed: readThrough === null ? null : { kind: 'platform', cursor: readThrough },
-          required: { kind: 'platform', cursor: rawAtLeast as CommitCursor },
-        };
-      }
-    }
-    if (readThrough === null) {
-      return { status: 'not_ready', observed: null, required: { kind: 'platform', cursor: MIN_CURSOR } };
-    }
+    const progress = readProgress(pageResult.value.readThrough, atLeast.atLeast);
+    if (!progress.ok) return progress.result;
+    const readThrough = progress.readThrough;
     const items: SessionMessage[] = [];
     for (const record of pageResult.value.records) {
       const decoded = decodeSessionMessageRecord(record);
@@ -3119,20 +3107,6 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
 
   // ---- readRoutedReplies / readUndeliveredReplies (slice 1 §2.5) ----------
 
-  /** The `SessionPageRequest` shared by the two reply reads. */
-  function replyPageProblem(page: unknown): { ok: true; limit: number; rawCursor: unknown; rawAtLeast: unknown }
-    | { ok: false; rejection: CoreRejection } {
-    if (!isObject(page)) return { ok: false, rejection: reject('invalid', 'the reply page must be an object') };
-    if (Object.keys(page).some((key) => key !== 'limit' && key !== 'cursor' && key !== 'atLeastCursor')) {
-      return { ok: false, rejection: reject('invalid', 'the reply page does not accept extra fields') };
-    }
-    const limit = page['limit'];
-    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) {
-      return { ok: false, rejection: reject('invalid', 'the reply limit must be an integer between 1 and 100') };
-    }
-    return { ok: true, limit, rawCursor: page['cursor'], rawAtLeast: page['atLeastCursor'] };
-  }
-
   /** A work_run reads only its own Session; a Host reads within its workspace. */
   async function replyCallerKey(owned: Owned, session: SessionRef, what: string):
   Promise<{ ok: true; key: string } | { ok: false; rejection: CoreRejection }> {
@@ -3164,7 +3138,11 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (handlerProblem !== null) return reject('invalid', `readRoutedReplies handler: ${handlerProblem}`);
     const handler = structuredClone(raw['handler']) as SessionRef;
     if (handler.projectId !== owned.projectId) return reject('forbidden', 'the reply handler belongs to another project');
-    const page = replyPageProblem(raw['page']);
+    const page = pageProblem(raw['page'], {
+      requiresObject: 'the reply page must be an object',
+      extraFields: 'the reply page does not accept extra fields',
+      limit: 'the reply limit must be an integer between 1 and 100',
+    });
     if (!page.ok) return page.rejection;
     const caller = await replyCallerKey(owned, handler, 'routed-replies');
     if (!caller.ok) return caller.rejection;
@@ -3180,12 +3158,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         return reject('invalid', 'the reply cursor belongs to another scope or handler');
       }
     }
-    let atLeastSeq: number | undefined;
-    if (page.rawAtLeast !== undefined) {
-      const parsed = cursorSequence(page.rawAtLeast);
-      if (parsed === null) return reject('invalid', 'atLeastCursor is not a ledger commit cursor');
-      atLeastSeq = parsed;
-    }
+    const atLeast = atLeastCursorOf(page.rawAtLeast);
+    if (!atLeast.ok) return atLeast.rejection;
     if (decodedCursor !== null && decodedCursor.callerKey !== caller.key) {
       return reject('invalid', 'the reply cursor does not belong to the current caller');
     }
@@ -3203,20 +3177,9 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       return reject('unavailable', 'the routed-reply lookup failed');
     }
     if (pageResult.status !== 'ready') return mapStoreFailure(pageResult);
-    const readThrough = pageResult.value.readThrough;
-    if (atLeastSeq !== undefined) {
-      const observed = readThrough === null ? null : cursorSequence(readThrough);
-      if (observed === null || observed < atLeastSeq) {
-        return {
-          status: 'not_ready',
-          observed: readThrough === null ? null : { kind: 'platform', cursor: readThrough },
-          required: { kind: 'platform', cursor: page.rawAtLeast as CommitCursor },
-        };
-      }
-    }
-    if (readThrough === null) {
-      return { status: 'not_ready', observed: null, required: { kind: 'platform', cursor: MIN_CURSOR } };
-    }
+    const progress = readProgress(pageResult.value.readThrough, atLeast.atLeast);
+    if (!progress.ok) return progress.result;
+    const readThrough = progress.readThrough;
     const items: SessionMessage[] = [];
     for (const record of pageResult.value.records) {
       const decoded = decodeSessionMessageRecord(record);
@@ -3251,7 +3214,11 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (sessionProblem !== null) return reject('invalid', `readUndeliveredReplies sessionRef: ${sessionProblem}`);
     const sessionRef = structuredClone(raw['sessionRef']) as SessionRef;
     if (sessionRef.projectId !== owned.projectId) return reject('forbidden', 'the reply source belongs to another project');
-    const page = replyPageProblem(raw['page']);
+    const page = pageProblem(raw['page'], {
+      requiresObject: 'the reply page must be an object',
+      extraFields: 'the reply page does not accept extra fields',
+      limit: 'the reply limit must be an integer between 1 and 100',
+    });
     if (!page.ok) return page.rejection;
     const caller = await replyCallerKey(owned, sessionRef, 'undelivered-replies');
     if (!caller.ok) return caller.rejection;
@@ -3267,12 +3234,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         return reject('invalid', 'the reply cursor belongs to another scope or source Session');
       }
     }
-    let atLeastSeq: number | undefined;
-    if (page.rawAtLeast !== undefined) {
-      const parsed = cursorSequence(page.rawAtLeast);
-      if (parsed === null) return reject('invalid', 'atLeastCursor is not a ledger commit cursor');
-      atLeastSeq = parsed;
-    }
+    const atLeast = atLeastCursorOf(page.rawAtLeast);
+    if (!atLeast.ok) return atLeast.rejection;
     if (decodedCursor !== null && decodedCursor.callerKey !== caller.key) {
       return reject('invalid', 'the reply cursor does not belong to the current caller');
     }
@@ -3316,20 +3279,9 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       return reject('unavailable', 'the undelivered-reply lookup failed');
     }
     if (pageResult.status !== 'ready') return mapStoreFailure(pageResult);
-    const readThrough = pageResult.value.readThrough;
-    if (atLeastSeq !== undefined) {
-      const observed = readThrough === null ? null : cursorSequence(readThrough);
-      if (observed === null || observed < atLeastSeq) {
-        return {
-          status: 'not_ready',
-          observed: readThrough === null ? null : { kind: 'platform', cursor: readThrough },
-          required: { kind: 'platform', cursor: page.rawAtLeast as CommitCursor },
-        };
-      }
-    }
-    if (readThrough === null) {
-      return { status: 'not_ready', observed: null, required: { kind: 'platform', cursor: MIN_CURSOR } };
-    }
+    const progress = readProgress(pageResult.value.readThrough, atLeast.atLeast);
+    if (!progress.ok) return progress.result;
+    const readThrough = progress.readThrough;
     const items: UndeliveredReplyV1[] = [];
     for (const record of pageResult.value.records) {
       const decoded = decodeSessionMessageRecord(record);
@@ -3681,9 +3633,9 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
  * The shared body/persist facade over the mailbox's private helpers
  * (SPEC §3.3 line 684): `storeBody`/`persist` keep the original
  * `storeMessageBody`/`writeMessage`/receipt rules, while the public
- * `SessionMailboxPort` gains no internal method. Part 1 declares the factory
- * only; the facade lands in part 2 and both callers (`sendMessage`/`respond*`
- * and `createDecisionMessageService`) share this one instance.
+ * `SessionMailboxPort` gains no internal method. Both callers
+ * (`sendMessage`/`respond*` and `createDecisionMessageService`) share this one
+ * instance.
  */
 export function createMessageWriteOwner(deps: SessionMailboxDependencies): MessageWriteOwnerPort {
   const records = deps.records;

@@ -1,6 +1,5 @@
 /** R3c plan/task slice. WorkGraph owns the rules; the Store owns atomic bytes. */
-import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
-import type { ArtifactRef } from '../../../contracts/artifact.js';
+import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
@@ -8,18 +7,17 @@ import type { ReadResult, WriteResult } from '../../../contracts/core/results.js
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import type { TaskTriple, TaskAttemptRef, RunRef, TaskBudgetV1, TaskEligibility } from '../../../contracts/dispatch.js';
-import type { PlanWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import type { GoalRef, GoalSnapshot, VersionedRef } from '../../../contracts/ledger.js';
 import type { GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
-import type { PlanProposalSnapshot } from '../../../contracts/goal-change.js';
 import type { QueryJobAnswerRef, QueryJobRef } from '../../../contracts/query-job.js';
 import type { DependencyRequirement, Disposition, Phase, PlanRevisionDraft, PlanRevisionRef,
-  PlanRevisionSnapshot, PlanValidationError, RuntimeTask, TaskDispositionChangeV1, TaskInputRequirementV2,
+  PlanRevisionSnapshot, RuntimeTask, TaskDispositionChangeV1, TaskInputRequirementV2,
   TaskRelationV2 } from '../../../contracts/plan.js';
 import type { TaskFailureFactsV1, TaskPhaseCauseV1, TaskReworkSummaryV1 } from '../../../contracts/task-failure.js';
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
 import type { ToolCommitLookup, UnknownCallDecisionReasonV1, UnknownCallReviewRef, UnknownCallReviewStatusV1, UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type { GoalDisplayV1, GoalResumeContinuationV1, GoalRunControlCapabilityV1 } from '../state/goal-machine.js';
+import type { PlanChangeReason, PlanProposalRecord, PlanProposalRef } from '../state/plan-machine.js';
 import type { GraphWrite } from './task-contracts.js';
 import type { InitialPlanAnswerFacts } from '../../../contracts/query-job.js';
 
@@ -31,31 +29,11 @@ export type { InitialPlanAnswerFacts };
  * this former name keeps the JSON shape and every importer unchanged.
  */
 export type { DelegatedWriteProvenanceV1, PlanWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
-/** Same full identity as legacy PlanProposal@1; schema v2 has a distinct body. */
-export type PlanProposalRef = { aggregateType: 'PlanProposal'; projectId: string;
-  workspaceId: string; proposalId: string };
-export type PlanChangeReason = { text: string; sources: ArtifactRef[];
-  /**
-   * C7 (spec §3.1): the Tasks this candidate means to change, e.g. a traced
-   * Task whose disposition only changes. Absent is recorded as `[]` in a
-   * `TaskDispositionChangeV1`. Recording checks its shape (PLAN-01/02); an
-   * adoption requires every traced disposition-only Task in it (TASK-19 guard 6).
-   */
-  affectedTaskIds?: string[] };
-
-/**
- * Slice 5 request-candidate extension (spec §2.4). `requestRef` names the first
- * user-initiated QueryJob this candidate belongs to; `notAdopted` records the
- * exact non-adoption fact. Both are optional so old records keep their shape.
- */
-export type CandidateRequestExtensionV1 = {
-  requestRef?: QueryJobRef | null;
-  notAdopted?: {
-    reason: 'replaced' | 'not_selected' | 'abandoned';
-    requestedBy: ActorRef; at: string; replacedBy: PlanProposalRef | null;
-  };
-};
-
+export type {
+  CandidatePlanProposal, CandidateRequestExtensionV1, LegacyPlanProposal,
+  PlanChangeReason, PlanProposalRecord, PlanProposalRef,
+} from '../state/plan-machine.js';
+export type PlanProposal = PlanProposalRecord;
 /** Slice 5 proposePlan input (spec §2.4): the original fields plus the request slot facts. */
 export type ProposedPlanRequestV1 = {
   goalRef: GoalRef; basedOn: PlanRevisionRef | null;
@@ -63,20 +41,6 @@ export type ProposedPlanRequestV1 = {
   requestRef?: QueryJobRef | null;
   replaces?: { proposalRef: PlanProposalRef; revision: number } | null;
 };
-export type PlanProposal =
-  | { kind: 'candidate_v2'; ref: PlanProposalRef; revision: number; schemaVersion: 2;
-      goalRef: GoalRef; basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
-      reason: PlanChangeReason; status: 'candidate' | 'accepted' | 'rejected' | 'not_adopted';
-      issues: PlanValidationError[];
-      /** Slice 5: first user-initiated request this candidate belongs to; absent = independent. */
-      requestRef?: QueryJobRef | null;
-      /** Slice 5: the exact non-adoption fact, when this candidate was not adopted. */
-      notAdopted?: CandidateRequestExtensionV1['notAdopted'];
-      /** W2 Agent branch only; absent on every legacy/Host candidate. */
-      submittedBy?: PlanWriteProvenanceV1 }
-  | { kind: 'legacy_v1'; ref: PlanProposalRef; revision: 1; schemaVersion: 1;
-      goalRef: GoalRef; basedOn: PlanRevisionRef; draft: null;
-      legacy: PlanProposalSnapshot; status: 'candidate'; issues: PlanValidationError[] };
 export type GoalDetail = { goal: GoalSnapshot; pendingPlan: PlanProposal | null };
 /**
  * 只读规划诊断（W2 §4.2）。它由已采用的 Plan + canonical task facts 在内存投影，

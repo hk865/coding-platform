@@ -3,8 +3,7 @@
  * (spec §2.6, §2.8, §3.3, §4.1, §4.2, §4.5).
  *
  * This file declares only the narrow contracts the owners and the read model
- * share; the implementations live in their owner modules. Part 1 writes the
- * signatures and the stub bodies, never the behaviour.
+ * share; the implementations live in their owner modules.
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
@@ -47,7 +46,7 @@ import type { GoalRecordTransactionPort, RecordGuard, UniqueClaimChange } from '
 import type { MessageQueryAnswerSender, MessageSender, SessionMailboxPort, SessionMessage,
   SessionMessageEventV1 } from './communication-contracts.js';
 import type { MaterialPort } from './material-contracts.js';
-import type { NoteDispositionResult } from './note-contracts.js';
+import type { NoteDecisionApplicationInputV1, NoteDispositionResult } from './note-contracts.js';
 import type { PlanProposal, PlanProposalRef } from './plan-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
 
@@ -199,10 +198,7 @@ export interface NoteDecisionSourcePort {
     Promise<ReadResult<NoteDecisionCardFactsV1[]>>;
   readNoteDecision(ctx: CoreCallContext, input: { pin: { noteId: string; version: number } }):
     Promise<ReadResult<{ card: NoteDecisionCardFactsV1 | null; closedReason: NoteDecisionClosedReasonV1 | null }>>;
-  applyNoteDecision(ctx: CoreCallContext, input: { commandId: string; cardId: string;
-    optionId: 'accept' | 'reject' | 'supersede' | 'coexist';
-    pin: { noteId: string; version: number }; expectedPointerRevision: number | null;
-    answerMessageRef: SessionMessageRef; conditions: string | null }): Promise<NoteDispositionResult>;
+  applyNoteDecision(ctx: CoreCallContext, input: NoteDecisionApplicationInputV1): Promise<NoteDispositionResult>;
 }
 
 // ------------------------------------------------------------------------ //

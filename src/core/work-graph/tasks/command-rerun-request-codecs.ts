@@ -33,12 +33,13 @@ import { nestedSourceObject, parseDecisionSourceKey } from './decision-source-id
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import type { CommandRerunRequestChangeV1 } from '../state/command-rerun-request.js';
 
 export const COMMAND_RERUN_REQUEST_SCHEMA_ID = 'CommandRerunRequest@1';
 export const COMMAND_RERUN_REQUEST_CHANGED_EVENT_TYPE = 'CommandRerunRequestChanged';
 export const COMMAND_RERUN_REQUEST_EVENT_SCHEMA_VERSION = 1;
-// Rework 1 item 12: the three index names come from the aggregate contract.
+// The three index names come from the aggregate contract.
 export const K3_CRR_BY_TASK_ALIAS_LOOKUP = K3_CRR_BY_TASK_ALIAS_INDEX;
 export const K3_CRR_BY_GOAL_STATE_LOOKUP = K3_CRR_BY_GOAL_STATE_INDEX;
 export const K3_CRR_BY_TASK_LOOKUP = K3_CRR_BY_TASK_INDEX;
@@ -285,13 +286,7 @@ function actorProblem(value: unknown): string | null {
 }
 
 export function encodeCommandRerunRequestChangedEvent(event: CommandRerunRequestChangedEventV1): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function commandRerunRequestChangedEventFromEvent(

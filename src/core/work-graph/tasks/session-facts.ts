@@ -19,6 +19,7 @@ import type { CoreRejection, ReadResult } from '../../../contracts/core/results.
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
@@ -49,12 +50,6 @@ const FACTS_CURSOR_PREFIX = 's1-facts-page:';
 // Small local helpers
 // --------------------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function refKeyOf(value: unknown): string {
   return canonicalJson(value as JsonValue);
 }

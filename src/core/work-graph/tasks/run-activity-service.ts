@@ -17,6 +17,7 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -27,6 +28,7 @@ import {
 import type {
   ActivityRecordingRef, ActivityRecordingSnapshot, RunActivityFactsV1, RunActivityRef, RunActivitySnapshot,
 } from '../../../contracts/run-activity.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import { dispatchOutboxRefKey, decodeDispatchOutboxEntry } from './claim-record-codecs.js';
 import type { EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
@@ -80,14 +82,8 @@ export type RunActivityWriteOutcome = 'created' | 'replaced' | 'unchanged';
 type HostActor = { kind: 'human' | 'system'; id: string };
 type Trusted = { scope: WorkspaceScope; actor: HostActor };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function reject(code: CoreError, reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
+  return rejected(code, reason);
 }
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }

@@ -1,4 +1,4 @@
-/** Canonical task facts for R3c graph/ready reads and future R4c claim checks.
+/** Canonical task facts for R3c graph/ready reads.
  * A missing schema/index/provider is incomplete, never an empty set of facts. */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
@@ -10,6 +10,7 @@ import type {
   TaskTriple,
 } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { isNonNeg as isSafeRevision, isRecord, nonEmpty, parseObject as parseJsonObject } from '../../../contracts/validation/common.js';
 import { completionPolicyContentDigest } from '../../../contracts/governance.js';
 import type {
   ArchitectureBaselinePin,
@@ -78,6 +79,7 @@ import {
   type NoticeOriginWireV1,
 } from '../persistence/plan-record-codecs.js';
 import { decodeGoalPhaseSnapshot } from './completion-record-codecs.js';
+import { taskPhaseFactsOf } from './task-phase-facts.js';
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import {
@@ -117,28 +119,11 @@ function incomplete(reason: string): Rejected {
 function unavailable(reason: string): Rejected {
   return { status: 'rejected', code: 'unavailable', reason };
 }
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isSafeRevision(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
 function invalidRecord(reason: string): DecodeResult<EncodedRecord> {
   return { status: 'invalid', reason };
 }
 function copyRecord(record: EncodedRecord): EncodedRecord {
   return { refKey: record.refKey, schemaId: record.schemaId, revision: record.revision, json: record.json };
-}
-function parseJsonObject(json: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(json) as unknown;
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 // --------------------------------------------------------------------------
@@ -582,8 +567,7 @@ export async function findPendingProposal(
  * Slice 5 §2.4 per-request head read: the current candidate of ONE saved
  * request (`s5-plan-proposal-by-goal-request`). The returned head is a live
  * candidate even when it is derived stale; only `accepted`/`not_adopted`
- * candidates are closed. Part 1 declares the signature; the read lands in
- * part 2 together with the service that compiles the slot commit.
+ * candidates are closed.
  */
 export async function readRequestCandidateHead(
   records: GoalRecordTransactionPort & RecordLookupPort,
@@ -625,7 +609,7 @@ export async function readRequestCandidateHead(
  * Slice 5 §2.4 all-candidate enumeration: every saved candidate of one Goal
  * (each request's head plus the independent/legacy candidates). The caller
  * must never treat one `findPendingProposal` result as the whole set (spec
- * §8.2 "request head 并发"). Part 1 declares the signature.
+ * §8.2 "request head 并发").
  */
 export async function enumerateGoalCandidates(
   records: GoalRecordTransactionPort & RecordLookupPort,
@@ -742,22 +726,10 @@ export async function enumerateClosedGoalCandidates(
       // LAST (its first candidate's creation commit), never the last in refKey
       // order and never "accepted first". `findCandidateProposal` compares the
       // same positions, so both entrances select the same terminal.
-      let terminal: PlanProposal | null = null;
-      for (const proposal of heads) {
-        if (proposal.kind !== 'candidate_v2') continue;
-        if (proposal.status !== 'accepted' && proposal.status !== 'not_adopted') continue;
-        if (terminal === null) {
-          terminal = proposal;
-          continue;
-        }
-        const position = compareProposalChainPositions(
-          { refKey: planProposalRefKey(proposal.ref), since: positions.get(planProposalRefKey(proposal.ref)) ?? null },
-          { refKey: planProposalRefKey(terminal.ref), since: positions.get(planProposalRefKey(terminal.ref)) ?? null });
-        if (position > 0) terminal = proposal;
-      }
+      const terminal = terminalProposalOf(heads, positions);
       if (terminal !== null) proposals.push(terminal);
     }
-    // L11: append without an unbounded argument spread.
+    // Append without an unbounded argument spread.
     for (const proposal of independent) proposals.push(proposal);
     proposals.sort((left, right) => {
       const leftKey = planProposalRefKey(left.ref);
@@ -768,6 +740,32 @@ export async function enumerateClosedGoalCandidates(
   }
   return { status: 'rejected', code: 'unavailable',
     reason: 'the closed-candidate enumeration window changed while it was being read' };
+}
+
+/**
+ * §2.4/T-R2-2: the request's terminal is the head whose chain was created
+ * LAST (its first candidate's creation commit), never the last in refKey
+ * order and never "accepted first". `findCandidateProposal` compares the
+ * same positions, so both entrances select the same terminal.
+ */
+export function terminalProposalOf(
+  heads: readonly PlanProposal[],
+  positions: ReadonlyMap<string, CommitCursor | null>,
+): PlanProposal | null {
+  let terminal: PlanProposal | null = null;
+  for (const proposal of heads) {
+    if (proposal.kind !== 'candidate_v2') continue;
+    if (proposal.status !== 'accepted' && proposal.status !== 'not_adopted') continue;
+    if (terminal === null) {
+      terminal = proposal;
+      continue;
+    }
+    const position = compareProposalChainPositions(
+      { refKey: planProposalRefKey(proposal.ref), since: positions.get(planProposalRefKey(proposal.ref)) ?? null },
+      { refKey: planProposalRefKey(terminal.ref), since: positions.get(planProposalRefKey(terminal.ref)) ?? null });
+    if (position > 0) terminal = proposal;
+  }
+  return terminal;
 }
 
 // --------------------------------------------------------------------------
@@ -1010,7 +1008,7 @@ export type CanonicalTaskState = {
   execution: RunSnapshot['ref'] | null;
   lease: { status: 'free' } | { status: 'leased'; holderRunId: string };
   reductionRevision: number | null;
-  /** K3 L7: the selected Run's review record, `unreadable`, or null when the key is absent. */
+  /** The selected Run's review record, `unreadable`, or null when the key is absent. */
   unknownCallReview: TaskUnknownCallReview | null;
 };
 export type CanonicalTaskFacts = {
@@ -1031,7 +1029,7 @@ export type CanonicalTaskFacts = {
    * continuation claim can guard and update the SAME record revision. */
   leasesByTaskId: ReadonlyMap<string, TaskLeaseSnapshot>;
   /**
-   * K3 L7/L22: the full decoded UnknownCallReview records of each selected Task,
+   * The full decoded UnknownCallReview records of each selected Task,
    * read in THIS window. The Task row only projects the selected Run's record
    * (`byTaskId.unknownCallReview`), while the failure facts need the complete
    * records for AV-2b / AV-4c and `requeueConfirmed`. Empty for a Task whose
@@ -1074,7 +1072,7 @@ export type CanonicalTaskFacts = {
   /** Undirected read only: `countEndedGoalRuns` over the Goal's raw Run candidates, before any Plan filter (ND-8). */
   goalEndedRuns?: number;
   readThrough: CommitCursor;
-  /** Complete exact versions/absences used by adoption or future claim CAS. */
+  /** Complete exact versions/absences used by adoption and claim CAS. */
   guards: readonly RecordGuard[];
   /** Directed read only: at least one Run exists for THIS task, even one pinned
    * to an older Plan. A fresh claim must reject rather than read it as pending. */
@@ -1090,7 +1088,7 @@ export type CanonicalTaskFactRead =
   | { status: 'ready'; value: CanonicalTaskFacts }
   | Rejected;
 
-/** K3 L7: the bounded Task read-model projection of one decoded review record. */
+/** The bounded Task read-model projection of one decoded review record. */
 function projectTaskReview(review: UnknownCallReviewV1): TaskUnknownCallReview {
   return {
     ref: review.ref,
@@ -1104,7 +1102,7 @@ function projectTaskReview(review: UnknownCallReviewV1): TaskUnknownCallReview {
 }
 
 /**
- * K3 L7 "读不出就当没定" (option A): the ONE reading of an UnknownCallReview
+ * "读不出就当没定" (option A): the ONE reading of an UnknownCallReview
  * record read. Only a `ready` result can distinguish a present record from an
  * authoritatively absent key (`missing`): every failed read — `unsupported`,
  * `invalid`, `corrupt`, `unavailable` — and a thrown call is `unreadable`,
@@ -1734,10 +1732,10 @@ export async function readCanonicalTaskFacts(
       else list.push(requeue);
     }
     const requeueRefusalsByRunId = new Map(rework.refusals.map((refusal) => [refusal.ref.subjectId, refusal]));
-    // K3 L7: the UnknownCallReview record of every Run read in this window, so
+    // The UnknownCallReview record of every Run read in this window, so
     // the Task read model can fail closed (`unreadable`), project the selected
-    // Run's record, and hand the full decoded records to the failure facts
-    // (L22). Only an authoritative `not_found` (a ready read whose key is
+    // Run's record, and hand the full decoded records to the failure facts.
+    // Only an authoritative `not_found` (a ready read whose key is
     // missing) is absence; ONE shared mapping (readUnknownCallReviewOutcome)
     // makes every failed read — unsupported, invalid, corrupt, unavailable, a
     // thrown call — `unreadable` for every candidate.
@@ -1799,7 +1797,7 @@ export async function readCanonicalTaskFacts(
       // independent of clock granularity.
       const leaseHolderRunId = leaseByTask.get(task.taskId)?.holderRunId;
       for (const candidate of runByTask.get(task.taskId) ?? []) {
-        // K3 L10: a review/proposal round Run is never the Task's selected Run;
+        // A review/proposal round Run is never the Task's selected Run;
         // selection, failure class, checks, completion and the continuation
         // `afterRun` all read the original Run.
         if (candidate.purpose?.kind === 'unknown_call_review') continue;
@@ -1903,7 +1901,7 @@ export async function readCanonicalTaskFacts(
     reason: 'the canonical task window changed while it was being read' };
 }
 // --------------------------------------------------------------------------
-// K3 rework 1 item 4: ONE Task-closure derivation (ruling 4)
+// ONE Task-closure derivation (ruling 4)
 // --------------------------------------------------------------------------
 
 /** The canonical closure of one Task: satisfied first, then cancelled/superseded. */
@@ -2146,9 +2144,9 @@ export async function readDispositionChangeTaskFacts(
     }
     tasks.push({
       facts: { taskId, runs, lease, reduction, selectedRun, pointerIntent },
-      phase: { taskKind: task.taskKind, applicableReduction, selectedRun,
-        originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
-        round: facts.roundsByTaskId.get(taskId) ?? { kind: 'none' }, coveringRequeue: state.requeueRef },
+      phase: taskPhaseFactsOf({ taskKind: task.taskKind, applicableReduction, selectedRun,
+        effectivePhase: state.effectivePhase, round: facts.roundsByTaskId.get(taskId) ?? { kind: 'none' },
+        coveringRequeue: state.requeueRef }),
       guards,
     });
   }
@@ -2261,7 +2259,7 @@ export function createSessionResponsibilityBasisReader(
       if (state === undefined) {
         return { status: 'rejected', code: 'incomplete', reason: 'the directed task state was not read' };
       }
-      // Rework 1 item 4: one closure derivation, shared with the decision
+      // One closure derivation, shared with the decision
       // readers (satisfied from the canonical state, then the disposition).
       const closure = taskClosureOf(plan, facts, task['taskId']);
       const satisfied = closure.cause === 'satisfied';

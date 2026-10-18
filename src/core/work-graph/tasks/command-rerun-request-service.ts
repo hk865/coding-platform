@@ -15,7 +15,7 @@
  * set under that ONE read instead of re-reading it per page.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
@@ -28,7 +28,9 @@ import type {
   ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult, UnknownCallReviewV1,
 } from '../../../contracts/unknown-call-review.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { EncodedRecord, GoalRecordTransactionPort, StoreFailure } from '../../record-store/ports.js';
+import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
+import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { LookupValue, RecordLookupPage, RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { compareRefKeys } from '../../record-store/lookup-index.js';
 import type {
@@ -40,8 +42,10 @@ import { isolateWrite, mergeGuards } from './execution-entry-service.js';
 import { replayCommittedReceipt } from './receipt-replay.js';
 import { pinRevision } from './revision-guard.js';
 import { lookupAll } from '../persistence/lookup-all.js';
+import { ownerReadStoreFailureToRejection, ownerWriteStoreFailureToRejection } from '../persistence/read-result-failures.js';
+import { readOwnerRecord, type OwnerRecordRead } from './owner-record-read.js';
 import { commandSha256 } from '../state/command-normalization.js';
-import { isObject, isPos, nonEmpty, codePoints, utf8Bytes } from './codec-fields.js';
+import { codePoints, utf8Bytes } from './codec-fields.js';
 import { truncateUtf8 } from '../../../contracts/utf8.js';
 import {
   newCommandRerunRequest, openRequestForAlias, transitionCommandRerunRequest,
@@ -68,9 +72,9 @@ export type CommandRerunRequestServiceDependencies = {
   /** Reads THIS task's UnknownCallReview records, paged to the end (wire to listReviews {goalRef,taskId}). */
   listTaskReviews?: (ctx: CoreCallContext, input: { goalRef: GoalRef; taskId: string }) => Promise<ReadResult<readonly UnknownCallReviewV1[]>>;
   /**
-   * Rework 1 item 4 / rework 2 item 2: the ONE canonical Task-closure reader
-   * (satisfied, cancelled, superseded). REQUIRED: there is no "absent means
-   * open" default; the composition wires it wherever the owner is built.
+   * The ONE canonical Task-closure reader (satisfied, cancelled, superseded).
+   * REQUIRED: there is no "absent means open" default; the composition wires it
+   * wherever the owner is built.
    */
   readTaskClosure: (ctx: CoreCallContext, task: TaskTriple) =>
     Promise<ReadResult<{ closed: boolean; cause: 'satisfied' | 'cancelled' | 'superseded' | null }>>;
@@ -93,26 +97,7 @@ const STATES: readonly CommandRerunRequestStateV1[] = [
   'pending', 'allowed', 'used', 'denied', 'denied_final', 'closed',
 ];
 
-const isRecord = isObject;
-const isPositiveSafeInteger = isPos;
-function rejected(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
-}
-function mapStoreFailure(failure: StoreFailure): CoreRejection {
-  switch (failure.code) {
-    case 'revision_conflict': return rejected('revision_conflict', failure.reason);
-    case 'unique_conflict': return rejected('busy', failure.reason);
-    case 'idempotency_conflict': return rejected('idempotency_conflict', failure.reason);
-    case 'not_found': return rejected('not_found', failure.reason);
-    case 'invalid': return rejected('invalid', failure.reason);
-    case 'unsupported': return rejected('unavailable', failure.reason);
-    default: return rejected('unavailable', failure.reason);
-  }
-}
-function mapReadFailure(failure: StoreFailure): CoreRejection {
-  const code = failure.code === 'invalid' ? 'invalid' : failure.code === 'unsupported' ? 'unsupported' : 'unavailable';
-  return rejected(code, failure.reason);
-}
+const rejected = rejectedWithCurrent;
 function refKeyOf(value: unknown): string {
   return canonicalJson(value as JsonValue);
 }
@@ -169,7 +154,7 @@ function reasonProblem(value: unknown): string | null {
   return null;
 }
 function rewriteOfProblem(value: unknown): string | null {
-  if (!isRecord(value) || !nonEmpty(value['review']) || !isPositiveSafeInteger(value['alias'])
+  if (!isRecord(value) || !nonEmpty(value['review']) || !isPos(value['alias'])
     || value['alias'] > MAX_ALIAS
     || !Object.keys(value).every(key => key === 'review' || key === 'alias')) {
     return `rewriteOf must be { review: non-empty string, alias: 1..${String(MAX_ALIAS)} }`;
@@ -196,26 +181,15 @@ export function createCommandRerunRequestService(
 
   // ---- reads --------------------------------------------------------------
 
-  async function loadRequest(refKey: string): Promise<
-  { ok: true; value: CommandRerunRequestV1 } | { ok: false; rejection: CoreRejection } | { ok: false; notFound: true }> {
-    let batch;
-    try {
-      batch = await store.readMany([refKey]);
-    } catch (error) {
-      return { ok: false, rejection: rejected('unavailable',
-        `the request could not be read: ${error instanceof Error ? error.message : String(error)}`) };
-    }
-    if (batch.status !== 'ready') return { ok: false, rejection: mapReadFailure(batch) };
-    const encoded = batch.value.records.find(record => record.refKey === refKey);
-    if (encoded === undefined) return { ok: false, notFound: true };
-    const decoded = decodeCommandRerunRequest(encoded);
-    if (decoded.status !== 'decoded') {
-      return { ok: false, rejection: rejected('invalid', `the stored request is not decodable: ${decoded.reason}`) };
-    }
-    return { ok: true, value: decoded.value };
+  async function loadRequest(refKey: string): Promise<OwnerRecordRead<CommandRerunRequestV1>> {
+    return readOwnerRecord({
+      store, refKey, decode: decodeCommandRerunRequest,
+      readError: message => rejected('unavailable', `the request could not be read: ${message}`),
+      decodeError: reason => rejected('invalid', `the stored request is not decodable: ${reason}`),
+    });
   }
 
-  /** Rework 1 item 12: both replays go through the ONE receipt-replay helper. */
+  /** Both replays go through the ONE receipt-replay helper. */
   async function replayRequest(
     receipt: Extract<Awaited<ReturnType<GoalRecordTransactionPort['lookupCommit']>>, { status: 'ready' }>['value'],
     identityKey: string, fingerprint: string,
@@ -234,8 +208,8 @@ export function createCommandRerunRequestService(
 
   /**
    * `forms_added` keeps the record state; `created` is always `requested`.
-   * Rework 2 item 3: a replayed `pending` names the record's own (waiting)
-   * command, never the caller's input, so the tool needs no point read.
+   * A replayed `pending` names the record's own (waiting) command, never the
+   * caller's input, so the tool needs no point read.
    */
   function replyOutcomeOf(decoded: {
     change: string; request: CommandRerunRequestV1;
@@ -303,7 +277,7 @@ export function createCommandRerunRequestService(
     } catch (error) {
       return rejected('unavailable', `the request could not be committed: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (receipt.status !== 'committed') return mapStoreFailure(receipt);
+    if (receipt.status !== 'committed') return ownerWriteStoreFailureToRejection(receipt);
     if (receipt.replayed) return replayRequest(receipt, input.identityKey, input.fingerprint);
     return { status: 'committed', value: input.next, replayed: false, cursor: receipt.cursor };
   }
@@ -333,9 +307,9 @@ export function createCommandRerunRequestService(
   }
 
   /**
-   * Rework 1 item 4 / rework 2 item 2: ONE closure read per operation; the
-   * reader is REQUIRED and there is no "absent means open" branch. A thrown
-   * read or any non-ready result is `unavailable`, never "still active".
+   * ONE closure read per operation; the reader is REQUIRED and there is no
+   * "absent means open" branch. A thrown read or any non-ready result is
+   * `unavailable`, never "still active".
    */
   async function taskClosed(
     ctx: CoreCallContext, task: TaskTriple,
@@ -432,16 +406,16 @@ export function createCommandRerunRequestService(
     if (!nonEmpty(goalId) || !nonEmpty(taskId)) {
       return rejected('invalid', 'listRequests requires a goalId and taskId');
     }
-    // Rework 1 item 4: derive the Task's closure ONCE per call for every
-    // task-scoped form, then return pending/allowed items as `closed` (no write).
+    // Derive the Task's closure ONCE per call for every task-scoped form, then
+    // return pending/allowed items as `closed` (no write).
     const closure = await taskClosed(ctx, { projectId, goalId: goalId as string, taskId: taskId as string });
     if (!closure.ok) return closure.rejection;
     if (filter['reviewRunId'] !== undefined || filter['alias'] !== undefined) {
-      if (!nonEmpty(filter['reviewRunId']) || !isPositiveSafeInteger(filter['alias'])
+      if (!nonEmpty(filter['reviewRunId']) || !isPos(filter['alias'])
         || filter['alias'] > MAX_ALIAS) {
         return rejected('invalid', 'the alias filter requires reviewRunId and alias 1..32');
       }
-      // B2-18: exactly ONE physical page per call, never a scan to the end.
+      // Exactly ONE physical page per call, never a scan to the end.
       return await onePage(K3_CRR_BY_TASK_ALIAS_LOOKUP,
         [projectId, goalId as string, taskId as string, filter['reviewRunId'] as string, filter['alias'] as number],
         limit, cursorValue, closure.closed);
@@ -451,7 +425,7 @@ export function createCommandRerunRequestService(
   }
 
   /**
-   * Rework 2 item 2 / review-3 item 2: the shell hook's ONE call for a Task.
+   * The shell hook's ONE call for a Task.
    * ONE closure read for the whole call, then `k3-crr-by-task` paged to the end
    * — still exactly ONE physical page per page (limit 200), so R = 401 is 3
    * pages — and the closure rides back so the delivery step reuses it. This is
@@ -593,9 +567,9 @@ export function createCommandRerunRequestService(
   }
 
   /**
-   * Rework 1 item 7 / B2-18: ONE read of the Task's request set for the whole
-   * request call, by `k3-crr-by-task` in ceil(R/200) pages. Decode/dedupe once
-   * and use it for the alias, the refusals and the declared forms.
+   * ONE read of the Task's request set for the whole request call, by
+   * `k3-crr-by-task` in ceil(R/200) pages. Decode/dedupe once and use it for
+   * the alias, the refusals and the declared forms.
    */
   async function readTaskRequests(
     workspace: WorkspaceScope, goalId: string, taskId: string,
@@ -708,7 +682,7 @@ export function createCommandRerunRequestService(
         `the request receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (existing.status === 'ready') return replayRequestReply(existing.value, identityKey, fingerprint);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
 
     // The tool adapter passes the trusted prepared Task; no Run read is needed.
     if (ctx.workspaceId === undefined) {
@@ -718,9 +692,8 @@ export function createCommandRerunRequestService(
     const workspace: WorkspaceScope = { projectId: runRef.projectId, workspaceId };
     const goalRef: GoalRef = { aggregateType: 'Goal', projectId: runRef.projectId, goalId: runRef.goalId };
 
-    // Rework 1 item 7 / B2-18: ONE read of the Task's request set, before any
-    // recognition or alias decision; used for the alias, the refusals and the
-    // stored declared forms.
+    // ONE read of the Task's request set, before any recognition or alias
+    // decision; used for the alias, the refusals and the stored declared forms.
     const taskRequestsRead = await readTaskRequests(workspace, runRef.goalId, task.taskId);
     if (taskRequestsRead.status === 'rejected') return taskRequestsRead;
     if (taskRequestsRead.status !== 'ready') {
@@ -911,7 +884,7 @@ export function createCommandRerunRequestService(
       return { ok: false, rejection: rejected('unavailable',
         `the answer message could not be read: ${error instanceof Error ? error.message : String(error)}`) };
     }
-    if (batch.status !== 'ready') return { ok: false, rejection: mapReadFailure(batch) };
+    if (batch.status !== 'ready') return { ok: false, rejection: ownerReadStoreFailureToRejection(batch) };
     const encoded = batch.value.records.find(record => record.refKey === sessionMessageRefKey(ref));
     if (encoded === undefined) return { ok: false, rejection: rejected('not_found', 'the answer message does not exist') };
     const decoded = decodeSessionMessageRecord(encoded);
@@ -957,7 +930,7 @@ export function createCommandRerunRequestService(
         `the request receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (existing.status === 'ready') return replayRequest(existing.value, identityKey, fingerprint);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
 
     // F-100: after the replay lookup, the SAVED synthetic answered answer is the
     // authoritative selection and the Goal content basis this answer captured.
@@ -1013,8 +986,8 @@ export function createCommandRerunRequestService(
     }
 
     const actor = ctx.principal.actor;
-    // Rework 1 item 4: ONE canonical closure read; a closed Task persists CRR-06
-    // and answers busy, and a read failure is never "still active".
+    // ONE canonical closure read; a closed Task persists CRR-06 and answers
+    // busy, and a read failure is never "still active".
     const closure = await taskClosed(ctx, current.task);
     if (!closure.ok) return closure.rejection;
     if (closure.closed) {
@@ -1113,7 +1086,7 @@ export function createCommandRerunRequestService(
         `the request receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (existing.status === 'ready') return replayRequest(existing.value, identityKey, fingerprint);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
 
 
     const refKey = commandRerunRequestRefKey(requestRef);
@@ -1133,11 +1106,11 @@ export function createCommandRerunRequestService(
         { ref: structuredClone(current.ref), revision: current.revision } as unknown as VersionPin,
       ]);
     }
-    // Rework 1 item 4 + review-3 item 2: the allowance is void once the Task
-    // closed; persist CRR-06. The shell hook passes the closure its list read
-    // already made, so ONE hook call reads the closure ONCE. It must name THIS
-    // request's Task; absent, the owner reads the closure itself — a real read,
-    // never a default (direct callers keep their old behavior).
+    // The allowance is void once the Task closed; persist CRR-06. The shell
+    // hook passes the closure its list read already made, so ONE hook call reads
+    // the closure ONCE. It must name THIS request's Task; absent, the owner
+    // reads the closure itself — a real read, never a default (direct callers
+    // keep their old behavior).
     let closed: boolean;
     if (taskClosure === undefined) {
       const closure = await taskClosed(ctx, current.task);
@@ -1197,7 +1170,7 @@ export function createCommandRerunRequestService(
     if (ctx.workspaceId !== undefined && ctx.workspaceId !== current.workspaceId) {
       return rejected('forbidden', 'the request belongs to another workspace');
     }
-    // Rework 1 item 4: a closure read failure is `unavailable`, never "valid".
+    // A closure read failure is `unavailable`, never "valid".
     const closure = await taskClosed(ctx, current.task);
     if (!closure.ok) return closure.rejection;
     if (closure.closed && (current.state === 'pending' || current.state === 'allowed')) {

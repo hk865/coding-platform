@@ -1,5 +1,5 @@
 /**
- * Wiring package 1, I-3 (spec §2.5, §4.2, L7-L9): the graph reader's optional
+ * Spec §2.5, §4.2, L7-L9: the graph reader's optional
  * `extensions` provider. It reads the Goal's not-yet-picked-up anomaly anchors
  * as the Host (the graph reader has already authorized the caller's read of
  * this Goal), projects each into one deterministic reminder index row, and
@@ -9,6 +9,7 @@
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import { isRecord } from '../../../contracts/validation/common.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import type {
@@ -31,7 +32,7 @@ export type ContextExtensionsDependencies = {
   hostActor: Extract<ActorRef, { kind: 'human' | 'system' }>;
   goalSettings?: Pick<GoalSettingsPort, 'readGoalSettings'>;
   decisions?: Pick<DecisionReadPort, 'queryDecisionQueue'>;
-  /** Slice 4C-2/U8: the one memory-material read per assembly, when wired. */
+  /** U8: the one memory-material read per assembly, when wired. */
   memoryMaterial?: NoteMemoryMaterialPort;
 };
 
@@ -51,13 +52,9 @@ const DECISION_PAGE_LIMIT = 100;
 
 type TaskTriple = { aggregateType: 'Task'; projectId: string; goalId: string; taskId: string };
 
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /** The formal Task designation `{aggregateType:'Task',projectId,goalId,taskId}`, or null. */
 function taskTripleOf(ref: unknown): TaskTriple | null {
-  if (!isRecordValue(ref) || ref['aggregateType'] !== 'Task') return null;
+  if (!isRecord(ref) || ref['aggregateType'] !== 'Task') return null;
   const { projectId, goalId, taskId } = ref;
   if (typeof projectId !== 'string' || typeof goalId !== 'string' || typeof taskId !== 'string') return null;
   return { aggregateType: 'Task', projectId, goalId, taskId };
@@ -89,7 +86,7 @@ function recordSourcesOf(pins: DecisionCardV1['source']['pins']): ContextSourceV
   const byKey = new Map<string, ContextSourceV1>();
   for (const pin of pins) {
     if (pin.revision <= 0) continue;
-    if (!isRecordValue(pin.ref)) continue;
+    if (!isRecord(pin.ref)) continue;
     if (taskTripleOf(pin.ref) !== null) continue;
     const source: ContextSourceV1 = { kind: 'record', ref: pin.ref, revision: pin.revision, digest: null };
     byKey.set(canonicalJson(source as unknown as JsonValue), source);

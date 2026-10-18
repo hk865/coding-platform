@@ -18,6 +18,8 @@ import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
+import { isPos, isRecord } from '../../../contracts/validation/common.js';
 import type { RoleConfigurationRef, SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
@@ -28,6 +30,7 @@ import { anchorFormatProblem, anchorKeyOf, conclusionProblem, isSafeRelativePath
 import type { ScribeScope, ScribeScopeCall } from './scribe-scope.js';
 import { newScribeScopeCall, sourceIsAuthorOf } from './scribe-scope.js';
 import { stageContinuityOf } from './note-continuity.js';
+import { anchorSlots } from './note-related-scope.js';
 import { readGoalPlanWindow, type GoalPlanWindow } from '../tasks/plan-readers.js';
 import { S2B_PLAN_REVISION_BY_GOAL_LOOKUP, decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
 import { mapStoreFailure, readAllHeads, type ReadFailureCode } from './note-read-model.js';
@@ -94,18 +97,13 @@ export type NoteServiceDependencies = {
   /** P4 injection points (tests shrink the soft quota); production uses the spec constants. */
   anchorQuota?: number;
   goalQuota?: number;
-  /** Item 14: the injectable L14 symbol-scan cap; production uses `NOTE_SYMBOL_HITS_MAX`. */
+  /** The injectable L14 symbol-scan cap; production uses `NOTE_SYMBOL_HITS_MAX`. */
   symbolHitsMax?: number;
   basisFileMaxBytes?: number;
 };
 
 type Rejected = { status: 'rejected'; code: NoteErrorCode; reason: string };
-const rejected = (code: NoteErrorCode, reason: string): Rejected => ({ status: 'rejected', code, reason });
 const forbidden = (reason: string): Rejected => rejected('forbidden', reason);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** C3.1: a raw draft anchor that names the project (shape only; class 1/2 follow). */
 function isProjectAnchorDraft(anchor: unknown): boolean {
@@ -130,7 +128,7 @@ type Caller = {
   goalId: string | null;
   duty: string | null;
   sessionRef: SessionRef | null;
-  /** Item 6: the Run-bound plan for a work_run caller, `null` for a user. */
+  /** The Run-bound plan for a work_run caller, `null` for a user. */
   planRef: PlanRevisionRef | null;
 };
 
@@ -155,7 +153,7 @@ Promise<{ ok: true; value: Caller } | { ok: false; rejection: Rejected }> {
       ? rejected(facts.code === 'forbidden' ? 'forbidden' : 'unavailable', facts.reason)
       : rejected('unavailable', 'the caller Run is not readable') };
   }
-  // Item 3 fix 4: a resolver rejection or a throw is a read failure, never
+  // A resolver rejection or a throw is a read failure, never
   // `forbidden`; only a ready `'unknown'` (R12: the frozen resolver maps a
   // failed RoleSpec read to `'unknown'`) stays `forbidden`.
   let resolved: Awaited<ReturnType<NoteServiceDependencies['duties']>>;
@@ -210,7 +208,7 @@ Promise<{ ok: true; record: EncodedRecord | null; pointer: CurrentPointerSnapsho
 }
 
 /**
- * Item 1 (L8): a pointer read that carries both the `{ noteId, revision }`
+ * L8: a pointer read that carries both the `{ noteId, revision }`
  * payload a rejected write/disposition returns AND the FULL decoded snapshot.
  * The snapshot is threaded to `supersessionOf` so `moveCurrentPointerRecord`
  * receives the readable pointer record instead of a freshly built literal
@@ -250,7 +248,7 @@ function principalOf(ctx: CoreCallContext): unknown {
 }
 
 /**
- * K3 L4 / decision 72 (U1): the ONE identity/fingerprint pair the note writer
+ * L4 / decision 72 (U1): the ONE identity/fingerprint pair the note writer
  * (`writeNote`, `dispose`) and the read-only `lookupToolCommit` all use. The
  * builder and these helpers were factored out so the write and the lookup call
  * one function and never drift into two copies.
@@ -293,7 +291,7 @@ function noteCommandReceiptOf(ctx: CoreCallContext, built: RecordNoteRequestV1):
 
 /**
  * Every head that carries `anchorKey` in one of the five anchor slots, deduped
- * by noteId. Item 3 fix 1: the whole index is read through `readAllHeads`, so a
+ * by noteId. The whole index is read through `readAllHeads`, so a
  * failed or damaged page is returned, never skipped into a partial set.
  */
 async function headsByAnchorKey(deps: NoteServiceDependencies, projectId: string, anchorKey: string):
@@ -325,14 +323,10 @@ function isGeneral(kind: string): boolean { return (NOTE_GENERAL_KINDS as readon
 
 const NOTE_KINDS: readonly string[] = [...NOTE_GENERAL_KINDS, 'understanding', 'repair'];
 
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-
 function sameKindFamily(left: string, right: string): boolean { return isGeneral(left) === isGeneral(right); }
 
 /**
- * Item 2/item 8: the ONE supersession target rule, shared by the accepted-write
+ * The ONE supersession target rule, shared by the accepted-write
  * supersession and the quota projection. The ordered, deduplicated union of
  * `replaces` and — for an understanding — the current pointer's note, minus the
  * subject itself and any id also listed in `coexistWith`
@@ -363,9 +357,9 @@ export function renderUnderstandingBody(sections: { status: string; decided: str
  * L4.1/L2a class 1: the complete shape gate over the WHOLE `WriteNoteInput`.
  * `writeNote` runs it first, before the trusted caller read and before any
  * dereference or read, so a malformed input is refused `invalid` with the draft
- * and can never reach a store/plan/workspace read (item 12a). Anchor object
- * existence and the `symbolRequest` shape are not checked here (classes 2/3 and
- * group GD).
+ * and can never reach a store/plan/workspace read. Anchor object
+ * existence and the `symbolRequest` shape are checked later (classes 2/3 and
+ * the symbol resolution), not here.
  */
 function writeInputProblem(input: unknown): string | null {
   if (!isRecord(input)) return 'the write input must be an object';
@@ -375,7 +369,7 @@ function writeInputProblem(input: unknown): string | null {
     return 'goalId must be a non-empty string or null';
   }
   const expectedPointerRevision = input['expectedPointerRevision'];
-  if (!(expectedPointerRevision === null || isPositiveSafeInteger(expectedPointerRevision))) {
+  if (!(expectedPointerRevision === null || isPos(expectedPointerRevision))) {
     return 'expectedPointerRevision must be null or a positive safe integer';
   }
   const draft = input['note'];
@@ -450,13 +444,13 @@ function writeInputProblem(input: unknown): string | null {
 // --------------------------------------------------------------------------
 
 /**
- * 4C-2 rework 2 item 1: one plan window the card source has already read for a
+ * One plan window the card source has already read for a
  * Goal. `userReasonFacts` seeds its per-call cache with it, so a stage target
  * never reads the same window again.
  */
 export type NotePlanWindowFactsV1 = { goalId: string; window: GoalPlanWindow };
 
-/** 4C-2 rework item 6: the batched user-reason facts the card source reuses. */
+/** The batched user-reason facts the card source reuses. */
 export type NoteUserReasonFactsPort = {
   userReasonFacts(ctx: CoreCallContext, heads: readonly NoteHeadSnapshot[],
     planWindows: readonly NotePlanWindowFactsV1[],
@@ -475,7 +469,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     ...(deps.workspace === undefined ? {} : { workspace: deps.workspace }) };
 
   /**
-   * P9/item 11(b): the per-commit envelope fields shared by every event of one
+   * P9: the per-commit envelope fields shared by every event of one
    * commit. Each event mints its OWN eventId (`{ ...base, eventId: deps.eventId() }`),
    * so a commit with several events never reuses one id.
    */
@@ -526,7 +520,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   /**
-   * R4/item 5 step 3: restore the ORIGINAL write result verbatim from the
+   * R4: restore the ORIGINAL write result verbatim from the
    * NoteWritten event at the receipt cursor. Every check failure is
    * `unavailable` with the draft; a constructed success is never returned.
    */
@@ -570,7 +564,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   /**
-   * R4/item 5 step 6: restore the ORIGINAL disposition from the
+   * R4: restore the ORIGINAL disposition from the
    * NoteDispositionChanged event at the receipt cursor, before any mutable read.
    */
   async function replayDisposition(receipt: Extract<StoreCommitReceipt, { status: 'committed' }>, identityKey: string,
@@ -612,7 +606,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   /**
-   * L22 existingTopics (item 3 fix 2, item should-1): per anchor key, only when
+   * L22 existingTopics: per anchor key, only when
    * the new `topicKey` is new on that key, group the other current general notes
    * by `topicKey` and keep the latest-written head's spelling (createdAt desc,
    * then noteId desc). Sorted by anchorKey then topicKey, plain code-unit
@@ -656,7 +650,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     | { ok: false; rejection: Rejected };
 
   /**
-   * Item 2 (L6/S4-NOTE-05/08): the ONE supersession builder, used by an accepted
+   * L6/S4-NOTE-05/08: the ONE supersession builder, used by an accepted
    * write and an accepted disposition. The target set is the ordered, deduped
    * union of `subject.replaces` and — for an understanding — the current
    * pointer's noteId, minus the subject itself (R1/S4-NOTE-08: an id also listed
@@ -753,7 +747,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   };
 
   /**
-   * 4C-2 rework item 3 (verify §3): the ONE shared tail of `dispose` and
+   * §3: the ONE shared tail of `dispose` and
    * `applyNoteDecision`, split at `transitionNote`. The fronts own their own
    * replay/caller/authority/facts/transition rules; from here on the pointer
    * CAS (+ `understanding_outdated` on accept), the supersession, the notice
@@ -819,7 +813,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       events.push(...supersession.events);
     }
 
-    // 4C-2 item 5 (§2): the writer decides the notice class from the ACTUAL
+    // §2: the writer decides the notice class from the ACTUAL
     // targets this commit superseded/withdrew (never the stored reasons).
     const supersededForNotice = supersessionTargetsOf(transition.next, pointer?.noteId ?? null);
     const userAffected = change.kind === 'withdraw'
@@ -926,7 +920,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   /**
-   * 4C-2 rework item 6 (verify §6): the live user-reason facts of the given
+   * §6: the live user-reason facts of the given
    * heads, computed with the ONE per-call plan cache. This is the per-head loop
    * the guard uses, exposed batched so the card source reads no head twice.
    */
@@ -978,16 +972,16 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   /**
-   * 4C-2 rework item 6: the batched, public-to-the-source form of
+   * The batched, public-to-the-source form of
    * `reasonFactsOf` — ONE `NoteCall` (one plan cache) per call, no head read.
    */
   async function userReasonFacts(ctx: CoreCallContext, heads: readonly NoteHeadSnapshot[],
     planWindows: readonly NotePlanWindowFactsV1[], attempt?: DecisionSourceAttempt):
   Promise<ReadResult<Map<string, NoteUserReasonTargetV1>>> {
-    // Rework 3 item 1: every Goal's card source of one queue attempt shares the
+    // Every Goal's card source of one queue attempt shares the
     // attempt's catalog-window map; a new attempt starts empty.
     const call = newNoteCall(attempt);
-    // Rework 2 item 1: seed the per-call cache with the window the card source
+    // Seed the per-call cache with the window the card source
     // already read, using the same key `planWindowOf` uses.
     for (const { goalId, window } of planWindows) {
       call.planWindows.set(`${ctx.projectId}\u0000${goalId}`, Promise.resolve(window));
@@ -998,7 +992,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   /**
-   * Item 1: the per-CALL caches. Every public entry (`writeNote`, `dispose`)
+   * The per-CALL caches. Every public entry (`writeNote`, `dispose`)
    * creates one object and threads it down; there is no module-level or
    * `ctx`-keyed cache, so a reused Run context cannot leak plan stages or scope
    * facts from an earlier call.
@@ -1010,7 +1004,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     anchorFacts?: NoteAnchorFactsDeps; scope: ScribeScopeCall };
   type AttemptCatalogWindows = Map<string, Promise<CurrentCatalogWindow>>;
   /**
-   * Rework 3 item 1: the ONE private attempt-cache key. The map lives in the
+   * The ONE private attempt-cache key. The map lives in the
    * queue window attempt's cache, so every Goal's card source shares the same
    * per-project catalog window, and a new attempt (new `attempt.cache`) starts
    * empty. Nothing is module-level or keyed by `ctx`.
@@ -1035,7 +1029,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   /**
-   * Rework 2 item 1: the current catalog window of one project, memoized per
+   * The current catalog window of one project, memoized per
    * call like `planWindowOf`, so several module/interface anchors of one note
    * call share ONE catalog read.
    */
@@ -1049,7 +1043,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   /**
-   * Rework 2 item 1 requirement 3: the write path and the scribe/disposition
+   * Requirement 3: the write path and the scribe/disposition
    * path use THIS per-call facts object, so anchor reads stay cached per call
    * and the visible behaviour (and error codes) never changes.
    */
@@ -1064,7 +1058,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   /**
-   * Item 1: the Goal→active-Plan window of one Goal, memoized per CALL like
+   * The Goal→active-Plan window of one Goal, memoized per CALL like
    * `planStages`, so several stage targets of one disposition read the window
    * once instead of once per target.
    */
@@ -1119,7 +1113,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
    * drop a user card; goal and project anchors never retire. RW-5: a stage is
    * retired by the ONE shared `stageContinuityOf` over its own `planRevision`
    * through the current revision. A task still uses the narrow anchor reader,
-   * now over the call's ONE plan window (rework 4 item 2).
+   * now over the call's ONE plan window.
    */
   async function primaryAnchorRetiredNonFile(call: NoteCall, ctx: CoreCallContext, anchor: NoteAnchorV1):
   Promise<{ ok: true; value: boolean } | { ok: false; rejection: Rejected }> {
@@ -1141,10 +1135,10 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       return { ok: true, value: continuity.status === 'retired' };
     }
     const goalId = 'goalId' in anchor ? anchor.goalId : null;
-    // Rework 3 item 1: this read path only needs the retired verdict, so the
+    // This read path only needs the retired verdict, so the
     // candidate list (and its second catalog read) is not built here. This is
     // NOT the write/dispose path.
-    // Rework 4 item 2: the task branch shares the call's ONE Goal→Plan window,
+    // The task branch shares the call's ONE Goal→Plan window,
     // like the stage branch above; the hook is set ONLY here.
     const resolved = await resolveNoteAnchors(ctx,
       { main: anchor, extraAnchors: [], goalId, includeBasis: false },
@@ -1156,10 +1150,10 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   async function writeNote(ctx: CoreCallContext, input: WriteNoteInput): Promise<WriteNoteResult> {
-    // Item 1: this call owns its caches; nothing survives the return.
+    // This call owns its caches; nothing survives the return.
     const call = newNoteCall();
     // L4 step 1 / L2a class 1: the whole input shape is checked before the
-    // trusted caller read (item 12a), so a malformed input never reaches a read.
+    // trusted caller read, so a malformed input never reaches a read.
     const shapeProblem = writeInputProblem(input);
     if (shapeProblem !== null) return rejectedInput(input, 'invalid', shapeProblem);
 
@@ -1181,12 +1175,12 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     // anchors and is written by the project scribe or the user.
     const isProjectUnderstanding = draft.kind === 'understanding' && draft.anchor.kind === 'project';
     const storedGoalId = isProjectUnderstanding ? null : caller.goalId;
-    // L4 step 2 / L5 authority: only an agent or a scribe stages a repair (item 9a).
+    // L4 step 2 / L5 authority: only an agent or a scribe stages a repair.
     const authority = noteWriteAuthority({ kind: draft.kind, isUser: caller.isUser, duty: caller.duty });
     if (authority !== null) return rejectedInput(input, noteCodeOf(authority.code), authority.detail);
 
-    // L2a classes 1–2 and 4, through item 7's narrow reader (item 6 passes the
-    // Run-bound plan so an agent's stage key keeps its bound revision).
+    // L2a classes 1–2 and 4, through the narrow reader (the Run-bound plan is
+    // passed so an agent's stage key keeps its bound revision).
     const anchorRead = await resolveNoteAnchors(ctx, { main: draft.anchor, extraAnchors: draft.extraAnchors,
       goalId: storedGoalId, facts: draft.facts, boundPlanRef: caller.planRef, symbolHitsMax }, anchorFactsOf(call));
     if (anchorRead.status === 'rejected') {
@@ -1226,7 +1220,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         }
       }
     }
-    // L5/L2a class 3 (item 12b): a human with goalId null may use only project,
+    // L5/L2a class 3: a human with goalId null may use only project,
     // module, interface and file anchors; a non-null human goalId must exist.
     if (caller.isUser) {
       if (storedGoalId === null && resolved.anchors.some(anchor => anchor.kind === 'goal'
@@ -1253,7 +1247,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     }
     const warnings: ('symbol_unresolved' | 'anchor_ended')[] = [];
     if (resolved.anchorEnded) warnings.push('anchor_ended');
-    // Item 14/L14: a symbolRequest that resolved to no unique locator keeps the
+    // L14: a symbolRequest that resolved to no unique locator keeps the
     // plain file anchor and reports the success warning exactly once.
     if (resolved.symbolUnresolved) warnings.push('symbol_unresolved');
 
@@ -1311,8 +1305,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     for (const noteId of [...draft.replaces, ...draft.contradicts, ...draft.coexistWith]) {
       const head = relations.get(noteId)!;
       if (head === null) continue;
-      const shares = [head.anchorKey0, head.anchorKey1, head.anchorKey2, head.anchorKey3, head.anchorKey4]
-        .some(key => key !== null && resolved.keys.includes(key));
+      const shares = anchorSlots(head).some(key => resolved.keys.includes(key));
       if (!shares) return rejectedInput(input, 'invalid', 'anchor_not_found');
       if (draft.replaces.includes(noteId) && !sameKindFamily(draft.kind, head.kind)) {
         return rejectedInput(input, 'invalid', 'replaces_kind_mismatch');
@@ -1320,7 +1313,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     }
 
     // L5: a scribe disposing another's current note must manage the target's
-    // scope (the author disposing their own note is exempt). Item 3 fix 7: a
+    // scope (the author disposing their own note is exempt). A
     // failed scope read is `unavailable`, never `forbidden`.
     if (caller.duty === 'scribe' && caller.sessionRef !== null && deps.scopes !== undefined) {
       for (const noteId of [...draft.replaces, ...draft.contradicts]) {
@@ -1341,7 +1334,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       }
     }
 
-    // L4.4: current same-topic admission. Item 3 fix 2: any failed anchor read
+    // L4.4: current same-topic admission. Any failed anchor read
     // refuses the write before the commit.
     const sameTopicConflicts: { noteId: string; version: number; conclusion: string }[] = [];
     const currentByAnchor = new Map<string, NoteHeadSnapshot[]>();
@@ -1367,7 +1360,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
 
     // L8: the pointer CAS is read before the projection because, for an
     // understanding, the note the pointer leaves is superseded by this write and
-    // is therefore subtracted from the projected counts (item 8). The pointer CAS
+    // is therefore subtracted from the projected counts. The pointer CAS
     // is required for every understanding write and moved only on accept.
     const isUnderstanding = draft.kind === 'understanding';
     const pointerKey = isUnderstanding ? resolved.keys[0] : null;
@@ -1398,7 +1391,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     }
 
     // L7: the projected counts subtract the current items this write would
-    // replace, by the same target rule as supersession (item 2/item 8).
+    // replace, by the same target rule as supersession.
     const replacedCurrent = new Map<string, NoteHeadSnapshot>();
     for (const noteId of supersessionTargetsOf({ noteId: '', kind: draft.kind, replaces: draft.replaces,
       coexistWith: draft.coexistWith }, pointerRead?.noteId ?? null)) {
@@ -1458,7 +1451,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     const admission = admitNoteWrite({ kind: draft.kind, structural: draft.structural,
       contradicts: liveContradicts, userNoteReplaced, anchorFull, goalFull, isUser: caller.isUser });
 
-    // Fix 1 (L7/R6): the returned and replay-stored `overQuota` is the COMMITTED
+    // L7/R6: the returned and replay-stored `overQuota` is the COMMITTED
     // population, so it always equals `readNote(noteId).overQuota` right after the
     // commit. The new item counts in the state it lands in; only the targets this
     // commit actually supersedes (an `accepted` commit) stop counting — a note
@@ -1513,7 +1506,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       [encodeNoteVersionSnapshot(version1).refKey, null]]);
     const events: EncodedDomainEvent[] = [];
 
-    // R4/item 5 step 4: the FULL success result is computed BEFORE the commit —
+    // R4: the FULL success result is computed BEFORE the commit —
     // `existingTopics` from the already-read `currentByAnchor` minus the heads
     // this commit supersedes (the projected post-commit state, L7) — and stored
     // verbatim in the NoteWritten event, so a replay never rebuilds it.
@@ -1526,7 +1519,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
 
     // L6/S4-NOTE-05/08: an accepted write supersedes its current `replaces`
     // targets AND, for an understanding, the note the pointer leaves — in one
-    // pass, so a target in both sets is bumped exactly once (item 2).
+    // pass, so a target in both sets is bumped exactly once.
     if (admission.state === 'accepted') {
       const supersession = await supersessionOf(ctx, head, caller.source, relations, pointerKey, pointerRead, now);
       if (!supersession.ok) return rejectedInput(input, supersession.rejection.code, supersession.rejection.reason);
@@ -1603,7 +1596,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     eventKind: 'review' | 'accept' | 'reject' | 'withdraw', reason: string | null,
     expectedPointerRevision?: number | null,
     resolution?: 'supersede' | 'coexist'): Promise<NoteDispositionResult> {
-    // Item 1: this call owns its caches; nothing survives the return.
+    // This call owns its caches; nothing survives the return.
     const call = newNoteCall();
     // R4/d7: the disposition replay is resolved BEFORE `resolveCaller`, the head
     // read, the scope check, the version check and the transition, and returns
@@ -1628,7 +1621,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     if (!read.ok) return { status: 'rejected', code: read.rejection.code, reason: read.rejection.reason, noteId };
     if (read.head === null) return { status: 'rejected', code: 'not_found', reason: 'the note does not exist', noteId };
     const head = read.head;
-    // L6/item 9b: the author is the note's `source.sessionRef`, not the Run; a
+    // L6: the author is the note's `source.sessionRef`, not the Run; a
     // later Run of the same Session may withdraw it (slice 7 owns real handover).
     const sameAuthor = sourceIsAuthorOf(head.source, caller.source);
     if (!caller.isUser && caller.duty !== 'scribe' && !(eventKind === 'withdraw' && sameAuthor)) {
@@ -1636,9 +1629,9 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     }
     // L5/L6: a scribe may only disposition a note managed by its own scope.
     // Withdrawing one's own note stays exempt (the other dispositions do not).
-    // Item 3 fix 7: a failed scope read is `unavailable`, never `forbidden`.
+    // A failed scope read is `unavailable`, never `forbidden`.
     const authorWithdraw = eventKind === 'withdraw' && sameAuthor;
-    // C3.5/D-07 (§11.1 item 6): a scribe cannot withdraw a user-confirmed note
+    // C3.5/D-07 (§11.1): a scribe cannot withdraw a user-confirmed note
     // unless the scribe is its author; the author and the user keep that right.
     if (eventKind === 'withdraw' && !caller.isUser && caller.duty === 'scribe' && !authorWithdraw
       && head.confirmedByUser) {
@@ -1719,7 +1712,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   // ------------------------------------------------------------------------
-  // 4C-2 §2 item 4: the note card's application (the answering user)
+  // §2: the note card's application (the answering user)
   // ------------------------------------------------------------------------
 
   /**
@@ -1803,7 +1796,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   /**
-   * K3 L4 / decision 72 (U1): the read-only committed-receipt lookup for
+   * L4 / decision 72 (U1): the read-only committed-receipt lookup for
    * `record_note`. It rebuilds the request `recordNoteRequestOf` builds for the
    * tool handler and the identity/fingerprint pair `writeNote`/`dispose` commit,
    * from the original Run's trusted provenance; it never writes and never reads

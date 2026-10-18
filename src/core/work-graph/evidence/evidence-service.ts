@@ -1,5 +1,5 @@
 /**
- * R3e.1 Evidence service (implementation).
+ * Evidence service.
  *
  * The ONE trusted Evidence/verification service the composition root owns.
  * `openVerification` reads the adopted Goal/Plan/subject Run, captures the real
@@ -54,7 +54,9 @@ import type {
 import type {
     VerificationRoundMaterialIdentity, VerificationRoundSourcePort, VerificationRoundSourceResult,
 } from '../../../contracts/verification-context.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejections.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
     EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
     UniqueClaimChange,
@@ -78,7 +80,7 @@ import {
     buildEffectiveTaskBasis, isBasisUnsupported,
 } from '../tasks/plan-task-basis.js';
 import {
-    bindTrustedContext, isRecord, isolateWrite, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef,
+    bindTrustedContext, isolateWrite, loadReplayEvent, mapStoreFailure, mergeGuards, sameRef,
 } from '../tasks/execution-entry-service.js';
 import {
     authorizeDelegatedWrite, identifyDelegatedWriter, type AgentPlanWriter, type PlanDelegatedWriteDependencies,
@@ -133,21 +135,15 @@ type LoadedRound = { ok: true; round: RoundSnapshot } | { ok: false; rejection: 
 // Small pure helpers                                                          //
 // -------------------------------------------------------------------------- //
 
-function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-    return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
-}
-function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
-function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
-function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
-function notFound(reason: string): CoreRejection { return reject('not_found', reason); }
-function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
-function unsupported(reason: string): CoreRejection { return reject('unsupported', reason); }
-function cancelled(reason: string): CoreRejection { return reject('cancelled', reason); }
+function invalid(reason: string): CoreRejection { return rejected('invalid', reason); }
+function forbidden(reason: string): CoreRejection { return rejected('forbidden', reason); }
+function unavailable(reason: string): CoreRejection { return rejected('unavailable', reason); }
+function notFound(reason: string): CoreRejection { return rejected('not_found', reason); }
+function incomplete(reason: string): CoreRejection { return rejected('incomplete', reason); }
+function unsupported(reason: string): CoreRejection { return rejected('unsupported', reason); }
+function cancelled(reason: string): CoreRejection { return rejected('cancelled', reason); }
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
-function refKeyOf(value: unknown): string | null {
-    try { return canonicalJson(value as JsonValue); } catch { return null; }
-}
 function fingerprintOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
 function digestOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
 function identityKeyOf(prefix: string, actor: Pick<ActorRef, 'kind' | 'id'>, projectId: string, workspaceId: string,
@@ -193,7 +189,7 @@ function mapRead<T>(result: Exclude<ReadResult<T>, { status: 'ready' }>): CoreRe
 }
 function mapSourceFailure(capture: Exclude<VerificationRoundSourceResult, { status: 'ready' }>): CoreRejection {
     if (capture.status === 'incomplete') return incomplete(capture.missing.join('; ') || 'the workspace source is unavailable');
-    return reject('source_stale', capture.issues.map(issue => `${issue.path}: ${issue.message}`).join('; ') || 'the workspace source changed');
+    return rejectedWithCurrent('source_stale', capture.issues.map(issue => `${issue.path}: ${issue.message}`).join('; ') || 'the workspace source changed');
 }
 function checkRoundPin(expected: readonly VersionPin[], ref: VerificationRoundRef):
 { ok: true; revision: number } | CoreRejection {
@@ -247,7 +243,7 @@ function refusalOf(refusal: Refused, round?: RoundSnapshot): CoreRejection;
 function refusalOf(refusal: Rejected | null, round?: RoundSnapshot): CoreRejection | null;
 function refusalOf(refusal: Refused | Rejected | null, round?: RoundSnapshot): CoreRejection | null {
     if (refusal === null || refusal.ok) return null;
-    return reject(refusal.code, refusal.detail, refusal.code === 'revision_conflict' && round !== undefined
+    return rejectedWithCurrent(refusal.code, refusal.detail, refusal.code === 'revision_conflict' && round !== undefined
         ? [{ ref: round.ref, revision: round.revision }] : undefined);
 }
 
@@ -295,7 +291,7 @@ type RoundWrite<T> = {
  */
 async function preservedRoundNoticeOrigin(records: Records, ref: VerificationRoundRef): Promise<
     { ok: true; value: NoticeOriginWireV1 } | { ok: false; rejection: CoreRejection }> {
-    const key = refKeyOf(ref);
+    const key = canonicalOf(ref);
     if (key === null) return { ok: false, rejection: invalid('the round ref is not canonical JSON') };
     let read: Awaited<ReturnType<Records['readMany']>>;
     try {
@@ -416,7 +412,7 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
 // -------------------------------------------------------------------------- //
 
 async function readRoundRecord(records: Records, ref: VerificationRoundRef): Promise<LoadedRound> {
-    const key = refKeyOf(ref);
+    const key = canonicalOf(ref);
     if (key === null) return { ok: false, rejection: invalid('the round ref is not canonical JSON') };
     let read;
     try { read = await records.readMany([key]); }
@@ -447,7 +443,7 @@ Promise<{ ok: true; facts: RoundActivityFactsV1; guards: RecordGuard[] } | { ok:
     if (goal.workspaceRef.projectId !== scope.projectId || goal.workspaceRef.workspaceId !== scope.workspaceId) {
         return { ok: false, rejection: forbidden('the round Goal belongs to another workspace') };
     }
-    const goalKey = refKeyOf(goalRef);
+    const goalKey = canonicalOf(goalRef);
     if (goalKey === null) return { ok: false, rejection: invalid('the round Goal ref is not canonical JSON') };
     const guards: RecordGuard[] = [{ refKey: goalKey, expectedRevision: goal.revision }];
     let subjectDisposition: RoundActivityFactsV1['subjectDisposition'] = null;
@@ -508,7 +504,7 @@ async function commitOrRecover(
 
 async function readPinnedBaseline(records: Records, pin: { ref: { baselineId: string; revision: number }; digest: string }):
 Promise<{ ok: true; guard: RecordGuard } | { ok: false; rejection: CoreRejection }> {
-    const key = refKeyOf(pin.ref);
+    const key = canonicalOf(pin.ref);
     if (key === null) return { ok: false, rejection: incomplete('the pinned baseline ref is not canonical JSON') };
     const read = await readBatch(records, [key]);
     if (read.status !== 'ready') return { ok: false, rejection: mapRejected(read) };
@@ -519,11 +515,11 @@ Promise<{ ok: true; guard: RecordGuard } | { ok: false; rejection: CoreRejection
     const snapshot = readArchitectureBaselineSnapshot(body);
     if (snapshot === null) return { ok: false, rejection: unavailable('the pinned ArchitectureBaseline is damaged') };
     if (snapshot.ref.baselineId !== pin.ref.baselineId || snapshot.contentRevision !== pin.ref.revision) {
-        return { ok: false, rejection: reject('source_stale', 'the pinned ArchitectureBaseline content revision disagrees with the adopted pin') };
+        return { ok: false, rejection: rejectedWithCurrent('source_stale', 'the pinned ArchitectureBaseline content revision disagrees with the adopted pin') };
     }
     const digest = architectureBaselineDigest(body as { schemaVersion?: unknown; baselineId?: unknown; contentRevision?: unknown; content?: unknown });
     if (digest === null) return { ok: false, rejection: incomplete('the pinned ArchitectureBaseline content is not canonical JSON') };
-    if (digest !== pin.digest) return { ok: false, rejection: reject('source_stale', 'the pinned ArchitectureBaseline digest disagrees with the adopted pin') };
+    if (digest !== pin.digest) return { ok: false, rejection: rejectedWithCurrent('source_stale', 'the pinned ArchitectureBaseline digest disagrees with the adopted pin') };
     if (record.revision !== snapshot.revision) return { ok: false, rejection: unavailable('the ArchitectureBaseline outer revision disagrees with its body') };
     return { ok: true, guard: { refKey: key, expectedRevision: record.revision } };
 }
@@ -532,7 +528,7 @@ Promise<{ ok: true; guard: RecordGuard } | { ok: false; rejection: CoreRejection
  * existing Plan reader owner; a missing/corrupt row is never a default. */
 async function readWorkspaceRevision(records: Records, workspaceRef: { aggregateType: 'Workspace'; projectId: string; workspaceId: string }):
 Promise<{ ok: true; revision: number } | { ok: false; rejection: CoreRejection }> {
-    const key = refKeyOf(workspaceRef);
+    const key = canonicalOf(workspaceRef);
     if (key === null) return { ok: false, rejection: incomplete('the Workspace ref is not canonical JSON') };
     const read = await readBatch(records, [key]);
     if (read.status !== 'ready') return { ok: false, rejection: mapRejected(read) };
@@ -545,7 +541,7 @@ Promise<{ ok: true; revision: number } | { ok: false; rejection: CoreRejection }
 async function readIndex(records: Records, round: RoundSnapshot):
 Promise<{ ok: true; index: TaskEvidenceIndexReadV1 } | { ok: false; rejection: CoreRejection }> {
     const ref = taskEvidenceIndexRefOf(round);
-    const key = refKeyOf(ref);
+    const key = canonicalOf(ref);
     if (key === null) return { ok: false, rejection: invalid('the task evidence index ref is not canonical JSON') };
     let read;
     try { read = await records.readMany([key]); }
@@ -625,7 +621,7 @@ async function readRequeueCover(
 /** VD-1/VD-15 answered with the head pin (§9.4): the caller re-reads the head, never a second root. */
 function chainRefusal(refusal: Rejected, chain: RoundChainHeadV1): CoreRejection {
     if (refusal.ok) throw new Error('chainRefusal needs a refusal');
-    return reject(refusal.code, refusal.detail, chain.kind === 'head' && refusal.code === 'busy'
+    return rejectedWithCurrent(refusal.code, refusal.detail, chain.kind === 'head' && refusal.code === 'busy'
         ? [{ ref: chain.head.ref, revision: chain.head.revision }] : undefined);
 }
 
@@ -724,8 +720,8 @@ function reverifyPinsOf(expected: readonly VersionPin[], predecessorRef: Verific
 function sortedPins(expected: readonly VersionPin[]): { ref: VersionPin['ref']; revision: number }[] {
     return [...expected].map(pin => ({ ref: pin.ref, revision: pin.revision }))
         .sort((left, right) => {
-            const leftKey = refKeyOf(left.ref) ?? '';
-            const rightKey = refKeyOf(right.ref) ?? '';
+            const leftKey = canonicalOf(left.ref) ?? '';
+            const rightKey = canonicalOf(right.ref) ?? '';
             return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
         });
 }
@@ -766,8 +762,8 @@ export type CheckConfigurationResolver = (scope: WorkspaceScope) => TrustedCheck
  * Slice 5 §3.2/§4.4 (F37) seam: the autonomy verdict for an automatic reverify.
  * The evidence owner keeps every existing cap, chain and admission check; this
  * injected seam only decides whether `auto_reverify` proceeds automatically (a
- * "请知悉" notice) or must become a `needs_decision` cause instead. Absent keeps
- * the part-1 admission. Behaviour lands in part 2.
+ * "请知悉" notice) or must become a `needs_decision` cause instead. Absent, the
+ * Goal's own autonomy setting decides (`decisionActionPolicy`).
  */
 export type AutomaticReverifyPolicyV1 = (input: {
     goal: GoalSnapshot;
@@ -799,7 +795,7 @@ export type EvidenceServiceDependencies = {
      * fresh round when both are supplied. Absent keeps history reads/receipts
      * but makes fresh open/begin explicitly unsupported. */
     configuration?: TrustedCheckConfiguration;
-    /** R6 scoped resolver; Stage 1 declares the seam only. */
+    /** R6 scoped resolver; when supplied it takes precedence over `configuration`. */
     configurationFor?: CheckConfigurationResolver;
     /** A.2 step 5.6: this Host instance and its lease (D-18), for VR-04. */
     hostInstance?: { hostInstanceId: string; lease: 'owned' | 'held_by_other' };
@@ -931,7 +927,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const workspaceRead = await readWorkspaceRevision(records, goal.workspaceRef);
         if (!workspaceRead.ok) return workspaceRead;
         if (workspaceRead.revision !== resolvedRoot.value.workspaceRevision) {
-            return failure(reject('source_stale', 'the Host access workspace revision is not the current Workspace record revision'));
+            return failure(rejectedWithCurrent('source_stale', 'the Host access workspace revision is not the current Workspace record revision'));
         }
         const captured = await deps.source.capture(resolvedRoot.value.root);
         if (captured.status !== 'ready') return failure(mapSourceFailure(captured));
@@ -977,7 +973,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 sourceDigest: captured.sourceDigest, sourceProofDigest: digestOf(captured.sourceProof),
             };
         } catch { return failure(invalid('the round material identity is not canonical JSON')); }
-        const workspaceKey = refKeyOf(goal.workspaceRef);
+        const workspaceKey = canonicalOf(goal.workspaceRef);
         if (workspaceKey === null) return failure(invalid('the open read refs are not canonical JSON'));
         return { ok: true,
             build: { adoptedPlanRef: input.planRef, taskBasisRef: input.taskBasisRef, configuration, configurationDigest,
@@ -1128,8 +1124,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         // revision, the ended subject Run, the pinned policy/baseline and the
         // Round absence. A legal W1 future apply during the capture await moves
         // the Goal pointer and conflicts here instead of landing silently.
-        const goalKey = refKeyOf(goalRef);
-        const runKey = refKeyOf(run.ref);
+        const goalKey = canonicalOf(goalRef);
+        const runKey = canonicalOf(run.ref);
         if (goalKey === null || runKey === null) {
             return invalid('the open read refs are not canonical JSON');
         }
@@ -1520,7 +1516,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (goalRead.status !== 'ready') {
             contextGaps.push({ code: 'goal_unavailable', message: 'the subject Goal is not readable' });
         } else {
-            const goalKey = refKeyOf(goalRef);
+            const goalKey = canonicalOf(goalRef);
             if (goalKey === null) return invalid('the subject Goal ref is not canonical JSON');
             readSet.push({ refKey: goalKey, expectedRevision: goalRead.goal.revision });
             if (evidencePlan !== null) {
@@ -1536,7 +1532,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 }
             }
         }
-        const subjectRunKey = refKeyOf(round.subjectRunRef);
+        const subjectRunKey = canonicalOf(round.subjectRunRef);
         if (subjectRunKey === null) return invalid('the subject Run ref is not canonical JSON');
         const subjectRunRead = await readBatch(records, [subjectRunKey]);
         if (subjectRunRead.status !== 'ready') return mapRejected(subjectRunRead);
@@ -1694,7 +1690,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         for (const effect of write.decided.effects) {
             switch (effect.kind) {
                 case 'guard_round': {
-                    const key = refKeyOf(write.decided.next.ref);
+                    const key = canonicalOf(write.decided.next.ref);
                     if (key === null) return invalid('the successor round ref is not canonical JSON');
                     // Slice 5 §2.5: the successor round carries the wire-only
                     // notice origin; the Store binds this creation commit's
@@ -1708,7 +1704,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                     break;
                 }
                 case 'guard_predecessor': {
-                    const key = refKeyOf(effect.ref);
+                    const key = canonicalOf(effect.ref);
                     if (key === null) return invalid('the predecessor round ref is not canonical JSON');
                     guards.push({ refKey: key, expectedRevision: effect.revision });
                     break;
@@ -1898,7 +1894,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             if (!coverRead.ok) return coverRead.rejection;
             cover = coverRead;
             const pointers = await readPointerIntents(records, [run]);
-            if (pointers.status !== 'ready') return reject(pointers.code, pointers.reason);
+            if (pointers.status !== 'ready') return rejectedWithCurrent(pointers.code, pointers.reason);
             fence = reworkFenceOf(run, pointers.intents.get(run.ref.runId) ?? null);
         }
         const failureClass = reverifyFailureClass(predecessor);
@@ -1920,14 +1916,14 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             const current = admission.code !== 'revision_conflict' ? undefined : moved || !cover.covered ? headPin(chainRead.chain)
                 : [{ ref: { aggregateType: 'TaskRequeue' as const, projectId: run.ref.projectId, goalId: run.ref.goalId,
                     taskId: run.task.taskId, afterRunId: run.ref.runId }, revision: 1 }];
-            return reject(admission.code, admission.detail, current);
+            return rejectedWithCurrent(admission.code, admission.detail, current);
         }
         // The refusal record under (reverify, predecessor) and the caller's optional pin on it (§13.7 point 9).
         const refusalRead = await readReverifyRefusal(records, refusalRef);
         if (!refusalRead.ok) return refusalRead.rejection;
         const currentRefusal = refusalRead.current;
         if (pins.refusal !== null && pins.refusal !== (currentRefusal?.revision ?? 0)) {
-            return reject('revision_conflict', 'the reverify refusal changed since the caller read it',
+            return rejectedWithCurrent('revision_conflict', 'the reverify refusal changed since the caller read it',
                 currentRefusal === null ? undefined : [{ ref: refusalRef, revision: currentRefusal.revision }]);
         }
         // Step 5 (ND-9): every new input as the owner reads it.
@@ -1940,9 +1936,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         // 7–8. The cap, then the Goal's ended Runs (the refusal watermark), both before any capture.
         const policy = policyOf();
         const ended = await readGoalRunsForCount(records, goalRef);
-        if (ended.status !== 'ready') return reject(ended.code, ended.reason);
-        const goalKey = refKeyOf(goalRef);
-        const runKey = refKeyOf(run.ref);
+        if (ended.status !== 'ready') return rejectedWithCurrent(ended.code, ended.reason);
+        const goalKey = canonicalOf(goalRef);
+        const runKey = canonicalOf(run.ref);
         if (goalKey === null || runKey === null) return invalid('the reverify read refs are not canonical JSON');
         const readSet: RecordGuard[] = [
             { refKey: goalKey, expectedRevision: goal.revision },
@@ -1957,14 +1953,14 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const slotTaken = async (): Promise<CoreRejection> => {
             const again = await readSubjectChain(records, scope, predecessor.subject, chainRun);
             if (!again.ok) return again.rejection;
-            return reject('revision_conflict', 'the predecessor is no longer the chain head (a successor round or a requeue committed first)',
+            return rejectedWithCurrent('revision_conflict', 'the predecessor is no longer the chain head (a successor round or a requeue committed first)',
                 headPin(again.chain));
         };
         const commitBase = { identity, fingerprint, signal, actor, task, predecessor, run, refusalRef, refusalKey: refusalRead.key,
             currentRefusal, goalEndedRunsAtRefusal: countEndedGoalRuns(ended.runs), slotTaken };
         if (reverifyCapRefusal(predecessor, actorClass, policy.autoReworkLimit) !== null) {
             const capped = decide(null);
-            if (!capped.ok) return reject(capped.code, capped.detail);
+            if (!capped.ok) return rejectedWithCurrent(capped.code, capped.detail);
             return await commitReverify({ ...commitBase, eventActor: null, readSet, decided: capped });
         }
 
@@ -2010,7 +2006,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 origin: { kind: 'platform_operation', projectId: scope.projectId, workspaceId: scope.workspaceId,
                     requestId: owned.requestId, actor: caller.actor } });
             if (stored.status !== 'stored') {
-                return reject(stored.code === 'size_exceeded' ? 'capacity' : stored.code === 'missing_source' ? 'invalid' : stored.code,
+                return rejectedWithCurrent(stored.code === 'size_exceeded' ? 'capacity' : stored.code === 'missing_source' ? 'invalid' : stored.code,
                     `the note could not be stored: ${stored.reason}`);
             }
             if (newInputRefs.length >= MAX_NEW_BASIS_INPUT_REFS) {
@@ -2024,11 +2020,11 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 configurationDigest: prepared.build.configurationDigest },
             basisPlan: basis, completionPolicyPin: plan.effectiveCompletionPolicy,
             architectureBaselinePin: plan.effectiveArchitectureBaseline, newInputRefs });
-        if (!key.ok) return reject(key.code, key.detail);
+        if (!key.ok) return rejectedWithCurrent(key.code, key.detail);
         // 10–12. The machine: a successor or a policy refusal, then the one commit.
         const decided = decide({ roundId: deps.newId(), build: prepared.build, basis: key.next, requestedBy: actor,
             requestedAt: deps.now(), newInputRefs, reason: input.reason ?? null });
-        if (!decided.ok) return reject(decided.code, decided.detail);
+        if (!decided.ok) return rejectedWithCurrent(decided.code, decided.detail);
         return await commitReverify({ ...commitBase, decided,
             eventActor: caller.kind === 'host' ? caller.actor : { kind: configuration.executor.kind, id: configuration.executor.id },
             noticeAutomationCap: policy.autoReworkLimit,

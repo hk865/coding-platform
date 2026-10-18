@@ -1,5 +1,5 @@
 /**
- * WorkGraph Goal record/event codecs — the ONE registration this batch owns.
+ * WorkGraph Goal record/event codecs — the ONE Goal-family registration.
  *
  * R3a §2.3: the RecordStore has no `schemaId` column in the legacy
  * `snapshot_json` table, so it selects a codec from the `aggregateType` of the
@@ -27,7 +27,11 @@ import {
 } from "../../../contracts/goal-decisions.js";
 import type { PlanRevisionRef } from "../../../contracts/plan.js";
 import { canonicalJson, type JsonValue } from "../../../contracts/fingerprint.js";
+import {
+  invalid, isNonNeg, isRecord, nonEmpty, parseTaggedObject,
+} from "../../../contracts/validation/common.js";
 import type { DecodeResult, EncodedDomainEvent, EncodedRecord, EncodedRecordSchema, RecordBackendSchemas } from "../../record-store/ports.js";
+import { encodeEventEnvelope } from "./event-envelope.js";
 
 // --------------------------------------------------------------------------
 // Fixed registration identifiers
@@ -80,34 +84,6 @@ export function canonicalRefKey(ref: GoalRef | ProjectRef | WorkspaceRef): strin
 
 type UnknownRecord = Record<string, unknown>;
 
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function nonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-/** Generic revision: a safe non-negative integer (never a float, never NaN). */
-function isSafeRevision(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
-function invalid(reason: string): { status: "invalid"; reason: string } {
-  return { status: "invalid", reason };
-}
-
-function parseJsonObject(json: string, what: string): UnknownRecord | string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    return `${what} is not valid JSON`;
-  }
-  if (!isRecord(parsed)) return `${what} JSON must be an object`;
-  return parsed;
-}
-
 /** Deep-copies an actor so a stored event never aliases caller input. */
 export function cloneActorRef(actor: ActorRef): ActorRef {
   if (actor.kind === "agent") {
@@ -120,14 +96,14 @@ export function cloneActorRef(actor: ActorRef): ActorRef {
 function actorFromValue(value: unknown): ActorRef | null {
   if (!isRecord(value)) return null;
   const kind = value["kind"];
-  if (!nonEmptyString(value["id"])) return null;
+  if (!nonEmpty(value["id"])) return null;
   if (kind === "human" || kind === "system") return { kind, id: value["id"] };
   if (kind !== "agent") return null;
   const runRef = value["runRef"];
   if (!isRecord(runRef)) return null;
-  if (!nonEmptyString(runRef["projectId"])) return null;
-  if (!nonEmptyString(runRef["goalId"])) return null;
-  if (!nonEmptyString(runRef["runId"])) return null;
+  if (!nonEmpty(runRef["projectId"])) return null;
+  if (!nonEmpty(runRef["goalId"])) return null;
+  if (!nonEmpty(runRef["runId"])) return null;
   return {
     kind: "agent",
     id: value["id"],
@@ -143,15 +119,15 @@ function actorFromValue(value: unknown): ActorRef | null {
 function projectRefFromValue(value: unknown): ProjectRef | null {
   if (!isRecord(value)) return null;
   if (value["aggregateType"] !== "Project") return null;
-  if (!nonEmptyString(value["projectId"])) return null;
+  if (!nonEmpty(value["projectId"])) return null;
   return { aggregateType: "Project", projectId: value["projectId"] };
 }
 
 function workspaceRefFromValue(value: unknown): WorkspaceRef | null {
   if (!isRecord(value)) return null;
   if (value["aggregateType"] !== "Workspace") return null;
-  if (!nonEmptyString(value["projectId"])) return null;
-  if (!nonEmptyString(value["workspaceId"])) return null;
+  if (!nonEmpty(value["projectId"])) return null;
+  if (!nonEmpty(value["workspaceId"])) return null;
   return {
     aggregateType: "Workspace",
     projectId: value["projectId"],
@@ -162,16 +138,16 @@ function workspaceRefFromValue(value: unknown): WorkspaceRef | null {
 function goalRefFromValue(value: unknown): GoalRef | null {
   if (!isRecord(value)) return null;
   if (value["aggregateType"] !== "Goal") return null;
-  if (!nonEmptyString(value["projectId"])) return null;
-  if (!nonEmptyString(value["goalId"])) return null;
+  if (!nonEmpty(value["projectId"])) return null;
+  if (!nonEmpty(value["goalId"])) return null;
   return { aggregateType: "Goal", projectId: value["projectId"], goalId: value["goalId"] };
 }
 
 function planRevisionRefFromValue(value: unknown, projectId: string): PlanRevisionRef | null {
   if (!isRecord(value)) return null;
   if (value["aggregateType"] !== "PlanRevision") return null;
-  if (!nonEmptyString(value["projectId"])) return null;
-  if (!nonEmptyString(value["planId"])) return null;
+  if (!nonEmpty(value["projectId"])) return null;
+  if (!nonEmpty(value["planId"])) return null;
   // A legal PlanRevisionRef of THIS goal's project — a cross-project ref is not
   // a legal later Goal, it is a corrupt record.
   if (value["projectId"] !== projectId) return null;
@@ -205,12 +181,12 @@ function validateProjectSnapshot(record: EncodedRecord): DecodeResult<EncodedRec
   if (record.schemaId !== PROJECT_SNAPSHOT_SCHEMA_ID) {
     return invalid(`expected schemaId ${PROJECT_SNAPSHOT_SCHEMA_ID}, got ${record.schemaId}`);
   }
-  const parsed = parseJsonObject(record.json, "Project snapshot");
+  const parsed = parseTaggedObject(record.json, "Project snapshot");
   if (typeof parsed === "string") return invalid(parsed);
   const ref = projectRefFromValue(parsed["ref"]);
   if (ref === null) return invalid("Project snapshot has no valid ProjectRef");
   const revision = parsed["revision"];
-  if (!isSafeRevision(revision)) return invalid("Project snapshot revision must be a safe non-negative integer");
+  if (!isNonNeg(revision)) return invalid("Project snapshot revision must be a safe non-negative integer");
   if (revision !== record.revision) {
     return invalid("Project snapshot outer revision disagrees with the JSON revision");
   }
@@ -224,12 +200,12 @@ function validateWorkspaceSnapshot(record: EncodedRecord): DecodeResult<EncodedR
   if (record.schemaId !== WORKSPACE_SNAPSHOT_SCHEMA_ID) {
     return invalid(`expected schemaId ${WORKSPACE_SNAPSHOT_SCHEMA_ID}, got ${record.schemaId}`);
   }
-  const parsed = parseJsonObject(record.json, "Workspace snapshot");
+  const parsed = parseTaggedObject(record.json, "Workspace snapshot");
   if (typeof parsed === "string") return invalid(parsed);
   const ref = workspaceRefFromValue(parsed["ref"]);
   if (ref === null) return invalid("Workspace snapshot has no valid WorkspaceRef");
   const revision = parsed["revision"];
-  if (!isSafeRevision(revision)) {
+  if (!isNonNeg(revision)) {
     return invalid("Workspace snapshot revision must be a safe non-negative integer");
   }
   if (revision !== record.revision) {
@@ -265,8 +241,8 @@ function noticePositionProblem(value: unknown): string | null {
     if (!hasExactKeys(value, ["kind", "occurredAt", "itemKey"])) {
       return "a legacy notice position must carry exactly kind, occurredAt and itemKey";
     }
-    if (!nonEmptyString(value["occurredAt"])) return "a legacy notice position occurredAt must be a non-empty string";
-    return nonEmptyString(value["itemKey"]) ? null : "a notice position itemKey must be a non-empty string";
+    if (!nonEmpty(value["occurredAt"])) return "a legacy notice position occurredAt must be a non-empty string";
+    return nonEmpty(value["itemKey"]) ? null : "a notice position itemKey must be a non-empty string";
   }
   if (value["kind"] === "commit") {
     if (!hasExactKeys(value, ["kind", "cursor", "itemKey"])) {
@@ -276,7 +252,7 @@ function noticePositionProblem(value: unknown): string | null {
     if (!(typeof cursor === "string" && /^c\d{10}$/.test(cursor))) {
       return "a commit notice position cursor must be a CommitCursor";
     }
-    return nonEmptyString(value["itemKey"]) ? null : "a notice position itemKey must be a non-empty string";
+    return nonEmpty(value["itemKey"]) ? null : "a notice position itemKey must be a non-empty string";
   }
   return 'a notice position kind must be "legacy" or "commit"';
 }
@@ -326,10 +302,10 @@ export function workspaceLineSettingsProblem(value: unknown): string | null {
       return "a pinned line sessionRef must be a complete SessionRef";
     }
     const ref = sessionRef as UnknownRecord;
-    if (!nonEmptyString(ref["projectId"]) || !nonEmptyString(ref["sessionId"])) {
+    if (!nonEmpty(ref["projectId"]) || !nonEmpty(ref["sessionId"])) {
       return "a pinned line sessionRef must be a complete SessionRef";
     }
-    if (!nonEmptyString(entry["pinnedAt"])) return "a pinned line pinnedAt must be a non-empty string";
+    if (!nonEmpty(entry["pinnedAt"])) return "a pinned line pinnedAt must be a non-empty string";
     const canonical = canonicalJson(sessionRef as JsonValue);
     if (seen.has(canonical)) return "Workspace lineSettings pins a Session more than once";
     seen.add(canonical);
@@ -366,12 +342,12 @@ export function goalSnapshotProblem(parsed: UnknownRecord): string | null {
   }
   const revision = parsed["revision"];
   // Goal's own encoding rule: revision >= 1 (0 never denotes an existing Goal).
-  if (!isSafeRevision(revision) || revision < 1) {
+  if (!isNonNeg(revision) || revision < 1) {
     return "Goal snapshot revision must be a safe integer >= 1";
   }
   const desiredStateRevision = parsed["desiredStateRevision"];
   if (desiredStateRevision !== undefined
-    && (!isSafeRevision(desiredStateRevision) || desiredStateRevision < 1 || desiredStateRevision > revision)) {
+    && (!isNonNeg(desiredStateRevision) || desiredStateRevision < 1 || desiredStateRevision > revision)) {
     return "Goal snapshot desiredStateRevision must be a safe integer between 1 and the Goal revision";
   }
   const requestedBy = parsed["desiredStateRequestedBy"];
@@ -381,7 +357,7 @@ export function goalSnapshotProblem(parsed: UnknownRecord): string | null {
       return "Goal snapshot desiredStateRequestedBy must be null or a Host (human/system) actor";
     }
   }
-  // Slice 5: the optional §2.2 settings. Absent stays absent (the default helper
+  // The optional §2.2 settings. Absent stays absent (the default helper
   // applies it at consumption); present must be a complete legal shape, so a
   // corrupt ref/enum/float/negative order can never be read as "no settings".
   if (parsed["settings"] !== undefined) {
@@ -426,7 +402,7 @@ export function goalSettingsProblem(value: unknown, projectId: string): string |
     return "Goal settings autonomy is not a legal GoalAutonomyV1";
   }
   // order is a non-negative integer; a float or negative order is corrupt.
-  if (!isSafeRevision(settings["order"])) {
+  if (!isNonNeg(settings["order"])) {
     return "Goal settings order must be a safe non-negative integer";
   }
   const wait = settings["waitForGoalRef"];
@@ -455,7 +431,7 @@ function validateGoalSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord
   if (record.schemaId !== GOAL_SNAPSHOT_SCHEMA_ID) {
     return invalid(`expected schemaId ${GOAL_SNAPSHOT_SCHEMA_ID}, got ${record.schemaId}`);
   }
-  const parsed = parseJsonObject(record.json, "Goal snapshot");
+  const parsed = parseTaggedObject(record.json, "Goal snapshot");
   if (typeof parsed === "string") return invalid(parsed);
   const problem = goalSnapshotProblem(parsed);
   if (problem !== null) return invalid(problem);
@@ -481,9 +457,9 @@ function validateGoalCreatedEvent(event: EncodedDomainEvent): DecodeResult<Encod
   if (event.schemaVersion !== GOAL_CREATED_EVENT_SCHEMA_VERSION) {
     return invalid(`expected schemaVersion ${GOAL_CREATED_EVENT_SCHEMA_VERSION}, got ${event.schemaVersion}`);
   }
-  if (!nonEmptyString(event.eventId)) return invalid("eventId must be a non-empty string");
-  if (!nonEmptyString(event.occurredAt)) return invalid("occurredAt must be a non-empty string");
-  const parsed = parseJsonObject(event.json, "GoalCreated event");
+  if (!nonEmpty(event.eventId)) return invalid("eventId must be a non-empty string");
+  if (!nonEmpty(event.occurredAt)) return invalid("occurredAt must be a non-empty string");
+  const parsed = parseTaggedObject(event.json, "GoalCreated event");
   if (typeof parsed === "string") return invalid(parsed);
   if (parsed["eventId"] !== event.eventId) return invalid("outer eventId disagrees with the event JSON");
   if (parsed["eventType"] !== event.eventType) return invalid("outer eventType disagrees with the event JSON");
@@ -493,14 +469,14 @@ function validateGoalCreatedEvent(event: EncodedDomainEvent): DecodeResult<Encod
   if (parsed["occurredAt"] !== event.occurredAt) {
     return invalid("outer occurredAt disagrees with the event JSON");
   }
-  if (!nonEmptyString(parsed["projectId"])) return invalid("GoalCreated projectId must be a non-empty string");
-  if (!nonEmptyString(parsed["workspaceId"])) return invalid("GoalCreated workspaceId must be a non-empty string");
+  if (!nonEmpty(parsed["projectId"])) return invalid("GoalCreated projectId must be a non-empty string");
+  if (!nonEmpty(parsed["workspaceId"])) return invalid("GoalCreated workspaceId must be a non-empty string");
   if (parsed["aggregateType"] !== "Goal") return invalid('GoalCreated aggregateType must be "Goal"');
-  if (!nonEmptyString(parsed["aggregateId"])) return invalid("GoalCreated aggregateId must be a non-empty string");
+  if (!nonEmpty(parsed["aggregateId"])) return invalid("GoalCreated aggregateId must be a non-empty string");
   if (parsed["aggregateRevision"] !== 1) return invalid("GoalCreated aggregateRevision must be 1");
-  if (!nonEmptyString(parsed["causationId"])) return invalid("GoalCreated causationId must be a non-empty string");
-  if (!nonEmptyString(parsed["correlationId"])) return invalid("GoalCreated correlationId must be a non-empty string");
-  if (!nonEmptyString(parsed["idempotencyKey"])) return invalid("GoalCreated idempotencyKey must be a non-empty string");
+  if (!nonEmpty(parsed["causationId"])) return invalid("GoalCreated causationId must be a non-empty string");
+  if (!nonEmpty(parsed["correlationId"])) return invalid("GoalCreated correlationId must be a non-empty string");
+  if (!nonEmpty(parsed["idempotencyKey"])) return invalid("GoalCreated idempotencyKey must be a non-empty string");
   if (actorFromValue(parsed["actor"]) === null) return invalid("GoalCreated actor is not a valid ActorRef");
   const payload = parsed["payload"];
   if (!isRecord(payload)) return invalid("GoalCreated payload must be an object");
@@ -526,8 +502,8 @@ function hasExactKeys(value: unknown, keys: readonly string[]): boolean {
 /**
  * The Goal a `GoalDesiredStateChanged` event carries has no unknown or missing
  * field at any level, so a receipt replay can return it as the written
- * snapshot (shape-checked separately by `goalSnapshotProblem`). Slice 5 makes
- * `settings` an optional extra whose presence is preserved, never defaulted in.
+ * snapshot (shape-checked separately by `goalSnapshotProblem`). `settings` is
+ * an optional extra whose presence is preserved, never defaulted in.
  */
 const WRITTEN_GOAL_KEYS: readonly string[] = [
   "ref", "workspaceRef", "objective", "desiredState", "desiredStateRevision", "desiredStateRequestedBy",
@@ -545,7 +521,7 @@ function writtenGoalHasExactShape(goal: UnknownRecord): boolean {
 }
 
 /**
- * Full `GoalSnapshot` value check for the slice-5 write events: the record
+ * Full `GoalSnapshot` value check for the write events: the record
  * validator's field rules plus the exact written field set (a present
  * `settings` is preserved, an absent one stays absent).
  */
@@ -557,10 +533,10 @@ export function goalSnapshotValueProblem(value: unknown): string | null {
 }
 
 /**
- * Full `WorkspaceSnapshot` value check for the slice-5 and slice-2C write
- * events: the exact `ref`/`revision` plus an optional, validated
- * `decisionSettings` and an optional, validated `lineSettings`; a field that is
- * absent stays absent (never defaulted in).
+ * Full `WorkspaceSnapshot` value check for the write events: the exact
+ * `ref`/`revision` plus an optional, validated `decisionSettings` and an
+ * optional, validated `lineSettings`; a field that is absent stays absent (never
+ * defaulted in).
  */
 export function workspaceSnapshotValueProblem(value: unknown): string | null {
   if (!isRecord(value)) return "Workspace value must be an object";
@@ -574,7 +550,7 @@ export function workspaceSnapshotValueProblem(value: unknown): string | null {
   }
   const ref = workspaceRefFromValue(value["ref"]);
   if (ref === null) return "Workspace value has no valid WorkspaceRef";
-  if (!isSafeRevision(value["revision"])) return "Workspace value revision must be a safe non-negative integer";
+  if (!isNonNeg(value["revision"])) return "Workspace value revision must be a safe non-negative integer";
   if (hasSettings) {
     const settingsProblem = workspaceDecisionSettingsProblem(value["decisionSettings"]);
     if (settingsProblem !== null) return settingsProblem;
@@ -614,9 +590,9 @@ function validateGoalDesiredStateChangedEvent(event: EncodedDomainEvent): Decode
   if (event.schemaVersion !== GOAL_DESIRED_STATE_CHANGED_EVENT_SCHEMA_VERSION) {
     return invalid(`expected schemaVersion ${GOAL_DESIRED_STATE_CHANGED_EVENT_SCHEMA_VERSION}, got ${event.schemaVersion}`);
   }
-  if (!nonEmptyString(event.eventId)) return invalid("eventId must be a non-empty string");
-  if (!nonEmptyString(event.occurredAt)) return invalid("occurredAt must be a non-empty string");
-  const parsed = parseJsonObject(event.json, "GoalDesiredStateChanged event");
+  if (!nonEmpty(event.eventId)) return invalid("eventId must be a non-empty string");
+  if (!nonEmpty(event.occurredAt)) return invalid("occurredAt must be a non-empty string");
+  const parsed = parseTaggedObject(event.json, "GoalDesiredStateChanged event");
   if (typeof parsed === "string") return invalid(parsed);
   if (parsed["eventId"] !== event.eventId || parsed["eventType"] !== event.eventType
     || parsed["schemaVersion"] !== event.schemaVersion || parsed["occurredAt"] !== event.occurredAt) {
@@ -625,26 +601,26 @@ function validateGoalDesiredStateChangedEvent(event: EncodedDomainEvent): Decode
   if (!Object.keys(parsed).every((key) => DESIRED_STATE_CHANGED_EVENT_KEYS.includes(key))) {
     return invalid("GoalDesiredStateChanged carries unknown fields");
   }
-  if (!nonEmptyString(parsed["identityKey"])) return invalid("GoalDesiredStateChanged identityKey must be a non-empty string");
-  if (!nonEmptyString(parsed["fingerprint"])) return invalid("GoalDesiredStateChanged fingerprint must be a non-empty string");
+  if (!nonEmpty(parsed["identityKey"])) return invalid("GoalDesiredStateChanged identityKey must be a non-empty string");
+  if (!nonEmpty(parsed["fingerprint"])) return invalid("GoalDesiredStateChanged fingerprint must be a non-empty string");
   const actor = actorFromValue(parsed["actor"]);
   if (actor === null || actor.kind === "agent") return invalid("GoalDesiredStateChanged actor must be a Host (human/system) actor");
   const changeProblem = desiredStateChangeProblem(parsed["control"], parsed["from"], parsed["to"]);
   if (changeProblem !== null) return invalid(changeProblem);
   const desiredStateRevision = parsed["desiredStateRevision"];
-  if (!isSafeRevision(desiredStateRevision) || desiredStateRevision < 2) {
+  if (!isNonNeg(desiredStateRevision) || desiredStateRevision < 2) {
     return invalid("GoalDesiredStateChanged desiredStateRevision must be a safe integer >= 2");
   }
   const pausedEpoch = parsed["pausedEpoch"];
   if (parsed["control"] === "resume") {
-    if (!isSafeRevision(pausedEpoch) || pausedEpoch < 2 || pausedEpoch >= desiredStateRevision) {
+    if (!isNonNeg(pausedEpoch) || pausedEpoch < 2 || pausedEpoch >= desiredStateRevision) {
       return invalid("a resume pausedEpoch must be the earlier pause desiredStateRevision");
     }
   } else if (pausedEpoch !== null) {
     return invalid("only a resume carries a pausedEpoch");
   }
   const reason = parsed["reason"];
-  if (!(reason === null || nonEmptyString(reason))) return invalid("GoalDesiredStateChanged reason must be null or a non-empty string");
+  if (!(reason === null || nonEmpty(reason))) return invalid("GoalDesiredStateChanged reason must be null or a non-empty string");
   const goal = parsed["goal"];
   if (!isRecord(goal)) return invalid("GoalDesiredStateChanged goal must be the written Goal snapshot");
   const goalProblem = goalSnapshotProblem(goal);
@@ -752,13 +728,7 @@ export function encodeGoalSnapshot(snapshot: GoalSnapshot): EncodedRecord {
 }
 
 export function encodeGoalCreatedEvent(event: GoalCreatedEvent): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function decodeProjectSnapshot(record: EncodedRecord): DecodeResult<ProjectSnapshot> {
@@ -814,7 +784,7 @@ export function decodeGoalSnapshot(record: EncodedRecord): DecodeResult<GoalSnap
       activePlanRevision:
         active === null ? null : planRevisionRefFromValue(active, ref.projectId),
       revision: record.revision,
-      // Slice 5: present stays byte-identical, absent stays absent (the default
+      // Present stays byte-identical, absent stays absent (the default
       // is applied by `readGoalSettings` at the consumption point, never stored).
       ...(settings === undefined ? {} : { settings }),
     },
@@ -893,13 +863,7 @@ export function goalSnapshotFromCreatedEvent(event: GoalCreatedEvent): GoalSnaps
 }
 
 export function encodeGoalDesiredStateChangedEvent(event: GoalDesiredStateChangedEvent): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 export function decodeGoalDesiredStateChangedEvent(event: EncodedDomainEvent): DecodeResult<GoalDesiredStateChangedEvent> {

@@ -1,5 +1,5 @@
 /**
- * R4c.2b shared execution-history locator codec (WorkGraph persistence layer).
+ * Shared execution-history locator codec (WorkGraph persistence layer).
  *
  * Responsibility of THIS file — and nothing else:
  *  - own the PURE `RunExecutionHistoryV1` shape/range validator. The existing
@@ -13,26 +13,23 @@
  *
  * It does NOT register or restate `RunSnapshot@1` (materials owns that codec),
  * imports no Kernel module, scans no event log and creates no table/index.
- *
- * Shape rules enforced here (shared by read and write):
- *  - `schemaVersion === 1`, no unknown keys;
- *  - `sessionRef` is a non-empty `{ projectId, sessionId }` (project equality
- *    against the owning Run is checked by the caller that knows the Run);
- *  - `kernel` has non-empty `adapterId`, `kernelSessionId`, `runId`, `turnId`;
- *  - `startPosition`, `observedThroughPosition` and a non-null `endPosition`
- *    are positive safe integers;
- *  - `startPosition <= observedThroughPosition`, and
- *    `startPosition <= endPosition <= observedThroughPosition`.
+ * That `sessionRef.projectId` equals the owning Run's project is checked by the
+ * caller that knows the Run, not here.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-history.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
+import {
+  hasOnlyKeys, invalid, isPos as isPositiveSafeInteger, isRecord as isJsonObject,
+  nonEmpty, parseObject,
+} from '../../../contracts/validation/common.js';
 import type {
   DecodeResult,
   EncodedDomainEvent,
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import type { RecordedExecutionHistory } from '../model/execution-history-contracts.js';
+import { encodeEventEnvelope } from './event-envelope.js';
 
 export const EXECUTION_HISTORY_RECORDED_EVENT_TYPE = 'ExecutionHistoryRecorded' as const;
 export const EXECUTION_HISTORY_RECORDED_EVENT_SCHEMA_VERSION = 1 as const;
@@ -62,30 +59,6 @@ const HISTORY_KEYS: readonly string[] = [
 ];
 const SESSION_REF_KEYS: readonly string[] = ['projectId', 'sessionId'];
 const KERNEL_KEYS: readonly string[] = ['adapterId', 'kernelSessionId', 'runId', 'turnId'];
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  return Object.keys(value).every(key => allowed.includes(key));
-}
-function parseObject(json: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return isJsonObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function invalid<T>(reason: string): DecodeResult<T> {
-  return { status: 'invalid', reason };
-}
 
 function isRunRef(value: unknown): value is RunRef {
   return isJsonObject(value) && value['aggregateType'] === 'Run'
@@ -130,13 +103,7 @@ export function isRunExecutionHistoryV1(value: unknown): value is RunExecutionHi
 export function encodeExecutionHistoryRecordedEvent(
   event: ExecutionHistoryRecordedEvent,
 ): EncodedDomainEvent {
-  return {
-    eventId: event.eventId,
-    eventType: event.eventType,
-    schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt,
-    json: JSON.stringify(event),
-  };
+  return encodeEventEnvelope(event);
 }
 
 /**

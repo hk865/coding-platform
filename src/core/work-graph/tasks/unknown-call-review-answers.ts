@@ -2,18 +2,20 @@
  * K3 L28 / §3.4 UR7b: the ONE internal reader over
  * `k3-decision-answer-by-source-goal`.
  *
- * It is parameterized by the source kind (B1 uses `unknown_call_review`; B3 adds
+ * It is parameterized by the source kind (`unknown_call_review` or
  * `command_rerun_request`), pages the index to its end (2A L6/L10) and keeps
  * only a synthetic, responded answer whose formal ② commit exists under the
  * answer-derived identity. A read failure is `unavailable`, never an empty list.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type {
   DecisionSelectionV1, DecisionSourceV1,
 } from '../../../contracts/goal-decisions.js';
+import { rejected as reject } from '../../../contracts/core/rejections.js';
+import { isRecord } from '../../../contracts/validation/common.js';
 import { canonicalJson, sha256Hex } from '../../../contracts/fingerprint.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { UnknownCallReviewRef } from '../../../contracts/unknown-call-review.js';
@@ -57,14 +59,6 @@ export type UnappliedAnswersReadV1 = {
   answers: RedriveAnswerHitV1[];
   readThrough: CommitCursor | null;
 };
-
-function reject(code: CoreError, reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** L19: the phase follows the selected option, never the record's status. */
 export function unknownCallAnswerPhase(selection: DecisionSelectionV1): UnknownCallAnswerPhaseV1 {

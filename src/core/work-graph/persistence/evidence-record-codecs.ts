@@ -1,5 +1,5 @@
 /**
- * R3e.1 round/Evidence/index/event codecs (implementation).
+ * Round/Evidence/index/event codecs (implementation).
  *
  * This is the ONE owner of:
  *  - the immutable persisted `VerificationRoundSnapshot@1`;
@@ -24,7 +24,10 @@ import type {
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import type { EvidenceSnapshot, TaskEvidenceIndexSnapshot } from '../../../contracts/evidence.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalOf } from '../../../contracts/fingerprint.js';
+import {
+    hasOnlyKeys, invalid, isRecord, nonEmpty, parseObject,
+} from '../../../contracts/validation/common.js';
 import {
     ROUND_CHAIN_MAX,
     type CheckExecutionTicket, type CheckProcessObservation, type RoundSnapshot, type VerificationRoundRef,
@@ -35,6 +38,7 @@ import {
     actorRefProblem, incompleteCauseProblem, isSha256Hex, newBasisInputRefsProblem, reverifyBasisProblem,
     noticeOriginFieldsProblem, NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS, type NoticeOriginWireV1,
 } from './rework-codecs.js';
+import { encodeEventEnvelope } from './event-envelope.js';
 
 // -------------------------------------------------------------------------- //
 // Schema names (frozen)                                                      //
@@ -127,31 +131,8 @@ export const VERIFICATION_ROUND_EVENT_TYPES: readonly VerificationRoundEvent['ev
 
 type UnknownRecord = Record<string, unknown>;
 
-function isRecord(value: unknown): value is UnknownRecord {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-    return typeof value === 'string' && value.length > 0;
-}
 function isSafeInteger(value: unknown, minimum = 0): value is number {
     return typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum;
-}
-function invalid<T>(reason: string): DecodeResult<T> {
-    return { status: 'invalid', reason };
-}
-function parseObject(json: string): UnknownRecord | null {
-    try {
-        const parsed: unknown = JSON.parse(json);
-        return isRecord(parsed) ? parsed : null;
-    } catch {
-        return null;
-    }
-}
-function canonicalOf(value: unknown): string | null {
-    try { return canonicalJson(value as JsonValue); } catch { return null; }
-}
-function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
-    return Object.keys(value).every(key => allowed.includes(key));
 }
 function actorProblem(value: unknown): string | null {
     if (!isRecord(value) || (value['kind'] !== 'human' && value['kind'] !== 'system') || !nonEmpty(value['id'])) {
@@ -331,9 +312,8 @@ function roundSnapshotProblem(value: unknown): string | null {
     if (value['outcome'] !== null && !OUTCOMES.includes(value['outcome'] as typeof OUTCOMES[number])) return 'VerificationRoundSnapshot outcome is not recognized';
     if (!Array.isArray(value['gaps'])) return 'VerificationRoundSnapshot gaps must be an array';
     if (!Array.isArray(value['evidenceRefs'])) return 'VerificationRoundSnapshot evidenceRefs must be an array';
-    // Slice 5 §2.5 wire-only notice origin (absent on old rounds): the creating
-    // commit cursor and, for an automatic reverify, the cap at write time.
-    // Slice 2B L14 end adds the round-only VR-07 `finalizedAt` top-level field.
+    // Wire-only notice origin (absent on old rounds): the creating commit
+    // cursor and the write-time cap for an automatic reverify.
     const originProblem = noticeOriginFieldsProblem(value, 'VerificationRoundSnapshot', { allowFinalizedAt: true });
     if (originProblem !== null) return originProblem;
     // `finalizedAt` is written only by the VR-07 finalize commit: an open round
@@ -496,8 +476,7 @@ function eventEnvelopeProblem(body: UnknownRecord, event: EncodedDomainEvent): s
 
 /** Encode one discriminated round/Evidence event, including its original result. */
 export function encodeVerificationRoundEvent(event: VerificationRoundEvent): EncodedDomainEvent {
-    return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-        occurredAt: event.occurredAt, json: JSON.stringify(event) };
+    return encodeEventEnvelope(event);
 }
 
 /** Decode one discriminated round/Evidence event, including its original result. */

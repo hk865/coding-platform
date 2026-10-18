@@ -29,10 +29,9 @@
  * the Task machine (TASK-18/19) about, as it asks the Goal machine about
  * `move_goal_pointer`. Rows and their status: spec §15.2/§15.3.
  *
- * `PlanProposal` is declared in `model/plan-contracts.ts:28-50`, which this
- * directory may not import. `PlanProposalRecord` below is the same shape built
- * from `src/contracts` types only; tests/state/plan-machine.test.ts asserts the
- * two types are identical.
+ * `PlanProposalRecord` below is the single declaration of the persisted plan
+ * record; `model/plan-contracts.ts` re-exports it and the proposal types under
+ * their public names, which this directory may not import.
  *
  * The `plan-service.ts`, `plan-commit-compiler.ts` and `plan-readers.ts` line
  * references below cite the pre-step-3 worktree (2026-10-02, as the spec does).
@@ -60,19 +59,25 @@ import {
 } from './transition.js';
 
 // --------------------------------------------------------------------------
-// Persisted record (structurally identical to model/plan-contracts.ts:28-50)
+// Persisted record (the single declaration; re-exported by model)
 // --------------------------------------------------------------------------
 
-/** Same full identity as legacy PlanProposal@1 (`plan-contracts.ts:28-29`). */
+/** Same full identity as legacy PlanProposal@1; schema v2 has a distinct body. */
 export type PlanProposalRef = { aggregateType: 'PlanProposal'; projectId: string; workspaceId: string; proposalId: string };
 
-/** `plan-contracts.ts:37-44`; `affectedTaskIds` is the optional C7 list. */
-export type PlanChangeReason = { text: string; sources: ArtifactRef[]; affectedTaskIds?: string[] };
+export type PlanChangeReason = { text: string; sources: ArtifactRef[];
+  /**
+   * C7 (spec §3.1): the Tasks this candidate means to change, e.g. a traced
+   * Task whose disposition only changes. Absent is recorded as `[]` in a
+   * `TaskDispositionChangeV1`. Recording checks its shape (PLAN-01/02); an
+   * adoption requires every traced disposition-only Task in it (TASK-19 guard 6).
+   */
+  affectedTaskIds?: string[] };
 
 /**
- * Slice 5 request-candidate extension mirror (`plan-contracts.ts:49-55`): the
- * first user-initiated request a candidate belongs to and the exact
- * non-adoption fact. Both optional so old records keep their shape.
+ * Slice 5 request-candidate extension (spec §2.4). `requestRef` names the first
+ * user-initiated QueryJob this candidate belongs to; `notAdopted` records the
+ * exact non-adoption fact. Both are optional so old records keep their shape.
  */
 export type CandidateRequestExtensionV1 = {
   requestRef?: QueryJobRef | null;
@@ -414,7 +419,6 @@ export const TARGET_PLAN_NOT_NEW_DETAIL = 'the target planId must be a new, unus
 
 /**
  * Slice 5 request-slot guard facts (spec §3.1 rows S5-PLAN-01..05).
- * UNSPECIFIED-GUARDS: the lead freezes these field names at the part-1 review.
  */
 export type PlanRequestCandidateFacts = {
   /** S5-PLAN-01 `proposal_recorded`: request root same Goal, `replaces=null`, empty slot. */

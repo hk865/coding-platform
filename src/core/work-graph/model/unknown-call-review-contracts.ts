@@ -1,6 +1,6 @@
 /**
  * K3 model contracts: the `UnknownCallReview` read port and write port
- * (spec §2). Types only in group 1; the owner service is group 3/4.
+ * (spec §2).
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../../contracts/core/identity.js';

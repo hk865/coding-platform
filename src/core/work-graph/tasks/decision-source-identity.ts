@@ -1,12 +1,11 @@
 /**
- * K3 rework 1 item 12.4 (decision 75): the ONE parse of a decision source's
- * `source.key` into `{ kind, body }`.
+ * The ONE parse of a decision source's `source.key` into `{ kind, body }`.
  *
  * The CRR card source and the CRR codecs both carry the same envelope
- * (`{"kind":"command_rerun_request", ...}`); they now share this shape check
- * instead of keeping two JSON.parse copies. The parse is deliberately generic:
+ * (`{"kind":"command_rerun_request", ...}`). The parse is deliberately generic:
  * a caller still validates its own nested payload (a ref, a revision, ...).
  */
+import { parseObject } from '../../../contracts/validation/common.js';
 
 export type ParsedDecisionSourceKey = { kind: string; body: Record<string, unknown> };
 
@@ -15,14 +14,8 @@ export function parseDecisionSourceKey(source: { key?: unknown } | null | undefi
   if (typeof source !== 'object' || source === null) return null;
   const key = (source as { key?: unknown }).key;
   if (typeof key !== 'string') return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(key);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-  const body = parsed as Record<string, unknown>;
+  const body = parseObject(key);
+  if (body === null) return null;
   const kind = body['kind'];
   if (typeof kind !== 'string' || kind.length === 0) return null;
   return { kind, body };

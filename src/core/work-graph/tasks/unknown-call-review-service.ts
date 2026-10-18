@@ -1,19 +1,18 @@
 /**
  * K3 (spec §2 L7, §3.2, L14/L15/L16): the `UnknownCallReview` owner.
  *
- * Group 2 owns `readReview` (by record ref or by the original Run). Group 3
- * adds the write port's review-round half (`recordConclusion`, `settleReview`)
- * and the `listReviews` read. Each write follows the owner order: trusted
- * context → input isolation/shape → request identity/fingerprint → original
- * receipt lookup (replay wins before any record or Run read) → one read of the
- * record (and the round's Run/pointer/manifest) → the pure state machine → M3
- * admission → ONE RecordStore commit whose guards are the versions read here.
+ * `readReview` reads by record ref or by the original Run; `listReviews` is a
+ * read. Each write of the review-round half (`recordConclusion`,
+ * `settleReview`) follows the owner order: trusted context → input
+ * isolation/shape → request identity/fingerprint → original receipt lookup
+ * (replay wins before any record or Run read) → one read of the record (and the
+ * round's Run/pointer/manifest) → the pure state machine → M3 admission → ONE
+ * RecordStore commit whose guards are the versions read here.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import type { VersionPin } from '../../../contracts/core/identity.js';
 import type {
   CrashSuspicionV1, KernelCallRefV1, SaferMethodProposalV1, UnknownCallBlockedCommandV1,
   UnknownCallReviewItemV1, UnknownCallReviewRef, UnknownCallReviewStatusV1, UnknownCallReviewV1,
@@ -25,7 +24,9 @@ import { seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { DecisionChangeProofV1, DecisionSelectionV1, DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { GoalRecordTransactionPort, EncodedRecord, StoreFailure } from '../../record-store/ports.js';
+import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
+import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+import type { GoalRecordTransactionPort, EncodedRecord } from '../../record-store/ports.js';
 import type { LookupValue, RecordLookupPage, RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { compareRefKeys } from '../../record-store/lookup-index.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
@@ -47,6 +48,8 @@ import { unknownCallReviewOptions } from './unknown-call-review-card.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { mergeGuards, isolateWrite } from './execution-entry-service.js';
 import { replayCommittedReceipt } from './receipt-replay.js';
+import { ownerReadStoreFailureToRejection, ownerWriteStoreFailureToRejection } from '../persistence/read-result-failures.js';
+import { readOwnerRecord, type OwnerRecordRead } from './owner-record-read.js';
 import {
   decodeUnknownCallReview, encodeUnknownCallReview, encodeUnknownCallReviewChangedEvent,
   unknownCallReviewChangedEventFromEvent, unknownCallReviewRefKey,
@@ -270,7 +273,7 @@ export type UnknownCallReviewTaskProjectionReader = (
 ) => Promise<CanonicalTaskFactRead>;
 
 const MAX_PAGE_LIMIT = 200;
-/** Codex 8: how many times one keyset page is re-read until every tuple reads at one watermark. */
+/** How many times one keyset page is re-read until every tuple reads at one watermark. */
 const LOOKUP_WATERMARK_ATTEMPTS = 3;
 const STATUSES: readonly UnknownCallReviewStatusV1[] = [
   'pending_review', 'needs_decision', 'awaiting_proposal', 'awaiting_approval', 'resolved',
@@ -296,22 +299,11 @@ const ALREADY_HELD_TEXT = '已经在等你处理';
 /** UCR-14/D3: release-hold while a round is still active. */
 const ROUND_NOT_SETTLED_TEXT = '核对轮还没收尾';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function rejected(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
-}
+const rejected = rejectedWithCurrent;
 /**
- * Codex 8: the newest watermark among a mixed per-tuple read, used as the
- * `not_ready` requirement. At least one tuple read at a concrete cursor, so this
- * always returns one; a malformed cursor falls back to the first non-null one.
+ * The newest watermark among a mixed per-tuple read, used as the `not_ready`
+ * requirement. At least one tuple read at a concrete cursor, so this always
+ * returns one; a malformed cursor falls back to the first non-null one.
  */
 function maxCommitCursor(watermarks: readonly (CommitCursor | null)[]): CommitCursor {
   let chosen: CommitCursor | null = null;
@@ -325,22 +317,6 @@ function maxCommitCursor(watermarks: readonly (CommitCursor | null)[]): CommitCu
   }
   if (chosen === null) throw new Error('no review-list watermark was observed');
   return chosen;
-}
-/** A read-side store failure: a damaged/invalid record is `invalid`, everything else `unavailable`. */
-function mapReadFailure(failure: StoreFailure): CoreRejection {
-  const code = failure.code === 'invalid' ? 'invalid' : failure.code === 'unsupported' ? 'unsupported' : 'unavailable';
-  return rejected(code, failure.reason);
-}
-function mapStoreFailure(failure: StoreFailure): CoreRejection {
-  switch (failure.code) {
-    case 'revision_conflict': return rejected('revision_conflict', failure.reason);
-    case 'unique_conflict': return rejected('busy', failure.reason);
-    case 'idempotency_conflict': return rejected('idempotency_conflict', failure.reason);
-    case 'not_found': return rejected('not_found', failure.reason);
-    case 'invalid': return rejected('invalid', failure.reason);
-    case 'unsupported': return rejected('unavailable', failure.reason);
-    default: return rejected('unavailable', failure.reason);
-  }
 }
 function refKeyOf(value: unknown): string {
   return canonicalJson(value as JsonValue);
@@ -414,7 +390,7 @@ function reviewCardIdentityOf(source: DecisionSourceV1):
   const rawRef = parsed['reviewRef'];
   if (refProblem(rawRef) !== null) return null;
   const revision = parsed['revision'];
-  if (!isPositiveSafeInteger(revision)) return null;
+  if (!isPos(revision)) return null;
   return { reviewRef: reviewRefOf({ ref: rawRef as UnknownCallReviewRef })!, revision };
 }
 
@@ -443,26 +419,15 @@ export function createUnknownCallReviewService(
   let eventSeq = 0;
   const newEventId = deps.eventId ?? (() => `ucr-event-${String(++eventSeq)}`);
 
-  async function loadReview(refKey: string): Promise<
-  { ok: true; value: UnknownCallReviewV1 } | { ok: false; rejection: CoreRejection } | { ok: false; notFound: true }> {
-    let batch;
-    try {
-      batch = await records.readMany([refKey]);
-    } catch (error) {
-      return { ok: false, rejection: rejected('unavailable',
-        `the review could not be read: ${error instanceof Error ? error.message : String(error)}`) };
-    }
-    if (batch.status !== 'ready') return { ok: false, rejection: mapReadFailure(batch) };
-    const encoded = batch.value.records.find(record => record.refKey === refKey);
-    if (encoded === undefined) return { ok: false, notFound: true };
-    const decoded = decodeUnknownCallReview(encoded);
-    if (decoded.status !== 'decoded') {
-      return { ok: false, rejection: rejected('invalid', `the stored review is not decodable: ${decoded.reason}`) };
-    }
-    return { ok: true, value: decoded.value };
+  async function loadReview(refKey: string): Promise<OwnerRecordRead<UnknownCallReviewV1>> {
+    return readOwnerRecord({
+      store: records, refKey, decode: decodeUnknownCallReview,
+      readError: message => rejected('unavailable', `the review could not be read: ${message}`),
+      decodeError: reason => rejected('invalid', `the stored review is not decodable: ${reason}`),
+    });
   }
 
-  /** Rework 1 item 12: the ONE committed-receipt replay helper (absorbs 4C-2). */
+  /** The ONE committed-receipt replay helper. */
   async function replayReview(
     receipt: Extract<Awaited<ReturnType<GoalRecordTransactionPort['lookupCommit']>>, { status: 'ready' }>['value'],
     identityKey: string, fingerprint: string,
@@ -509,7 +474,7 @@ export function createUnknownCallReviewService(
     } catch (error) {
       return rejected('unavailable', `the review could not be committed: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (receipt.status !== 'committed') return mapStoreFailure(receipt);
+    if (receipt.status !== 'committed') return ownerWriteStoreFailureToRejection(receipt);
     if (receipt.replayed) return replayReview(receipt, input.identityKey, input.fingerprint);
     return { status: 'committed', value: input.next, replayed: false, cursor: receipt.cursor };
   }
@@ -531,7 +496,7 @@ export function createUnknownCallReviewService(
     const refProblemText = refProblem(input['reviewRef']);
     if (refProblemText !== null) return rejected('invalid', `recordConclusion ${refProblemText}`);
     const reviewRef = reviewRefOf({ ref: input['reviewRef'] as UnknownCallReviewRef })!;
-    if (!isPositiveSafeInteger(input['item']) || (input['item'] as number) > UNKNOWN_CALL_REVIEW_MAX_ITEMS) {
+    if (!isPos(input['item']) || (input['item'] as number) > UNKNOWN_CALL_REVIEW_MAX_ITEMS) {
       return rejected('invalid', 'recordConclusion requires an item alias');
     }
     const verdict = input['verdict'];
@@ -569,7 +534,7 @@ export function createUnknownCallReviewService(
       return rejected('unavailable', `the review receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (existing.status === 'ready') return replayReview(existing.value, identityKey, fingerprint);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
 
     const refKey = unknownCallReviewRefKey(reviewRef);
     // L14: a record pin is optional. The round tool sends none, so the owner
@@ -677,7 +642,7 @@ export function createUnknownCallReviewService(
     if (refProblemText !== null) return rejected('invalid', `recordProposal ${refProblemText}`);
     const reviewRef = reviewRefOf({ ref: input['reviewRef'] as UnknownCallReviewRef })!;
     const item = input['item'];
-    if (!isPositiveSafeInteger(item) || item > UNKNOWN_CALL_REVIEW_MAX_ITEMS) {
+    if (!isPos(item) || item > UNKNOWN_CALL_REVIEW_MAX_ITEMS) {
       return rejected('invalid', 'recordProposal requires an item alias');
     }
     const command = input['command'];
@@ -727,7 +692,7 @@ export function createUnknownCallReviewService(
       return rejected('unavailable', `the review receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (existing.status === 'ready') return replayReview(existing.value, identityKey, fingerprint);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
 
     const refKey = unknownCallReviewRefKey(reviewRef);
     const hasExpected = owned.expected.length > 0;
@@ -884,7 +849,7 @@ export function createUnknownCallReviewService(
       return rejected('unavailable', `the review receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (existing.status === 'ready') return replayReview(existing.value, identityKey, fingerprint);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
 
     const refKey = unknownCallReviewRefKey(reviewRef);
     const loaded = await loadReview(refKey);
@@ -1044,7 +1009,7 @@ export function createUnknownCallReviewService(
       return rejected('unavailable', `the review receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (existing.status === 'ready') return replayReview(existing.value, identityKey, fingerprint);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
 
     const refKey = unknownCallReviewRefKey(reviewRef);
     const loaded = await loadReview(refKey);
@@ -1122,7 +1087,7 @@ export function createUnknownCallReviewService(
       return rejected('unavailable', `the review receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (existing.status === 'ready') return replayReview(existing.value, identityKey, fingerprint);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
 
     const refKey = unknownCallReviewRefKey(reviewRef);
     const loaded = await loadReview(refKey);
@@ -1174,7 +1139,7 @@ export function createUnknownCallReviewService(
       return { ok: false, rejection: rejected('unavailable',
         `the answer message could not be read: ${error instanceof Error ? error.message : String(error)}`) };
     }
-    if (batch.status !== 'ready') return { ok: false, rejection: mapReadFailure(batch) };
+    if (batch.status !== 'ready') return { ok: false, rejection: ownerReadStoreFailureToRejection(batch) };
     const encoded = batch.value.records.find(record => record.refKey === sessionMessageRefKey(ref));
     if (encoded === undefined) return { ok: false, rejection: rejected('not_found', 'the answer message does not exist') };
     const decoded = decodeSessionMessageRecord(encoded);
@@ -1236,7 +1201,7 @@ export function createUnknownCallReviewService(
         `the disposition receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (existing.status === 'ready') return replayReview(existing.value, identityKey, fingerprint);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
 
     // The answer is the saved synthetic response whose captured source is THIS
     // card at THIS revision (L19 guards).
@@ -1428,7 +1393,7 @@ export function createUnknownCallReviewService(
     } catch (error) {
       return rejected('unavailable', `the review could not be read: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (batch.status !== 'ready') return mapReadFailure(batch);
+    if (batch.status !== 'ready') return ownerReadStoreFailureToRejection(batch);
     const encoded = batch.value.records.find(record => record.refKey === refKey);
     if (encoded === undefined) return { status: 'not_found' };
     const decoded = decodeUnknownCallReview(encoded);
@@ -1508,11 +1473,11 @@ export function createUnknownCallReviewService(
       } else {
         return rejected('invalid', 'listReviews filter is not recognized');
       }
-      // Codex 8: one bounded keyset page per tuple after the refKey cursor, then
-      // merge (newest revision per refKey), sort and take `limit`. The old full
-      // scan - and with it the total cap and the "cursor outside this query"
-      // check - is gone: L7 has no total cap. Every tuple must read at the same
-      // watermark, or the page is retried; a mixed page is never returned.
+      // One bounded keyset page per tuple after the refKey cursor, then merge
+      // (newest revision per refKey), sort and take `limit`. The old full scan -
+      // and with it the total cap and the "cursor outside this query" check - is
+      // gone: L7 has no total cap. Every tuple must read at the same watermark,
+      // or the page is retried; a mixed page is never returned.
       const cursorValue = typeof cursor === 'string' ? cursor : undefined;
       let pages: RecordLookupPage[] | null = null;
       let readThrough: CommitCursor | null = null;
@@ -1561,11 +1526,11 @@ export function createUnknownCallReviewService(
         }
         decoded.push(value.value);
       }
-      // Rework 1 item 1 (Codex a201/z): fix the merged raw page WINDOW and its
-      // cursor BEFORE filtering by task. Filtering first would let a cursor jump
-      // to another task's record outside the window and skip a later target
-      // record. The window advances every page even when it holds no target
-      // record (items may be empty with a non-null cursor).
+      // Fix the merged raw page WINDOW and its cursor BEFORE filtering by task.
+      // Filtering first would let a cursor jump to another task's record outside
+      // the window and skip a later target record. The window advances every page
+      // even when it holds no target record (items may be empty with a non-null
+      // cursor).
       const window = decoded.slice(0, limit);
       const items = taskId === null ? window : window.filter(record => record.task.taskId === taskId);
       const hasMore = decoded.length > limit || pages.some(page => page.next !== null);

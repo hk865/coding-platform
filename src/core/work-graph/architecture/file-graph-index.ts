@@ -1,5 +1,5 @@
 /**
- * Slice 8A file-level graph paging (spec L12; lead answer 1). PURE: no I/O, no
+ * File-level graph paging (spec L12). PURE: no I/O, no
  * store, no clock. It takes the already-decoded nodes/edges of one observation
  * and returns one deterministically ordered page.
  *
@@ -14,6 +14,8 @@
  */
 import type { FileGraphPageNodeV1, ObservedCaptureRef } from '../../../contracts/architecture-inspection.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { isRecord } from '../../../contracts/validation/common.js';
+import { encodeCursor } from './graph-index.js';
 
 /** One page of the file graph (the service adds the capture ref and inventory). */
 export type FileGraphPageData = {
@@ -39,20 +41,11 @@ export class FileGraphCursorError extends Error {
   }
 }
 
-type CursorV1 = { v: 1; captureKey: string; queryKey: string; offset: number };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function captureKeyOf(captureRef: ObservedCaptureRef): string {
   return sha256Hex(canonicalJson(captureRef as unknown as JsonValue));
 }
 function queryKeyOf(query: unknown): string {
   return sha256Hex(canonicalJson(query as unknown as JsonValue));
-}
-function encodeCursor(cursor: CursorV1): string {
-  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
 }
 function readOffset(captureRef: ObservedCaptureRef, query: unknown, cursor: string | null): number {
   if (cursor === null) return 0;

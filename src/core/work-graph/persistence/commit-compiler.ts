@@ -1,16 +1,15 @@
 /**
  * WorkGraph Goal commit compiler — the ONE goal-create pure validator/fold.
  *
- * This file owns every pure decision of the Goal creation slice:
+ * This file owns every pure decision of Goal creation:
  *   - the deterministic `GoalCreated@1` event and the encoded write set of one
  *     `PreparedCommit`. The revision-1 `GoalSnapshot` and the guard set come
  *     from GOAL-01 (`state/goal-machine.ts` `transitionGoal`, STATE-MACHINES-SPEC
  *     §2), which the owner (`tasks/task-service.ts`) runs and translates: the
  *     Goal record is built only there (§14.1), and this file imports no `state/`;
- *   - the legacy raw-batch envelope validator MOVED here from
- *     `data/state-ledger/validation/bootstrap.ts` (its semantics are preserved
+ *   - the legacy raw-batch envelope validator (its semantics are preserved
  *     verbatim for the old entry point; see `validateGoalCreateCommit`);
- *   - the approved strict check for a NEW legacy batch identity;
+ *   - the strict check for a NEW legacy batch identity;
  *   - the trusted caller version pins.
  *
  * It starts no transaction, writes no SQL, keeps no state and never talks to the
@@ -20,6 +19,7 @@
 import type { CommandFingerprint, CommandIdentity, CreateGoalCommand, GoalCreatedEvent } from "../../../contracts/command-event.js";
 import { commandFingerprint, commandIdentityKey } from "../../../contracts/command-event.js";
 import type { VersionPin } from "../../../contracts/core/identity.js";
+import { isRecord } from "../../../contracts/validation/common.js";
 
 
 import type { GoalRef, GoalSnapshot, ProjectRef, WorkspaceRef } from "../../../contracts/ledger.js";
@@ -138,16 +138,12 @@ export type GoalPinNormalization =
   | { status: "ok"; pins: CallerGoalPins }
   | { status: "invalid"; reason: string };
 
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function classifyPinRef(value: unknown):
   | { kind: "project"; ref: ProjectRef }
   | { kind: "workspace"; ref: WorkspaceRef }
   | { kind: "goal"; ref: GoalRef }
   | { kind: "other" } {
-  if (!isRecordValue(value)) return { kind: "other" };
+  if (!isRecord(value)) return { kind: "other" };
   const aggregateType = value["aggregateType"];
   const projectId = value["projectId"];
   if (typeof projectId !== "string" || projectId.length === 0) return { kind: "other" };
@@ -180,7 +176,7 @@ export function normalizeCallerGoalPins(
   const normalized: CallerGoalPins = {};
   const seen = new Set<string>();
   for (const entry of pins as readonly unknown[]) {
-    if (!isRecordValue(entry)) return { status: "invalid", reason: "version pin must be an object" };
+    if (!isRecord(entry)) return { status: "invalid", reason: "version pin must be an object" };
     const revision = entry["revision"];
     if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0) {
       return { status: "invalid", reason: "version pin revision must be a safe non-negative integer" };

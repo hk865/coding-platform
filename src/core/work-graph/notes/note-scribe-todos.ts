@@ -16,8 +16,8 @@
  * - `immediate` = an unclaimed `archive:` trigger whose `at` is after the GOAL
  *   anchor's baseline (`baseline === null` means negative infinity), so an
  *   archive already covered by a goal understanding is not immediate
- *   (rework missed 2 / ruling 8);
- * - rework items 4 and 1: the pending buckets are read FIRST, so the pending
+ *   (ruling 8);
+ * - The pending buckets are read FIRST, so the pending
  *   notes' own anchors join the ONE shared reader; the reader performs exactly
  *   one pointer batch and one pointed-head batch. Only the pending buckets that
  *   count (a cancelled Goal or a Goal with no active Plan is dropped, the
@@ -32,6 +32,7 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { NoteHeadSnapshot } from '../../../contracts/note.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
@@ -50,10 +51,6 @@ export type NoteScribeTodosDeps = {
   userReasonFacts: NoteUserReasonFactsPort['userReasonFacts'];
 };
 
-function unavailable<T>(reason: string): ReadResult<T> {
-  return { status: 'rejected', code: 'unavailable', reason };
-}
-
 type Outcome<T> = { ok: true; value: T } | { ok: false; reason: string };
 
 /** A `pending_review` bucket: a real goal id, or the goal-less `null` slot. */
@@ -62,7 +59,7 @@ type PendingBucket = string | null;
 type PendingEntry = { bucket: PendingBucket; head: NoteHeadSnapshot };
 
 /**
- * Rework item 1: the relation-target rule of §11.5/§11.6. Only pending notes in
+ * The relation-target rule of §11.5/§11.6. Only pending notes in
  * the buckets that COUNT contribute targets, so a cancelled Goal's notes (and
  * their relations) are neither read nor able to fail the call.
  */
@@ -78,7 +75,7 @@ function relationTargetIds(entries: readonly PendingEntry[]): Set<string> {
 
 export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodoPort {
   /**
-   * Rework item 4: every bucket's `pending_review` heads in one pass. The
+   * Every bucket's `pending_review` heads in one pass. The
    * buckets are read before the shared anchor reader so the anchors they need
    * can join its single pointer/head batch.
    */
@@ -110,7 +107,7 @@ export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodo
     if (relevant.length === 0) return { ok: true, value: result };
 
     for (const { bucket, head } of relevant) {
-      // 4C-2 rework item 6 (verify §6 aside): pass ONLY this head's own targets;
+      // §6 aside: pass ONLY this head's own targets;
       // handing it the whole bucket's target map rebuilds it per head (O(H×T)).
       let counts = userReasonsOf(head, actualDispositionTargets(head)
         .flatMap(noteId => {
@@ -136,12 +133,12 @@ export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodo
 
   return {
     async readScribeTodos(ctx, input): Promise<ReadResult<NoteScribeTodosV1[]>> {
-      // Rework item 4: read every pending bucket first, so the pending notes'
+      // Read every pending bucket first, so the pending notes'
       // OWN anchors join the ONE shared reader below.
       const allBuckets: PendingBucket[] = [...new Set(input.goalIds)];
       allBuckets.push(null); // EXACTLY ONE goal-less bucket.
       const pendingHeads = await readPendingHeads(ctx, allBuckets);
-      if (!pendingHeads.ok) return unavailable(pendingHeads.reason);
+      if (!pendingHeads.ok) return rejected('unavailable', pendingHeads.reason);
       const pendingAnchorKeys = [...new Set(pendingHeads.value.map(entry => entry.head.anchorKey0))];
 
       // ONE shared reader for the whole call: one plan window per goal, ONE
@@ -151,7 +148,7 @@ export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodo
       // buckets that count, in the one batch below.
       const anchorsResult = await readGoalUnderstandingAnchors(deps.records, ctx, input.goalIds, pendingAnchorKeys);
       if (anchorsResult.status !== 'ready') {
-        return unavailable(anchorsResult.status === 'rejected' ? anchorsResult.reason
+        return rejected('unavailable', anchorsResult.status === 'rejected' ? anchorsResult.reason
           : 'the goal understanding anchors are not available');
       }
       const byGoal = new Map(anchorsResult.value.map(row => [row.goalId, row]));
@@ -164,7 +161,7 @@ export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodo
       }
       pendingBuckets.push(null); // EXACTLY ONE goal-less bucket.
 
-      // Rework item 1: only the pending entries in a bucket that counts can
+      // Only the pending entries in a bucket that counts can
       // contribute relation targets; they are read in ONE batch, and their LIVE
       // user-reason facts come from the service's `userReasonFacts` (the same
       // function the card source and the guard use), seeded with the shared
@@ -173,21 +170,21 @@ export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodo
       const relevantHeads = pendingHeads.value.filter(entry => pendingBuckets.includes(entry.bucket));
       const targetIds = relationTargetIds(relevantHeads);
       const targetHeadsRead = await readHeadBatch(deps.records, ctx.projectId, [...targetIds], { requireAll: true });
-      if (!targetHeadsRead.ok) return unavailable(targetHeadsRead.reason);
+      if (!targetHeadsRead.ok) return rejected('unavailable', targetHeadsRead.reason);
       const targets = new Map<string, NoteUserReasonTargetV1>();
       if (targetHeadsRead.value.size > 0) {
         const planWindows: NotePlanWindowFactsV1[] = anchorsResult.value.map(row => ({ goalId: row.goalId,
           window: { status: 'ready', goal: row.goal, plan: row.plan, readThrough: row.readThrough } }));
         const facts = await deps.userReasonFacts(ctx, [...targetHeadsRead.value.values()], planWindows);
         if (facts.status !== 'ready') {
-          return unavailable(facts.status === 'rejected' ? facts.reason
+          return rejected('unavailable', facts.status === 'rejected' ? facts.reason
             : 'the user reason facts are not available');
         }
         for (const [noteId, target] of facts.value) targets.set(noteId, target);
       }
 
       const pending = await pendingTodosBatch(pendingBuckets, pendingHeads.value, anchorsResult.value, targets);
-      if (!pending.ok) return unavailable(pending.reason);
+      if (!pending.ok) return rejected('unavailable', pending.reason);
 
       const results: NoteScribeTodosV1[] = [];
       for (const goalId of input.goalIds) {
@@ -218,7 +215,7 @@ export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodo
     /** §11.7: the ledger cursor is a bare commit cursor, `null` before any commit. */
     async readLedgerCursor(ctx): Promise<ReadResult<string | null>> {
       const read = await deps.records.readMany([]);
-      if (read.status !== 'ready') return unavailable(read.reason);
+      if (read.status !== 'ready') return rejected('unavailable', read.reason);
       return { status: 'ready', value: read.value.readThrough };
     },
   };

@@ -56,6 +56,15 @@ export function sameJson(left: unknown, right: unknown): boolean {
         return false;
     }
 }
+/** Canonical JSON, or `null` when the value is not canonical JSON. */
+export function canonicalOf(value: unknown): string | null {
+    try {
+        return canonicalJson(value as JsonValue);
+    }
+    catch {
+        return null;
+    }
+}
 /** SHA-256 of UTF-8 bytes, lowercase hex. */
 export function sha256Hex(input: string): string {
     return createHash("sha256").update(input, "utf8").digest("hex");

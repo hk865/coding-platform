@@ -40,10 +40,9 @@
  *   input, are likewise preceded by `recheckAfterMiss`, so a concurrent request
  *   of the same identity replays its original receipt instead of being rejected.
  *
- * `SessionMessage` is declared in `model/communication-contracts.ts:95`, which this
- * directory may not import (§14.4). `SessionMessageRecord` below is the same
- * shape built from `src/contracts` types only; tests/state/message-machine.test.ts
- * asserts the two types are identical.
+ * The persisted message record types below are the single declaration;
+ * `model/communication-contracts.ts` re-exports them under the public DTO
+ * names, which this directory may not import (§14.4).
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
@@ -64,16 +63,20 @@ import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-jo
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 // --------------------------------------------------------------------------
-// Persisted record (structurally identical to model/communication-contracts.ts:36-145)
+// Persisted record (the single declaration; re-exported by model)
 // --------------------------------------------------------------------------
 
-/** Trusted Host sender (`communication-contracts.ts:36-39`). */
+/** Trusted Host sender: a real human/system identity, never fabricated per recipient. */
 export type MessageHostSenderRecord = {
   kind: 'host';
   actor: Extract<ActorRef, { kind: 'human' | 'system' }>;
 };
 
-/** Formal work_run sender (`communication-contracts.ts:46-52`). */
+/**
+ * Formal work-run sender. `sessionRef`/`runRef`/`roleBinding`/`generation` must
+ * all match the persisted claim and the live Run/Session facts; none of them is
+ * taken from model JSON.
+ */
 export type MessageWorkRunSenderRecord = {
   kind: 'work_run';
   sessionRef: SessionRef;
@@ -82,7 +85,12 @@ export type MessageWorkRunSenderRecord = {
   generation: number;
 };
 
-/** Derived formal Query Answer sender; only the response slot accepts it (`communication-contracts.ts:67-73`). */
+/**
+ * Formal Query Answer sender. It is DERIVED by the mailbox from the settled
+ * official Query Job/Run/Answer, never supplied by a caller: `sessionRef` is the
+ * original recipient, `queryRunRef`/`answerRef` are the persisted facts and
+ * `generation` is the claimed Session generation that produced the Answer.
+ */
 export type MessageQueryAnswerSenderRecord = {
   kind: 'query_run';
   sessionRef: SessionRef;
@@ -91,7 +99,13 @@ export type MessageQueryAnswerSenderRecord = {
   generation: number;
 };
 
-/** The single response slot (`communication-contracts.ts:81-86`); written once. */
+/**
+ * A reply lives in the ORIGINAL message's single response slot. It never
+ * produces a second inbox message and never fabricates a sender Session. The
+ * original message `sender` stays restricted to host/work_run; only the
+ * response slot additionally accepts the derived `query_run` Answer source.
+ * The response slot is written once.
+ */
 export type MessageResponseRecord = {
   sender: MessageWorkRunSenderRecord | MessageQueryAnswerSenderRecord;
   bodyRef: ArtifactRef;
@@ -101,7 +115,12 @@ export type MessageResponseRecord = {
 
 export type SessionMessageStatus = 'pending' | 'read' | 'responded';
 
-/** One committed Kernel `run.input_accepted` observation (`communication-contracts.ts:132-138`); append-only. */
+/**
+ * Narrow Host-side confirmation, written ONLY from a committed Kernel
+ * `run.input_accepted` fact: which original source part entered which
+ * execution. It is the durable cross-Turn consumption relation, never a
+ * caller-supplied processed flag. Append-only.
+ */
 export type MessageAcceptedInput = {
   inputId: string;
   part: 'message' | 'response';
@@ -110,7 +129,13 @@ export type MessageAcceptedInput = {
   acceptedAt: string;
 };
 
-/** The fixed A′ derivation (`communication-contracts.ts:139-144`); the first writer wins. */
+/**
+ * The FIXED isolated A′ derivation recorded on the original request BEFORE the
+ * Query is submitted. A retry reuses it even if the source advanced, so the
+ * first derivation source/boundary is the replayable formal fact. A null
+ * throughPosition is the explicit empty baseline, distinct from a non-empty one.
+ * The first writer wins.
+ */
 export type MessageConsultationDerivation = {
   childSessionRef: SessionRef;
   sourceSessionRef: SessionRef;
@@ -118,7 +143,11 @@ export type MessageConsultationDerivation = {
   throughPosition: number | null;
 };
 
-/** `SessionMessage` (`communication-contracts.ts:96-152`). */
+/**
+ * Persisted message. `revision` starts at 1 (send CAS@0) and is the CAS unit for
+ * ack/respond. `bodyRef` is the only durable body address; text is never inlined
+ * in the message record.
+ */
 export type SessionMessageRecord = {
   ref: SessionMessageRef;
   schemaVersion: 1;
@@ -132,9 +161,11 @@ export type SessionMessageRecord = {
   readAt: string | null;
   response: MessageResponseRecord | UserMessageResponseV1 | null;
   /**
-   * Wiring package 2 (spec §2.3, L10): the commit cursor of the first saved
-   * response on a work_run message; `null` is the pending placeholder bound in
-   * the same mailbox commit, absent on other senders and legacy messages.
+   * Wiring package 2 (spec §2.3, L10): the commit cursor of the FIRST saved
+   * response. `null` is the pending placeholder written by
+   * `nextSessionMessageRecord` on a work_run message's first reply and bound in
+   * the same mailbox commit; it is absent on non-work_run senders and on
+   * messages written before this package.
    */
   responseSince?: CommitCursor | null;
   /** Slice 5: the owning Goal; absent/null keeps the historical message shape. */
@@ -143,13 +174,25 @@ export type SessionMessageRecord = {
   decision?: DecisionMessageMetadataV1;
   /** Slice 5: the recorded application of the user's answer, when requirements demanded one. */
   application?: DecisionApplicationV1 | null;
+  /**
+   * Optional explicit reply expectation. ABSENT is the entire historical
+   * fire-and-forget behavior; the ONLY accepted legacy value is `'wait'`, which is
+   * normalized to `needsReply`/`waitAfterSend`. It is persisted with the message
+   * so a reopened Host still sees the original ask.
+   */
   replyMode?: 'wait';
+  /** Explicit communication intent; absent keeps the historical notify default. */
   intent?: SessionMessageIntentV1;
+  /** The sender expects a semantic reply (independent of whether it waits now). */
   needsReply?: boolean;
+  /** The sender chose to yield execution after the message is durably saved. */
   waitAfterSend?: boolean;
   acceptedInputs?: MessageAcceptedInput[];
   consultationDerivation?: MessageConsultationDerivation;
-  /** Slice 1 §2.5: the effective reply handler; absent and null both mean the original sender. */
+  /**
+   * Slice 1 §2.5: the effective reply handler for this wait. Absent and null
+   * both mean the original `sender.sessionRef` still handles it.
+   */
   replyHandler?: {
     sessionRef: SessionRef;
     archiveSessionRef: SessionRef;
@@ -207,7 +250,6 @@ export type MessageEvent =
 
 /**
  * S5-MSG-01 extension (`user_message_sent`) guard facts (spec §3.1 guard column).
- * UNSPECIFIED-GUARDS: the lead freezes these field names at the part-1 review.
  */
 export type MessageUserSendFacts = {
   /** The named Goal is the real owning Goal of the recipient user workspace. */

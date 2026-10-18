@@ -49,6 +49,7 @@ import {
 import { laterCursor, readCanonicalTaskFacts, RUN_BY_TASK_INDEX } from '../tasks/plan-readers.js';
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
+import { storeFailureCode } from '../persistence/read-result-failures.js';
 import { deriveTaskDisplayFacts, type LineTaskArchiveNextV1, type LineTaskFactV1 } from '../state/line-status.js';
 import { pathOwnershipOf } from '../notes/note-path-ownership.js';
 import {
@@ -56,7 +57,7 @@ import {
 } from './work-line-reader.js';
 
 /**
- * Slice 4C C1.5: the notes read the node-detail column and the hover counts
+ * The notes read the node-detail column and the hover counts
  * call. The composition root wires the real `platform.notes.listNotes` (a model
  * contract read); `views` never imports the notes implementation.
  */
@@ -71,7 +72,7 @@ export type NodeDetailReaderDeps = {
   executedFiles: GoalExecutedFilesPort;
   /** P4: the line assembly deps; the hover's owners go through the same function as lines/list. */
   line: WorkLineReaderDeps;
-  /** Slice 4C C1.5: the `notes/list` read (the same `platform.notes` surface). */
+  /** The `notes/list` read (the same `platform.notes` surface). */
   notes?: NodeNotesLookup;
 };
 
@@ -84,21 +85,11 @@ function keyOf(value: unknown): string {
   return canonicalJson(value as JsonValue);
 }
 
-/** Map a store failure code onto the core error vocabulary. */
-function coreCode(code: string): CoreError {
-  switch (code) {
-    case 'invalid': case 'forbidden': case 'revision_conflict': case 'idempotency_conflict':
-    case 'not_found': case 'dependency_blocked': case 'cycle': case 'busy': case 'source_stale':
-    case 'incomplete': case 'capacity': case 'unsupported': case 'unavailable': case 'cancelled':
-      return code;
-    default: return 'unavailable';
-  }
-}
-
 /** A failed read as the port rejection the whole read returns (rule 3 / item 2). */
 function storeRejection(read: { status: string; code?: string; reason?: string }): CoreRejection {
   if (read.status === 'rejected') {
-    return { status: 'rejected', code: coreCode(read.code ?? 'unavailable'), reason: read.reason ?? 'the read failed' };
+    return { status: 'rejected', code: storeFailureCode({ code: read.code ?? 'unavailable' }),
+      reason: read.reason ?? 'the read failed' };
   }
   if (read.status === 'not_found') return { status: 'rejected', code: 'not_found', reason: 'the record was not found' };
   return { status: 'rejected', code: 'incomplete', reason: 'the read is not ready' };
@@ -925,7 +916,7 @@ async function assembleHover(deps: NodeDetailReaderDeps, ctx: CoreCallContext, g
   });
 
   const groups = buildGroups(goalRef, graph.plan.ref, graph.rows, runs, participationIndex, goalOwners);
-  // Slice 4C L21: the hover card only shows a note count per hovered node.
+  // L21: the hover card only shows a note count per hovered node.
   const noteCounts = await collectHoverNoteCounts(deps, ctx, goalRef, graph.plan, graph.rows, catalog.modules);
   return { status: 'ready', value: { goalRef, groups, tasks, modules: moduleHovers, files, noteCounts, problems, sourceCursor: ZERO_CURSOR } };
 }
@@ -943,14 +934,14 @@ function taskRefOf(node: GraphNodeRefV1): { task: TaskTriple; planRef: PlanRevis
 }
 
 // -------------------------------------------------------------------------- //
-// Slice 4C C1.5: the node notes column and the hover note counts             //
+// The node notes column and the hover note counts                            //
 // -------------------------------------------------------------------------- //
 
 /** The note anchor a node maps to, or null for Session, Run and round nodes. */
 function noteAnchorOf(node: GraphNodeRefV1, goalRef: GoalRef, planRevision: number): NoteAnchorV1 | null {
   if (node.kind === 'goal') return { kind: 'goal', goalId: goalRef.goalId };
   if (node.kind === 'stage') {
-    // The stage anchor takes the goal's CURRENT plan revision (C1.5 answer 6).
+    // The stage anchor takes the goal's CURRENT plan revision (answer 6).
     return { kind: 'stage', goalId: goalRef.goalId, planRevision, stageId: node.stageId };
   }
   if (node.kind === 'task') return { kind: 'task', goalId: node.ref.goalId, taskId: node.ref.taskId };

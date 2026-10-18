@@ -15,7 +15,10 @@
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { ModelRequestPermitRef } from '../../../contracts/dispatch.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalOf } from '../../../contracts/fingerprint.js';
+import {
+  hasOnlyKeys, invalid, isPos, isSha256Hex, nonEmpty, parseObject,
+} from '../../../contracts/validation/common.js';
 import type { ModelRequestPermitV1, ModelRequestPermitSnapshot } from './model-call-contracts.js';
 import type {
   DecodeResult,
@@ -23,6 +26,7 @@ import type {
   EncodedRecord,
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 
 export const MODEL_REQUEST_PERMIT_SCHEMA_ID = 'ModelRequestPermitSnapshot@1';
 export const MODEL_REQUEST_AUTHORIZED_EVENT_TYPE = 'ModelRequestAuthorized';
@@ -50,32 +54,6 @@ export type ModelRequestRecordedEvent = {
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
-}
-function isSha256Hex(value: unknown): value is string {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
-}
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  return Object.keys(value).every(key => allowed.includes(key));
-}
-function invalid<T>(reason: string): DecodeResult<T> {
-  return { status: 'invalid', reason };
-}
-function parseObject(json: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    return isJsonObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function canonicalOf(value: object): string | null {
-  try { return canonicalJson(value as unknown as JsonValue); } catch { return null; }
 }
 
 function runRefProblem(value: unknown): string | null {
@@ -149,7 +127,7 @@ function snapshotProblem(record: EncodedRecord): string | null {
     return 'ModelRequestPermit snapshot has no complete ModelRequestPermitRef';
   }
   if (canonicalOf(ref) !== record.refKey) return 'ModelRequestPermit ref is not the outer canonical ref_key';
-  if (!isPositiveSafeInteger(body['revision']) || body['revision'] !== record.revision) {
+  if (!isPos(body['revision']) || body['revision'] !== record.revision) {
     return 'ModelRequestPermit outer revision disagrees with the JSON revision';
   }
   if (record.revision !== 1 && record.revision !== 2) return 'ModelRequestPermit revision must be 1 or 2';
@@ -191,8 +169,7 @@ function validateModelRequestPermitRecord(record: EncodedRecord): DecodeResult<E
 // --------------------------------------------------------------------------
 
 export function encodeModelRequestRecordedEvent(event: ModelRequestRecordedEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 export function modelRequestRecordedEventFromEvent(event: EncodedDomainEvent): DecodeResult<ModelRequestRecordedEvent> {
@@ -226,7 +203,7 @@ export function modelRequestRecordedEventFromEvent(event: EncodedDomainEvent): D
   if (permitProblem !== null) return invalid(permitProblem);
   const permit = body['permit'] as Record<string, unknown>;
   if (permit['permitId'] !== permitRef['permitId']) return invalid('model-request permitId disagrees with its ref');
-  if (!isPositiveSafeInteger(body['runRevision'])) return invalid('model-request runRevision must be a positive safe integer');
+  if (!isPos(body['runRevision'])) return invalid('model-request runRevision must be a positive safe integer');
   return { status: 'decoded', value: body as unknown as ModelRequestRecordedEvent };
 }
 

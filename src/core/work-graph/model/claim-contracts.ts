@@ -21,6 +21,7 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
+import type { DispatchStateV1 } from '../state/attempt-machine.js';
 
 /** Compatibility re-export: the single declaration lives in contracts/core. */
 export type { TaskClaim } from '../../../contracts/core/task-claim.js';
@@ -88,20 +89,7 @@ export type RequeueTaskInput = {
   /** Slice 1 §2.6: present only when this requeue is caused by an archive. */
   archiveOrigin?: ArchiveRequeueOriginV1 | null;
 };
-/**
- * Versioned dispatch phase nested in the @1 outbox body. `entered`/`settled`
- * must agree with the outer `status`; the codec that admits them is an
- * implementation-phase change, so the existing decoder still accepts only the
- * legacy `pending` shape.
- */
-export type TaskDispatchStateV1 = {
-  schemaVersion: 1;
-  phase: 'entered' | 'settled';
-  consumerId: string;
-  entryGeneration: number;
-  sessionGeneration: number;
-  eventId: string;
-};
+export type TaskDispatchStateV1 = DispatchStateV1;
 /** The not-entered settlement (AD-2) lives in contracts; re-exported beside V1. */
 export type { TaskDispatchStateV2 } from '../../../contracts/dispatch.js';
 export type TaskClaimOutbox = {

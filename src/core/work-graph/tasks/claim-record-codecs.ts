@@ -1,5 +1,5 @@
 /**
- * R4c.1 claim-record codecs.
+ * Claim-record codecs.
  *
  * The Run, TaskLease and SessionRecord shapes already have registered codecs
  * (`materials/record-readers.ts` owns `RunSnapshot@1`,
@@ -27,12 +27,14 @@ import {
   TASK_REWORK_REASON_MAX_CHARS, TASK_REWORK_REFUSAL_CODES,
   type TaskRequeueRef, type TaskRequeueSnapshotV1, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
+import { invalid, isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import type { TaskClaim, TaskClaimOutbox } from '../model/claim-contracts.js';
 import { WORK_EXECUTION_BY_SESSION_LOOKUP } from '../model/session-facts-contracts.js';
+import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { taskDispatchStateProblem } from '../persistence/execution-entry-codecs.js';
 import {
   actorRefProblem, controlIntentRefProblem, delegatedWriteProvenanceProblem, goalRefProblem, hasOnlyKeys,
@@ -125,25 +127,8 @@ export type TaskReworkRefusedEvent = {
 // Small pure helpers
 // --------------------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function isSafeRevision(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-}
-function parseObject(json: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(json) as unknown;
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function invalid<T>(reason: string): DecodeResult<T> {
-  return { status: 'invalid', reason };
 }
 function aggregateRefOf(value: unknown): Record<string, unknown> | null {
   return isRecord(value) ? value : null;
@@ -344,8 +329,7 @@ export function decodeDispatchOutboxEntry(record: EncodedRecord): DecodeResult<T
 
 /** Encodes the `TaskClaimed` replay event. */
 export function encodeTaskClaimedEvent(event: TaskClaimedEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 /** Decodes a `TaskClaimed` event, verifying the outer envelope against the JSON
@@ -755,8 +739,7 @@ function reworkEventBody(event: EncodedDomainEvent, eventType: string): Record<s
 
 /** Encodes the `TaskRequeued` replay event. */
 export function encodeTaskRequeuedEvent(event: TaskRequeuedEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 /** Decodes a `TaskRequeued` event; its actor is the recorded requester. */
@@ -778,8 +761,7 @@ export function taskRequeuedEventFromEvent(event: EncodedDomainEvent): DecodeRes
 
 /** Encodes the `TaskReworkRefused` replay event. */
 export function encodeTaskReworkRefusedEvent(event: TaskReworkRefusedEvent): EncodedDomainEvent {
-  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion,
-    occurredAt: event.occurredAt, json: JSON.stringify(event) };
+  return encodeEventEnvelope(event);
 }
 
 /** Decodes a `TaskReworkRefused` event; its actor is the recorded requester. */

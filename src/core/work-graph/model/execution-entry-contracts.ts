@@ -1,5 +1,5 @@
 /**
- * B2 WorkGraph execution-entry contracts (skeleton).
+ * B2 WorkGraph execution-entry contracts.
  *
  * Reuses the existing result types. The first version handles TaskClaim only;
  * Query/ReviewWork without a provider are explicitly unsupported and are never
@@ -28,6 +28,7 @@ import type { ExecutionReadPort } from './execution-read-contracts.js';
 import type { RecordExecutionHistoryInput } from './execution-history-contracts.js';
 import type { RunActivityFactsV1 } from '../../../contracts/run-activity.js';
 import type { HostTakeoverProofV1 } from '../../../contracts/unknown-call-review.js';
+import type { RunEntryPermit } from '../state/run-machine.js';
 
 /** Existing shared Kernel identity shape; no second declaration. */
 export type KernelExecutionBinding = RunExecutionHistoryV1['kernel'];
@@ -35,13 +36,7 @@ export type KernelExecutionBinding = RunExecutionHistoryV1['kernel'];
 export type KernelObservationSource = KernelExecutionBinding & { position: number };
 export type CompletedHistoryBoundary = { source: KernelObservationSource; cursor: string };
 
-export type TaskEntryPermit = {
-  claim: TaskClaim;
-  consumerId: string;
-  entryGeneration: number;
-  authorizationRevision: number;
-  inputDigest: string;
-};
+export type TaskEntryPermit = RunEntryPermit;
 
 /** Public projection of the existing Run authorization fact; not a new aggregate. */
 export type RuntimeEntryRecord = {

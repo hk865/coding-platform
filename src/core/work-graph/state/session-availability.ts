@@ -25,6 +25,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
 import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/query-job.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
+import { sameRef } from './ref-equality.js';
 
 // --------------------------------------------------------------------------
 // State, events, guard context and effects (§8.1, §8.2)
@@ -242,10 +243,9 @@ export function nextOccupancyGeneration(revision: number): OccupancyGeneration {
 }
 
 /**
- * The holder check (formerly copied at `execution-entry-service.ts:1625-1628`
- * and `query-execution.ts:935-938`; both owners call it now): an execution
- * occupancy of exactly this ref at the holder's claim generation. Lifecycle
- * and health are not looked at; those checks and their codes stay with each caller.
+ * The holder check: an execution occupancy of exactly this ref at the holder's
+ * claim generation. Lifecycle and health are not looked at; those checks and
+ * their codes stay with each caller.
  */
 export function ownsOccupancy(session: Pick<SessionRecord, 'occupancy'>, holder: ExecutionRef, generation: number): boolean {
   const occupancy = session.occupancy;
@@ -1041,19 +1041,4 @@ function holdsExecution(state: ActiveState, holder: ExecutionRef, generation: nu
 
 function phaseHolder(phase: HolderPhase): 'Run' | 'QueryRun' {
   return phase.startsWith('run_') ? 'Run' : 'QueryRun';
-}
-
-/** Key-order-free structural equality; refs are plain JSON records (same result as comparing canonical JSON). */
-function sameRef(left: unknown, right: unknown): boolean {
-  if (left === right) return true;
-  if (typeof left !== 'object' || typeof right !== 'object' || left === null || right === null) return false;
-  if (Array.isArray(left) || Array.isArray(right)) {
-    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
-    return left.every((item, index) => sameRef(item, right[index]));
-  }
-  const leftRecord = left as Record<string, unknown>;
-  const rightRecord = right as Record<string, unknown>;
-  const keys = Object.keys(leftRecord);
-  if (keys.length !== Object.keys(rightRecord).length) return false;
-  return keys.every((key) => Object.hasOwn(rightRecord, key) && sameRef(leftRecord[key], rightRecord[key]));
 }

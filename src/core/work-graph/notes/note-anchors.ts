@@ -15,6 +15,7 @@ import type { ArchitectureBaselinePin } from '../../../contracts/governance.js';
 import type { NoteAnchorV1, NoteDraftAnchorV1, NoteFactV1, SymbolLocatorV1, SymbolRequestV1 } from '../../../contracts/note.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import { sha256Hex } from '../../../contracts/fingerprint.js';
+import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { NoteAnchorCandidateV1 } from '../model/note-contracts.js';
 import type {
   CaptureSummary, SourceHit, SourceProvider, WorkspaceResult, WorkspaceToolsPort,
@@ -48,20 +49,20 @@ export type NoteAnchorFactsDeps = {
   /** Candidate/containment catalog read; absent in narrow doubles keeps class 1–2 shape checks working. */
   architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   /**
-   * Rework 2 item 1: the per-call module-facts reader over an already-read
+   * The per-call module-facts reader over an already-read
    * current catalog window. Absent in narrow doubles keeps the fresh read, so
    * several module/interface targets of one note call share ONE window.
    */
   catalogModuleFacts?: (ctx: CoreCallContext, moduleId: string) => Promise<ReadResult<CatalogModuleFacts>>;
   /**
-   * Rework 3 item 1: the reason-facts path only needs "retired", not the
+   * The reason-facts path only needs "retired", not the
    * candidate list, so it turns this on and `candidatesFor` answers plain
    * `notFound()` without a second candidate-catalog read. The write/dispose
    * path never sets it.
    */
   skipCandidates?: boolean;
   /**
-   * Rework 4 item 2: set ONLY on the reason-facts path (like `skipCandidates`).
+   * Set ONLY on the reason-facts path (like `skipCandidates`).
    * It feeds the call's ONE memoized Goal→Plan window into the task-target
    * decision, so several task targets share it instead of re-reading the Goal.
    * Absent keeps the fresh reads and the write path's Workspace gate.
@@ -74,7 +75,7 @@ export type NoteAnchorFactsDeps = {
 export type NoteAnchorFailure = { status: 'rejected'; code: 'invalid' | 'forbidden' | 'unavailable';
   reason: string; field: string | null;
   anchorCandidates?: NoteAnchorCandidateV1[]; candidatesUnavailable?: boolean;
-  /** Item 14/L14: the same-name hits when the symbol request is ambiguous. */
+  /** L14: the same-name hits when the symbol request is ambiguous. */
   symbolCandidates?: { name: string; range: { startLine: number; endLine: number } }[] };
 
 export type ResolvedNoteAnchors = {
@@ -83,20 +84,20 @@ export type ResolvedNoteAnchors = {
   /** L3: five scalar slots; slot 0 is the main anchor, the rest are extras, `null` when unused. */
   keys: [string, string | null, string | null, string | null, string | null];
   /**
-   * Item 6/L11/L14: the plan revision of the note's goal — the Run-bound plan
+   * L11/L14: the plan revision of the note's goal — the Run-bound plan
    * for an agent, the goal's current accepted plan for a user (`null` when the
    * caller has no goal or that goal has no accepted plan).
    */
   basisPlanRevision: number | null;
   /**
-   * Item 6/L11/L14: the catalog baseline revision. For an agent it is the
+   * L11/L14: the catalog baseline revision. For an agent it is the
    * revision pinned by the bound plan (`null` when the baseline has no catalog
    * record); for a user it is the current active baseline (`null` when none).
    */
   basisCatalogRevision: number | null;
   /** L2a class 4: at least one task anchor names a cancelled/superseded Task. */
   anchorEnded: boolean;
-  /** Item 14/L14: a file anchor carried a `symbolRequest` that did not resolve to one locator. */
+  /** L14: a file anchor carried a `symbolRequest` that did not resolve to one locator. */
   symbolUnresolved: boolean;
 };
 
@@ -167,7 +168,7 @@ function moduleSeeds(catalog: AdoptedArchitecture): CandidateSeed[] {
 }
 
 /**
- * Item 3 fix 6: the candidate catalog read is allowed to FAIL, and a failure is
+ * The candidate catalog read is allowed to FAIL, and a failure is
  * reported as `candidatesUnavailable`, never as "no catalog / no candidates".
  * `ok: true, catalog: null` stays the real "no catalog adopted" answer.
  */
@@ -246,7 +247,7 @@ Promise<{ candidates: NoteAnchorCandidateV1[]; unavailable: boolean }> {
 }
 
 // --------------------------------------------------------------------------
-// L14 write-side symbol resolution (item 14)
+// L14 write-side symbol resolution
 // --------------------------------------------------------------------------
 
 /** The languages L14 resolves; anything else is `unsupported` → warning (R10). */
@@ -255,7 +256,7 @@ const SYMBOL_LANGUAGES: readonly SourceProvider[] = ['typescript', 'python', 'cp
 /**
  * Symbol-scan page size. The spec fixes only the total cap
  * (`NOTE_SYMBOL_HITS_MAX`); scanning in bounded pages is what proves the
- * cursor path (item 14 test (f)). The floor with the remaining budget keeps
+ * cursor path. The floor with the remaining budget keeps
  * the cap exact.
  */
 const SYMBOL_SCAN_PAGE = 32;
@@ -276,16 +277,20 @@ type SymbolResolution =
   | { status: 'ambiguous'; candidates: { name: string; range: { startLine: number; endLine: number } }[] }
   | { status: 'rejected'; code: 'unavailable'; reason: string };
 
+/** The one-based UTF-16 line/column slice of the frozen capture content (end column exclusive). */
+export function symbolRangeText(content: string, start: { line: number; column: number },
+  end: { line: number; column: number }): string {
+  const lines = content.split('\n');
+  if (start.line === end.line) return lines[start.line - 1]!.slice(start.column - 1, end.column - 1);
+  const parts = [lines[start.line - 1]!.slice(start.column - 1)];
+  for (let line = start.line + 1; line < end.line; line += 1) parts.push(lines[line - 1]!);
+  parts.push(lines[end.line - 1]!.slice(0, end.column - 1));
+  return parts.join('\n');
+}
+
 /** The one-based UTF-16 line/column slice of the frozen capture content. */
 function rangeTextOf(content: string, hit: SymbolHit): string {
-  const startLine = hit.location.start.line;
-  const endLine = hit.location.end.line;
-  const lines = content.split('\n');
-  if (startLine === endLine) return lines[startLine - 1]!.slice(hit.location.start.column - 1, hit.location.end.column - 1);
-  const parts = [lines[startLine - 1]!.slice(hit.location.start.column - 1)];
-  for (let line = startLine + 1; line < endLine; line += 1) parts.push(lines[line - 1]!);
-  parts.push(lines[endLine - 1]!.slice(0, hit.location.end.column - 1));
-  return parts.join('\n');
+  return symbolRangeText(content, hit.location.start, hit.location.end);
 }
 
 function symbolCandidatesOf(hits: readonly SymbolHit[]): { name: string; range: { startLine: number; endLine: number } }[] {
@@ -431,7 +436,7 @@ function isAnchorFailure(value: GoalPlanEntry | NoteAnchorFailure): value is Not
 }
 
 /**
- * Item 6: the catalog revision of the basis, from the caller's binding — the
+ * The catalog revision of the basis, from the caller's binding — the
  * Run-bound plan's pinned baseline for an agent, the current active baseline for
  * a user. A read failure is `unavailable`, never a silent `null`.
  */
@@ -462,7 +467,7 @@ Promise<{ ok: true; value: number | null } | { ok: false; code: 'unavailable'; r
 /**
  * L2a classes 1–2 and 4: validate the shape of the submitted anchors, check that
  * the object exists and resolve the stored `NoteAnchorV1` plus its five keys.
- * Item 6: each goal is read once (current accepted plan) and, for an agent, the
+ * Each goal is read once (current accepted plan) and, for an agent, the
  * Run-bound plan is read once for its own goal; a run-goal stage takes the bound
  * revision and must exist in both plans. A cancelled/superseded Task anchor is
  * resolved and reported through `anchorEnded`.
@@ -472,11 +477,11 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
   extraAnchors: readonly NoteDraftAnchorV1[];
   goalId: string | null;
   facts?: readonly NoteFactV1[];
-  /** Item 6: the Run-bound plan for a work_run caller; `null`/absent for a user. */
+  /** The Run-bound plan for a work_run caller; `null`/absent for a user. */
   boundPlanRef?: PlanRevisionRef | null;
   /** Read path: existence checks need no L11/L14 basis, so skip those reads. */
   includeBasis?: boolean;
-  /** Item 14: the injectable symbol-scan cap; defaults to the spec's `NOTE_SYMBOL_HITS_MAX`. */
+  /** The injectable symbol-scan cap; defaults to the spec's `NOTE_SYMBOL_HITS_MAX`. */
   symbolHitsMax?: number;
 }, deps: NoteAnchorFactsDeps): Promise<{ status: 'ok'; value: ResolvedNoteAnchors } | NoteAnchorFailure> {
   const symbolHitsMax = input.symbolHitsMax ?? NOTE_SYMBOL_HITS_MAX;
@@ -497,7 +502,7 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
     seen.add(key);
   }
 
-  // Item 6: one read per goal through the narrow anchor-facts reader. The
+  // One read per goal through the narrow anchor-facts reader. The
   // Run-bound plan is read once, for the agent's own (run) goal only.
   const isAgent = input.boundPlanRef !== undefined && input.boundPlanRef !== null;
   const boundPlanRef = isAgent ? input.boundPlanRef! : null;
@@ -581,20 +586,8 @@ export function normalizePath(path: string): string {
   return value;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function nonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
-}
-
 /**
- * Item 14/L14: the file anchor's `symbolRequest` shape (class 1).
+ * L14: the file anchor's `symbolRequest` shape (class 1).
  * `{ language, name, range? }` with non-empty strings and, when given, a
  * positive-integer range with `startLine ≤ endLine`; no extra keys. Returns the
  * failing subpath (L2a "指出字段"), or `null` when the shape is fine.
@@ -604,16 +597,16 @@ function symbolRequestProblem(request: unknown): string | null {
   if (Object.keys(request).some(key => key !== 'language' && key !== 'name' && key !== 'range')) {
     return 'symbolRequest';
   }
-  if (!nonEmptyString(request['language'])) return 'symbolRequest.language';
-  if (!nonEmptyString(request['name'])) return 'symbolRequest.name';
+  if (!nonEmpty(request['language'])) return 'symbolRequest.language';
+  if (!nonEmpty(request['name'])) return 'symbolRequest.name';
   const range = request['range'];
   if (range === undefined) return null;
   if (!isRecord(range)) return 'symbolRequest.range';
   if (Object.keys(range).some(key => key !== 'startLine' && key !== 'endLine')) {
     return 'symbolRequest.range';
   }
-  if (!isPositiveSafeInteger(range['startLine'])) return 'symbolRequest.range.startLine';
-  if (!isPositiveSafeInteger(range['endLine'])) return 'symbolRequest.range.endLine';
+  if (!isPos(range['startLine'])) return 'symbolRequest.range.startLine';
+  if (!isPos(range['endLine'])) return 'symbolRequest.range.endLine';
   if (range['startLine'] > range['endLine']) return 'symbolRequest.range.startLine';
   return null;
 }
@@ -622,7 +615,7 @@ function symbolRequestProblem(request: unknown): string | null {
  * L2a class 1 (anchor shape only): a submitted draft anchor must be an object
  * with a recognized kind and non-empty string ids; a file anchor needs a safe
  * relative path and `deleted` either absent or exactly `true`, plus a valid
- * `symbolRequest` shape (group GD's item 14). Object existence is class 2 and
+ * `symbolRequest` shape. Object existence is class 2 and
  * stays in `resolveOne`.
  */
 export function anchorFormatProblem(draft: unknown, field: string): NoteAnchorFailure | null {
@@ -636,10 +629,10 @@ export function anchorFormatProblem(draft: unknown, field: string): NoteAnchorFa
   if (!isRecord(draft)) return bad(null);
   switch (draft['kind']) {
     case 'module':
-      return nonEmptyString(draft['moduleId']) ? null : bad('moduleId');
+      return nonEmpty(draft['moduleId']) ? null : bad('moduleId');
     case 'interface':
-      if (!nonEmptyString(draft['moduleId'])) return bad('moduleId');
-      return nonEmptyString(draft['interfaceId']) ? null : bad('interfaceId');
+      if (!nonEmpty(draft['moduleId'])) return bad('moduleId');
+      return nonEmpty(draft['interfaceId']) ? null : bad('interfaceId');
     case 'file':
       if (!isSafeRelativePath(draft['path'])) return bad('path');
       if (draft['deleted'] !== undefined && draft['deleted'] !== true) return bad('deleted');
@@ -652,13 +645,13 @@ export function anchorFormatProblem(draft: unknown, field: string): NoteAnchorFa
       }
       return null;
     case 'goal':
-      return nonEmptyString(draft['goalId']) ? null : bad('goalId');
+      return nonEmpty(draft['goalId']) ? null : bad('goalId');
     case 'stage':
-      if (!nonEmptyString(draft['goalId'])) return bad('goalId');
-      return nonEmptyString(draft['stageId']) ? null : bad('stageId');
+      if (!nonEmpty(draft['goalId'])) return bad('goalId');
+      return nonEmpty(draft['stageId']) ? null : bad('stageId');
     case 'task':
-      if (!nonEmptyString(draft['goalId'])) return bad('goalId');
-      return nonEmptyString(draft['taskId']) ? null : bad('taskId');
+      if (!nonEmpty(draft['goalId'])) return bad('goalId');
+      return nonEmpty(draft['taskId']) ? null : bad('taskId');
     case 'project':
       return null;
     default:
@@ -675,7 +668,7 @@ Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: 
     ...(candidates === undefined ? {} : { anchorCandidates: candidates }),
     ...(unavailable === true ? { candidatesUnavailable: true } : {}),
   });
-  // Item 3 fix 6: a rejected store read passes through (forbidden stays
+  // A rejected store read passes through (forbidden stays
   // forbidden, everything else is unavailable); the candidate list is only
   // built for a real `not_found`, and a failed candidate catalog read says so.
   const passThrough = (code: string, reason: string): NoteAnchorFailure => ({
@@ -685,14 +678,14 @@ Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: 
     status: 'rejected', code: 'unavailable', reason: 'the anchor facts are not readable', field,
   });
   const candidatesFor = async (given: string): Promise<NoteAnchorFailure> => {
-    // Rework 3 item 1: the reason facts only need the retired verdict, so the
+    // The reason facts only need the retired verdict, so the
     // card-source path builds no candidate list and reads no catalog here.
     if (deps.skipCandidates === true) return notFound();
     const catalogRead = await readCandidateCatalog(ctx, deps);
     if (!catalogRead.ok) return notFound(undefined, true);
     return notFound(catalogRead.catalog === null ? undefined : rankCandidates(moduleSeeds(catalogRead.catalog), given));
   };
-  // Rework 2 item 1: one catalog read per note call; the seam carries the
+  // One catalog read per note call; the seam carries the
   // caller's per-call window cache, the fallback keeps narrow doubles working.
   const moduleFactsOf = (moduleId: string): Promise<ReadResult<CatalogModuleFacts>> =>
     deps.catalogModuleFacts === undefined
@@ -722,7 +715,7 @@ Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: 
         ...(draft.deleted === true ? { deleted: true as const } : {}) };
       const problem = await checkFileAnchor(ctx, anchor, context.facts, deps, field);
       if (problem !== null) return problem;
-      // Item 14/L14: resolution runs after the class-2 existence check. The
+      // L14: resolution runs after the class-2 existence check. The
       // symbolRequest is write-only; only the resolved locator is stored.
       if (draft.symbolRequest !== undefined) {
         const resolution = await resolveSymbol(ctx, path, draft.symbolRequest, deps.workspace, context.symbolHitsMax);
@@ -775,7 +768,7 @@ Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: 
 /** L2a classes 2/4: the live/deleted file anchor check and the missing-file candidates. */
 async function checkFileAnchor(ctx: CoreCallContext, anchor: Extract<NoteAnchorV1, { kind: 'file' }>,
   facts: readonly NoteFactV1[], deps: NoteAnchorFactsDeps, field: string): Promise<NoteAnchorFailure | null> {
-  // Item 3 fix 6 / R2: without a workspace the existence is unknown, never admitted.
+  // R2: without a workspace the existence is unknown, never admitted.
   if (deps.workspace === undefined) {
     return { status: 'rejected', code: 'unavailable', reason: 'the file anchor cannot be read', field };
   }

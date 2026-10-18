@@ -2,9 +2,8 @@
  * Slice 5 §4.4/F44 + slice 2A L4: the automatic requeue/reverify "please be
  * aware" projector.
  *
- * One `DecisionNoticeSourcePort` for category `automatic_rework`. Slice 2A L4
- * replaces the old wide reads (every ended Run, every round of the workspace)
- * with the ordered commit-position window:
+ * One `DecisionNoticeSourcePort` for category `automatic_rework`. It reads the
+ * ordered commit-position window:
  *   - requeues come from `s2a-requeue-by-project` (bound at the saved seen
  *     commit position) plus the `s2a-requeue-legacy` equality group (`since`
  *     absent);
@@ -12,10 +11,10 @@
  *     workspace and the system/member actor class) plus its legacy group. The
  *     ordered index only names the SUBJECT; every subject's whole chain is read
  *     once through `VerificationRoundBySubject` and rechecked with
- *     `roundChainHead`, exactly as before. Earlier rounds and human rechecks in
- *     the chain are used for verification only and never become notices (D2).
+ *     `roundChainHead`. Earlier rounds and human rechecks in the chain are used
+ *     for verification only and never become notices (D2).
  *
- * One `DecisionNoticeSourcePort` still deduplicates by the exact
+ * One `DecisionNoticeSourcePort` deduplicates by the exact
  * `TaskRequeueRef`/`VerificationRoundRef`, keeps only system/agent rework, and
  * projects the frozen `自动返工 · …` summary with the creation-time cap (`null`
  * when the old wire had no `noticeAutomationCap`). It never schedules work,
@@ -24,6 +23,7 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
@@ -88,7 +88,7 @@ type ReadPageInput = {
  * One read of the ordered index to the end. The `values` equality prefix is
  * always non-empty text (D3); `bound` is the saved commit position for `asc`.
  */
-async function readOrderedToEnd(
+export async function readOrderedToEnd(
   records: AutomaticReworkNoticeSourceDependencies['records'],
   index: string,
   values: readonly string[],
@@ -133,10 +133,6 @@ async function readEqualityToEnd(
   return all;
 }
 
-function unavailable(reason: string): { status: 'rejected'; code: 'unavailable'; reason: string } {
-  return { status: 'rejected', code: 'unavailable', reason };
-}
-
 /**
  * P9: a row returned by an ordered index whose decoded order value is missing
  * or outside the request is a read failure, never silently skipped. `bound` is
@@ -147,14 +143,14 @@ function orderedSince(
   bound: CommitCursor | null,
 ): { ok: true; since: CommitCursor } | { ok: false; rejection: { status: 'rejected'; code: 'unavailable'; reason: string } } {
   const origin = decodeNoticeOrigin(record);
-  if (origin.status !== 'decoded') return { ok: false, rejection: unavailable(`automatic rework origin: ${origin.reason}`) };
+  if (origin.status !== 'decoded') return { ok: false, rejection: rejected('unavailable', `automatic rework origin: ${origin.reason}`) };
   const since = origin.value.since;
   if (typeof since !== 'string' || since.length === 0) {
-    return { ok: false, rejection: unavailable(`automatic rework ordered record ${record.refKey} has no commit position`) };
+    return { ok: false, rejection: rejected('unavailable', `automatic rework ordered record ${record.refKey} has no commit position`) };
   }
   // `since` is `c` + zero-padded digits, so text order is commit order.
   if (bound !== null && since < bound) {
-    return { ok: false, rejection: unavailable(`automatic rework ordered record ${record.refKey} is outside the requested window`) };
+    return { ok: false, rejection: rejected('unavailable', `automatic rework ordered record ${record.refKey} is outside the requested window`) };
   }
   return { ok: true, since };
 }
@@ -170,9 +166,9 @@ function legacySince(
   label: string,
 ): { ok: true; since: null } | { ok: false; rejection: { status: 'rejected'; code: 'unavailable'; reason: string } } {
   const origin = decodeNoticeOrigin(record);
-  if (origin.status !== 'decoded') return { ok: false, rejection: unavailable(`${label}: ${origin.reason}`) };
+  if (origin.status !== 'decoded') return { ok: false, rejection: rejected('unavailable', `${label}: ${origin.reason}`) };
   if (origin.value.since !== undefined) {
-    return { ok: false, rejection: unavailable(`${label} record ${record.refKey} unexpectedly carries a commit position`) };
+    return { ok: false, rejection: rejected('unavailable', `${label} record ${record.refKey} unexpectedly carries a commit position`) };
   }
   return { ok: true, since: null };
 }
@@ -223,7 +219,7 @@ async function readAutomaticReworkPage(
     const workspaceByGoal = await readGoalWorkspaces(records, requeueRecords.map(({ record }) => record));
     for (const { record, since } of requeueRecords) {
       const decoded = decodeTaskRequeueSnapshot(record);
-      if (decoded.status !== 'decoded') return unavailable(`automatic rework requeue: ${decoded.reason}`);
+      if (decoded.status !== 'decoded') return rejected('unavailable', `automatic rework requeue: ${decoded.reason}`);
       const requeue = decoded.value;
       if (requeue.ref.projectId !== projectId) continue;
       if (workspaceByGoal.get(goalKeyOf(projectId, requeue.ref.goalId)) !== workspaceId) continue;
@@ -277,23 +273,23 @@ async function readAutomaticReworkPage(
       if (chainRead.status !== 'ready') return chainRead;
       const chain = roundChainHead(chainRead.rounds);
       if (chain.kind !== 'head') {
-        return unavailable(`automatic rework round chain: ${chain.kind === 'invalid' ? chain.reason : 'empty'}`);
+        return rejected('unavailable', `automatic rework round chain: ${chain.kind === 'invalid' ? chain.reason : 'empty'}`);
       }
       for (const [refKey, candidate] of subject.candidates) {
         const round = chainRead.byRef.get(refKey);
         if (round === undefined) {
-          return unavailable('automatic rework round record is missing from its chain');
+          return rejected('unavailable', 'automatic rework round record is missing from its chain');
         }
         const reverify = round.chain?.reverify ?? null;
         if (reverify === null || (reverify.actorClass !== 'system' && reverify.actorClass !== 'agent')) continue;
         // L16（决定 55）：重新检查那条用轮次链里它接着的那一轮（链读里已有，不再多读）。
         const predecessorRef = round.chain?.predecessorRoundRef ?? null;
         if (predecessorRef === null) {
-          return unavailable(`automatic rework reverify ${refKey} has no predecessor round`);
+          return rejected('unavailable', `automatic rework reverify ${refKey} has no predecessor round`);
         }
         const predecessor = chainRead.byRef.get(canonicalJson(predecessorRef as unknown as JsonValue));
         if (predecessor === undefined) {
-          return unavailable(`automatic rework predecessor round for ${refKey} is missing from its chain`);
+          return rejected('unavailable', `automatic rework predecessor round for ${refKey} is missing from its chain`);
         }
         const ordinal = round.chain?.ordinal ?? 0;
         const itemKey = `automatic_rework:${String(ordinal).padStart(4, '0')}:${refKey}`;
@@ -406,7 +402,7 @@ async function addRoundCandidate(
   workspaceId: string,
 ): Promise<{ status: 'rejected'; code: 'unavailable'; reason: string } | null> {
   const decoded = decodeVerificationRoundSnapshot(record);
-  if (decoded.status !== 'decoded') return unavailable(`automatic rework round: ${decoded.reason}`);
+  if (decoded.status !== 'decoded') return rejected('unavailable', `automatic rework round: ${decoded.reason}`);
   const round = decoded.value;
   if (round.ref.projectId !== projectId || round.ref.workspaceId !== workspaceId) return null;
   if (input.goalRef !== undefined && round.ref.goalId !== input.goalRef.goalId) return null;
@@ -433,7 +429,7 @@ function decodeCapOf(record: EncodedRecord):
   { ok: true; cap: number | null } | { ok: false; rejection: { status: 'rejected'; code: 'unavailable'; reason: string } } {
   const origin = decodeNoticeOrigin(record);
   if (origin.status !== 'decoded') {
-    return { ok: false, rejection: unavailable(`automatic rework round origin: ${origin.reason}`) };
+    return { ok: false, rejection: rejected('unavailable', `automatic rework round origin: ${origin.reason}`) };
   }
   return { ok: true, cap: origin.value.noticeAutomationCap ?? null };
 }
@@ -508,11 +504,11 @@ async function triggerRoundCapHit(
   if (read.status !== 'ready') throw read;
   const record = read.value.records.find((candidate) => candidate.refKey === key);
   if (record === undefined) {
-    return { ok: false, rejection: unavailable(`automatic rework trigger round ${key} is missing`) };
+    return { ok: false, rejection: rejected('unavailable', `automatic rework trigger round ${key} is missing`) };
   }
   const decoded = decodeVerificationRoundSnapshot(record);
   if (decoded.status !== 'decoded') {
-    return { ok: false, rejection: unavailable(`automatic rework trigger round: ${decoded.reason}`) };
+    return { ok: false, rejection: rejected('unavailable', `automatic rework trigger round: ${decoded.reason}`) };
   }
   return { ok: true, hit: firstResourceCapHitOf(decoded.value) };
 }

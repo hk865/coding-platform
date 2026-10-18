@@ -1,14 +1,14 @@
 /**
- * Slice 5 §4.1 line 772 / slice 2A L10: the ONE stable-window index pager.
+ * §4.1 line 772: the ONE stable-window index pager.
  *
  * It lives in `persistence` because that is the lowest layer both `views/` and
  * `tasks/` may import (the `tasks -> views` edge is forbidden;
  * `read-result-failures.ts` is the precedent). One registered index's complete
- * candidate set is paged by `after` to the very end (2A L10: the shared reads
+ * candidate set is paged by `after` to the very end (the shared reads
  * have no whole-window cap). §4.1 line 772: a page that observed a later commit
  * than the window's first page makes the window inconsistent; the whole read is
  * retried (<=4) and a persistently changing index is reported `unavailable`,
- * never stamped with a mixed watermark. `truncated` stays in the type (P5) and
+ * never stamped with a mixed watermark. `truncated` stays in the type and
  * is always `false`: the read reaches the end, so a complete count is always
  * safe to report.
  */
