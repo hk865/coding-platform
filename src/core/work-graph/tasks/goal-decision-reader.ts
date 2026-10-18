@@ -383,6 +383,9 @@ export function createGoalDecisionCauseReader(
       const derived = automationConfirmationCause({
         autonomy: settings.autonomy, action, countedNext, cap: failure.automation.cap,
         goalRef: goal.ref, taskId: row.ref.taskId, runRef: failure.runRef, runRevision,
+        // K3 L22: the user's review answer or released "I'll handle it" already
+        // confirmed the one system requeue of the original Run.
+        requeueConfirmedByReview: failure.unknownCallReview?.requeueConfirmed ?? false,
       });
       if (derived === null) continue;
       causes.push(cause({ goal, code: derived.code, action: derived.action, affected: derived.affected,

@@ -46,6 +46,7 @@ import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessio
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { materialRecordSchemas, createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
@@ -142,7 +143,7 @@ function schemas(): RecordBackendSchemas {
       ...ARCHITECTURE_CATALOG_SCHEMAS.records, ...TASK_CLAIM_RECORD_SCHEMAS.records, ...ROLE_RECORD_SCHEMAS.records,
       ...QUERY_JOB_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records,
       ...MODEL_REQUEST_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
-      ...EVIDENCE_RECORD_SCHEMAS.records],
+      ...EVIDENCE_RECORD_SCHEMAS.records, ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records],
     events: [...materialRecordSchemas().events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events, ...SESSION_ANOMALY_RECORD_SCHEMAS.events,
@@ -154,7 +155,7 @@ function schemas(): RecordBackendSchemas {
       // The real execution-entry/result replay events (records empty: Run/Attempt/
       // Outbox/Session are registered by their owning modules), so the fixture can
       // drive a claimed Run to `ended` through the real `ExecutionEntryPort`.
-      ...EXECUTION_ENTRY_RECORD_SCHEMAS.events],
+      ...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events],
     lookups: [...SESSION_RECORD_SCHEMAS.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [], ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [],
@@ -162,7 +163,7 @@ function schemas(): RecordBackendSchemas {
       ...ROLE_RECORD_SCHEMAS.lookups ?? [], ...QUERY_JOB_RECORD_SCHEMAS.lookups ?? [],
       ...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...COMPLETION_RECORD_SCHEMAS.lookups ?? [],
       ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [], ...SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [],
-      ...EVIDENCE_RECORD_SCHEMAS.lookups ?? [],
+      ...EVIDENCE_RECORD_SCHEMAS.lookups ?? [], ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
       ...(materialRecordSchemas().lookups ?? [])],
   };
 }

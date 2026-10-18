@@ -59,6 +59,7 @@ import {
   readGoal,
   readGoalPhase,
 } from './plan-readers.js';
+import { pinRevision } from './revision-guard.js';
 import type {
   GoalSettingsPort,
   GoalSettingsServiceDependencies,
@@ -91,16 +92,6 @@ function phaseRefOf(goalRef: GoalRef): GoalPhaseRef {
 }
 function actorsAgree(left: { kind: string; id: string }, right: { kind: string; id: string }): boolean {
   return left.kind === right.kind && left.id === right.id;
-}
-
-/** The caller's pin revision for one exact ref, or null when absent/repeated/malformed. */
-function pinRevision(expected: readonly VersionPin[], ref: unknown): number | null {
-  if (!isRecord(ref)) return null;
-  const key = refKeyOf(ref);
-  const matches = expected.filter((pin) => isRecord(pin) && isRecord(pin.ref) && refKeyOf(pin.ref) === key);
-  if (matches.length !== 1) return null;
-  const revision = matches[0]!.revision;
-  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
 }
 
 /**

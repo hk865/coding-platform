@@ -36,13 +36,21 @@ import type {
   AcceptedSteerV1, ExecutionEntryPort, KernelExecutionBinding, ObservedExecutionHistory,
 } from '../work-graph/model/execution-entry-contracts.js';
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
-import type { ReconcileRunInput, ReconcileTurnV1, RunReconcilePort } from '../work-graph/tasks/run-reconcile-contracts.js';
+import type { ReconcileRunInput, ReconcileTurnV1, RunReconcilePort, AutoCleanupCandidateV1 } from '../work-graph/tasks/run-reconcile-contracts.js';
 import { terminalEventOf, transcriptHasOutcomeUnknown, turnIsComplete } from './execution-observation.js';
 import { confirmMailboxInputs } from './execution-inputs.js';
 import { decodeKernelEntry, reduceTurnFromStart, unresolvedToolCallIds, type DecodedKernelRecord } from './kernel-turn-facts.js';
 import { tallyTurnActivity } from './run-activity-tally.js';
 import { unknownFacts } from './run-activity-reader.js';
 import type { RunActivityFactsV1 } from '../../contracts/run-activity.js';
+import type {
+  HostTakeoverProofV1, ToolCommitLookup, UnknownCallReviewDraftV1, WorkspaceCaptureV1,
+} from '../../contracts/unknown-call-review.js';
+import type { ArtifactRef } from '../../contracts/artifact.js';
+import {
+  captureUnknownCallWorkspace, readUnknownCallReviewDraft, unknownCallInventoryProblem, type UnresolvedCallFactV1,
+} from './unknown-call-draft.js';
+import { containedByHostStop } from '../work-graph/state/unknown-call-kinds.js';
 import type { SessionHistoryCursorOwner, SessionHistoryEntry, SessionMappingProbe } from './session-operations.js';
 
 export type RunReconcileClassifierDependencies = {
@@ -53,6 +61,14 @@ export type RunReconcileClassifierDependencies = {
   reconcile: RunReconcilePort;
   now(): string;
   newId(): string;
+  /** K3 (G6, L25): the read-only K closure support query; absent = closure_unsupported. */
+  turnClosureSupport?(ctx: CoreCallContext, input: { sessionRef: { projectId: string; sessionId: string } }):
+    Promise<{ status: 'supported' } | { status: 'unsupported'; reason: string }>;
+  /** K3 (G8, L5): the workspace capture; absent = no_baseline/not_configured. */
+  captureWorkspace?(ctx: CoreCallContext, input: { workspaceId: string; bundleRef: ArtifactRef }):
+    Promise<WorkspaceCaptureV1>;
+  /** K3 (G3/L4): the platform owners' committed-call lookup; absent = every platform item undetermined. */
+  lookupToolCommit?: ToolCommitLookup;
 };
 
 /** One Run's line of the reconcile report (§12.1 step 7). */
@@ -62,6 +78,8 @@ export type RunReconcileReport = {
   row: string;
   status: 'reconciled' | 'left' | 'failed';
   reason: string;
+  /** K3 (L25, KR1): the automatic-closure outcome the Host report copies. */
+  autoCleanup?: { applied: true } | { applied: false; blockedBy: string };
 };
 
 const PAGE_LIMIT = 200;
@@ -202,12 +220,14 @@ async function rebuildContinuation(
  */
 export async function reconcileRunAtStartup(
   deps: RunReconcileClassifierDependencies, ctx: CoreCallContext,
-  input: { record: TaskExecutionRecord; hostInstanceId: string; probe: SessionMappingProbe },
+  input: { record: TaskExecutionRecord; hostInstanceId: string; probe: SessionMappingProbe;
+    takeover?: HostTakeoverProofV1 | null },
 ): Promise<RunReconcileReport> {
   const { record, hostInstanceId } = input;
   return classifyRun(deps, ctx, { record, probe: input.probe,
     basis: { kind: 'host_instance_takeover', hostInstanceId },
-    requestId: `a2-reconcile:${hostInstanceId}:${record.run.ref.runId}:${String(record.run.revision)}` });
+    requestId: `a2-reconcile:${hostInstanceId}:${record.run.ref.runId}:${String(record.run.revision)}`,
+    takeover: input.takeover ?? null });
 }
 
 /**
@@ -231,7 +251,8 @@ export async function bookLateEvidenceInProcess(
 
 async function classifyRun(
   deps: RunReconcileClassifierDependencies, ctx: CoreCallContext,
-  input: { record: TaskExecutionRecord; probe: SessionMappingProbe; basis: RunReconciliationBasisV1; requestId: string },
+  input: { record: TaskExecutionRecord; probe: SessionMappingProbe; basis: RunReconciliationBasisV1; requestId: string;
+    takeover?: HostTakeoverProofV1 | null },
 ): Promise<RunReconcileReport> {
   const { record, probe, basis, requestId } = input;
   const run = record.run;
@@ -260,7 +281,24 @@ async function classifyRun(
     const written = await deps.reconcile.reconcileRun(ctx, { input: { runRef, basis, probe: probe.verdict, result,
       ...(activity === undefined ? {} : { activity }) },
       meta: { requestId, expected } });
-    return written.status === 'committed' ? { runRef, row, status: 'reconciled', reason: result.kind } : failed(row, written);
+    const report: RunReconcileReport = written.status === 'committed'
+      ? { runRef, row, status: 'reconciled', reason: result.kind } : failed(row, written);
+    if (written.status === 'committed' && result.kind === 'unknown' && result.autoCleanup !== undefined) {
+      // L25: the report reads the COMMITTED Run's observation, so a candidate
+      // the WorkGraph blocked reports WorkGraph's first guard, not `applied`.
+      const observation = written.value.reconciliation?.observation;
+      if (observation?.kind === 'takeover_unresolved') {
+        report.row = 'W-26';
+        report.reason = 'takeover_unresolved';
+        report.autoCleanup = { applied: true };
+      } else if (observation?.kind === 'unresolved' && observation.autoCleanupBlockedBy !== undefined) {
+        report.autoCleanup = { applied: false, blockedBy: observation.autoCleanupBlockedBy };
+      } else {
+        report.autoCleanup = 'blockedBy' in result.autoCleanup
+          ? { applied: false, blockedBy: result.autoCleanup.blockedBy } : { applied: true };
+      }
+    }
+    return report;
   };
   if (probe.verdict === 'missing' || probe.verdict === 'damaged') {
     // W-06, W-14: an unreadable Kernel is not proof of not entering (SD-3).
@@ -371,8 +409,13 @@ async function classifyRun(
   }
   if (unknownOutcome) return left('W-15', 'no new Kernel terminal; the unknown end waits for new evidence or an attestation');
   if (turn.inFlightToolCallIds.length > 0) {
+    const autoCleanup = await autoCleanupOutcome(deps, ctx, {
+      record, kernel, probe, takeover: input.takeover ?? null, decoded: read.decoded, state,
+      turn, startPosition: start.position, turnLast,
+    });
     return submit('W-13', { kind: 'unknown', cause: 'tool_calls_unresolved', unresolvedToolCallIds: turn.inFlightToolCallIds,
-      observedThroughPosition: turnLast, turn }, activityFor('reconcile_observation'));
+      observedThroughPosition: turnLast, turn, ...(autoCleanup === undefined ? {} : { autoCleanup }) },
+      activityFor('reconcile_observation'));
   }
   // A queued cancel with a clean Turn is RUN-23 (W-12); every other clean Turn is RUN-19/24 by the pointer (W-11, W-20).
   const control = run.controlState;
@@ -388,6 +431,84 @@ async function classifyRun(
   }
   return submit(control?.desiredState === 'paused' ? 'W-20' : 'W-11', { kind: 'interrupted_clean', turn },
     activityFor('reconcile_observation'));
+}
+
+/**
+ * K3 (L25, KR1): the Runtime-side guards of RUN-25, in the spec order G10, G1,
+ * G3, G5, G6, G11, G8. The first failing guard returns `{ blockedBy }`; the
+ * candidate carries the proof, the closure head, the capture and the draft.
+ * `review_round` is checked first and stops before any lookup or capture (D1).
+ */
+async function autoCleanupOutcome(
+  deps: RunReconcileClassifierDependencies, ctx: CoreCallContext,
+  input: {
+    record: TaskExecutionRecord; kernel: KernelExecutionBinding; probe: SessionMappingProbe;
+    takeover: HostTakeoverProofV1 | null; decoded: readonly DecodedKernelRecord[]; state: RunState;
+    turn: ReconcileTurnV1; startPosition: number; turnLast: number;
+  },
+): Promise<AutoCleanupCandidateV1 | { blockedBy: string } | undefined> {
+  const run = input.record.run;
+  if (run.purpose !== undefined) return { blockedBy: 'review_round' };                       // G10
+  const takeover = input.takeover;
+  if (takeover === null || takeover === undefined || takeover.kind === 'memory_store') {
+    return { blockedBy: 'no_takeover_proof' };                                                // G1
+  }
+  const calls = unresolvedCallFactsOf(input.decoded, input.state, input.turn.inFlightToolCallIds, input.kernel,
+    input.startPosition);
+  if (!calls.every(call => containedByHostStop(call.toolName))) return { blockedBy: 'uncontained_tool' };  // G3
+  if (input.turn.inputsConfirmed !== true) return { blockedBy: 'inputs_unconfirmed' };        // G5
+  if (deps.turnClosureSupport === undefined) return { blockedBy: 'closure_unsupported' };     // G6
+  const closure = await deps.turnClosureSupport(ctx, { sessionRef: input.record.session.ref });
+  if (closure.status !== 'supported') return { blockedBy: 'closure_unsupported' };
+  const head = input.probe.activeRunId;
+  if (head === null || !sameRef(head, input.kernel.runId)) return { blockedBy: 'head_mismatch' };
+  const draftDeps = { ...(deps.lookupToolCommit === undefined ? {} : { lookupToolCommit: deps.lookupToolCommit }),
+    ...(deps.captureWorkspace === undefined ? {} : { captureWorkspace: deps.captureWorkspace }) };
+  const inventoryInput = { record: input.record, kernel: input.kernel, turnFound: true, kernelReadable: true,
+    kernelUnreadableAtStop: false, unresolved: calls };
+  // L25/G11: the PURE inventory check comes first; a Turn that fails it does no
+  // capture (so no capture Artifact) and no owner lookup.
+  if (unknownCallInventoryProblem(inventoryInput) !== null) return { blockedBy: 'inventory_incomplete' };
+  // L25/G8: capture once, then reuse it for the owner lookups below.
+  const workspace = await captureUnknownCallWorkspace(draftDeps, ctx, run);
+  if (workspace.status !== 'captured') return { blockedBy: `workspace_${workspace.reason}` };
+  if (!workspace.runBaselineKnown) return { blockedBy: 'no_baseline' };
+  const draft = await readUnknownCallReviewDraft(draftDeps, ctx, { ...inventoryInput, capturedWorkspace: workspace });
+  return { proof: takeover, closure: { status: 'supported', headActiveRunId: head },
+    workspace, unresolvedCalls: calls.map(call => ({ callId: call.callId, toolName: call.toolName })), draft };
+}
+
+/** The unresolved calls with the names, arguments and positions the Kernel recorded (L4/L7). */
+function unresolvedCallFactsOf(
+  decoded: readonly DecodedKernelRecord[], state: RunState, unresolvedIds: readonly string[],
+  kernel: KernelExecutionBinding, fallbackPosition: number,
+): UnresolvedCallFactV1[] {
+  const declared = new Map<string, { name: string; arguments: unknown }>();
+  for (const entry of state.transcript) {
+    if (entry.kind !== 'assistant_message') continue;
+    for (const call of entry.toolCalls) declared.set(call.callId, { name: call.name, arguments: call.arguments });
+  }
+  const positions = new Map<string, number>();
+  const started = new Map<string, { position: number; at: string }>();
+  for (const item of decoded) {
+    if (item.record.recordType !== 'agent.event') continue;
+    const event = item.record.payload.event;
+    if (event.meta.runId !== kernel.runId || event.meta.turnId !== kernel.turnId) continue;
+    if (event.type === 'assistant.message_completed') {
+      for (const call of event.payload.toolCalls) if (!positions.has(call.callId)) positions.set(call.callId, item.position);
+    }
+    if (event.type === 'tool.started') {
+      const callId = event.payload.call.callId;
+      if (!started.has(callId)) started.set(callId, { position: item.position, at: item.record.recordedAt });
+    }
+  }
+  return unresolvedIds.map((callId) => {
+    const call = declared.get(callId);
+    const start = started.get(callId);
+    return { callId, toolName: call?.name ?? '', arguments: call?.arguments ?? {},
+      declaredPosition: positions.get(callId) ?? fallbackPosition,
+      startedPosition: start?.position ?? null, startedAt: start?.at ?? null };
+  });
 }
 
 // -------------------------------------------------------------------------- //
@@ -596,4 +717,58 @@ export async function stopPausedRunInProcess(
     result: { kind: 'paused_stop', cancelIntentRef: { ...input.cancelIntentRef }, pausedBy: input.pausedBy, turn }, activity },
   meta: { requestId: `a2-run23:${run.ref.runId}:${input.cancelIntentRef.intentId}`, expected: [{ ref: run.ref, revision: run.revision }] } });
   return written.status === 'committed';
+}
+
+// -------------------------------------------------------------------------- //
+// The Host attestation entry's review draft (K3 L8, KR3; Q3)                   //
+// -------------------------------------------------------------------------- //
+
+/**
+ * K3 (L8, KR3; Q3): the Host attestation entry reads the Kernel facts AND the
+ * untruncated review draft in one pass. It replaces `readAttestationFacts` for
+ * a Work Run: the same probe and window read, plus the unresolved calls the
+ * draft needs. The classifier's optional lookup and capture dependencies are
+ * reused; absent, the draft reports the Q2/Q3 defaults (`lookup_not_wired`,
+ * `not_configured`).
+ */
+export async function readReviewDraftAtEntry(
+  deps: Pick<RunReconcileClassifierDependencies, 'owner' | 'messages' | 'lookupToolCommit' | 'captureWorkspace'>,
+  ctx: CoreCallContext,
+  input: { record: TaskExecutionRecord; kernel: KernelExecutionBinding; startPosition: number | null },
+): Promise<{ ok: true; kernelTurnOpen: boolean; inputsConfirmed: boolean | null; draft: UnknownCallReviewDraftV1 }
+  | { ok: false; rejection: CoreRejection }> {
+  const observation = input.record.run.reconciliation?.observation;
+  const unreadableAtStop = observation !== undefined && observation.kind === 'unresolved'
+    && observation.reason === 'kernel_unreadable';
+  const draftDeps = { ...(deps.lookupToolCommit === undefined ? {} : { lookupToolCommit: deps.lookupToolCommit }),
+    ...(deps.captureWorkspace === undefined ? {} : { captureWorkspace: deps.captureWorkspace }) };
+  const base = { record: input.record, kernel: input.kernel, turnFound: true, kernelReadable: true,
+    kernelUnreadableAtStop: unreadableAtStop } as const;
+  const probe = await deps.owner.probe({ session: input.record.session, signal: ctx.signal });
+  if (probe.verdict === 'missing' || probe.verdict === 'damaged') {
+    return { ok: true, kernelTurnOpen: true, inputsConfirmed: null,
+      draft: await readUnknownCallReviewDraft(draftDeps, ctx, { ...base, turnFound: false, kernelReadable: false,
+        unresolved: [] }) };
+  }
+  if (probe.verdict !== 'ready') {
+    return { ok: false, rejection: { status: 'rejected', code: 'unavailable',
+      reason: `the Kernel could not be read (${probe.verdict}: ${probe.reason}); retry the attestation` } };
+  }
+  const afterPosition = input.startPosition === null ? 0 : Math.max(0, input.startPosition - 1);
+  const read = await readTurnWindow(deps.owner, input.record.session, afterPosition, ctx.signal);
+  if (!read.ok) {
+    return { ok: false, rejection: { status: 'rejected', code: 'unavailable',
+      reason: `the Kernel history could not be read (${read.reason}); retry the attestation` } };
+  }
+  const state = reduceTurnFromStart(read.decoded, input.kernel);
+  const inputsConfirmed = await confirmMailboxInputs(deps.messages, ctx, input.record.run.ref, input.kernel, read.decoded);
+  if (state === null) {
+    return { ok: true, kernelTurnOpen: false, inputsConfirmed,
+      draft: await readUnknownCallReviewDraft(draftDeps, ctx, { ...base, turnFound: false, unresolved: [] }) };
+  }
+  const unresolvedIds = unresolvedToolCallIds(state);
+  const startPosition = read.decoded.find(item => item.record.recordType === 'turn.started')?.position ?? afterPosition + 1;
+  const calls = unresolvedCallFactsOf(read.decoded, state, unresolvedIds, input.kernel, startPosition);
+  return { ok: true, kernelTurnOpen: !TERMINAL_STATUSES.includes(state.status), inputsConfirmed,
+    draft: await readUnknownCallReviewDraft(draftDeps, ctx, { ...base, unresolved: calls }) };
 }

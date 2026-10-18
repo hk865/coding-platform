@@ -19,6 +19,7 @@ import type { SessionFactsV1 } from '../../core/work-graph/model/session-facts-c
 import type { GraphWrite } from '../../core/work-graph/model/session-contracts.js';
 import { executorArchiveDue } from '../../core/work-graph/state/session-availability.js';
 import { sessionResponsibilityChangedEventFromEvent } from '../../core/work-graph/sessions/lifecycle-record-codecs.js';
+import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type { WorkflowDependencies } from './ports.js';
 import type { WorkflowCalls, WorkflowCloseEventReader } from './contracts.js';
 import type { ArchiveLineResultV1, SessionArchivePort } from './session-archive.js';
@@ -96,6 +97,9 @@ export type SessionMaintenanceDependencies = Pick<WorkflowDependencies,
   };
 
 const PAGE_LIMIT_MAX = 100;
+
+/** The three answers of the review claim's Goal read (see `reviewClaimCanRun`). */
+type ReviewClaimState = 'active' | 'inactive' | 'unreadable';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -412,22 +416,82 @@ export function createSessionMaintenanceService(
     }
   }
 
+  /** The TaskRow from the plan read, or `null` when it proves nothing (never close unread). */
+  async function readTaskRow(ctx: CoreCallContext, latestWork: NonNullable<SessionFactsV1['latestWork']>): Promise<TaskRow | null> {
+    if (deps.plans === undefined) return null;
+    try {
+      const read = await deps.plans.queryTaskGraph(ctx, { goalRef: { aggregateType: 'Goal',
+        projectId: latestWork.runRef.projectId, goalId: latestWork.runRef.goalId } });
+      if (read.status !== 'ready') return null;
+      return read.value.tasks.find((candidate) => candidate.ref.taskId === latestWork.task.taskId) ?? null;
+    } catch { return null; }
+  }
+
   /**
-   * K L7 condition 3 (decision 51): the latest Work Run's reconciliation
-   * observation proves the dangling Turn may be closed — RUN-19/RUN-23
-   * (`interrupted_clean` with no pause fence) or a RUN-22 a person attested
-   * (`human_attested`). Every other ending (a human pause fence) and a Query
-   * line (no Work Run) are not closable here.
+   * The Goal's answer to the review claim: `active` still lets the claim run
+   * (so maintenance defers), `inactive` (paused/cancelled) does not, and a Goal
+   * that cannot be read is `unreadable` — never "inactive", because closing on
+   * a failed read would take a Turn the claim may still own.
    */
-  async function closableWorkRun(ctx: CoreCallContext, latestWork: SessionFactsV1['latestWork']): Promise<boolean> {
+  async function reviewClaimCanRun(ctx: CoreCallContext, latestWork: NonNullable<SessionFactsV1['latestWork']>): Promise<ReviewClaimState> {
+    if (deps.plans === undefined) return 'unreadable';
+    try {
+      const read = await deps.plans.queryGoal(ctx, { aggregateType: 'Goal',
+        projectId: latestWork.runRef.projectId, goalId: latestWork.runRef.goalId });
+      if (read.status !== 'ready') return 'unreadable';
+      return read.value.goal.desiredState === 'active' ? 'active' : 'inactive';
+    } catch { return 'unreadable'; }
+  }
+
+  /**
+   * K L7 condition 3 (decision 51, K3 L27): the latest Work Run's reconciliation
+   * observation proves the dangling Turn may be closed — RUN-19/RUN-23
+   * (`interrupted_clean` with no pause fence), a RUN-22 a person attested
+   * (`human_attested`), a RUN-25 takeover proof (`takeover_unresolved`), or a
+   * review-purpose Run whose ending is known (RUN-19/22/23/24; a RUN-24 pause
+   * fence is the review record's to settle, not ordinary work). Every other
+   * ending (an ordinary human pause fence) and a Query line (no Work Run) are
+   * not closable here.
+   *
+   * A RUN-25 line whose review record still owns the next close is left to the
+   * review claim (K L4 / L29 row 8) while the Goal can still run that claim:
+   * closing it here would remove the dangling Turn that the review claim must
+   * close, including the definite-failure fallback. Once the claim is settled
+   * or the Goal is paused/cancelled (no claim can run), it is maintenance's.
+   *
+   * `true` means closable, `false` means today's fallback applies, and `null`
+   * means the Goal could not be read: closing on that failed read would decide
+   * "not active" without proof, so the caller must skip the line this pass.
+   */
+  async function closableWorkRun(ctx: CoreCallContext, latestWork: SessionFactsV1['latestWork']): Promise<boolean | null> {
     if (latestWork === null || deps.executions === undefined) return false;
     try {
       const read = await deps.executions.readExecution(ctx, latestWork.runRef);
       if (read.status !== 'ready') return false;
-      const observation = read.value.run.reconciliation?.observation;
+      const run = read.value.run;
+      const observation = run.reconciliation?.observation;
       if (observation === undefined) return false;
+      if (observation.kind === 'takeover_unresolved') {
+        const row = await readTaskRow(ctx, latestWork);
+        if (row === null) return false;
+        const review = row.unknownCallReview;
+        if (review === undefined) return true;
+        if (review.status === 'unreadable') return false;
+        // Defer to the review claim only while that claim is still due and can
+        // run: a paused/cancelled Goal has no claim to defer to, so L27's
+        // maintenance close applies even with the record `pending_review`.
+        const claimDue = review.activeRound !== null
+          || review.status === 'pending_review' || review.status === 'awaiting_proposal';
+        if (!claimDue) return true;
+        const claim = await reviewClaimCanRun(ctx, latestWork);
+        return claim === 'unreadable' ? null : claim === 'inactive';
+      }
       if (observation.kind === 'human_attested') return true;
-      return observation.kind === 'interrupted_clean' && (observation.pausedIntentRef ?? null) === null;
+      if (observation.kind !== 'interrupted_clean') return false;
+      if ((observation.pausedIntentRef ?? null) === null) return true;
+      // L27: a paused RUN-24 review round is read-only and never requeued; its
+      // known ending is the review record's, so maintenance may close it.
+      return run.purpose?.kind === 'unknown_call_review';
     } catch {
       return false;
     }
@@ -437,9 +501,10 @@ export function createSessionMaintenanceService(
    * K L7 maintenance insertion point (KA1): try to close a retired
    * `kernel_turn_open` Work line's dangling Turn under the four L7 conditions.
    * `true` means this line is skipped this round (success, a retryable result,
-   * or a `refused` reason that only means the platform facts changed); `false`
-   * means today's logic runs unchanged (the closure is not installed, a
-   * precondition is unmet, or the closure failed definitely).
+   * an unreadable Goal that leaves the decision unproven, or a `refused` reason
+   * that only means the platform facts changed); `false` means today's logic
+   * runs unchanged (the closure is not installed, a precondition is unmet, or
+   * the closure failed definitely).
    */
   async function tryCloseDanglingTurn(
     ctx: CoreCallContext, sessionRef: SessionRef, facts: SessionFactsV1, record: SessionRecord,
@@ -450,7 +515,9 @@ export function createSessionMaintenanceService(
     if (runtime === undefined || close === undefined) return false; // M1: no closure installed
     if (facts.latestWork === null) return false; // condition 2: the latest Work execution is a Run
     if (facts.legacyPending || (record.provenance ?? null) === null) return false; // condition 4
-    if (!(await closableWorkRun(ctx, facts.latestWork))) return false; // condition 3
+    const closable = await closableWorkRun(ctx, facts.latestWork); // condition 3
+    if (closable === null) return true; // unreadable Goal: no close and no write this pass
+    if (!closable) return false;
     let result;
     try {
       result = await close.call(runtime, ctx, { sessionRef, afterRunRef: facts.latestWork.runRef, requeueRef: null,

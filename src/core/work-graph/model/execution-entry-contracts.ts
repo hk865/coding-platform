@@ -27,6 +27,7 @@ import type { GraphWrite } from './task-contracts.js';
 import type { ExecutionReadPort } from './execution-read-contracts.js';
 import type { RecordExecutionHistoryInput } from './execution-history-contracts.js';
 import type { RunActivityFactsV1 } from '../../../contracts/run-activity.js';
+import type { HostTakeoverProofV1 } from '../../../contracts/unknown-call-review.js';
 
 /** Existing shared Kernel identity shape; no second declaration. */
 export type KernelExecutionBinding = RunExecutionHistoryV1['kernel'];
@@ -103,7 +104,12 @@ export type AcceptedSteerV1 = {
  * live Host holds it or the lock file is unreadable. Every start-up reconcile
  * write and every human attestation needs `owned` (L-1).
  */
-export type HostInstanceFacts = { hostInstanceId: string; lease: 'owned' | 'held_by_other' };
+export type HostInstanceFacts = {
+  hostInstanceId: string;
+  lease: 'owned' | 'held_by_other';
+  /** K3 (L2): the labeled proof that the previous Host is gone; absent = no proof (G1). */
+  takeover?: HostTakeoverProofV1 | null;
+};
 
 export interface ExecutionEntryPort {
   authorizeRuntimeEntry(ctx: CoreCallContext, request: GraphWrite<{

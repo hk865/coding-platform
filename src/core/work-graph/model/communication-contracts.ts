@@ -31,6 +31,7 @@ import { canonicalJson, sha256Hex } from '../../../contracts/fingerprint.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
+import type { ToolCommitLookup } from '../../../contracts/unknown-call-review.js';
 import type { MessageDutiesFactsPort } from './decision-contracts.js';
 import type { MaterialPort } from './material-contracts.js';
 import type { GraphWrite, SessionDirectoryPort, SessionPage, SessionPageRequest } from './session-contracts.js';
@@ -343,6 +344,12 @@ export interface SessionMailboxPort {
   readRoutedReplies?(
     ctx: CoreCallContext, input: { handler: SessionRef; page: SessionPageRequest },
   ): Promise<ReadResult<SessionPage<SessionMessage>>>;
+  /**
+   * K3 L4: the read-only committed-receipt lookup for the row-4 mailbox tools
+   * (`send_session_message`, `ack_session_message`, `respond_session_message`,
+   * `send_user_message`). It never writes and never reads a business fact.
+   */
+  lookupToolCommit?: ToolCommitLookup;
 }
 
 /**

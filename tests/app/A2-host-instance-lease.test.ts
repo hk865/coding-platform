@@ -98,6 +98,27 @@ describe('the Host instance lease file (HL-01..HL-06)', () => {
     await next.release();
   });
 
+  it('K3-34 labels the takeover proof: HL-01, HL-03 (old instance id and pid), memory, and null when held', async () => {
+    const memory = await acquireHostInstanceLease({ directory: null, now: () => AT });
+    expect(memory.takeover).toEqual({ kind: 'memory_store' });
+    await memory.release();
+
+    const fresh = await directory();
+    const first = await acquireHostInstanceLease({ directory: fresh, now: () => AT, pid: 7001, isAlive: () => true });
+    expect(first.takeover).toEqual({ kind: 'hl01_no_lock' });
+    await first.release();
+
+    const dir = await directory();
+    const path = join(dir, HOST_INSTANCE_LOCK_FILE);
+    await writeFile(path, JSON.stringify({ pid: 5000, hostInstanceId: 'k3-crashed', startedAt: AT }));
+    const taken = await acquireHostInstanceLease({ directory: dir, now: () => AT, pid: 6000, isAlive: pid => pid !== 5000 });
+    expect(taken.takeover).toEqual({ kind: 'hl03_stale_lock', previousInstanceId: 'k3-crashed', previousPid: 5000 });
+    const peer = await acquireHostInstanceLease({ directory: dir, now: () => AT, pid: 6001, isAlive: () => true });
+    expect(peer.takeover).toBeNull();
+    await peer.release();
+    await taken.release();
+  });
+
   it.each([
     ['not JSON', 'not json'],
     ['an array', '[]'],

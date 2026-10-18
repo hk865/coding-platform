@@ -18,6 +18,9 @@ import type { SessionResponsibilityPort } from '../../core/work-graph/sessions/s
 import type { SessionAnomalyPort } from '../../core/work-graph/tasks/session-anomaly-service.js';
 import type { RunControlPort } from '../../core/work-graph/tasks/control-contracts.js';
 import type { TaskClaimPort } from '../../core/work-graph/model/claim-contracts.js';
+import type {
+  UnknownCallReviewPort, UnknownCallReviewReadPort,
+} from '../../core/work-graph/model/unknown-call-review-contracts.js';
 import type { ExecutionReadPort } from '../../core/work-graph/model/execution-read-contracts.js';
 import type { EvidencePort } from '../../core/work-graph/model/evidence-contracts.js';
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
@@ -36,7 +39,7 @@ import type { DecisionApplicationAdapter } from './decision-actions.js';
 import type { RunActivityPort } from '../../core/work-graph/tasks/run-activity-service.js';
 import type { ActivityBackfillBatchV1, ActivityBackfillInput, ActivityBackfillRangeInput,
   ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
-  N0GoalInput, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowCloseEventReader } from './contracts.js';
+  N0GoalInput, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCloseEventReader } from './contracts.js';
 
 /**
  * Trusted Host advancement policy. It is pure data snapshotted by the
@@ -191,6 +194,15 @@ export type WorkflowDependencies = {
    * operations stay explicitly unsupported.
    */
   runActivity?: RunActivityPort;
+  /**
+   * K3 (L7/L11/L12/L16, §3.4): the SAME UnknownCallReview owner the routes and
+   * the Runtime publish. The Workflow reads the selected Run's record before
+   * `automaticRequeue` (fail-closed on an unreadable key) and performs the
+   * `settle_review` step through `settleReview`. Optional so every existing
+   * narrow double keeps its historical selection; without it the UR gate is a
+   * `pass` and the owner guards still decide.
+   */
+  unknownCallReviews?: UnknownCallReviewPort & UnknownCallReviewReadPort;
 };
 
 /**
@@ -212,7 +224,7 @@ export type ConsultationConsumerDependencies = {
  */
 export interface WorkflowPort {
   handleGoalInput(ctx: CoreCallContext, input: N0GoalInput | InitialPlanningGoalInput): Promise<InitialPlanningGoalInputResult>;
-  advanceWork(ctx: CoreCallContext, input: WorkflowAdvanceInput): Promise<WorkflowAdvanceResult>;
+  advanceWork(ctx: CoreCallContext, input: WorkflowAdvanceInput, internal?: WorkflowAdvanceInternal): Promise<WorkflowAdvanceResult>;
   /**
    * Explicitly process ONE received message: reuse the saved deterministic
    * Query/Answer first, otherwise run the finite submit/claim/prepare/start

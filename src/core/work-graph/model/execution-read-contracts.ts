@@ -11,6 +11,7 @@ import type { RunRef, RunSnapshot, TaskAttemptSnapshot, TaskLeaseSnapshot } from
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
+import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
@@ -83,6 +84,12 @@ export type ContinuationBasis = {
   factsChain: { requeue: TaskRequeueSnapshotV1; run: TaskExecutionRecord; round: RoundSnapshot | null }[];
   /** Slice 1 §2.7: this Task's not-yet-picked-up anchors; the real production reader always returns it. */
   pendingAnomalies?: SessionAnomalyAnchorV1[];
+  /**
+   * K3 L20: the afterRun's stored `UnknownCallReview`, or null when it has none.
+   * The real production reader always returns it; an old/narrow basis read as
+   * `undefined` means no record.
+   */
+  unknownCallReview?: UnknownCallReviewV1 | null;
   readThrough: CommitCursor | null;
 };
 

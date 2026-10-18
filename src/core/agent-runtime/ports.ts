@@ -111,6 +111,24 @@ export interface RuntimeExecutionPort {
         | 'archive_requested' | 'occupied' | 'handed_over' | 'health' }
     | { status: 'unsupported' | 'unreadable' | 'mismatch' | 'conflict' | 'transient'; reason: string }>;
   /**
+   * K3 (§2 L4 item 5; G6): the read-only capability check behind RUN-25's
+   * `closure_unsupported`: this Runtime publishes the closure, this Host holds
+   * the instance lease, the Session is readable, and its Kernel store is not a
+   * legacy reader and publishes `closeOpenTurn`. It never writes and never
+   * closes; the head comparison stays the classifier's own probe.
+   */
+  turnClosureSupport?(ctx: CoreCallContext, input: { sessionRef: SessionRef }):
+    Promise<{ status: 'supported' } | { status: 'unsupported'; reason: string }>;
+  /**
+   * K3 L13/U5/R3: whether the review/proposal round for this workspace+Role
+   * could register the real `run_readonly_command` tool. It probes with exactly
+   * the options the real tool is built with and requires the Host switch on and
+   * the whole workspace readable. It selects the binding by Role and never
+   * resolves the model. Read-only: it never writes and never starts a round.
+   */
+  reviewCapability?(ctx: CoreCallContext, input: import('./execution-contracts.js').ReadonlyCommandAccessInput):
+    Promise<{ status: 'available' } | { status: 'unavailable'; reason: string }>;
+  /**
    * Slice 2B L6/L8: the read-only backfill window tally for one ended Run.
    * Optional (like the members above); `createAgentRuntime` publishes it with
    * the trusted bundle. `{kind:'not_entered'}` is the L7 proof that the Run

@@ -38,9 +38,10 @@ const CALL_KINDS: readonly ContextCallKindV1[] = [
 
 const DUTIES: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
 
-/** The fixed rendering order of §4.3; every call kind is a subsequence. */
+/** The fixed rendering order of §4.3; every call kind is a subsequence. R1: the
+ * review instruction is the last section and is legal only for `work`. */
 const SECTION_ORDER: readonly ContextSectionNameV1[] = [
-  'role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation',
+  'role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation', 'unknown_call_review',
 ];
 
 /** The four budgeted optional sections that may be omitted as a whole (§4.3 T2). */
@@ -48,6 +49,8 @@ const BUDGET_SECTIONS: ReadonlySet<ContextSectionNameV1> = new Set(['footprint',
 
 const WORK_SECTIONS: readonly ContextSectionNameV1[] = ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs'];
 const WORK_AND_CONTINUATION: readonly ContextSectionNameV1[] = [...WORK_SECTIONS, 'continuation'];
+/** R1: the review instruction is a Work section; continuation/handoff never carry it. */
+const WORK_AND_REVIEW: readonly ContextSectionNameV1[] = [...WORK_SECTIONS, 'unknown_call_review'];
 
 /** Call kinds whose task card also carries the Goal and Accepted task sections (§4.3). */
 const REQUIRES_GOAL_AND_TASK: ReadonlySet<ContextCallKindV1> = new Set(['work', 'continuation', 'handoff']);
@@ -59,14 +62,14 @@ const OMISSIONS_HEADER = '## Context omissions';
 
 /** §4.3's per-call-kind section table. `attention` carries only change rows. */
 const CALL_KIND_SECTIONS: Readonly<Record<ContextCallKindV1, ReadonlySet<ContextSectionNameV1>>> = {
-  work: new Set(WORK_SECTIONS),
+  work: new Set(WORK_AND_REVIEW),
   continuation: new Set(WORK_AND_CONTINUATION),
   handoff: new Set(WORK_AND_CONTINUATION),
   review: new Set(['role', 'task', 'reminders']),
   secretary: new Set(['role', 'goal', 'task', 'notes', 'reminders']),
   copy: new Set(['role', 'goal', 'task']),
   planning: new Set(['role', 'goal', 'task', 'footprint']),
-  attention: new Set(SECTION_ORDER),
+  attention: new Set(SECTION_ORDER.filter((name) => name !== 'unknown_call_review')),
 };
 
 function invalid(reason: string): CoreRejection {
@@ -182,15 +185,59 @@ function requirementIdOf(declarationId: string): string {
   return declarationId.startsWith('legacy:') ? declarationId.slice('legacy:'.length) : declarationId;
 }
 
+/**
+ * D1/R1: the one trailing-section check shared by the continuation brief and the
+ * review instruction. `suffix` is the rendered text (null when the section must
+ * be absent); when it is present the section must be the last one and its byte
+ * interval exactly the rendered suffix.
+ */
+function trailingSectionProblem(input: {
+  text: string;
+  sections: ContextAssemblyBindingV1['sections'];
+  index: number;
+  name: ContextSectionNameV1;
+  /** The rendered text; null means the section carries no text. */
+  suffix: string | null;
+  /** Human noun of the rendered text, e.g. `continuation brief`. */
+  noun: string;
+  /** True when the section itself is required even without its rendered text. */
+  required: boolean;
+}): CoreRejection | null {
+  const { text, sections, index, name, suffix } = input;
+  if (suffix === null) {
+    if (index !== -1) return invalid(`a ${name} section requires the rendered ${input.noun}`);
+    if (input.required) return invalid(`a ${name} section is required by this call kind`);
+    return null;
+  }
+  if (index === -1) return invalid(`a ${name} section is required`);
+  if (index !== sections.length - 1) return invalid(`the ${name} section must be the last section`);
+  const section = sections[index]!;
+  if (section.startByte === null || section.endByte === null) {
+    return invalid(`the ${name} section cannot be omitted`);
+  }
+  if (section.endByte !== utf8Bytes(text)) return invalid(`no text may follow the ${input.noun}`);
+  if (section.startByte !== utf8Bytes(text) - utf8Bytes(suffix)) {
+    return invalid(`the ${name} section interval must be exactly the rendered ${input.noun}`);
+  }
+  if (!text.endsWith(`\n\n${suffix}`)) return invalid(`the input does not end with the ${input.noun}`);
+  return null;
+}
+
 export type ContextAssemblyProblemInput = {
   binding: ContextAssemblyBindingV1 | undefined;
   text: string;
   selectedTaskInputs: { requirementId: string; ref: ArtifactRef }[];
   continuationSuffix: string | null;
+  /**
+   * R1/D1: the rendered `unknown_call_review` section of a review-purpose Work
+   * Run, or null/absent for every ordinary Work and Query binding.
+   */
+  reviewSuffix?: string | null;
 };
 
 export function contextAssemblyProblem(input: ContextAssemblyProblemInput): CoreRejection | null {
   const { binding, text, selectedTaskInputs, continuationSuffix } = input;
+  const reviewSuffix = input.reviewSuffix ?? null;
   if (binding === undefined) return null;
   // A present but malformed value (null included) is `invalid`, never legacy (§2.4 item 1).
   if (!isRecord(binding)) return invalid('the context assembly binding is not an object');
@@ -212,6 +259,7 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
   let previousOrder = -1;
   let previousEnd: number | null = null;
   let continuationIndex = -1;
+  let reviewIndex = -1;
   for (let index = 0; index < binding.sections.length; index += 1) {
     const section = binding.sections[index]!;
     if (!isRecord(section)) return invalid('a context section entry is not an object');
@@ -224,6 +272,7 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
     if (order <= previousOrder) return invalid('context sections are not in the fixed order');
     previousOrder = order;
     if (name === 'continuation') continuationIndex = index;
+    if (name === 'unknown_call_review') reviewIndex = index;
     if (!isNonNegativeSafeInteger(section.omitted)) return invalid('a section omitted count must be a non-negative safe integer');
     const startByte = section.startByte;
     const endByte = section.endByte;
@@ -260,23 +309,27 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
   }
 
   if (binding.callKind === 'continuation' || binding.callKind === 'handoff') {
-    if (continuationIndex === -1) return invalid('a continuation call requires the continuation section');
-    if (continuationIndex !== binding.sections.length - 1) return invalid('the continuation section must be the last section');
-    const continuation = binding.sections[continuationIndex]!;
-    if (continuation.startByte === null || continuation.endByte === null) {
-      return invalid('the continuation section cannot be omitted');
-    }
-    if (continuationSuffix === null) return invalid('a continuation section requires the rendered continuation brief');
-    const suffixBytes = utf8Bytes(continuationSuffix);
-    if (continuation.endByte !== utf8Bytes(text)) return invalid('no text may follow the continuation brief');
-    if (continuation.startByte !== utf8Bytes(text) - suffixBytes) {
-      return invalid('the continuation section interval must be exactly the rendered brief');
-    }
-    if (!text.endsWith(`\n\n${continuationSuffix}`)) return invalid('the input does not end with the continuation brief');
-  } else if (seen.has('continuation')) {
-    return invalid('a continuation section is legal only for a continuation call');
-  } else if (continuationSuffix !== null) {
-    return invalid('a continuation brief was supplied without a continuation section');
+    const continuationProblem = trailingSectionProblem({
+      text, sections: binding.sections, index: continuationIndex,
+      name: 'continuation', suffix: continuationSuffix, noun: 'continuation brief', required: true,
+    });
+    if (continuationProblem !== null) return continuationProblem;
+  } else {
+    if (seen.has('continuation')) return invalid('a continuation section is legal only for a continuation call');
+    if (continuationSuffix !== null) return invalid('a continuation brief was supplied without a continuation section');
+  }
+
+  // R1: the review instruction is a Work-only last section, present exactly when
+  // the caller supplies its rendered text. `continuation` and `handoff` never
+  // carry it (the call-kind table already refuses the name there).
+  if (binding.callKind === 'work') {
+    const reviewProblem = trailingSectionProblem({
+      text, sections: binding.sections, index: reviewIndex,
+      name: 'unknown_call_review', suffix: reviewSuffix, noun: 'review instruction', required: false,
+    });
+    if (reviewProblem !== null) return reviewProblem;
+  } else if (reviewSuffix !== null) {
+    return invalid('a review section is legal only for a work call');
   }
 
   let previousSource: string | null = null;

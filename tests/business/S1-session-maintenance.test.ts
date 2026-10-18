@@ -16,7 +16,9 @@
  * Owners with an injected clock get `t0`/`t1`; owners reading `new Date()` get
  * `vi.setSystemTime`.
  */
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SessionRecordDraft } from '../../vendor/coding-agent/dist/public-api.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, SessionWorkLinkRef, VersionPin, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { SessionRecord, SessionWorkLink } from '../../src/contracts/core/session.js';
@@ -44,11 +46,21 @@ import { createMaterialService } from '../../src/core/work-graph/materials/mater
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
-import { DEFAULT_SESSION_ARCHIVE_POLICY, type SessionArchivePolicyV1, type SessionDutyResolver } from '../../src/business/workflow/ports.js';
+import { DEFAULT_SESSION_ARCHIVE_POLICY, type SessionArchivePolicyV1, type SessionDutyResolver, type WorkflowDependencies } from '../../src/business/workflow/ports.js';
 import type { SessionMaintenancePort } from '../../src/business/workflow/session-maintenance.js';
 import { createB2ExecutionFixture, type B2ExecutionFixture, type B2Records } from '../helpers/S1-workflow-archive-fixture.js';
 import { beginConsultation, completeWork, interruptWork, retireSession, unknownWork, workflowForFixture } from '../helpers/S1-workflow-archive-fixture.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
+import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
+import type { HostTakeoverProofV1, UnknownCallReviewDraftV1, UnknownCallReviewRef } from '../../src/contracts/unknown-call-review.js';
+import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
+import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
+import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
+import type { AutoCleanupCandidateV1 } from '../../src/core/work-graph/tasks/run-reconcile-contracts.js';
+import { createSessionHealthService } from '../../src/core/work-graph/sessions/session-health.js';
+import type { TurnClosureDependencies } from '../../src/core/agent-runtime/execution-contracts.js';
+import { KernelTurnRecords } from '../helpers/S2B-kernel-records-fixture.js';
 
 const T0 = '2026-10-08T00:00:00.000Z';
 const T1 = '2026-10-09T00:00:00.000Z';
@@ -75,6 +87,8 @@ const ADDITIONAL_SCHEMAS: RecordBackendSchemas = {
     ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
     ...QUERY_JOB_RECORD_SCHEMAS.records,
     ...CONTROL_RECORD_SCHEMAS.records,
+    ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records,
+    ...COMPLETION_RECORD_SCHEMAS.records,
   ],
   events: [
     ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
@@ -82,6 +96,8 @@ const ADDITIONAL_SCHEMAS: RecordBackendSchemas = {
     ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
     ...QUERY_JOB_RECORD_SCHEMAS.events,
     ...CONTROL_RECORD_SCHEMAS.events,
+    ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
+    ...COMPLETION_RECORD_SCHEMAS.events,
   ],
   lookups: [
     ...(SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? []),
@@ -89,10 +105,17 @@ const ADDITIONAL_SCHEMAS: RecordBackendSchemas = {
     ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []),
     ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []),
     ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
+    ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
   ],
 };
 
-type MaintenanceOptions = { duty?: SessionDutyResolver; policy?: SessionArchivePolicyV1 };
+type MaintenanceOptions = {
+  duty?: SessionDutyResolver; policy?: SessionArchivePolicyV1;
+  /** Additive maintenance-only Plans override; absent leaves the fixture's own store. */
+  plans?: WorkflowDependencies['plans'];
+  /** Additive: publish the real Runtime `closeOpenTurn` seam for a real closure. */
+  turnClosure?: TurnClosureDependencies;
+};
 
 type Opened = {
   b2: B2ExecutionFixture;
@@ -341,6 +364,8 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
     service(options = {}) {
       return { async maintainSessions(ctx, input) {
         const workflow = await workflowForFixture(b2, { now, records,
+          ...(options.plans === undefined ? {} : { plans: options.plans }),
+          ...(options.turnClosure === undefined ? {} : { turnClosure: options.turnClosure }),
           archivePolicy: options.policy ?? DEFAULT_SESSION_ARCHIVE_POLICY,
           sessionDuty: options.duty ?? executorDuty });
         if (workflow.maintainSessions === undefined) throw new Error('Workflow maintenance is absent');
@@ -399,6 +424,155 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
   opened.push(fixture);
   return fixture;
 }
+
+const S1_MAINTENANCE_HOST = 's1-maintenance-host';
+const S1_MAINTENANCE_PROOF: HostTakeoverProofV1 = {
+  kind: 'hl03_stale_lock', previousInstanceId: 's1-maintenance-previous-host', previousPid: 4242,
+};
+
+/**
+ * The real RUN-25 owner path: a real `takeover_unresolved` end (a matching
+ * Host-takeover proof and an automatic-closure candidate) leaves the Session
+ * retired `kernel_turn_open` and creates the open `pending_review` record with
+ * `activeRound: null`. The Kernel Turn is appended through the public Kernel
+ * store so the real maintenance closure can close it later.
+ */
+async function createRun25ReviewState(f: Opened): Promise<UnknownCallReviewRef> {
+  await f.openResponsibility(f.session, f.taskA);
+  await f.b2.enter();
+  const kernel = await f.b2.kernelFor(f.b2.claim);
+  const turn = new KernelTurnRecords({ kernel, at: T0 });
+  turn.runStarted();
+  const stores = await createKernelStoreRegistry({ entries: [{ adapterId: kernel.adapterId,
+    storeKey: KERNEL_STORE, workspace: f.scope, databasePath: join(f.base.directory, 'kernel.sqlite') }] });
+  await stores.withStore(kernel.adapterId, async (store) => {
+    const header = await store.get(kernel.kernelSessionId, { signal: f.ctx.signal });
+    const drafts = turn.records().map(({ record }) => ({
+      recordId: record.recordId, recordType: record.recordType, schemaVersion: record.schemaVersion,
+      recordedAt: record.recordedAt, payload: record.payload,
+    }) as SessionRecordDraft);
+    await store.append(kernel.kernelSessionId, header.revision, drafts, { signal: f.ctx.signal });
+  });
+
+  const callId = 's1-maintenance-unresolved-call';
+  const workspace = { status: 'unavailable' as const, runBaselineKnown: false,
+    reason: 'not_configured' as const, detail: 's1-maintenance' };
+  const draft: UnknownCallReviewDraftV1 = {
+    inventory: 'complete', inventoryProblem: null, itemsOmitted: 0, workspace,
+    items: [{ alias: 1, callId, toolName: 'shell', kind: 'process', contained: true,
+      kernel: { adapterId: kernel.adapterId, kernelSessionId: kernel.kernelSessionId,
+        kernelRunId: kernel.runId, turnId: kernel.turnId, callId, declaredPosition: 1, startedPosition: 2 },
+      argumentsDigest: 'd'.repeat(64),
+      summary: { command: 'echo hi', cwd: '/w', mode: null, paths: [], pathsOmitted: 0, truncated: false },
+      startedAt: T0, observed: { verdict: 'pending', by: null } }],
+  };
+  const candidate: AutoCleanupCandidateV1 = {
+    proof: S1_MAINTENANCE_PROOF, closure: { status: 'supported', headActiveRunId: kernel.runId },
+    workspace, unresolvedCalls: [{ callId, toolName: 'shell' }], draft,
+  };
+  let seq = 0;
+  const reconcile = createRunReconcileService({ records: f.records, reads: createRunStateReader({ records: f.records }),
+    hostInstance: { hostInstanceId: S1_MAINTENANCE_HOST, lease: 'owned', takeover: S1_MAINTENANCE_PROOF },
+    now: () => T0, eventId: () => `s1-maintenance-reconcile-${++seq}` });
+  const marked = await reconcile.reconcileRun(f.ctx, { input: {
+    runRef: f.b2.claim.runRef,
+    basis: { kind: 'host_instance_takeover', hostInstanceId: S1_MAINTENANCE_HOST },
+    probe: 'ready',
+    result: { kind: 'unknown', cause: 'tool_calls_unresolved', unresolvedToolCallIds: [callId],
+      observedThroughPosition: null,
+      turn: { terminal: false, inFlightToolCallIds: [callId], lastPosition: null, kernelPaused: false,
+        entered: null, acceptedSteers: [], inputsConfirmed: true },
+      autoCleanup: candidate },
+  }, meta: { requestId: 's1-maintenance-run25', expected: [await f.b2.pin()] } });
+  expect(marked, JSON.stringify(marked)).toMatchObject({ status: 'committed' });
+
+  const run = await f.b2.read();
+  expect(run.run).toMatchObject({ status: 'ended', outcome: 'crashed',
+    reconciliation: { observation: { kind: 'takeover_unresolved' } } });
+  expect(await f.record()).toMatchObject({ lifecycle: 'active', occupancy: null, health: 'unavailable',
+    healthConclusion: 'kernel_turn_open' });
+  const reviewRef: UnknownCallReviewRef = { aggregateType: 'UnknownCallReview',
+    projectId: f.b2.claim.runRef.projectId, goalId: f.b2.claim.runRef.goalId, runId: f.b2.claim.runRef.runId };
+  const reviews = createUnknownCallReviewService({ records: f.records });
+  const review = await reviews.readReview(f.ctx, { ref: reviewRef });
+  expect(review).toMatchObject({ status: 'ready', value: { status: 'pending_review', activeRound: null } });
+  return reviewRef;
+}
+
+describe.each(['memory', 'sqlite'] as const)('S1 Session maintenance goal-read failure (%s)', (kind) => {
+  it('IT35 an unreadable Goal read closes nothing; an active Goal defers; a paused Goal closes the dangling Turn', async () => {
+    const f = await open(kind);
+    const reviewRef = await createRun25ReviewState(f);
+    const reviews = createUnknownCallReviewService({ records: f.records });
+    const beforeSession = await f.record();
+    const beforeRunRevision = (await f.b2.read()).run.revision;
+    const beforeReview = await reviews.readReview(f.ctx, { ref: reviewRef });
+    if (beforeReview.status !== 'ready') throw new Error(JSON.stringify(beforeReview));
+    const beforeReviewRevision = beforeReview.value.revision;
+    const beforeEvents = f.base.audit.events().length;
+    const beforeTotals = f.base.audit.totals();
+
+    let goalReads = 0;
+    let failGoalRead = true;
+    let healthSeq = 0;
+    const health = createSessionHealthService({ records: f.records,
+      hostInstance: { hostInstanceId: S1_MAINTENANCE_HOST, lease: 'owned' },
+      now: () => T0, eventId: () => `s1-maintenance-health-${++healthSeq}` });
+    const turnClosure: TurnClosureDependencies = { recordSessionHealth: health.recordSessionHealth, lease: 'owned' };
+    const plans: WorkflowDependencies['plans'] = {
+      ...f.base.plans,
+      async queryGoal(ctx, ref) {
+        goalReads += 1;
+        if (failGoalRead) {
+          failGoalRead = false;
+          return { status: 'rejected' as const, code: 'unavailable' as const, reason: 'injected goal read failure' };
+        }
+        return f.base.plans.queryGoal(ctx, ref);
+      },
+    };
+
+    // Pass 1: the Goal read fails. The unreadable Goal is NOT "inactive": the
+    // line is skipped with zero commits, exactly like the other read failures.
+    const pass1 = await f.service({ plans, turnClosure }).maintainSessions(f.ctx, { workspace: f.scope, after: null });
+    expect(pass1).toMatchObject({ status: 'ready', value: { archived: [] } });
+    expect(await f.record()).toEqual(beforeSession);
+    expect(await f.record()).toMatchObject({ lifecycle: 'active', health: 'unavailable',
+      healthConclusion: 'kernel_turn_open' });
+    expect((await f.b2.read()).run.revision).toBe(beforeRunRevision);
+    expect((await reviews.readReview(f.ctx, { ref: reviewRef })).status).toBe('ready');
+    const reviewAfterPass1 = await reviews.readReview(f.ctx, { ref: reviewRef });
+    if (reviewAfterPass1.status !== 'ready') throw new Error(JSON.stringify(reviewAfterPass1));
+    expect(reviewAfterPass1.value.revision).toBe(beforeReviewRevision);
+    expect(f.base.audit.events().length).toBe(beforeEvents);
+    expect(f.base.audit.totals()).toEqual(beforeTotals);
+    expect(goalReads).toBe(1);
+
+    // Pass 2: the Goal read succeeds and the Goal is active. The review claim
+    // still owns the close, so maintenance defers with zero commits.
+    const pass2 = await f.service({ plans, turnClosure }).maintainSessions(f.ctx, { workspace: f.scope, after: null });
+    expect(pass2).toMatchObject({ status: 'ready', value: { archived: [] } });
+    expect(await f.record()).toEqual(beforeSession);
+    expect((await f.b2.read()).run.revision).toBe(beforeRunRevision);
+    expect(f.base.audit.events().length).toBe(beforeEvents);
+    expect(f.base.audit.totals()).toEqual(beforeTotals);
+    expect(goalReads).toBe(2);
+
+    // Pass 3: the paused Goal has no claim left to run, so it is maintenance's
+    // close. This proves pass 2 really evaluated an ACTIVE Goal instead of
+    // silently skipping like a failed read.
+    const paused = await f.base.goals.setGoalControl(f.ctx, { input: {
+      goalRef: f.goalRef, control: 'pause', reason: 'no review claim may run now',
+    }, meta: { requestId: 's1-maintenance-pause-goal',
+      expected: [await f.goalPin(), { ref: { aggregateType: 'GoalPhase' as const,
+        projectId: f.scope.projectId, goalId: f.goalRef.goalId }, revision: 0 }] } });
+    expect(paused, JSON.stringify(paused)).toMatchObject({ status: 'committed' });
+    const pass3 = await f.service({ plans, turnClosure }).maintainSessions(f.ctx, { workspace: f.scope, after: null });
+    expect(pass3).toMatchObject({ status: 'ready', value: { archived: [] } });
+    expect(await f.record()).toMatchObject({ lifecycle: 'active', occupancy: null, health: 'available',
+      healthConclusion: null });
+    expect(goalReads).toBe(3);
+  }, 60_000);
+});
 
 describe.each(['sqlite'] as const)('S1 Session maintenance (%s)', (kind) => {
   it('IT06 an executor one millisecond short of the threshold is not archived; lifecycle stays active', async () => {

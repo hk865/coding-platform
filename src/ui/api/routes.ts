@@ -9,6 +9,8 @@ export const GRAPH_WRITE_ROUTES = new Set<CoreRouteSuffix>([
   'architecture/capture', 'plans/propose', 'plans/apply', 'messages/send',
   'queries/submit', 'queries/claim',
   'lines/pin',
+  // K3 L21: the human direct hold and the release-hold "continue".
+  'unknown-call-reviews/hold', 'unknown-call-reviews/release-hold',
 ]);
 
 const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
@@ -107,6 +109,11 @@ const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
   'tasks/archive-state': '查看任务归档状态',
   'anomalies/list': '列出异常锚点',
   'messages/undelivered-replies': '查看未送达回复',
+  // K3 (§2 L7): display label only (the table is total over CoreRouteSuffix).
+  'unknown-call-reviews/read': '查看核对记录',
+  'unknown-call-reviews/list': '核对记录列表',
+  'unknown-call-reviews/hold': '我来处理',
+  'unknown-call-reviews/release-hold': '继续',
   // Slice 3 suffixes: display labels only (the table is total over
   // CoreRouteSuffix); the action is the new UI's (task E3).
   'graph/look': '查看图节点',

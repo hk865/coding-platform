@@ -20,6 +20,7 @@ import type {
   TaskReworkRefusalCode, TaskReworkRefusalRef,
 } from './task-requeue.js';
 import type { RoundSnapshot, VerificationRoundRef } from './verification.js';
+import type { UnknownCallReviewStatusV1 } from './unknown-call-review.js';
 
 // ------------------------------------------------------------------------ //
 // Projection cause (TD-1)                                                   //
@@ -87,7 +88,9 @@ export type TaskAutomationStopReason =
   | 'budget_exhausted'
   | 'task_cancelled'
   | 'task_paused'
-  | 'not_reworkable';
+  | 'not_reworkable'
+  /** K3 (AV-2b): the selected Run's review record is not resolved (or unreadable). */
+  | 'unknown_call_review';
 export type TaskAutomationStopDetailV1 = {
   operation?: TaskReworkOperation;
   /** `not_reworkable` only. */
@@ -97,6 +100,10 @@ export type TaskAutomationStopDetailV1 = {
   failingChecks?: FailingCheckFactV1[];
   /** `budget_exhausted` only: a requeue budget must exceed this token budget. */
   minTokenBudgetExclusive?: number;
+  /** K3 AV-2b: the record's status, or 'unreadable' when the read failed (L7, L22). */
+  reviewStatus?: UnknownCallReviewStatusV1 | 'unreadable';
+  /** K3 AV-4c: the record is resolved+held ("I'll handle it"). */
+  reviewHold?: true;
 };
 /**
  * Whether the owner would accept one automatic rework now (AV/GV tables). It is
@@ -178,6 +185,16 @@ export type TaskFailureFactsV1 = {
     /** The latest source captured by a refusal. */
     lastChecked: SourceStampV1 | null;
     sinceFailure: SourceChangeVerdictV1;
+  };
+  /**
+   * K3 (L22): present when the selected Run has a review record. `unreadable`
+   * is the fail-closed value; `requeueConfirmed` suppresses the plain
+   * system-requeue confirmation card.
+   */
+  unknownCallReview?: {
+    status: UnknownCallReviewStatusV1 | 'unreadable';
+    hold: 'held' | 'released' | null;
+    requeueConfirmed: boolean;
   };
   /** Classes that may requeue / reverify now (state, Goal `active`, matrix and fence). */
   requeueActors: ReworkActorClass[];

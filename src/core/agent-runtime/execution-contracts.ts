@@ -26,7 +26,7 @@ import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { DecisionApplicationReceiptV1 } from '../../contracts/core/session-message.js';
 import type { ControlIntentRef } from '../../contracts/control-intent.js';
-import type { RoleConfigurationRef, SessionRef } from '../../contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { ReadResult } from '../../contracts/core/results.js';
 import type { PreparedQueryExecution, PreparedTaskExecution, PreparedTaskManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';
@@ -37,9 +37,18 @@ import type { PlatformDutyV1 } from '../../contracts/graph-context.js';
 import type { RunRef } from '../../contracts/dispatch.js';
 import type { VerificationRoundSourceResult } from '../../contracts/verification-context.js';
 import type { RawArtifactStorePort } from '../record-store/body-ports.js';
+import type { ContinuationWorkspaceBytes } from '../workspace/continuation-diff-reads.js';
 import type { RoleBindingFactsPort } from '../work-graph/model/configuration-contracts.js';
 import type { MaterialPort } from '../work-graph/model/material-contracts.js';
 import type { TaskClaimPort } from '../work-graph/model/claim-contracts.js';
+import type {
+  UnknownCallReviewPort, UnknownCallReviewReadPort,
+} from '../work-graph/model/unknown-call-review-contracts.js';
+import type {
+  CommandRerunRequestPort, CommandRerunRequestReadPort,
+} from '../work-graph/model/command-rerun-request-contracts.js';
+import type { CommandRecognizer } from '../work-graph/model/command-recognition-contracts.js';
+import type { ToolCommitLookup } from '../../contracts/unknown-call-review.js';
 import type { ExecutionHistoryWritePort } from '../work-graph/model/execution-history-contracts.js';
 import type { ExecutionEntryPort } from '../work-graph/model/execution-entry-contracts.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
@@ -155,6 +164,15 @@ export type QueryRuntimeConfigurationInput = {
   roleResolution: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>;
 };
 
+/** R3: the ONE `readonlyCommandAccess` input. It selects the binding exactly as
+ * a Work Run does (`bind(scope, role)`) so the review round's capability probe
+ * reads the same trusted binding its prepare and start will use, and it never
+ * resolves the model. */
+export type ReadonlyCommandAccessInput = {
+  workspace: WorkspaceScope;
+  role: RoleConfigurationRef;
+};
+
 /** Trusted Host startup binding. The stored `runtime` option is data, never a
  * capability that the request or model can extend. `resolveQueryConfiguration`
  * is the optional R5b.2 Query branch; its absence keeps only the new Query
@@ -162,6 +180,14 @@ export type QueryRuntimeConfigurationInput = {
 export interface RuntimeHostBindings {
   resolveConfiguration(ctx: CoreCallContext, input: RuntimeConfigurationInput): Promise<ReadResult<ResolvedRuntimeConfiguration>>;
   resolveQueryConfiguration?(ctx: CoreCallContext, input: QueryRuntimeConfigurationInput): Promise<ReadResult<ResolvedRuntimeConfiguration>>;
+  /**
+   * K3 L13/U5/R3: the binding-level read-only command facts the Runtime's
+   * `reviewCapability` probes with (the SAME `readonlyCommandAccess` and
+   * `processSandboxOptions` a Run binding receives for that workspace+Role).
+   * Optional so every existing Host binding keeps working; absence answers
+   * `unavailable` (fail closed).
+   */
+  readonlyCommandAccess?(input: ReadonlyCommandAccessInput): Promise<ReadonlyCommandHostFacts | null>;
 }
 
 // ------------------------------------------------------------------------ //
@@ -173,6 +199,11 @@ export interface RuntimeHostBindings {
  * Runtime factory owns no store, no reducer and no second transcript: WorkGraph
  * keeps the formal facts and the kernel keeps the original history.
  */
+export type ReadonlyCommandHostFacts = {
+  access: 'all_except_denied' | null;
+  processSandboxOptions: { readOnlyPaths?: string[]; executablePath?: string };
+};
+
 export type RuntimeExecutionDependencies = {
   claims: TaskClaimPort;
   executions: ExecutionReadPort;
@@ -248,6 +279,15 @@ export type RuntimeExecutionDependencies = {
    */
   resourceCaps?: import('../../../vendor/coding-agent/dist/public-api.js').ResourceCapSource;
   /**
+   * K3 L13/U5/R3 (`reviewCapability`): the Host's read-only command facts for
+   * one workspace+Role, resolved by the composition root from the SAME Host
+   * binding a Run receives (`readonlyCommandAccess` and `processSandboxOptions`).
+   * It never resolves the model. Absent or a null result means the Runtime
+   * answers `unavailable` (fail closed) and the Workflow settles
+   * `review_unavailable` instead of opening a round.
+   */
+  readonlyCommandAccess?: (input: ReadonlyCommandAccessInput) => Promise<ReadonlyCommandHostFacts | null>;
+  /**
    * R4.3a: the SAME raw control service the composition root owns. It is the
    * `RunControlPort` intersection with the internal `ControlObservationPort`,
    * so Runtime can read the accepted intent and persist the real observation
@@ -278,6 +318,44 @@ export type RuntimeExecutionDependencies = {
     write?: NoteWritePort;
     check?: Pick<NoteCheckPort, 'checkNotes'>;
   };
+  /**
+   * K3 L14: the SAME UnknownCallReview owner the routes publish. The review
+   * round's `record_unknown_call_review` tool binds the record and the
+   * `work_run` round to it; the read half supplies the current record revision
+   * the tool must pin. Absent, a review-purpose Run fails closed before the
+   * model instead of exposing a tool with no owner.
+   */
+  unknownCallReviews?: UnknownCallReviewPort & Pick<UnknownCallReviewReadPort, 'readReview' | 'listReviews'>;
+  /**
+   * Rework 2 item 2: the ONE canonical Task-closure reader (`satisfied`,
+   * `cancelled`, `superseded`), the same `plan-readers.readTaskClosure` the
+   * work graph uses. OPTIONAL only on this Runtime shell so unrelated
+   * `createAgentRuntime` callers keep compiling; `createAgentRuntime` installs
+   * a fail-closed reader (rejected `unavailable`) when it is absent — never an
+   * "absent means open" default. The composition root always wires the real
+   * reader to the same records.
+   */
+  readTaskClosure?: (
+    ctx: CoreCallContext,
+    task: { projectId: string; goalId: string; taskId: string },
+  ) => Promise<ReadResult<{ closed: boolean; cause: 'satisfied' | 'cancelled' | 'superseded' | null }>>;
+  /**
+   * L19a (item 4): the SAME CommandRerunRequest owner/read port the routes
+   * publish, plus the L4 tool-commit lookup the no-write branches use. The
+   * `shell` hook reads the task's requests and consumes a one-time allowance;
+   * the `request_command_rerun` tool writes through the same owner. Optional so
+   * an old construction with no blocked commands keeps compiling; a Run whose
+   * manifest carries a non-empty binding fails closed when it is absent.
+   */
+  commandRerunRequests?: CommandRerunRequestReadPort & CommandRerunRequestPort & { lookupToolCommit: ToolCommitLookup };
+  /**
+   * L19a (item 4): the ONE recognizer (`tasks/command-recognition.ts`) the hook
+   * shares with the request owner. It owns `WorkspaceToolsPort.readWorkspace`
+   * in the composition closure. Optional for old constructions; the hook fails
+   * closed with the fixed unconfirmed text when it is absent, so an unconfirmed
+   * command never runs just because recognition is not wired.
+   */
+  commandRecognizer?: CommandRecognizer;
   /**
    * C3 (spec §6.1 (e)): the verification workspace reader (the same instance
    * the evidence owner captures with) the continuation brief takes its own
@@ -318,7 +396,23 @@ export type TurnClosureDependencies = {
 export type ContinuationWorkspaceSource = {
   captureDigest(root: string): Promise<{ status: 'ready'; sourceDigest: string } | { status: 'unavailable'; reason: string }>;
   capture(root: string): Promise<VerificationRoundSourceResult>;
+  /**
+   * K3 L6 (optional): the raw bytes of one old side of a file diff, read with
+   * `git cat-file blob` (no filters). `objectRef` is either a baseline blob id
+   * (`<hex>`) or a start-HEAD tree ref (`<headCommit>:<path>`, L6 line 215).
+   * Absent, a file edit gets no diff.
+   */
+  readBaselineBlob?(root: string, objectRef: string): Promise<ContinuationWorkspaceBytes>;
+  /** K3 L6 (optional): the raw bytes of the current workspace file. */
+  readCurrentFile?(root: string, path: string): Promise<ContinuationWorkspaceBytes>;
 };
+
+/**
+ * K3 L6: a read-only byte read of one side of a file diff. Defined by
+ * WorkspaceTools (`continuation-diff-reads.ts`); re-exported here so the
+ * existing AgentRuntime/composition import sites keep working.
+ */
+export type { ContinuationWorkspaceBytes };
 
 // Re-export the exact shared shapes the port consumes so callers do not import
 // WorkGraph paths by accident.

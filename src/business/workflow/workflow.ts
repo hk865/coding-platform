@@ -11,12 +11,16 @@ import type { GoalPhaseRef } from '../../contracts/goal-phase.js';
 import type { RoundSnapshot } from '../../contracts/verification.js';
 import type { PreparedTaskExecution } from '../../contracts/core/prepared-execution.js';
 import type { ConsumedWaitV1 } from '../../contracts/dispatch.js';
+import type {
+  UnknownCallReviewRef, UnknownCallReviewV1,
+} from '../../contracts/unknown-call-review.js';
 import type { TaskAutomationStopReason, TaskAutomationVerdictV1, TaskFailureFactsV1 } from '../../contracts/task-failure.js';
 import {
   WORKFLOW_AUTOMATION_ACTOR, type ReworkFailureClass, type TaskRequeueRef, type TaskReworkRefusalRef,
 } from '../../contracts/task-requeue.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
-import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey } from '../../contracts/goal-decisions.js';
+import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey, type DecisionSelectionV1, type DecisionSourceV1, type UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
+import { UNKNOWN_CALL_REVIEW_T02_REASON } from '../../contracts/unknown-call-review.js';
 import type { CreateSessionRequest } from '../../core/agent-runtime/session-operations.js';
 import type { PrepareTaskExecutionRequest, StartTaskExecutionRequest } from '../../core/agent-runtime/execution-contracts.js';
 import type { ClaimTaskInput, RequeueTaskInput } from '../../core/work-graph/model/claim-contracts.js';
@@ -25,13 +29,17 @@ import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { GoalDecisionCauseReadV1 } from '../../core/work-graph/model/decision-contracts.js';
 import type { SessionCard } from '../../core/work-graph/model/session-contracts.js';
 import { runUnresolvedBlocker } from '../../core/work-graph/state/run-machine.js';
+import { lastHolderOf } from '../../core/work-graph/state/unknown-call-review.js';
 import { automationConfirmationCause } from '../../core/work-graph/state/decision-policy.js';
 import {
   beginRefusalIsPermanent, displayRoundStatus, reverifyExemptionOfFacts, successorAutoCount,
 } from '../../core/work-graph/state/verification-machine.js';
+import { isUnenteredReviewRoundForCancellation, reviewRoundEndedKnown } from '../../core/work-graph/state/review-lease.js';
 import type { ReverifyRoundInput } from '../../core/work-graph/model/evidence-contracts.js';
-import type { ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowCalls, WorkflowOperation, WorkflowSessionRequeue, WorkflowStepReceipt } from './contracts.js';
+import type { CommandRerunRequestRef } from '../../contracts/command-rerun-request.js';
+import type { ConsultationInput, ConsultationResult, FailedCardRefV1, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCalls, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview, WorkflowStepReceipt } from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
+import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import { createConsultationConsumer } from './consultation.js';
 import { orderTasksByDependency } from './task-order.js';
 import { createSessionArchiveService } from './session-archive.js';
@@ -70,7 +78,46 @@ type Base = {
   actor: Actor;
   /** Explicit `select_work` Task selection; null keeps the default selection. */
   taskId: string | null;
+  /**
+   * K3 UR7 rework 1 (answer 7): the cards whose ② already failed in this
+   * continuous selection, discriminated by kind (UCR record or CRR request).
+   * Only the Host driver supplies it (the internal third argument of
+   * `advanceWork`); a successor `select_work` or another
+   * `apply_review_disposition` carries it forward, every other successor drops it.
+   */
+  failedCardRefs: FailedCardRefV1[];
 };
+
+/**
+ * The internal successor shape: the public next request plus the driver-only
+ * carried set. `readyValue` moves the set out of `next` into the result value.
+ */
+type AdvanceNext = WorkflowAdvanceInput & { failedCardRefs?: FailedCardRefV1[] };
+
+/**
+ * K3 U4 (decision 72): one finite result per Task before any automatic rework.
+ * `pass` goes on to today's selection; `skip` blocks this Task with its source
+ * (for a named Task it becomes `waiting`; UR6 also carries the card's formal
+ * `decisionSource`); `review` carries the one review step to perform
+ * (`claim_task{review}`, `close_open_turn`, `create_session{review}` or
+ * `settle_review`). UR8 (`held`) is built here; UR3h and UR7/UR7b are left to
+ * session A's other parts / session B.
+ */
+type TaskGateSource = 'review_unreadable' | 'review_round_in_flight' | 'review_round_unknown' | 'review_session_busy'
+  | 'review_binding_missing' | 'held' | 'needs_decision' | 'awaiting_approval'
+  /** K3-46: this advance already failed this card's ②; never select it again in the same advance. */
+  | 'review_application_failed';
+type TaskGate =
+  | { kind: 'pass' }
+  | { kind: 'skip'; source: TaskGateSource;
+      /** K3 UR6/ruling 6: the review card's formal source when one is blocked on. */
+      decisionSource?: DecisionSourceV1 }
+  | { kind: 'review'; step: WorkflowOperation };
+/** The internal UR1 Session-selection outcome (not part of the finite gate union). */
+type ReviewGate =
+  | TaskGate
+  | { kind: 'waiting'; reason: string }
+  | { kind: 'rejection'; rejection: CoreRejection };
 
 // --------------------------------------------------------------------------
 // Small pure helpers
@@ -144,6 +191,7 @@ function createSessionStep(
   taskRef: TaskTriple,
   planRef: PlanRevisionRef,
   requeue?: WorkflowSessionRequeue,
+  review?: WorkflowSessionReview,
 ): WorkflowOperation {
   const expected: VersionPin[] = [];
   // A Session for a requeued Task is a new request: its identity names the requeue.
@@ -152,23 +200,54 @@ function createSessionStep(
     initialLinks: value.initialLinks, meta: { expected },
     ...(value.provenance === undefined ? {} : { provenance: value.provenance }),
     ...(requeue === undefined ? {} : { requeueRef: requeue.requeueRef }),
+    // K3 L12: a review round's new Session is its own request; the identity
+    // names the record and phase, never the (absent) requeue.
+    ...(review === undefined ? {} : { reviewRef: review.reviewRef, reviewPhase: review.phase }),
   };
   const requestId = requestIdFor(base, 'create_session', requestWithoutRequestId);
   return { kind: 'create_session', request: { ...value, meta: { requestId, expected } }, taskRef, planRef,
-    ...(requeue === undefined ? {} : { requeue }) };
+    ...(requeue === undefined ? {} : { requeue }),
+    ...(review === undefined ? {} : { review }) };
 }
 /**
  * K slice (L7, KA2/KA3): the one close step a `kernel_turn_open` Work line gets
- * before its requeue claim. The request is exactly the Runtime's
+ * before its requeue/review claim. The request is exactly the Runtime's
  * `{ sessionRef, afterRunRef, requeueRef }`; the continuation context the
- * definite-failure fallback needs (`create_session{requeue}` + E15) is carried
- * like `create_session`'s own.
+ * definite-failure fallback needs (`create_session{requeue}` or, for a review
+ * round, `create_session{review}` + E15) is carried like `create_session`'s own.
  */
 function closeOpenTurnStep(
-  sessionRef: SessionRef, afterRunRef: RunRef, requeueRef: TaskRequeueRef,
-  taskRef: TaskTriple, planRef: PlanRevisionRef, requeue: WorkflowSessionRequeue,
+  sessionRef: SessionRef, afterRunRef: RunRef, requeueRef: TaskRequeueRef | null,
+  taskRef: TaskTriple, planRef: PlanRevisionRef, continuation: { requeue?: WorkflowSessionRequeue; review?: WorkflowSessionReview },
 ): WorkflowOperation {
-  return { kind: 'close_open_turn', request: { sessionRef, afterRunRef, requeueRef }, taskRef, planRef, requeue };
+  return { kind: 'close_open_turn', request: { sessionRef, afterRunRef, requeueRef }, taskRef, planRef,
+    ...(continuation.requeue === undefined ? {} : { requeue: continuation.requeue }),
+    ...(continuation.review === undefined ? {} : { review: continuation.review }) };
+}
+/**
+ * K3 (§3.4 UR4/UR2, L16): the one Workflow step that settles a review record.
+ * The owner reads the round's Run and the prepared manifest itself and guards
+ * the revisions in the commit; the Workflow names the record, the cause and the
+ * record revision it read. The pin is part of the request: a retry replays its
+ * receipt, and the next round's settlement pins a new revision (a new identity).
+ */
+function settleReviewStep(
+  base: Base, review: Pick<UnknownCallReviewV1, 'ref' | 'revision'>, cause: 'round_ended' | 'review_unavailable',
+): WorkflowOperation {
+  return { kind: 'settle_review', request: graphWrite(base, 'settle_review',
+    { reviewRef: review.ref, cause }, [{ ref: review.ref, revision: review.revision }]) };
+}
+/**
+ * K3 §3.4 UR3h (L21, ruling 3): the Workflow, as automation, cancels a review
+ * round that was claimed but never entered (including one paused before
+ * entry). The request is pinned to the Run revision read; the control owner
+ * ends it RUN-09(U) and a moved revision is a `revision_conflict`.
+ */
+function cancelReviewRoundStep(base: Base, run: RunSnapshot): WorkflowOperation {
+  return { kind: 'cancel_review_round', request: automaticGraphWrite(base, 'cancel_review_round',
+    { runRef: run.ref, kind: 'cancel' as const,
+      reason: 'the review record was held before the round entered; cancel the review round' },
+    [{ ref: run.ref, revision: run.revision }]) };
 }
 /** VD-7: a work round opens under the Goal's CURRENT adopted Plan, not the Plan the Run was claimed under. */
 function openWorkChecksStep(base: Base, run: RunSnapshot, planRef: PlanRevisionRef): WorkflowOperation {
@@ -320,6 +399,9 @@ function gateStopAdvice(reason: TaskAutomationStopReason): string {
     case 'budget_exhausted':
     case 'task_cancelled':
     case 'task_paused':
+    // K3 AV-2b is a work-Task reason; a gate never reports it, but the closed
+    // union must be handled.
+    case 'unknown_call_review':
       return 'a person decides';
   }
 }
@@ -328,21 +410,89 @@ function headFinalizedNonPass(row: TaskRow): boolean {
   const head = row.failure?.round;
   return head !== undefined && head !== null && head.status === 'finalized' && (head.outcome !== 'PASS' || head.gapCodes.length > 0);
 }
-function makePerform(base: Base, operation: WorkflowOperation): WorkflowAdvanceInput {
+/** K3 UR7 rework 1: copy a discriminated failed-card ref so a successor never aliases a caller's object. */
+function cloneFailedCardRef(card: FailedCardRefV1): FailedCardRefV1 {
+  return card.kind === 'unknown_call_review'
+    ? { kind: 'unknown_call_review', reviewRef: { ...card.reviewRef } }
+    : { kind: 'command_rerun_request', requestRef: { ...card.requestRef } };
+}
+/** K3 UR7 rework 1: copy the carried failed cards so a successor never aliases a caller's array. */
+function carriedFailedCardRefs(base: Base): FailedCardRefV1[] {
+  return base.failedCardRefs.map(cloneFailedCardRef);
+}
+function failedCardKey(card: FailedCardRefV1): string {
+  return canonicalJson(card as unknown as JsonValue);
+}
+function completeUcrRef(raw: unknown): UnknownCallReviewRef | null {
+  if (!isRecord(raw) || raw['aggregateType'] !== 'UnknownCallReview'
+    || !nonEmpty(raw['projectId']) || !nonEmpty(raw['goalId']) || !nonEmpty(raw['runId'])) return null;
+  return { aggregateType: 'UnknownCallReview', projectId: raw['projectId'] as string,
+    goalId: raw['goalId'] as string, runId: raw['runId'] as string };
+}
+function completeCrrRef(raw: unknown): CommandRerunRequestRef | null {
+  if (!isRecord(raw) || raw['aggregateType'] !== 'CommandRerunRequest'
+    || !nonEmpty(raw['projectId']) || !nonEmpty(raw['goalId'])
+    || !nonEmpty(raw['taskId']) || !nonEmpty(raw['requestId'])) return null;
+  return { aggregateType: 'CommandRerunRequest', projectId: raw['projectId'] as string,
+    goalId: raw['goalId'] as string, taskId: raw['taskId'] as string,
+    requestId: raw['requestId'] as string };
+}
+/** One discriminated failed-card ref from a decision-source kind and its raw ref, or null when incomplete. */
+function failedCardRefOf(kind: 'unknown_call_review' | 'command_rerun_request', raw: unknown): FailedCardRefV1 | null {
+  if (kind === 'unknown_call_review') {
+    const reviewRef = completeUcrRef(raw);
+    return reviewRef === null ? null : { kind: 'unknown_call_review', reviewRef };
+  }
+  const requestRef = completeCrrRef(raw);
+  return requestRef === null ? null : { kind: 'command_rerun_request', requestRef };
+}
+/** K3 UR7 rework 1: add one failure to the set, de-duplicated by the whole discriminated ref. */
+function addFailedCardRef(refs: FailedCardRefV1[], card: FailedCardRefV1): void {
+  const key = failedCardKey(card);
+  if (!refs.some(existing => failedCardKey(existing) === key)) refs.push(cloneFailedCardRef(card));
+}
+/**
+ * K3-46 rework 2 item 1: a `select_work` is always part of the continuous
+ * selection, and another `apply_review_disposition` is the only perform step
+ * that continues it. Every other successor drops the set (a fresh selection).
+ */
+function makePerform(base: Base, operation: WorkflowOperation): AdvanceNext {
   return { schemaVersion: 1, goalRef: base.goalRef, flowId: base.flowId, sessionHint: base.sessionHint, kind: 'perform', operation,
     // An explicit Task selection is preserved across every successor request.
-    ...(base.taskId === null ? {} : { taskId: base.taskId }) };
+    ...(base.taskId === null ? {} : { taskId: base.taskId }),
+    ...(operation.kind !== 'apply_review_disposition' || base.failedCardRefs.length === 0
+      ? {} : { failedCardRefs: carriedFailedCardRefs(base) }) };
 }
-/** Back to the read-only selection, keeping the flow, the Session hint and an explicit Task selection. */
-function selectWorkStep(base: Base): WorkflowAdvanceInput {
+/** Back to the read-only selection, keeping the flow, the Session hint, an explicit Task selection and the failed cards. */
+function selectWorkStep(base: Base): AdvanceNext {
   return { schemaVersion: 1, goalRef: base.goalRef, flowId: base.flowId, sessionHint: base.sessionHint, kind: 'select_work',
-    ...(base.taskId === null ? {} : { taskId: base.taskId }) };
+    ...(base.taskId === null ? {} : { taskId: base.taskId }),
+    ...(base.failedCardRefs.length === 0 ? {} : { failedCardRefs: carriedFailedCardRefs(base) }) };
+}
+/** K3 UR7 rework 1: the UCR and CRR card refs captured in one apply request's pins. */
+function failedCardRefsOfPins(pins: readonly VersionPin[]): FailedCardRefV1[] {
+  const refs: FailedCardRefV1[] = [];
+  for (const pin of pins) {
+    const ref = pin.ref as { aggregateType?: unknown } | null;
+    if (ref === null) continue;
+    const card = ref.aggregateType === 'UnknownCallReview'
+      ? failedCardRefOf('unknown_call_review', ref)
+      : ref.aggregateType === 'CommandRerunRequest' ? failedCardRefOf('command_rerun_request', ref) : null;
+    if (card !== null) addFailedCardRef(refs, card);
+  }
+  return refs;
+}
+/** K3 UR7 rework 1: merge one ② failure's refs into the continuous selection's set, de-duplicated canonically. */
+function mergeFailedCardRefs(base: Base, refs: readonly FailedCardRefV1[]): Base {
+  const merged = carriedFailedCardRefs(base);
+  for (const ref of refs) addFailedCardRef(merged, ref);
+  return { ...base, failedCardRefs: merged };
 }
 
 type WorkflowAdvanceValue = {
   state: 'advance' | 'waiting' | 'completed';
   receipt: WorkflowStepReceipt | null;
-  next: WorkflowAdvanceInput | null;
+  next: AdvanceNext | null;
   reason: string | null;
   /**
    * Slice 5 §4.5: an automatic refine/requeue/reverify step gated by the Goal's
@@ -350,15 +500,34 @@ type WorkflowAdvanceValue = {
    * field through the result type; no selection behaviour changes yet.
    */
   decisionCause?: GoalDecisionCauseReadV1 | null;
+  /** K3 UR6/ruling 6: the blocked review card's formal source on a `waiting` result. */
+  source?: DecisionSourceV1 | null;
 };
+/**
+ * K3 UR7 rework 1: the driver-only carried set never travels inside `next`; it
+ * is moved beside `next` exactly when the successor is part of the continuous
+ * selection and the set is non-empty. The internal failed-card expression is the
+ * only one; the old `failedReviewRefs` public field is not produced.
+ */
 function readyValue(value: WorkflowAdvanceValue): WorkflowAdvanceResult {
-  return { status: 'ready', value };
+  const next = value.next;
+  if (next === null) return { status: 'ready', value };
+  const { failedCardRefs, ...publicNext } = next;
+  const cards = failedCardRefs ?? [];
+  return { status: 'ready', value: {
+    ...value,
+    next: publicNext,
+    ...(cards.length === 0 ? {} : { failedCardRefs: cards.map(cloneFailedCardRef) }),
+  } };
 }
-function advancing(receipt: WorkflowStepReceipt | null, next: WorkflowAdvanceInput): WorkflowAdvanceResult {
-  return readyValue({ state: 'advance', receipt, next, reason: null });
+function advancing(receipt: WorkflowStepReceipt | null, next: AdvanceNext,
+  reason: string | null = null): WorkflowAdvanceResult {
+  return readyValue({ state: 'advance', receipt, next, reason });
 }
-function waiting(receipt: WorkflowStepReceipt | null, reason: string): WorkflowAdvanceResult {
-  return readyValue({ state: 'waiting', receipt, next: null, reason });
+function waiting(receipt: WorkflowStepReceipt | null, reason: string,
+  source?: DecisionSourceV1): WorkflowAdvanceResult {
+  return readyValue({ state: 'waiting', receipt, next: null, reason,
+    ...(source === undefined ? {} : { source }) });
 }
 function completed(receipt: WorkflowStepReceipt | null, reason: string): WorkflowAdvanceResult {
   return readyValue({ state: 'completed', receipt, next: null, reason });
@@ -512,9 +681,53 @@ function automationContext(owned: Owned): CoreCallContext {
     signal: owned.ctx.signal };
 }
 
-function baseFromInput(input: WorkflowAdvanceInput, owned: Owned): Base | { rejection: CoreRejection } {
+function failedCardRefsFromInternal(
+  internal: WorkflowAdvanceInternal | undefined, owned: Owned,
+): { failedCardRefs: FailedCardRefV1[] } | { rejection: CoreRejection } {
+  const refs: FailedCardRefV1[] = [];
+  if (internal === undefined) return { failedCardRefs: refs };
+  if (!isRecord(internal)) {
+    return { rejection: rejection('invalid', 'the internal advance input must be an object') };
+  }
+  const raw = (internal as unknown as Record<string, unknown>)['failedCardRefs'];
+  if (raw !== undefined) {
+    if (!Array.isArray(raw)) {
+      return { rejection: rejection('invalid', 'the internal failedCardRefs must be an array of discriminated card refs when present') };
+    }
+    for (const candidate of raw) {
+      if (!isRecord(candidate)) {
+        return { rejection: rejection('invalid', 'the internal failedCardRefs must hold discriminated card refs') };
+      }
+      const kind = candidate['kind'];
+      if (kind !== 'unknown_call_review' && kind !== 'command_rerun_request') {
+        return { rejection: rejection('invalid', 'an internal failed card ref must be unknown_call_review or command_rerun_request') };
+      }
+      const card = failedCardRefOf(kind, kind === 'unknown_call_review'
+        ? candidate['reviewRef'] : candidate['requestRef']);
+      if (card === null) {
+        return { rejection: rejection('invalid', `the internal failed ${kind} ref must be a complete card ref`) };
+      }
+      const projectId = card.kind === 'unknown_call_review' ? card.reviewRef.projectId : card.requestRef.projectId;
+      if (projectId !== owned.projectId) {
+        return { rejection: rejection('forbidden', 'a failed card ref is outside the bound project scope') };
+      }
+      addFailedCardRef(refs, card);
+    }
+  }
+  return { failedCardRefs: refs };
+}
+
+function baseFromInput(
+  input: WorkflowAdvanceInput, internal: WorkflowAdvanceInternal | undefined, owned: Owned,
+): Base | { rejection: CoreRejection } {
   const raw = input as unknown as Record<string, unknown>;
   if (raw['schemaVersion'] !== 1) return { rejection: rejection('invalid', 'advanceWork requires schemaVersion 1') };
+  for (const internalKey of ['failedReviewRefs', 'failedCardRefs']) {
+    if (Object.prototype.hasOwnProperty.call(raw, internalKey)) {
+      return { rejection: rejection('invalid',
+        `${internalKey} is internal to the Host driver and is not a public advance input`) };
+    }
+  }
   const goalRef = raw['goalRef'];
   if (!isRecord(goalRef) || goalRef['aggregateType'] !== 'Goal'
     || !nonEmpty(goalRef['projectId']) || !nonEmpty(goalRef['goalId'])) {
@@ -538,8 +751,10 @@ function baseFromInput(input: WorkflowAdvanceInput, owned: Owned): Base | { reje
   if (rawTaskId !== undefined && !nonEmpty(rawTaskId)) {
     return { rejection: rejection('invalid', 'taskId must be a non-empty string when present') };
   }
+  const internalRefs = failedCardRefsFromInternal(internal, owned);
+  if ('rejection' in internalRefs) return { rejection: internalRefs.rejection };
   return { goalRef: goalRef as unknown as GoalRef, flowId, sessionHint, actor: owned.actor,
-    taskId: rawTaskId === undefined ? null : rawTaskId };
+    taskId: rawTaskId === undefined ? null : rawTaskId, failedCardRefs: internalRefs.failedCardRefs };
 }
 
 /**
@@ -576,7 +791,7 @@ function initialPlanningBase(
     return { rejection: rejection('invalid', 'handleGoalInput requires an executeWithinRequest boolean') };
   }
   return { goalRef: goalRef as unknown as GoalRef, flowId, sessionHint, actor: owned.actor,
-    taskId: null, executeWithinRequest: raw['executeWithinRequest'] };
+    taskId: null, failedCardRefs: [], executeWithinRequest: raw['executeWithinRequest'] };
 }
 
 // --------------------------------------------------------------------------
@@ -840,6 +1055,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef,
     task: RuntimeTask, binding: Binding, sessionId: string, sessionRevision: number,
     reusedSession: boolean, consumedWait?: ConsumedWaitV1, requeue?: WorkflowSessionRequeue,
+    review?: WorkflowSessionReview,
   ): Promise<{ operation: WorkflowOperation } | { rejection: CoreRejection }> {
     const workspacePin = await loadWorkspacePin(owned, goal.workspaceRef);
     if ('rejection' in workspacePin) return workspacePin;
@@ -852,10 +1068,14 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     const input: ClaimTaskInput = {
       goalRef: base.goalRef, planRef, taskId: task.taskId, sessionRef,
       // TASK-03: a requeue that pins a budget is claimed with exactly that budget (§4.3: `budget ?? binding.budget`).
-      roleBinding: binding.roleBinding, budget: requeue?.budget ?? binding.budget,
+      roleBinding: binding.roleBinding, budget: review?.budget ?? requeue?.budget ?? binding.budget,
       ...(consumedWait === undefined ? {} : { consumedWait }),
       // TASK-03 (D-3): a requeued Task is claimed only with the TaskRequeue covering its selected Run.
       ...(requeue === undefined ? {} : { requeueRef: requeue.requeueRef }),
+      // K3 TASK-03r (L10): a review claim names the record, its read revision and the phase; the owner
+      // derives `afterRunRef` = the last holder and writes UCR-03 in the same commit.
+      ...(review === undefined ? {} : { review: { reviewRef: review.reviewRef,
+        expectedRevision: review.expectedRevision, phase: review.phase } }),
       // 2C item 10 (lead ruling): a claim in a REUSED Session also opens the
       // claimed Task's responsible link in the same commit (the create path
       // already wrote its `initialLinks`; the claim checks for an open link).
@@ -1046,12 +1266,15 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
    * Kernel Turn is still open (`kernel_turn_open`) gets a new Session through
    * `create_session{requeue}` (LA-1, A.2 step 5.6).
    */
-  async function claimRequeued(
+  async function claimContinuation(
     owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, task: RuntimeTask, row: TaskRow,
-    binding: Binding, requeueRef: TaskRequeueRef, afterRunRef: RunRef,
+    binding: Binding, afterRunRef: RunRef,
+    continuation: { requeue?: WorkflowSessionRequeue; review?: WorkflowSessionReview },
   ): Promise<WorkflowAdvanceResult | null> {
+    const requeue = continuation.requeue;
+    const review = continuation.review;
     const afterRun = await deps.executions.readExecution(owned.ctx, afterRunRef);
-    if (afterRun.status !== 'ready') return waiting(null, receiptReason(afterRun, 'the requeued Task afterRun is not readable'));
+    if (afterRun.status !== 'ready') return waiting(null, receiptReason(afterRun, 'the afterRun is not readable'));
     const workspaceId = goal.workspaceRef.workspaceId;
     const claimSession = await deps.sessions.readSession(owned.ctx, afterRun.value.outbox.claim.sessionRef);
     // E16 (§4.1 S:799, rule 7): the continuation of a requeued Task follows the
@@ -1061,7 +1284,6 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     // ordinary selection instead.
     const transferred = await responsibleSessionFor(owned, goal, binding, row.ref);
     const taskRef: TaskTriple = row.ref;
-    const requeue: WorkflowSessionRequeue = { requeueRef, budget: row.requeueBudget ?? null };
     let chosen: SessionChoice;
     if (transferred !== null) {
       chosen = { kind: 'reuse', card: transferred };
@@ -1081,12 +1303,13 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
         // Workflow first closes the dangling Turn (the Runtime answers `unsupported` when the Kernel cannot
         // close, and the definite-failure fallback below then applies); otherwise today's route stands: a NEW
         // linked Session (never another Task's), seeded by `prepare` from the TaskRequeue history source.
+        // K3 L12: a review continuation closes with `afterRunRef = lastHolderOf(record)` and `requeueRef: null`.
         const claimSessionRef: SessionRef = { projectId: record.ref.projectId, sessionId: record.ref.sessionId };
         if (turnClosureOf(deps.runtime) === undefined || await hasContinuationForTask(owned, claimSessionRef, taskRef)) {
           chosen = { kind: 'create' };
         } else {
           return advancing(null, makePerform(base, closeOpenTurnStep(
-            claimSessionRef, afterRunRef, requeueRef, taskRef, planRef, requeue)));
+            claimSessionRef, afterRunRef, requeue?.requeueRef ?? null, taskRef, planRef, continuation)));
         }
       } else if (record.occupancy !== null) {
         return null;
@@ -1110,20 +1333,190 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
         role: binding.sessionRole, recommendedRefs: [],
         initialLinks: [{ target: { kind: 'task', ref: taskRef }, relation: 'responsible' }],
         ...(provenance === null ? {} : { provenance }),
-      }, taskRef, planRef, requeue)));
+      }, taskRef, planRef, requeue, review)));
     }
     // E15 (W1-HO-04, §4.4.7, L17): a reused Session that continues exactly this
     // Task from a predecessor still open and unarchived re-derives the same
     // handover step from durable facts BEFORE the claim pin is computed. The
     // crash between `create_session` and its handover therefore recovers here,
     // and the (live, idle) predecessor can still be archived in one composition.
-    const recovered = await recoveryHandoverStep(owned, base, chosen.card, taskRef, planRef, requeue);
+    const recovered = await recoveryHandoverStep(owned, base, chosen.card, taskRef, planRef, requeue, review);
     if (recovered !== null) return advancing(null, makePerform(base, recovered));
     const sessionRef: SessionRef = { projectId: owned.projectId, sessionId: chosen.card.record.ref.sessionId };
     const built = await buildClaimOperation(owned, base, goal, planRef, task, binding,
-      sessionRef.sessionId, chosen.card.record.revision, true, undefined, requeue);
+      sessionRef.sessionId, chosen.card.record.revision, true, undefined, requeue, review);
     if ('rejection' in built) return built.rejection;
     return advancing(null, makePerform({ ...base, sessionHint: sessionRef }, built.operation));
+  }
+
+  /** K3 L12: the record's most recent holder for the continuation Session start. */
+  async function continuationHolder(owned: Owned, runRef: RunRef): Promise<RunRef> {
+    const port = deps.unknownCallReviews;
+    if (port === undefined) return runRef;
+    try {
+      const read = await port.readReview(owned.ctx, { runRef });
+      if (read.status !== 'ready') return runRef;
+      return lastHolderOf(read.value);
+    } catch { return runRef; }
+  }
+
+  /**
+   * K3 §3.4 UR table (U4, decision 72): the one finite result per Task,
+   * evaluated before `automaticRequeue`. The record read is fail-closed (UR0);
+   * the round's Run is read through the source authority and classified
+   * starting (UR3a) / in flight (UR3) / ended (UR4) / unknown (UR5). UR3h, UR6,
+   * UR7, UR7b and UR8 are group 4: a `held` record or a decided status falls
+   * through here and the owner guards still block the claim.
+   */
+  async function reviewGate(
+    owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot,
+    plan: PlanRevisionSnapshot, task: RuntimeTask, row: TaskRow,
+  ): Promise<ReviewGate> {
+    const port = deps.unknownCallReviews;
+    if (port === undefined || row.execution === null) return { kind: 'pass' };
+    let read;
+    try { read = await port.readReview(owned.ctx, { runRef: row.execution }); }
+    catch { return { kind: 'skip', source: 'review_unreadable' }; }
+    if (read.status === 'not_found') return { kind: 'pass' };
+    if (read.status !== 'ready') return { kind: 'skip', source: 'review_unreadable' };
+    const review = read.value;
+    // K3 UR7 rework 1: one card whose ② already failed in this continuous
+    // selection is never selected again; the discriminated set comes in as
+    // `advanceWork`'s internal third argument and goes out beside `next`.
+    if (base.failedCardRefs.some(card => card.kind === 'unknown_call_review'
+      && canonicalJson(card.reviewRef as unknown as JsonValue) === canonicalJson(review.ref as unknown as JsonValue))) {
+      return { kind: 'skip', source: 'review_application_failed' };
+    }
+    const active = review.activeRound;
+    if (active !== null) {
+      const runRead = await deps.sourceAuthority.load(active.runRef).catch(() => null);
+      const run = runRead !== null && runRead.status === 'found' && isRecord(runRead.snapshot)
+        && 'status' in runRead.snapshot ? runRead.snapshot as unknown as RunSnapshot : null;
+      if (run === null) return { kind: 'skip', source: 'review_round_unknown' };
+      const held = review.disposition?.hold === 'held';
+      // UR3h (L21, M1): a held record whose round was claimed but never entered
+      // (including paused before entry) is cancelled. UR8 is a later row, so a
+      // held record whose round ended still reaches UR4 and is settled.
+      if (held && isUnenteredReviewRoundForCancellation(run, active.runRef)) {
+        return { kind: 'review', step: cancelReviewRoundStep(base, run) };
+      }
+      // UR3a: claimed but never entered -> prepare with the SAME claim, then start.
+      // A `starting` Run that is NOT the one recoverable unadmitted execution
+      // (paused, entered, another phase) is already in flight and is skipped.
+      // A held round is never started; only its (unentered) cancel above applies.
+      if (run.status === 'starting') {
+        if (held) return { kind: 'skip', source: 'held' };
+        return await isUnadmittedStarting(owned, active.runRef)
+          ? { kind: 'review', step: { kind: 'prepare', request: prepareStep(base, active.runRef) } }
+          : { kind: 'skip', source: 'review_round_in_flight' };
+      }
+      // UR3: entered or running (including a person's safe-point pause).
+      if (run.status === 'running') return { kind: 'skip', source: 'review_round_in_flight' };
+      // UR5/UR4 (item C): one "known end" rule; an unknown outcome waits.
+      if (!reviewRoundEndedKnown(run)) return { kind: 'skip', source: 'review_round_unknown' };
+      // UR4: any known end (completed, crashed, failed, cancelled, budget, yielded).
+      return { kind: 'review', step: settleReviewStep(base, review, 'round_ended') };
+    }
+    // UR8 (L11): a `resolved`+held record is "I will handle it"; skip (AV-4c).
+    if (review.disposition?.hold === 'held') return { kind: 'skip', source: 'held' };
+    // UR7 (L19, L29 row 5): a card that is already answered applies its
+    // disposition first; only an unanswered card reaches today's UR6 skip.
+    // The current card's canonical source uses the record's CURRENT revision;
+    // the saved answer's own captured source/selection is authoritative, so ②
+    // replays by the answer-derived identity whatever an earlier answer said.
+    if (review.status === 'needs_decision' || review.status === 'awaiting_approval') {
+      const source: DecisionSourceV1 = {
+        kind: 'unknown_call_review',
+        key: decisionSourceKey({ kind: 'unknown_call_review', reviewRef: review.ref, revision: review.revision }),
+        goalRef: goal.ref,
+        pins: [{ ref: review.ref, revision: review.revision }],
+      };
+      let solved: { message: SessionMessage; body: UserDecisionBodyV1 } | null = null;
+      if (deps.decisionMessages !== undefined) {
+        try {
+          const read = await deps.decisionMessages.readDecisionAnswer(owned.ctx, { source });
+          if (read.status !== 'ready') return { kind: 'skip', source: 'review_unreadable' };
+          if (read.value.message !== null && read.value.body !== null
+            && read.value.body.selection.kind === 'option') {
+            solved = { message: read.value.message, body: read.value.body };
+          }
+        } catch {
+          return { kind: 'skip', source: 'review_unreadable' };
+        }
+      }
+      if (solved !== null) {
+        // L19's ② guard compares the caller's source pins/goalRef with the
+        // saved answer's CAPTURED source (record@revision, original Run, Goal
+        // content basis). The request therefore carries that captured source,
+        // not the minimal lookup source built above, or a real owner would
+        // refuse it `invalid`.
+        const response: unknown = solved.message.response;
+        const captured = isRecord(response) && isRecord(response['decision']) && isRecord(response['decision']['source'])
+          ? response['decision']['source'] as unknown as DecisionSourceV1 : source;
+        const expected = Array.isArray(captured.pins)
+          ? captured.pins as VersionPin[] : [{ ref: review.ref, revision: review.revision }];
+        return { kind: 'review', step: { kind: 'apply_review_disposition', request: graphWrite(base,
+          'apply_review_disposition',
+          { source: captured, selection: solved.body.selection, decisionMessageRef: solved.message.ref },
+          [...expected]) } };
+      }
+      // UR6 (L11): no answer yet — the card waits for the user; a named Task
+      // waits with the card's formal source.
+      return { kind: 'skip', source: review.status, decisionSource: source };
+    }
+    if (review.status !== 'pending_review' && review.status !== 'awaiting_proposal') return { kind: 'pass' };
+    // UR1/UR2: no active round, the record still awaits a round. R3: the
+    // capability takes the binding's Role, exactly as the round's prepare/start will.
+    // B2: the assignment/binding is looked up ONCE here; a missing binding never
+    // falls through to the ordinary selection and never settles `review_unavailable`
+    // (a missing model binding does not prove the read-only command unusable), so
+    // the named Task waits with `review_binding_missing` and the record stays.
+    const assignment = revisionAssignments(plan).find((candidate) => candidate.taskId === task.taskId);
+    const binding = assignment === undefined ? null
+      : bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
+    if (binding === null) return { kind: 'skip', source: 'review_binding_missing' };
+    const capability = deps.runtime.reviewCapability;
+    let available = false;
+    if (capability !== undefined) {
+      try {
+        available = (await capability.call(deps.runtime, owned.ctx, {
+          workspace: { projectId: owned.projectId, workspaceId: goal.workspaceRef.workspaceId },
+          role: binding.sessionRole,
+        })).status === 'available';
+      } catch { available = false; }
+    }
+    if (!available) return { kind: 'review', step: settleReviewStep(base, review, 'review_unavailable') };
+    return await planReviewRound(owned, base, goal, plan, task, row, review, binding);
+  }
+
+  /**
+   * K3 §3.4 UR1 (L12/L13): open the round in the record's last holder's Session
+   * (close a dangling Turn / create the continuation Session / claim), with
+   * `afterRunRef = lastHolderOf(record)` and the review budget. B2: the caller
+   * looked the binding up once and passes it in; this function has no missing
+   * binding branch.
+   */
+  async function planReviewRound(
+    owned: Owned, base: Base, goal: GoalSnapshot,
+    plan: PlanRevisionSnapshot, task: RuntimeTask, row: TaskRow, review: UnknownCallReviewV1,
+    binding: Binding,
+  ): Promise<ReviewGate> {
+    const afterRunRef = lastHolderOf(review);
+    // L13: the review round takes the binding's model; the token budget is the
+    // smaller of the binding's and 200,000; the deadline is the binding's.
+    const budget: TaskBudgetV1 = { ...binding.budget, tokenBudget: Math.min(binding.budget.tokenBudget, 200_000) };
+    const sessionReview: WorkflowSessionReview = {
+      reviewRef: review.ref, expectedRevision: review.revision,
+      phase: review.status === 'awaiting_proposal' ? 'proposal' : 'review', afterRunRef, budget,
+    };
+    const claimed = await claimContinuation(owned, base, goal, plan.ref, task, row, binding, afterRunRef,
+      { review: sessionReview });
+    if (claimed === null) return { kind: 'skip', source: 'review_session_busy' };
+    if (claimed.status !== 'ready') return { kind: 'rejection', rejection: claimed };
+    if (claimed.value.state !== 'advance' || claimed.value.next === null || claimed.value.next.kind !== 'perform') {
+      return { kind: 'waiting', reason: claimed.value.reason ?? 'the review continuation selected no step' };
+    }
+    return { kind: 'review', step: claimed.value.next.operation };
   }
 
   /**
@@ -1218,6 +1611,9 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     if (automationConfirmationCause({
       autonomy: settings.autonomy, action, countedNext, cap: failure.automation.cap,
       goalRef: goal.ref, taskId: row.ref.taskId, runRef: null, runRevision: null,
+      // K3 L22: a review answer already confirmed this system requeue; the
+      // probe and the final derivation must agree.
+      requeueConfirmedByReview: failure.unknownCallReview?.requeueConfirmed ?? false,
     }) === null) return null;
     // §3.3 line 629 / defect-1: a Run is a STORED aggregate, so its pin must be
     // its formal revision, never a fabricated 0 (the §3.3 pin check would then
@@ -1249,6 +1645,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     const cause = automationConfirmationCause({
       autonomy: settings.autonomy, action, countedNext, cap: failure.automation.cap,
       goalRef: goal.ref, taskId: row.ref.taskId, runRef: failure.runRef, runRevision,
+      requeueConfirmedByReview: failure.unknownCallReview?.requeueConfirmed ?? false,
     });
     if (cause === null) return null;
     const goalPin: VersionPin = { ref: goal.ref, revision: goal.revision };
@@ -1298,6 +1695,25 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
       ? candidate.ref.taskId === operation.request.input.taskRef.taskId
       : sameCanonical(candidate.failure?.round?.roundRef, operation.request.input.predecessorRoundRef));
     if (row === undefined) return null;
+    // K3 L11/§3.4 `gatePerform`: a `requeue_task` on a Task whose selected Run
+    // has a record that is not `resolved` waits and writes nothing; an
+    // unreadable record is fail-closed (a `not_found` record passes).
+    if (operation.kind === 'requeue_task' && row.execution !== null && deps.unknownCallReviews !== undefined) {
+      let read;
+      try { read = await deps.unknownCallReviews.readReview(owned.ctx, { runRef: row.execution }); }
+      catch { return waiting(null, 'unknown_call_review_unreadable: the review record read failed; the requeue writes nothing'); }
+      if (read.status === 'ready') {
+        const record = read.value;
+        if ((record.disposition?.hold ?? null) === 'held') {
+          return waiting(null, 'unknown_call_review_held: the selected Run\'s review record blocks this requeue');
+        }
+        if (record.status !== 'resolved') {
+          return waiting(null, 'unknown_call_review_pending: the selected Run\'s review record blocks this requeue');
+        }
+      } else if (read.status !== 'not_found') {
+        return waiting(null, 'unknown_call_review_unreadable: the selected Run\'s review record blocks this requeue');
+      }
+    }
     return await automationConfirmation(base, goalRead.value.goal, row, operation);
   }
 
@@ -1356,6 +1772,20 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
       // is claimed below; `stopped` skips only this Task's rework (requeue, reverify, a claim
       // by requeueRef), so a completed Run's round still opens, runs, finalizes and completes
       // (AV-4, STEP5-FLIPS §14), except on an invalid chain (`round_ambiguous`, skipped below).
+      // K3 §3.4 (U4): every Task first consults its selected Run's review record,
+      // before any automatic requeue/reverify. `skip` stops only this Task (a
+      // named Task waits with the blocking source); `review` performs its one step.
+      const gate = await reviewGate(owned, base, config, goal, graph.plan, task, row);
+      if (gate.kind === 'waiting') return waiting(null, gate.reason);
+      if (gate.kind === 'rejection') return gate.rejection;
+      if (gate.kind === 'review') return advancing(null, makePerform(base, gate.step));
+      if (gate.kind === 'skip') {
+        if (base.taskId !== null) {
+          return waiting(null, `unknown_call_review_${gate.source}: the selected Run's review record blocks this Task`,
+            gate.decisionSource);
+        }
+        continue;
+      }
       const rework = automaticRequeue(config, owned, base, goal, graph.plan, task, row) ?? automaticReverify(base, row);
       if (rework !== null) {
         // §4.5: the Goal's current settings decide before any automatic rework;
@@ -1377,7 +1807,11 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
           return rejection('unsupported',
             `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`);
         }
-        const claimed = await claimRequeued(owned, base, goal, graph.plan.ref, task, row, binding, row.requeueRef, row.execution);
+        // K3 L12: the continuation Session and the close start from the record's
+        // most recent holder (the original Run when it has no rounds).
+        const holder = await continuationHolder(owned, row.execution);
+        const claimed = await claimContinuation(owned, base, goal, graph.plan.ref, task, row, binding, holder,
+          { requeue: { requeueRef: row.requeueRef, budget: row.requeueBudget ?? null } });
         if (claimed === null) continue;
         return claimed;
       }
@@ -1494,6 +1928,41 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     return waiting(null, describeGap(ordered, graph));
   }
 
+  /**
+   * K3-46 (rework-2 item 1): a ② that did not succeed keeps the apply receipt
+   * and the FIRST failure text, and an ordinary advance continues choosing the
+   * other work in the same advance. The card's review ref is merged into the
+   * selection's carried set: it comes in as `advanceWork`'s internal third
+   * argument and goes out beside `next`, so the Host's continuous drive never
+   * alternates back to a failed card. If
+   * nothing else is selectable, the selection's own state still governs (its
+   * next/receipt shape is kept). A designated advance never calls this: it
+   * answers `waiting` directly.
+   */
+  async function continueAfterFailedReview(
+    owned: Owned, base: Base, receipt: WorkflowStepReceipt | null, failure: string,
+    failedRefs: readonly FailedCardRefV1[],
+  ): Promise<WorkflowAdvanceResult> {
+    const nextBase = mergeFailedCardRefs(base, failedRefs);
+    const selection = await selectNext(owned, nextBase);
+    if (selection.status !== 'ready') return selection;
+    // The selection is a ready result whose carried set already sits BESIDE its
+    // next; put it back into the internal next shape so the re-wrapped result
+    // keeps the same lifetime instead of dropping it.
+    const selectionValue = { ...selection.value };
+    const carried = selectionValue.failedCardRefs;
+    const internalValue = selectionValue as { failedCardRefs?: unknown };
+    delete internalValue.failedCardRefs;
+    const selectedNext = selectionValue.next;
+    return readyValue({
+      ...selectionValue,
+      next: selectedNext === null ? null : { ...selectedNext,
+        ...(carried === undefined || carried.length === 0
+          ? {} : { failedCardRefs: carried.map(cloneFailedCardRef) }) },
+      receipt, reason: failure,
+    });
+  }
+
   // --------------------------------------------------------------------------
   // E15 (wiring 1 §4.4): the ordinary-continuation handover
   // --------------------------------------------------------------------------
@@ -1505,6 +1974,8 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     successor: SessionRef;
     planRef: PlanRevisionRef;
     requeue?: WorkflowSessionRequeue;
+    /** K3 L12: the review round the successor claims after the handover. */
+    review?: WorkflowSessionReview;
   };
   type HandoverOperation = Extract<WorkflowOperation,
     { kind: 'transfer_responsibility' | 'archive_predecessor' }>;
@@ -1590,7 +2061,8 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     const input = { from: continuation.predecessor, to: successorRef, target: { kind: 'task' as const, ref: continuation.task } };
     return { kind: 'transfer_responsibility', request: automaticGraphWrite(base, 'transfer_responsibility', input, expected),
       taskRef: continuation.task, planRef: continuation.planRef, successor: successorRef,
-      ...(continuation.requeue === undefined ? {} : { requeue: continuation.requeue }) };
+      ...(continuation.requeue === undefined ? {} : { requeue: continuation.requeue }),
+      ...(continuation.review === undefined ? {} : { review: continuation.review }) };
   }
 
   /**
@@ -1618,7 +2090,8 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
       const expected: VersionPin[] = [{ ref: record.ref, revision: record.revision }];
       return { kind: 'archive_predecessor', request: automaticGraphWrite(base, 'archive_predecessor', input, expected),
         taskRef: continuation.task, planRef: continuation.planRef, successor: continuation.successor,
-        ...(continuation.requeue === undefined ? {} : { requeue: continuation.requeue }) };
+        ...(continuation.requeue === undefined ? {} : { requeue: continuation.requeue }),
+        ...(continuation.review === undefined ? {} : { review: continuation.review }) };
     }
     return await transferStepFor(owned, base, continuation);
   }
@@ -1629,14 +2102,17 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
    * this Task from a predecessor that is still open and unarchived.
    */
   async function recoveryHandoverStep(owned: Owned, base: Base, card: SessionCard, task: TaskTriple,
-    planRef: PlanRevisionRef, requeue: WorkflowSessionRequeue): Promise<HandoverOperation | null> {
+    planRef: PlanRevisionRef, requeue: WorkflowSessionRequeue | undefined,
+    review?: WorkflowSessionReview): Promise<HandoverOperation | null> {
     const provenance = card.record.provenance;
     if (provenance === undefined || provenance === null || provenance.kind !== 'continuation') return null;
     if (!sameCanonical(provenance.task, task)) return null;
     return await buildHandoverStep(owned, base, {
       predecessor: provenance.from, task,
       successor: { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId },
-      planRef, requeue,
+      planRef,
+      ...(requeue === undefined ? {} : { requeue }),
+      ...(review === undefined ? {} : { review }),
     });
   }
 
@@ -1670,7 +2146,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
       return waiting(receipt, receiptReason(card, 'the handover successor Session is not readable'));
     }
     const built = await buildClaimOperation(owned, base, goal, graphRead.value.plan.ref, task, binding,
-      operation.successor.sessionId, card.value.record.revision, false, undefined, operation.requeue);
+      operation.successor.sessionId, card.value.record.revision, false, undefined, operation.requeue, operation.review);
     if ('rejection' in built) return waiting(receipt, built.rejection.reason);
     const nextBase: Base = { ...base, sessionHint: operation.successor };
     return advancing(receipt, makePerform(nextBase, built.operation));
@@ -1716,7 +2192,98 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
       role: binding.sessionRole, recommendedRefs: [],
       initialLinks: [{ target: { kind: 'task', ref: operation.taskRef }, relation: 'responsible' }],
       ...(provenance === null ? {} : { provenance }),
-    }, operation.taskRef, operation.planRef, operation.requeue)));
+    }, operation.taskRef, operation.planRef, operation.requeue, operation.review)));
+  }
+
+  /**
+   * K3 L10 / item A: the ONE next step after a review-purpose Run's `start` or
+   * `observe`. A review Run NEVER opens a check round and never takes
+   * `afterNotNormalEnd`. On ANY known end (item C's predicate) it reads the
+   * record and builds the pinned `settle_review`; while the Run has not ended
+   * or its outcome is `outcome_unknown`, it waits with the normal-end reason.
+   * A failed record read also waits for the next advance.
+   */
+  async function settleReviewAfterRun(
+    owned: Owned, base: Base, receipt: WorkflowStepReceipt, run: RunSnapshot,
+  ): Promise<WorkflowAdvanceResult> {
+    if (!reviewRoundEndedKnown(run)) {
+      const ended = normalEnd(run);
+      return waiting(receipt, ended.ok ? `the Run ${run.ref.runId} ended without a known result` : ended.reason);
+    }
+    const purpose = run.purpose;
+    if (purpose === undefined || purpose.kind !== 'unknown_call_review') {
+      return waiting(receipt, 'the review-purpose Run has no review record reference');
+    }
+    const port = deps.unknownCallReviews;
+    if (port === undefined) return waiting(receipt, 'the review record reader is not wired');
+    let read;
+    try { read = await port.readReview(owned.ctx, { ref: purpose.reviewRef }); }
+    catch { return waiting(receipt, 'the review record is not readable'); }
+    if (read.status !== 'ready') return waiting(receipt, receiptReason(read, 'the review record is not readable'));
+    return advancing(receipt, makePerform(base, settleReviewStep(base, read.value, 'round_ended')));
+  }
+
+  /**
+   * K3 L19/UR7/UR7b (rework 1 item 2): the shared reading of one
+   * `advanceReviewDisposition` outcome. It judges ② by its RESULT, never by
+   * the coordinator's `application_not_recorded` state string: a committed ②
+   * (new or replayed) applied the disposition, and a `revision_conflict` did
+   * only when its `current` proves the review record moved to a revision other
+   * than the answered card's. `state === 'applied'` stays applied. Everything
+   * else waits with `dispositionFailure`, so the Workflow never busy-loops on a
+   * refused ②.
+   */
+  type DispositionValue = {
+    state: string;
+    action: { status: string; code?: string; reason?: string; current?: VersionPin[] } | null;
+    application: { status: string; code?: string; reason?: string } | null;
+  };
+  /** The answered card's revision is the review pin the answer captured. */
+  function answeredReviewPin(expected: readonly VersionPin[]): VersionPin | null {
+    for (const pin of expected) {
+      const ref = pin.ref as { aggregateType?: unknown };
+      if (ref.aggregateType === 'UnknownCallReview') return pin;
+    }
+    return null;
+  }
+  /** True only for the record-really-moved `revision_conflict` (T02 carries no record `current`). */
+  function revisionConflictMovedRecord(value: DispositionValue, expected: readonly VersionPin[]): boolean {
+    const action = value.action;
+    if (action === null || action.status !== 'rejected' || action.code !== 'revision_conflict') return false;
+    const answered = answeredReviewPin(expected);
+    if (answered === null || !Array.isArray(action.current)) return false;
+    const moved = action.current.find(pin => sameCanonical(pin.ref, answered.ref));
+    return moved !== undefined && moved.revision !== answered.revision;
+  }
+  function dispositionApplied(value: DispositionValue, expected: readonly VersionPin[]): boolean {
+    if (value.state === 'applied') return true;
+    if (value.action !== null && value.action.status === 'committed') return true;
+    return revisionConflictMovedRecord(value, expected);
+  }
+  function dispositionFailure(value: DispositionValue, expected: readonly VersionPin[]): string {
+    if (value.action !== null && value.action.status === 'rejected') {
+      // K3-46: ONLY the owner's T02 refusal (its own exported reason) is the
+      // Goal-content sentence. A moved record and every other
+      // `revision_conflict` (e.g. a concurrently paused Goal) report the real
+      // rejection so the next advance re-reads and acts on it.
+      if (value.action.code === 'revision_conflict'
+        && value.action.reason === UNKNOWN_CALL_REVIEW_T02_REASON
+        && !revisionConflictMovedRecord(value, expected)) {
+        return '目标的内容变了，这个答复不能落实';
+      }
+      return `${value.action.code ?? 'rejected'}: ${value.action.reason ?? 'the disposition action was refused'}`;
+    }
+    if (value.application !== null && value.application.status === 'rejected') {
+      return `${value.application.code ?? 'rejected'}: ${value.application.reason ?? 'the application record was refused'}`;
+    }
+    return `${value.state}: the review disposition was not applied`;
+  }
+  /** A non-ready `ReadResult` as the one visible `code: reason` text. */
+  function dispositionReadFailure(result: { status: string; code?: unknown; reason?: unknown }): string {
+    const code = typeof result.code === 'string' && result.code.length > 0 ? result.code : result.status;
+    const reason = typeof result.reason === 'string' && result.reason.length > 0
+      ? result.reason : 'the review disposition was not ready';
+    return `${code}: ${reason}`;
   }
 
   async function performStep(owned: Owned, base: Base, operation: WorkflowOperation): Promise<WorkflowAdvanceResult> {
@@ -1806,6 +2373,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
             successor: { projectId: owned.projectId, sessionId: session.ref.sessionId },
             planRef: graphRead.value.plan.ref,
             ...(operation.requeue === undefined ? {} : { requeue: operation.requeue }),
+            ...(operation.review === undefined ? {} : { review: operation.review }),
           });
           if (handover !== null) return advancing(receipt, makePerform(base, handover));
         }
@@ -1824,7 +2392,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
           if (card.status === 'ready') claimRevision = card.value.record.revision;
         }
         const built = await buildClaimOperation(owned, base, goal, graphRead.value.plan.ref, task, binding,
-          session.ref.sessionId, claimRevision, false, undefined, operation.requeue);
+          session.ref.sessionId, claimRevision, false, undefined, operation.requeue, operation.review);
         if ('rejection' in built) return waiting(receipt, built.rejection.reason);
         const nextBase: Base = { ...base, sessionHint: { projectId: owned.projectId, sessionId: session.ref.sessionId } };
         return advancing(receipt, makePerform(nextBase, built.operation));
@@ -1863,6 +2431,11 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
             { kind: 'prepare', request: prepareStep(base, operation.request.prepared.claim.runRef) }));
         }
         if (result.status !== 'ready') return waiting(receipt, receiptReason(result, 'the Run did not return a formal record'));
+        // K3 L10: a review-purpose Run NEVER opens a check round and never takes
+        // `afterNotNormalEnd`; any known end settles the record instead.
+        if (result.value.run.purpose?.kind === 'unknown_call_review') {
+          return await settleReviewAfterRun(owned, base, receipt, result.value.run);
+        }
         const ended = normalEnd(result.value.run);
         if (!ended.ok) return afterNotNormalEnd(receipt, result.value.run, ended.reason, base);
         return await openChecksAfterRun(receipt, result.value.run);
@@ -1871,6 +2444,9 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
         const result = await deps.runtime.observeRun(owned.ctx, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'observe', result };
         if (result.status !== 'ready') return waiting(receipt, receiptReason(result, 'the Run observation did not return a formal record'));
+        if (result.value.run.purpose?.kind === 'unknown_call_review') {
+          return await settleReviewAfterRun(owned, base, receipt, result.value.run);
+        }
         const ended = normalEnd(result.value.run);
         if (!ended.ok) return afterNotNormalEnd(receipt, result.value.run, ended.reason, base);
         return await openChecksAfterRun(receipt, result.value.run);
@@ -1959,6 +2535,57 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
         if (result.status === 'committed' || result.code === 'revision_conflict') return advancing(receipt, selectWorkStep(base));
         return waiting(receipt, `${result.code}: ${result.reason}`);
       }
+      case 'settle_review': {
+        const owner = deps.unknownCallReviews;
+        if (owner === undefined) return rejection('unsupported', 'the UnknownCallReview owner is not installed');
+        // K3 L16: performed as the Host principal (the owner refuses anything else).
+        const result = await owner.settleReview(owned.ctx, operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'settle_review', result };
+        // A commit (settled or the unfinished-round UCR-06) and the record revision
+        // having moved both go back to the selection; every other refusal waits.
+        if (result.status === 'committed' || result.code === 'revision_conflict') {
+          return advancing(receipt, selectWorkStep(base));
+        }
+        return waiting(receipt, `${result.code}: ${result.reason}`);
+      }
+      case 'cancel_review_round': {
+        const controls = deps.controls;
+        if (controls === undefined) return rejection('unsupported', 'the control owner is not installed');
+        // K3 §3.4 UR3h: submitted as the Workflow automation actor, pinned to the
+        // Run revision read. A conflict returns to the selection, where the
+        // current facts decide (never a second write here).
+        const result = await controls.submitControl(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'cancel_review_round', result };
+        if (result.status === 'committed' || result.code === 'revision_conflict') {
+          return advancing(receipt, selectWorkStep(base));
+        }
+        return waiting(receipt, `${result.code}: ${result.reason}`);
+      }
+      case 'apply_review_disposition': {
+        // K3 L19/UR7/UR7b: ② runs as the Workflow automation actor (the answer
+        // derives its identity, so a replay writes nothing new); ③ is booked
+        // under the Host operator the slice-5 guard admits, so "person first,
+        // Workflow second" and "Workflow first, person second" agree (K3-17).
+        if (decisionActions === null) {
+          return rejection('unsupported', 'the Workflow has no decision coordinator dependencies');
+        }
+        const result = await decisionActions.advanceReviewDisposition(
+          automationContext(owned), operation.request, { applicationCtx: owned.ctx });
+        const receipt: WorkflowStepReceipt = { kind: 'apply_review_disposition', result };
+        // A committed ② (new or replayed) returns to the normal selection even
+        // when ③ lagged (UR7b repairs it); a record that really moved does too.
+        // K3-46: a ② that did NOT succeed keeps its receipt and the first
+        // failure text. On an ordinary advance the selection continues in THIS
+        // advance (the failed card excluded) instead of ending it; on a
+        // designated advance it still answers `waiting` with that reason.
+        const expected = operation.request.meta.expected;
+        const failure = result.status !== 'ready'
+          ? dispositionReadFailure(result)
+          : dispositionApplied(result.value, expected) ? null : dispositionFailure(result.value, expected);
+        if (failure === null) return advancing(receipt, selectWorkStep(base));
+        if (base.taskId !== null) return waiting(receipt, failure);
+        return await continueAfterFailedReview(owned, base, receipt, failure, failedCardRefsOfPins(expected));
+      }
       case 'transfer_responsibility': {
         const responsibilities = deps.responsibilities;
         if (responsibilities === undefined) {
@@ -2035,14 +2662,154 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
       ? { ...result, value: { ...result.value, maintenanceFailures: failures } }
       : result;
 
-  const advanceWork = async (ctx: CoreCallContext, input: WorkflowAdvanceInput): Promise<WorkflowAdvanceResult> => {
+  /**
+   * K3 L28 step 6b (c) kind 4 / §3.4 UR7b (M2): replay ② and do ③ for every
+   * answer the start-up reconcile hands over, each by its own `reviewRef`,
+   * independent of the selected Run, the Task's eligibility and the record's
+   * `open`. It only repairs the bookkeeping: it never releases `hold` and never
+   * fabricates a continuation (the next selection is the ordinary one).
+   *
+   * Rework 1 item 2: a committed ② advances even when its ③ lagged (L29 row
+   * 5b); the FIRST failure text is kept and reported on the advance's `reason`,
+   * never overwritten by a later receipt. K3-46 (rework 2): a ② that did not
+   * succeed no longer ends an ordinary advance either — its review ref is
+   * excluded and the ordinary selection continues in the same advance (the
+   * designated advance still answers `waiting`). One hard-failed answer wins
+   * over another's ③-only failure.
+   */
+  async function applyHandedOverAnswers(
+    owned: Owned, base: Base, answers: NonNullable<WorkflowAdvanceInput['answers']>,
+  ): Promise<WorkflowAdvanceResult | null> {
+    if (answers.length === 0) return null;
+    if (decisionActions === null || deps.messages === undefined) {
+      return waiting(null,
+        'unsupported: the Workflow has no decision coordinator or mailbox for the handed-over review answers');
+    }
+    let receipt: WorkflowStepReceipt | null = null;
+    let failure: string | null = null;
+    let hardFailure = false;
+    /** K3 UR7 rework 1: at least one handed-over answer's ② ran and did not succeed (either kind). */
+    let cardFailure = false;
+    const failedCards: FailedCardRefV1[] = [];
+    for (const handed of answers) {
+      if (!isRecord(handed) || !isRecord(handed.answerMessageRef)) {
+        hardFailure = true;
+        if (failure === null) failure = 'invalid: a handed-over answer has no answer message ref';
+        continue;
+      }
+      let read: Awaited<ReturnType<NonNullable<WorkflowDependencies['messages']>['readMessage']>> | null;
+      try { read = await deps.messages.readMessage(owned.ctx, handed.answerMessageRef); }
+      catch { read = null; }
+      if (read === null || read.status !== 'ready') {
+        hardFailure = true;
+        if (failure === null) failure = 'unavailable: the handed-over answer message is not readable';
+        continue;
+      }
+      const message = read.value;
+      const response: unknown = message.response;
+      if (!isRecord(response) || !isRecord(response['decision'])) {
+        hardFailure = true;
+        if (failure === null) failure = 'invalid: the handed-over answer message carries no decision response';
+        continue;
+      }
+      const decision = response['decision'] as Record<string, unknown>;
+      const source = decision['source'];
+      const selection = decision['selection'];
+      // B1 applies the review card kind; B3 adds the command-request kind through
+      // the SAME advance (K3 ruling 4/answer 7). The handed ref decides the kind.
+      if (!isRecord(source) || !isRecord(selection) || selection['kind'] !== 'option') continue;
+      const kind = source['kind'];
+      if (kind !== 'unknown_call_review' && kind !== 'command_rerun_request') continue;
+      const handedRaw = handed as unknown as Record<string, unknown>;
+      const cardRef = kind === 'unknown_call_review' ? handedRaw['reviewRef'] : handedRaw['requestRef'];
+      if (cardRef === undefined) {
+        hardFailure = true;
+        if (failure === null) failure = 'invalid: a handed-over answer has no card ref of its source kind';
+        continue;
+      }
+      const card = failedCardRefOf(kind, cardRef);
+      if (card === null) {
+        hardFailure = true;
+        if (failure === null) failure = `invalid: a handed-over ${kind} answer has an incomplete card ref`;
+        continue;
+      }
+      // K3 UR7 rework 1: the ordinary advance skips a card already failed in
+      // this continuous selection, for BOTH kinds. It is never applied twice.
+      if (base.failedCardRefs.some(existing => failedCardKey(existing) === failedCardKey(card))
+        || failedCards.some(existing => failedCardKey(existing) === failedCardKey(card))) continue;
+      const expected = Array.isArray(source['pins']) ? source['pins'] as VersionPin[] : [];
+      // The identity is derived from the answer alone, so a crash re-drive sends
+      // the same request and ② replays its answer-derived receipt.
+      const requestId = 'wf-auto:card-application:' + sha256Hex(canonicalJson({
+        schemaVersion: 1, kind: 'apply_review_disposition',
+        sourceKind: kind, cardRef, decisionMessageRef: message.ref,
+      } as unknown as JsonValue));
+      // ③'s S5 guard admits the answer's actual modifier or the trusted
+      // configured operator; the start-up advance runs as that operator. Using
+      // the automation identity here would replay ② and then be refused
+      // `forbidden` when the earlier ② was committed by the user's answer.
+      const result = await decisionActions.advanceReviewDisposition(owned.ctx, {
+        input: { source: source as unknown as DecisionSourceV1,
+          selection: selection as unknown as DecisionSelectionV1,
+          decisionMessageRef: message.ref },
+        meta: { requestId, expected: structuredClone(expected) },
+      });
+      receipt = { kind: 'apply_review_disposition', result };
+      if (result.status !== 'ready') {
+        hardFailure = true;
+        cardFailure = true;
+        addFailedCardRef(failedCards, card);
+        if (failure === null) failure = dispositionReadFailure(result);
+        continue;
+      }
+      if (!dispositionApplied(result.value, expected)) {
+        hardFailure = true;
+        cardFailure = true;
+        addFailedCardRef(failedCards, card);
+        if (failure === null) failure = dispositionFailure(result.value, expected);
+        continue;
+      }
+      // ② committed: a lagging ③ is visible but never holds up the ordinary next
+      // selection (L29 row 5b), and the first failure text is the one reported.
+      const committed = result.value.action !== null && result.value.action.status === 'committed';
+      const recorded = result.value.application !== null
+        && result.value.application.status === 'committed';
+      if (committed && !recorded && failure === null) {
+        failure = dispositionFailure(result.value, expected);
+      }
+    }
+    // K3 UR7 rework 1: a designated advance still waits on a refused ② of
+    // EITHER kind (no busy loop and no fabricated continuation); an ordinary
+    // one keeps its first failure text and continues the ordinary selection
+    // with ALL failed cards excluded. An unreadable/invalid handed-over answer
+    // (no ② ran) keeps the old wait. A committed ② advances with its first
+    // failure as the visible reason.
+    if (hardFailure) {
+      const firstFailure = failure ?? 'invalid: the handed-over answer did not apply';
+      if (base.taskId !== null || !cardFailure) return waiting(receipt, firstFailure);
+      return await continueAfterFailedReview(owned, base, receipt, firstFailure, failedCards);
+    }
+    return advancing(receipt, selectWorkStep(base), failure);
+  }
+
+  const advanceWork = async (ctx: CoreCallContext, input: WorkflowAdvanceInput,
+    internal?: WorkflowAdvanceInternal): Promise<WorkflowAdvanceResult> => {
     let isolated: WorkflowAdvanceInput;
-    try { isolated = structuredClone(input); }
-    catch { return rejection('invalid', 'the advancement input cannot be isolated from the caller'); }
+    let isolatedInternal: WorkflowAdvanceInternal | undefined;
+    try {
+      isolated = structuredClone(input);
+      isolatedInternal = internal === undefined ? undefined : structuredClone(internal);
+    } catch { return rejection('invalid', 'the advancement input cannot be isolated from the caller'); }
     const owned = ownContext(ctx);
     if ('rejection' in owned) return owned.rejection;
-    const base = baseFromInput(isolated, owned);
+    const base = baseFromInput(isolated, isolatedInternal, owned);
     if ('rejection' in base) return base.rejection;
+    // K3 UR7b: the start-up hand-over is driven FIRST, before the ordinary
+    // selection, and never consults the selected Run or the record's `open`.
+    if (isolated.answers !== undefined) {
+      const handedOver = await applyHandedOverAnswers(owned, base, isolated.answers);
+      if (handedOver !== null) return handedOver;
+    }
     if (isolated.kind === 'select_work') {
       const maintenanceFailures = await runMaintenancePage(owned);
       return withMaintenance(await selectNext(owned, base), maintenanceFailures);

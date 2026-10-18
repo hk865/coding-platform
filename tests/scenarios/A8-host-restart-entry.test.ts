@@ -234,6 +234,10 @@ it('A8-2b, L-2, L-1 (W-06, W-15, RUN-20(ii), RUN-22, ATT-36, ATT-37, ATT-29): an
   const attested = await post(h.host, 'executions/resolve-unknown', graphWrite(AG2B_SCOPE,
     { runRef: run2Ref, reason: 'the Run never reached the Kernel' }, 'a8-2b-attest', pin));
   expect(attested).toMatchObject({ status: 'committed', replayed: false });
+  // K3 §5.3: the attestation creates the review record; this Run went RUN-20(ii), so it is incomplete at stop.
+  expect(await answer(h.host, 'unknown-call-reviews/read', plain(AG2B_SCOPE, { runRef: run2Ref })))
+    .toMatchObject({ status: 'ready', value: { inventory: 'incomplete', inventoryProblem: 'kernel_unreadable_at_stop',
+      status: 'needs_decision' } });
   await assertInvariants(h, 'a8-2b attested', stepOf(h, 'other', 'a8-2b attested'));
   const ended = await execution(h, run2Ref);
   expect(ended.run).toMatchObject({ status: 'ended', outcome: 'crashed', startedAt: null,
@@ -289,6 +293,10 @@ it('A8-2b, SES-07, SES-19, H-01 (W-06, RUN-22, LA-1): attested while the Kernel 
     { runRef: run2Ref, reason: 'the Kernel store was lost with the Host' }, 'a8-2b-missing-attest',
     [{ ref: run2Ref, revision: unknown.run.revision }]));
   expect(attested).toMatchObject({ status: 'committed', replayed: false });
+  // K3 §5.3: the Kernel is unreadable now, so the record is incomplete `kernel_unreadable`.
+  expect(await answer(h.host, 'unknown-call-reviews/read', plain(AG2B_SCOPE, { runRef: run2Ref })))
+    .toMatchObject({ status: 'ready', value: { inventory: 'incomplete', inventoryProblem: 'kernel_unreadable',
+      status: 'needs_decision' } });
   await assertInvariants(h, 'a8-2b attested, Kernel missing', stepOf(h, 'other', 'a8-2b attested, Kernel missing'));
   const ended = await execution(h, run2Ref);
   expect(ended.run).toMatchObject({ status: 'ended', outcome: 'crashed', startedAt: null,

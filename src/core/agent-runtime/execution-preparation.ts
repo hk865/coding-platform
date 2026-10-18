@@ -12,8 +12,12 @@ import type { ArtifactRef } from '../../contracts/artifact.js';
 import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
-import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../contracts/core/prepared-execution.js';
+import {
+  renderUnknownCallReviewZh,
+  type PreparedTaskExecution, type PreparedTaskManifestV1, type UnknownCallReviewInputV1,
+} from '../../contracts/core/prepared-execution.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
+import type { GoalRef } from '../../contracts/ledger.js';
 import type { SourceRefV1, RuntimeInputBindingV1 } from '../../contracts/dispatch.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { SessionAnomalyAnchorRef } from '../../contracts/session-anomaly.js';
@@ -21,11 +25,19 @@ import { revisionAssignments } from '../../contracts/plan.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
 import { MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import { continuationBriefDigest, type ContinuationBriefV1 } from '../../contracts/continuation-brief.js';
+import type { UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
+import {
+  UNKNOWN_CALL_PROPOSAL_ROUND_TOOL_NAMES, UNKNOWN_CALL_REVIEW_ROUND_TOOL_NAMES,
+} from '../../contracts/review-admission.js';
+import { readWorkspaceBaseline } from '../workspace/workspace-change-capture.js';
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import {
-  briefWorkspaceFactsFor, createContextAssembler, type BriefWorkspaceFactsOutcome, type ContextAssembler,
-  type ContextAssemblerDependencies,
+  briefWorkspaceFactsFor, createContextAssembler, trimUnknownCallReviewInput,
+  type BriefWorkspaceFactsOutcome, type ContextAssembler, type ContextAssemblerDependencies,
 } from './context-assembler.js';
+import { readTaskReviews } from '../work-graph/tasks/task-review-reader.js';
+import { orderBlockedCommands } from '../work-graph/tasks/blocked-command-order.js';
+import { unknownCallReviewRefKey } from '../work-graph/tasks/unknown-call-review-codecs.js';
 import type { PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
 
 /**
@@ -38,7 +50,20 @@ export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies
   'executions' | 'roles' | 'bodies' | 'host' | 'now' | 'newId'>
   & Partial<Pick<RuntimeExecutionDependencies,
     'materials' | 'plans' | 'sessions' | 'kernelStores' | 'workspaceHost' | 'workspaceSource'
-    | 'kernel' | 'graphContext' | 'taskInputs' | 'architectureReminders'>>;
+    | 'kernel' | 'graphContext' | 'taskInputs' | 'architectureReminders' | 'unknownCallReviews'>>
+  & {
+    /**
+     * Rework 1 item 4 / rework 2 item 2: the ONE canonical Task-closure read
+     * (`readTaskClosure`). REQUIRED: `createAgentRuntime` installs a
+     * fail-closed reader (`unavailable`) when the shell dependency is absent,
+     * so there is no "absent means open" behaviour. The composition root wires
+     * the real `plan-readers.readTaskClosure` to the same records.
+     */
+    readTaskClosure: (
+      ctx: CoreCallContext,
+      task: { projectId: string; goalId: string; taskId: string },
+    ) => Promise<ReadResult<{ closed: boolean; cause: 'satisfied' | 'cancelled' | 'superseded' | null }>>;
+  };
 
 // Slice 1 §4.1 (T10): the archive-origin rule lives with the brief assembly (slice 3 moved the brief into the
 // context assembler); re-exported here, where slice 1 declared it.
@@ -66,6 +91,100 @@ export type ExecutionPreparationService = {
 export const PREPARED_MANIFEST_CONTENT_TYPE = MANIFEST_CONTENT_TYPE;
 /** One prepared manifest is a bounded JSON body, never a transcript store. */
 export const MAX_PREPARED_MANIFEST_BYTES = ARTIFACT_MAX_SIZE_BYTES;
+/** L5: the run-start baseline is its own immutable Artifact; the manifest carries only its reference. */
+export const WORKSPACE_BASELINE_CONTENT_TYPE = 'application/vnd.platform.workspace-baseline+json';
+const BASELINE_DETAIL_MAX = 500;
+
+/** K3 L13/D8: the rendered review instruction is limited to this many UTF-8 bytes before the manifest measure. */
+export const REVIEW_INSTRUCTION_MAX_BYTES = 64 * 1024;
+
+/**
+ * K3 L13/D8: fit the review instruction into the two budgets. The rendered text
+ * is first held to `instructionMaxBytes`; then the whole manifest is measured by
+ * the caller's `measure`, and while it is over `manifestMaxBytes` the instruction
+ * is trimmed from the back in the fixed order. If even the floor does not fit,
+ * the caller's other sections filled the manifest: `capacity`, never a blamed
+ * review instruction.
+ */
+export function fitUnknownCallReviewForManifest(input: {
+  review: UnknownCallReviewInputV1;
+  render: (review: UnknownCallReviewInputV1) => string;
+  measure: (review: UnknownCallReviewInputV1, rendered: string) => number;
+  instructionMaxBytes?: number;
+  manifestMaxBytes?: number;
+}): { ok: true; review: UnknownCallReviewInputV1; rendered: string } | { ok: false; reason: 'capacity' } {
+  const instructionMax = input.instructionMaxBytes ?? REVIEW_INSTRUCTION_MAX_BYTES;
+  const manifestMax = input.manifestMaxBytes ?? MAX_PREPARED_MANIFEST_BYTES;
+  let review = input.review;
+  let rendered = input.render(review);
+  while (Buffer.byteLength(rendered, 'utf8') > instructionMax) {
+    const next = trimUnknownCallReviewInput(review);
+    if (next === null) break;
+    review = next;
+    rendered = input.render(review);
+  }
+  while (input.measure(review, rendered) > manifestMax) {
+    const next = trimUnknownCallReviewInput(review);
+    if (next === null) return { ok: false, reason: 'capacity' };
+    review = next;
+    rendered = input.render(review);
+  }
+  return { ok: true, review, rendered };
+}
+
+/**
+ * L5: record the run-start baseline as its own immutable Artifact and return
+ * the reference+digest the manifest carries. `prepare` NEVER fails because of
+ * the baseline: a non-git root, too many changes, a read failure or a store
+ * failure all become `unavailable` and preparation continues.
+ */
+async function recordWorkspaceBaseline(
+  deps: ExecutionPreparationDependencies,
+  ctx: CoreCallContext,
+  workspaceId: string,
+  runRef: PreparedTaskManifestV1['claim']['runRef'],
+  deniedPrefixes: readonly string[],
+  sourceRefs: SourceRefV1[],
+): Promise<PreparedTaskManifestV1['workspaceBaseline'] | 'cancelled'> {
+  const unavailable = (reason: 'not_git' | 'too_many_changes' | 'read_failed', detail: string) => ({
+    status: 'unavailable' as const, reason, detail: detail.length > BASELINE_DETAIL_MAX ? detail.slice(0, BASELINE_DETAIL_MAX) : detail,
+  });
+  if (deps.workspaceHost === undefined) return undefined;
+  if (ctx.signal.aborted) return 'cancelled';
+  let root: string;
+  try {
+    const resolved = await deps.workspaceHost.resolveRoot({ aggregateType: 'Workspace', projectId: ctx.projectId, workspaceId });
+    // Slice 8 §13.8: a dependency that names cancellation is never a read failure.
+    if (resolved.status === 'rejected' && resolved.code === 'cancelled') return 'cancelled';
+    if (ctx.signal.aborted) return 'cancelled';
+    if (resolved.status !== 'ready') return unavailable('read_failed', `the workspace root could not be resolved: ${resolved.reason}`);
+    root = resolved.value.root;
+  } catch (error) {
+    if (ctx.signal.aborted) return 'cancelled';
+    return unavailable('read_failed', `the workspace root could not be resolved: ${messageOf(error)}`);
+  }
+  let read;
+  try {
+    read = await readWorkspaceBaseline({ root, deniedPrefixes });
+  } catch (error) {
+    if (ctx.signal.aborted) return 'cancelled';
+    return unavailable('read_failed', messageOf(error));
+  }
+  // The baseline read has no cancelled result: judge it by the signal, and never put after a cancellation.
+  if (ctx.signal.aborted) return 'cancelled';
+  if (read.status === 'unavailable') return unavailable(read.reason, read.detail);
+  let stored;
+  try {
+    stored = await deps.bodies.put({
+      body: JSON.stringify(read.baseline), contentType: WORKSPACE_BASELINE_CONTENT_TYPE, sourceRefs,
+      origin: { kind: 'run', owner: runRef }, requestedAt: deps.now(),
+    });
+  } catch (error) {
+    return unavailable('read_failed', `storing the workspace baseline failed: ${messageOf(error)}`);
+  }
+  if (stored.status !== 'ready') return unavailable('read_failed', `storing the workspace baseline failed: ${stored.reason}`);
+  return { status: 'captured', ref: stored.value.ref, digest: stored.value.ref.digest };
+}
 
 function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
@@ -152,6 +271,31 @@ function defaultContextAssemblerDependencies(
   return { ...deps, materials };
 }
 
+/** F-075: the ONE Task-review paging read, shared with the brief and the CRR
+ * owner. `prepare` still reads the records ONCE and uses that one result for
+ * the binding and the continuation's blocked lines. */
+/**
+ * L19a rework 1 item 1: every blocked command of the task's records, in
+ * (record createdAt, alias) order. There is NO cap: 32 was one record's
+ * boundary, never the task-history total.
+ */
+function blockedBindingOf(
+  reviews: readonly UnknownCallReviewV1[], taskId: string,
+): NonNullable<PreparedTaskManifestV1['blockedCommands']> {
+  // F-074: the ONE global flatten + order (record createdAt, alias, ref-key
+  // tie-break), the SAME rule the recognizer and the brief use. Sorting each
+  // record in isolation would let an earlier record's alias 2 beat a later
+  // record's alias 1 when createdAt ties.
+  return orderBlockedCommands(reviews
+    .filter(record => record.task.taskId === taskId)
+    .map(record => ({
+      createdAt: record.createdAt,
+      refKey: unknownCallReviewRefKey(record.ref),
+      commands: record.blockedCommands.map(entry => ({ alias: entry.alias,
+        value: { reviewRunId: record.ref.runId, alias: entry.alias, commandSha256: entry.commandSha256 } })),
+    })));
+}
+
 export function createExecutionPreparation(deps: ExecutionPreparationDependencies, contextAssembler?: ContextAssembler): ExecutionPreparationService {
   // §4.2/G5.7: a missing second argument constructs the same one assembler once;
   // the legacy text builder is unreachable and gone.
@@ -180,6 +324,9 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       if (record.status !== 'ready') return mapRead(record);
       const { run, outbox, plan, session } = record.value;
       const claim = outbox.claim;
+      // K3 L13/L20: a review-purpose Run's tools and empty write scope are fixed
+      // by purpose (either phase), not by the Role/Host intersection.
+      const reviewPurpose = run.purpose?.kind === 'unknown_call_review' ? run.purpose : undefined;
       if (!sameRef(run.ref, runRef) || !sameRef(claim.runRef, runRef)) return rejected('unavailable', 'the claim facts do not name the requested Run');
       if (!sameRef(claim.task, run.task)) return rejected('unavailable', 'the claim task disagrees with the Run task');
       if (!sameRef(claim.planRef, run.planRef)) return rejected('unavailable', 'the claim plan disagrees with the Run plan');
@@ -239,11 +386,16 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
           return rejected('forbidden', 'the Host legacy template does not match the Session legacy template');
         }
       }
-      const writeScopeResult = validateWriteScope(hostConfig.writeScope, roleResolution, hostConfig.shellWorkspaceAccess);
+      const writeScopeResult = reviewPurpose !== undefined
+        ? { ok: true as const, writeScope: [] as string[] }
+        : validateWriteScope(hostConfig.writeScope, roleResolution, hostConfig.shellWorkspaceAccess);
       if (!writeScopeResult.ok) return writeScopeResult.rejection;
+      // L20: the proposal phase swaps only the one write tool.
+      const reviewToolNames = reviewPurpose?.phase === 'proposal'
+        ? UNKNOWN_CALL_PROPOSAL_ROUND_TOOL_NAMES : UNKNOWN_CALL_REVIEW_ROUND_TOOL_NAMES;
       const permissions: TaskEnvelopeV1['permissions'] = {
         policyRevision: run.roleBinding.policyRevision,
-        tools: intersectTools(hostConfig.tools, roleResolution),
+        tools: reviewPurpose !== undefined ? [...reviewToolNames] : intersectTools(hostConfig.tools, roleResolution),
         writeScope: writeScopeResult.writeScope,
       };
       const hasShell = permissions.tools.includes('shell');
@@ -271,6 +423,50 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         { kind: 'workspace', refId: session.workspaceId, revision: String(run.workspaceSnapshot.revision) },
       ];
       const additionalMaterialRefs: ArtifactRef[] = [];
+      // Rework 1 items 1 and 4: read the Task closure ONCE and, when open, the
+      // Task's review records ONCE. The SAME result builds the binding and feeds
+      // the assembler's blocked lines. A closed Task carries neither, and a read
+      // failure is `unavailable`, never "still valid".
+      let taskReviews: UnknownCallReviewV1[] | undefined;
+      let blockedBinding: PreparedTaskManifestV1['blockedCommands'];
+      if (run.purpose === undefined) {
+        // Today's one read of the Task's records stays; the closure is read only
+        // when a binding/blocked line could exist, so a Run with no blocked
+        // commands pays no extra read.
+        const read = await readTaskReviews(owned, deps.unknownCallReviews,
+          { goalRef: { aggregateType: 'Goal', projectId: claim.task.projectId, goalId: claim.task.goalId },
+            taskId: claim.task.taskId,
+            workspace: { projectId: claim.task.projectId, workspaceId: session.workspaceId } });
+        if (read.status !== 'ready') return read;
+        taskReviews = read.value;
+        const binding = blockedBindingOf(taskReviews, claim.task.taskId);
+        if (binding.length > 0) {
+          // Rework 2 item 2: the reader is REQUIRED; a thrown read or any
+          // non-ready result is `unavailable`, never "the Task is still open".
+          let closure;
+          try {
+            closure = await deps.readTaskClosure(owned, claim.task);
+          } catch (error) {
+            // F-076: a cancelled read keeps its cancellation; only a genuine
+            // failure becomes `unavailable`, and it keeps its message.
+            if (signal.aborted) return rejected('cancelled', 'the Task closure read was cancelled');
+            return rejected('unavailable', `the Task closure could not be read: ${messageOf(error)}`);
+          }
+          if (closure.status !== 'ready') {
+            // F-076: `cancelled` and the original rejection survive this layer;
+            // a missing watermark stays its own failure, never "still open".
+            if (closure.status === 'rejected') return closure;
+            return rejected('unavailable', closure.status === 'not_found' ? 'the Task is not in the active Plan'
+              : 'the Task closure is not readable at the required watermark');
+          }
+          if (closure.value.closed) {
+            // A closed Task carries no binding and no blocked lines.
+            taskReviews = [];
+          } else {
+            blockedBinding = binding;
+          }
+        }
+      }
       // Slice 3 (§4.2/§4.3, C7): the ONE context assembler owns the eight
       // sections and the byte budget. Its rejection (in particular a failing
       // `graphContext` read) is propagated unchanged; the manifest is built from
@@ -285,6 +481,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       try {
         assembled = await assembler.assembleTask(owned, {
           execution: record.value, role: roleResolution, configuration: hostConfig, permissions,
+          ...(taskReviews === undefined ? {} : { taskReviews }),
         });
       } catch (error) {
         if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled while the context was assembled');
@@ -299,21 +496,69 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       sessionBasis = assembled.value.sessionBasis;
       selectedTaskInputs = assembled.value.selectedTaskInputs;
       contextAssembly = assembled.value.binding;
+      const reviewInput = assembled.value.unknownCallReview;
+      const reviewSectionStart = assembled.value.reviewSectionStart ?? null;
       // Slice 1 §2.7: the anchors the brief's anomaly section names are bound with the input.
       const anomalyAnchorRefs: SessionAnomalyAnchorRef[] | null = assembled.value.anomalyAnchorRefs ?? null;
       const briefDigest = brief === null ? null : continuationBriefDigest(brief);
-      const manifest: PreparedTaskManifestV1 = {
-        schemaVersion: 1, kind: 'task_execution', claim, role: roleResolution,
-        hostTemplate: roleResolution.status === 'resolved' ? null : hostConfig.hostTemplate,
-        roleBinding: run.roleBinding, hostConfigurationRevision: hostConfig.configurationRevision, sessionRole: session.role,
-        workspaceSnapshot: { workspaceId: session.workspaceId, revision: run.workspaceSnapshot.revision },
-        permissions, budget: run.budget, selectedTaskInputs, materialBasis: hostConfig.materialBasis,
-        materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs,
-        ...(contextAssembly === undefined ? {} : { contextAssembly }),
-        ...(brief === null ? {} : { continuationBrief: brief }),
-        ...(sessionBasis === undefined ? {} : { sessionBasis }),
-        input, inputDigest,
+      // L5: only a Run with a non-empty write scope records a run-start baseline,
+      // and only when the workspace root is the git work-tree top level (the same
+      // test `VerificationWorkspaceReader.capture` makes). A missing workspace
+      // host or any baseline failure leaves the field absent/unavailable and
+      // NEVER fails preparation; a cancellation still ends it (slice 8 §13.8).
+      const workspaceBaseline = writeScopeResult.writeScope.length === 0
+        ? undefined
+        : await recordWorkspaceBaseline(deps, owned, session.workspaceId, runRef, hostConfig.deniedPrefixes, sourceRefs);
+      if (workspaceBaseline === 'cancelled') {
+        return rejected('cancelled', 'the preparation was cancelled during the workspace baseline capture');
+      }
+      // K3 D8: the review instruction is carried twice in the manifest (the
+      // structured field and the rendered `input`), so the whole manifest is
+      // measured and the instruction trimmed from the back while over budget.
+      const buildManifest = (review: UnknownCallReviewInputV1 | undefined, inputText: string): PreparedTaskManifestV1 => {
+        const total = Buffer.byteLength(inputText, 'utf8');
+        const trimsReviewSuffix = review !== undefined && reviewSectionStart !== null && contextAssembly !== undefined;
+        const assembly = contextAssembly === undefined ? undefined : trimsReviewSuffix
+          ? { ...contextAssembly, totalBytes: total,
+              sections: contextAssembly.sections.map(section => section.name === 'unknown_call_review'
+                && section.startByte === reviewSectionStart ? { ...section, endByte: total } : section) }
+          : contextAssembly;
+        return {
+          schemaVersion: 1, kind: 'task_execution', claim, role: roleResolution,
+          hostTemplate: roleResolution.status === 'resolved' ? null : hostConfig.hostTemplate,
+          roleBinding: run.roleBinding, hostConfigurationRevision: hostConfig.configurationRevision, sessionRole: session.role,
+          workspaceSnapshot: { workspaceId: session.workspaceId, revision: run.workspaceSnapshot.revision },
+          permissions, budget: run.budget, selectedTaskInputs, materialBasis: hostConfig.materialBasis,
+          materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs,
+          ...(assembly === undefined ? {} : { contextAssembly: assembly }),
+          ...(brief === null ? {} : { continuationBrief: brief }),
+          ...(sessionBasis === undefined ? {} : { sessionBasis }),
+          ...(workspaceBaseline === undefined ? {} : { workspaceBaseline }),
+          ...(review === undefined ? {} : { unknownCallReview: review }),
+          ...(blockedBinding === undefined ? {} : { blockedCommands: blockedBinding }),
+          input: inputText, inputDigest: sha256Hex(inputText),
+        };
       };
+      let manifest: PreparedTaskManifestV1;
+      if (reviewInput === undefined || reviewSectionStart === null) {
+        manifest = buildManifest(undefined, input);
+      } else {
+        // D4/F: `reviewSectionStart` is a UTF-8 BYTE offset, so the prefix must
+        // be cut by bytes, never as a JS string index (the base text often holds
+        // Chinese role/goal/task content).
+        const baseInput = Buffer.from(input, 'utf8').subarray(0, reviewSectionStart).toString('utf8');
+        const fit = fitUnknownCallReviewForManifest({
+          review: reviewInput,
+          render: review => renderUnknownCallReviewZh(review),
+          measure: (review, rendered) => Buffer.byteLength(JSON.stringify(buildManifest(review, baseInput + rendered)), 'utf8'),
+        });
+        if (!fit.ok) {
+          return rejected('capacity', `the bounded prepared manifest exceeds ${String(MAX_PREPARED_MANIFEST_BYTES)} bytes`);
+        }
+        input = baseInput + fit.rendered;
+        inputDigest = sha256Hex(input);
+        manifest = buildManifest(fit.review, input);
+      }
       const manifestJson = JSON.stringify(manifest);
       if (Buffer.byteLength(manifestJson, 'utf8') > MAX_PREPARED_MANIFEST_BYTES) {
         return rejected('capacity', `the bounded prepared manifest exceeds ${String(MAX_PREPARED_MANIFEST_BYTES)} bytes`);

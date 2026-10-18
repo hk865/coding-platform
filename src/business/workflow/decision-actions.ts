@@ -24,8 +24,12 @@ import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/cor
 import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { DecisionSelectionV1, DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
+import type { UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
+import type { CommandRerunRequestV1 } from '../../contracts/command-rerun-request.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
+import type { CommandRerunRequestPort } from '../../core/work-graph/model/command-rerun-request-contracts.js';
+import { commandRerunRequestRefOfSource } from '../../core/work-graph/tasks/command-rerun-request-codecs.js';
 import type {
   DecisionMessagePort,
   DecisionSourceFactsPort,
@@ -43,7 +47,7 @@ import type {
 
 /** The narrow, internal result of one dispatched application step (U6). */
 type DecisionApplicationOutcome = {
-  action: ResolveDecisionActionV1;
+  action: ResolveDecisionActionV1 | WriteResult<UnknownCallReviewV1> | WriteResult<CommandRerunRequestV1>;
   receipt: DecisionApplicationReceiptV1 | null;
   /** Present when the step reports a coordination state (the conflict path). */
   state?: ResolveDecisionReadV1['state'];
@@ -97,12 +101,40 @@ export type DecisionActionDependencies = {
   applicationReceipt?: (ctx: CoreCallContext, cursor: CommitCursor) => Promise<DecisionApplicationReceiptV1 | null>;
 };
 
+/** The shared ②-then-③ result (the coordinator owns the exact public narrowing). */
+type AppliedOutcome = {
+  action: ResolveDecisionActionV1 | WriteResult<UnknownCallReviewV1> | WriteResult<CommandRerunRequestV1>;
+  application: WriteResult<SessionMessage> | CoreRejection | null;
+  state: ResolveDecisionReadV1['state'];
+};
+
+/** K3 L19/UR7: the ②-then-③ result of advancing one answered review card. */
+export type ReviewDispositionAdvanceResultV1 = {
+  action: WriteResult<UnknownCallReviewV1> | WriteResult<CommandRerunRequestV1> | CoreRejection | null;
+  application: WriteResult<SessionMessage> | CoreRejection | null;
+  state: ResolveDecisionReadV1['state'];
+};
+
 /** §4.5 Workflow decision surface: resolve one decision, order pending advances. */
 export type DecisionActionsPort = {
   resolveDecision(
     ctx: CoreCallContext,
     request: GraphWrite<ResolveDecisionInputV1>,
   ): Promise<ReadResult<ResolveDecisionReadV1>>;
+  /**
+   * K3 L19/UR7/UR7b: run ② (the adapter table) then ③ on an ALREADY answered
+   * card, using the saved answer message and its own recorded selection. The
+   * coordinator never answers again; ② replays by answer-derived identity.
+   * `options.applicationCtx` books ③ (default: `ctx`); UR7 passes the Host
+   * operator so the slice-5 S5-MSG-04 guard admits the application while ②
+   * still runs as the Workflow automation.
+   */
+  advanceReviewDisposition(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ source: DecisionSourceV1; selection: DecisionSelectionV1;
+      decisionMessageRef: SessionMessageRef }>,
+    options?: { applicationCtx?: CoreCallContext },
+  ): Promise<ReadResult<ReviewDispositionAdvanceResultV1>>;
   orderGoalAdvances(
     ctx: CoreCallContext,
     input: { advances: WorkflowAdvanceInput[] },
@@ -206,6 +238,59 @@ function replayExpectedPins(captured: DecisionSourceV1, selection: ConflictSelec
   const expected: VersionPin[] = refs.map((ref) => capturedGoalPin(capturedPins, ref) ?? { ref, revision: 0 });
   if (selection.kind === 'conflict_wait') expected.push({ ref: goalPhaseRefOf(selection.earlier), revision: 0 });
   return expected;
+}
+
+/**
+ * K3 L19a: the `command_rerun_request` step ② adapter beside B1's
+ * `unknown_call_review` row. It commits the owner's answer application under
+ * the answer-derived identity (the CRR codecs' ONE helper), so a retried
+ * `decisions/answer` and a crash re-drive replay the original receipt. The
+ * coordinator's step ③ then reads the formal receipt from the changed event.
+ */
+export type CommandRerunRequestApplicationDependencies = {
+  commandRerunRequests: Pick<CommandRerunRequestPort, 'applyAnswer'>;
+};
+
+export function createCommandRerunRequestApplicationAdapter(
+  commandRerunRequests: CommandRerunRequestApplicationDependencies['commandRerunRequests'],
+): DecisionApplicationAdapter {
+  return {
+    async apply(ctx, { answerRef, source, selection, requestId, expected }) {
+      const requestRef = commandRerunRequestRefOfSource(source);
+      if (requestRef === null) {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'invalid',
+          reason: 'the answer source is not a command_rerun_request card',
+        }, receipt: null } };
+      }
+      const optionId = selection.kind === 'option' ? selection.optionId : null;
+      if (optionId !== 'allow_rerun' && optionId !== 'deny' && optionId !== 'deny_final') {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'invalid',
+          reason: 'a command_rerun_request card answers allow_rerun, deny or deny_final',
+        }, receipt: null } };
+      }
+      // F-072: a throw/unknown outcome at the new CRR ② boundary is a
+      // STRUCTURED failure, never an escaping error that hides the saved ①
+      // answer. ① is already committed by the coordinator.
+      let result: Awaited<ReturnType<typeof commandRerunRequests.applyAnswer>>;
+      try {
+        result = await commandRerunRequests.applyAnswer(ctx, {
+          input: { requestRef, selection: optionId, decisionMessageRef: answerRef },
+          meta: { requestId, expected },
+        });
+      } catch (error) {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'unavailable',
+          reason: `the command-rerun answer could not be applied: ${
+            error instanceof Error ? error.message : String(error)}`,
+        }, receipt: null } };
+      }
+      // A committed result's formal DecisionApplicationReceiptV1 is read from
+      // the CRR changed event at this cursor by the coordinator's step ③.
+      return { status: 'ready', value: { action: result, receipt: null } };
+    },
+  };
 }
 
 export function createDecisionActions(deps: DecisionActionDependencies): DecisionActionsPort {
@@ -338,44 +423,97 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
   }
 
   /**
+   * The ONE ② adapter table, keyed by source kind: the built-in
+   * `goal_conflict` registration merged with the composition's adapters. No
+   * second dispatch table exists.
+   */
+  function applicationTable(
+    goalSettings: DecisionActionDependencies['goalSettings'],
+  ): Partial<Record<DecisionSourceV1['kind'], DecisionApplicationAdapter>> {
+    const applications: Partial<Record<DecisionSourceV1['kind'], DecisionApplicationAdapter>> = {
+      ...(goalSettings === undefined ? {} : {
+        goal_conflict: {
+          apply: (adapterCtx: CoreCallContext, adapterInput: Parameters<DecisionApplicationAdapter['apply']>[1]) =>
+            applyGoalConflict(adapterCtx, adapterInput.answer, adapterInput.answerRef, adapterInput.source,
+              adapterInput.selection, adapterInput.requestId, goalSettings),
+        },
+      }),
+      ...deps.decisionApplications,
+    };
+    return applications;
+  }
+
+  /**
    * ③ Record the dispatched action's formal receipt (U6). The adapter may hand
    * one over directly; a committed WriteResult is proved from its cursor via
    * `applicationReceipt`; a done `NoteDispositionResult` carries its own. Rule
    * 19: after the answer commit every later failure is a `ready` result.
+   *
+   * `applicationCtx` is the identity ③ is booked under; it is separate from the
+   * execution context ② ran as (K3-17: UR7's ② is the Workflow automation, its
+   * ③ is the Host operator the slice-5 S5-MSG-04 guard admits).
    */
   async function recordApplicationOutcome(
-    ctx: CoreCallContext, decisionMessages: NonNullable<DecisionActionDependencies['decisionMessages']>,
-    answer: Extract<WriteResult<SessionMessage>, { status: 'committed' }>, answerRef: SessionMessageRef,
+    ctx: CoreCallContext, applicationCtx: CoreCallContext,
+    decisionMessages: NonNullable<DecisionActionDependencies['decisionMessages']>,
+    answerRef: SessionMessageRef, answerRevision: number,
     requestId: string, outcome: DecisionApplicationOutcome,
-  ): Promise<ReadResult<ResolveDecisionReadV1>> {
+  ): Promise<AppliedOutcome> {
     const action = outcome.action;
     if (outcome.state !== undefined) {
-      return ready({ answer, action, application: null, state: outcome.state });
+      return { action, application: null, state: outcome.state };
     }
     if (action !== null && action.status === 'rejected') {
-      return ready({ answer, action, application: null,
-        state: action.code === 'busy' ? 'awaiting_resume' : 'application_not_recorded' });
+      return { action, application: null,
+        state: action.code === 'busy' ? 'awaiting_resume' : 'application_not_recorded' };
     }
     let receipt = outcome.receipt;
     if (receipt === null && action !== null) {
       if (action.status === 'committed') {
-        receipt = deps.applicationReceipt === undefined ? null : await deps.applicationReceipt(ctx, action.cursor);
+        receipt = deps.applicationReceipt === undefined ? null : await deps.applicationReceipt(applicationCtx, action.cursor);
       } else if (action.status === 'done') {
         receipt = action.receipt;
       }
     }
     if (receipt === null) {
-      return ready({ answer, action, application: null,
-        state: action === null ? 'answered' : 'application_not_recorded' });
+      return { action, application: null, state: action === null ? 'answered' : 'application_not_recorded' };
     }
-    const application: ResolveDecisionReadV1['application'] = await decisionMessages.recordDecisionApplication(ctx, {
-      input: { messageRef: answerRef, receipt },
-      meta: { requestId: `${requestId}:application`, expected: [{ ref: answerRef, revision: answer.value.revision }] },
+    const application: WriteResult<SessionMessage> | CoreRejection =
+      await decisionMessages.recordDecisionApplication(applicationCtx, {
+        input: { messageRef: answerRef, receipt },
+        meta: { requestId: `${requestId}:application`, expected: [{ ref: answerRef, revision: answerRevision }] },
+      });
+    return { action, application,
+      state: application.status === 'committed' ? 'applied' : 'application_not_recorded' };
+  }
+
+  /**
+   * The ONE ②-then-③ path shared by `resolveDecision` (after its ①) and the
+   * K3 UR7/UR7b `advanceReviewDisposition` (no second answer). ② runs as
+   * `ctx`; ③ is booked as `applicationCtx` (the same context unless a caller
+   * separates them, as UR7 does).
+   */
+  async function dispatchApplication(
+    ctx: CoreCallContext, applicationCtx: CoreCallContext, input: {
+      answer: SessionMessage; answerRef: SessionMessageRef; answerRevision: number;
+      source: DecisionSourceV1; selection: DecisionSelectionV1;
+      requestId: string; expected: VersionPin[];
+    },
+    decisionMessages: NonNullable<DecisionActionDependencies['decisionMessages']>,
+  ): Promise<AppliedOutcome> {
+    const adapter = applicationTable(deps.goalSettings)[input.source.kind];
+    if (adapter === undefined) {
+      return { action: null, application: null, state: 'answered' };
+    }
+    const applied = await adapter.apply(ctx, {
+      answer: input.answer, answerRef: input.answerRef, source: input.source,
+      selection: input.selection, requestId: input.requestId, expected: input.expected,
     });
-    return ready({
-      answer, action, application,
-      state: application.status === 'committed' ? 'applied' : 'application_not_recorded',
-    });
+    const outcome: DecisionApplicationOutcome = applied.status === 'ready'
+      ? applied.value
+      : { action: applicationRejection(applied), receipt: null };
+    return recordApplicationOutcome(ctx, applicationCtx, decisionMessages,
+      input.answerRef, input.answerRevision, input.requestId, outcome);
   }
 
   async function resolveDecision(
@@ -403,33 +541,78 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
       meta: { requestId: `${requestId}:answer`, expected: [...expected] },
     });
     if (answer.status !== 'committed') return answer;
-    const answerRef = answer.value.ref;
 
-    // ② Dispatch the application step on the source kind through ONE adapter
-    // table: today's conflict chain is the DEFAULT `goal_conflict` registration,
-    // and the composition's adapters are merged over it. A kind with no adapter
-    // answers the card only, exactly as before.
-    const applications: Partial<Record<DecisionSourceV1['kind'], DecisionApplicationAdapter>> = {
-      goal_conflict: {
-        apply: (adapterCtx, adapterInput) => applyGoalConflict(adapterCtx, adapterInput.answer,
-          adapterInput.answerRef, adapterInput.source, adapterInput.selection, adapterInput.requestId,
-          goalSettings),
-      },
-      ...deps.decisionApplications,
-    };
-    const adapter = applications[input.source.kind];
-    if (adapter === undefined) {
-      return ready({ answer, action: null, application: null, state: 'answered' });
+    // ② then ③, through the ONE adapter table. The person's own answer books
+    // both under the same context (no behaviour change).
+    const outcome = await dispatchApplication(ctx, ctx, {
+      answer: answer.value, answerRef: answer.value.ref, answerRevision: answer.value.revision,
+      source: input.source, selection: input.selection, requestId, expected,
+    }, decisionMessages);
+    return ready({ answer, action: outcome.action as ResolveDecisionActionV1,
+      application: outcome.application, state: outcome.state });
+  }
+
+  /**
+   * K3 L19 / UR7 / UR7b: advance an ALREADY answered card by its saved answer.
+   * ② replays by the answer-derived identity and runs as `ctx`; ③ records the
+   * original receipt under `options.applicationCtx` (default `ctx`). The
+   * answer's own recorded selection is authoritative; a caller selection that
+   * disagrees with the saved one is `invalid`.
+   */
+  async function advanceReviewDisposition(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ source: DecisionSourceV1; selection: DecisionSelectionV1;
+      decisionMessageRef: SessionMessageRef }>,
+    options?: { applicationCtx?: CoreCallContext },
+  ): Promise<ReadResult<ReviewDispositionAdvanceResultV1>> {
+    const applicationCtx = options?.applicationCtx ?? ctx;
+    const decisionMessages = deps.decisionMessages;
+    if (decisionMessages === undefined) {
+      return unsupported('the Workflow has no decision-message owner for a review disposition');
     }
-    const applied = await adapter.apply(ctx, {
-      answer: answer.value, answerRef, source: input.source, selection: input.selection, requestId, expected,
-    });
-    const outcome: DecisionApplicationOutcome = applied.status === 'ready'
-      ? applied.value
-      : { action: applicationRejection(applied), receipt: null };
-
-    // ③ Record the application of the change the dispatched step produced.
-    return recordApplicationOutcome(ctx, decisionMessages, answer, answerRef, requestId, outcome);
+    const raw = request as unknown as Record<string, unknown> | null | undefined;
+    if (!isRecord(raw) || !isRecord(raw['meta']) || !nonEmpty(raw['meta']['requestId'])
+      || !Array.isArray(raw['meta']['expected']) || !isRecord(raw['input'])) {
+      return { status: 'rejected', code: 'invalid',
+        reason: 'advanceReviewDisposition requires an input object and meta.requestId/expected' };
+    }
+    const input = raw['input'] as unknown as {
+      source: DecisionSourceV1; selection: DecisionSelectionV1; decisionMessageRef: SessionMessageRef };
+    const requestId = raw['meta']['requestId'] as string;
+    const expected = raw['meta']['expected'] as VersionPin[];
+    if (!isRecord(input.source) || !nonEmpty(input.source.key) || !isRecord(input.selection)) {
+      return { status: 'rejected', code: 'invalid', reason: 'advanceReviewDisposition requires a decision source and selection' };
+    }
+    if (!isRecord(input.decisionMessageRef)) {
+      return { status: 'rejected', code: 'invalid', reason: 'advanceReviewDisposition requires the answer message ref' };
+    }
+    const read = await decisionMessages.readDecisionAnswer(ctx, { source: input.source });
+    if (read.status !== 'ready') {
+      if (read.status === 'rejected') return read;
+      if (read.status === 'not_found') return { status: 'not_found' };
+      return read;
+    }
+    const { message, body } = read.value;
+    if (message === null || body === null) {
+      return { status: 'rejected', code: 'invalid', reason: 'the saved answer message has no readable decision body' };
+    }
+    const messageKey = refKeyOf(message.ref);
+    if (messageKey === null || messageKey !== refKeyOf(input.decisionMessageRef)) {
+      return { status: 'rejected', code: 'invalid',
+        reason: 'the saved answer message is not the requested decisionMessageRef' };
+    }
+    const selectionKey = refKeyOf(body.selection);
+    if (selectionKey === null || selectionKey !== refKeyOf(input.selection)) {
+      return { status: 'rejected', code: 'invalid',
+        reason: 'the requested selection disagrees with the saved answer selection' };
+    }
+    const outcome = await dispatchApplication(ctx, applicationCtx, {
+      answer: message, answerRef: message.ref, answerRevision: message.revision,
+      source: input.source, selection: body.selection, requestId, expected,
+    }, decisionMessages);
+    return { status: 'ready', value: {
+      action: outcome.action as ReviewDispositionAdvanceResultV1['action'],
+      application: outcome.application, state: outcome.state } };
   }
 
   async function orderGoalAdvances(
@@ -461,5 +644,5 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
     return { status: 'ready', value: { advances: ordered.map((entry) => entry.advance) } };
   }
 
-  return { resolveDecision, orderGoalAdvances };
+  return { resolveDecision, advanceReviewDisposition, orderGoalAdvances };
 }

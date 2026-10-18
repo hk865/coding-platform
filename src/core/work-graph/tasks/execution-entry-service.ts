@@ -28,7 +28,9 @@
  */
 import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
-import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../../contracts/core/prepared-execution.js';
+import {
+  renderUnknownCallReviewZh, type PreparedTaskExecution, type PreparedTaskManifestV1,
+} from '../../../contracts/core/prepared-execution.js';
 import type { SessionAnomalyAnchorRef } from '../../../contracts/session-anomaly.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
@@ -52,6 +54,7 @@ import type {
   ContextAssemblyBindingV1, ContextCallKindV1, InputDeclarationV1, PlatformDutyV1,
 } from '../../../contracts/graph-context.js';
 import { goalContextDigestV1 } from '../../../contracts/graph-context.js';
+import { isReviewRoundPurpose } from '../../../contracts/review-admission.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
 import type { RawArtifactRecord } from '../../record-store/body-ports.js';
@@ -71,6 +74,8 @@ import {
   inputBindingProblem, taskDispatchStateV1Problem,
 } from '../persistence/execution-entry-codecs.js';
 import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
+import { decodeUnknownCallReview, unknownCallReviewRefKey } from './unknown-call-review-codecs.js';
+import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import {
   attemptEventFromRunEvent, isTaskLeaseEvent, taskLeaseNodeOf, transitionAttempt, transitionDispatchOutbox,
@@ -588,9 +593,15 @@ export async function recheckHostRoleAdmission(
     configurationRevision: string;
   },
 ): Promise<{ ok: true; value: HostRoleAdmission } | Rejected> {
+  // R4/L13: a review-purpose Run resolves its Role with EMPTY declared
+  // permissions, so only the Role's tool ceiling is skipped; validity and the
+  // manifest-role match checks below stay.
+  const reviewPurpose = isReviewRoundPurpose(input.run.purpose);
   const roleFacts = await deps.roles.resolveRoleBindingFacts(ctx, {
     roleBinding: input.roleBinding,
-    declaredPermissions: { tools: input.permissions.tools, writeScope: input.permissions.writeScope },
+    declaredPermissions: reviewPurpose
+      ? { tools: [], writeScope: [] }
+      : { tools: input.permissions.tools, writeScope: input.permissions.writeScope },
   });
   if (roleFacts.result.status !== 'ready') return { ok: false, rejection: mapReadResult(roleFacts.result) };
   const resolution = roleFacts.result.value;
@@ -1113,6 +1124,8 @@ function contextConsumptionProblem(input: {
   goal: GoalSnapshot;
   /** CTX-02: re-authorizing an already bound manifest validates it, it does not re-pin its sources. */
   rebinding: boolean;
+  /** R1/R2: the trusted Run purpose decides whether the manifest must carry the review instruction. */
+  run: RunSnapshot;
 }): CoreRejection | null {
   const binding = input.manifest.contextAssembly;
   const roleDuty = roleDutyOf(input.manifest.role);
@@ -1121,11 +1134,22 @@ function contextConsumptionProblem(input: {
   if (duty.status !== 'ready') {
     return duty.status === 'rejected' ? duty : reject('invalid', 'the effective platform duty is not available');
   }
+  // R1/R2/L20: "the manifest has the review field" must agree with "the Run's
+  // purpose is a review-purpose round" (review OR proposal phase); either
+  // difference is forbidden. The review/proposal text is re-rendered from the
+  // structured copy, so the binding's byte interval and the rendered section
+  // are checked against the same bytes.
+  const manifestReview = input.manifest.unknownCallReview;
+  if ((manifestReview !== undefined) !== isReviewRoundPurpose(input.run.purpose)) {
+    return forbidden('the prepared review instruction disagrees with the Run purpose');
+  }
+  const reviewSuffix = manifestReview === undefined ? null : renderUnknownCallReviewZh(manifestReview);
   const assemblyProblem = contextAssemblyProblem({
     binding,
     text: input.manifest.input,
     selectedTaskInputs: input.manifest.selectedTaskInputs,
     continuationSuffix: continuationSuffixOf(input.manifest, binding),
+    reviewSuffix,
   });
   if (assemblyProblem !== null) return assemblyProblem;
   if (binding === undefined) return null;
@@ -1242,7 +1266,7 @@ async function authorizeAdmission(
   // authorization was revoked) only validates it and never refuses for sources that moved on.
   const rebinding = facts.run.executionAuthorization?.phase === 'revoked';
   const consumption = contextConsumptionProblem({
-    manifest, plan: facts.plan, claim, scope, workspaceRevision, goal, rebinding,
+    manifest, plan: facts.plan, claim, scope, workspaceRevision, goal, rebinding, run: facts.run,
   });
   if (consumption !== null) return { ok: false, rejection: consumption };
   return { ok: true, value: { ...admitted.value,
@@ -1472,6 +1496,21 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
       let runEvent: Extract<RunEvent, { kind: 'entry_authorized' }> = { kind: 'entry_authorized', claim, consumerId,
         envelope: prepared.envelope, inputBinding: prepared.inputBinding };
       let runCtx = entryRunContext(facts, claim, actor);
+      // K3 RUN-02 (L11, D3): a review-purpose Run re-reads its record before
+      // entry; the guard and its commit CAS are filled with the manifest below.
+      let reviewFacts: { key: string; record: UnknownCallReviewV1 } | null = null;
+      if (facts.run.purpose?.kind === 'unknown_call_review') {
+        const reviewKey = unknownCallReviewRefKey(facts.run.purpose.reviewRef);
+        const reviewRead = await records.readMany([reviewKey]);
+        if (reviewRead.status !== 'ready') return mapStoreFailure(reviewRead);
+        const encoded = reviewRead.value.records.find(record => record.refKey === reviewKey);
+        if (encoded === undefined) return reject('incomplete', 'the review round record is not readable');
+        const decoded = decodeUnknownCallReview(encoded);
+        if (decoded.status !== 'decoded') {
+          return unavailable(`the review round record is damaged: ${decoded.reason}`);
+        }
+        reviewFacts = { key: reviewKey, record: decoded.value };
+      }
       const onExecution = transitionRun(state, runEvent, runCtx);
       if (!onExecution.ok) return runRefusal(onExecution);
 
@@ -1526,6 +1565,9 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
 
       // C3 (RUN-02, contract (e)): the continuation brief binding of the prepared manifest.
       const briefManifest = await readManifestFromEnvelope(deps, prepared.envelope as unknown as Record<string, unknown>, claim.runRef);
+      // R2/D5: an unreadable manifest on a review Run is its read error, never a
+      // silent hold (the review instruction can no longer be checked).
+      if (reviewFacts !== null && !briefManifest.ok) return briefManifest.rejection;
       const manifestBrief = briefManifest.ok ? briefManifest.value.manifest.continuationBrief : undefined;
       runCtx = { ...runCtx,
         continuationBrief: continuationBriefVerdict(facts.run, claim, prepared.inputBinding,
@@ -1533,6 +1575,25 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
         // Slice 1 §3.5/F84: the actually installed anchor refs must equal the
         // binding's canonical refs; an old brief without the section holds.
         anomalyRefsMatch: anomalyAnchorRefsMatch(manifestBrief, prepared.inputBinding) };
+      // K3 RUN-02 (L11, D3): the record must still wait for this round, and the
+      // prepared review instruction must match it. A manifest without the
+      // section (a non-review prepare) holds, like an old brief.
+      if (reviewFacts !== null) {
+        const review = reviewFacts.record;
+        const active = review.activeRound;
+        const waitingForRound = active !== null && sameRef(active.runRef, claim.runRef)
+          && ((review.status === 'pending_review' && active.phase === 'review')
+            || (review.status === 'awaiting_proposal' && active.phase === 'proposal'))
+          && (review.disposition?.hold ?? null) !== 'held';
+        const manifestReview = briefManifest.ok ? briefManifest.value.manifest.unknownCallReview : undefined;
+        // D5: a missing review field is a mismatch, never a match.
+        const instructionDigestMatches = manifestReview !== undefined
+          && manifestReview.reviewRef.runId === review.ref.runId
+          && manifestReview.revision === review.revision
+          && manifestReview.phase === active?.phase
+          && manifestReview.round === active?.round;
+        runCtx = { ...runCtx, reviewEntry: { waitingForRound, instructionDigestMatches } };
+      }
       const admission = freshAdmissionOf(
         await authorizeAdmission(deps, scopeCtx, scope, prepared, facts,
           goalScope.goal.workspaceRef.workspaceId, goalScope.goal, goalScope.workspaceRevision));
@@ -1563,6 +1624,8 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
         // C6: with `carried_unchanged`, the active Plan and the basis sources the verdict read.
         ...entryPlan.guards,
         ...admission.guards,
+        // K3 RUN-02 (L11, D3): the review record's revision joins the entry CAS.
+        ...(reviewFacts === null ? [] : [{ refKey: reviewFacts.key, expectedRevision: reviewFacts.record.revision }]),
       ]);
       if (!merged.ok) return merged.rejection;
       const guards = merged.guards;

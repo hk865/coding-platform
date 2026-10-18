@@ -33,11 +33,13 @@ import type { QueryJobIntentV1 } from '../contracts/query-job.js';
 import { DEFAULT_RUNTIME_BUDGET, validateRuntimeBudget, type RuntimeBudget } from '../contracts/runtime-budget.js';
 import type {
   QueryRuntimeConfigurationInput,
+  ReadonlyCommandAccessInput,
   ResolvedRuntimeConfiguration,
   RuntimeConfigurationInput,
   RuntimeHostBindings,
 } from '../core/agent-runtime/execution-contracts.js';
 import { READONLY_COMMAND_TOOL_NAME } from '../core/agent-runtime/readonly-command-tool.js';
+import { reviewHostLayerOneAccess } from '../contracts/review-admission.js';
 
 /** One trusted model description. It carries the environment-variable NAME
  * only; the secret value never enters this value, a digest, a log or a body. */
@@ -458,6 +460,25 @@ export function createWorkbenchRuntimeHostBindings(
     },
     async resolveQueryConfiguration(ctx, input: QueryRuntimeConfigurationInput) {
       return resolve(ctx, input.role);
+    },
+    // R3 (L13/U5): the review-round capability reads the SAME binding lookup as
+    // every Work Run (`bind(scope, role)`), with the same D-SWITCH narrowing;
+    // it deliberately never calls `resolveModel`, so a missing API key cannot
+    // settle a record as `review_unavailable`.
+    async readonlyCommandAccess(input: ReadonlyCommandAccessInput) {
+      if (narrowing.readonlyCommandsDisabledScopes?.has(scopeKey(input.workspace)) === true) return null;
+      const binding = bind(input.workspace, input.role);
+      if (binding === null) return null;
+      const access = binding.grant.readonlyCommandAccess ?? null;
+      // A1 (L13): the capability and admission share ONE Host-layer-1
+      // predicate, so `reviewCapability` answers `available` exactly when
+      // `reviewRoundAdmissionProblem` would pass layer 1 (both `read` and
+      // `run_readonly_command` granted, full read-only access).
+      if (reviewHostLayerOneAccess({ hostTools: binding.grant.tools, readonlyCommandAccess: access }) !== null) return null;
+      return {
+        access,
+        processSandboxOptions: structuredClone(binding.grant.processSandboxOptions),
+      };
     },
   };
 }

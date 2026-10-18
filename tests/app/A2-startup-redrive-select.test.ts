@@ -74,7 +74,11 @@ async function reconcile(goals: readonly GoalSnapshot[], graphs: Record<string, 
       if (answer === undefined) throw new Error(`the Task graph of ${input.goalRef.goalId} must not be read`);
       return await answer() as never;
     } },
-    reconcile: { ...untouched<StartupReconcilePlatform['reconcile']>('reconcile'), candidates: {
+    reconcile: { ...untouched<StartupReconcilePlatform['reconcile']>('reconcile'),
+      // The L28 step-2b open-review scan is real production behavior: return an
+      // empty page instead of letting the optional seam report "not wired".
+      reviews: { listReviews: async () => ({ status: 'ready' as const, value: { items: [], nextCursor: null, readThrough: null } }) },
+      candidates: {
       listRuns: nothing, listUnknownRuns: nothing, listQueuedControlRuns: nothing, listOpenRounds: nothing,
       listGoals: async () => ({ status: 'ready', value: { records: [...goals], damaged: [] } }),
     } },

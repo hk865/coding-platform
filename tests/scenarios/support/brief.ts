@@ -18,10 +18,13 @@ import { execFile } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import type { ArtifactRef } from '../../../src/contracts/artifact.js';
 import type { SessionRef } from '../../../src/app/core-http-types.js';
 import type { SessionMessageRef } from '../../../src/contracts/core/session-message.js';
 import type { PreparedTaskManifestV1 } from '../../../src/contracts/core/prepared-execution.js';
 import type { ReadResult, WriteResult } from '../../../src/contracts/core/results.js';
+import type { ContinuationBriefV1 } from '../../../src/contracts/continuation-brief.js';
+import type { SessionMessage } from '../../../src/core/work-graph/model/communication-contracts.js';
 import type { ScriptedReply } from '../../helpers/B2-runtime-fixture.js';
 import {
   AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_BUDGET, AG2B_QUERY_ROLE_BINDING, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, graphWrite, plain,
@@ -99,6 +102,37 @@ export function manifestOf(database: string, digest: string): PreparedTaskManife
     .all(`%|${digest}|%`) as Array<{ record: string }>, []);
   if (rows.length !== 1) throw new Error(`exactly one stored body must have digest ${digest}: ${String(rows.length)}`);
   return JSON.parse((JSON.parse(rows[0]!.record) as { body: string }).body) as PreparedTaskManifestV1;
+}
+
+/**
+ * K3 9(b): the prepared manifest Artifact read through the public
+ * `materials/open` route (never SQLite). `executions/brief` cannot answer before
+ * a Run's `begin` binds `inputBinding.continuationBriefDigest`
+ * (`src/core/agent-runtime/runtime.ts:467`; the binding is written at
+ * `src/core/work-graph/state/run-machine.ts:838-842`), so at the stop-before-
+ * `start` step the prepared-manifest Artifact is the public read.
+ */
+export async function preparedManifestOf(h: HostScenario, bundleRef: ArtifactRef): Promise<PreparedTaskManifestV1> {
+  const read = await h.post<ReadResult<{ body: string }>>('materials/open',
+    plain(AG2B_SCOPE, { ref: bundleRef, usage: 'historical_explanation' }));
+  if (read.status !== 'ready') throw new Error(`the prepared manifest must be openable: ${JSON.stringify(read)}`);
+  return JSON.parse(read.value.body) as PreparedTaskManifestV1;
+}
+
+/** K3 9(b): the continuation brief the prepared manifest carries, read through the public route. */
+export async function preparedBriefOf(h: HostScenario, bundleRef: ArtifactRef): Promise<ContinuationBriefV1> {
+  const manifest = await preparedManifestOf(h, bundleRef);
+  const brief = manifest.continuationBrief;
+  if (brief === undefined) throw new Error('the prepared manifest must carry the continuation brief');
+  return brief;
+}
+
+/** K3 9(b): the messages SENT BY one Session, through the public `messages/outbox` route. */
+export async function outboxMessages(h: HostScenario, senderSession: SessionRef): Promise<SessionMessage[]> {
+  const read = await h.post<ReadResult<{ items: SessionMessage[] }>>('messages/outbox',
+    plain(AG2B_SCOPE, { senderSession, page: { limit: 100 } }));
+  if (read.status !== 'ready') throw new Error(`the outbox must be readable: ${JSON.stringify(read)}`);
+  return read.value.items;
 }
 
 /** Every Kernel `run.input_accepted` whose source is a SessionMessage part (the unified input channel). */

@@ -233,7 +233,9 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
     if (attest) committed(await reconcile.reconcileRun(ctx, { input: { runRef, basis: { kind: 'host_instance_takeover', hostInstanceId: 'wp2-host' },
       probe: 'missing', result: { kind: 'unknown', cause: 'kernel_unreadable', unresolvedToolCallIds: [], observedThroughPosition: null, turn: null } },
       meta: { requestId: f.id(), expected: [await f.pin(runRef)] } }));
-    return attest ? committed(await reconcile.resolveUnknownRun(ctx, { input: { runRef, reason: 'Checked interrupted work', kernelTurnOpen: true, inputsConfirmed: null },
+    return attest ? committed(await reconcile.resolveUnknownRun(ctx, { input: { runRef, reason: 'Checked interrupted work', kernelTurnOpen: true, inputsConfirmed: null,
+      review: { inventory: 'incomplete', inventoryProblem: 'kernel_unreadable', items: [], itemsOmitted: 0,
+        workspace: { status: 'unavailable', runBaselineKnown: false, reason: 'not_configured', detail: 'WP2' } } },
       meta: { requestId: f.id(), expected: [await f.pin(runRef)] } })) : committed(await reconcile.reconcileRun(ctx, {
       input: { runRef, basis: { kind: 'host_instance_takeover', hostInstanceId: 'wp2-host' }, probe: 'ready', result: { kind: 'interrupted_clean', turn } },
       meta: { requestId: f.id(), expected: [await f.pin(runRef)] } }));

@@ -36,6 +36,10 @@ import {
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
 import type { DecisionMessagePort } from '../work-graph/model/decision-contracts.js';
+import {
+  ackSessionMessageRequest, recordDecisionApplicationRequest, respondSessionMessageRequest,
+  sendSessionMessageRequest, sendUserMessageRequest,
+} from '../work-graph/model/tool-commit-arguments.js';
 
 /** Fixed production tool names. The Kernel host-authorization list comes from here. */
 export const SESSION_MAILBOX_TOOL_NAMES = [
@@ -407,16 +411,7 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
                   recipient: SessionRef; text: string; intent?: SessionMessageIntentV1;
                   needsReply?: boolean; waitAfterSend?: boolean; replyMode?: 'wait';
                 };
-                const result = await config.mailbox.sendMessage(context, {
-                  input: {
-                    recipient: { ...input.recipient }, text: input.text,
-                    ...(input.intent === undefined ? {} : { intent: input.intent }),
-                    ...(input.needsReply === undefined ? {} : { needsReply: input.needsReply }),
-                    ...(input.waitAfterSend === undefined ? {} : { waitAfterSend: input.waitAfterSend }),
-                    ...(input.replyMode === undefined ? {} : { replyMode: input.replyMode }),
-                  },
-                  meta: { requestId, expected: [] },
-                });
+                const result = await config.mailbox.sendMessage(context, sendSessionMessageRequest(input, requestId));
                 if (result.status !== 'committed') return mapWrite(call.callId, result);
                 // The historical fire-and-forget send keeps the untouched result.
                 const waitAfterSend = input.waitAfterSend === true || input.replyMode === 'wait';
@@ -461,18 +456,12 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
               }
               case 'ack_session_message': {
                 const input = args as { messageRef: SessionMessageRef; expectedRevision: number };
-                const result = await config.mailbox.ackMessage(context, {
-                  input: { messageRef: { ...input.messageRef } },
-                  meta: { requestId, expected: [{ ref: { ...input.messageRef }, revision: input.expectedRevision }] },
-                });
+                const result = await config.mailbox.ackMessage(context, ackSessionMessageRequest(input, requestId));
                 return mapWrite(call.callId, result);
               }
               case 'respond_session_message': {
                 const input = args as { messageRef: SessionMessageRef; expectedRevision: number; text: string };
-                const result = await config.mailbox.respondMessage(context, {
-                  input: { messageRef: { ...input.messageRef }, text: input.text },
-                  meta: { requestId, expected: [{ ref: { ...input.messageRef }, revision: input.expectedRevision }] },
-                });
+                const result = await config.mailbox.respondMessage(context, respondSessionMessageRequest(input, requestId));
                 return mapWrite(call.callId, result);
               }
               default:
@@ -514,10 +503,7 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
             switch (name) {
               case 'send_user_message': {
                 const input = args as Parameters<DecisionMessagePort['sendUserMessage']>[1]['input'];
-                const result = await decisions.sendUserMessage(context, {
-                  input: { ...input },
-                  meta: { requestId, expected: [] },
-                });
+                const result = await decisions.sendUserMessage(context, sendUserMessageRequest(input, requestId));
                 if (result.status !== 'committed') return mapWrite(call.callId, result);
                 // The message is already durably saved; registration never changes
                 // the send receipt and never starts a model or a poll loop.
@@ -600,10 +586,9 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
                     { status: 'not_found', reason: 'the decision answer message does not exist' },
                     'the decision answer message does not exist');
                 }
-                const result = await decisions.recordDecisionApplication(context, {
-                  input: { messageRef: saved.ref, receipt: input.receipt },
-                  meta: { requestId, expected: [{ ref: saved.ref, revision: saved.revision }] },
-                });
+                const result = await decisions.recordDecisionApplication(context,
+                  recordDecisionApplicationRequest({ messageRef: saved.ref, receipt: input.receipt }, requestId,
+                    [{ ref: saved.ref, revision: saved.revision }]));
                 return mapWrite(call.callId, result);
               }
               default:

@@ -17,7 +17,7 @@ import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
-import type { ReadResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { RoleConfigurationRef, SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
@@ -61,6 +61,14 @@ import {
 } from '../state/note-machine.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
+import type {
+  ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult,
+} from '../../../contracts/unknown-call-review.js';
+import {
+  recordNoteRequestOf, type RecordNoteArgs, type RecordNoteRequestV1,
+} from '../model/note-contracts.js';
+import { toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId } from '../model/tool-commit-arguments.js';
+import { replayCommittedReceipt, type ReceiptReplayFailure } from '../tasks/receipt-replay.js';
 
 /**
  * The trusted Run→Session facts the composition root resolves for a work_run
@@ -239,6 +247,48 @@ function principalOf(ctx: CoreCallContext): unknown {
       runId: principal.runRef.runId } };
   }
   return { kind: 'query_run', queryRunRef: { ...principal.queryRunRef } };
+}
+
+/**
+ * K3 L4 / decision 72 (U1): the ONE identity/fingerprint pair the note writer
+ * (`writeNote`, `dispose`) and the read-only `lookupToolCommit` all use. The
+ * builder and these helpers were factored out so the write and the lookup call
+ * one function and never drift into two copies.
+ */
+function noteCommandIdentity(op: 'write' | 'review' | 'withdraw', ctx: CoreCallContext, commandId: string): string {
+  return `s4-note-${op}:` + sha256Hex(canonicalJson({ schemaVersion: 1, op, projectId: ctx.projectId,
+    workspaceId: ctx.workspaceId ?? null, principal: principalOf(ctx), commandId } as unknown as JsonValue));
+}
+function fingerprintOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
+
+/** The one identity + fingerprint for a built `record_note` request, shared by the write and the lookup. */
+function noteCommandReceiptOf(ctx: CoreCallContext, built: RecordNoteRequestV1): { identityKey: string; fingerprint: string } {
+  if (built.op === 'write') {
+    const request = built.request;
+    return {
+      identityKey: noteCommandIdentity('write', ctx, request.commandId),
+      fingerprint: fingerprintOf({ kind: 's4-note-write', projectId: ctx.projectId, principal: principalOf(ctx),
+        commandId: request.commandId, note: request.note, expectedPointerRevision: request.expectedPointerRevision,
+        goalId: request.goalId }),
+    };
+  }
+  if (built.op === 'review') {
+    const request = built.request;
+    return {
+      identityKey: noteCommandIdentity('review', ctx, request.commandId),
+      fingerprint: fingerprintOf({ kind: 's4-note-disposition', projectId: ctx.projectId, principal: principalOf(ctx),
+        commandId: request.commandId, noteId: request.noteId, expectedVersion: request.expectedVersion,
+        eventKind: request.verdict, reason: request.reason,
+        expectedPointerRevision: request.expectedPointerRevision, resolution: request.resolution ?? null }),
+    };
+  }
+  const request = built.request;
+  return {
+    identityKey: noteCommandIdentity('withdraw', ctx, request.commandId),
+    fingerprint: fingerprintOf({ kind: 's4-note-disposition', projectId: ctx.projectId, principal: principalOf(ctx),
+      commandId: request.commandId, noteId: request.noteId, expectedVersion: request.expectedVersion,
+      eventKind: 'withdraw', reason: request.reason, expectedPointerRevision: null, resolution: null }),
+  };
 }
 
 /**
@@ -434,15 +484,45 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     return { schemaVersion: NOTE_EVENT_SCHEMA_VERSION, occurredAt, projectId, workspaceId };
   }
 
-  function noteCommandIdentity(op: 'write' | 'review' | 'withdraw', ctx: CoreCallContext, commandId: string): string {
-    return `s4-note-${op}:` + sha256Hex(canonicalJson({ schemaVersion: 1, op, projectId: ctx.projectId,
-      workspaceId: ctx.workspaceId ?? null, principal: principalOf(ctx), commandId } as unknown as JsonValue));
-  }
-  function fingerprintOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
-
   function rejectedInput(input: WriteNoteInput, code: NoteErrorCode, reason: string,
     extra: Partial<Extract<WriteNoteResult, { status: 'rejected' }>> = {}): WriteNoteResult {
     return { status: 'rejected', code, reason, draft: input, ...extra };
+  }
+
+  /** The note owner's original wording for a failed NoteWritten replay. */
+  function writeReplayRejection(failure: ReceiptReplayFailure): CoreRejection {
+    switch (failure.kind) {
+      case 'event_unreadable':
+        return { status: 'rejected', code: 'unavailable', reason: 'the replayed write event could not be read' };
+      case 'event_rejected':
+        return { status: 'rejected', code: 'unavailable', reason: failure.rejection.reason };
+      case 'wrong_event_type':
+        return { status: 'rejected', code: 'unavailable', reason: 'the replayed write event is not a NoteWritten event' };
+      case 'receipt_mismatch':
+        return { status: 'rejected', code: 'unavailable', reason: 'the replayed write event disagrees with the receipt' };
+      case 'undecodable':
+        return { status: 'rejected', code: 'unavailable', reason: `the replayed write event is not decodable: ${failure.reason}` };
+      case 'identity_mismatch':
+        return { status: 'rejected', code: 'unavailable', reason: 'the replayed write event identity disagrees with the receipt' };
+    }
+  }
+
+  /** The note owner's original wording for a failed NoteDispositionChanged replay. */
+  function dispositionReplayRejection(failure: ReceiptReplayFailure): CoreRejection {
+    switch (failure.kind) {
+      case 'event_unreadable':
+        return { status: 'rejected', code: 'unavailable', reason: 'the replayed disposition event could not be read' };
+      case 'event_rejected':
+        return { status: 'rejected', code: 'unavailable', reason: failure.rejection.reason };
+      case 'wrong_event_type':
+        return { status: 'rejected', code: 'unavailable', reason: 'the replayed disposition event is not a NoteDispositionChanged event' };
+      case 'receipt_mismatch':
+        return { status: 'rejected', code: 'unavailable', reason: 'the replayed disposition event disagrees with the receipt' };
+      case 'undecodable':
+        return { status: 'rejected', code: 'unavailable', reason: `the replayed disposition event is not decodable: ${failure.reason}` };
+      case 'identity_mismatch':
+        return { status: 'rejected', code: 'unavailable', reason: 'the replayed disposition event identity disagrees with the receipt' };
+    }
   }
 
   /**
@@ -452,32 +532,26 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
    */
   async function replayWrite(receipt: Extract<StoreCommitReceipt, { status: 'committed' }>, input: WriteNoteInput,
     projectId: string): Promise<WriteNoteResult> {
-    let located: Awaited<ReturnType<NoteServiceDependencies['records']['eventAt']>>;
-    try {
-      located = await deps.records.eventAt(receipt.cursor);
-    } catch {
-      return rejectedInput(input, 'unavailable', 'the replayed write event could not be read');
-    }
-    if (located.status !== 'ready') return rejectedInput(input, 'unavailable', located.reason);
-    const event = located.value.event;
-    if (event.eventType !== NOTE_WRITTEN_EVENT_TYPE) {
-      return rejectedInput(input, 'unavailable', 'the replayed write event is not a NoteWritten event');
-    }
-    if (!receipt.eventIds.includes(event.eventId)) {
-      return rejectedInput(input, 'unavailable', 'the replayed write event disagrees with the receipt');
-    }
-    const decoded = noteWrittenEventFromEvent(event);
-    if (decoded.status !== 'decoded') {
-      return rejectedInput(input, 'unavailable', `the replayed write event is not decodable: ${decoded.reason}`);
-    }
-    const result = decoded.value.result;
-    const refKey = noteVersionRefKey({ aggregateType: 'NoteVersion', projectId, noteId: result.noteId,
-      version: result.version });
-    const stored = receipt.versions.find(entry => entry.refKey === refKey);
-    if (stored === undefined || stored.revision !== 1) {
-      return rejectedInput(input, 'unavailable', 'the replayed write receipt does not name its NoteVersion');
-    }
-    return result;
+    const replayed = await replayCommittedReceipt({
+      receipt,
+      eventAt: (cursor) => deps.records.eventAt(cursor),
+      expectedEventType: NOTE_WRITTEN_EVENT_TYPE,
+      decode: noteWrittenEventFromEvent,
+      project: (event) => event.result,
+      validate: (event, committed) => {
+        const result = event.result;
+        const refKey = noteVersionRefKey({ aggregateType: 'NoteVersion', projectId, noteId: result.noteId,
+          version: result.version });
+        const stored = committed.versions.find(entry => entry.refKey === refKey);
+        return stored === undefined || stored.revision !== 1
+          ? { status: 'rejected', code: 'unavailable', reason: 'the replayed write receipt does not name its NoteVersion' }
+          : null;
+      },
+      onFailure: writeReplayRejection,
+    });
+    return replayed.status === 'committed'
+      ? replayed.value
+      : rejectedInput(input, 'unavailable', replayed.reason);
   }
 
   /** The mailbox pattern: a lost receipt is re-checked by identity only. */
@@ -501,30 +575,23 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
    */
   async function replayDisposition(receipt: Extract<StoreCommitReceipt, { status: 'committed' }>, identityKey: string,
     fingerprint: string, noteId: string): Promise<NoteDispositionResult> {
-    let located: Awaited<ReturnType<NoteServiceDependencies['records']['eventAt']>>;
-    try {
-      located = await deps.records.eventAt(receipt.cursor);
-    } catch {
-      return { status: 'rejected', code: 'unavailable', reason: 'the replayed disposition event could not be read', noteId };
-    }
-    if (located.status !== 'ready') return { status: 'rejected', code: 'unavailable', reason: located.reason, noteId };
-    const event = located.value.event;
-    if (event.eventType !== NOTE_DISPOSITION_CHANGED_EVENT_TYPE) {
-      return { status: 'rejected', code: 'unavailable', reason: 'the replayed disposition event is not a NoteDispositionChanged event', noteId };
-    }
-    if (!receipt.eventIds.includes(event.eventId)) {
-      return { status: 'rejected', code: 'unavailable', reason: 'the replayed disposition event disagrees with the receipt', noteId };
-    }
-    const decoded = noteDispositionChangedEventFromEvent(event);
-    if (decoded.status !== 'decoded') {
-      return { status: 'rejected', code: 'unavailable', reason: `the replayed disposition event is not decodable: ${decoded.reason}`, noteId };
-    }
-    const head = decoded.value.head;
-    if (head.noteId !== noteId) {
-      return { status: 'rejected', code: 'unavailable', reason: 'the replayed disposition event names another note', noteId };
-    }
-    return { status: 'done', noteId, version: head.version, state: head.state,
-      receipt: { identityKey, fingerprint, cursor: receipt.cursor } };
+    const replayed = await replayCommittedReceipt({
+      receipt,
+      eventAt: (cursor) => deps.records.eventAt(cursor),
+      expectedEventType: NOTE_DISPOSITION_CHANGED_EVENT_TYPE,
+      decode: noteDispositionChangedEventFromEvent,
+      project: (event): Extract<NoteDispositionResult, { status: 'done' }> => ({
+        status: 'done', noteId, version: event.head.version, state: event.head.state,
+        receipt: { identityKey, fingerprint, cursor: receipt.cursor },
+      }),
+      validate: (event) => event.head.noteId === noteId
+        ? null
+        : { status: 'rejected', code: 'unavailable', reason: 'the replayed disposition event names another note' },
+      onFailure: dispositionReplayRejection,
+    });
+    return replayed.status === 'committed'
+      ? replayed.value
+      : { status: 'rejected', code: 'unavailable', reason: replayed.reason, noteId };
   }
 
   /** The mailbox pattern: a lost disposition receipt is re-checked by identity only. */
@@ -1100,10 +1167,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     // read and every admission gate. Identity is scoped to (operation, project,
     // workspace, the trusted principal, commandId); a same identity with another
     // fingerprint is `idempotency_conflict`, not `unavailable` (R2).
-    const identityKey = noteCommandIdentity('write', ctx, input.commandId);
-    const fingerprint = fingerprintOf({ kind: 's4-note-write', projectId: ctx.projectId, principal: principalOf(ctx),
-      commandId: input.commandId, note: input.note, expectedPointerRevision: input.expectedPointerRevision,
-      goalId: input.goalId });
+    const { identityKey, fingerprint } = noteCommandReceiptOf(ctx, { op: 'write', request: input });
     const prior = await deps.records.lookupCommit({ identityKey, fingerprint });
     if (prior.status === 'ready') return replayWrite(prior.value, input, ctx.projectId);
     if (prior.code === 'idempotency_conflict') return rejectedInput(input, 'invalid', 'idempotency_conflict');
@@ -1544,11 +1608,12 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     // R4/d7: the disposition replay is resolved BEFORE `resolveCaller`, the head
     // read, the scope check, the version check and the transition, and returns
     // the ORIGINAL receipt from the recorded event.
-    const op: 'review' | 'withdraw' = eventKind === 'withdraw' ? 'withdraw' : 'review';
-    const identityKey = noteCommandIdentity(op, ctx, commandId);
-    const fingerprint = fingerprintOf({ kind: 's4-note-disposition', projectId: ctx.projectId, principal: principalOf(ctx),
-      commandId, noteId, expectedVersion, eventKind, reason, expectedPointerRevision: expectedPointerRevision ?? null,
-      resolution: resolution ?? null });
+    const built: RecordNoteRequestV1 = eventKind === 'withdraw'
+      ? { op: 'withdraw', request: { commandId, noteId, expectedVersion, reason } }
+      : { op: 'review', request: { commandId, noteId, expectedVersion,
+          expectedPointerRevision: expectedPointerRevision ?? null, verdict: eventKind,
+          ...(resolution === undefined ? {} : { resolution }), reason } };
+    const { identityKey, fingerprint } = noteCommandReceiptOf(ctx, built);
     const prior = await deps.records.lookupCommit({ identityKey, fingerprint });
     if (prior.status === 'ready') return replayDisposition(prior.value, identityKey, fingerprint, noteId);
     if (prior.code === 'idempotency_conflict') {
@@ -1737,6 +1802,42 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     });
   }
 
+  /**
+   * K3 L4 / decision 72 (U1): the read-only committed-receipt lookup for
+   * `record_note`. It rebuilds the request `recordNoteRequestOf` builds for the
+   * tool handler and the identity/fingerprint pair `writeNote`/`dispose` commit,
+   * from the original Run's trusted provenance; it never writes and never reads
+   * a business fact beyond the idempotency row.
+   */
+  async function lookupToolCommit(ctx: CoreCallContext, input: ToolCommitLookupInput): Promise<ToolCommitLookupResult> {
+    void ctx;
+    if (input.toolName !== 'record_note') return toolCommitLookupUnknownTool(input.toolName);
+    const raw = input.arguments;
+    if (!isRecord(raw)) return { status: 'undetermined', reason: 'invalid_arguments' };
+    let identityKey: string;
+    let fingerprint: string;
+    try {
+      const built = recordNoteRequestOf(raw as unknown as RecordNoteArgs, toolCommitRequestId(input));
+      const origin = input.origin;
+      const rebuilt = {
+        projectId: origin.runRef.projectId,
+        workspaceId: origin.workspaceId,
+        principal: { kind: 'work_run', runRef: { aggregateType: 'Run', projectId: origin.runRef.projectId,
+          goalId: origin.runRef.goalId, runId: origin.runRef.runId } },
+      } as unknown as CoreCallContext;
+      ({ identityKey, fingerprint } = noteCommandReceiptOf(rebuilt, built));
+    } catch {
+      return { status: 'undetermined', reason: 'invalid_arguments' };
+    }
+    let lookup: Awaited<ReturnType<NoteServiceDependencies['records']['lookupCommit']>>;
+    try {
+      lookup = await deps.records.lookupCommit({ identityKey, fingerprint });
+    } catch {
+      return { status: 'undetermined', reason: 'the note receipt lookup failed' };
+    }
+    return toolCommitLookupResult(lookup);
+  }
+
   return {
     writeNote,
     async reviewNote(ctx, input) {
@@ -1748,5 +1849,6 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     },
     applyNoteDecision,
     userReasonFacts,
+    lookupToolCommit,
   };
 }

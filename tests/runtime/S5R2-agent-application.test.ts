@@ -8,6 +8,8 @@ import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contract
 import { createWhiteboardTools } from '../../src/core/agent-runtime/whiteboard-tools.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { createToolCommitLookup } from '../../src/composition/tool-commit-lookup.js';
+import { recordDecisionApplicationRequest } from '../../src/core/work-graph/model/tool-commit-arguments.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
@@ -345,5 +347,50 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 Agent application (%s)', kind
     expect(Object.hasOwn(jsonObject(wire['payload']), 'decisionApplication')).toBe(false);
     expect(Object.hasOwn(jsonObject(json), 'applicationReceipt')).toBe(false);
     expect(Object.keys(jsonObject(json)).sort()).toEqual(['cursor', 'replayed', 'status', 'value']);
+  });
+
+  it('K3-39 record_decision_application reports committed, not_committed and idempotency_conflict through the production dispatch', async () => {
+    const h = await harness(kind);
+    const given = await answeredCandidate(h);
+    const adopted = await adoptAsAgent(h, given);
+    // The PRODUCTION default table (`createToolCommitLookup` as composed in
+    // `src/composition/tool-commit-lookup.ts`), in the production owner order;
+    // the lookup is called with a Host ctx like the start-up reconcile.
+    const lookup = createToolCommitLookup([
+      h.messages.mailbox.lookupToolCommit, h.messages.decisions.lookupToolCommit, h.plans.lookupToolCommit,
+    ]);
+    const origin = { runRef: h.f.runRA.ref, sessionRef: h.f.sessionS,
+      generation: h.f.claimRA.generation, workspaceId: h.f.ctx.workspaceId as string };
+    const kernelCallId = 'k3-39-decision-call-1';
+    // Decision 72 (U1): hand-rolled here (NOT via `toolCommitRequestId`) so a
+    // drift in the production algorithm makes the owner lookup miss.
+    const requestId = 'c2-tool:' + sha256Hex(canonicalJson({
+      runRef: { aggregateType: 'Run', projectId: origin.runRef.projectId, goalId: origin.runRef.goalId,
+        runId: origin.runRef.runId },
+      sessionRef: { projectId: origin.sessionRef.projectId, sessionId: origin.sessionRef.sessionId },
+      operation: 'record_decision_application', callId: kernelCallId,
+    } as never));
+    const args = { messageRef: given.answer.value.ref, receipt: adopted.applicationReceipt };
+    const recorded = committed(await h.messages.decisions.recordDecisionApplication(workContext(h.f),
+      recordDecisionApplicationRequest(args, requestId,
+        [{ ref: given.answer.value.ref, revision: given.answer.value.revision }])));
+
+    const hit = await lookup(h.f.ctx, {
+      toolName: 'record_decision_application', arguments: args, kernelCallId, origin,
+    });
+    expect(hit).toMatchObject({ status: 'committed', cursor: recorded.cursor });
+
+    const miss = await lookup(h.f.ctx, {
+      toolName: 'record_decision_application', arguments: args, kernelCallId: 'k3-39-decision-call-2', origin,
+    });
+    expect(miss).toEqual({ status: 'not_committed' });
+
+    const conflict = await lookup(h.f.ctx, {
+      toolName: 'record_decision_application',
+      arguments: { ...args, messageRef: { ...args.messageRef, messageId: 'k3-39-decision-other' } },
+      kernelCallId, origin,
+    });
+    expect(conflict).toMatchObject({ status: 'undetermined' });
+    expect((conflict as { status: 'undetermined'; reason: string }).reason).toContain('idempotency_conflict');
   });
 });

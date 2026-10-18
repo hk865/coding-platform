@@ -23,6 +23,7 @@ import {createSqliteRawArtifactStore} from '../../src/core/record-store/sqlite-b
 import {createSessionDirectory} from '../../src/core/work-graph/sessions/session-directory.js';
 import {createPlanService} from '../../src/core/work-graph/tasks/plan-service.js';
 import {roleSpecContentDigest,type RoleSpecContentV1} from '../../src/contracts/role-spec.js';
+import {isReviewRoundPurpose,reviewRoundAdmissionProblem} from '../../src/contracts/review-admission.js';
 import {coordinationPolicyContentDigest,type CoordinationPolicyContentV1} from '../../src/contracts/human-role-collaboration.js';
 import {createRoleConfigurationService} from '../../src/core/work-graph/configuration/role-memory-service.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -37,6 +38,7 @@ import type { RuntimeExecutionDependencies, RuntimeHostBindings } from '../../sr
 import type { AgentRuntimeService } from '../../src/core/agent-runtime/ports.js';
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createModelCallService } from '../../src/core/work-graph/tasks/model-call-service.js';
@@ -216,6 +218,9 @@ export async function createB2RuntimeFixture(options: {
   let entry!:ExecutionEntryPort;let modelRequests!:ModelRequestPort;
   function buildDeps(overrides:B2RuntimeFixtureOverrides={}):RuntimeExecutionDependencies {
     const executions=createRunStateReader({records});
+    // Rework 10 package R: the REQUIRED Task-review reader is the real owner
+    // over this fixture's one real records store and its Run reader.
+    const unknownCallReviews=createUnknownCallReviewService({records,reads:executions,now,eventId});
     const roles=createRoleConfigurationService({records,now,eventId});
     const reads=createMaterialRecordReaders(records);
     const materials=createMaterialService({bodies,authority:reads.authority,now});
@@ -226,7 +231,13 @@ export async function createB2RuntimeFixture(options: {
     const activity=createExecutionHistoryReader({history:sessionOperations});
     const activeHost=overrides.host??host;
     const authorizeConfiguration:AuthorizeConfiguration=async(ctx,input)=>{
-      const role=await roles.resolveRoleBinding(ctx,{roleBinding:input.run.roleBinding,declaredPermissions:input.permissions});
+      // R4/L13: a review-purpose Run resolves its Role with EMPTY declared
+      // permissions (its fixed tool set may exceed the Role ceiling), then is
+      // admitted by the shared review contract; every other Run keeps the
+      // Role/Host ceiling checks (create-platform.ts's authorize lane).
+      const reviewPurpose=isReviewRoundPurpose(input.run.purpose);
+      const role=await roles.resolveRoleBinding(ctx,{roleBinding:input.run.roleBinding,
+        declaredPermissions:reviewPurpose?{tools:[],writeScope:[]}:input.permissions});
       if(role.status!=='ready')return role;
       const configured=await activeHost.resolveConfiguration(ctx,{runRef:input.run.ref,role:input.sessionRole,roleResolution:role.value});
       if(configured.status!=='ready')return configured;
@@ -236,6 +247,17 @@ export async function createB2RuntimeFixture(options: {
       // be wider, but every accepted capability must still fit both current
       // Host and Role ceilings; resolving the Role above validates its pins.
       const permissions=input.run.envelope?.permissions??input.permissions;
+      if(reviewPurpose){
+        const admission=reviewRoundAdmissionProblem({purpose:input.run.purpose,tools:permissions.tools,
+          writeScope:permissions.writeScope,hostTools:value.tools,
+          readonlyCommandAccess:value.readonlyCommandAccess??null,roleValid:role.value.status!=='inadmissible'});
+        if(value.configurationRevision!==input.configurationRevision
+          || refKey(permissions)!==refKey(input.permissions)
+          || permissions.policyRevision!==input.run.roleBinding.policyRevision
+          || admission!==null)
+          return {status:'rejected',code:'forbidden',reason:`the review round permissions are not admitted: ${admission??'policy_revision_mismatch'}`};
+        return {status:'ready',value:{configurationRevision:value.configurationRevision,permissions:structuredClone(permissions),hostTemplate:template}};
+      }
       const ceiling=role.value.status==='resolved'?role.value.spec.permissions:null;
       if(value.configurationRevision!==input.configurationRevision
         || refKey(permissions)!==refKey(input.permissions)
@@ -254,6 +276,7 @@ export async function createB2RuntimeFixture(options: {
       ...(overrides.hostInstance===undefined?{}:{hostInstance:overrides.hostInstance}),now,eventId}):undefined;
     return {claims:claimFixture.makeService(records),executions,entry:overrides.entry??entry,modelRequests:overrides.modelRequests??modelRequests,
       roles,plans,sessions,materials,bodies,historyWriter:createExecutionHistoryService({records,now,eventId}),activity,graphHistory:createGraphExecutionHistoryReader({executions,history:activity}),sessionOperations,kernelStores:selectedKernelStores,
+      unknownCallReviews,
       workspaceHost:overrides.workspaceHost??{
         async resolveRoot(scope){return scope.projectId===claimFixture.scope.projectId&&scope.workspaceId===claimFixture.scope.workspaceId?{status:'ready',value:{root:claimFixture.directory,workspaceRevision:1}}:{status:'rejected',code:'forbidden',reason:'Unknown scope'};},
         async authorize(ctx,scope){

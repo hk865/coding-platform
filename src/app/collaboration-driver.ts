@@ -42,7 +42,9 @@ import type {
 import type {
   ConsultationInput,
   ConsultationResult,
+  FailedCardRefV1,
   WorkflowAdvanceInput,
+  WorkflowAdvanceInternal,
   WorkflowAdvanceResult,
 } from '../business/workflow/contracts.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
@@ -273,6 +275,12 @@ type Handle = {
   state: CollaborationState;
   current: WorkflowAdvanceInput | null;
   last: WorkflowAdvanceResult | null;
+  /**
+   * K3 UR7 rework 1: the discriminated cards whose ② already failed in this
+   * continuous selection, carried to the next Workflow advance as its internal
+   * third argument. Never part of the public snapshot.
+   */
+  failedCardRefs: FailedCardRefV1[];
   reason: string | null;
   messages: SessionMessage[];
   messageKeys: Set<string>;
@@ -732,7 +740,7 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
   }
 
   async function runWithPump(handle: Handle, runRef: RunRef, input: WorkflowAdvanceInput,
-    admission: AdvanceAdmission | null = null): Promise<WorkflowAdvanceResult> {
+    internal: WorkflowAdvanceInternal, admission: AdvanceAdmission | null = null): Promise<WorkflowAdvanceResult> {
     handle.currentRun = structuredClone(runRef);
     const fresh = await freshStart(handle, runRef);
     const pumpAbort = new AbortController();
@@ -749,7 +757,7 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
     try {
       // The safe-point wait ends here: the Workflow call is about to be made.
       admission?.proceed();
-      return await dependencies.workflow.advanceWork(loopContext(handle), input);
+      return await dependencies.workflow.advanceWork(loopContext(handle), input, internal);
     } finally {
       // Sender completion/yield is not cancellation of an already-started
       // consultation. Drain it and one final saved-outbox scan before returning.
@@ -763,9 +771,9 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
 
   /** Make the claim/create Workflow call, releasing the safe-point waiters first. */
   async function advanceWorkNow(handle: Handle, input: WorkflowAdvanceInput,
-    admission: AdvanceAdmission | null): Promise<WorkflowAdvanceResult> {
+    internal: WorkflowAdvanceInternal, admission: AdvanceAdmission | null): Promise<WorkflowAdvanceResult> {
     admission?.proceed();
-    return dependencies.workflow.advanceWork(loopContext(handle), input);
+    return dependencies.workflow.advanceWork(loopContext(handle), input, internal);
   }
 
 /** The real continuation of a yielded start/observe receipt, if present. */
@@ -805,13 +813,24 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
           if (openAdmission === null) return;
         }
         const startRun = startRunRefOf(input);
+        // K3 UR7 rework 1: the failed-card set travels ONLY through this internal
+        // third argument, never inside the public request.
+        const internal: WorkflowAdvanceInternal = handle.failedCardRefs.length === 0
+          ? {} : { failedCardRefs: handle.failedCardRefs };
         const result = startRun === null
-          ? await advanceWorkNow(handle, input, openAdmission)
-          : await runWithPump(handle, startRun, input, openAdmission);
+          ? await advanceWorkNow(handle, input, internal, openAdmission)
+          : await runWithPump(handle, startRun, input, internal, openAdmission);
         openAdmission = null;
         // Record the REAL receipt/Run BEFORE honoring a concurrent stop, so a Run
         // claimed/prepared while stop was requested is never lost.
         handle.last = result;
+        // The Workflow returns the set beside `next` only while the continuous
+        // selection continues; any other state ends it and drops the set.
+        if (result.status === 'ready' && result.value.failedCardRefs !== undefined) {
+          handle.failedCardRefs = structuredClone(result.value.failedCardRefs);
+        } else {
+          handle.failedCardRefs = [];
+        }
         if (result.status === 'ready') {
           const observedRun = receiptRunRefOf(result) ?? startRunRefOf(result.value.next);
           if (observedRun !== null) handle.currentRun = structuredClone(observedRun);
@@ -896,6 +915,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       // advances ordered behind it; `proceed` is idempotent.
       openAdmission?.proceed();
       handle.current = null;
+      handle.failedCardRefs = [];
       // A stop drain owns the final `stopped` transition; never claim it here.
       if (!handle.stopRequested && (handle.state === 'running' || handle.state === 'waiting_for_reply')) {
         handle.state = 'waiting';
@@ -1038,7 +1058,8 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
         key, projectId: ctx.projectId, workspaceId: ctx.workspaceId!,
         goalRef: structuredClone(goalRef), flowId: typedAdvance.flowId, taskId, seed, profiles,
         context: snapshotContext(ctx),
-        state: 'running', current: structuredClone(typedAdvance), last: null, reason: null,
+        state: 'running', current: structuredClone(typedAdvance), last: null,
+        failedCardRefs: [], reason: null,
         messages: [], messageKeys: new Set(), currentRun: null,
         stopRequested: false, stopReason: null, wakeWaiting: false, abort: new AbortController(),
         activePumpAbort: null, stopDrain: null, done: Promise.resolve(), announced: null,

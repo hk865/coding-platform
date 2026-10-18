@@ -23,7 +23,7 @@ import type { SourceToolOptions } from './exploration-tools.js';
 import { ModelBudget, type MeterEntry, type ModelTokenBudget } from './model-budget.js';
 import { RuntimeModelCallRejected } from './model-call-access.js';
 import { runObservedModel } from './observed-model-run.js';
-import { createReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
+import { registerReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import { createMailboxInputSupply } from './execution-inputs.js';
 import { projectQueryConfiguration } from './query-preparation.js';
 import { createQueryObservation } from './query-observation.js';
@@ -359,30 +359,17 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // selected it, the explicit `readonlyCommandAccess` grant is present and
       // the current workspace read is the whole workspace. The handler re-reads
       // the same grant before every launch.
-      let readonlyCommandTool: ((workspace: WorkspaceSandbox) => ToolDefinition) | undefined;
-      if (readonlyRequested && hostConfig.readonlyCommandAccess === 'all_except_denied'
-        && currentAuthorization !== undefined && currentAuthorization.status === 'ready'
-        && currentAuthorization.value.allowsRead('.')) {
-        const permissionRevision = currentAuthorization.value.permissionRevision;
-        readonlyCommandTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => createReadonlyCommandTool({
-          workspace: workspaceHandle,
-          workspaceRoot: rootResolved.value.root,
-          ...(hostConfig.processSandboxOptions.readOnlyPaths === undefined ? {} : { readOnlyPaths: hostConfig.processSandboxOptions.readOnlyPaths }),
-          ...(hostConfig.processSandboxOptions.executablePath === undefined ? {} : { executablePath: hostConfig.processSandboxOptions.executablePath }),
-          ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
-          authorization: {
-            permissionRevision,
-            current: async () => {
-              let current;
-              try { current = await deps.workspaceHost.authorize(owned, workspace); }
-              catch { return { status: 'rejected' as const, reason: 'the Host read policy could not be verified' }; }
-              if (current.status !== 'ready') return { status: 'rejected' as const, reason: current.reason };
-              return { status: 'ready' as const, permissionRevision: current.value.permissionRevision,
-                wholeWorkspaceRead: current.value.allowsRead('.') };
-            },
-          },
-        });
-      }
+      // U5: the ONE shared read-only command construction; Query keeps its own
+      // authorization choice (the same Host read re-check at every launch).
+      const readonlyCommandTool = registerReadonlyCommandTool({
+        requested: readonlyRequested,
+        access: hostConfig.readonlyCommandAccess,
+        authorization: currentAuthorization?.status === 'ready' ? currentAuthorization.value : undefined,
+        workspaceRoot: rootResolved.value.root,
+        processSandboxOptions: hostConfig.processSandboxOptions,
+        ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
+        authorizeCurrent: () => deps.workspaceHost.authorize(owned, workspace),
+      });
 
       const taskBudget: ModelTokenBudget = { tokenBudget: record.job.job.intent.budget.maxTokens, deadline: record.job.job.intent.budget.deadline };
       const meter = new ModelBudget(manifest.runtimeBudget, async (entries) => {

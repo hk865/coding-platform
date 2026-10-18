@@ -40,7 +40,10 @@ const OWNER_HOST = { hostInstanceId: 'a8-attestation-owner-host', lease: 'owned'
 
 /** A second connection to the scenario's ledger, closed by the caller. */
 function ownerBackend(database: string): SqliteRecordBackend {
-  return createSqliteRecordBackend({ schemas: platformRecordSchemas(), path: join(database, 'ledger.sqlite') });
+  // K3: the RUN-22 owner writes the UnknownCallReview record; the shared
+  // platform set already registers its schemas (I-23), so add nothing twice.
+  return createSqliteRecordBackend({ schemas: platformRecordSchemas(),
+    path: join(database, 'ledger.sqlite') });
 }
 
 function ownerIds(prefix: string): () => string {
@@ -73,12 +76,20 @@ it('RUN-22 (LA-8): the owner answers a same-identity attestation retry with the 
     const owner = createRunReconcileService({ records, reads, hostInstance: OWNER_HOST, now: () => AG2B_AT,
       eventId: ownerIds('a8-attest-owner-event') });
     const pin = [{ ref: runRef, revision: unknown.run.revision }];
-    const attest = (reason: string, kernelTurnOpen: boolean, inputsConfirmed: boolean | null) => owner.resolveUnknownRun(hostCtx(),
-      { input: { runRef, reason, kernelTurnOpen, inputsConfirmed }, meta: { requestId: 'a8-attest-owner', expected: pin } });
+    // K3 §5.3: the attestation now carries the owner's review draft.
+    const attestWorkspace = { status: 'unavailable' as const, runBaselineKnown: false,
+      reason: 'not_configured' as const, detail: 'a8-attestation-owner' };
+    const incompleteDraft = { inventory: 'incomplete' as const, inventoryProblem: 'kernel_unreadable' as const,
+      items: [], itemsOmitted: 0, workspace: attestWorkspace };
+    const completeDraft = { inventory: 'complete' as const, inventoryProblem: null,
+      items: [], itemsOmitted: 0, workspace: attestWorkspace };
+    const attest = (reason: string, kernelTurnOpen: boolean, inputsConfirmed: boolean | null,
+      review: typeof incompleteDraft | typeof completeDraft) => owner.resolveUnknownRun(hostCtx(),
+      { input: { runRef, reason, kernelTurnOpen, inputsConfirmed, review }, meta: { requestId: 'a8-attest-owner', expected: pin } });
     const reason = 'checked the workspace by hand: nothing was written';
 
     // The facts one way: the Kernel unreadable, so the Turn counts as open and no input is confirmed (contract (d)).
-    const committed = await attest(reason, true, null);
+    const committed = await attest(reason, true, null, incompleteDraft);
     expect(committed).toMatchObject({ status: 'committed', replayed: false, value: { status: 'ended', outcome: 'crashed' } });
     await assertInvariantsAt(inv, 'RUN-22 attested by the owner');
     const attested = await reads.readExecution(hostCtx(), runRef);
@@ -87,9 +98,9 @@ it('RUN-22 (LA-8): the owner answers a same-identity attestation retry with the 
     const events = ledgerEvents(database);
 
     // The other way: the same identity with the Turn read as ended and the inputs confirmed gets the original receipt.
-    expect(await attest(reason, false, true)).toEqual({ ...committed, replayed: true });
+    expect(await attest(reason, false, true, completeDraft)).toEqual({ ...committed, replayed: true });
     // §1.2: the same identity with another reason.
-    expect(await attest('another reason', true, null)).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
+    expect(await attest('another reason', true, null, incompleteDraft)).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
     expect(ledgerEvents(database), 'neither retry writes').toBe(events);
     expect(await reads.readExecution(hostCtx(), runRef)).toEqual(attested);
   } finally {

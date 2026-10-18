@@ -28,8 +28,13 @@
  * refused or failed object is reported, never skipped silently.
  */
 import type { CoreCallContext } from '../contracts/core/call-context.js';
+import type { HostTakeoverProofV1, UnknownCallReviewRef, UnknownCallReviewV1 } from '../contracts/unknown-call-review.js';
+import type { UnknownCallReviewReadPort } from '../core/work-graph/model/unknown-call-review-contracts.js';
 import type { ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
+import type { SessionMessageRef } from '../contracts/core/session-message.js';
+import type { DecisionSourceV1 } from '../contracts/goal-decisions.js';
+import { decisionSourceKey } from '../contracts/goal-decisions.js';
 import type { SessionRecord } from '../contracts/core/session.js';
 import type { RunSnapshot } from '../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../contracts/ledger.js';
@@ -39,6 +44,7 @@ import type { SessionMappingProbe } from '../core/agent-runtime/session-operatio
 import type { QueryReconcileReport, RunReconcileReport } from '../core/agent-runtime/run-reconcile.js';
 import type { InterruptCheckInput } from '../core/work-graph/model/evidence-contracts.js';
 import type { QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
+import type { DecisionMessagePort } from '../core/work-graph/model/decision-contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import type { SessionHealthResult } from '../core/work-graph/sessions/session-health.js';
 import { isPendingVerdict } from '../core/work-graph/state/goal-machine.js';
@@ -50,6 +56,8 @@ import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.
 import type { WriteResult } from '../contracts/core/results.js';
 import type { GoalFanOutPassOptions, GoalFanOutReportV1 } from './goal-fan-out-driver.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
+import type { RedriveAnswerV1 } from '../business/workflow/contracts.js';
+import type { UnappliedAnswersReadV1 } from '../core/work-graph/tasks/unknown-call-review-answers.js';
 
 type Scope = { projectId: string; workspaceId: string };
 
@@ -72,7 +80,8 @@ export type StartupReconcilePlatform = {
     probe(session: SessionRecord, signal: AbortSignal): Promise<SessionMappingProbe>;
     recordSessionHealth(ctx: CoreCallContext, input: { sessionRef: { projectId: string; sessionId: string };
       probe: { verdict: SessionMappingProbe['verdict']; activeRunId: string | null } }): Promise<SessionHealthResult>;
-    reconcileRun(ctx: CoreCallContext, input: { record: TaskExecutionRecord; hostInstanceId: string; probe: SessionMappingProbe }):
+    reconcileRun(ctx: CoreCallContext, input: { record: TaskExecutionRecord; hostInstanceId: string;
+      takeover?: HostTakeoverProofV1 | null; probe: SessionMappingProbe }):
       Promise<RunReconcileReport>;
     reconcileQuery(ctx: CoreCallContext, input: { record: QueryExecutionRecord; hostInstanceId: string; probe: SessionMappingProbe }):
       Promise<QueryReconcileReport>;
@@ -88,12 +97,49 @@ export type StartupReconcilePlatform = {
      * publish it skips the step.
      */
     maintainSessions?: NonNullable<WorkflowPort['maintainSessions']>;
+    /**
+     * K3 (L28 step 2b): the `open = 'yes'` review records, through the existing
+     * `UnknownCallReviewReadPort.listReviews` owner (index
+     * `k3-ucr-by-workspace-open`, 100 per page). Optional: a platform that does
+     * not publish it reports that in `problems` and lists no reviews; the step
+     * never throws.
+     */
+    reviews?: Pick<UnknownCallReviewReadPort, 'listReviews'> & {
+      /**
+       * K3 L28 step 6b (c) kind 4 / M2: the Goal's answers whose ② is
+       * committed and whose ③ is not recorded, read once per active Goal.
+       * Optional (the answer seam is optional): a platform that does not
+       * publish it lists no answers, so the `{ listReviews }`-only seam keeps
+       * working.
+       */
+      listUnappliedAnswers?: UnknownCallReviewReadPort['listUnappliedAnswers'];
+      /**
+       * K3 L19a (ruling 4, answer 7): the Goal's unapplied answers of the
+       * `command_rerun_request` kind through the SAME
+       * `k3-decision-answer-by-source-goal` index (`readUnappliedAnswers`).
+       * Optional like the UCR seam.
+       */
+      readCommandRerunRequestAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
+        Promise<ReadResult<UnappliedAnswersReadV1>>;
+      /**
+       * K3 L18/L28 step 6b (c) kind 3: read the current card's answer by its
+       * canonical source. Optional as above; an absent read selects no answered
+       * record.
+       */
+      readDecisionAnswer?: DecisionMessagePort['readDecisionAnswer'];
+    };
   };
 };
 
 export type StartupReconcileDependencies = {
   platform: StartupReconcilePlatform;
   hostInstanceId: string;
+  /**
+   * K3 (L2): this Host instance's takeover proof (`HostInstanceFacts.takeover`),
+   * copied into every Run classification so a Run-25 candidate can be judged.
+   * Absent/null means no proof and every candidate is blocked.
+   */
+  takeover?: HostTakeoverProofV1 | null;
   /** The workspaces this Host serves (its Kernel Stores are registered before the reconcile runs). */
   scopes: readonly Scope[];
   /** The Host's own context for one workspace (the Host actor, a never-aborted signal). */
@@ -102,7 +148,16 @@ export type StartupReconcileDependencies = {
   fanOut(ctx: CoreCallContext, goalRef: GoalRef, options: GoalFanOutPassOptions): Promise<GoalFanOutReportV1>;
 };
 
-export type ReconcileLine = { ref: string; row: string; status: 'reconciled' | 'left' | 'failed'; reason: string };
+export type ReconcileLine = { ref: string; row: string; status: 'reconciled' | 'left' | 'failed'; reason: string;
+  /** K3 (L25): the automatic-closure outcome of a Run line, copied from `RunReconcileReport.autoCleanup`. */
+  autoCleanup?: { applied: true } | { applied: false; blockedBy: string } };
+
+/**
+ * K3 L28/UR7b (B3 ruling 4/answer 7): one answer the start-up hands to the
+ * Workflow, keyed by its decision source ref (M2): a review record or a
+ * `CommandRerunRequest`.
+ */
+export type { RedriveAnswerV1 } from '../business/workflow/contracts.js';
 
 /** §12.1 step 7: the report; every object left as recorded is listed with its reason. */
 export type StartupReconcileReportV1 = {
@@ -112,19 +167,27 @@ export type StartupReconcileReportV1 = {
   queries: ReconcileLine[];
   checks: ReconcileLine[];
   controls: ReconcileLine[];
+  /**
+   * K3 (L28 step 2b): one `UCR` / `left` line per `open = 'yes'` review record,
+   * with the status, its decision reasons and whether a round is still open.
+   */
+  reviews: ReconcileLine[];
   fanOut: { goalId: string; control: string | null; problem: string | null; runs: number; continuations: number }[];
   /**
    * Step 6b (LA-6): the active Goals the start-up re-drive starts a driver for, with the Tasks that
    * selected them: (a) a required active Task whose automation verdict is pending, (b) a Task whose
    * not-entered Run the same claim re-drives.
    */
-  redriveGoals: { goalRef: GoalRef; scope: Scope; taskIds: string[] }[];
+  redriveGoals: { goalRef: GoalRef; scope: Scope; taskIds: string[]; answers?: RedriveAnswerV1[] }[];
   /** Candidates whose record could not be decoded, and scans that could not complete. */
   problems: string[];
 };
 
 const SESSION_PAGE_LIMIT = 100;
 const MAX_SESSION_PAGES = 100;
+/** L28 step 2b: the same page bound as step 1's scan. */
+const REVIEW_PAGE_LIMIT = 100;
+const MAX_REVIEW_PAGES = 100;
 
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function rejectionText(result: CoreRejection | { status: string }): string {
@@ -152,8 +215,51 @@ function isYieldedWait(run: RunSnapshot): boolean {
   return run.status === 'ended' && run.outcome === 'yielded' && run.continuation !== undefined;
 }
 
+/**
+ * L28 step 6b (c): the four kinds of open review that hand a Goal to the
+ * start-up re-drive. This classifier decides the record-only kinds 1 and 2;
+ * the answer-driven kinds 3 and 4 need I/O (the card-answer read and the
+ * answer index, UR7b) and are read by the callers below.
+ */
+type ReviewRedriveKind = 1 | 2 | 3 | 4;
+
+/**
+ * Which L28 step 6b (c) kind this open record is, or `null`:
+ * 1. open, `pending_review`/`awaiting_proposal` and not `held` (an
+ *    `activeRound` claimed but not entered included);
+ * 2. open with an `activeRound`, whatever its status and hold: the round must
+ *    be closed (an ended one through `settle_review`, a held claimed-not-entered
+ *    one through UR3h), and a held record never opens a new round (L21).
+ * A `held` record with no round (`open = 'no'`) is not handed off: it waits
+ * for "continue" (L29 row 10). Kinds 3-4 are not decided here: they are answer
+ * reads, so `null` means "not kind 1 or 2" and the caller probes the answer
+ * seam separately.
+ */
+function reviewRedriveKindOf(record: UnknownCallReviewV1): ReviewRedriveKind | null {
+  if (record.open !== 'yes') return null;
+  if (record.activeRound !== null) return 2;
+  if ((record.disposition?.hold ?? null) !== 'held'
+    && (record.status === 'pending_review' || record.status === 'awaiting_proposal')) return 1;
+  return null;
+}
+
+/**
+ * L28 6b (c) kind 3: the answered current card's canonical source. The
+ * revision is the record's CURRENT one (the card identity carries it), so an
+ * answer to an older card is never mistaken for this card's answer.
+ */
+function answeredCardSource(record: UnknownCallReviewV1): DecisionSourceV1 {
+  return {
+    kind: 'unknown_call_review',
+    key: decisionSourceKey({ kind: 'unknown_call_review', reviewRef: record.ref, revision: record.revision }),
+    goalRef: { aggregateType: 'Goal', projectId: record.ref.projectId, goalId: record.ref.goalId },
+    pins: [],
+  };
+}
+
 export function emptyStartupReport(hostInstanceId: string): StartupReconcileReportV1 {
-  return { hostInstanceId, sessions: [], runs: [], queries: [], checks: [], controls: [], fanOut: [], redriveGoals: [], problems: [] };
+  return { hostInstanceId, sessions: [], runs: [], queries: [], checks: [], controls: [], reviews: [], fanOut: [],
+    redriveGoals: [], problems: [] };
 }
 
 export async function runStartupReconcile(deps: StartupReconcileDependencies): Promise<StartupReconcileReportV1> {
@@ -238,8 +344,19 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
         continue;
       }
       const result = await platform.reconcile.reconcileRun(ctx, { record: read.value, hostInstanceId,
-        probe: await probeOf(read.value.session) });
-      out.runs.push({ ref: refText(result.runRef), row: result.row, status: result.status, reason: result.reason });
+        takeover: deps.takeover ?? null, probe: await probeOf(read.value.session) });
+      out.runs.push({ ref: refText(result.runRef), row: result.row, status: result.status, reason: result.reason,
+        ...(result.autoCleanup === undefined ? {} : { autoCleanup: result.autoCleanup }) });
+    }
+
+    // Step 2b (L28): the `open = 'yes'` review records, after step 2 (which may
+    // have just created one), read only, 100 per page and at most 100 pages.
+    const openReviews = await readOpenReviews(scope, ctx, out);
+    for (const record of openReviews) {
+      const reasons = record.decisionReasons.length === 0 ? '' : ` ${record.decisionReasons.join(',')}`;
+      const round = record.activeRound === null ? '' : ' active_round';
+      out.reviews.push({ ref: refText(record.ref), row: 'UCR', status: 'left',
+        reason: `${record.status}${reasons}${round}` });
     }
 
     // Step 3: QueryRuns, found through the Sessions they occupy.
@@ -361,17 +478,128 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
     }
 
     // Step 6b (LA-6): the active Goals with (a) a required active Task whose automation verdict the
-    // Workflow acts on, read again after steps 1..6 (a Run step 2 ended is judged here, W-21, RUN-19), or
-    // (b) a not-entered Run whose pointer is not paused/cancelled (W-01..W-03).
+    // Workflow acts on, read again after steps 1..6 (a Run step 2 ended is judged here, W-21, RUN-19),
+    // (b) a not-entered Run whose pointer is not paused/cancelled (W-01..W-03), or (c) an open review
+    // record (L28): a kind-1 waiting record or a kind-2 record whose round still has to be closed.
     const afterSteps = await listed('starting', platform.reconcile.candidates.listRuns(scope, 'starting', ctx.signal));
     const notEntered = afterSteps.filter(run => startingEntryOf(run) === 'not_entered'
       && run.controlState?.desiredState !== 'paused' && run.controlState?.desiredState !== 'cancelled');
+    const readDecisionAnswer = platform.reconcile.reviews?.readDecisionAnswer;
+    const listUnappliedAnswers = platform.reconcile.reviews?.listUnappliedAnswers;
+    const readCommandRerunRequestAnswers = platform.reconcile.reviews?.readCommandRerunRequestAnswers;
     for (const goal of goalRecords) {
       if (goal.desiredState !== 'active') continue;
+      const goalReviews = openReviews.filter(record => record.ref.goalId === goal.ref.goalId);
       const taskIds = [...await pendingAutomationTaskIds(ctx, goal, out),
-        ...notEntered.filter(run => run.ref.goalId === goal.ref.goalId).map(run => run.task.taskId)];
-      if (taskIds.length > 0) out.redriveGoals.push({ goalRef: goal.ref, scope: { ...scope }, taskIds: [...new Set(taskIds)] });
+        ...notEntered.filter(run => run.ref.goalId === goal.ref.goalId).map(run => run.task.taskId),
+        ...goalReviews.filter(record => reviewRedriveKindOf(record) !== null).map(record => record.task.taskId)];
+      // Kind 3 (L28): a `needs_decision`/`awaiting_approval` record with no
+      // round and an answer to its CURRENT card. Reading the answer selects the
+      // record's Task; nothing is applied here (UR7 does that on the advance).
+      if (readDecisionAnswer !== undefined) {
+        for (const record of goalReviews) {
+          if (record.status !== 'needs_decision' && record.status !== 'awaiting_approval') continue;
+          if (reviewRedriveKindOf(record) !== null) continue;
+          let read: Awaited<ReturnType<typeof readDecisionAnswer>>;
+          try {
+            read = await readDecisionAnswer(ctx, { source: answeredCardSource(record) });
+          } catch (error) {
+            out.problems.push(`${scope.workspaceId}: the card answer of review ${record.ref.runId} `
+              + `is not readable (${messageOf(error)})`);
+            continue;
+          }
+          if (read.status === 'not_found') continue;
+          if (read.status !== 'ready') {
+            out.problems.push(`${scope.workspaceId}: the card answer of review ${record.ref.runId} `
+              + `is not readable (${rejectionText(read)})`);
+            continue;
+          }
+          if (read.value.message !== null) taskIds.push(record.task.taskId);
+        }
+      }
+      // Kind 4 (L28, M2): ONE read per active Goal; each answer is handed over
+      // by its own `reviewRef`, independent of the Task ids and the record's
+      // `open`. A read failure is a problem line, never a throw.
+      const answers: RedriveAnswerV1[] = [];
+      if (listUnappliedAnswers !== undefined) {
+        try {
+          const read = await listUnappliedAnswers(ctx, { goalRef: goal.ref });
+          if (read.status === 'ready') {
+            for (const answer of read.value.answers) {
+              answers.push({ kind: 'unknown_call_review', reviewRef: answer.reviewRef,
+                answerMessageRef: answer.answerMessageRef });
+            }
+          } else if (read.status !== 'not_found') {
+            out.problems.push(`${scope.workspaceId}: the unapplied answers of ${goal.ref.goalId} `
+              + `are not readable (${rejectionText(read)})`);
+          }
+        } catch (error) {
+          out.problems.push(`${scope.workspaceId}: the unapplied answers of ${goal.ref.goalId} `
+            + `are not readable (${messageOf(error)})`);
+        }
+      }
+      // Kind 4 for the CRR source (K3 L19a, ruling 4): the SAME answer index
+      // read per Goal; each answer is handed over by its own request ref.
+      if (readCommandRerunRequestAnswers !== undefined) {
+        try {
+          const read = await readCommandRerunRequestAnswers(ctx, { goalRef: goal.ref });
+          if (read.status === 'ready') {
+            for (const answer of read.value.answers) {
+              if (answer.kind !== 'command_rerun_request') continue;
+              answers.push({ kind: 'command_rerun_request', requestRef: answer.requestRef,
+                answerMessageRef: answer.answerMessageRef });
+            }
+          } else if (read.status !== 'not_found') {
+            out.problems.push(`${scope.workspaceId}: the unapplied command-rerun answers of ${goal.ref.goalId} `
+              + `are not readable (${rejectionText(read)})`);
+          }
+        } catch (error) {
+          out.problems.push(`${scope.workspaceId}: the unapplied command-rerun answers of ${goal.ref.goalId} `
+            + `are not readable (${messageOf(error)})`);
+        }
+      }
+      const uniqueTaskIds = [...new Set(taskIds)];
+      if (uniqueTaskIds.length > 0 || answers.length > 0) {
+        out.redriveGoals.push({ goalRef: goal.ref, scope: { ...scope }, taskIds: uniqueTaskIds,
+          ...(answers.length > 0 ? { answers } : {}) });
+      }
     }
+  }
+
+  /**
+   * L28 step 2b: the `open = 'yes'` records through the platform's review read
+   * (the same owner the routes use). Never throws: a missing read or a failed
+   * page is a `problems` line; after the 100-page bound the unread rest is one.
+   */
+  async function readOpenReviews(scope: Scope, ctx: CoreCallContext, out: StartupReconcileReportV1):
+  Promise<UnknownCallReviewV1[]> {
+    const read = platform.reconcile.reviews;
+    if (read === undefined) {
+      out.problems.push(`${scope.workspaceId}: the open reviews are not readable (the review read is not wired)`);
+      return [];
+    }
+    const records: UnknownCallReviewV1[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_REVIEW_PAGES; page += 1) {
+      let found: Awaited<ReturnType<UnknownCallReviewReadPort['listReviews']>>;
+      try {
+        found = await read.listReviews(ctx, { workspace: { ...scope }, filter: { open: 'yes' },
+          page: { limit: REVIEW_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }) } });
+      } catch (error) {
+        out.problems.push(`${scope.workspaceId}: the open reviews are not readable (${messageOf(error)})`);
+        return records;
+      }
+      if (found.status !== 'ready') {
+        out.problems.push(`${scope.workspaceId}: the open reviews are not readable (${rejectionText(found)})`);
+        return records;
+      }
+      records.push(...found.value.items);
+      cursor = found.value.nextCursor ?? undefined;
+      if (cursor === undefined) return records;
+    }
+    out.problems.push(`${scope.workspaceId}: the open-review scan stopped at ${String(records.length)} records; `
+      + 'the unread rest was not listed');
+    return records;
   }
 
   /**

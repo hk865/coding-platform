@@ -9,10 +9,11 @@ import type { ReadResult } from '../../../contracts/core/results.js';
 import type { NoteIndexRowV1, NotesUnderstandingRowV1, UnderstandingStatusV1 } from '../../../contracts/graph-context.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type {
-  NoteAnchorV1, NoteDraftV1, NoteHeadSnapshot, NoteKind, NoteReviewReason, NoteSectionsV1, NoteSourceV1, NoteState,
-  NoteVersionSnapshot,
+  NoteAnchorV1, NoteDraftAnchorV1, NoteDraftV1, NoteFactV1, NoteHeadSnapshot, NoteKind, NoteReviewReason, NoteSectionsV1,
+  NoteSourceV1, NoteState, NoteVersionSnapshot,
 } from '../../../contracts/note.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type { ToolCommitLookup } from '../../../contracts/unknown-call-review.js';
 
 // --------------------------------------------------------------------------
 // Constants (spec §2; injectable initial values, DESIGN §9.3)
@@ -94,6 +95,96 @@ export interface NoteWritePort {
     reason: string | null }): Promise<NoteDispositionResult>;
   withdrawNote(ctx: CoreCallContext, input: { commandId: string; noteId: string; expectedVersion: number;
     reason: string | null }): Promise<NoteDispositionResult>;
+  /** K3 L4: the read-only committed-receipt lookup for the `record_note` tool. */
+  lookupToolCommit?: ToolCommitLookup;
+}
+
+// --------------------------------------------------------------------------
+// The `record_note` model arguments and their ONE pure request builder
+// --------------------------------------------------------------------------
+
+/**
+ * K3 (decision 72, U1): the shape of the `record_note` model arguments after the
+ * strict schema. It lives here in `WorkGraph/model` so the tool handler
+ * (`agent-runtime/note-tool.ts`) and the owner lookup (`notes/note-service.ts`)
+ * share ONE builder, exactly as the mailbox/plan/decision builders live in
+ * `tool-commit-arguments.ts`. The Kernel's parsed args are structurally
+ * assignable, and the runtime schema still enforces the real shape.
+ */
+export type RecordNoteWriteArgs = {
+  op: 'write';
+  kind: NoteKind;
+  topic: string;
+  conclusion: string;
+  anchor: NoteDraftAnchorV1;
+  extraAnchors?: NoteDraftAnchorV1[];
+  facts?: unknown[];
+  basisFiles?: string[];
+  replaces?: string[];
+  contradicts?: string[];
+  coexistWith?: string[];
+  structural?: boolean;
+  body?: string;
+  sections?: NoteSectionsV1;
+  expectedPointerRevision?: number | null;
+};
+export type RecordNoteReviewArgs = {
+  op: 'review';
+  noteId: string;
+  expectedVersion: number;
+  verdict: 'review' | 'accept' | 'reject';
+  resolution?: 'supersede' | 'coexist';
+  reason?: string | null;
+  expectedPointerRevision?: number | null;
+};
+export type RecordNoteWithdrawArgs = {
+  op: 'withdraw';
+  noteId: string;
+  expectedVersion: number;
+  reason?: string | null;
+};
+export type RecordNoteArgs = RecordNoteWriteArgs | RecordNoteReviewArgs | RecordNoteWithdrawArgs;
+
+/**
+ * RW-14 (U1): the ONE pure builder from the accepted model args to the
+ * `writeNote` / `reviewNote` / `withdrawNote` request objects. It is the only
+ * place the model JSON becomes a request: the trusted `commandId` is injected,
+ * absent lists/bodies/pointers take their defaults, and no model-supplied
+ * identity (principal, goalId, plan/catalog revision) can enter.
+ */
+export type RecordNoteRequestV1 =
+  | { op: 'write'; request: WriteNoteInput }
+  | { op: 'review'; request: Parameters<NoteWritePort['reviewNote']>[1] }
+  | { op: 'withdraw'; request: Parameters<NoteWritePort['withdrawNote']>[1] };
+
+export function recordNoteRequestOf(args: RecordNoteArgs, commandId: string): RecordNoteRequestV1 {
+  if (args.op === 'write') {
+    const common = {
+      topic: args.topic,
+      conclusion: args.conclusion,
+      anchor: args.anchor as NoteDraftAnchorV1,
+      extraAnchors: (args.extraAnchors ?? []) as NoteDraftAnchorV1[],
+      facts: (args.facts ?? []) as NoteFactV1[],
+      basisFiles: args.basisFiles ?? [],
+      structural: args.structural ?? false,
+      replaces: args.replaces ?? [],
+      contradicts: args.contradicts ?? [],
+      coexistWith: args.coexistWith ?? [],
+    };
+    const note: NoteDraftV1 = args.kind === 'understanding'
+      ? { ...common, kind: 'understanding', sections: args.sections as NoteSectionsV1 }
+      : { ...common, kind: args.kind as Exclude<NoteKind, 'understanding'>, body: args.body as string };
+    return { op: 'write', request: { commandId, note,
+      expectedPointerRevision: args.expectedPointerRevision ?? null, goalId: null } };
+  }
+  if (args.op === 'review') {
+    return { op: 'review', request: { commandId, noteId: args.noteId, expectedVersion: args.expectedVersion,
+      expectedPointerRevision: args.expectedPointerRevision ?? null, verdict: args.verdict,
+      ...(args.resolution === undefined ? {} : { resolution: args.resolution }),
+      reason: args.reason ?? null } };
+  }
+  return { op: 'withdraw', request: { commandId, noteId: args.noteId, expectedVersion: args.expectedVersion,
+    reason: args.reason ?? null } };
 }
 
 /**

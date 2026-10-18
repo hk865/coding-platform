@@ -31,6 +31,7 @@
 import { randomUUID } from 'node:crypto';
 import { link, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { HostTakeoverProofV1 } from '../contracts/unknown-call-review.js';
 
 export const HOST_INSTANCE_LOCK_FILE = 'host-instance.lock';
 
@@ -44,6 +45,13 @@ export type HostInstanceLease = {
   row: 'HL-01' | 'HL-02' | 'HL-03' | 'HL-04' | 'memory';
   /** Who holds the lock when this Host does not (HL-02/HL-05); null when unreadable (HL-04) or owned. */
   heldBy: HostInstanceLockContent | null;
+  /**
+   * K3 (L2): the labeled proof that the previous Host is gone. HL-01 (no lock
+   * existed) and HL-03 (a stale lock was taken over, with the old instance id
+   * and pid) prove it; an in-memory store (`memory_store`) does not (L2); a
+   * held lease has no proof (`null`).
+   */
+  takeover: HostTakeoverProofV1 | null;
   reason: string;
   /** HL-06: removes the lock file only while it still names this instance. */
   release(): Promise<void>;
@@ -106,7 +114,8 @@ export async function acquireHostInstanceLease(options: HostInstanceLeaseOptions
   const hostInstanceId = randomUUID();
   const noop = async (): Promise<void> => { /* nothing held */ };
   if (options.directory === null) {
-    return { hostInstanceId, lease: 'owned', row: 'memory', heldBy: null, reason: 'an in-memory store has no other Host', release: noop };
+    return { hostInstanceId, lease: 'owned', row: 'memory', takeover: { kind: 'memory_store' },
+      heldBy: null, reason: 'an in-memory store has no other Host', release: noop };
   }
   const directory = options.directory;
   const path = join(directory, HOST_INSTANCE_LOCK_FILE);
@@ -118,7 +127,7 @@ export async function acquireHostInstanceLease(options: HostInstanceLeaseOptions
     if (current.status === 'read' && current.content?.hostInstanceId === hostInstanceId) await rm(path, { force: true });
   };
   const held = (row: 'HL-02' | 'HL-04', heldBy: HostInstanceLockContent | null, reason: string): HostInstanceLease =>
-    ({ hostInstanceId, lease: 'held_by_other', row, heldBy, reason, release: noop });
+    ({ hostInstanceId, lease: 'held_by_other', row, takeover: null, heldBy, reason, release: noop });
   /** The answer when another Host's lock is (now) in place. */
   const heldByCurrent = async (reason: string): Promise<HostInstanceLease> => {
     const current = await readLock(path);
@@ -143,8 +152,10 @@ export async function acquireHostInstanceLease(options: HostInstanceLeaseOptions
       // HL-01 (and the second half of HL-03): create the lock exclusively.
       try {
         await link(own, path);
-        if (takenOver === null) return { hostInstanceId, lease: 'owned', row: 'HL-01', heldBy: null, reason: 'the lock file was created', release };
-        return { hostInstanceId, lease: 'owned', row: 'HL-03', heldBy: null,
+        if (takenOver === null) return { hostInstanceId, lease: 'owned', row: 'HL-01', takeover: { kind: 'hl01_no_lock' },
+          heldBy: null, reason: 'the lock file was created', release };
+        return { hostInstanceId, lease: 'owned', row: 'HL-03', takeover: { kind: 'hl03_stale_lock',
+          previousInstanceId: takenOver.hostInstanceId, previousPid: takenOver.pid }, heldBy: null,
           reason: `the stale lock of pid ${String(takenOver.pid)} was taken over`, release };
       } catch (error) {
         if (codeOf(error) !== 'EEXIST') return held('HL-04', null, `the lock file could not be created: ${messageOf(error)}`);

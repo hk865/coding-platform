@@ -23,6 +23,7 @@ import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-
 import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-history-codecs.js';
@@ -63,6 +64,7 @@ export function committed<T>(result: WriteResult<T>): Extract<WriteResult<T>, { 
 export function s1Schemas(r3e = false): RecordBackendSchemas {
   const installed = [materialRecordSchemas(), PLAN_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS,
     PLAN_GOVERNANCE_RECORD_SCHEMAS, SESSION_RECORD_SCHEMAS, ROLE_RECORD_SCHEMAS, TASK_CLAIM_RECORD_SCHEMAS,
+    UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS,
     EXECUTION_ENTRY_RECORD_SCHEMAS, MODEL_REQUEST_RECORD_SCHEMAS, EXECUTION_HISTORY_RECORD_SCHEMAS,
     ...(r3e ? [EVIDENCE_RECORD_SCHEMAS, PROJECT_BOOTSTRAP_RECORD_SCHEMAS] : [])];
   const all = platformRecordSchemas();

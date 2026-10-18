@@ -18,6 +18,7 @@ import type { DependencyRequirement, Disposition, Phase, PlanRevisionDraft, Plan
   TaskRelationV2 } from '../../../contracts/plan.js';
 import type { TaskFailureFactsV1, TaskPhaseCauseV1, TaskReworkSummaryV1 } from '../../../contracts/task-failure.js';
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
+import type { ToolCommitLookup, UnknownCallDecisionReasonV1, UnknownCallReviewRef, UnknownCallReviewStatusV1, UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type { GoalDisplayV1, GoalResumeContinuationV1, GoalRunControlCapabilityV1 } from '../state/goal-machine.js';
 import type { GraphWrite } from './task-contracts.js';
 import type { InitialPlanAnswerFacts } from '../../../contracts/query-job.js';
@@ -102,6 +103,25 @@ export type GoalPlanningView = {
   completionEvaluation: 'not_evaluated';
   diagnostics: GoalPlanningDiagnostic[];
 };
+/**
+ * K3 L7: the selected Run's `UnknownCallReview` record in the Task read model.
+ * `unreadable` is the fail-closed value (the key exists but the record could not
+ * be read); the plain shape is the bounded public projection the UI and the
+ * Workflow gate read. A key that truly does not exist leaves the field absent.
+ */
+export type TaskUnknownCallReview =
+  | { status: 'unreadable' }
+  | {
+      ref: UnknownCallReviewRef;
+      revision: number;
+      status: UnknownCallReviewStatusV1;
+      decisionReasons: UnknownCallDecisionReasonV1[];
+      activeRound: UnknownCallReviewV1['activeRound'];
+      hold: 'held' | 'released' | null;
+      /** L9: 8 - rounds.length. */
+      remainingRoundSlots: number;
+    };
+
 export type TaskRow = { ref: TaskTriple; definition: RuntimeTask; effectivePhase: Phase;
   disposition: Disposition; currentAttempt: TaskAttemptRef | null; execution: RunRef | null;
   eligibilityScope: 'task_state'; eligibility: TaskEligibility;
@@ -132,6 +152,8 @@ export type TaskRow = { ref: TaskTriple; definition: RuntimeTask; effectivePhase
   rework?: TaskReworkSummaryV1;
   /** C7 latest disposition change through a future-only adoption; read-only. */
   dispositionChange?: TaskDispositionChangeV1;
+  /** K3 L7: the selected Run's review record; absent when no key exists. */
+  unknownCallReview?: TaskUnknownCallReview;
 };
 /**
  * R3e.3 formal Goal completion projection. It is INDEPENDENT of the advisory
@@ -282,6 +304,8 @@ export interface PlanTaskPort {
    * `requeueTask` with the `goal_resume` trigger. Optional like the reads above.
    */
   queryGoalResumeContinuations?(ctx: CoreCallContext, input: { goalRef: GoalRef }): Promise<ReadResult<GoalResumeContinuationsRead>>;
+  /** K3 L4: the read-only committed-receipt lookup for `propose_future_plan`. */
+  lookupToolCommit?: ToolCommitLookup;
 }
 
 /**

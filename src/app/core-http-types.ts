@@ -26,6 +26,11 @@ import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
 import type { SessionResponsibilityPort } from '../core/work-graph/sessions/session-responsibility-service.js';
 import type { SessionAnomalyPort } from '../core/work-graph/tasks/session-anomaly-service.js';
+// K3 (§2 L7): the read-only UnknownCallReview owner of `unknown-call-reviews/read`.
+import type {
+  UnknownCallReviewPort, UnknownCallReviewReadPort,
+} from '../core/work-graph/model/unknown-call-review-contracts.js';
+import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js';
 import type { AdoptInitialArchitectureInput } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
@@ -67,7 +72,7 @@ import type {
 import type { LineSegmentV1 } from '../contracts/work-line.js';
 import type { SessionHistoryEntry } from '../core/agent-runtime/session-operations.js';
 // Slice 4C C1.4 (spec §2/L15/L19): the notes and version-list route contracts.
-import type { ReadResult } from '../contracts/core/results.js';
+import type { ReadResult, WriteResult } from '../contracts/core/results.js';
 import type {
   NoteListRequestV1, NoteListResultV1, NoteMemoryReadResult, WriteNoteEnvelopeV1, NoteWritePort, VersionListPageV1,
 } from '../core/work-graph/model/note-contracts.js';
@@ -232,6 +237,11 @@ export type CoreRouteSuffix =
   | 'sessions/transfer-responsibility'
   | 'tasks/archive-state'
   | 'anomalies/list'
+  // K3 (§2 L7, §4): the read-only review lookup, by record ref or original Run.
+  | 'unknown-call-reviews/read'
+  | 'unknown-call-reviews/list'
+  | 'unknown-call-reviews/hold'
+  | 'unknown-call-reviews/release-hold'
   | 'messages/undelivered-replies'
   // Slice 3: the two public read-only graph routes.
   | 'graph/look'
@@ -601,6 +611,39 @@ export type AnomaliesListBody = PlainBody<SessionAnomalyPort['listSessionAnomali
 export type AnomaliesListResponse = RouteResponse<SessionAnomalyPort['listSessionAnomalies']>;
 export type MessagesUndeliveredRepliesBody = PlainBody<NonNullable<SessionMailboxPort['readUndeliveredReplies']>>;
 export type MessagesUndeliveredRepliesResponse = RouteResponse<NonNullable<SessionMailboxPort['readUndeliveredReplies']>>;
+// K3 (§2 L7): `unknown-call-reviews/read` derives its body/response from the
+// exact read-only owner method; the request is `{ ref }` or `{ runRef }`.
+export type UnknownCallReviewsReadBody = PlainBody<UnknownCallReviewReadPort['readReview']>;
+export type UnknownCallReviewsReadResponse = RouteResponse<UnknownCallReviewReadPort['readReview']>;
+export type UnknownCallReviewsListBody = PlainBody<UnknownCallReviewReadPort['listReviews']>;
+export type UnknownCallReviewsListResponse = RouteResponse<UnknownCallReviewReadPort['listReviews']>;
+export type UnknownCallReviewsHoldBody = GraphWriteBody<UnknownCallReviewPort['holdReview']>;
+export type UnknownCallReviewsHoldResponse = RouteResponse<UnknownCallReviewPort['holdReview']>;
+/**
+ * K3 L21 ruling 4: `release-hold` is one response. `hold` is the `releaseHold`
+ * receipt; `requeue` is the same operator's human `requeueTask` result (or its
+ * rejection) when the original Run's rework fence is human, `null` otherwise.
+ * The route itself succeeds iff `hold` succeeded.
+ */
+export type UnknownCallReviewReleaseHoldValue = {
+  hold: Awaited<ReturnType<UnknownCallReviewPort['releaseHold']>>;
+  requeue: Awaited<ReturnType<NonNullable<TaskClaimPort['requeueTask']>>> | null;
+};
+export type UnknownCallReviewsReleaseHoldBody = GraphWriteBody<UnknownCallReviewPort['releaseHold']>;
+export type UnknownCallReviewsReleaseHoldResponse = WriteResult<UnknownCallReviewReleaseHoldValue>;
+
+/**
+ * The compile-time typed assembly of the K3 suffixes. Like `Slice1CoreRouteDto`
+ * it is a type only; `dispatchCoreRoute` names it so the aliases stay reachable
+ * from production.
+ */
+export type K3CoreRouteDto = {
+  'unknown-call-reviews/read': { body: UnknownCallReviewsReadBody; response: UnknownCallReviewsReadResponse };
+  'unknown-call-reviews/list': { body: UnknownCallReviewsListBody; response: UnknownCallReviewsListResponse };
+  'unknown-call-reviews/hold': { body: UnknownCallReviewsHoldBody; response: UnknownCallReviewsHoldResponse };
+  'unknown-call-reviews/release-hold':
+    { body: UnknownCallReviewsReleaseHoldBody; response: UnknownCallReviewsReleaseHoldResponse };
+};
 
 /**
  * The compile-time typed assembly of the eleven slice-1 suffixes (spec §4.4):

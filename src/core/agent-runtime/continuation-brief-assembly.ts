@@ -18,12 +18,17 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import {
   CONTINUATION_BRIEF_LIMITS, compareSourceCheckpoints,
-  type BoundedTextV1, type ContinuationAnomalySectionV1, type ContinuationBriefV1, type ContinuationNewInputV1,
-  type ContinuationSourceCheckpointV1, type ContinuationToolCallV1,
+  type BoundedTextV1, type ContinuationAnomalySectionV1, type ContinuationBriefV1, type ContinuationDiffOmittedReasonV1,
+  type ContinuationNewInputV1, type ContinuationSourceCheckpointV1, type ContinuationToolCallV1,
+  type ContinuationBlockedCommandLineV1,
+  type ContinuationUnknownCallReviewFileV1, type ContinuationUnknownCallReviewItemV1, type ContinuationUnknownCallReviewV1,
 } from '../../contracts/continuation-brief.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { SessionAnomalyAnchorV1 } from '../../contracts/session-anomaly.js';
 import { reworkActorClassOf, type ReworkFailureClass } from '../../contracts/task-requeue.js';
+import type {
+  CapturedPathV1, UnknownCallObservationV1, UnknownCallReviewItemV1, UnknownCallReviewV1, WorkspaceCaptureV1,
+} from '../../contracts/unknown-call-review.js';
 import type { ContinuationBasis, TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import { roundFailureFacts, runFailureOrigin } from '../work-graph/state/no-progress.js';
 import { deriveReworkClass, runErrorOf } from '../work-graph/state/task-failure.js';
@@ -68,6 +73,26 @@ export type AssembleBriefInput = {
    * or null means no section (the old brief bytes and digest stay unchanged).
    */
   anomalies?: ContinuationAnomalySectionV1 | null;
+  /**
+   * K3 L20: the previous/afterRun's stored review record. Absent or null means
+   * no review section (the old brief bytes and digest stay unchanged).
+   */
+  unknownCallReview?: UnknownCallReviewV1 | null;
+  /**
+   * K3 L6: the run-start baseline and current file content per path, already
+   * read and classified by the caller. Missing paths get no diff.
+   */
+  unknownCallReviewFiles?: ReadonlyMap<string, { baseline: ReviewFileRead; current: ReviewFileRead }>;
+  /** K3 L6: the capture that classifies each path's change; defaults to the review's own capture. */
+  unknownCallReviewCapture?: WorkspaceCaptureV1 | null;
+  /** K3 L6 (item 6a): the FULL changed list read from the capture Artifact, or null when unreadable. */
+  unknownCallReviewCaptureChanges?: readonly CapturedPathV1[] | null;
+  /**
+   * K3 B3 item 7 / lead answer 5: the Task's blocked commands (all its records,
+   * ordered by record creation time then alias), already read by the caller.
+   * Absent or empty means no section, so the brief stays byte-identical.
+   */
+  blockedCommands?: readonly ContinuationBlockedCommandLineV1[] | null;
 };
 
 /** Slice 1 §2.7: at most this many anchors are loaded into one brief. */
@@ -92,6 +117,225 @@ export function assembleAnomalySection(
   });
   const carried = ordered.slice(0, ANOMALY_ANCHOR_LIMIT);
   return { anchors: carried, omitted: ordered.length - carried.length, instructionVersion: 1 };
+}
+
+// ------------------------------------------------------------------------ //
+// K3 L6/L20: the unknown-call review section                                //
+// ------------------------------------------------------------------------ //
+/** K3 L6: one side of a file read, classified by the read-only caller (never by this pure function). */
+export type ReviewFileRead =
+  | { status: 'ready'; text: string }
+  | { status: 'unavailable'; reason: ContinuationDiffOmittedReasonV1 | 'read_failed' };
+
+export type UnknownCallReviewSectionInput = {
+  review: UnknownCallReviewV1;
+  /** The Kernel-recorded tool arguments by callId (the `oldText`/`newText` excerpts). */
+  callArguments?: ReadonlyMap<string, Record<string, unknown>>;
+  /** The run-start baseline and current file content per path, already read. */
+  files?: ReadonlyMap<string, { baseline: ReviewFileRead; current: ReviewFileRead }>;
+  /** The capture whose changed paths classify `change`; defaults to the review's own capture. */
+  capture?: WorkspaceCaptureV1 | null;
+  /**
+   * K3 L6 (item 6a): the FULL changed list read from the capture Artifact
+   * (`captureRef`). `null`/absent means the Artifact could not be read, so the
+   * bounded sample is all the classifier has.
+   */
+  captureChanges?: readonly CapturedPathV1[] | null;
+};
+
+/** L6: `oldText`/`newText` excerpts. */
+const REVIEW_EXCERPT_CHARS = 1_000;
+/** L6: one path's diff. */
+const REVIEW_DIFF_CHARS = 2_000;
+/** L6: all diffs of the section together. */
+const REVIEW_SECTION_DIFF_BYTES = 8 * 1024;
+const REVIEW_UTF8 = new TextEncoder();
+const REVIEW_OLD_TEXT_KEYS: readonly string[] = ['oldText', 'old_string'];
+const REVIEW_NEW_TEXT_KEYS: readonly string[] = ['newText', 'new_string', 'content', 'text'];
+
+/** A bounded text with a field-specific cap (the contract's own `BoundedTextV1` shape). */
+function boundedTo(text: string, cap: number): BoundedTextV1 {
+  return text.length > cap ? { text: text.slice(0, cap), truncated: true } : { text, truncated: false };
+}
+function reviewArgText(args: Record<string, unknown> | undefined, keys: readonly string[]): string | null {
+  if (args === undefined) return null;
+  for (const key of keys) {
+    const value = args[key];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return null;
+}
+function reviewSummary(item: UnknownCallReviewItemV1): BoundedTextV1 {
+  const summary = item.summary;
+  const text = summary.command !== null && summary.command.length > 0 ? summary.command
+    : summary.mode !== null && summary.paths.length > 0 ? `${summary.mode} ${summary.paths.join('、')}`
+      : item.toolName;
+  const boundedText = bounded(text);
+  return summary.truncated ? { text: boundedText.text, truncated: true } : boundedText;
+}
+/** The human evidence text of an observation: a review-round string or a platform lookup outcome. */
+function reviewEvidence(observed: UnknownCallObservationV1): string | null {
+  if (!('evidence' in observed) || observed.evidence === undefined) return null;
+  const evidence = observed.evidence;
+  if (typeof evidence === 'string') return evidence;
+  if (evidence.kind === 'receipt') return `平台回执：${evidence.eventIds.join('、')}`;
+  if (evidence.kind === 'not_committed') return '平台没有提交记录';
+  return `平台查找失败：${evidence.reason}`;
+}
+/** A `read_failed` reason has no `diffOmittedReason`; it degrades to a null reason, never a diff. */
+function diffReasonOf(reason: ContinuationDiffOmittedReasonV1 | 'read_failed'): ContinuationDiffOmittedReasonV1 | null {
+  return reason === 'read_failed' ? null : reason;
+}
+/** LCS-based line diff over a bounded window; a fallback replace when the inputs are too large to align. */
+function diffOperations(before: readonly string[], after: readonly string[]): Array<{ kind: 'same' | 'del' | 'add'; line: string }> {
+  if (before.length * after.length > 250_000) {
+    return [...before.map((line) => ({ kind: 'del' as const, line })), ...after.map((line) => ({ kind: 'add' as const, line }))];
+  }
+  const rows = before.length + 1;
+  const columns = after.length + 1;
+  const table: Uint32Array[] = Array.from({ length: rows }, () => new Uint32Array(columns));
+  for (let i = before.length - 1; i >= 0; i -= 1) {
+    for (let j = after.length - 1; j >= 0; j -= 1) {
+      table[i]![j] = before[i] === after[j] ? table[i + 1]![j + 1]! + 1 : Math.max(table[i + 1]![j]!, table[i]![j + 1]!);
+    }
+  }
+  const operations: Array<{ kind: 'same' | 'del' | 'add'; line: string }> = [];
+  let i = 0;
+  let j = 0;
+  while (i < before.length && j < after.length) {
+    if (before[i] === after[j]) { operations.push({ kind: 'same', line: before[i]! }); i += 1; j += 1; }
+    else if (table[i + 1]![j]! >= table[i]![j + 1]!) { operations.push({ kind: 'del', line: before[i]! }); i += 1; }
+    else { operations.push({ kind: 'add', line: after[j]! }); j += 1; }
+  }
+  while (i < before.length) { operations.push({ kind: 'del', line: before[i]! }); i += 1; }
+  while (j < after.length) { operations.push({ kind: 'add', line: after[j]! }); j += 1; }
+  return operations;
+}
+/** A unified diff (`--- a/…`, `+++ b/…`, one hunk); the caller bounds it further. */
+function unifiedDiffText(path: string, oldText: string, newText: string): string {
+  const before = oldText === '' ? [] : oldText.split('\n');
+  const after = newText === '' ? [] : newText.split('\n');
+  const operations = diffOperations(before, after);
+  const startOld = before.length === 0 ? 0 : 1;
+  const startNew = after.length === 0 ? 0 : 1;
+  const header = `@@ -${String(startOld)},${String(before.length)} +${String(startNew)},${String(after.length)} @@`;
+  const lines = [`--- a/${path}`, `+++ b/${path}`, header];
+  for (const operation of operations) {
+    lines.push(`${operation.kind === 'same' ? ' ' : operation.kind === 'del' ? '-' : '+'}${operation.line}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * K3 L6/§2: the pure `unknownCallReview` section. Per item it copies the alias,
+ * callId, tool name, kind, bounded summary, the observed verdict/evidence/crash
+ * suspicion and the D6 `reviewerConclusion`; for `file_edit` items it adds one
+ * entry per `summary.paths`, classified against the capture's changed paths,
+ * bounded Kernel-argument excerpts and the L6 unified diff with its caps. The
+ * record's disposition is projected to the contract's alias form (L19/L20).
+ */
+export function assembleUnknownCallReviewSection(input: UnknownCallReviewSectionInput): ContinuationUnknownCallReviewV1 {
+  const review = input.review;
+  const capture = input.capture === undefined ? review.workspace : input.capture;
+  const changed = capture !== null && capture.status === 'captured' ? capture.sample : [];
+  const notVisible = capture !== null && capture.status === 'captured' ? capture.notVisible : [];
+  // L6 (item 6a): the full Artifact changes, when the caller could read them.
+  const fullChanges = input.captureChanges ?? null;
+  const sampleTruncated = capture !== null && capture.status === 'captured' && capture.changedCount > capture.sample.length;
+  const changeOf = (path: string): ContinuationUnknownCallReviewFileV1['change'] => {
+    const source = fullChanges ?? changed;
+    const hit = source.find((entry) => entry.path === path);
+    if (hit !== undefined) return hit.change;
+    if (notVisible.some((prefix) => path === prefix || path.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`))) {
+      return 'not_visible';
+    }
+    // The Artifact could not be read and the bounded sample cannot speak for
+    // every changed path: saying "unchanged" would state an unknown fact.
+    if (fullChanges === null && sampleTruncated) return 'unknown';
+    return 'unchanged';
+  };
+  let sectionDiffBytes = 0;
+  const items: ContinuationUnknownCallReviewItemV1[] = review.items.map((item) => {
+    const observed = item.observed;
+    const evidenceText = reviewEvidence(observed);
+    const crashSuspicion = 'crashSuspicion' in observed && observed.crashSuspicion !== undefined ? observed.crashSuspicion : null;
+    const reviewerConclusion = 'reviewerConclusion' in observed && observed.reviewerConclusion !== null
+      && observed.reviewerConclusion !== undefined ? bounded(observed.reviewerConclusion.evidence) : null;
+    const files: ContinuationUnknownCallReviewFileV1[] = item.kind !== 'file_edit' ? [] : item.summary.paths.map((path) => {
+      const mode = item.summary.mode ?? 'replace';
+      const args = input.callArguments?.get(item.callId);
+      const oldRaw = reviewArgText(args, REVIEW_OLD_TEXT_KEYS);
+      const newRaw = reviewArgText(args, REVIEW_NEW_TEXT_KEYS);
+      const oldText = oldRaw === null ? null : boundedTo(oldRaw, REVIEW_EXCERPT_CHARS);
+      const newText = newRaw === null ? null : boundedTo(newRaw, REVIEW_EXCERPT_CHARS);
+      const read = input.files?.get(path);
+      let diff: BoundedTextV1 | null = null;
+      let diffOmittedReason: ContinuationUnknownCallReviewFileV1['diffOmittedReason'] = null;
+      if (read === undefined) {
+        diffOmittedReason = diffReasonOf(mode === 'create' ? 'baseline_dirty' : 'read_failed');
+      } else if (read.baseline.status === 'unavailable') {
+        diffOmittedReason = diffReasonOf(read.baseline.reason);
+      } else if (read.current.status === 'unavailable') {
+        diffOmittedReason = diffReasonOf(read.current.reason);
+      } else {
+        const text = unifiedDiffText(path, read.baseline.text, read.current.text);
+        const bytes = REVIEW_UTF8.encode(text).length;
+        if (sectionDiffBytes + bytes > REVIEW_SECTION_DIFF_BYTES) diffOmittedReason = 'section_limit';
+        else { sectionDiffBytes += bytes; diff = boundedTo(text, REVIEW_DIFF_CHARS); }
+      }
+      return { path, mode, change: changeOf(path), oldText, newText, diff, diffOmittedReason };
+    });
+    return { alias: item.alias, callId: item.callId, toolName: item.toolName, kind: item.kind,
+      summary: reviewSummary(item), verdict: observed.verdict,
+      evidence: evidenceText === null ? null : bounded(evidenceText), crashSuspicion,
+      reviewerConclusion, files };
+  });
+  const recordDisposition = review.disposition;
+  const disposition: ContinuationUnknownCallReviewV1['disposition'] = recordDisposition === null ? null : (() => {
+    const aliasOf = new Map(review.items.map(item => [item.callId, item.alias] as const));
+    const proposalTargets = new Set(review.proposalTargets ?? []);
+    const aliasesOf = (callIds: readonly string[]): number[] => callIds
+      .map(callId => aliasOf.get(callId))
+      .filter((alias): alias is number => alias !== undefined);
+    return {
+      choice: recordDisposition.choice,
+      source: recordDisposition.source,
+      text: recordDisposition.text === null ? null : bounded(recordDisposition.text),
+      targets: aliasesOf(recordDisposition.targets),
+      platformTargets: aliasesOf((review.dispositionTargets ?? []).filter(callId => !proposalTargets.has(callId))),
+      approvedMethods: (recordDisposition.approvedMethods ?? []).map(method => ({
+        alias: method.alias, command: method.command, cwd: method.cwd,
+      })),
+      // The ② owner already mapped each answer object to the card's canonical
+      // form: the aggregate object became `null`, a file object its path.
+      annotations: (recordDisposition.annotations ?? []).map(annotation => ({
+        path: annotation.path, text: annotation.text,
+      })),
+    };
+  })();
+  return {
+    reviewRef: { ...review.ref },
+    revision: review.revision,
+    origin: review.origin.kind,
+    inventory: review.inventory,
+    items,
+    itemsOmitted: review.itemsOmitted,
+    disposition,
+    workspace: {
+      status: capture === null ? review.workspace.status : capture.status,
+      runBaselineKnown: capture === null ? review.workspace.runBaselineKnown : capture.runBaselineKnown,
+      notVisible: capture !== null && capture.status === 'captured' ? [...capture.notVisible] : [],
+      changedSample: changed.map((entry) => entry.path),
+      changedOmitted: capture !== null && capture.status === 'captured'
+        ? Math.max(0, capture.changedCount - capture.sample.length) : 0,
+    },
+    // K3 B3 item 6 / answer 5: present exactly when the record blocked a command.
+    ...(review.blockedCommands.length === 0 ? {} : {
+      blockedCommands: review.blockedCommands.map(entry => ({
+        alias: entry.alias, reviewRunId: entry.reviewRunId, commandSha256: entry.commandSha256,
+      })),
+    }),
+  };
 }
 
 const PAGE_LIMIT = 200;
@@ -373,6 +617,17 @@ function bounded(text: string): BoundedTextV1 {
   return text.length > cap ? { text: text.slice(0, cap), truncated: true } : { text, truncated: false };
 }
 
+/** The Kernel-recorded tool arguments by callId, for the review section's L6 excerpts. */
+function callArgumentsOf(turn: PreviousTurnFacts): ReadonlyMap<string, Record<string, unknown>> {
+  const argumentsByCallId = new Map<string, Record<string, unknown>>();
+  if (turn.kernel !== 'read') return argumentsByCallId;
+  for (const entry of turn.state.transcript) {
+    if (entry.kind !== 'assistant_message') continue;
+    for (const call of entry.toolCalls) argumentsByCallId.set(call.callId, call.arguments as Record<string, unknown>);
+  }
+  return argumentsByCallId;
+}
+
 /** A body the basis reader already bounded: cut there, it stays marked cut (contract (e) "…Omitted / truncated"). */
 function boundedBody(entry: { body: string | null; truncated: boolean } | undefined): BoundedTextV1 | null {
   if (entry === undefined || entry.body === null) return null;
@@ -575,6 +830,15 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
     : sameSession ? previousEnd !== null ? 'same_session_history' : 'same_session_without_previous_turn'
       : 'other_session';
   const tools = turn.kernel === 'read' ? toolFactsOf(turn.state) : null;
+  // K3 L20: the previous/afterRun's review section, rendered only when a record was read.
+  const unknownCallReview = input.unknownCallReview === undefined || input.unknownCallReview === null ? null
+    : assembleUnknownCallReviewSection({
+      review: input.unknownCallReview,
+      callArguments: callArgumentsOf(turn),
+      ...(input.unknownCallReviewFiles === undefined ? {} : { files: input.unknownCallReviewFiles }),
+      ...(input.unknownCallReviewCapture === undefined ? {} : { capture: input.unknownCallReviewCapture }),
+      ...(input.unknownCallReviewCaptureChanges === undefined ? {} : { captureChanges: input.unknownCallReviewCaptureChanges }),
+    });
   const steersApplied = basis.previousIntents.steers.filter((steer) => steer.kind === 'steer' && steer.status === 'applied');
   const steersOpen = basis.previousIntents.steers.filter((steer) => steer.kind === 'steer' && steer.status !== 'applied');
   // Contract (e): the accepted steers and messages are listed unless the new Run's history already holds them.
@@ -685,5 +949,13 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
     // Slice 1 §2.7: absent (never null) without a section, so an old brief's
     // bytes and digest stay unchanged.
     ...(input.anomalies === undefined || input.anomalies === null ? {} : { anomalies: input.anomalies }),
+    // K3 L20: absent (never null) without a record, same reason.
+    ...(unknownCallReview === null ? {} : { unknownCallReview }),
+    // K3 B3 item 7: the Task's blocked-command lines, absent when empty.
+    ...(input.blockedCommands === undefined || input.blockedCommands === null || input.blockedCommands.length === 0
+      ? {} : { blockedCommands: input.blockedCommands.map(entry => ({
+        alias: entry.alias, reviewRunId: entry.reviewRunId, requestState: entry.requestState,
+        declaredForms: [...entry.declaredForms],
+      })) }),
   };
 }

@@ -28,6 +28,8 @@ import type { DecisionSourceFactsPort, S5RecordPort } from '../model/decision-co
 import { decodeGoalSettingsChangedEvent, decisionChangeProofProblem } from '../persistence/decision-record-codecs.js';
 import { noteDispositionChangedEventFromEvent } from '../persistence/note-record-codecs.js';
 import { decodePlanRevisionAcceptedEvent } from '../persistence/plan-record-codecs.js';
+import { unknownCallReviewChangedEventFromEvent } from '../tasks/unknown-call-review-codecs.js';
+import { commandRerunRequestChangedEventFromEvent } from '../tasks/command-rerun-request-codecs.js';
 
 function canonicalOf(value: unknown): string | null {
   try {
@@ -84,11 +86,29 @@ const PROOF_EVENT_DECODERS: Readonly<Record<string, ProofEventDecoder>> = {
     return { actor: decoded.value.actor as DecisionApplicationV1['actor'],
       appliedAt: decoded.value.occurredAt, proof: decoded.value.proof };
   },
+  // K3 L19/§3.2: a non-application review change carries no proof and stays
+  // `incomplete`; the two application changes carry the formal `DecisionChangeProofV1`.
+  UnknownCallReviewChanged: (event) => {
+    const decoded = unknownCallReviewChangedEventFromEvent(event);
+    if (decoded.status !== 'decoded') {
+      return reject('unavailable', `the UnknownCallReviewChanged event is damaged: ${decoded.reason}`);
+    }
+    return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt, proof: decoded.value.proof ?? null };
+  },
+  // K3 L19a/ruling 2: the three card-application changes carry the formal
+  // `DecisionChangeProofV1`; the non-application changes carry none.
+  CommandRerunRequestChanged: (event) => {
+    const decoded = commandRerunRequestChangedEventFromEvent(event);
+    if (decoded.status !== 'decoded') {
+      return reject('unavailable', `the CommandRerunRequestChanged event is damaged: ${decoded.reason}`);
+    }
+    return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt, proof: decoded.value.proof ?? null };
+  },
   // [lead L1] The initial architecture/completion-policy proof is slice 6.
   ArchitectureCatalogAdopted: () => reject('unsupported',
-    'only GoalSettingsChanged, PlanRevisionAccepted and NoteDispositionChanged applications are provable in this slice'),
+    'only GoalSettingsChanged, PlanRevisionAccepted, NoteDispositionChanged, UnknownCallReviewChanged and CommandRerunRequestChanged applications are provable in this slice'),
   ProjectCompletionPolicyActivated: () => reject('unsupported',
-    'only GoalSettingsChanged, PlanRevisionAccepted and NoteDispositionChanged applications are provable in this slice'),
+    'only GoalSettingsChanged, PlanRevisionAccepted, NoteDispositionChanged, UnknownCallReviewChanged and CommandRerunRequestChanged applications are provable in this slice'),
 };
 
 function decodeProofEvent(event: EncodedDomainEvent): ProofEvent | ReadResult<never> {

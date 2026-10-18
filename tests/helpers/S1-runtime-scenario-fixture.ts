@@ -28,6 +28,7 @@ import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/sessi
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createModelCallService } from '../../src/core/work-graph/tasks/model-call-service.js';
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
@@ -232,8 +233,12 @@ export async function openS1RuntimeFixture(options: {
   const requeues = createTaskRequeueService({ records, reads, workspaceHost, source, materials, messages,
     delegatedWrites: { reads, roles, bodies, authorizeConfiguration }, now, eventId: newId });
   const claims = base.makeService(records, now);
+  // Rework 10 package R: the REQUIRED Task-review reader is the real owner over
+  // this fixture's one real records store and its Run reader.
+  const unknownCallReviews = createUnknownCallReviewService({ records, reads, now, eventId: newId });
   const deps: RuntimeExecutionDependencies = { claims, executions: reads, entry, modelRequests, roles, plans: base.plans,
     sessions, messages, materials, bodies, controls, kernelStores, workspaceHost, host, kernel, now, newId,
+    unknownCallReviews,
     runReconcile: createRunReconcileService({ records, reads, hostInstance, now, eventId: newId }),
     historyWriter: createExecutionHistoryService({ records, now, eventId: newId }), activity,
     graphHistory: createGraphExecutionHistoryReader({ executions: reads, history: activity }), sessionOperations,

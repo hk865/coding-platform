@@ -134,6 +134,8 @@ export function runFailureOrigin(run: Pick<RunSnapshot, 'outcome' | 'reconciliat
     case 'runtime_terminal':
     case 'unresolved':
     case 'not_entered':
+    // K3 RUN-25: a takeover closure is an observed interruption (L26).
+    case 'takeover_unresolved':
       return 'observed';
     default:
       return unreachable(observation, 'reconciliation observation');

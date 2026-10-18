@@ -41,6 +41,10 @@ import { S5_DECISION_ANSWER_BY_SOURCE, decodeSessionMessageRecord,
 import { decodeStoredUserDecisionBody, encodeUserDecisionBody } from '../sessions/message-body-envelope.js';
 import { decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import { readSavedAnswerReaderSessions } from './decision-source-facts.js';
+import type { ToolCommitLookup } from '../../../contracts/unknown-call-review.js';
+import {
+  recordDecisionApplicationInput, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
+} from '../model/tool-commit-arguments.js';
 
 // -------------------------------------------------------------------------- //
 // Small helpers                                                               //
@@ -169,14 +173,14 @@ function messageIdentityOf(source: DecisionSourceV1): MessageIdentity | null {
  * revision moved, so folding the pin in would turn a retry into an
  * `idempotency_conflict` instead of a replay.
  */
-function applicationIdentity(owned: Owned, senderIdentity: JsonValue, requestId: string,
+function applicationIdentity(scope: { projectId: string; workspaceId: string }, senderIdentity: JsonValue, requestId: string,
   messageRef: SessionMessageRef, receipt: DecisionApplicationReceiptV1): { identityKey: string; fingerprint: string } {
   const operation = 'decision-application';
   const identityKey = `session-message-${operation}:` + sha256Hex(canonicalJson({
-    operation, projectId: owned.projectId, workspaceId: owned.workspaceId, sender: senderIdentity, requestId,
+    operation, projectId: scope.projectId, workspaceId: scope.workspaceId, sender: senderIdentity, requestId,
   } as unknown as JsonValue));
   const fingerprint = sha256Hex(canonicalJson({
-    operation, projectId: owned.projectId, workspaceId: owned.workspaceId, sender: senderIdentity,
+    operation, projectId: scope.projectId, workspaceId: scope.workspaceId, sender: senderIdentity,
     payload: { messageRef, receipt },
   } as unknown as JsonValue));
   return { identityKey, fingerprint };
@@ -211,6 +215,8 @@ export type DecisionMessageService = Pick<DecisionMessagePort,
     }) => Promise<ReadResult<{
       replayed: Extract<WriteResult<SessionMessage>, { status: 'committed' }> | null;
     }>>;
+    /** K3 L4: the read-only committed-receipt lookup for `record_decision_application`. */
+    lookupToolCommit: ToolCommitLookup;
   };
 
 /** Builds the decision-message owner from the same RecordStore/material/message seam the mailbox uses. */
@@ -510,12 +516,20 @@ export function createDecisionMessageService(
     };
   }
 
+  /**
+   * K3 L18 / ruling 8: the source kinds whose card requires an option. A
+   * text-only answer (`{kind:'other'}`) is `invalid` for them and writes
+   * nothing; every other kind keeps the slice-5 rule. B3 adds its kind here.
+   */
+  const OPTION_REQUIRED_SOURCE_KINDS: ReadonlySet<DecisionSourceV1['kind']> =
+    new Set<DecisionSourceV1['kind']>(['unknown_call_review']);
+
   function validSelection(kind: DecisionSourceV1['kind'], options: readonly DecisionOptionV1[],
     selection: DecisionSelectionV1): boolean {
     if (kind === 'goal_conflict') {
       return selection.kind === 'conflict_wait' || selection.kind === 'conflict_order' || selection.kind === 'conflict_parallel';
     }
-    if (selection.kind === 'other') return true;
+    if (selection.kind === 'other') return !OPTION_REQUIRED_SOURCE_KINDS.has(kind);
     if (selection.kind !== 'option') return false;
     return options.some((option) => option.id === selection.optionId);
   }
@@ -1158,6 +1172,46 @@ export function createDecisionMessageService(
     return true;
   }
 
+  /**
+   * K3 L4 / spec §1: the read-only committed-receipt lookup for
+   * `record_decision_application`. It shares `applicationIdentity` (LB-2: the
+   * message version pin is never folded into the fingerprint); the workspace and
+   * sender both come from the original Run's provenance (`{ kind: 'agent',
+   * runRef }`, the same shape `callerSenderIdentity` derives for a `work_run`),
+   * never from the calling context. The payload is the Kernel-recorded
+   * `{ messageRef, receipt }`.
+   */
+  const lookupToolCommit: ToolCommitLookup = async (ctx, input) => {
+    void ctx;
+    if (input.toolName !== 'record_decision_application') return toolCommitLookupUnknownTool(input.toolName);
+    const scope = { projectId: input.origin.runRef.projectId, workspaceId: input.origin.workspaceId };
+    if (!nonEmpty(scope.projectId) || !nonEmpty(scope.workspaceId)) {
+      return { status: 'undetermined', reason: 'invalid_origin' };
+    }
+    const args = input.arguments;
+    if (!isObject(args) || !isObject(args['messageRef']) || !isObject(args['receipt'])) {
+      return { status: 'undetermined', reason: 'invalid_arguments' };
+    }
+    const receipt = args['receipt'] as unknown as DecisionApplicationReceiptV1;
+    if (!nonEmpty(receipt.identityKey) || !nonEmpty(receipt.fingerprint) || !nonEmpty(receipt.cursor)) {
+      return { status: 'undetermined', reason: 'invalid_arguments' };
+    }
+    const payload = recordDecisionApplicationInput({
+      messageRef: args['messageRef'] as unknown as SessionMessageRef, receipt,
+    });
+    const requestId = toolCommitRequestId(input);
+    const senderIdentity = { kind: 'agent', runRef: structuredClone(input.origin.runRef) } as unknown as JsonValue;
+    const { identityKey, fingerprint } = applicationIdentity(scope, senderIdentity, requestId,
+      payload.messageRef, payload.receipt);
+    let lookup: Awaited<ReturnType<S5RecordPort['lookupCommit']>>;
+    try {
+      lookup = await records.lookupCommit({ identityKey, fingerprint });
+    } catch {
+      return { status: 'undetermined', reason: 'the decision receipt lookup failed' };
+    }
+    return toolCommitLookupResult(lookup);
+  };
+
   return { answerDecision, recordDecisionApplication, readDecisionAnswer, readDecisionMessagePin,
-    replayDecisionApplication };
+    replayDecisionApplication, lookupToolCommit };
 }

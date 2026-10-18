@@ -16,17 +16,42 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { join } from 'node:path';
 import { agentEventSchema, SqliteStores } from '../../vendor/coding-agent/dist/public-api.js';
 import type { TaskExecutionRecord } from '../../src/app/core-http-types.js';
+import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
+import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/session-contracts.js';
 import type { ArchiveLineInput, ArchiveLineResultV1 } from '../../src/business/workflow/session-archive.js';
-import { AG2B_SCOPE, graphWrite, plain, startAG2bHost } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_SCOPE, graphWrite, plain, startAG2bHost, type AG2bHost } from '../helpers/AG2b-collaboration-fixture.js';
 import {
   moveKernelAside, post, publicDirectory, readExecution, restoreKernel, selectWork, tempDir, workRow, writeAutomationSettings,
 } from '../helpers/A2-restart-fixture.js';
 import { assertInvariantsAt, cleanupScenarios, type InvariantTarget } from './harness.js';
 import { crashMidTurn } from './support/restart.js';
 import { driveChecked, pausedRunOnClosedHostChecked, requiredBriefOf, textReply, WORK_TARGET } from './support/common.js';
+
+/**
+ * K3 L21/L11: the attested record is `needs_decision`; a person resolves it with
+ * the direct hold and "continue" routes before the automatic continuation. The
+ * KA-14 crash has no pause pointer, so `release-hold` only releases (no human
+ * requeue) and the ordinary automatic rework continues.
+ */
+async function resolveAttestedReview(host: AG2bHost, runRef: RunRef, label: string): Promise<void> {
+  const read = await post<ReadResult<UnknownCallReviewV1>>(host, 'unknown-call-reviews/read',
+    plain(AG2B_SCOPE, { runRef }));
+  if (read.status !== 'ready') throw new Error(`the attested review record must read: ${JSON.stringify(read)}`);
+  const review = read.value;
+  expect(review).toMatchObject({ status: 'needs_decision', decisionReasons: ['inventory_incomplete'] });
+  const held = await post<WriteResult<UnknownCallReviewV1>>(host, 'unknown-call-reviews/hold', graphWrite(AG2B_SCOPE,
+    { reviewRef: review.ref, text: null }, `${label}-hold`, [{ ref: review.ref, revision: review.revision }]));
+  if (held.status !== 'committed') throw new Error(`the review hold must commit: ${JSON.stringify(held)}`);
+  const released = await post<WriteResult<{ hold: WriteResult<UnknownCallReviewV1>; requeue: unknown }>>(host,
+    'unknown-call-reviews/release-hold', graphWrite(AG2B_SCOPE, { reviewRef: review.ref }, `${label}-release`,
+      [{ ref: review.ref, revision: held.value.revision }]));
+  if (released.status !== 'committed') throw new Error(`the review release must commit: ${JSON.stringify(released)}`);
+  expect(released.value).toMatchObject({ hold: { status: 'committed', value: { disposition: { hold: 'released' } } },
+    requeue: null });
+}
 
 afterEach(cleanupScenarios);
 
@@ -306,6 +331,7 @@ it('KA-14 (KE3, L7, decision 45/51 second phase): an attested host-interrupted u
       // requeue; the continuation is claimed in the ORIGINAL Session and its brief lists
       // the interrupted Turn's step facts. A fresh target re-reads the world after the
       // restart (the crashed host's cached world predates the attestation).
+      await resolveAttestedReview(third, crashed.runRef, 'kw-ka14b');
       const driveInv: InvariantTarget = { database };
       const continuation = await driveChecked(third, driveInv, selectWork('kw-ka14b-continue', true), { stopBefore: 'open_checks' });
       expect(continuation.next?.kind === 'perform' ? continuation.next.operation.kind : null, 'the drive stops after the continuation Run').toBe('open_checks');

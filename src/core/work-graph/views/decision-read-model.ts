@@ -32,6 +32,7 @@ import type {
   DecisionQueueReadV1,
   DecisionReadPort,
   DecisionSourceAttempt,
+  S5RecordPort,
   GoalConflictReadV1,
   GoalDecisionCauseReadV1,
   NoticeDisplayTokenPort,
@@ -41,6 +42,14 @@ import type {
   NoteDecisionSourcePort,
 } from '../model/decision-contracts.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
+import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
+import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
+import type { CommandRerunRequestV1 } from '../../../contracts/command-rerun-request.js';
+import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
+import {
+  commandRerunRequestCardFacts, commandRerunRequestCardIdentity, commandRerunRequestCardWorkspaceOf,
+  type CommandRerunRequestCardFactsV1, type CommandRerunRequestCardSourceDependencies,
+} from '../tasks/command-rerun-request-card.js';
 import type { PlanProposal } from '../model/plan-contracts.js';
 import {
   compareProposalChainPositions,
@@ -57,12 +66,18 @@ import {
 import {
   decodeSessionMessageRecord,
   S2A_USER_MESSAGES_LOOKUP,
-  S5_DECISION_ANSWER_BY_SOURCE,
   sessionMessageRefKey,
 } from '../sessions/message-record-codecs.js';
 import type { GoalDecisionCauseReader } from '../tasks/goal-decision-reader.js';
 import type { PlanningQuestionReader } from '../tasks/planning-question-reader.js';
-import { enumerateClosedGoalCandidates, enumerateGoalCandidates } from '../tasks/plan-readers.js';
+import { enumerateClosedGoalCandidates, enumerateGoalCandidates, readGoalPlanWindow,
+  readTaskClosure, type TaskClosureV1 } from '../tasks/plan-readers.js';
+import { findAnswerMessage } from '../tasks/decision-answer-lookup.js';
+import { UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX, unknownCallReviewCardFacts, unknownCallReviewTargetPaths,
+  type UnknownCallReviewCardFactsV1 } from '../tasks/unknown-call-review-card.js';
+import { readReviewTargetDigests } from '../tasks/unknown-call-review-target-digests.js';
+import type { WorkspaceToolsPort } from '../../workspace/ports.js';
+import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import {
   atLeastCursorResult,
   goalDecisionBasis,
@@ -97,6 +112,7 @@ type CardAction = DecisionCardV1['actions'][number];
 
 const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
   'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
+  'unknown_call_review', 'command_rerun_request',
 ];
 const NOTICE_CATEGORIES: readonly NoticeCategoryV1[] = [
   'member_notice', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework', 'continuation',
@@ -219,6 +235,8 @@ export type CardCollectionSourceSpec<T> = {
   closedReasonOf(item: T): DecisionCardV1['closedReason'];
   readByKey(ctx: CoreCallContext, input: { workspace: WorkspaceScope; source: DecisionSourceV1 }):
     Promise<ReadResult<{ item: T } | { closed: DecisionCardV1['closedReason'] } | null>>;
+  /** K3-20: the maximum items one OFFSET page serves (1..200, default SOURCE_PAGE_LIMIT). */
+  pageLimit?: number;
 };
 
 /**
@@ -270,7 +288,10 @@ export function createCollectionCardSource<T>(
       }
       const offset = input.page.cursor === undefined ? 0 : Number(input.page.cursor);
       const start = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
-      const limit = Number.isSafeInteger(input.page.limit) && input.page.limit > 0 ? input.page.limit : SOURCE_PAGE_LIMIT;
+      const requested = Number.isSafeInteger(input.page.limit) && input.page.limit > 0 ? input.page.limit : SOURCE_PAGE_LIMIT;
+      const configured = spec.pageLimit !== undefined && Number.isSafeInteger(spec.pageLimit)
+        && spec.pageLimit >= 1 && spec.pageLimit <= SOURCE_PAGE_LIMIT ? spec.pageLimit : SOURCE_PAGE_LIMIT;
+      const limit = spec.pageLimit === undefined ? requested : Math.min(requested, configured);
       const end = Math.min(assembled.length, start + limit);
       return { status: 'ready', value: { availability: 'available', items: assembled.slice(start, end),
         nextCursor: end < assembled.length ? String(end) : null, sourceCursor: null } };
@@ -341,6 +362,358 @@ function noteReviewCard(card: NoteDecisionCardFactsV1, goalRef: GoalRef, goal: G
     state: 'waiting_answer', goalRef: { ...goalRef }, senderSessionRef: null, requestRef: null,
     objects: card.objects, options: card.options, answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: null, readOnly: false, actions: ['answer'],
+  };
+}
+
+/**
+ * K3 rework 1 item 4 (ruling 4): the ONE canonical Task-closure read the card
+ * sources share. `readTaskClosure` derives satisfied/cancelled/superseded from
+ * the canonical Task facts (never only the Plan disposition); its rejection is
+ * passed through unchanged, so a read failure is `unavailable` and never
+ * "still active". The attempt cache is keyed by Task, so several cards of one
+ * Task share the same read and no card adds a second read.
+ */
+async function readTaskClosureCached(
+  records: S5RecordPort,
+  goalRef: GoalRef,
+  taskId: string,
+  cache: Map<string, unknown> | undefined,
+): Promise<ReadResult<TaskClosureV1>> {
+  const key = `task-closure:${canonicalJson(goalRef as unknown as JsonValue)}:${taskId}`;
+  const cached = cache?.get(key) as ReadResult<TaskClosureV1> | undefined;
+  if (cached !== undefined) return cached;
+  const result = await readTaskClosure(records, goalRef, taskId);
+  cache?.set(key, result);
+  return result;
+}
+
+/**
+ * K3 L18/U7: the `unknown_call_review` card source, registered on the generic
+ * collection adapter. It reads the Goal's `needs_decision`/`awaiting_approval`
+ * records to the end, the Goal's current plan window ONCE per attempt (the Goal
+ * basis), the ONE canonical Task closure once per Task (ruling 4) and each
+ * original Run revision ONCE per attempt, then projects the open cards.
+ * `readByKey` reads the review by ref directly (no paging), rejects a foreign
+ * Goal and serves a closed projection as history.
+ */
+export type UnknownCallReviewCardSourceDependencies = {
+  records: S5RecordPort;
+  reviews: Pick<UnknownCallReviewReadPort, 'listReviews' | 'readReview'>;
+  /**
+   * K3 L18: the workspace owner's read seam for each target path's current
+   * digest. Optional so existing constructions keep compiling; absent, every
+   * digest is `null`.
+   */
+  workspace?: Pick<WorkspaceToolsPort, 'readWorkspace'>;
+  /** K3-20: the maximum items one offset page serves (1..200, default SOURCE_PAGE_LIMIT). */
+  pageLimit?: number;
+};
+
+const UNKNOWN_CALL_REVIEW_CARD_STATUSES = ['needs_decision', 'awaiting_approval'] as const;
+
+export function createUnknownCallReviewCardSource(
+  deps: UnknownCallReviewCardSourceDependencies,
+): DecisionCardSourcePort {
+  const base = createCollectionCardSource<UnknownCallReviewCardFactsV1>({
+    kind: 'unknown_call_review',
+    needsGoal: true,
+    pageLimit: deps.pageLimit ?? SOURCE_PAGE_LIMIT,
+    async readCollection(ctx, { workspace, goalRef, attempt }) {
+      const cache = attempt?.cache;
+      const planKey = `unknown-call-review-plan:${canonicalJson(goalRef as unknown as JsonValue)}`;
+      let window = cache?.get(planKey) as Awaited<ReturnType<typeof readGoalPlanWindow>> | undefined;
+      if (window === undefined) {
+        window = await readGoalPlanWindow(deps.records, goalRef);
+        cache?.set(planKey, window);
+      }
+      if (window.status !== 'ready') {
+        return window.status === 'rejected' ? window : { status: 'rejected', code: 'unavailable', reason: 'the review Goal window is not readable' };
+      }
+      const records: UnknownCallReviewV1[] = [];
+      let cursor: string | undefined;
+      for (;;) {
+        const page = await deps.reviews.listReviews(ctx, { workspace,
+          filter: { goalRef, status: [...UNKNOWN_CALL_REVIEW_CARD_STATUSES] },
+          page: { limit: SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }) } });
+        if (page.status !== 'ready') return page;
+        records.push(...page.value.items);
+        if (page.value.nextCursor === null) break;
+        cursor = page.value.nextCursor;
+      }
+      const targetPaths = [...new Set(records.flatMap(record =>
+        unknownCallReviewTargetPaths(record).slice(0, UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX)))];
+      const fileDigests = await readReviewTargetDigests(ctx, deps.workspace, targetPaths, cache);
+      const cards: UnknownCallReviewCardFactsV1[] = [];
+      for (const record of records) {
+        const runKey = `unknown-call-review-run:${canonicalJson(record.runRef as unknown as JsonValue)}`;
+        let run = cache?.get(runKey) as import('../../../contracts/dispatch.js').RunSnapshot | undefined;
+        if (run === undefined) {
+          let encoded;
+          try {
+            encoded = await readOne(deps.records, canonicalJson(record.runRef as unknown as JsonValue));
+          } catch (error) {
+            return storeFailureToRejection(error as { code: string; reason: string });
+          }
+          if (encoded === null) {
+            return { status: 'rejected', code: 'unavailable',
+              reason: `the original Run ${JSON.stringify(record.runRef)} of the review is missing` };
+          }
+          const decoded = decodeRun(encoded);
+          if (!decoded.ok) return { status: 'rejected', code: 'unavailable', reason: decoded.reason };
+          run = decoded.value;
+          cache?.set(runKey, run);
+        }
+        const closure = await readTaskClosureCached(deps.records, goalRef, record.task.taskId, cache);
+        if (closure.status !== 'ready') return closure;
+        cards.push(unknownCallReviewCardFacts({ record, goal: window.goal, run,
+          taskActive: !closure.value.closed, fileDigests }));
+      }
+      return { status: 'ready', value: cards };
+    },
+    keyOf: (facts) => facts.source.key,
+    project: (facts, goalRef) => unknownCallReviewCard(facts, goalRef),
+    closedReasonOf: (facts) => facts.closedReason,
+    async readByKey(ctx, { source }) {
+      const identity = parseIdentity(source.key);
+      if (identity === null || identity.kind !== 'unknown_call_review') {
+        return { status: 'rejected', code: 'invalid', reason: 'an unknown_call_review source key is not a review identity' };
+      }
+      if (identity.reviewRef.projectId !== source.goalRef.projectId
+        || identity.reviewRef.goalId !== source.goalRef.goalId) {
+        return { status: 'ready', value: null };
+      }
+      const read = await deps.reviews.readReview(ctx, { ref: identity.reviewRef });
+      if (read.status === 'not_found') return { status: 'ready', value: null };
+      if (read.status !== 'ready') return read;
+      const record = read.value;
+      // A moved record is a stale source key, not the current card.
+      if (record.revision !== identity.revision) return { status: 'ready', value: null };
+      if (record.task.goalId !== source.goalRef.goalId) return { status: 'ready', value: null };
+      const window = await readGoalPlanWindow(deps.records, source.goalRef);
+      if (window.status !== 'ready') return window;
+      let encoded;
+      try {
+        encoded = await readOne(deps.records, canonicalJson(record.runRef as unknown as JsonValue));
+      } catch (error) {
+        return storeFailureToRejection(error as { code: string; reason: string });
+      }
+      if (encoded === null) return { status: 'ready', value: null };
+      const decoded = decodeRun(encoded);
+      if (!decoded.ok) return { status: 'rejected', code: 'unavailable', reason: decoded.reason };
+      const closure = await readTaskClosureCached(deps.records, source.goalRef, record.task.taskId, undefined);
+      if (closure.status !== 'ready') return closure;
+      const fileDigests = await readReviewTargetDigests(ctx, deps.workspace,
+        unknownCallReviewTargetPaths(record).slice(0, UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX));
+      const facts = unknownCallReviewCardFacts({ record, goal: window.goal, run: decoded.value,
+        taskActive: !closure.value.closed, fileDigests });
+      if (facts.closedReason !== null) return { status: 'ready', value: { closed: facts.closedReason } };
+      return { status: 'ready', value: { item: facts } };
+    },
+  }, (goalRef) => readGoalForBasis(deps.records, goalRef));
+  return {
+    ...base,
+    async readPage(ctx, input) {
+      const result = await base.readPage(ctx, input);
+      if (result.status !== 'ready') return result;
+      // B1 ruling 5: a projected waiting card with no answer action keeps the
+      // source not available. `awaiting_approval` no longer hits this: B2 gives
+      // it approve/decline and `actions: ['answer']`.
+      const unavailable = result.value.items.some((card) => card.state === 'waiting_answer' && card.actions.length === 0);
+      return unavailable
+        ? { ...result, value: { ...result.value, availability: 'not_available' as const } }
+        : result;
+    },
+  };
+}
+
+/**
+ * K3 L19a: the `command_rerun_request` card source, registered on the generic
+ * collection adapter. It pages the Goal's `pending` requests to the end
+ * (`k3-crr-by-goal-state`), then re-derives each card from the request, its
+ * review record, the original Run and the Goal's current plan window. The card
+ * is NEVER filtered by autonomy: the human must know and allow the rerun
+ * (B2-07). `readByKey` reads the request directly, rejects a moved revision
+ * (a stale source key) and serves `closed` for a non-pending request or an
+ * ended Task (B2-08, ruling 4).
+ */
+export function createCommandRerunRequestCardSource(
+  deps: CommandRerunRequestCardSourceDependencies,
+): DecisionCardSourcePort {
+  const goalRefOf = (request: CommandRerunRequestV1): GoalRef => ({
+    aggregateType: 'Goal', projectId: request.ref.projectId, goalId: request.ref.goalId,
+  });
+
+  /** Every request of one Task (all states) through the per-task index, paged to the end. */
+  async function aliasRequestsOf(
+    ctx: CoreCallContext, request: CommandRerunRequestV1,
+    cache: Map<string, unknown> | undefined,
+  ): Promise<ReadResult<CommandRerunRequestV1[]>> {
+    const key = `crr-task-requests:${request.ref.projectId}:${request.ref.goalId}:${request.ref.taskId}`;
+    const cached = cache?.get(key) as CommandRerunRequestV1[] | undefined;
+    if (cached !== undefined) return { status: 'ready', value: cached };
+    const requests: CommandRerunRequestV1[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await deps.requests.listRequests(ctx, {
+        workspace: commandRerunRequestCardWorkspaceOf(request),
+        filter: { goalId: request.ref.goalId, taskId: request.ref.taskId },
+        page: { limit: SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }) },
+      });
+      // F-076/F-101: the page result keeps a cancellation/rejection; only a
+      // non-ready read with no rejection (today none reach this call) keeps the
+      // old `unavailable` answer.
+      if (page.status !== 'ready') {
+        return page.status === 'rejected' ? page
+          : { status: 'rejected', code: 'unavailable', reason: 'the alias requests are not readable' };
+      }
+      requests.push(...page.value.items);
+      if (page.value.nextCursor === null) break;
+      cursor = page.value.nextCursor;
+    }
+    cache?.set(key, requests);
+    return { status: 'ready', value: requests };
+  }
+
+  /** The whole card, from the real request/review/run/window/Kernel facts. */
+  async function cardOf(
+    ctx: CoreCallContext, request: CommandRerunRequestV1,
+    cache: Map<string, unknown> | undefined,
+  ): Promise<ReadResult<CommandRerunRequestCardFactsV1>> {
+    const goalRef = goalRefOf(request);
+    const windowKey = `crr-plan:${canonicalJson(goalRef as unknown as JsonValue)}`;
+    let window = cache?.get(windowKey) as Awaited<ReturnType<typeof readGoalPlanWindow>> | undefined;
+    if (window === undefined) {
+      window = await readGoalPlanWindow(deps.records, goalRef);
+      cache?.set(windowKey, window);
+    }
+    if (window.status !== 'ready') {
+      return window.status === 'rejected' ? window
+        : { status: 'rejected', code: 'unavailable', reason: 'the request Goal window is not readable' };
+    }
+    const closure = await readTaskClosureCached(deps.records, goalRef, request.ref.taskId, cache);
+    if (closure.status !== 'ready') return closure;
+    const taskActive = !closure.value.closed;
+    const reviewKey = `crr-review:${canonicalJson(request.reviewRef as unknown as JsonValue)}`;
+    let review = cache?.get(reviewKey) as UnknownCallReviewV1 | undefined;
+    if (review === undefined) {
+      const read = await deps.reviews.readReview(ctx, { ref: request.reviewRef });
+      if (read.status !== 'ready') {
+        return read.status === 'rejected' ? read
+          : { status: 'rejected', code: 'unavailable', reason: 'the request review record is not readable' };
+      }
+      review = read.value;
+      cache?.set(reviewKey, review);
+    }
+    if (review.revision !== undefined && review.revision < 1) {
+      return { status: 'rejected', code: 'unavailable', reason: 'the request review record is damaged' };
+    }
+    const blocked = review.blockedCommands.find(entry =>
+      entry.reviewRunId === request.reviewRef.runId && entry.alias === request.alias);
+    if (blocked === undefined) {
+      return { status: 'rejected', code: 'unavailable',
+        reason: `the blocked command #${String(request.alias)} of ${request.reviewRef.runId} is not recorded` };
+    }
+    const executionKey = `crr-execution:${canonicalJson(review.runRef as unknown as JsonValue)}`;
+    let execution = cache?.get(executionKey) as Awaited<ReturnType<ExecutionReadPort['readExecution']>> | undefined;
+    if (execution === undefined) {
+      execution = await deps.executions.readExecution(ctx, review.runRef);
+      cache?.set(executionKey, execution);
+    }
+    if (execution.status !== 'ready') {
+      return execution.status === 'rejected' ? execution
+        : { status: 'rejected', code: 'unavailable', reason: 'the original Run is not readable' };
+    }
+    const factsRead = await deps.readKernelCommandFacts(ctx, {
+      session: execution.value.session, calls: [blocked.kernelCallRef],
+      ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
+    });
+    if (factsRead.status !== 'ready') {
+      return factsRead.status === 'rejected' ? factsRead
+        : { status: 'rejected', code: 'unavailable',
+          reason: 'the blocked command text is not readable from the Kernel' };
+    }
+    const blockedText = factsRead.value.get(blocked.kernelCallRef.callId)?.command ?? null;
+    if (blockedText === null) {
+      return { status: 'rejected', code: 'unavailable',
+        reason: 'the blocked command text is not readable from the Kernel' };
+    }
+    const siblings = await aliasRequestsOf(ctx, request, cache);
+    if (siblings.status !== 'ready') return siblings;
+    return { status: 'ready', value: commandRerunRequestCardFacts({
+      request, review, goal: window.goal, blockedCommandText: blockedText,
+      aliasRequests: siblings.value, taskActive,
+    }) };
+  }
+
+  const base = createCollectionCardSource<CommandRerunRequestCardFactsV1>({
+    kind: 'command_rerun_request',
+    needsGoal: true,
+    pageLimit: deps.pageLimit ?? SOURCE_PAGE_LIMIT,
+    async readCollection(ctx, { workspace, goalRef, attempt }) {
+      const requests: CommandRerunRequestV1[] = [];
+      let cursor: string | undefined;
+      for (;;) {
+        const page = await deps.requests.listRequests(ctx, { workspace,
+          filter: { goalRef, state: 'pending' },
+          page: { limit: SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }) } });
+        if (page.status !== 'ready') return page;
+        requests.push(...page.value.items);
+        if (page.value.nextCursor === null) break;
+        cursor = page.value.nextCursor;
+      }
+      const cards: CommandRerunRequestCardFactsV1[] = [];
+      for (const request of requests) {
+        const built = await cardOf(ctx, request, attempt?.cache);
+        if (built.status !== 'ready') return built;
+        cards.push(built.value);
+      }
+      return { status: 'ready', value: cards };
+    },
+    keyOf: (facts) => facts.source.key,
+    project: (facts, goalRef) => commandRerunRequestCard(facts, goalRef),
+    closedReasonOf: (facts) => facts.closedReason,
+    async readByKey(ctx, { source }) {
+      const identity = commandRerunRequestCardIdentity(source);
+      if (identity === null) {
+        return { status: 'rejected', code: 'invalid', reason: 'a command_rerun_request source key is not a request identity' };
+      }
+      if (identity.requestRef.projectId !== source.goalRef.projectId
+        || identity.requestRef.goalId !== source.goalRef.goalId) {
+        return { status: 'ready', value: null };
+      }
+      const read = await deps.requests.readRequest(ctx, { ref: identity.requestRef });
+      if (read.status === 'not_found') return { status: 'ready', value: null };
+      if (read.status !== 'ready') return read;
+      const request = read.value;
+      // A moved request is a stale source key, not the current card.
+      if (request.revision !== identity.revision) return { status: 'ready', value: null };
+      if (request.state !== 'pending') return { status: 'ready', value: { closed: 'source_resolved' } };
+      const built = await cardOf(ctx, request, undefined);
+      if (built.status !== 'ready') return built;
+      if (built.value.closedReason !== null) return { status: 'ready', value: { closed: built.value.closedReason } };
+      return { status: 'ready', value: { item: built.value } };
+    },
+  }, (goalRef) => readGoalForBasis(deps.records, goalRef));
+  return base;
+}
+
+function commandRerunRequestCard(facts: CommandRerunRequestCardFactsV1, goalRef: GoalRef): DecisionCardV1 {
+  return {
+    cardKey: facts.source.key, source: facts.source,
+    state: 'waiting_answer', goalRef: { ...goalRef }, senderSessionRef: null, requestRef: null,
+    objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
+    candidateStatus: null, staleReason: null, closedReason: null,
+    readOnly: false, actions: ['answer'],
+  };
+}
+
+function unknownCallReviewCard(facts: UnknownCallReviewCardFactsV1, goalRef: GoalRef): DecisionCardV1 {
+  return {
+    cardKey: facts.source.key, source: facts.source,
+    state: 'waiting_answer', goalRef: { ...goalRef }, senderSessionRef: null, requestRef: null,
+    objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
+    candidateStatus: null, staleReason: null, closedReason: null,
+    readOnly: false, actions: ['answer'],
   };
 }
 
@@ -899,6 +1272,11 @@ function identityScopeProblem(ctx: CoreCallContext, identity: DecisionSourceIden
       return identity.goalRef.projectId !== ctx.projectId ? forbidden : null;
     case 'note_review':
       return null;
+    // K3 sources (L19a/L24): their refs carry their own project/workspace ids.
+    case 'unknown_call_review':
+      return identity.reviewRef.projectId !== ctx.projectId ? forbidden : null;
+    case 'command_rerun_request':
+      return identity.requestRef.projectId !== ctx.projectId ? forbidden : null;
     default: {
       const unknown: never = identity;
       void unknown;
@@ -1231,29 +1609,6 @@ async function loadWorkspaceMessages(
   return { messages, watermark: batch.watermark };
 }
 
-async function findAnswerMessage(
-  records: DecisionReadRecordsPort,
-  workspace: WorkspaceScope,
-  source: DecisionSourceV1,
-): Promise<SessionMessage | null> {
-  const batch = await lookupAll(records, S5_DECISION_ANSWER_BY_SOURCE,
-    [workspace.projectId, workspace.workspaceId, source.kind, source.key]);
-  for (const record of batch.items) {
-    const decoded = decodeSessionMessageRecord(record);
-    if (decoded.status !== 'decoded') {
-      // §8.2 data row: a damaged answer record is `unavailable`, never skipped
-      // into the false fact "this source has no answer".
-      throw { status: 'rejected', code: 'unavailable',
-        reason: `answer message ${record.refKey}: ${decoded.reason}` } as CoreRejection;
-    }
-    const message = decoded.value;
-    if (message.decision?.syntheticAnswer !== true || message.status !== 'responded') continue;
-    if (isUserDecisionResponse(message.response)) return message;
-  }
-  // 2A L6/L10: the answer index is read to its end, so a full scan that found
-  // no answer really proves this source has none.
-  return null;
-}
 
 async function findCandidateProposal(
   records: DecisionReadRecordsPort,

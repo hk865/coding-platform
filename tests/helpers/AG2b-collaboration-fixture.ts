@@ -23,7 +23,7 @@ import { createLocalWorkbenchHost, type LocalWorkbenchHost } from '../../src/app
 import { loadWorkbenchCliConfig } from '../../src/app/main.js';
 import { ProviderRegistry, type ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import { createScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
-import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
+import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { WorkbenchRuntimeConfiguration } from '../../src/app/runtime-configuration.js';
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
@@ -502,9 +502,4 @@ export async function sendPlainNotify(host: AG2bHost, recipient: SessionRef, tex
   const response = await corePost(host.base, 'messages/send', host.token,
     graphWrite(AG2B_SCOPE, { recipient, text }, requestId, []));
   return await response.json() as WriteResult<SessionMessage>;
-}
-
-/** A tiny deterministic value hash used by callers that assert real identities. */
-export function ag2bJson(value: unknown): string {
-  return canonicalJson(value as never);
 }

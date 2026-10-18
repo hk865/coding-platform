@@ -217,6 +217,10 @@ const AGGREGATE_REF_RULES: Readonly<Record<string, AggregateRefRule>> = {
   VerificationRound: { strings: ['projectId', 'workspaceId', 'goalId', 'taskId', 'runId', 'roundId'] },
   TaskReduction: { strings: ['projectId', 'goalId', 'taskId'] },
   GoalPhase: { strings: ['projectId', 'goalId'] },
+  // K3 L18: a review card's source pins name the review record itself.
+  UnknownCallReview: { strings: ['projectId', 'goalId', 'runId'] },
+  // K3 L19a: a request card's source pins name the CommandRerunRequest record.
+  CommandRerunRequest: { strings: ['projectId', 'goalId', 'taskId', 'requestId'] },
   WorkContextBinding: { strings: ['projectId', 'workspaceId', 'workId'] },
   ControlIntent: { strings: ['projectId', 'workspaceId', 'intentId'] },
   QueryJob: { strings: ['projectId', 'workspaceId', 'queryJobId'] },

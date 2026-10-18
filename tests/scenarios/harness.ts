@@ -62,7 +62,7 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { RoleBindingRefV1, RunRef } from '../../src/contracts/dispatch.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
-import type { PreparedCommit, StoreCommitReceipt } from '../../src/core/record-store/ports.js';
+import type { GoalRecordTransactionPort, PreparedCommit, StoreCommitReceipt, StoreResult } from '../../src/core/record-store/ports.js';
 import * as memoryBackend from '../../src/core/record-store/in-memory-record-store.js';
 import * as sqliteBackend from '../../src/core/record-store/sqlite-record-store.js';
 import {
@@ -85,6 +85,7 @@ import {
 import {
   checkAllInvariants, invariantStoreOf, legacyFindings, readInvariantWorld, type FuzzStep, type FuzzStepKind, type InvariantWorld,
 } from '../state/invariants.js';
+import { initGitWorkspace, type GitWorkspaceInfo, type GitWorkspaceOption } from './support/git-workspace.js';
 
 export type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;
 
@@ -99,20 +100,54 @@ export type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;
  */
 export type ScenarioCommit = PreparedCommit & { readonly cursor: CommitCursor };
 
+/**
+ * F-044's crash boundary: a wrapper around the real commit that is awaited
+ * AFTER the durable write and BEFORE the caller continues, so the test can
+ * abandon the Host between the release-hold commit and the human requeue.
+ * Unlike the observer it may hold (and, only at cleanup, fail) the caller.
+ */
+export type ScenarioCommitGate = (batch: ScenarioCommit) => Promise<void>;
+
 const scenarioCommitObservers = new Set<(batch: ScenarioCommit) => void>();
+const scenarioCommitGates = new Set<ScenarioCommitGate>();
 let scenarioCommitSpies: Array<{ mockRestore(): void }> | null = null;
 
-/** Wrap one record backend's `commit` with the scenario observers, preserving every other method. */
-function observeScenarioBackend<T extends { readonly records: { commit(batch: PreparedCommit): Promise<StoreCommitReceipt> } }>(
-  backend: T,
-): T {
+/**
+ * One armed one-shot `lookupCommit` failure (K3-03, spec §5.1 "存储读失败一次"): the
+ * next call the wrapped backend sees consumes it and answers the store-level
+ * `unavailable` failure below; every later call passes through. A token is a
+ * handle, so the owner can drop an unconsumed arming on close without touching
+ * another scenario's.
+ */
+type ArmedLookupFailure = { readonly armed: true };
+const armedLookupFailures = new Set<ArmedLookupFailure>();
+/** Open host scenarios that need the wrap installed over their live backend for a later `failNextLookupCommitOnce()`. */
+let scenarioBackendWrapHolders = 0;
+
+/** The store failure one armed `lookupCommit` answers. */
+const SCENARIO_LOOKUP_FAILURE = 'the scenario store seam failed this lookupCommit once';
+
+/** True while the factory wrap must stay installed: an observer, an armed failure or an open host scenario needs it. */
+function scenarioBackendWrapNeeded(): boolean {
+  return scenarioCommitObservers.size > 0 || scenarioCommitGates.size > 0
+    || armedLookupFailures.size > 0 || scenarioBackendWrapHolders > 0;
+}
+
+/** Wrap one record backend's `commit` (observers) and `lookupCommit` (the one-shot failure), preserving every other method. */
+function observeScenarioBackend<T extends { readonly records: GoalRecordTransactionPort }>(backend: T): T {
   return {
     ...backend,
     records: {
       ...backend.records,
       async commit(batch: PreparedCommit): Promise<StoreCommitReceipt> {
         const receipt = await backend.records.commit(batch);
-        if (receipt.status === 'committed' && !receipt.replayed && scenarioCommitObservers.size > 0) {
+        if (receipt.status === 'committed' && !receipt.replayed) {
+          if (scenarioCommitGates.size > 0) {
+            // The gate runs AFTER the durable write and holds the caller before
+            // it returns the receipt (F-044: crash between two route commits).
+            const observed = { ...structuredClone(batch), cursor: receipt.cursor };
+            for (const gate of [...scenarioCommitGates]) await gate(observed);
+          }
           for (const observer of scenarioCommitObservers) {
             // Clone and dispatch inside the guard: neither an observer nor the
             // clone itself can change, delay or throw into the write receipt.
@@ -122,15 +157,72 @@ function observeScenarioBackend<T extends { readonly records: { commit(batch: Pr
         }
         return receipt;
       },
+      async lookupCommit(input: { identityKey: string; fingerprint: string }):
+      Promise<StoreResult<Extract<StoreCommitReceipt, { status: 'committed' }>>> {
+        const armed = armedLookupFailures.values().next().value;
+        if (armed !== undefined) {
+          armedLookupFailures.delete(armed);
+          releaseScenarioBackendWrapIfIdle();
+          return { status: 'rejected', code: 'unavailable', reason: SCENARIO_LOOKUP_FAILURE };
+        }
+        return backend.records.lookupCommit(input);
+      },
     },
   } as T;
 }
 
+/** Install the factory wrap over both record backends; idempotent while it is needed. */
+function ensureScenarioBackendWrap(): void {
+  if (scenarioCommitSpies !== null) return;
+  const originalMemory = memoryBackend.createInMemoryRecordBackend;
+  const originalSqlite = sqliteBackend.createSqliteRecordBackend;
+  scenarioCommitSpies = [
+    vi.spyOn(memoryBackend, 'createInMemoryRecordBackend').mockImplementation(
+      options => observeScenarioBackend(originalMemory(options))),
+    vi.spyOn(sqliteBackend, 'createSqliteRecordBackend').mockImplementation(
+      options => observeScenarioBackend(originalSqlite(options))),
+  ];
+}
+
+/** Restore both factories as soon as no observer, armed failure or open host scenario needs the wrap. */
+function releaseScenarioBackendWrapIfIdle(): void {
+  if (scenarioCommitSpies === null || scenarioBackendWrapNeeded()) return;
+  for (const spy of scenarioCommitSpies) spy.mockRestore();
+  scenarioCommitSpies = null;
+}
+
+/** Arm the next `lookupCommit` (installing the wrap first) and return its handle. */
+function armScenarioLookupFailure(): ArmedLookupFailure {
+  const armed: ArmedLookupFailure = { armed: true };
+  armedLookupFailures.add(armed);
+  ensureScenarioBackendWrap();
+  return armed;
+}
+
+/** Drop one arming (an unconsumed one on close) and restore the factories when nothing is left. */
+function disarmScenarioLookupFailure(armed: ArmedLookupFailure): void {
+  armedLookupFailures.delete(armed);
+  releaseScenarioBackendWrapIfIdle();
+}
+
+/** Keep the factory wrap installed for one open host scenario (its live backend is already wrapped). */
+function retainScenarioBackendWrap(): void {
+  scenarioBackendWrapHolders += 1;
+  ensureScenarioBackendWrap();
+}
+
+/** Drop one host scenario's hold and restore the factories when nothing is left. */
+function releaseScenarioBackendWrap(): void {
+  scenarioBackendWrapHolders -= 1;
+  releaseScenarioBackendWrapIfIdle();
+}
+
 /**
- * Install the one additive commit observation over both record backends while at
- * least one scenario observer is registered: it sees every in-process writer
- * (the Host, `direct()` and the scenario fixture backends) with the prepared
- * batch and its cursor.
+ * Install the additive wrap over both record backends while at least one scenario
+ * observer is registered, an armed `lookupCommit` failure is pending, or an open
+ * host scenario holds the wrap: it sees every in-process writer (the Host,
+ * `direct()` and the scenario fixture backends) with the prepared batch and its
+ * cursor.
  *
  * Forced deviation (refreeze §5/§3): the production seam is only
  * `createTargetPlatform({ commitObserver })`, whose `RecordCommitNotice` is
@@ -139,29 +231,29 @@ function observeScenarioBackend<T extends { readonly records: { commit(batch: Pr
  * cannot name `SessionHealthObserved`/`SessionMessageResponded`, and it observes
  * only that platform object's backend, never the separately-opened
  * `retireS1Session` backend. The additive factory wrap is therefore the only way
- * to observe the committed batches with their events. It is observation-only:
- * with the option absent nothing is installed and both factories are untouched.
+ * to observe the committed batches with their events. With no observer, no armed
+ * failure and no open host scenario nothing is installed and both factories are
+ * untouched; the spies are restored as soon as nothing needs them.
  */
 function addScenarioCommitObserver(observer: (batch: ScenarioCommit) => void): void {
-  if (scenarioCommitSpies === null) {
-    const originalMemory = memoryBackend.createInMemoryRecordBackend;
-    const originalSqlite = sqliteBackend.createSqliteRecordBackend;
-    scenarioCommitSpies = [
-      vi.spyOn(memoryBackend, 'createInMemoryRecordBackend').mockImplementation(
-        options => observeScenarioBackend(originalMemory(options))),
-      vi.spyOn(sqliteBackend, 'createSqliteRecordBackend').mockImplementation(
-        options => observeScenarioBackend(originalSqlite(options))),
-    ];
-  }
   scenarioCommitObservers.add(observer);
+  ensureScenarioBackendWrap();
 }
 
 function removeScenarioCommitObserver(observer: (batch: ScenarioCommit) => void): void {
   scenarioCommitObservers.delete(observer);
-  if (scenarioCommitObservers.size === 0 && scenarioCommitSpies !== null) {
-    for (const spy of scenarioCommitSpies) spy.mockRestore();
-    scenarioCommitSpies = null;
-  }
+  releaseScenarioBackendWrapIfIdle();
+}
+
+/** Install one Host's commit gate (F-044): the wrapper is awaited after the durable write, before the caller continues. */
+function addScenarioCommitGate(gate: ScenarioCommitGate): void {
+  scenarioCommitGates.add(gate);
+  ensureScenarioBackendWrap();
+}
+
+function removeScenarioCommitGate(gate: ScenarioCommitGate): void {
+  scenarioCommitGates.delete(gate);
+  releaseScenarioBackendWrapIfIdle();
 }
 
 /** The default Host actor of the AG2b fixture: an operator (`human` class). */
@@ -821,6 +913,32 @@ export type HostScenarioOptions = {
    * backends are exactly as today.
    */
   commitObserver?: (batch: ScenarioCommit) => void;
+  /**
+   * F-044's old-Host crash gate: awaited after each durable commit and before
+   * the route continues (the release-hold commit is durable and the human
+   * requeue has not run yet). `HostScenario.dropCommitGate()` stops applying it
+   * to a Host started by a later `restart()`.
+   */
+  commitGate?: ScenarioCommitGate;
+  /**
+   * Arm ONE store failure for the next `lookupCommit` once the Host is up
+   * (K3-03, spec §5.1 "存储读失败一次"): the call answers `unavailable` once and
+   * every later call passes through. The record-backend wrap is installed before
+   * the Host starts (so its live backend is covered); the arming waits until the
+   * start-of-recording write has passed, because arming earlier would fail that
+   * `lookupCommit` and abort Host startup (src/app/host.ts `ensureActivityRecording`).
+   * `HostScenario.failNextLookupCommitOnce()` arms the same seam at call time.
+   */
+  failNextLookupCommitOnce?: boolean;
+  /**
+   * Initialise a git baseline in the scenario's own workspace root BEFORE the
+   * first Host starts (K3 §5.1 "git 工作区"): `git init`, the tracked defaults
+   * (or `files`) committed, and one Host-denied file (default
+   * `.evaluator/hidden.ts`) written on disk, untracked and untracked-visible.
+   * `true` uses the defaults; `{ files, deniedFile, message }` tunes them. The
+   * root is the scenario's temporary directory; the repository is never touched.
+   */
+  gitWorkspace?: GitWorkspaceOption;
 };
 
 export type HostRestartOptions = {
@@ -849,36 +967,59 @@ export class HostScenario extends ScenarioBase {
   private settings: HostSettings;
   private restarts = 0;
   private readonly commitObserver: ((batch: ScenarioCommit) => void) | undefined;
+  private commitGate: ScenarioCommitGate | undefined;
+  /** The unresolved `lookupCommit` armings this scenario requested (option or method); dropped on dispose. */
+  private readonly armedLookupFailures: ArmedLookupFailure[] = [];
+  /** Set while this scenario holds the factory wrap over its live backend (released on dispose). */
+  private backendWrapHeld = false;
 
   private constructor(root: string, database: string, readonly publicDir: string, models: ScriptState,
     first: { host: AG2bHost; index: number }, settings: HostSettings, policy: TaskAutomationPolicyV1,
-    commitObserver?: (batch: ScenarioCommit) => void) {
+    readonly gitWorkspace: GitWorkspaceInfo | null, commitObserver?: (batch: ScenarioCommit) => void,
+    commitGate?: ScenarioCommitGate) {
     super(root, database, models, policy);
     this.current = first;
     this.settings = settings;
     this.commitObserver = commitObserver;
+    this.commitGate = commitGate;
   }
 
   static async open(options: HostScenarioOptions = {}): Promise<HostScenario> {
     const root = await tempDir('scenario-ws-');
     const database = await tempDir('scenario-db-');
     const publicDir = await publicDirectory();
+    // K3 §5.1 "git 工作区": the baseline must exist before the first Host opens the
+    // workspace (so its start is the baseline). `false`/absent leaves the root plain.
+    const gitWorkspace = options.gitWorkspace === undefined || options.gitWorkspace === false
+      ? null
+      : await initGitWorkspace(root, typeof options.gitWorkspace === 'object' ? options.gitWorkspace : {});
     if (options.automation !== undefined) await writeAutomationSettings(database, options.automation);
     const models = new ScriptState(options.script ?? {});
     const settings: HostSettings = { check: options.check ?? 'result_file', checkRevision: 1, actor: options.actor ?? SCENARIO_OPERATOR,
       noKernelStores: false };
     if (options.commitObserver !== undefined) addScenarioCommitObserver(options.commitObserver);
+    if (options.commitGate !== undefined) addScenarioCommitGate(options.commitGate);
+    // The wrap must be installed BEFORE the first Host opens its backend, so a later
+    // `failNextLookupCommitOnce()` reaches that live backend. The arming itself waits
+    // until the Host is up: the start-of-recording `lookupCommit` would otherwise fail
+    // and abort startup (src/app/host.ts `ensureActivityRecording`).
+    retainScenarioBackendWrap();
     let first: { host: AG2bHost; index: number };
     try {
       first = await HostScenario.start(root, database, publicDir, models, settings, 'live');
     } catch (error) {
       if (options.commitObserver !== undefined) removeScenarioCommitObserver(options.commitObserver);
+      if (options.commitGate !== undefined) removeScenarioCommitGate(options.commitGate);
+      releaseScenarioBackendWrap();
       throw error;
     }
     const scenario = new HostScenario(root, database, publicDir, models, first, settings,
-      options.automation ?? DEFAULT_TASK_AUTOMATION_POLICY, options.commitObserver);
+      options.automation ?? DEFAULT_TASK_AUTOMATION_POLICY, gitWorkspace, options.commitObserver, options.commitGate);
+    scenario.backendWrapHeld = true;
     opened.push(scenario);
     if (options.workIds !== null) await seedAG2bWorkGraph(first.host, options.workIds ?? [AG2B_WORK_TASK_ID]);
+    // Arm only after the seed: the option must fail the test's own call, not a seed write.
+    if (options.failNextLookupCommitOnce === true) scenario.failNextLookupCommitOnce();
     return scenario;
   }
 
@@ -910,6 +1051,32 @@ export class HostScenario extends ScenarioBase {
   /** The start-up reconcile report of the live Host (§12.1 step 7). */
   get reconcile(): HostReconcileReportV1 { return this.current.host.host.reconcile; }
   stepActor(): WorkbenchActor { return this.settings.actor; }
+
+  /**
+   * Arm ONE store failure for the next `lookupCommit` (K3-03, spec §5.1 "存储读失败一次"):
+   * it answers `{ status: 'rejected', code: 'unavailable' }` once, then every later call
+   * passes through. The scenario keeps the factory wrap installed over its live Host backend,
+   * so this reaches a route on the running Host as well as any backend a later `restart()`,
+   * `direct()` or `startPeer()` creates.
+   */
+  failNextLookupCommitOnce(): void {
+    this.armedLookupFailures.push(armScenarioLookupFailure());
+  }
+
+  /**
+   * F-044: stop applying this scenario's commit gate and restore the backend
+   * factories, so a Host started by the next `restart()` opens unwrapped. The
+   * already-entered commit of the old Host keeps waiting at its gate.
+   */
+  dropCommitGate(): void {
+    if (this.commitGate === undefined) return;
+    removeScenarioCommitGate(this.commitGate);
+    this.commitGate = undefined;
+    if (this.backendWrapHeld) {
+      this.backendWrapHeld = false;
+      releaseScenarioBackendWrap();
+    }
+  }
 
   /** One core route on the live Host; a non-200 answer fails the test (use `answer` for refusals). */
   post<T>(suffix: string, body: unknown): Promise<T> { return post<T>(this.current.host, suffix, body); }
@@ -1023,6 +1190,10 @@ export class HostScenario extends ScenarioBase {
     await this.current.host.host.close().catch(() => undefined);
     await this.closeDirect().catch(() => undefined);
     if (this.commitObserver !== undefined) removeScenarioCommitObserver(this.commitObserver);
+    if (this.commitGate !== undefined) removeScenarioCommitGate(this.commitGate);
+    // Drop this scenario's armings: an unconsumed one must never leak into the next test.
+    for (const armed of this.armedLookupFailures.splice(0)) disarmScenarioLookupFailure(armed);
+    if (this.backendWrapHeld) { this.backendWrapHeld = false; releaseScenarioBackendWrap(); }
   }
 }
 

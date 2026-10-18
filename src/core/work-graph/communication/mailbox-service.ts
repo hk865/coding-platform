@@ -59,6 +59,12 @@ import {
 import type { PreparedTaskManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+import type { ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
+import {
+  ackSessionMessageRequest, respondSessionMessageRequest, sendSessionMessageRequest, sendUserMessageRequest,
+  toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
+  type SessionMessageSendInput, type SendUserMessageInput,
+} from '../model/tool-commit-arguments.js';
 import { consultationQueryRefs } from '../../../contracts/query-job.js';
 import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageStatus, UndeliveredReplyV1 } from '../model/communication-contracts.js';
@@ -379,6 +385,13 @@ type Owned = {
   signal: AbortSignal;
 };
 type OwnedContext = Owned | { ok: false; rejection: CoreRejection };
+
+/**
+ * The project/workspace scope `identityKeyOf`/`fingerprintOf` bind. The real
+ * owner methods pass their `Owned` context; the L4 lookup passes the original
+ * Run's `origin` so the identity matches what that Run actually committed.
+ */
+type MailboxScope = { projectId: string; workspaceId: string };
 
 function ownContext(ctx: CoreCallContext): OwnedContext {
   const raw = ctx as unknown as Unknown | null | undefined;
@@ -749,13 +762,13 @@ function senderIdentityOf(sender: MessageSender | MessageQueryAnswerSender): Unk
   };
 }
 
-function identityKeyOf(operation: string, owned: Owned, senderIdentity: Unknown, requestId: string): string {
+function identityKeyOf(operation: string, scope: MailboxScope, senderIdentity: Unknown, requestId: string): string {
   return `session-message-${operation}:` + sha256Hex(canonicalJson({
-    operation, projectId: owned.projectId, workspaceId: owned.workspaceId, sender: senderIdentity, requestId,
+    operation, projectId: scope.projectId, workspaceId: scope.workspaceId, sender: senderIdentity, requestId,
   } as unknown as JsonValue));
 }
 
-function fingerprintOf(operation: string, owned: Owned, senderIdentity: Unknown, payload: Unknown, expected: readonly VersionPin[]): string {
+function fingerprintOf(operation: string, scope: MailboxScope, senderIdentity: Unknown, payload: Unknown, expected: readonly VersionPin[]): string {
   const pins = [...expected]
     .map((pin) => ({ ref: pin.ref, revision: pin.revision }))
     .sort((left, right) => {
@@ -764,7 +777,7 @@ function fingerprintOf(operation: string, owned: Owned, senderIdentity: Unknown,
       return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
     });
   return sha256Hex(canonicalJson({
-    operation, projectId: owned.projectId, workspaceId: owned.workspaceId, sender: senderIdentity, payload, expected: pins,
+    operation, projectId: scope.projectId, workspaceId: scope.workspaceId, sender: senderIdentity, payload, expected: pins,
   } as unknown as JsonValue));
 }
 
@@ -772,6 +785,22 @@ function messageIdOf(owned: Owned, senderIdentity: Unknown, requestId: string): 
   return 'session-message-' + sha256Hex(canonicalJson({
     projectId: owned.projectId, workspaceId: owned.workspaceId, sender: senderIdentity, requestId,
   } as unknown as JsonValue));
+}
+
+/**
+ * K3 L4: the Run record's `origin.sessionRef` is a `SessionAggregateRef`
+ * (`aggregateType: 'Session'`), while the live `sendMessage` bound a plain
+ * `SessionRef`; the Run ref keeps its `Run` tag on both sides. Normalize the
+ * two refs so the rebuilt request id, sender identity and scope hash exactly
+ * the identity the original Run committed.
+ */
+function normalizedLookupOrigin(origin: ToolCommitLookupInput['origin']): ToolCommitLookupInput['origin'] {
+  return {
+    runRef: { aggregateType: 'Run', projectId: origin.runRef.projectId, goalId: origin.runRef.goalId, runId: origin.runRef.runId },
+    sessionRef: { projectId: origin.sessionRef.projectId, sessionId: origin.sessionRef.sessionId },
+    generation: origin.generation,
+    workspaceId: origin.workspaceId,
+  };
 }
 
 /** Each event's id under its write identity. */
@@ -3540,8 +3569,112 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     });
   }
 
+  // ---- L4 lookupToolCommit -------------------------------------------------
+
+  /**
+   * K3 L4: the sender identity the original Run recorded, rebuilt from the
+   * trusted `origin` (the Run record's provenance) rather than from the ctx of
+   * the reconcile caller. `senderIdentityOf` ignores the Role binding, so the
+   * four `origin` fields reproduce exactly what `sendMessage` committed.
+   */
+  function workRunSenderIdentityOf(origin: ToolCommitLookupInput['origin']): Unknown {
+    return {
+      kind: 'work_run',
+      sessionRef: { projectId: origin.sessionRef.projectId, sessionId: origin.sessionRef.sessionId },
+      runRef: { aggregateType: 'Run', projectId: origin.runRef.projectId, goalId: origin.runRef.goalId, runId: origin.runRef.runId },
+      generation: origin.generation,
+    };
+  }
+
+  /**
+   * K3 L4: the read-only committed-receipt lookup for the four row-4 mailbox
+   * tools. It reuses the SAME pure "arguments -> owner request" functions and
+   * the SAME module-level identity/fingerprint helpers as the real owner
+   * methods, then asks `lookupCommit`; it never writes and never opens a body.
+   */
+  const lookupToolCommit: ToolCommitLookup = async (
+    ctx: CoreCallContext, input: ToolCommitLookupInput,
+  ): Promise<ToolCommitLookupResult> => {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return { status: 'undetermined', reason: owned.rejection.reason };
+    const args = input.arguments;
+    if (!isObject(args)) return { status: 'undetermined', reason: 'invalid_arguments' };
+    // K3 L4: rebuild the whole lookup identity from the ORIGINAL Run's
+    // provenance, not from the reconcile caller's ctx/principal.
+    const origin = normalizedLookupOrigin(input.origin);
+    const requestId = toolCommitRequestId({ ...input, origin });
+    let operation: string;
+    let payload: Unknown;
+    let expected: readonly VersionPin[];
+    try {
+      switch (input.toolName) {
+        case 'send_session_message': {
+          const request = sendSessionMessageRequest(args as unknown as SessionMessageSendInput, requestId);
+          operation = 'send';
+          expected = request.meta.expected;
+          payload = {
+            recipient: request.input.recipient, text: request.input.text,
+            ...(request.input.replyMode === undefined ? {} : { replyMode: request.input.replyMode }),
+            ...(request.input.intent === undefined ? {} : { intent: request.input.intent }),
+            ...(request.input.needsReply === undefined ? {} : { needsReply: request.input.needsReply }),
+            ...(request.input.waitAfterSend === undefined ? {} : { waitAfterSend: request.input.waitAfterSend }),
+          };
+          break;
+        }
+        case 'ack_session_message': {
+          const input2 = args as unknown as { messageRef: SessionMessageRef; expectedRevision: number };
+          const request = ackSessionMessageRequest(input2, requestId);
+          operation = 'ack';
+          expected = request.meta.expected;
+          payload = { messageRef: request.input.messageRef };
+          break;
+        }
+        case 'respond_session_message': {
+          const input2 = args as unknown as { messageRef: SessionMessageRef; expectedRevision: number; text: string };
+          const request = respondSessionMessageRequest(input2, requestId);
+          operation = 'respond';
+          expected = request.meta.expected;
+          payload = { messageRef: request.input.messageRef, text: request.input.text };
+          break;
+        }
+        case 'send_user_message': {
+          const request = sendUserMessageRequest(args as unknown as SendUserMessageInput, requestId);
+          operation = 'user-send';
+          expected = request.meta.expected;
+          const wire = request.input;
+          payload = {
+            goalRef: wire.goalRef, intent: wire.intent, text: wire.text,
+            needsReply: wire.needsReply, waitAfterSend: wire.waitAfterSend,
+            options: wire.options, objects: wire.objects,
+            ...(wire.forwardedFrom === undefined ? {} : { forwardedFrom: wire.forwardedFrom }),
+          };
+          break;
+        }
+        default:
+          return toolCommitLookupUnknownTool(input.toolName);
+      }
+    } catch {
+      return { status: 'undetermined', reason: 'invalid_arguments' };
+    }
+    // K3 L4: the committed row belongs to the ORIGINAL Run, so both the sender
+    // identity and the identity/fingerprint scope come from `input.origin` (the
+    // Run record's provenance). A Host reconcile ctx must not substitute the
+    // Host principal's identity here.
+    const senderIdentity = workRunSenderIdentityOf(origin);
+    const scope: MailboxScope = { projectId: origin.runRef.projectId, workspaceId: origin.workspaceId };
+    const identityKey = identityKeyOf(operation, scope, senderIdentity, requestId);
+    const fingerprint = fingerprintOf(operation, scope, senderIdentity, payload, expected);
+    let lookup: Awaited<ReturnType<typeof records.lookupCommit>>;
+    try {
+      lookup = await records.lookupCommit({ identityKey, fingerprint });
+    } catch {
+      return { status: 'undetermined', reason: 'the mailbox receipt lookup failed' };
+    }
+    return toolCommitLookupResult(lookup);
+  };
+
   return { sendMessage, readMessage, readMessageBody, readInbox, readOutbox, ackMessage, respondMessage, respondFromQueryAnswer, recordConsultationDerivation, recordInputAccepted, sendUserMessage,
-    disposeArchiveWait, readUndeliveredReplies, readRoutedReplies };
+    disposeArchiveWait, readUndeliveredReplies, readRoutedReplies, lookupToolCommit };
 }
 
 /**

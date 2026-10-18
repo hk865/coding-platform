@@ -260,6 +260,11 @@ export function createHostRuntimeResolverRegistry(initial: RuntimeHostBindings):
       if (result.status === 'ready') queryPins.set(key, bindings);
       return result;
     },
+    // R3 (L13/U5): no RunRef to pin; the capability always reads the current
+    // settings version, exactly like a fresh Work Run's binding lookup.
+    async readonlyCommandAccess(input) {
+      return current.readonlyCommandAccess?.(input) ?? null;
+    },
   };
 }
 

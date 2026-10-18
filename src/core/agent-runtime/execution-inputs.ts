@@ -214,6 +214,19 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
   };
 }
 
+/**
+ * K3 L13: the review/proposal round's input channel. It carries ONLY the
+ * trusted control inputs for this round: Session letters and saved replies are
+ * deliberately not supplied (they stay for the later continuation), so the
+ * read-only round neither answers nor consumes them.
+ */
+export function createControlOnlyInputSupply(controlInputs: InputSupply): InputSupply {
+  return async (point, { signal }) => {
+    if (signal.aborted) return [];
+    return controlInputs(point, { signal });
+  };
+}
+
 /** Confirm only original committed Kernel input facts, not Host delivery. */
 export async function confirmMailboxInputs(
   messages: Pick<SessionMailboxPort, 'recordInputAccepted'> | undefined,

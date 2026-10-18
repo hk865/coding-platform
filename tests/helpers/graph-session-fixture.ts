@@ -36,6 +36,7 @@ import {
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import {
@@ -266,6 +267,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.records,
       ...PLAN_STATE_RECORD_SCHEMAS.records,
       ...TASK_CLAIM_RECORD_SCHEMAS.records,
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records,
       ...ROLE_RECORD_SCHEMAS.records,
       ...materialRecordSchemas().records.filter(schema => schema.aggregateType === 'Run'),
     ],
@@ -277,6 +279,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...ARCHITECTURE_CATALOG_SCHEMAS.events,
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...TASK_CLAIM_RECORD_SCHEMAS.events,
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events,
       { eventType: 'TrustedScopeSeeded', schemaVersion: 1,
         validate: event => ({ status: 'decoded', value: event }) },
@@ -287,6 +290,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...(PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? []),
       ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []),
       ...(ROLE_RECORD_SCHEMAS.lookups ?? []),
+      ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
     ],
   };
   let failWrite = false;

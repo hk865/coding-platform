@@ -828,7 +828,7 @@ export type GoalDisplayFactsV1 = {
 };
 
 /** The eight stop reasons GOAL-30 reports (`unknown_outcome` belongs to GOAL-23). */
-export type GoalStopCauseCode = Exclude<TaskAutomationStopReason, 'unknown_outcome'>;
+export type GoalStopCauseCode = Exclude<TaskAutomationStopReason, 'unknown_outcome' | 'unknown_call_review'>;
 
 /** The causes of §2.1 (原因码 table, plus the GOAL-21/24/25/26 causes). */
 export type GoalDisplayCauseV1 =
@@ -905,8 +905,8 @@ function decidedByAutomation(task: GoalDisplayTaskFactsV1): boolean {
   return verdict.kind === 'stopped' || isPendingVerdict(verdict);
 }
 
-function isGoalStopCause(reason: TaskAutomationStopReason): reason is GoalStopCauseCode {
-  return reason !== 'unknown_outcome';
+export function isGoalStopCause(reason: TaskAutomationStopReason): reason is GoalStopCauseCode {
+  return reason !== 'unknown_outcome' && reason !== 'unknown_call_review';
 }
 
 type DesiredStateHit = { row: 'GOAL-17'; phase: 'CANCELLED' } | { row: 'GOAL-20'; phase: 'PAUSED' };

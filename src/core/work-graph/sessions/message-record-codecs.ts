@@ -67,6 +67,8 @@ export const S5_MESSAGE_BY_WORKSPACE_STATUS = 's5-message-by-workspace-status';
 export const S5_DECISION_ANSWER_BY_SOURCE = 's5-decision-answer-by-source';
 /** Slice 2A L2: messages addressed to the user in one workspace. */
 export const S2A_USER_MESSAGES_LOOKUP = 's2a-user-messages';
+/** K3 L28: every decision answer of one source kind for one Goal (the UR7b index). */
+export const K3_DECISION_ANSWER_BY_SOURCE_GOAL_LOOKUP = 'k3-decision-answer-by-source-goal';
 
 /**
  * Slice 5 notification origin wire (SPEC §2.5 line 289). The single
@@ -138,6 +140,20 @@ export const S5_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
     name: S5_DECISION_ANSWER_BY_SOURCE,
     aggregateType: 'SessionMessage',
     paths: ['ref.projectId', 'ref.workspaceId', 'decision.source.kind', 'decision.source.key'],
+  },
+];
+
+/**
+ * K3 L28 additive indexes: `k3-decision-answer-by-source-goal` lets the start-up
+ * and UR7b reader find every card answer of one source kind in one Goal without
+ * the slice-5 complete-source key. Kept separate so the frozen slice-5 constant
+ * and its exact-shape test stay byte-compatible.
+ */
+export const K3_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+  {
+    name: K3_DECISION_ANSWER_BY_SOURCE_GOAL_LOOKUP,
+    aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'decision.source.kind', 'decision.source.goalRef.goalId'],
   },
 ];
 
@@ -520,6 +536,7 @@ function checkDecisionOptionShape(value: unknown): Problem {
 
 const DECISION_SOURCE_KINDS: readonly string[] = [
   'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
+  'unknown_call_review', 'command_rerun_request',
 ];
 
 function checkDecisionSourceShape(value: unknown): Problem {
@@ -1144,7 +1161,8 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
     { eventType: SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE) },
   ],
-  lookups: [...SESSION_MESSAGE_LOOKUP_INDEXES, ...S5_SESSION_MESSAGE_LOOKUP_INDEXES, ...S2A_SESSION_MESSAGE_LOOKUP_INDEXES],
+  lookups: [...SESSION_MESSAGE_LOOKUP_INDEXES, ...S5_SESSION_MESSAGE_LOOKUP_INDEXES, ...S2A_SESSION_MESSAGE_LOOKUP_INDEXES,
+    ...K3_SESSION_MESSAGE_LOOKUP_INDEXES],
 };
 
 // --------------------------------------------------------------------------

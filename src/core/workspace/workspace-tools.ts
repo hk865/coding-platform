@@ -2,6 +2,10 @@ import { CaptureRegistry } from './capture.js';
 import { createPythonLanguageProvider } from './architecture-language-provider.js';
 import type { WorkspaceAccessFactory } from './access.js';
 import type { WorkspaceCaptureLimits, WorkspaceToolsPort } from './ports.js';
+import {
+  readContinuationBaselineBlob, readContinuationCurrentFile, type ContinuationWorkspaceBytes,
+} from './continuation-diff-reads.js';
+import { WORKSPACE_DENIED_PREFIXES } from './denied-prefixes.js';
 
 /** Host defaults (module page §8 / task book §6); the model never supplies these. */
 export const DEFAULT_WORKSPACE_LIMITS: WorkspaceCaptureLimits = {
@@ -35,9 +39,19 @@ export type WorkspaceToolsDependencies = {
    */
   sourceAnalyzers?: { directory?: string; pythonPath?: string; cppLibraryPath?: string;
     unitTimeoutMs?: number; languageTimeoutMs?: number };
+  /**
+   * L6: the Host's denied prefixes for the continuation diff reads. The
+   * platform constant is the default; the composition passes it explicitly so
+   * the protected-path boundary lives with the reads that open files.
+   */
+  deniedPrefixes?: readonly string[];
 };
 export type WorkspaceToolsHandle = {
   tools: WorkspaceToolsPort;
+  /** K3 L6: the old side of one continuation file diff (`git cat-file blob`). */
+  readContinuationBaselineBlob(root: string, objectRef: string): Promise<ContinuationWorkspaceBytes>;
+  /** K3 L6: the current side of one continuation file diff (protected-aware, symlink-refusing). */
+  readContinuationCurrentFile(root: string, path: string): Promise<ContinuationWorkspaceBytes>;
   close(): Promise<void>;
 };
 
@@ -84,5 +98,11 @@ export function createWorkspaceTools(deps: WorkspaceToolsDependencies): Workspac
     readWorkspace: (ctx, input) => registry.read(ctx, input),
     compareWorkspace: (ctx, input) => registry.compare(ctx, input),
   };
-  return { tools, close: () => registry.close() };
+  const deniedPrefixes = deps.deniedPrefixes ?? WORKSPACE_DENIED_PREFIXES;
+  return {
+    tools,
+    readContinuationBaselineBlob: (root, objectRef) => readContinuationBaselineBlob(root, objectRef),
+    readContinuationCurrentFile: (root, path) => readContinuationCurrentFile(root, path, deniedPrefixes),
+    close: () => registry.close(),
+  };
 }

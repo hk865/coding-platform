@@ -32,6 +32,7 @@ import { SESSION_RECORD_SCHEMAS, encodeSessionRecord, plainSessionRefToAggregate
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-history-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
@@ -124,6 +125,23 @@ function emptySpy(): RecordSpy {
   return { lookups: [], readMany: [], commits: 0, lookupCommits: 0, eventAt: 0 };
 }
 
+/**
+ * K3 L7 fixtures: register each record/event/lookup schema once. Callers that
+ * already pass `UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS` through `additionalSchemas`
+ * must not make the backend reject the whole list as a duplicate aggregateType.
+ */
+function uniqueBySchemaId<T>(items: readonly T[], id: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const key = id(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
 function wrapRecords(target: Records, spy: RecordSpy): Records {
   return {
     readMany(refKeys) { spy.readMany.push([...refKeys]); return target.readMany(refKeys); },
@@ -144,18 +162,21 @@ export async function createTaskClaimFixture(kind: ClaimFixtureKind, additionalS
   const ledgerPath = join(directory, 'ledger.sqlite');
   const materials = materialRecordSchemas();
   const schemas: RecordBackendSchemas = {
-    records: [...materials.records, ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
+    records: uniqueBySchemaId([...materials.records, ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records,
-      ...ROLE_RECORD_SCHEMAS.records, ...TASK_CLAIM_RECORD_SCHEMAS.records, ...additionalSchemas.records],
-    events: [...materials.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
+      ...ROLE_RECORD_SCHEMAS.records, ...TASK_CLAIM_RECORD_SCHEMAS.records,
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records, ...additionalSchemas.records], (schema) => schema.schemaId),
+    events: uniqueBySchemaId([...materials.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...TASK_CLAIM_RECORD_SCHEMAS.events, ...EXECUTION_HISTORY_RECORD_SCHEMAS.events,
       { eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-        validate: event => ({ status: 'decoded', value: event }) }, ...additionalSchemas.events],
-    lookups: [...(materials.lookups ?? []), ...(PLAN_RECORD_SCHEMAS.lookups ?? []),
+        validate: event => ({ status: 'decoded', value: event }) }, ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
+      ...additionalSchemas.events], (schema) => `${schema.eventType}@${String(schema.schemaVersion)}`),
+    lookups: uniqueBySchemaId([...(materials.lookups ?? []), ...(PLAN_RECORD_SCHEMAS.lookups ?? []),
       ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []), ...(PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? []),
       ...(SESSION_RECORD_SCHEMAS.lookups ?? []), ...(ROLE_RECORD_SCHEMAS.lookups ?? []),
-      ...(TASK_CLAIM_RECORD_SCHEMAS.lookups ?? []), ...(additionalSchemas.lookups ?? [])],
+      ...(TASK_CLAIM_RECORD_SCHEMAS.lookups ?? []), ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
+      ...(additionalSchemas.lookups ?? [])], (index) => index.name),
   };
   const backend = kind === 'memory'
     ? createInMemoryRecordBackend({ schemas })

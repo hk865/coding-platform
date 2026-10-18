@@ -653,6 +653,10 @@ it('W-14 and RUN-22: with the Kernel store gone at the restart the Run ends outc
       { runRef, reason: 'checked the workspace by hand: nothing was written' }, 'a2-attest',
       [{ ref: runRef, revision: unknown.run.revision }]));
     expect(attested).toMatchObject({ status: 'committed', replayed: false });
+    // K3 §5.3: the attestation creates the review record in the same commit; read it through the route.
+    expect(await answer(second, 'unknown-call-reviews/read', plain(AG2B_SCOPE, { runRef })))
+      .toMatchObject({ status: 'ready', value: { inventory: 'incomplete', inventoryProblem: 'kernel_unreadable',
+        status: 'needs_decision', decisionReasons: ['inventory_incomplete'] } });
     await assertInvariantsAt(inv, 'W-14 attested', attestedStep);   // A.2 step 6
     const ended = await readExecution(second, runRef);
     expect(ended.run).toMatchObject({ status: 'ended', outcome: 'crashed',
@@ -726,6 +730,10 @@ it('W-14 then W-07, W-15 and RUN-22 on a readable Kernel: a probe that proves no
     const attested = await post<WriteResult<unknown>>(fourth, 'executions/resolve-unknown', graphWrite(AG2B_SCOPE,
       { runRef, reason: 'the paused Turn did nothing more' }, 'a2-attest2', [{ ref: runRef, revision: before.run.revision }]));
     expect(attested).toMatchObject({ status: 'committed' });
+    // K3 §5.3: this Run went through RUN-20(ii), so even with a readable Kernel the record is incomplete at stop.
+    expect(await answer(fourth, 'unknown-call-reviews/read', plain(AG2B_SCOPE, { runRef })))
+      .toMatchObject({ status: 'ready', value: { inventory: 'incomplete', inventoryProblem: 'kernel_unreadable_at_stop',
+        status: 'needs_decision', decisionReasons: ['inventory_incomplete'] } });
     await assertInvariantsAt(inv, 'W-15 attested', attestedStep);   // A.2 step 6
     ended = await readExecution(fourth, runRef);
     expect(ended.run).toMatchObject({ status: 'ended', outcome: 'crashed',

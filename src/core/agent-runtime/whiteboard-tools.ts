@@ -38,6 +38,7 @@ import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../cont
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../contracts/plan.js';
 import type { PlanChangeReason, PlanProposalRef, PlanTaskPort } from '../work-graph/model/plan-contracts.js';
+import { proposeFuturePlanRequest } from '../work-graph/model/tool-commit-arguments.js';
 import {
   toolSchema as z,
   type ToolCall,
@@ -320,10 +321,9 @@ async function dispatch(prepared: PreparedWhiteboardCall): Promise<ToolResult> {
     }
     case 'propose_future_plan': {
       const input = args as ProposeArgs;
-      const result = await plans.proposePlan(context, {
-        input: { goalRef, basedOn: input.basedOn, draft: input.draft, reason: input.reason },
-        meta: { requestId, expected: input.expected },
-      });
+      const result = await plans.proposePlan(context, proposeFuturePlanRequest({
+        basedOn: input.basedOn, draft: input.draft, reason: input.reason, expected: [...input.expected],
+      }, requestId, goalRef));
       return mapWrite(callId, result);
     }
     case 'apply_future_plan': {

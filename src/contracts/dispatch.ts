@@ -167,6 +167,21 @@ export type RunReconciliationV1 = {
         reason: string;
         observedThroughPosition: number | null;
         unresolvedToolCallIds: string[];
+        /**
+         * L25: why the RUN-20(i) came from the startup ordering table's row 8
+         * (the classifier's `blockedBy`, or WorkGraph's first failing guard);
+         * absent on every other RUN-20 cause and on RUN-08.
+         */
+        autoCleanupBlockedBy?: string;
+    } | {
+        /** RUN-25: automatic closure after a Host takeover with unresolved tool calls (L25). */
+        kind: 'takeover_unresolved';
+        event: RuntimeEventV1;
+        lastPosition: number;
+        observedThroughPosition: number;
+        unresolvedToolCallIds: string[];
+        proof: import('./unknown-call-review.js').HostTakeoverProofV1;
+        reviewRef: import('./unknown-call-review.js').UnknownCallReviewRef;
     } | {
         /** RUN-16 */
         kind: 'not_entered';
@@ -206,6 +221,16 @@ export type RunSnapshot = {
     reconciliation?: RunReconciliationV1;
     /** Only an unconsumed authorization can be fenced and retried without a new TaskAttempt. */
     executionAuthorization?: ExecutionAuthorizationV1 | ExecutionAuthorizationV2;
+    /**
+     * K3 (L10): absent means ordinary work. A review round / proposal round Run
+     * carries the review record it belongs to and its phase.
+     */
+    purpose?: {
+        kind: 'unknown_call_review';
+        reviewRef: import('./unknown-call-review.js').UnknownCallReviewRef;
+        phase: 'review' | 'proposal';
+        round: number;
+    };
     /** Canonical desired state; updated atomically with its ControlIntent. */
     controlState?: {
         intentRef: import('./control-intent.js').ControlIntentRef;

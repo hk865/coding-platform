@@ -39,7 +39,8 @@ import type { TransitionRejectReason } from '../../src/core/work-graph/state/tra
 
 /** Every release cause (moved from `session-availability.ts` in A.2 step 4: no production code enumerates them). */
 const SESSION_RELEASE_CAUSES: readonly SessionReleaseCause[] = Object.freeze([
-  'terminal_observed', 'stop_not_entered', 'reconcile_terminal', 'reconcile_interrupted_clean', 'late_evidence',
+  'terminal_observed', 'stop_not_entered', 'reconcile_terminal', 'reconcile_interrupted_clean',
+  'reconcile_takeover_unresolved', 'late_evidence',
   'stop_paused', 'unknown_attested', 'query_terminal_observed', 'query_reconcile_terminal',
   'query_reconcile_not_entered', 'query_reconcile_interrupted_clean', 'query_unknown_attested',
 ]);
@@ -110,6 +111,8 @@ const CAUSES: Record<SessionReleaseCause, CauseInfo> = {
   stop_not_entered: { holder: 'run', reconcile: false, attested: false, terminal: false, turnSeen: false },
   reconcile_terminal: { holder: 'run', reconcile: true, attested: false, terminal: true, turnSeen: true },
   reconcile_interrupted_clean: { holder: 'run', reconcile: true, attested: false, terminal: false, turnSeen: true },
+  // K3 RUN-25 (SES-06): a takeover closure leaves the Kernel Turn open.
+  reconcile_takeover_unresolved: { holder: 'run', reconcile: true, attested: false, terminal: false, turnSeen: true },
   late_evidence: { holder: 'run', reconcile: false, attested: false, terminal: true, turnSeen: true },
   stop_paused: { holder: 'run', reconcile: false, attested: false, terminal: false, turnSeen: true },
   unknown_attested: { holder: 'run', reconcile: false, attested: true, terminal: false, turnSeen: true },
@@ -650,7 +653,9 @@ describe('SES-05: the D-7 stop of a Run that never entered (step 5.1)', () => {
 
 describe('SES-06/07/09/10: the release rows A.2 step 5.6 adds', () => {
   const release = (cause: SessionReleaseCause): SessionEvent => ({ kind: 'occupancy_released', cause });
-  const newCauses = SESSION_RELEASE_CAUSES.filter((cause) => !IMPLEMENTED_CAUSES.has(cause));
+  // K3's `reconcile_takeover_unresolved` (U2) rides SES-06 but is not a step 5.6 row; K3-30 asserts it.
+  const newCauses = SESSION_RELEASE_CAUSES.filter((cause) =>
+    !IMPLEMENTED_CAUSES.has(cause) && cause !== 'reconcile_takeover_unresolved');
   const heldBy = (cause: SessionReleaseCause): SessionMachineState => CAUSES[cause].holder === 'run' ? HELD_BY_RUN : HELD_BY_QUERY;
 
   it('lists exactly the causes step 5.6 adds', () => {

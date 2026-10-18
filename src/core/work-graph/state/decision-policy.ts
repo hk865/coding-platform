@@ -119,7 +119,10 @@ export function automationConfirmationCause(input: {
   autonomy: GoalAutonomyV1; action: 'system_requeue' | 'auto_reverify';
   countedNext: number; cap: number;
   goalRef: GoalRef; taskId: string; runRef: RunRef | null; runRevision: number | null;
+  /** K3 (L22): the user's review answer already confirmed this system requeue. */
+  requeueConfirmedByReview?: boolean;
 }): null | { code: 'automation_confirmation_required'; action: DecisionActionV1; affected: VersionPin[] } {
+  if (input.requeueConfirmedByReview === true && input.action === 'system_requeue') return null;
   if (input.countedNext > input.cap) return null;
   const affected: VersionPin[] = [
     { ref: { aggregateType: 'Task', projectId: input.goalRef.projectId, goalId: input.goalRef.goalId,
@@ -205,6 +208,10 @@ export function pausedAutomationAction(input: {
   const { failure } = input;
   // AV-1 / GV-1: a non-active Task is never advanced.
   if (!input.taskDispositionActive) return null;
+  // AV-2b / AV-4c (L22): a review record that is not resolved (or unreadable) or
+  // still held stops every derivation, before AV-3.
+  if (failure.unknownCallReview !== undefined
+    && (failure.unknownCallReview.status !== 'resolved' || failure.unknownCallReview.hold === 'held')) return null;
   // AV-3: a covering TaskRequeue already owns the Run.
   if (failure.automation.coveringRequeue !== null) return null;
   // AV-4 / AV-5: a paused interruption or a person's pointer stops every action.

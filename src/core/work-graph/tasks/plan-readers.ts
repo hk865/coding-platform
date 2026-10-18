@@ -25,6 +25,7 @@ import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { TaskPhaseCauseV1 } from '../../../contracts/task-failure.js';
 import type { SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
+import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type { QueryJobRef } from '../../../contracts/query-job.js';
 import type {
   TaskRequeueRef, TaskRequeueSnapshotV1, TaskReworkRefusalRef, TaskReworkRefusalSnapshotV1,
@@ -36,7 +37,9 @@ import type {
   EncodedRecord,
   GoalRecordTransactionPort,
   RecordBackendSchemas,
+  RecordBatchRead,
   RecordGuard,
+  StoreResult,
 } from '../../record-store/ports.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { taskLeaseSnapshotProblem } from '../persistence/execution-entry-codecs.js';
@@ -45,6 +48,7 @@ import {
 } from '../state/plan-machine.js';
 import { projectTaskPhase, type TaskPhaseFacts } from '../state/task-machine.js';
 import { countEndedGoalRuns } from '../state/task-failure.js';
+import { UNKNOWN_CALL_REVIEW_MAX_ROUNDS } from '../state/unknown-call-review.js';
 import {
   isFinalizedNonPass, roundChainHead, roundTaskSignal, type RoundChainHeadV1, type RoundTaskSignalV1,
 } from '../state/verification-machine.js';
@@ -53,9 +57,10 @@ import {
   decodeVerificationRoundSnapshot,
 } from '../persistence/evidence-record-codecs.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
-import type { PlanProposal, PlanProposalRef } from '../model/plan-contracts.js';
+import type { PlanProposal, PlanProposalRef, TaskUnknownCallReview } from '../model/plan-contracts.js';
 import type { NoteRunTaskResolver, NoteUpdateDueTriggerV1 } from '../model/note-contracts.js';
 import type { SessionResponsibilityBasisPort } from '../model/session-facts-contracts.js';
+import { decodeUnknownCallReview, unknownCallReviewRefKey } from './unknown-call-review-codecs.js';
 import {
   isBasisUnsupported, planTaskFacts, taskOriginVerdict, verifyBasisDelegation,
   type FrozenTaskDefinition, type PlanTaskFacts,
@@ -1005,6 +1010,8 @@ export type CanonicalTaskState = {
   execution: RunSnapshot['ref'] | null;
   lease: { status: 'free' } | { status: 'leased'; holderRunId: string };
   reductionRevision: number | null;
+  /** K3 L7: the selected Run's review record, `unreadable`, or null when the key is absent. */
+  unknownCallReview: TaskUnknownCallReview | null;
 };
 export type CanonicalTaskFacts = {
   goalRef: GoalRef;
@@ -1023,6 +1030,15 @@ export type CanonicalTaskFacts = {
   /** The persisted TaskLease per task (including a released lease), so a
    * continuation claim can guard and update the SAME record revision. */
   leasesByTaskId: ReadonlyMap<string, TaskLeaseSnapshot>;
+  /**
+   * K3 L7/L22: the full decoded UnknownCallReview records of each selected Task,
+   * read in THIS window. The Task row only projects the selected Run's record
+   * (`byTaskId.unknownCallReview`), while the failure facts need the complete
+   * records for AV-2b / AV-4c and `requeueConfirmed`. Empty for a Task whose
+   * records were not read or could not be decoded (the projection then reports
+   * `unreadable`).
+   */
+  reviewsByTaskId: ReadonlyMap<string, readonly UnknownCallReviewV1[]>;
   /**
    * §4.1 / §9 VD-14: the projection input of each work task whose selected Run
    * ended `completed` (`roundTaskSignal` over that Run's round chain) and of
@@ -1073,6 +1089,44 @@ export type CanonicalTaskFacts = {
 export type CanonicalTaskFactRead =
   | { status: 'ready'; value: CanonicalTaskFacts }
   | Rejected;
+
+/** K3 L7: the bounded Task read-model projection of one decoded review record. */
+function projectTaskReview(review: UnknownCallReviewV1): TaskUnknownCallReview {
+  return {
+    ref: review.ref,
+    revision: review.revision,
+    status: review.status,
+    decisionReasons: [...review.decisionReasons],
+    activeRound: review.activeRound,
+    hold: review.disposition?.hold ?? null,
+    remainingRoundSlots: Math.max(0, UNKNOWN_CALL_REVIEW_MAX_ROUNDS - review.rounds.length),
+  };
+}
+
+/**
+ * K3 L7 "读不出就当没定" (option A): the ONE reading of an UnknownCallReview
+ * record read. Only a `ready` result can distinguish a present record from an
+ * authoritatively absent key (`missing`): every failed read — `unsupported`,
+ * `invalid`, `corrupt`, `unavailable` — and a thrown call is `unreadable`,
+ * never absence. The readers and both owner gates use this outcome, so a
+ * store without the review aggregate schema cannot report "no record".
+ */
+export type UnknownCallReviewReadOutcome =
+  | { status: 'ready'; records: readonly EncodedRecord[]; readThrough: CommitCursor | null }
+  | { status: 'unreadable' };
+
+export async function readUnknownCallReviewOutcome(
+  read: () => Promise<StoreResult<RecordBatchRead>>,
+): Promise<UnknownCallReviewReadOutcome> {
+  let result: StoreResult<RecordBatchRead>;
+  try {
+    result = await read();
+  } catch {
+    return { status: 'unreadable' };
+  }
+  if (result.status !== 'ready') return { status: 'unreadable' };
+  return { status: 'ready', records: result.value.records, readThrough: result.value.readThrough };
+}
 
 function parseRun(json: string): RunSnapshot | null {
   const parsed = parseJsonObject(json);
@@ -1680,6 +1734,47 @@ export async function readCanonicalTaskFacts(
       else list.push(requeue);
     }
     const requeueRefusalsByRunId = new Map(rework.refusals.map((refusal) => [refusal.ref.subjectId, refusal]));
+    // K3 L7: the UnknownCallReview record of every Run read in this window, so
+    // the Task read model can fail closed (`unreadable`), project the selected
+    // Run's record, and hand the full decoded records to the failure facts
+    // (L22). Only an authoritative `not_found` (a ready read whose key is
+    // missing) is absence; ONE shared mapping (readUnknownCallReviewOutcome)
+    // makes every failed read — unsupported, invalid, corrupt, unavailable, a
+    // thrown call — `unreadable` for every candidate.
+    const reviewByRunId = new Map<string, TaskUnknownCallReview | null>();
+    const reviewsByRunId = new Map<string, UnknownCallReviewV1>();
+    const reviewKeyOfRun = (run: RunSnapshot): string => unknownCallReviewRefKey({
+      aggregateType: 'UnknownCallReview', projectId: run.ref.projectId, goalId: run.ref.goalId, runId: run.ref.runId });
+    const reviewKeys = uniqueKeys([...runByTask.values()].flat().map(reviewKeyOfRun));
+    if (reviewKeys.length > 0) {
+      const reviewRead = await readUnknownCallReviewOutcome(() => records.readMany(reviewKeys));
+      if (reviewRead.status === 'ready') {
+        if (!sameCursor(read.value.readThrough, reviewRead.readThrough)) continue;
+        const present = new Map(reviewRead.records.map((record) => [record.refKey, record]));
+        for (const run of [...runByTask.values()].flat()) {
+          const record = present.get(reviewKeyOfRun(run));
+          if (record === undefined) { reviewByRunId.set(run.ref.runId, null); continue; }
+          const decoded = decodeUnknownCallReview(record);
+          if (decoded.status !== 'decoded') {
+            reviewByRunId.set(run.ref.runId, { status: 'unreadable' });
+            continue;
+          }
+          reviewByRunId.set(run.ref.runId, projectTaskReview(decoded.value));
+          reviewsByRunId.set(run.ref.runId, decoded.value);
+        }
+      } else {
+        for (const run of [...runByTask.values()].flat()) reviewByRunId.set(run.ref.runId, { status: 'unreadable' });
+      }
+    }
+    // The selected Task's full records, for the failure facts read (`reviews`).
+    const reviewsByTaskId = new Map<string, readonly UnknownCallReviewV1[]>();
+    for (const [taskId, runs] of runByTask) {
+      const records = runs.flatMap((run) => {
+        const review = reviewsByRunId.get(run.ref.runId);
+        return review === undefined ? [] : [review];
+      });
+      reviewsByTaskId.set(taskId, records);
+    }
     const byTaskId = new Map<string, CanonicalTaskState>();
     const roundsByTaskId = new Map<string, RoundTaskSignalV1>();
     const chainsByTaskId = new Map<string, RoundChainHeadV1>();
@@ -1704,6 +1799,10 @@ export async function readCanonicalTaskFacts(
       // independent of clock granularity.
       const leaseHolderRunId = leaseByTask.get(task.taskId)?.holderRunId;
       for (const candidate of runByTask.get(task.taskId) ?? []) {
+        // K3 L10: a review/proposal round Run is never the Task's selected Run;
+        // selection, failure class, checks, completion and the continuation
+        // `afterRun` all read the original Run.
+        if (candidate.purpose?.kind === 'unknown_call_review') continue;
         const entry = index.get(planRevisionRefKey(candidate.planRef));
         if (entry === undefined) { unresolvable = true; continue; }
         const verdict = taskOriginVerdict({ origin: entry, selected: selectedFacts, selectedBasis,
@@ -1778,6 +1877,7 @@ export async function readCanonicalTaskFacts(
         execution: run === null ? null : run.ref,
         lease: lease.value,
         reductionRevision: reductionApplicable && reduction !== null ? reduction.revision : null,
+        unknownCallReview: run === null ? null : reviewByRunId.get(run.ref.runId) ?? null,
       });
     }
     // A round committed after the canonical read moves the watermark: the
@@ -1793,7 +1893,8 @@ export async function readCanonicalTaskFacts(
     const runsByTaskId = new Map<string, readonly RunSnapshot[]>();
     for (const [candidateTaskId, runs] of runByTask) runsByTaskId.set(candidateTaskId, runs);
     return { status: 'ready', value: { goalRef, planRef: plan.ref, byTaskId, runsByTaskId,
-      reductionsByTaskId: reductionByTask, leasesByTaskId: leaseByTask, roundsByTaskId, chainsByTaskId,
+      reductionsByTaskId: reductionByTask, leasesByTaskId: leaseByTask, reviewsByTaskId,
+      roundsByTaskId, chainsByTaskId,
       requeuesByTaskId, requeueRefusalsByRunId, reverifyRefusalsByRoundId: reverify.refusals,
       reworkGuards: rework.guards, readThrough: watermark, guards,
       ...(directed ? { taskHasRun } : { goalEndedRuns: countEndedGoalRuns(goalRuns) }) } };
@@ -1801,6 +1902,63 @@ export async function readCanonicalTaskFacts(
   return { status: 'rejected', code: 'revision_conflict',
     reason: 'the canonical task window changed while it was being read' };
 }
+// --------------------------------------------------------------------------
+// K3 rework 1 item 4: ONE Task-closure derivation (ruling 4)
+// --------------------------------------------------------------------------
+
+/** The canonical closure of one Task: satisfied first, then cancelled/superseded. */
+export type TaskClosureV1 = {
+  closed: boolean;
+  cause: 'satisfied' | 'cancelled' | 'superseded' | null;
+};
+
+/**
+ * Derive a Task's closure from the SAME canonical facts the readers publish.
+ * `satisfied` comes from the canonical Task state (never only the Plan's phase);
+ * `cancelled`/`superseded` come from the Task definition's disposition. The
+ * cause order is binding: satisfied, then cancelled, then superseded.
+ */
+export function taskClosureOf(
+  plan: PlanRevisionSnapshot,
+  facts: CanonicalTaskFacts,
+  taskId: string,
+): TaskClosureV1 {
+  if (facts.byTaskId.get(taskId)?.effectivePhase === 'satisfied') {
+    return { closed: true, cause: 'satisfied' };
+  }
+  const disposition = plan.tasks.find((task) => task.taskId === taskId)?.disposition;
+  if (disposition === 'cancelled') return { closed: true, cause: 'cancelled' };
+  if (disposition === 'superseded') return { closed: true, cause: 'superseded' };
+  return { closed: false, cause: null };
+}
+
+/**
+ * Read one Task's closure: the Goal's active Plan and the directed canonical
+ * Task facts, ONCE per call. A read failure is returned as a rejection and is
+ * never projected to "still active"; a Goal without an adopted Plan or a Task
+ * outside the active Plan is likewise a rejection, not an open Task.
+ */
+export async function readTaskClosure(
+  records: GoalRecordTransactionPort & RecordLookupPort,
+  goalRef: GoalRef,
+  taskId: string,
+): Promise<ReadResult<TaskClosureV1>> {
+  const window = await readGoalPlanWindow(records, goalRef);
+  if (window.status !== 'ready') return window;
+  const plan = window.plan;
+  if (plan === null) {
+    return { status: 'rejected', code: 'incomplete',
+      reason: 'the Goal has no adopted Plan for the Task closure' };
+  }
+  const factsRead = await readCanonicalTaskFacts(records, goalRef, plan, taskId);
+  if (factsRead.status !== 'ready') return factsRead;
+  if (!factsRead.value.byTaskId.has(taskId)) {
+    return { status: 'rejected', code: 'not_found',
+      reason: `the Task ${taskId} is not part of the active Plan` };
+  }
+  return { status: 'ready', value: taskClosureOf(plan, factsRead.value, taskId) };
+}
+
 /**
  * R3e.3 directed GoalPhase read (§9.3). It decodes through the SINGLE
  * `completion-record-codecs.ts` GoalPhase decoder (the one allowed
@@ -2103,11 +2261,12 @@ export function createSessionResponsibilityBasisReader(
       if (state === undefined) {
         return { status: 'rejected', code: 'incomplete', reason: 'the directed task state was not read' };
       }
-      const satisfied = state.effectivePhase === 'satisfied';
-      const dispositionTerminal = definition.disposition === 'cancelled' || definition.disposition === 'superseded';
-      const terminalCause: 'satisfied' | 'cancelled' | 'superseded' | null = satisfied
-        ? 'satisfied' : definition.disposition === 'cancelled' ? 'cancelled'
-          : definition.disposition === 'superseded' ? 'superseded' : null;
+      // Rework 1 item 4: one closure derivation, shared with the decision
+      // readers (satisfied from the canonical state, then the disposition).
+      const closure = taskClosureOf(plan, facts, task['taskId']);
+      const satisfied = closure.cause === 'satisfied';
+      const dispositionTerminal = closure.cause === 'cancelled' || closure.cause === 'superseded';
+      const terminalCause = closure.cause;
       let finishedAt: string | null = null;
       let originPlan: { ref: PlanRevisionRef; revision: number } | null = null;
       if (satisfied) {

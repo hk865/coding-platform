@@ -17,8 +17,13 @@ import type { ControlIntentRef } from './control-intent.js';
 import type { RunOutcome, RunRef, TaskAttemptRef, TaskTriple } from './dispatch.js';
 import { EVIDENCE_OUTCOMES } from './evidence.js';
 import { canonicalJson, sha256Hex, type JsonValue } from './fingerprint.js';
+import { truncateUtf8 } from './utf8.js';
 import type { RunFailureOrigin } from './no-progress.js';
 import type { FailingCheckFactV1 } from './task-failure.js';
+import type {
+  CapturedPathV1, CrashSuspicionV1, UnknownCallDispositionV1, UnknownCallKindV1, UnknownCallObservationV1,
+  UnknownCallReviewRef, WorkspaceCaptureV1,
+} from './unknown-call-review.js';
 import {
   REWORK_FAILURE_CLASSES, type ReworkActorClass, type ReworkFailureClass, type StopRequester, type TaskRequeueRef,
 } from './task-requeue.js';
@@ -70,6 +75,96 @@ export type ContinuationSessionContinuity =
 export type ContinuationAnomalySectionV1 = {
   anchors: SessionAnomalyAnchorV1[]; omitted: number;
   instructionVersion: 1;
+};
+/** L6: the diff omission reasons; `section_limit` is the whole-section 8 KiB budget, the rest are per-path read outcomes. */
+export type ContinuationDiffOmittedReasonV1 =
+  | 'baseline_dirty' | 'binary' | 'too_large' | 'protected' | 'section_limit' | 'not_text';
+/** L6: one edited path of one review item. */
+export type ContinuationUnknownCallReviewFileV1 = {
+  path: string;
+  mode: 'replace' | 'create';
+  change: CapturedPathV1['change'] | 'unchanged' | 'not_visible' | 'unknown';
+  /** L6 excerpt of the Kernel-recorded argument, <=1,000 UTF-16 units. */
+  oldText: BoundedTextV1 | null;
+  /** L6 excerpt of the Kernel-recorded argument, <=1,000 UTF-16 units. */
+  newText: BoundedTextV1 | null;
+  /** L6 unified diff, <=2,000 UTF-16 units; all diffs together <=8 KiB UTF-8. */
+  diff: BoundedTextV1 | null;
+  diffOmittedReason: ContinuationDiffOmittedReasonV1 | null;
+};
+/** L6: one unknown call in the continuation note. */
+export type ContinuationUnknownCallReviewItemV1 = {
+  alias: number;
+  /** Rendered only in the non-required conclusion line (D8). */
+  callId: string;
+  toolName: string;
+  kind: UnknownCallKindV1;
+  summary: BoundedTextV1;
+  verdict: UnknownCallObservationV1['verdict'];
+  evidence: BoundedTextV1 | null;
+  crashSuspicion: CrashSuspicionV1 | null;
+  /** D6: the pre-re-judgement model conclusion and self-check, as one bounded text. */
+  reviewerConclusion: BoundedTextV1 | null;
+  files: ContinuationUnknownCallReviewFileV1[];
+};
+/**
+ * K3 L20/§2: the `unknownCallReview` section of the brief. Group 4 adds the
+ * disposition and blocked-command rendering; the type carries the disposition
+ * so a later group does not have to change the digest shape.
+ */
+export type ContinuationUnknownCallReviewDispositionV1 = {
+  choice: UnknownCallDispositionV1['choice'];
+  source: 'card' | 'direct';
+  text: BoundedTextV1 | null;
+  /** `dispositionTargets` by alias. */
+  targets: number[];
+  /** The platform entries among them that are not clear ("结果查不清，重做前先核实"). */
+  platformTargets: number[];
+  approvedMethods: Array<{ alias: number; command: string; cwd: string | null }>;
+  /**
+   * K3 L18: the answer's annotations, in the answer's order. `path: null` names
+   * the record object, otherwise the file object's path. Rendered as
+   * non-required lines, so they shrink and drop with the other optional lines.
+   */
+  annotations: Array<{ path: string | null; text: string }>;
+};
+/**
+ * K3 B3 item 7 (replaces ruling 6): the blocked commands of ONE review record
+ * as the required part signals them. Present only when the record's
+ * `blockedCommands` is non-empty, so every brief without one keeps its bytes.
+ */
+export type ContinuationBlockedCommandV1 = {
+  alias: number;
+  /** The record's origin Run (`blockedCommands[].reviewRunId`). */
+  reviewRunId: string;
+  commandSha256: string;
+};
+/** K3 B3 item 7: one rendered blocked command of the Task's records, newest request state included. */
+export type ContinuationBlockedCommandLineV1 = {
+  alias: number;
+  reviewRunId: string;
+  /** The alias's newest request in that record; `used`/`closed`/absent render nothing. */
+  requestState: 'pending' | 'allowed' | 'denied' | 'denied_final' | null;
+  /** The alias's forms across its requests in that record, declaration order, deduplicated. */
+  declaredForms: string[];
+};
+export type ContinuationUnknownCallReviewV1 = {
+  reviewRef: UnknownCallReviewRef;
+  revision: number;
+  origin: 'takeover_unresolved' | 'human_attested';
+  inventory: 'complete' | 'incomplete';
+  items: ContinuationUnknownCallReviewItemV1[];
+  itemsOmitted: number;
+  disposition: ContinuationUnknownCallReviewDispositionV1 | null;
+  workspace: {
+    status: WorkspaceCaptureV1['status'];
+    runBaselineKnown: boolean;
+    notVisible: string[];
+    changedSample: string[];
+    changedOmitted: number;
+  };
+  /** K3 B3 item 6: present exactly when this record's `blockedCommands` is non-empty. */
+  blockedCommands?: ContinuationBlockedCommandV1[];
 };
 export type ContinuationBriefV1 = {
   schemaVersion: 1;
@@ -163,6 +258,19 @@ export type ContinuationBriefV1 = {
    * means no such section; it is never added to a historical brief's digest.
    */
   anomalies?: ContinuationAnomalySectionV1;
+  /**
+   * K3 L20: the previous/afterRun's unknown-call review, when one exists.
+   * Absent or null means no section; a historical brief is read as null and
+   * keeps its old bytes and digest exactly.
+   */
+  unknownCallReview?: ContinuationUnknownCallReviewV1 | null;
+  /**
+   * K3 B3 item 7 / lead answer 6: the Task's blocked commands (all of its
+   * records, ordered by record creation time then alias) as the standalone
+   * optional section. Present only when non-empty; absent or empty renders no
+   * bytes, so a brief without blocked commands keeps its digest.
+   */
+  blockedCommands?: ContinuationBlockedCommandLineV1[];
 };
 
 /** Bounds of the brief; over-long fields are truncated and counted in `…Omitted` / `truncated`. */
@@ -275,17 +383,61 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
   const head = ['## 接续说明', continuationBriefMarker(digest)];
   const tail = ['', ...CONTINUATION_STANDING_INSTRUCTIONS_ZH_V1];
   const limit = CONTINUATION_BRIEF_LIMITS.renderedBytes;
-  const allPaths = brief.anomalies === undefined ? 0 : anomalyPathLineCount(brief.anomalies);
+  const anomalies = brief.anomalies;
+  const review = brief.unknownCallReview ?? null;
+  const allPaths = anomalies === undefined ? 0 : anomalyPathLineCount(anomalies);
+  const allReviewLines = review === null ? 0 : unknownCallReviewOptionalLineCount(review);
+  const blockedAll = brief.blockedCommands ?? [];
+  const blockedKeepMax = Math.min(16, blockedAll.length);
+  let blockedOmitted = 0;
   let body: string[] = [];
   let anomaly: string[] = [];
+  let reviewLines: string[] = [];
+  // K3 B3 item 7 / lead answer 6: the blocked section is an ordinary OPTIONAL
+  // part that goes FIRST. With every other optional part at full length, take
+  // its entries away from the end (the count line first, then the lines from the
+  // last; the empty line and heading go with the last line) before the text caps
+  // shorten or the other optional lines are omitted.
+  if (blockedAll.length > 0) {
+    const firstCap = RENDER_TEXT_CAPS[0]!;
+    const fullBody = briefBodyZh(brief, firstCap);
+    const fullAnomaly = anomalyLinesZh(brief, firstCap, allPaths);
+    const fullReview = unknownCallReviewLinesZh(brief, firstCap, allReviewLines);
+    const full = [...head, ...fullBody, ...fullAnomaly, ...fullReview];
+    // K3 B3 item 9: the count line is its own last entry (present only while all
+    // 16 lines are shown and the Task has more), and every candidate is measured
+    // WITH the note for the command lines it just removed — the count line itself
+    // is never counted. Removing all command lines also removes the empty line
+    // and heading, so the whole section is gone at `keep === 0`.
+    const candidate = (keep: number, withCountLine: boolean): string => {
+      const removed = blockedKeepMax - keep;
+      const note = removed > 0 ? [omittedNoteZh(removed)] : [];
+      return [...full, ...blockedCommandsLinesZh(blockedAll, keep, withCountLine), ...note, ...tail].join('\n');
+    };
+    if (blockedAll.length > blockedKeepMax) {
+      const text = candidate(blockedKeepMax, true);
+      if (utf8Length(text) <= limit) return text;
+    }
+    for (let keep = blockedKeepMax; keep >= 0; keep -= 1) {
+      const text = candidate(keep, false);
+      if (utf8Length(text) <= limit) return text;
+    }
+    // The whole section is gone and the brief is still over: only now do the
+    // ordinary caps and omissions apply to the other optional parts.
+    blockedOmitted = blockedKeepMax;
+  }
   for (const cap of RENDER_TEXT_CAPS) {
     body = briefBodyZh(brief, cap);
     anomaly = anomalyLinesZh(brief, cap, allPaths);
-    const text = [...head, ...body, ...anomaly, ...tail].join('\n');
+    reviewLines = unknownCallReviewLinesZh(brief, cap, allReviewLines);
+    // The removed blocked command lines are already owed a note; measure every
+    // cap candidate WITH it and return that measured text (never a shorter one).
+    const note = blockedOmitted > 0 ? [omittedNoteZh(blockedOmitted)] : [];
+    const text = [...head, ...body, ...note, ...anomaly, ...reviewLines, ...tail].join('\n');
     if (utf8Length(text) <= limit) return text;
   }
-  if (brief.anomalies === undefined) {
-    // A brief without the anomaly section keeps its old bytes: this is the
+  if (anomalies === undefined && review === null && blockedAll.length === 0) {
+    // A brief without either mandatory section keeps its old bytes: this is the
     // original bounded fallback, the longest prefix of ordinary body lines.
     const fixed = utf8Length([...head, ...tail].join('\n'));
     let used = fixed;
@@ -298,32 +450,53 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
     }
     return [...head, ...body.slice(0, kept), omittedNoteZh(body.length - kept), ...tail].join('\n');
   }
-  // Still too long with the shortest texts. The anomaly section is mandatory
-  // (spec §2.7): keep every carried anchor's ref, cause, unknown/mixed-ownership
-  // warning and the fixed closing sentence, and budget only its path lists,
-  // counting what is left out. If even that does not fit, refuse `capacity`
-  // instead of silently dropping the section.
+  // Still too long with the shortest texts. Every present mandatory section is
+  // kept in full (spec §2.7; K3 L20 "必需部分"); only its optional lines are
+  // budgeted, counting what is left out. If even the mandatory lines do not fit,
+  // refuse `capacity` instead of silently dropping a section.
   const cap = RENDER_TEXT_CAPS[RENDER_TEXT_CAPS.length - 1]!;
-  let budgeted: string[] | null = null;
-  for (let allowed = allPaths; allowed >= 0; allowed -= 1) {
-    const candidate = anomalyLinesZh(brief, cap, allowed);
-    if (utf8Length([...head, ...candidate, ...tail].join('\n')) <= limit) { budgeted = candidate; break; }
+  let suffixMandatory: string[];
+  if (review === null) {
+    let budgeted: string[] | null = null;
+    for (let allowed = allPaths; allowed >= 0; allowed -= 1) {
+      const candidate = anomalyLinesZh(brief, cap, allowed);
+      if (utf8Length([...head, ...candidate, ...tail].join('\n')) <= limit) { budgeted = candidate; break; }
+    }
+    if (budgeted === null) {
+      throw new ContinuationBriefCapacityError(
+        `the mandatory anomaly section does not fit in the ${String(limit)}-byte continuation brief limit`);
+    }
+    suffixMandatory = budgeted;
+  } else {
+    // K3 L20: the review section is a second mandatory part, placed after the
+    // anomaly section and before the fixed closing block. Budget the optional
+    // lines of both sections (anomaly paths first, then the review detail) while
+    // keeping every mandatory line.
+    let chosen: string[] | null = null;
+    for (let allowedAnomaly = allPaths; allowedAnomaly >= 0 && chosen === null; allowedAnomaly -= 1) {
+      for (let allowedReview = allReviewLines; allowedReview >= 0; allowedReview -= 1) {
+        const candidate = [...anomalyLinesZh(brief, cap, allowedAnomaly), ...unknownCallReviewLinesZh(brief, cap, allowedReview)];
+        if (utf8Length([...head, ...candidate, ...tail].join('\n')) <= limit) { chosen = candidate; break; }
+      }
+    }
+    if (chosen === null) {
+      throw new ContinuationBriefCapacityError(
+        `the mandatory unknown-call review section does not fit in the ${String(limit)}-byte continuation brief limit`);
+    }
+    suffixMandatory = chosen;
   }
-  if (budgeted === null) {
-    throw new ContinuationBriefCapacityError(
-      `the mandatory anomaly section does not fit in the ${String(limit)}-byte continuation brief limit`);
-  }
-  const suffix = [...budgeted, ...tail];
+  const suffix = [...suffixMandatory, ...tail];
   const fixed = utf8Length([...head, ...suffix].join('\n'));
   let used = fixed;
   let kept = 0;
   for (const line of body) {
     const next = used + 1 + utf8Length(line);
-    if (next + 1 + utf8Length(omittedNoteZh(body.length - kept - 1)) > limit) break;
+    if (next + 1 + utf8Length(omittedNoteZh(body.length - kept - 1 + blockedOmitted)) > limit) break;
     used = next;
     kept += 1;
   }
-  const withNote = [...head, ...body.slice(0, kept), omittedNoteZh(body.length - kept), ...suffix].join('\n');
+  const withNote = [...head, ...body.slice(0, kept),
+    omittedNoteZh(body.length - kept + blockedOmitted), ...suffix].join('\n');
   return kept === 0 && utf8Length(withNote) > limit ? [...head, ...suffix].join('\n') : withNote;
 }
 
@@ -332,6 +505,40 @@ function omittedNoteZh(lines: number): string {
 }
 function utf8Length(text: string): number {
   return UTF8.encode(text).length;
+}
+/**
+ * K3 B3 item 7/9: the optional `### 被拦的命令` section. `keep` is the number of
+ * command lines still rendered (0..16); `withCountLine` shows the count line,
+ * which is the section's own last entry and is only shown while all 16 lines
+ * are. The caller counts every removed command line in the ordinary omission
+ * note and measures the candidate together with that note; the count line is
+ * never counted, and the empty line plus heading disappear with the last line.
+ */
+function blockedCommandsLinesZh(
+  entries: NonNullable<ContinuationBriefV1['blockedCommands']>, keep: number, withCountLine: boolean,
+): string[] {
+  if (entries.length === 0 || keep <= 0) return [];
+  const lines: string[] = ['', BLOCKED_COMMANDS_TITLE_ZH];
+  for (const entry of entries.slice(0, Math.min(16, keep))) {
+    let line = `- #${String(entry.alias)}@${entry.reviewRunId.slice(0, 8)}：被拦`;
+    if (entry.requestState !== null) line += `；${BLOCKED_COMMAND_STATE_ZH[entry.requestState]}`;
+    const forms: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of entry.declaredForms) {
+      if (seen.has(raw)) continue;
+      seen.add(raw);
+      forms.push(truncateUtf8(raw, 160));
+    }
+    if (forms.length > 0) {
+      line += `；注明过的写法：${forms.slice(0, 3).join('、')}`;
+      if (forms.length > 3) line += `，等 ${String(forms.length)} 种写法`;
+    }
+    lines.push(line);
+  }
+  if (withCountLine && entries.length > 16) {
+    lines.push(`- 另有 ${String(entries.length - 16)} 条被拦的命令；跑之前先用 request_command_rerun 请求。`);
+  }
+  return lines;
 }
 /** `text` cut to `cap` UTF-16 code units without splitting a surrogate pair; continuation lines are indented. */
 function clip(text: string, cap: number): string {
@@ -551,6 +758,173 @@ function anomalyPathLineCount(section: ContinuationAnomalySectionV1): number {
   return count;
 }
 
+// ------------------------------------------------------------------------ //
+// K3 L20: unknown-call review section                                       //
+// ------------------------------------------------------------------------ //
+/** The fixed title of the review section (L20 "必需部分的写法"). */
+const UNKNOWN_CALL_REVIEW_TITLE_ZH = '### 结果未知的调用：核对和处置';
+/** The fixed sentence of the review section (L5/L20). */
+const UNKNOWN_CALL_REVIEW_NOT_LISTED_ZH = '- 不在变动清单里，不证明没做。';
+/** K3 B3 item 6: the required signal that the platform blocked the original commands (62 UTF-8 bytes). */
+const UNKNOWN_CALL_REVIEW_BLOCKED_ZH = '- 平台拦下原命令；要再跑先请求并得到允许。';
+/** K3 B3 item 7: the optional section's heading. */
+const BLOCKED_COMMANDS_TITLE_ZH = '### 被拦的命令';
+/** K3 B3 item 7: the request state of a blocked command; used/closed/absent render nothing. */
+const BLOCKED_COMMAND_STATE_ZH: Readonly<Record<'pending' | 'allowed' | 'denied' | 'denied_final', string>> = {
+  pending: '请求等答复',
+  allowed: '允许一次（未用）',
+  denied: '不允许',
+  denied_final: '不允许，也别再问',
+};
+/** L20: the option wording of the one-line disposition. */
+const UNKNOWN_CALL_REVIEW_DISPOSITION_ZH: Readonly<Record<
+  NonNullable<ContinuationUnknownCallReviewV1['disposition']>['choice'], string>> = {
+  rerun_as_is: '照原样重跑',
+  skip_as_done: '跳过，当作已做：不要重跑这些命令',
+  handle_myself: '由人处理：操作者自己处理过这几条，先看当前状态',
+  // B2 owns the approved-methods block; this is the L20 wording of the option.
+  safer_method: '换个稳妥的跑法：不要跑原命令，照下面的方案原样跑',
+};
+/** L20: no disposition means the review settled by itself. */
+const UNKNOWN_CALL_REVIEW_NO_DISPOSITION_ZH = '核对自动定下，不用决定';
+/** L20: where the disposition came from. */
+const UNKNOWN_CALL_REVIEW_SOURCE_ZH: Readonly<Record<'card' | 'direct', string>> = {
+  card: '卡上选的', direct: '直接点的',
+};
+const UNKNOWN_CALL_REVIEW_AUTO_SOURCE_ZH = '自动';
+const REVIEW_VERDICT_ZH: Readonly<Record<string, string>> = {
+  no_review_needed: '无需核对', done: '已做', not_done: '没做', compare_in_continuation: '看接续说明里的改动',
+  pending: '还没有结论', partial: '做了一部分', undetermined: '结果查不清',
+};
+const REVIEW_CHANGE_ZH: Readonly<Record<ContinuationUnknownCallReviewFileV1['change'], string>> = {
+  added: '新增', modified: '有改动', deleted: '已删除', mode_changed: '类型或模式变了', unchanged: '没变', not_visible: '看不见',
+  unknown: '不知道',
+};
+const REVIEW_MODE_ZH: Readonly<Record<'replace' | 'create', string>> = { replace: '替换', create: '新建' };
+const REVIEW_DIFF_REASON_ZH: Readonly<Record<ContinuationDiffOmittedReasonV1, string>> = {
+  baseline_dirty: '开始时这个路径不是干净的基准', binary: '二进制文件', too_large: '文件太大',
+  protected: '受保护路径', section_limit: '这一节的 diff 总量放不下', not_text: '不是文本文件',
+};
+
+/** One non-required conclusion line per item (`#n = <callId>（<工具名>）：…`; D8: the callId appears only here). */
+function reviewItemConclusionZh(item: ContinuationUnknownCallReviewItemV1, cap: number): string {
+  const parts = [REVIEW_VERDICT_ZH[item.verdict] ?? item.verdict];
+  if (item.evidence !== null) parts.push(`依据 ${boundedZh(item.evidence, cap)}`);
+  if (item.crashSuspicion !== null) {
+    const suspicion = item.crashSuspicion.verdict === 'unlikely' ? '不太可能'
+      : item.crashSuspicion.verdict === 'possible' ? '有可能' : '无法确定';
+    parts.push(`崩溃可疑：${suspicion}（${clip(item.crashSuspicion.evidence, cap)}）`);
+  }
+  if (item.reviewerConclusion !== null) parts.push(`改判前结论 ${boundedZh(item.reviewerConclusion, cap)}`);
+  return `- #${String(item.alias)} = ${clip(item.callId, cap)}（${clip(item.toolName, cap)}）：${parts.join('；')}`;
+}
+function reviewFileLinesZh(file: ContinuationUnknownCallReviewFileV1, cap: number): string[] {
+  const lines = [`  - 文件 ${clip(file.path, cap)}（${REVIEW_MODE_ZH[file.mode]}）：${REVIEW_CHANGE_ZH[file.change]}。`];
+  if (file.oldText !== null) lines.push(`    - 旧摘录：${boundedZh(file.oldText, cap)}`);
+  if (file.newText !== null) lines.push(`    - 新摘录：${boundedZh(file.newText, cap)}`);
+  if (file.diff !== null) lines.push(`    - diff：${boundedZh(file.diff, cap)}`);
+  else if (file.diffOmittedReason !== null) lines.push(`    - diff 未附：${REVIEW_DIFF_REASON_ZH[file.diffOmittedReason]}。`);
+  return lines;
+}
+/** The non-required lines of the review section, in render order (never the fixed lines). */
+function unknownCallReviewOptionalLinesZh(section: ContinuationUnknownCallReviewV1, cap: number): string[] {
+  const lines: string[] = [];
+  for (const item of section.items) {
+    lines.push(reviewItemConclusionZh(item, cap));
+    for (const file of item.files) lines.push(...reviewFileLinesZh(file, cap));
+  }
+  // K3 L18: annotations are optional lines after the per-item conclusions. The
+  // ② owner already turned the answer object into `null` (the record) or a path.
+  for (const annotation of section.disposition?.annotations ?? []) {
+    lines.push(`- 批注（${annotation.path === null ? '这份核对记录' : clip(annotation.path, cap)}）`
+      + `：${clip(annotation.text, cap)}`);
+  }
+  return lines;
+}
+function unknownCallReviewOptionalLineCount(section: ContinuationUnknownCallReviewV1): number {
+  let count = section.disposition?.annotations.length ?? 0;
+  for (const item of section.items) {
+    count += 1;
+    for (const file of item.files) {
+      count += 1 + (file.oldText === null ? 0 : 1) + (file.newText === null ? 0 : 1)
+        + (file.diff !== null || file.diffOmittedReason !== null ? 1 : 0);
+    }
+  }
+  return count;
+}
+/**
+ * K3 L20: the approved-method lines (`approvedMethodLinesZh`). ONE pure
+ * function shared by the WorkGraph owner's byte-budget measurement and the
+ * renderer: the alias comes from the item's position in the record, so what is
+ * measured at write time is exactly what the continuation will say. A command's
+ * or a cwd's `\r\n`/`\n` becomes `\n` plus two spaces (the `clip` indentation,
+ * L20: both the command and cwd), and the methods are joined with `\n`; nothing
+ * is clipped or omitted.
+ */
+export function approvedMethodLinesZh(
+  methods: ReadonlyArray<{ alias: number; command: string; cwd: string | null }>,
+): string[] {
+  return methods.map(method =>
+    `- 方案 #${method.alias}，目录 ${(method.cwd ?? '.').replace(/\r\n|\n/g, '\n  ')}：`
+    + `\n  ${method.command.replace(/\r\n|\n/g, '\n  ')}`);
+}
+
+/**
+ * K3 L20 and lead ruling 5: the review section. The title, the count line, the
+ * one-line disposition, the always-present targets line (it reads `无` when
+ * there are none), the platform line when it names any, and the fixed sentence
+ * are mandatory; the per-item detail (conclusion, evidence, `reviewerConclusion`,
+ * excerpts and diffs) and the annotations are bounded by `optionalLimit` and
+ * left out by the caller without dropping a mandatory line. The approved-method
+ * block sits between the targets and platform lines and is mandatory too (never
+ * shortened or omitted); B3 adds the blocked-command sentence after the fixed
+ * sentence, which is not built here.
+ */
+function unknownCallReviewLinesZh(brief: ContinuationBriefV1, cap: number, optionalLimit: number): string[] {
+  const section = brief.unknownCallReview ?? null;
+  if (section === null) return [];
+  const count = section.items.length;
+  const lines: string[] = ['', UNKNOWN_CALL_REVIEW_TITLE_ZH,
+    `- 共 ${String(count)} 条（#1–#${String(count)}），另有 ${String(section.itemsOmitted)} 条没有列出；`
+    + '各条的结论和依据见上文“核对结论”，可能被略去。'];
+  lines.push(...unknownCallReviewOptionalLinesZh(section, cap).slice(0, Math.max(0, optionalLimit)));
+  const disposition = section.disposition;
+  const option = disposition === null
+    ? UNKNOWN_CALL_REVIEW_NO_DISPOSITION_ZH
+    : UNKNOWN_CALL_REVIEW_DISPOSITION_ZH[disposition.choice];
+  const source = disposition === null
+    ? UNKNOWN_CALL_REVIEW_AUTO_SOURCE_ZH
+    : UNKNOWN_CALL_REVIEW_SOURCE_ZH[disposition.source];
+  // L20: ONE line; the 附言 is clipped to 60 UTF-16 units by `clip`, not RENDER_TEXT_CAPS.
+  const note = disposition === null || disposition.text === null || disposition.text.text.length === 0
+    ? '' : `；附言：${clip(disposition.text.text, 60)}`;
+  lines.push(`- 处置：${option}（${source}）${note}。`);
+  // Lead ruling 5: the targets line is ALWAYS present; with no targets (settled
+  // by itself or an empty set) it reads exactly `无`. The platform line below
+  // stays present only when it names any.
+  const targets = disposition === null ? [] : disposition.targets;
+  lines.push(targets.length === 0
+    ? '- 作用对象：无。'
+    : `- 作用对象：${targets.map(alias => `#${String(alias)}`).join('、')}。`);
+  // L20: the approved methods are part of the mandatory block: every line is
+  // written whole, between the targets line and the platform line. No approved
+  // methods means no bytes change (an absent/empty array renders nothing).
+  if (disposition !== null && disposition.approvedMethods.length > 0) {
+    lines.push(...approvedMethodLinesZh(disposition.approvedMethods));
+  }
+  if (disposition !== null && disposition.platformTargets.length > 0) {
+    lines.push(`- 平台条目 ${disposition.platformTargets.map(alias => `#${String(alias)}`).join('、')}`
+      + '：结果查不清，重做前先核实。');
+  }
+  lines.push(UNKNOWN_CALL_REVIEW_NOT_LISTED_ZH);
+  // K3 B3 item 6: the required signal, present exactly when this record blocked
+  // at least one original command. No blocked commands renders no new bytes.
+  if (section.blockedCommands !== undefined && section.blockedCommands.length > 0) {
+    lines.push(UNKNOWN_CALL_REVIEW_BLOCKED_ZH);
+  }
+  return lines;
+}
+
 /**
  * Slice 1 §2.7: `renderContinuationBriefZh` refuses `capacity` when even the
  * mandatory part of the anomaly section cannot fit in `renderedBytes`, instead
@@ -732,7 +1106,7 @@ const BRIEF_KEYS = [
 
 /** Null when `value` is a well-formed `ContinuationBriefV1`; otherwise the first problem. */
 export function continuationBriefShapeProblem(value: unknown): string | null {
-  const brief = exact(value, 'continuationBrief', BRIEF_KEYS, ['anomalies']);
+  const brief = exact(value, 'continuationBrief', BRIEF_KEYS, ['anomalies', 'unknownCallReview', 'blockedCommands']);
   if (typeof brief === 'string') return brief;
   if (brief['schemaVersion'] !== 1) return 'continuationBrief.schemaVersion must be 1';
   if (brief['standingInstructionVersion'] !== 1) return 'continuationBrief.standingInstructionVersion must be 1';
@@ -751,7 +1125,9 @@ export function continuationBriefShapeProblem(value: unknown): string | null {
     ?? requeueProblem(brief['requeue'])
     ?? workspaceProblem(brief['workspace'])
     ?? sessionProblem(brief['session'])
-    ?? anomaliesProblem(brief['anomalies']);
+    ?? anomaliesProblem(brief['anomalies'])
+    ?? unknownCallReviewProblem(brief['unknownCallReview'])
+    ?? blockedCommandsProblem(brief['blockedCommands']);
   if (shape !== null) return shape;
   if ((brief['failureClass'] === 'interrupted') !== (brief['mode'] === 'resume_after_interruption')) {
     return 'continuationBrief.mode must be resume_after_interruption exactly when failureClass is interrupted';
@@ -1150,6 +1526,178 @@ function anomaliesProblem(value: unknown): Problem {
       return 'continuationBrief.anomalies.anchors must be sorted by recordedAt then canonical ref';
     }
     previous = current;
+  }
+  return null;
+}
+
+// ------------------------------------------------------------------------ //
+// K3 L20: unknown-call review section shape                                 //
+// ------------------------------------------------------------------------ //
+const REVIEW_ORIGINS: readonly string[] = ['takeover_unresolved', 'human_attested'];
+const REVIEW_INVENTORIES: readonly string[] = ['complete', 'incomplete'];
+const REVIEW_KINDS: readonly string[] = ['read_only', 'platform', 'file_edit', 'process'];
+const REVIEW_VERDICTS: readonly string[] = [
+  'no_review_needed', 'done', 'not_done', 'compare_in_continuation', 'pending', 'partial', 'undetermined',
+];
+const REVIEW_CRASH_VERDICTS: readonly string[] = ['unlikely', 'possible', 'undetermined'];
+const REVIEW_CHANGES: readonly string[] = ['added', 'modified', 'deleted', 'mode_changed', 'unchanged', 'not_visible', 'unknown'];
+const REVIEW_MODES: readonly string[] = ['replace', 'create'];
+const REVIEW_DIFF_REASONS: readonly string[] = ['baseline_dirty', 'binary', 'too_large', 'protected', 'section_limit', 'not_text'];
+const REVIEW_CHOICES: readonly string[] = ['rerun_as_is', 'safer_method', 'skip_as_done', 'handle_myself'];
+const REVIEW_SOURCES: readonly string[] = ['card', 'direct'];
+const REVIEW_ITEM_LIMIT = 32;
+/** L6: `oldText`/`newText` excerpts per path. */
+const REVIEW_EXCERPT_CHARS = 1_000;
+/** L6: one path's diff. */
+const REVIEW_DIFF_CHARS = 2_000;
+const REVIEW_WORKSPACE_STATUSES: readonly string[] = ['captured', 'unavailable'];
+
+/** `boundedText` with a field-specific cap smaller than `CONTINUATION_BRIEF_LIMITS.textChars`. */
+function boundedTextWithin(value: unknown, path: string, max: number): Problem {
+  const text = exact(value, path, ['text', 'truncated']);
+  if (typeof text === 'string') return text;
+  if (typeof text['text'] !== 'string') return `${path}.text must be a string`;
+  if (text['text'].length > max) return `${path}.text exceeds ${max} characters`;
+  return boolean(text['truncated'], `${path}.truncated`);
+}
+function reviewRefProblem(value: unknown, path: string): Problem {
+  const reference = exact(value, path, ['aggregateType', 'projectId', 'goalId', 'runId']);
+  if (typeof reference === 'string') return reference;
+  if (reference['aggregateType'] !== 'UnknownCallReview') return `${path}.aggregateType must be UnknownCallReview`;
+  for (const field of ['projectId', 'goalId', 'runId']) {
+    if (!nonEmpty(reference[field])) return `${path}.${field} must be a non-empty string`;
+  }
+  return null;
+}
+function crashSuspicionProblem(value: unknown, path: string): Problem {
+  if (value === null) return null;
+  const suspicion = exact(value, path, ['verdict', 'evidence']);
+  if (typeof suspicion === 'string') return suspicion;
+  return inList(suspicion['verdict'], REVIEW_CRASH_VERDICTS, `${path}.verdict`)
+    ?? (nonEmpty(suspicion['evidence']) && (suspicion['evidence'] as string).length <= REVIEW_EXCERPT_CHARS
+      ? null : `${path}.evidence must be a non-empty string of at most ${REVIEW_EXCERPT_CHARS} characters`);
+}
+function reviewFileProblem(value: unknown, path: string): Problem {
+  const file = exact(value, path, ['path', 'mode', 'change', 'oldText', 'newText', 'diff', 'diffOmittedReason']);
+  if (typeof file === 'string') return file;
+  return (nonEmpty(file['path']) ? null : `${path}.path must be a non-empty string`)
+    ?? inList(file['mode'], REVIEW_MODES, `${path}.mode`)
+    ?? inList(file['change'], REVIEW_CHANGES, `${path}.change`)
+    ?? (file['oldText'] === null ? null : boundedTextWithin(file['oldText'], `${path}.oldText`, REVIEW_EXCERPT_CHARS))
+    ?? (file['newText'] === null ? null : boundedTextWithin(file['newText'], `${path}.newText`, REVIEW_EXCERPT_CHARS))
+    ?? (file['diff'] === null ? null : boundedTextWithin(file['diff'], `${path}.diff`, REVIEW_DIFF_CHARS))
+    ?? (file['diffOmittedReason'] === null ? null : inList(file['diffOmittedReason'], REVIEW_DIFF_REASONS, `${path}.diffOmittedReason`));
+}
+function reviewItemProblem(value: unknown, path: string): Problem {
+  const item = exact(value, path, [
+    'alias', 'callId', 'toolName', 'kind', 'summary', 'verdict', 'evidence', 'crashSuspicion', 'reviewerConclusion', 'files',
+  ]);
+  if (typeof item === 'string') return item;
+  return (isCount(item['alias']) && (item['alias'] as number) >= 1 ? null : `${path}.alias must be a positive safe integer`)
+    ?? (nonEmpty(item['callId']) ? null : `${path}.callId must be a non-empty string`)
+    ?? (nonEmpty(item['toolName']) ? null : `${path}.toolName must be a non-empty string`)
+    ?? inList(item['kind'], REVIEW_KINDS, `${path}.kind`)
+    ?? boundedText(item['summary'], `${path}.summary`)
+    ?? inList(item['verdict'], REVIEW_VERDICTS, `${path}.verdict`)
+    ?? nullableBoundedText(item['evidence'], `${path}.evidence`)
+    ?? crashSuspicionProblem(item['crashSuspicion'], `${path}.crashSuspicion`)
+    ?? nullableBoundedText(item['reviewerConclusion'], `${path}.reviewerConclusion`)
+    ?? list(item['files'], `${path}.files`, null, reviewFileProblem);
+}
+function reviewDispositionProblem(value: unknown, path: string): Problem {
+  if (value === null) return null;
+  const disposition = exact(value, path, ['choice', 'source', 'text', 'targets', 'platformTargets', 'approvedMethods',
+    'annotations']);
+  if (typeof disposition === 'string') return disposition;
+  return inList(disposition['choice'], REVIEW_CHOICES, `${path}.choice`)
+    ?? inList(disposition['source'], REVIEW_SOURCES, `${path}.source`)
+    ?? nullableBoundedText(disposition['text'], `${path}.text`)
+    ?? list(disposition['targets'], `${path}.targets`, null, (entry, at) =>
+      (isCount(entry) && (entry as number) >= 1 ? null : `${at} must be a positive safe integer`))
+    ?? list(disposition['platformTargets'], `${path}.platformTargets`, null, (entry, at) =>
+      (isCount(entry) && (entry as number) >= 1 ? null : `${at} must be a positive safe integer`))
+    ?? list(disposition['approvedMethods'], `${path}.approvedMethods`, null, (entry, at) => {
+      const method = exact(entry, at, ['alias', 'command', 'cwd']);
+      if (typeof method === 'string') return method;
+      return (isCount(method['alias']) && (method['alias'] as number) >= 1 ? null : `${at}.alias must be a positive safe integer`)
+        ?? (nonEmpty(method['command']) ? null : `${at}.command must be a non-empty string`)
+        ?? nullableString(method['cwd'], `${at}.cwd`);
+    })
+    ?? list(disposition['annotations'], `${path}.annotations`, null, (entry, at) => {
+      const annotation = exact(entry, at, ['path', 'text']);
+      if (typeof annotation === 'string') return annotation;
+      return (annotation['path'] === null || nonEmpty(annotation['path']) ? null
+        : `${at}.path must be null or a non-empty string`)
+        ?? (typeof annotation['text'] === 'string' ? null : `${at}.text must be a string`);
+    });
+}
+function reviewWorkspaceProblem(value: unknown, path: string): Problem {
+  const workspace = exact(value, path, ['status', 'runBaselineKnown', 'notVisible', 'changedSample', 'changedOmitted']);
+  if (typeof workspace === 'string') return workspace;
+  return inList(workspace['status'], REVIEW_WORKSPACE_STATUSES, `${path}.status`)
+    ?? boolean(workspace['runBaselineKnown'], `${path}.runBaselineKnown`)
+    ?? pathList(workspace['notVisible'], `${path}.notVisible`, 32)
+    ?? list(workspace['changedSample'], `${path}.changedSample`, null, (entry, at) =>
+      (nonEmpty(entry) ? null : `${at} must be a non-empty string`))
+    ?? count(workspace['changedOmitted'], `${path}.changedOmitted`);
+}
+function unknownCallReviewProblem(value: unknown): Problem {
+  if (value === undefined || value === null) return null;
+  const path = 'continuationBrief.unknownCallReview';
+  const section = exact(value, path, [
+    'reviewRef', 'revision', 'origin', 'inventory', 'items', 'itemsOmitted', 'disposition', 'workspace',
+  ], ['blockedCommands']);
+  if (typeof section === 'string') return section;
+  return reviewRefProblem(section['reviewRef'], `${path}.reviewRef`)
+    ?? (Number.isSafeInteger(section['revision']) && (section['revision'] as number) >= 1
+      ? null : `${path}.revision must be a positive safe integer`)
+    ?? inList(section['origin'], REVIEW_ORIGINS, `${path}.origin`)
+    ?? inList(section['inventory'], REVIEW_INVENTORIES, `${path}.inventory`)
+    ?? list(section['items'], `${path}.items`, REVIEW_ITEM_LIMIT, reviewItemProblem)
+    ?? count(section['itemsOmitted'], `${path}.itemsOmitted`)
+    ?? reviewDispositionProblem(section['disposition'], `${path}.disposition`)
+    ?? reviewWorkspaceProblem(section['workspace'], `${path}.workspace`)
+    ?? reviewBlockedCommandsProblem(section['blockedCommands'], `${path}.blockedCommands`);
+}
+
+// ------------------------------------------------------------------------ //
+// K3 B3 item 7: blocked-command shape                                        //
+// ------------------------------------------------------------------------ //
+const BLOCKED_REQUEST_STATES: readonly string[] = ['pending', 'allowed', 'denied', 'denied_final'];
+/** The alias range of a review item (L7/L8: #1–#32). */
+function blockedAlias(value: unknown, path: string): Problem {
+  return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= REVIEW_ITEM_LIMIT
+    ? null : `${path} must be an integer 1..${String(REVIEW_ITEM_LIMIT)}`;
+}
+function reviewBlockedCommandsProblem(value: unknown, path: string): Problem {
+  if (value === undefined) return null;
+  if (!Array.isArray(value)) return `${path} must be an array`;
+  for (const [index, entry] of value.entries()) {
+    const at = `${path}[${index}]`;
+    const blocked = exact(entry, at, ['alias', 'reviewRunId', 'commandSha256']);
+    if (typeof blocked === 'string') return blocked;
+    const problem = blockedAlias(blocked['alias'], `${at}.alias`)
+      ?? (nonEmpty(blocked['reviewRunId']) ? null : `${at}.reviewRunId must be a non-empty string`)
+      ?? (isSha256(blocked['commandSha256']) ? null : `${at}.commandSha256 must be a sha256 hex`);
+    if (problem !== null) return problem;
+  }
+  return null;
+}
+function blockedCommandsProblem(value: unknown): Problem {
+  if (value === undefined) return null;
+  const path = 'continuationBrief.blockedCommands';
+  if (!Array.isArray(value)) return `${path} must be an array`;
+  for (const [index, entry] of value.entries()) {
+    const at = `${path}[${index}]`;
+    const blocked = exact(entry, at, ['alias', 'reviewRunId', 'requestState', 'declaredForms']);
+    if (typeof blocked === 'string') return blocked;
+    const problem = blockedAlias(blocked['alias'], `${at}.alias`)
+      ?? (nonEmpty(blocked['reviewRunId']) ? null : `${at}.reviewRunId must be a non-empty string`)
+      ?? (blocked['requestState'] === null ? null : inList(blocked['requestState'], BLOCKED_REQUEST_STATES,
+        `${at}.requestState`))
+      ?? list(blocked['declaredForms'], `${at}.declaredForms`, null,
+        (form, formAt) => (nonEmpty(form) ? null : `${formAt} must be a non-empty string`));
+    if (problem !== null) return problem;
   }
   return null;
 }

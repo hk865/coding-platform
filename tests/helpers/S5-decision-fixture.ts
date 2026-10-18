@@ -93,6 +93,10 @@ import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../..
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
+import { COMMAND_RERUN_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/command-rerun-request-codecs.js';
+import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
+import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -159,14 +163,6 @@ export const CANDIDATE_U2 = { aggregateType: 'PlanProposal', projectId: PROJECT_
 
 /** Trusted adapter duty fact for Session S (the real duties adapter lands in part 2). */
 export const DUTIES: readonly PlatformDutyV1[] = Object.freeze(['executor']);
-
-export const S5_INDEXES = {
-  messageByWorkspaceStatus: S5_MESSAGE_BY_WORKSPACE_STATUS,
-  planProposalByRequest: S5_PLAN_PROPOSAL_BY_REQUEST,
-  userMessageByGoal: S5_USER_MESSAGE_BY_GOAL,
-  decisionAnswerBySource: S5_DECISION_ANSWER_BY_SOURCE,
-  queryJobByGoal: S5_QUERY_JOB_BY_GOAL,
-} as const;
 
 // The real registered index names, re-exported for the service-case files.
 export {
@@ -325,7 +321,9 @@ export type S5DecisionFixture = {
   seedPlanRevisionSnapshot(snapshot: PlanRevisionSnapshot): Promise<StoreCommitReceipt>;
   seedCandidateProposal(proposal: PlanProposal): Promise<StoreCommitReceipt>;
   claimRun(input: { requestId: string; goalRef: GoalRef; planRef: PlanRevisionRef; taskId: string; sessionRef: SessionRef;
-    roleBinding?: RoleBindingRefV1; budget?: TaskBudgetV1 }): Promise<TaskClaim>;
+    roleBinding?: RoleBindingRefV1; budget?: TaskBudgetV1;
+    /** K3 TASK-03r: the review-round claim facts, passed through to `ClaimTaskInput.review`. */
+    review?: NonNullable<ClaimTaskInput['review']> }): Promise<TaskClaim>;
   enterClaim(claim: TaskClaim): Promise<RunSnapshot>;
   createS5Session(name: string, role?: RoleConfigurationRef): Promise<SessionRef>;
   settleRun(claim: TaskClaim): Promise<RunSnapshot>;
@@ -361,11 +359,6 @@ export function sourceOf(identity: DecisionSourceIdentityV1, goalRef: GoalRef,
 export function messageSourceOf(messageRef: SessionMessageRef, pins: readonly VersionPin[],
   goalBases?: readonly GoalDecisionBasisV1[], goalRef: GoalRef = GOAL_B): DecisionSourceV1 {
   return sourceOf({ kind: 'message', messageRef }, goalRef, pins, goalBases);
-}
-
-export function candidateSourceOf(goalRef: GoalRef, requestRef: QueryJobRef,
-  pins: readonly VersionPin[], goalBases?: readonly GoalDecisionBasisV1[]): DecisionSourceV1 {
-  return sourceOf({ kind: 'candidate', goalRef, requestRef }, goalRef, pins, goalBases);
 }
 
 export function conflictSourceOf(pair: Extract<DecisionSourceIdentityV1, { kind: 'goal_conflict' }>['pair'],
@@ -446,7 +439,11 @@ function proposalRefKey(proposal: PlanProposal): string {
 
 const additionalSchemas: RecordBackendSchemas[] = [QUERY_JOB_RECORD_SCHEMAS, SESSION_MESSAGE_RECORD_SCHEMAS,
   DECISION_RECORD_SCHEMAS, COMPLETION_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS,
-  SESSION_LIFECYCLE_RECORD_SCHEMAS];
+  UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS,
+  COMMAND_RERUN_REQUEST_RECORD_SCHEMAS,
+  SESSION_ANOMALY_RECORD_SCHEMAS,
+  SESSION_LIFECYCLE_RECORD_SCHEMAS,
+  CONTROL_RECORD_SCHEMAS];
 
 // These test-only indexes enumerate every registered aggregate on the SAME
 // physical store, including rows created later by a tested owner. No fixed ref
@@ -494,7 +491,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const records = observed.records;
   const allocations = createS5Allocations();
   const { allocationCounts, newId, now } = allocations;
-  const bodyPath = join(directory, 's5-bodies.sqlite');
+  const bodyPath = join(directory, 'artifacts.sqlite');
   let bodies: RawArtifactStorePort;
   let closeBodies: () => Promise<void>;
   if (kind === 'sqlite') {
@@ -667,13 +664,16 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
     bodies: { read: ref => bodies.read(ref) }, authorizeConfiguration, now, eventId, newId });
 
   async function claimRun(input: { requestId: string; goalRef: GoalRef; planRef: PlanRevisionRef; taskId: string; sessionRef: SessionRef;
-    roleBinding?: RoleBindingRefV1; budget?: TaskBudgetV1 }): Promise<TaskClaim> {
+    roleBinding?: RoleBindingRefV1; budget?: TaskBudgetV1;
+    /** K3 TASK-03r: the review-round claim facts, passed through to `ClaimTaskInput.review`. */
+    review?: NonNullable<ClaimTaskInput['review']> }): Promise<TaskClaim> {
     const goal = await readGoalSnapshot(input.goalRef);
     const card = await sessionsPort.readSession(ctx, input.sessionRef);
     if (card.status !== 'ready') throw new Error(`S5 claim session read failed: ${JSON.stringify(card)}`);
     const request: GraphWrite<ClaimTaskInput> = { input: {
       goalRef: input.goalRef, planRef: input.planRef, taskId: input.taskId, sessionRef: input.sessionRef,
       roleBinding: input.roleBinding ?? roleBinding, budget: input.budget ?? budget,
+      ...(input.review === undefined ? {} : { review: input.review }),
     }, meta: { requestId: input.requestId, expected: [
       { ref: input.goalRef, revision: goal.revision },
       { ref: WORKSPACE, revision: WORKSPACE_REVISION },

@@ -59,6 +59,8 @@ import type { SessionAnomalyAnchorV1, SessionAnomalyViewV1 } from '../../src/con
 import { createContextAssembler } from '../../src/core/agent-runtime/context-assembler.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import { createExecutionPreparation, loadPreparedManifest, rehydratePreparedExecution } from '../../src/core/agent-runtime/execution-preparation.js';
+import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -196,11 +198,20 @@ export async function openGoalContentEntry(kind: ClaimFixtureKind): Promise<Goal
     // prepare needs the factory's internal RoleBindingFactsPort as well.
     const roles = createRoleConfigurationService({ records: base.records, now,
       eventId: () => `wp1-ce-role-${++sequence}` });
+    // Rework 10 package R: the REQUIRED Task-review reader is the real owner over
+    // this fixture's one real records store and Run reader; the assembler reads
+    // the same owner so a continuation brief sees the same reviews.
+    const unknownCallReviews = createUnknownCallReviewService({ records: base.records,
+      reads: owners.executions, now, eventId: () => `wp1-ce-review-${++sequence}` });
     const assembler = createContextAssembler({ executions: owners.executions, roles,
       materials: owners.materials, bodies, plans: base.plans, sessions: base.sessionsPort,
-      graphContext: graph, taskInputs: owners.inputs });
+      graphContext: graph, taskInputs: owners.inputs, unknownCallReviews });
     const preparation = createExecutionPreparation({ executions: owners.executions, roles,
-      bodies, host, graphContext: graph, taskInputs: owners.inputs, now,
+      bodies, host, graphContext: graph, taskInputs: owners.inputs, now, unknownCallReviews,
+      // Item 2: the REQUIRED Task-closure reader, the production one over the
+      // SAME records (never an absent → open default).
+      readTaskClosure: async (_ctx, task) => readTaskClosure(base.records,
+        { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
       newId: () => `wp1-ce-prepare-${++sequence}` }, assembler);
     const prepared = ready(await preparation.prepare(ctx, { runRef: claim.runRef, requestId: 'wp1-ce-prepare' }), 'real preparation');
     async function readManifest(target: PreparedTaskExecution = prepared): Promise<GoalPrepared> {

@@ -33,6 +33,7 @@ import type { CoreRejection } from '../../../contracts/core/results.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../../contracts/dispatch.js';
+import type { UnknownCallReviewRef } from '../../../contracts/unknown-call-review.js';
 import type { EvidenceOutcome, EvidenceRef } from '../../../contracts/evidence.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
@@ -56,8 +57,8 @@ import type { AttemptClaimBasis } from './attempt-machine.js';
 import { runFailureOrigin } from './no-progress.js';
 import { tracedDispositionChangeProblem, type TracedTaskFactsV1 } from './plan-machine.js';
 import {
-  claimBasisProblem, claimPinProblem, isPausedInterrupted, runUnresolvedBlocker, type ClaimRequeueFacts,
-  type RunClaimContext,
+  claimBasisProblem, claimPinProblem, isPausedInterrupted, reviewBlockerProblem, runUnresolvedBlocker,
+  type ClaimRequeueFacts, type ReviewClaimFacts, type RunClaimContext,
 } from './run-machine.js';
 import {
   deriveReworkClass, isGoalFanOutActor, nextRequeueAutoCount, requeueHistorySourceOf, reworkFenceOf, reworkPermission,
@@ -283,10 +284,19 @@ export type TaskClaimFacts = {
   lease: TaskLeaseProjection;
   /** Directed read: some Run of this Task exists, even one excluded by its origin Plan (`:639-641`). */
   taskHasRun: boolean;
+  /**
+   * K3-38 (L11): the selected Run's UnknownCallReview as the owner read it;
+   * absent = no record. `pending`/`held` refuse an ordinary claim `busy` with
+   * `unknown_call_review_pending`/`unknown_call_review_held`; `unreadable`
+   * refuses `unavailable` (L7 fail-closed).
+   */
+  reviewBlocker?: 'pending' | 'held' | 'unreadable';
   /** The continuation prior Run, as RUN-01 reads it (`:590-638`); null when it is not a Run of this Task. */
   prior: RunClaimContext['prior'];
   /** TASK-03: the TaskRequeue the claim's `requeueRef` names; null when it names none of this Task. */
   requeue: ClaimRequeueFacts | null;
+  /** TASK-03r (K3): the review-claim facts; null/absent for every other basis. */
+  review?: ReviewClaimFacts | null;
   /** Assignment, role and deadline admission (`:643-666`); null when admitted. */
   admission: CoreRejection | null;
 };
@@ -426,7 +436,10 @@ export type TaskEffect =
   | { kind: 'write_plan_revision' }
   /** TASK-18/19 (C7): the change's entry in the new Plan's `PlanRevisionSnapshot.dispositionRecord`. */
   | { kind: 'record_disposition_change' }
-  | { kind: 'move_goal_pointer' };
+  | { kind: 'move_goal_pointer' }
+  /** K3 TASK-03r: the same commit writes the review record's `activeRound` (UCR-03). */
+  | { kind: 'record_review_round_claim'; reviewRef: UnknownCallReviewRef; runRef: RunRef;
+      phase: 'review' | 'proposal'; round: number; stateEntry: number };
 
 export type TaskTransition = Transition<TaskMachineState, TaskEvent, TaskEffect>;
 
@@ -877,7 +890,16 @@ export function taskClaimProblem(
   if (task.taskKind !== 'work') return reject('illegal', 'invalid', 'only a work task can be claimed');
   if (task.disposition !== 'active') return reject('guard_failed', 'invalid', 'the Task disposition is not active');
   if (facts.structuralProblem !== null) return rejected(facts.structuralProblem);
-  const phaseProblem = claimPhaseProblem(task.phase);
+  // K3 L11 (D3): the selected Run's review record blocks an ordinary claim
+  // BEFORE the phase and lease guards (the record is checked first, §3.4); the
+  // review claim (TASK-03r) is the only basis that passes.
+  if (claimBasis.kind !== 'review') {
+    const reviewProblem = reviewBlockerProblem(facts.reviewBlocker);
+    if (reviewProblem !== null) return reviewProblem;
+  }
+  // TASK-03r (K3, L10): a review claim reads P6 (`failed`) or P4 (`ready`);
+  // its own `projectionAdmitsReview` guard replaces the ordinary phase guard.
+  const phaseProblem = claimBasis.kind === 'review' ? null : claimPhaseProblem(task.phase);
   if (phaseProblem !== null) return phaseProblem;
   if (facts.lease.status === 'leased') {
     return reject('guard_failed', 'busy', `task already has an active lease (holder run ${facts.lease.holderRunId})`);
@@ -899,13 +921,22 @@ function onTaskClaimed(
   const { taskKind, disposition } = state as TaskState;
   const basis = event.basis;
   const claim = event.claim;
-  return accept({ taskKind, disposition, row: 'P2', phase: 'running', cause: null }, [
+  // TASK-03r (L10): the review claim leaves the Task projection unchanged (the
+  // selected Run is still the original one); every other claim writes P2.
+  const next = basis.kind === 'review'
+    ? (state as TaskState)
+    : { taskKind, disposition, row: 'P2' as const, phase: 'running' as const, cause: null };
+  return accept(next, [
     { kind: 'create_attempt' },
     { kind: 'create_run' },
     { kind: 'create_outbox' },
-    // ATT-15 (continuation) and ATT-16 (requeue) re-hold the released lease @k+1.
+    // ATT-15 (continuation), ATT-16 (requeue) and ATT-16r (review) re-hold the released lease @k+1.
     { kind: 'hold_lease', lease: basis.kind === 'first' ? 'first' : 'reheld' },
     { kind: 'occupy_session', sessionRef: claim.sessionRef, generation: claim.generation },
+    // UCR-03 (L10): the same commit writes the record's activeRound.
+    ...(basis.kind === 'review' && facts.review != null ? [{ kind: 'record_review_round_claim' as const,
+      reviewRef: structuredClone(facts.review.reviewRef), runRef: claim.runRef,
+      phase: facts.review.phase, round: facts.review.round, stateEntry: facts.review.stateEntry }] : []),
   ]);
 }
 

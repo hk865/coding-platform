@@ -493,8 +493,36 @@ function reconciliationBasisProblem(value: unknown): string | null {
   return 'reconciliation basis kind must be live_clean or host_instance_takeover';
 }
 
-function reconciliationEventProblem(value: unknown, runRef: Record<string, unknown>, label: string): string | null {
-  const problem = runtimeEventProblem(value);
+/** K3 (L2): the labeled takeover proof a RUN-25 observation carries. */
+function hostTakeoverProofProblem(value: unknown): string | null {
+  if (!isJsonObject(value)) return 'takeover_unresolved observation proof must be an object';
+  switch (value['kind']) {
+    case 'hl01_no_lock':
+      return hasOnlyKeys(value, ['kind']) ? null : 'hl01_no_lock proof carries unknown fields';
+    case 'hl03_stale_lock':
+      if (!hasOnlyKeys(value, ['kind', 'previousInstanceId', 'previousPid'])
+        || !nonEmpty(value['previousInstanceId']) || !isPositiveSafeInteger(value['previousPid'])) {
+        return 'hl03_stale_lock proof needs the previous instance id and pid';
+      }
+      return null;
+    case 'memory_store':
+      return hasOnlyKeys(value, ['kind']) ? null : 'memory_store proof carries unknown fields';
+    default:
+      return 'takeover_unresolved observation proof kind is not recognized';
+  }
+}
+
+/** K3 (L7): the review record a RUN-25 observation names. */
+function unknownCallReviewRefProblem(value: unknown): string | null {
+  if (!isJsonObject(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'runId'])
+    || value['aggregateType'] !== 'UnknownCallReview' || !nonEmpty(value['projectId'])
+    || !nonEmpty(value['goalId']) || !nonEmpty(value['runId'])) {
+    return 'takeover_unresolved observation reviewRef must be a complete UnknownCallReviewRef';
+  }
+  return null;
+}
+
+function reconciliationEventProblem(value: unknown, runRef: Record<string, unknown>, label: string): string | null {  const problem = runtimeEventProblem(value);
   if (problem !== null) return `${label}: ${problem}`;
   const eventRun = (value as Record<string, unknown>)['runRef'] as Record<string, unknown>;
   if (eventRun['projectId'] !== runRef['projectId'] || eventRun['goalId'] !== runRef['goalId']
@@ -529,7 +557,8 @@ export function runReconciliationProblem(value: unknown, runRef: Record<string, 
       if (!nonEmpty(observation['digest'])) return 'runtime_terminal observation digest is required';
       return reconciliationEventProblem(observation['event'], runRef, 'runtime_terminal observation event');
     case 'unresolved': {
-      if (!hasOnlyKeys(observation, ['kind', 'reason', 'observedThroughPosition', 'unresolvedToolCallIds'])) {
+      if (!hasOnlyKeys(observation, ['kind', 'reason', 'observedThroughPosition', 'unresolvedToolCallIds',
+        'autoCleanupBlockedBy'])) {
         return 'unresolved observation carries unknown fields';
       }
       if (typeof observation['reason'] !== 'string') return 'unresolved observation reason must be a string';
@@ -540,6 +569,33 @@ export function runReconciliationProblem(value: unknown, runRef: Record<string, 
       if (!Array.isArray(toolCallIds) || !toolCallIds.every(nonEmpty)) {
         return 'unresolved observation unresolvedToolCallIds must be an array of non-empty strings';
       }
+      // K3 (L25): the row-8 auto-cleanup blocker is optional; when present it names the first failing guard.
+      if (Object.hasOwn(observation, 'autoCleanupBlockedBy') && !nonEmpty(observation['autoCleanupBlockedBy'])) {
+        return 'unresolved observation autoCleanupBlockedBy must be a non-empty string when present';
+      }
+      return null;
+    }
+    case 'takeover_unresolved': {
+      if (!hasOnlyKeys(observation, ['kind', 'event', 'lastPosition', 'observedThroughPosition', 'unresolvedToolCallIds',
+        'proof', 'reviewRef'])) {
+        return 'takeover_unresolved observation carries unknown fields';
+      }
+      const eventProblem = reconciliationEventProblem(observation['event'], runRef, 'takeover_unresolved observation event');
+      if (eventProblem !== null) return eventProblem;
+      const eventType = (observation['event'] as Record<string, unknown>)['eventType'];
+      if (eventType !== 'run_crashed') return 'takeover_unresolved observation event must be a synthesized run_crashed';
+      if (!isNonNegativeSafeInteger(observation['lastPosition'])
+        || !isNonNegativeSafeInteger(observation['observedThroughPosition'])) {
+        return 'takeover_unresolved observation positions must be non-negative safe integers';
+      }
+      const toolCallIds = observation['unresolvedToolCallIds'];
+      if (!Array.isArray(toolCallIds) || toolCallIds.length === 0 || !toolCallIds.every(nonEmpty)) {
+        return 'takeover_unresolved observation unresolvedToolCallIds must be a non-empty array of non-empty strings';
+      }
+      const proofProblem = hostTakeoverProofProblem(observation['proof']);
+      if (proofProblem !== null) return proofProblem;
+      const reviewProblem = unknownCallReviewRefProblem(observation['reviewRef']);
+      if (reviewProblem !== null) return reviewProblem;
       return null;
     }
     case 'not_entered': {

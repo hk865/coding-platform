@@ -20,6 +20,7 @@ import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS, readCanonica
 import { SESSION_RECORD_SCHEMAS, plainSessionRefToAggregate, decodeSessionRecord } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { TASK_CLAIM_RECORD_SCHEMAS, decodeDispatchOutboxEntry, decodeTaskAttemptSnapshot, decodeTaskRequeueSnapshot, decodeTaskReworkRefusalSnapshot, taskClaimedEventFromEvent, taskRequeuedEventFromEvent, taskReworkRefusedEventFromEvent } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-history-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
@@ -43,6 +44,7 @@ import { type TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import { type RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { type AuthorizeConfiguration, type CompletedHistoryBoundary, type ExecutionEntryDependencies, type ExecutionEntryPort, type KernelExecutionBinding, type ObservedExecutionHistory, type TaskEntryPermit, type TaskResultObservation } from '../../src/core/work-graph/model/execution-entry-contracts.js';
+import type { TurnClosureDependencies } from '../../src/core/agent-runtime/execution-contracts.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS, executionEntryAuthorizedEventFromEvent } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
@@ -50,6 +52,7 @@ import { type TaskExecutionRecord } from '../../src/core/work-graph/model/execut
 import { type ModelRequestPort, type ActualModelRequest } from '../../src/core/work-graph/tasks/model-call-contracts.js';
 import { createModelCallService } from '../../src/core/work-graph/tasks/model-call-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { type TaskReductionSnapshot } from '../../src/contracts/reduction.js';
 import { type SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { decodeSessionMessageRecord } from '../../src/core/work-graph/sessions/message-record-codecs.js';
@@ -240,23 +243,45 @@ function wrapRecords(target: Records, spy: RecordSpy): Records {
 }
 
 /** Register the project, governance, Goal, Plan and Sessions through their owners. */
+
+/**
+ * K3 L7 fixtures: register each record/event/lookup schema once. Callers that
+ * already pass `UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS` through `additionalSchemas`
+ * must not make the backend reject the whole list as a duplicate aggregateType.
+ */
+function uniqueBySchemaId<T>(items: readonly T[], id: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const key = id(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
 export async function createTaskClaimFixture(kind: ClaimFixtureKind, additionalSchemas: RecordBackendSchemas = { records: [], events: [] }, clock: () => string = () => AT): Promise<TaskClaimFixture> {
   const directory = await mkdtemp(join(tmpdir(), `next-r4c-claim-${kind}-`));
   const ledgerPath = join(directory, 'ledger.sqlite');
   const materials = materialRecordSchemas();
   const schemas: RecordBackendSchemas = {
-    records: [...materials.records, ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
+    records: uniqueBySchemaId([...materials.records, ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records,
       ...ROLE_RECORD_SCHEMAS.records, ...TASK_CLAIM_RECORD_SCHEMAS.records,
-      ...ARCHITECTURE_CATALOG_SCHEMAS.records, ...additionalSchemas.records],
-    events: [...materials.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records,
+      ...additionalSchemas.records], (schema) => schema.schemaId),
+    events: uniqueBySchemaId([...materials.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...TASK_CLAIM_RECORD_SCHEMAS.events, ...EXECUTION_HISTORY_RECORD_SCHEMAS.events,
-      ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...additionalSchemas.events],
-    lookups: [...(materials.lookups ?? []), ...(PLAN_RECORD_SCHEMAS.lookups ?? []),
+      ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
+      ...additionalSchemas.events], (schema) => `${schema.eventType}@${String(schema.schemaVersion)}`),
+    lookups: uniqueBySchemaId([...(materials.lookups ?? []), ...(PLAN_RECORD_SCHEMAS.lookups ?? []),
       ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []), ...(PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? []),
       ...(SESSION_RECORD_SCHEMAS.lookups ?? []), ...(ROLE_RECORD_SCHEMAS.lookups ?? []),
-      ...(TASK_CLAIM_RECORD_SCHEMAS.lookups ?? []), ...(additionalSchemas.lookups ?? [])],
+      ...(TASK_CLAIM_RECORD_SCHEMAS.lookups ?? []), ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
+      ...(additionalSchemas.lookups ?? [])], (index) => index.name),
   };
   const backend = kind === 'memory'
     ? createInMemoryRecordBackend({ schemas })
@@ -1168,6 +1193,10 @@ let workflowFixtureId = 0;
 /** Full production wiring: archive/maintenance need Runtime, requeue, directory and Plan ports too. */
 export async function workflowForFixture(b2: B2ExecutionFixture, options: {
   now: () => string; records?: B2Records; allowedRuns?: Set<string>;
+  /** Additive maintenance-only override; the Runtime keeps `base.plans`. */
+  plans?: WorkflowDependencies['plans'];
+  /** Additive: publish the real `closeOpenTurn` seam; absent keeps today's fallback. */
+  turnClosure?: TurnClosureDependencies;
 } & Pick<WorkflowDependencies, 'sessionDuty' | 'archivePolicy' | 'attestUnknownRun' | 'attestUnknownQueryRun'>): Promise<WorkflowPort> {
   const base = b2.base;
   const records = options.records ?? base.records;
@@ -1208,6 +1237,9 @@ export async function workflowForFixture(b2: B2ExecutionFixture, options: {
   const scripted = createScriptedModel([{ kind: 'text', text: 'FX3 must stop before start' }]);
   const runtime = createAgentRuntime({ claims, executions: reads, entry: b2.entry, modelRequests: b2.model,
     roles, plans: base.plans, messages, sessions: base.sessionsPort, materials, bodies: b2.bodies,
+    // Rework 10 package R: the REQUIRED Task-review reader is the real owner over
+    // this workflow's one real records store and Run reader.
+    unknownCallReviews: createUnknownCallReviewService({ records, reads, now, eventId }),
     historyWriter: createExecutionHistoryService({ records, now, eventId }), activity,
     graphHistory: createGraphExecutionHistoryReader({ executions: reads, history: activity }),
     sessionOperations, kernelStores, workspaceHost,
@@ -1216,11 +1248,12 @@ export async function workflowForFixture(b2: B2ExecutionFixture, options: {
       root: base.directory, skillRoot: join(base.directory, 'skills'), scope: base.scope,
       role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' } }),
     kernel: kernelApi, controls, now, newId: eventId,
+    ...(options.turnClosure === undefined ? {} : { turnClosure: options.turnClosure }),
   });
   const sessionFacts = createSessionFactsService({ records });
   const forbiddenCheck = async () => { throw new Error('archive/maintenance must not start a check'); };
   const deps: WorkflowDependencies = {
-    tasks: base.goals, plans: base.plans, sessions: base.sessionsPort, claims, executions: reads,
+    tasks: base.goals, plans: options.plans ?? base.plans, sessions: base.sessionsPort, claims, executions: reads,
     runtime: { ...runtime.port, createSession: sessionOperations.createSession,
       readSessionHistory: sessionOperations.readSessionHistory },
     evidence: { openVerification: forbiddenCheck, readVerification: forbiddenCheck, beginCheck: forbiddenCheck,

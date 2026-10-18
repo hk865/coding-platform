@@ -75,6 +75,7 @@ import {
 } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-history-codecs.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import {
   decodeGoalCreatedEvent, decodeGoalDesiredStateChangedEvent, decodeGoalSnapshot,
 } from '../../src/core/work-graph/persistence/record-codecs.js';
@@ -288,6 +289,7 @@ export function invariantStoreOf(directory: string): InvariantStore {
 export function platformRecordSchemas(): RecordBackendSchemas {
   const groups: RecordBackendSchemas[] = [materialRecordSchemas(), PLAN_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS,
     PLAN_GOVERNANCE_RECORD_SCHEMAS, SESSION_RECORD_SCHEMAS, SESSION_LIFECYCLE_RECORD_SCHEMAS, ROLE_RECORD_SCHEMAS,
+    UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS,
     OBSERVED_ARCHITECTURE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS, TASK_CLAIM_RECORD_SCHEMAS,
     EXECUTION_ENTRY_RECORD_SCHEMAS, MODEL_REQUEST_RECORD_SCHEMAS, SESSION_MESSAGE_RECORD_SCHEMAS,
     PROJECT_BOOTSTRAP_RECORD_SCHEMAS, CONTROL_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, QUERY_JOB_RECORD_SCHEMAS,

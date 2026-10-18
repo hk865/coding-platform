@@ -11,17 +11,20 @@
  */
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
-import type { PreparedTaskExecution } from '../../contracts/core/prepared-execution.js';
+import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { RunRef, RunSnapshot, RuntimeInputBindingV1 } from '../../contracts/dispatch.js';
 import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { GoalRef, WorkspaceRef } from '../../contracts/ledger.js';
+import type { UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
+import type { CommandRerunRequestV1 } from '../../contracts/command-rerun-request.js';
 import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
 import type {
   HookPort, SqliteStores, ToolCall, ToolDefinition, ToolGroupBarrier, WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
-import { runObservedModel } from './observed-model-run.js';
-import { createMailboxInputSupply } from './execution-inputs.js';
+import { EXPLORATION_TOOL_NAMES, runObservedModel } from './observed-model-run.js';
+import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../../contracts/review-admission.js';
+import { createControlOnlyInputSupply, createMailboxInputSupply, type InputSupply } from './execution-inputs.js';
 import type { SourceToolOptions } from './exploration-tools.js';
 import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import { createSessionMailboxTools, SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from './communication-tools.js';
@@ -34,7 +37,21 @@ import { loadPreparedManifest, snapshotRuntimeConfiguration } from './execution-
 import { createRuntimeSourceCaptureFactory } from './source-capture-access.js';
 import { createGraphTools, GRAPH_TOOL_NAMES } from './graph-tools.js';
 import { createNoteTools, NOTE_TOOL_NAMES } from './note-tool.js';
-import { createReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
+import { registerReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
+import {
+  createUnknownCallReviewTools, PROPOSE_SAFER_METHOD_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
+} from './unknown-call-review-tools.js';
+import {
+  createCommandRerunTools, REQUEST_COMMAND_RERUN_TOOL_NAME,
+} from './command-rerun-tools.js';
+import { commandSha256 } from '../work-graph/state/command-normalization.js';
+import type {
+  CommandRerunRequestPort, CommandRerunRequestReadPort,
+} from '../work-graph/model/command-rerun-request-contracts.js';
+import type {
+  UnknownCallReviewReadPort,
+} from '../work-graph/model/unknown-call-review-contracts.js';
+import type { CommandRecognizer } from '../work-graph/model/command-recognition-contracts.js';
 import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
@@ -43,6 +60,7 @@ import type {
   ExecutionHistoryPage, GraphExecutionHistoryReadPort, TaskExecutionHistoryRequest,
 } from './execution-history-contracts.js';
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
+import { toolCommitRequestId } from '../work-graph/model/tool-commit-arguments.js';
 import type { ExecutionObservationService } from './execution-observation.js';
 import type { RuntimeControlCoordinator, RuntimeControlHandle } from './execution-control.js';
 import type {
@@ -57,7 +75,8 @@ export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'sourceAuthority' | 'sourcePolicyFor' | 'sourceAnalyzers' | 'host' | 'kernel' | 'resourceCaps' | 'now' | 'newId'
   | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'decisionMessages' | 'applicationReceipt'
   | 'sessions' | 'runReconcile'
-  | 'graphHistory' | 'graphContext' | 'taskInputs'> & {
+  | 'graphHistory' | 'graphContext' | 'taskInputs' | 'unknownCallReviews'
+  | 'commandRerunRequests' | 'commandRecognizer'> & {
   /** Slice 4C: the SAME `platform.notes` ports the note tools call. */
   notes?: RuntimeExecutionDependencies['notes'];
   /** The same observer instance backs start and explicit observe calls. */
@@ -84,6 +103,10 @@ const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
   ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, ...SESSION_DISCOVERY_TOOL_NAMES,
   ...GRAPH_TOOL_NAMES, ...NOTE_TOOL_NAMES,
 ]);
+/** K3 group 3: the L13 exploration names a review-round manifest may select.
+ * The set is deliberately NOT all of `RESERVED_TOOL_NAMES`: a mutation name
+ * such as `edit` stays unknown and is refused `unsupported` (KB-09). */
+const EXPLORATION_TOOL_NAME_SET = new Set<string>(EXPLORATION_TOOL_NAMES);
 
 function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
@@ -97,10 +120,10 @@ function nonEmpty(value: unknown): value is string {
 
 /** Builtin Kernel file/process tools. The platform coordination tools below are
  * extension tools and are never file/read/shell capabilities. */
-const BUILTIN_TOOL_NAMES = new Set<string>(['read', 'write', 'shell']);
+export const BUILTIN_TOOL_NAMES = new Set<string>(['read', 'write', 'shell']);
 /** Names the coordination factories must never collide with. Declaring a name
  * here still grants nothing; this is an assembly guard only. */
-const RESERVED_TOOL_NAMES = new Set<string>([
+export const RESERVED_TOOL_NAMES = new Set<string>([
   ...BUILTIN_TOOL_NAMES, 'edit', 'check', 'list_files', 'search', 'symbols', 'code_index',
   'project_source', 'project_index', 'python_index', 'cpp_index', 'source_excerpt', 'read_source', 'read_material',
 ]);
@@ -213,7 +236,8 @@ function selectCoordinationTools(input: {
    * read-only process tool). They are recognized but never built here. */
   extensionNames?: ReadonlySet<string>;
 }): { ok: true; value: CoordinationTools | null } | { ok: false; rejection: CoreRejection } {
-  const unknown = input.selected.filter(name => !BUILTIN_TOOL_NAMES.has(name) && !PLATFORM_COORDINATION_TOOL_NAMES.has(name)
+  const unknown = input.selected.filter(name => !BUILTIN_TOOL_NAMES.has(name)
+    && !EXPLORATION_TOOL_NAME_SET.has(name) && !PLATFORM_COORDINATION_TOOL_NAMES.has(name)
     && !(input.extensionNames?.has(name) ?? false));
   if (unknown.length > 0) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects tool names this Runtime does not know: ${[...new Set(unknown)].join(', ')}`) };
@@ -367,6 +391,160 @@ function ownContext(ctx: CoreCallContext): CoreCallContext | null {
   } catch { return null; }
 }
 
+/** L19a fixed texts (byte-exact; the hook is the only producer). */
+export const SHELL_BLOCKED_UNCONFIRMED_TEXT = '平台暂时确认不了这条命令有没有被拦，这次先不跑；稍后再试。';
+export const SHELL_ALLOWANCE_UNCONFIRMED_TEXT = '暂时确认不了允许，稍后再试';
+
+export type ShellBlockedHookConfig = {
+  /** The trusted Run context the reads and the allowance commit use. */
+  ctx: CoreCallContext;
+  runRef: RunRef;
+  taskId: string;
+  /** `{ projectId, workspaceId }` of the Run's workspace. */
+  workspace: { projectId: string; workspaceId: string };
+  /** The three-field binding prepared for this Work Run (never empty here). */
+  binding: NonNullable<PreparedTaskManifestV1['blockedCommands']>;
+  reviews: Pick<UnknownCallReviewReadPort, 'readReview'>;
+  requests: CommandRerunRequestReadPort & CommandRerunRequestPort;
+  recognizer?: CommandRecognizer;
+};
+
+type BeforeToolDecision = { point: 'before_tool'; kind: 'continue' }
+  | { point: 'before_tool'; kind: 'block'; reason: string };
+
+const CONTINUE_TOOL: BeforeToolDecision = { point: 'before_tool', kind: 'continue' };
+const blockTool = (reason: string): BeforeToolDecision => ({ point: 'before_tool', kind: 'block', reason });
+
+/**
+ * L19a "在哪拦": the `before_tool` control hook for `shell`. It is installed on
+ * a Work Run whose prepared manifest carries a non-empty `blockedCommands`
+ * binding; every other tool and every Run without a binding continues with
+ * ZERO extra reads. For `shell` it reads the binding's records' current state
+ * and the Task's CRRs through the owner's one-closure pager (ONE Task-closure
+ * read for the whole call, whatever the page count), then, in order: (i) an
+ * unused one-time allowance is consumed before the call is allowed; (ii) an
+ * approved method runs without a request; (iii) the ONE shared recognizer —
+ * exact, action, current-`package.json` expansion and declared forms — names
+ * the blocked alias with L19a's fixed text. There is no second matcher here.
+ *
+ * A records/CRRs read failure fails closed. A recognizer rejection loses only
+ * recognition (there is no local fallback) and the call continues; a missing
+ * recognizer on a non-empty binding is a wiring error and fails closed.
+ */
+export function createShellBlockedHook(config: ShellBlockedHookConfig): HookPort {
+  const reviewRunIds = [...new Set(config.binding.map(entry => entry.reviewRunId))];
+  return {
+    hookId: 'b2-runtime-shell-blocked', point: 'before_tool', priority: 10,
+    async execute(invocation): Promise<BeforeToolDecision> {
+      if (config.binding.length === 0) return CONTINUE_TOOL;
+      if (invocation.call.name !== 'shell') return CONTINUE_TOOL;
+      const args = invocation.call.arguments;
+      const command = isRecord(args) ? args['command'] : undefined;
+      if (typeof command !== 'string') return CONTINUE_TOOL;
+      const cwd = isRecord(args) && typeof args['cwd'] === 'string' ? args['cwd'] : '.';
+      const call = invocation.call;
+      const ctx = config.ctx;
+      // 1. The binding's records' CURRENT state: one read per distinct reviewRunId.
+      const records = new Map<string, UnknownCallReviewV1>();
+      for (const runId of reviewRunIds) {
+        let read;
+        try {
+          read = await config.reviews.readReview(ctx, { ref: {
+            aggregateType: 'UnknownCallReview', projectId: config.runRef.projectId,
+            goalId: config.runRef.goalId, runId,
+          } });
+        } catch { return blockTool(SHELL_BLOCKED_UNCONFIRMED_TEXT); }
+        if (read.status !== 'ready') return blockTool(SHELL_BLOCKED_UNCONFIRMED_TEXT);
+        if (read.value.task.taskId !== config.taskId) return blockTool(SHELL_BLOCKED_UNCONFIRMED_TEXT);
+        records.set(runId, read.value);
+      }
+      const orderedRecords = [...records.values()].sort((left, right) =>
+        left.createdAt.localeCompare(right.createdAt) || left.ref.runId.localeCompare(right.ref.runId));
+      // 2. The Task's CRRs through k3-crr-by-task, paged to the end. Rework 2
+      // item 2: the owner pages the WHOLE task set under ONE Task-closure read,
+      // so a 3-page hook call does not re-read the closure per page. Review-3
+      // item 2: that same closure is handed to the consume below, so the WHOLE
+      // hook call still reads it exactly once.
+      const requests: CommandRerunRequestV1[] = [];
+      let read;
+      try {
+        read = await config.requests.listTaskRequests(ctx, { workspace: config.workspace,
+          filter: { goalId: config.runRef.goalId, taskId: config.taskId } });
+      } catch { return blockTool(SHELL_BLOCKED_UNCONFIRMED_TEXT); }
+      if (read.status !== 'ready') return blockTool(SHELL_BLOCKED_UNCONFIRMED_TEXT);
+      const taskClosure = read.value.closure;
+      requests.push(...read.value.items);
+      const callSha = commandSha256(command);
+      const blockMatched = (
+        reviewRunId: string, alias: number, actionText: string | undefined,
+        kind: 'exact' | 'action' | 'declared',
+      ): BeforeToolDecision => {
+        const record = records.get(reviewRunId);
+        if (record === undefined) return blockTool(SHELL_BLOCKED_UNCONFIRMED_TEXT);
+        const choice = record.disposition?.choice === 'skip_as_done' ? '跳过' : '换了跑法';
+        const where = `#${String(alias)}@${reviewRunId.slice(0, 8)}`;
+        const head = kind === 'action' && actionText !== undefined
+          ? `平台拦下了这条命令：其中的 ${actionText} 是 ${where} 的一部分（核对以后处置是“${choice}”）。`
+          : `平台拦下了这条命令：${where}（核对以后处置是“${choice}”）。`;
+        return blockTool(head + '要再跑，先用 `request_command_rerun` 写明原因，等人允许。'
+          + '平台没认出来的改写，也要用 `rewriteOf` 注明以后再请求。');
+      };
+      // (i) One-time allowance, consumed BEFORE the command is allowed to run.
+      const allowances = requests.filter(request => request.state === 'allowed' && request.commandSha256 === callSha)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)
+          || left.ref.requestId.localeCompare(right.ref.requestId));
+      const allowance = allowances[0];
+      if (allowance !== undefined) {
+        let consumed;
+        try {
+          consumed = await config.requests.consumeAllowance(ctx, {
+            input: { requestRef: allowance.ref,
+              usedBy: { runId: config.runRef.runId, callId: call.callId } },
+            meta: { requestId: 'b2-hook-consume:' + call.callId,
+              // The pin is the CRR ref@revision; the shared VersionPin union does
+              // not yet name CommandRerunRequest (contract owner's change).
+              expected: [{ ref: allowance.ref as never, revision: allowance.revision }] },
+          }, taskClosure);
+        } catch { return blockTool(SHELL_ALLOWANCE_UNCONFIRMED_TEXT); }
+        return consumed.status === 'committed' ? CONTINUE_TOOL : blockTool(SHELL_ALLOWANCE_UNCONFIRMED_TEXT);
+      }
+      // (ii) An approved method of a record with blocked commands runs as-is.
+      for (const record of orderedRecords) {
+        if (record.blockedCommands.length === 0) continue;
+        for (const method of record.disposition?.approvedMethods ?? []) {
+          if (commandSha256(method.command) === callSha) return CONTINUE_TOOL;
+        }
+      }
+      // (iii) The ONE shared recognizer (item 2): exact, action, current
+      // `package.json` expansion and declared forms, first by (record
+      // `createdAt`, alias). The hook never parses or compares stored actions
+      // itself. F-070: the recognizer fails CLOSED. A throw or any non-`ready`
+      // answer leaves the command unconfirmed and blocked; only a CONFIRMED
+      // no-match (`ready`, value `null`) continues. A package.json read failure
+      // is not a recognizer failure: the recognizer degrades to `ready` and
+      // loses only the expansion. A missing recognizer on a non-empty binding
+      // is a wiring error and also fails closed.
+      const recognizer = config.recognizer;
+      if (recognizer === undefined) return blockTool(SHELL_BLOCKED_UNCONFIRMED_TEXT);
+      // A `closed` CRR is terminal (item 3): the Task is no longer active, so
+      // it can never be the `allowed` request consumed above (the filter
+      // compares `allowed` only). The recognizer still sees the request set,
+      // because a stored declared form names a blocked alias; it grants
+      // nothing.
+      let recognized;
+      try {
+        recognized = await recognizer(ctx, {
+          records: orderedRecords, requests, command, cwd, maxPackageReads: 2,
+        });
+      } catch { return blockTool(SHELL_BLOCKED_UNCONFIRMED_TEXT); }
+      if (recognized.status !== 'ready') return blockTool(SHELL_BLOCKED_UNCONFIRMED_TEXT);
+      if (recognized.value === null) return CONTINUE_TOOL;
+      const hit = recognized.value;
+      return blockMatched(hit.reviewRunId, hit.alias, hit.match.action?.text, hit.match.kind);
+    },
+  };
+}
+
 export function createExecutionDriver(deps: ExecutionDriverDependencies): ExecutionDriverService {
   return {
     async start(ctx: CoreCallContext, request: StartTaskExecutionRequest): Promise<ReadResult<TaskExecutionRecord>> {
@@ -488,7 +666,14 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       };
       const requestIdForCall = (call: Readonly<ToolCall>): string => {
         if (!nonEmpty(call.callId) || !nonEmpty(call.name)) throw new Error('the Kernel tool call carries no trusted identity');
-        return 'c2-tool:' + sha256Hex(canonicalJson({ runRef, sessionRef, operation: call.name, callId: call.callId } as never));
+        // Decision 72 (U1): the ONE request builder every owner lookup shares;
+        // passing the plain `{projectId, sessionId}` ref here is the live path
+        // the draft's claim-Session origin and the owner lookups must match.
+        return toolCommitRequestId({
+          origin: { runRef, sessionRef, generation: record.outbox.claim.generation,
+            workspaceId: record.session.workspaceId },
+          toolName: call.name, kernelCallId: call.callId,
+        });
       };
       // The explicit wait registration for THIS Run. It is set only after a
       // waitAfterSend message is durably committed; the tool-group barrier reads
@@ -527,10 +712,87 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           },
         }),
         ...(deps.notes === undefined ? {} : { notes: deps.notes }),
-        extensionNames: new Set([READONLY_COMMAND_TOOL_NAME]),
+        extensionNames: new Set([READONLY_COMMAND_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
+          PROPOSE_SAFER_METHOD_TOOL_NAME, REQUEST_COMMAND_RERUN_TOOL_NAME]),
       });
       if (!coordination.ok) return coordination.rejection;
       const coordinationTools = coordination.value;
+
+      // K3 L14/L20: the one review-purpose write tool is registered on BOTH
+      // phases — `record_unknown_call_review` for `review`,
+      // `propose_safer_method` for `proposal`. The record ref and this round's
+      // Run are trusted (the Run purpose and the `work_run` principal); the
+      // model supplies neither. A review Run whose owner is not bound fails
+      // closed before the model.
+      const reviewPurpose = record.run.purpose?.kind === 'unknown_call_review' ? record.run.purpose : null;
+      let unknownCallReviewTool: ((workspace: WorkspaceSandbox) => ToolDefinition) | undefined;
+      let unknownCallReviewToolName: string | undefined;
+      if (reviewPurpose !== null) {
+        if (deps.unknownCallReviews === undefined) {
+          return rejected('unsupported', 'the review Run requires the unknownCallReviews owner to register its review tool');
+        }
+        const reviewTools = createUnknownCallReviewTools({
+          reviews: deps.unknownCallReviews,
+          context: toolContext,
+          reviewRef: reviewPurpose.reviewRef,
+          requestIdForCall,
+          phase: reviewPurpose.phase,
+        });
+        const chosenName = reviewTools.names[0];
+        if (chosenName === undefined) return rejected('unsupported', 'the review tool factory produced no name');
+        unknownCallReviewToolName = chosenName;
+        unknownCallReviewTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => {
+          const definition = reviewTools.create(workspaceHandle)[0];
+          if (definition === undefined) throw new Error('the review tool factory produced no definition');
+          return definition;
+        };
+      }
+
+      // L19a: `request_command_rerun` is registered ONLY on a Work Run whose
+      // prepared manifest carries blocked commands. Review/proposal rounds are
+      // read-only and never see it. Its owner is the SAME CRR port the routes
+      // publish; a missing owner with a non-empty binding is a wiring error.
+      const blockedBinding = manifest.blockedCommands ?? [];
+      let commandRerunTool: ((workspace: WorkspaceSandbox) => ToolDefinition) | undefined;
+      let commandRerunToolName: string | undefined;
+      if (record.run.purpose === undefined && blockedBinding.length > 0) {
+        if (deps.commandRerunRequests === undefined) {
+          return rejected('unsupported', 'the blocked Work Run requires the commandRerunRequests owner to register its request tool');
+        }
+        if (deps.unknownCallReviews === undefined) {
+          return rejected('unsupported', 'the blocked Work Run requires the unknownCallReviews read port for its shell hook');
+        }
+        const requestTools = createCommandRerunTools({
+          requests: deps.commandRerunRequests,
+          context: toolContext,
+          task: manifest.claim.task,
+          requestIdForCall,
+        });
+        const chosenName = requestTools.names[0];
+        if (chosenName === undefined) return rejected('unsupported', 'the rerun request tool factory produced no name');
+        commandRerunToolName = chosenName;
+        commandRerunTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => {
+          const definition = requestTools.create(workspaceHandle)[0];
+          if (definition === undefined) throw new Error('the rerun request tool factory produced no definition');
+          return definition;
+        };
+      }
+
+      // L19a "在哪拦": the `before_tool` shell gate for a Work Run with a
+      // non-empty binding. It reads the records' current state and the Task's
+      // CRRs per `shell` call; a task without a binding installs no hook and
+      // pays zero extra reads.
+      const shellBlockedHook: HookPort | undefined = blockedBinding.length === 0 || deps.commandRerunRequests === undefined
+        || deps.unknownCallReviews === undefined ? undefined : createShellBlockedHook({
+        ctx: toolContext,
+        runRef,
+        taskId: manifest.claim.task.taskId,
+        workspace: { projectId: runRef.projectId, workspaceId: record.session.workspaceId },
+        binding: blockedBinding,
+        reviews: deps.unknownCallReviews,
+        requests: deps.commandRerunRequests,
+        ...(deps.commandRecognizer === undefined ? {} : { recognizer: deps.commandRecognizer }),
+      });
 
       // 4. A fresh authorization (or the existing authorized binding) still
       //    re-checks the current Role and Host. The accepted Run grant is kept:
@@ -538,7 +800,15 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       //    still fit both the current Host upper bound and the Role ceiling.
       let roleFacts;
       try {
-        roleFacts = await deps.roles.resolveRoleBindingFacts(owned, { roleBinding: record.run.roleBinding, declaredPermissions: manifest.permissions });
+        // R4/L13: a review-purpose Run resolves its Role with EMPTY declared
+        // permissions, so only the Role's declared tool ceiling is skipped; the
+        // fixed review tool set is admitted by `reviewRoundAdmissionProblem`
+        // below. Every other Run is unchanged.
+        roleFacts = await deps.roles.resolveRoleBindingFacts(owned, {
+          roleBinding: record.run.roleBinding,
+          declaredPermissions: isReviewRoundPurpose(record.run.purpose)
+            ? { tools: [], writeScope: [] } : manifest.permissions,
+        });
       } catch (error) {
         return rejected('unavailable', `Role resolution failed: ${messageOf(error)}`);
       }
@@ -558,14 +828,31 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         || !sameRef(hostConfig.hostTemplate, manifest.hostTemplate)) {
         return rejected('forbidden', 'the Host configuration revision or template changed since preparation');
       }
-      const roleCeiling = roleResolution.status === 'resolved' ? roleResolution.spec.permissions : null;
-      const hostTools = new Set(hostConfig.tools);
-      const ceilingTools = roleCeiling === null ? null : new Set(roleCeiling.tools);
-      if (manifest.permissions.policyRevision !== record.run.roleBinding.policyRevision
-        || !manifest.permissions.tools.every(tool => hostTools.has(tool) && (ceilingTools === null || ceilingTools.has(tool)))
-        || !manifest.permissions.writeScope.every(path => hostConfig.writeScope.includes(path))
-        || (roleCeiling?.writeScope === 'none' && manifest.permissions.writeScope.length !== 0)) {
-        return rejected('forbidden', 'the accepted Run permissions no longer fit the current Host and Role ceilings');
+      const policyRevisionMatches = manifest.permissions.policyRevision === record.run.roleBinding.policyRevision;
+      if (isReviewRoundPurpose(record.run.purpose)) {
+        // R4/L13: the review round's fixed tool set and empty write scope, with
+        // Host layer 1 still holding and the Role only skipped on its ceiling.
+        const admissionProblem = reviewRoundAdmissionProblem({
+          purpose: record.run.purpose,
+          tools: manifest.permissions.tools,
+          writeScope: manifest.permissions.writeScope,
+          hostTools: hostConfig.tools,
+          readonlyCommandAccess: hostConfig.readonlyCommandAccess ?? null,
+          roleValid: roleResolution.status !== 'inadmissible' && sameRef(roleResolution, manifest.role),
+        });
+        if (!policyRevisionMatches || admissionProblem !== null) {
+          return rejected('forbidden', `the review round permissions are not admitted: ${admissionProblem ?? 'policy_revision_mismatch'}`);
+        }
+      } else {
+        const roleCeiling = roleResolution.status === 'resolved' ? roleResolution.spec.permissions : null;
+        const hostTools = new Set(hostConfig.tools);
+        const ceilingTools = roleCeiling === null ? null : new Set(roleCeiling.tools);
+        if (!policyRevisionMatches
+          || !manifest.permissions.tools.every(tool => hostTools.has(tool) && (ceilingTools === null || ceilingTools.has(tool)))
+          || !manifest.permissions.writeScope.every(path => hostConfig.writeScope.includes(path))
+          || (roleCeiling?.writeScope === 'none' && manifest.permissions.writeScope.length !== 0)) {
+          return rejected('forbidden', 'the accepted Run permissions no longer fit the current Host and Role ceilings');
+        }
       }
       if (signal.aborted) return rejected('cancelled', 'the start was cancelled after the Host configuration read');
 
@@ -864,30 +1151,18 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           prepared.envelope,
         );
       }
-      let readonlyCommandTool: ((workspace: WorkspaceSandbox) => ToolDefinition) | undefined;
-      if (readonlyRequested && hostConfig.readonlyCommandAccess === 'all_except_denied'
-        && currentAuthorization !== undefined && currentAuthorization.status === 'ready'
-        && currentAuthorization.value.allowsRead('.')) {
-        const permissionRevision = currentAuthorization.value.permissionRevision;
-        readonlyCommandTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => createReadonlyCommandTool({
-          workspace: workspaceHandle,
-          workspaceRoot: rootResolved.value.root,
-          ...(hostConfig.processSandboxOptions.readOnlyPaths === undefined ? {} : { readOnlyPaths: hostConfig.processSandboxOptions.readOnlyPaths }),
-          ...(hostConfig.processSandboxOptions.executablePath === undefined ? {} : { executablePath: hostConfig.processSandboxOptions.executablePath }),
-          ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
-          authorization: {
-            permissionRevision,
-            current: async () => {
-              let current;
-              try { current = await deps.workspaceHost.authorize(owned, workspace); }
-              catch { return { status: 'rejected' as const, reason: 'the Host read policy could not be verified' }; }
-              if (current.status !== 'ready') return { status: 'rejected' as const, reason: current.reason };
-              return { status: 'ready' as const, permissionRevision: current.value.permissionRevision,
-                wholeWorkspaceRead: current.value.allowsRead('.') };
-            },
-          },
-        });
-      }
+      // U5: the ONE shared read-only command construction; the shared function
+      // applies the same L18 layer-1 gate and keeps this Run's authorization
+      // choice (the Host read re-check at every launch).
+      const readonlyCommandTool = registerReadonlyCommandTool({
+        requested: readonlyRequested,
+        access: hostConfig.readonlyCommandAccess,
+        authorization: currentAuthorization?.status === 'ready' ? currentAuthorization.value : undefined,
+        workspaceRoot: rootResolved.value.root,
+        processSandboxOptions: hostConfig.processSandboxOptions,
+        ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
+        authorizeCurrent: () => deps.workspaceHost.authorize(owned, workspace),
+      });
 
       // R4.3a real tool-group safe point: it reads the CURRENT canonical Run and
       // the accepted control intent. A cancel aborts this handle's own
@@ -915,22 +1190,30 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           // One unified input channel: ordinary mail, saved replies, steer and
           // mechanical attention are read here and only REALLY accepted by the
           // Kernel run.input_accepted commit.
-          const inputSupply = deps.messages === undefined ? undefined : createMailboxInputSupply({
-            messages: deps.messages,
-            context: () => toolContext,
-            sessionRef,
-            runRef,
-            controlInputs: async (point, options) => {
-              const inputs = await control?.inputs({ ...owned, signal: options.signal }, runRef) ?? [];
-              return inputs.flatMap(intent => {
-                const inputId = `control:${sha256Hex(canonicalJson(intent.ref as never))}`;
-                return point.acceptedInputIds.includes(inputId) || intent.reason === null ? [] : [{ inputId, text: intent.reason, sourceRef: { kind: 'ControlIntent', intentRef: intent.ref } }];
-              });
-            },
-            // A continuation still owns the prior yielded Run's saved reply; the
-            // exact original message identity is read Session-scoped.
-            ...(record.run.consumedWait === undefined ? {} : { consumedWait: { runRef: record.run.consumedWait.runRef, messageRef: record.run.consumedWait.messageRef } }),
-          });
+          const controlInputsFor: InputSupply = async (point, options) => {
+            const inputs = await control?.inputs({ ...owned, signal: options.signal }, runRef) ?? [];
+            return inputs.flatMap(intent => {
+              const inputId = `control:${sha256Hex(canonicalJson(intent.ref as never))}`;
+              return point.acceptedInputIds.includes(inputId) || intent.reason === null ? [] : [{ inputId, text: intent.reason, sourceRef: { kind: 'ControlIntent', intentRef: intent.ref } }];
+            });
+          };
+          // K3 L13: a review/proposal round has no collaboration tools, so it
+          // builds ONLY the control-input channel; Session letters and saved
+          // replies stay for the later continuation. Every ordinary Work Run
+          // keeps the mailbox channel unchanged.
+          const reviewRoundPurpose = record.run.purpose?.kind === 'unknown_call_review';
+          const inputSupply: InputSupply | undefined = reviewRoundPurpose
+            ? createControlOnlyInputSupply(controlInputsFor)
+            : deps.messages === undefined ? undefined : createMailboxInputSupply({
+              messages: deps.messages,
+              context: () => toolContext,
+              sessionRef,
+              runRef,
+              controlInputs: controlInputsFor,
+              // A continuation still owns the prior yielded Run's saved reply; the
+              // exact original message identity is read Session-scoped.
+              ...(record.run.consumedWait === undefined ? {} : { consumedWait: { runRef: record.run.consumedWait.runRef, messageRef: record.run.consumedWait.messageRef } }),
+            });
           await runObservedModel({
             kernel: deps.kernel, bound: hostConfig.model, meter, root: rootResolved.value.root, databasePath: location.databasePath,
             sessionId: record.session.kernel.kernelSessionId, input: manifest.input, budget: hostConfig.budget, readOnly,
@@ -940,10 +1223,18 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             allowedTools: builtinTools,
             ...(coordinationTools === null ? {} : { coordinationTools }),
             ...(readonlyCommandTool === undefined ? {} : { readonlyCommandTool }),
+            ...(unknownCallReviewTool === undefined ? {} : { unknownCallReviewTool }),
+            ...(unknownCallReviewToolName === undefined ? {} : { unknownCallReviewToolName }),
+            ...(commandRerunTool === undefined ? {} : { commandRerunTool }),
+            ...(commandRerunToolName === undefined ? {} : { commandRerunToolName }),
             // The file path check is only installed when `read` is actually
             // granted; an ungranted builtin read is rejected by the Kernel as an
             // unknown tool and must never open the source read policy.
-            controlHooks: hasFileRead ? [enteredHook, toolPathHook] : [enteredHook],
+            controlHooks: [
+              enteredHook,
+              ...(hasFileRead ? [toolPathHook] : []),
+              ...(shellBlockedHook === undefined ? [] : [shellBlockedHook]),
+            ],
             skills: hostConfig.skills,
             ...(hostConfig.systemInstruction === null ? {} : { systemInstruction: hostConfig.systemInstruction }),
             processSandboxOptions: hostConfig.processSandboxOptions,

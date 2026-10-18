@@ -41,6 +41,7 @@ import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { QueryJobRef } from '../../../contracts/query-job.js';
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
 import type { VerificationRoundRef } from '../../../contracts/verification.js';
+import type { ToolCommitLookup } from '../../../contracts/unknown-call-review.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort, RecordGuard, UniqueClaimChange } from '../../record-store/ports.js';
 import type { MessageQueryAnswerSender, MessageSender, SessionMailboxPort, SessionMessage,
@@ -243,6 +244,8 @@ export interface DecisionMessagePort {
   recordDecisionApplication(ctx: CoreCallContext, request: GraphWrite<{
     messageRef: SessionMessageRef; receipt: DecisionApplicationReceiptV1;
   }>): Promise<WriteResult<SessionMessage>>;
+  /** K3 L4: the read-only committed-receipt lookup for `record_decision_application`. */
+  lookupToolCommit?: ToolCommitLookup;
 }
 
 export interface RequestCandidatePort {

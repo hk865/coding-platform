@@ -10,6 +10,8 @@ import type { SessionMessageRef } from './core/session-message.js';
 import type { GoalRef, WorkspaceRef } from './ledger.js';
 import type { PlanRevisionRef } from './plan.js';
 import type { QueryJobAnswerRef, QueryJobRef } from './query-job.js';
+import type { UnknownCallReviewRef } from './unknown-call-review.js';
+import type { CommandRerunRequestRef } from './command-rerun-request.js';
 import { canonicalJson } from './fingerprint.js';
 
 // ------------------------------------------------------------------------ //
@@ -77,7 +79,8 @@ export type DecisionOptionV1 = {
 
 export type DecisionSourceV1 = {
   kind: 'message' | 'goal_cause' | 'candidate' | 'note_review'
-    | 'planning_question' | 'goal_conflict' | 'message_release';
+    | 'planning_question' | 'goal_conflict' | 'message_release'
+    | 'unknown_call_review' | 'command_rerun_request';
   key: string; goalRef: GoalRef; pins: VersionPin[];
   goalBases?: GoalDecisionBasisV1[];
 };
@@ -154,7 +157,9 @@ export type DecisionSourceIdentityV1 =
   | { kind: 'goal_conflict'; pair: [
       { goalRef: GoalRef; activePlanRef: PlanRevisionRef | null },
       { goalRef: GoalRef; activePlanRef: PlanRevisionRef | null },
-    ] };
+    ] }
+  | { kind: 'unknown_call_review'; reviewRef: UnknownCallReviewRef; revision: number }
+  | { kind: 'command_rerun_request'; requestRef: CommandRerunRequestRef; revision: number };
 
 const goalKey = (goalRef: GoalRef): string => canonicalJson(goalRef as never);
 const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -198,6 +203,14 @@ export function decisionSourceKey(identity: DecisionSourceIdentityV1): string {
       const pair = [...identity.pair].sort((a, b) => compareText(goalKey(a.goalRef), goalKey(b.goalRef)));
       return canonicalJson({ kind: 'goal_conflict', pair } as never);
     }
+    case 'unknown_call_review':
+      return canonicalJson({
+        kind: 'unknown_call_review', reviewRef: identity.reviewRef, revision: identity.revision,
+      } as never);
+    case 'command_rerun_request':
+      return canonicalJson({
+        kind: 'command_rerun_request', requestRef: identity.requestRef, revision: identity.revision,
+      } as never);
     default: {
       const unknownKind: never = identity;
       throw new Error(`unknown decision source identity ${JSON.stringify(unknownKind)}`);

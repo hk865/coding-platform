@@ -35,10 +35,12 @@
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import type {
-  ConsumedWaitV1, DispatchOutboxRef, RunOutcome, TaskAttemptSnapshot, TaskDispatchStateV2, TaskLeaseRef,
-  TaskLeaseSnapshot,
+  ConsumedWaitV1, DispatchOutboxRef, RunOutcome, RunRef, RunSnapshot, TaskAttemptSnapshot, TaskDispatchStateV2,
+  TaskLeaseRef, TaskLeaseSnapshot,
 } from '../../../contracts/dispatch.js';
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
+import type { UnknownCallReviewRef } from '../../../contracts/unknown-call-review.js';
+import { leaseReleasedForContinuation } from './review-lease.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 // -------------------------------------------------------------------------- //
@@ -123,11 +125,17 @@ export type AttemptGuardContext = {
   ownsLease: boolean;
 };
 
-/** How the claim reaches the Lease: first claim, W2 continuation, or a claim after a TaskRequeue (D-3). */
+/** How the claim reaches the Lease: first claim, W2 continuation, a TaskRequeue (D-3) or a review round (L10). */
 export type AttemptClaimBasis =
   | { kind: 'first' }
   | { kind: 'continuation'; consumedWait: ConsumedWaitV1 }
-  | { kind: 'requeue'; requeueRef: TaskRequeueRef };
+  | { kind: 'requeue'; requeueRef: TaskRequeueRef;
+      /** K3 (U3, L10): the releasing Run and its purpose, read in the same window. */
+      leaseRelease?: { releasedBy: RunRef; releasedByPurpose: RunSnapshot['purpose'] | null } }
+  | { kind: 'review'; reviewRef: UnknownCallReviewRef; expectedRevision: number; phase: 'review' | 'proposal';
+      /** The round number this claim opens (`rounds.length + 1`); the §2 basis
+       *  omits it, but the Run's `purpose.round` needs a carrier (UNSPECIFIED). */
+      round: number; afterRunRef: RunRef };
 
 /** `attempt_started` payload (§5.2; `recordExecutionEntered`). */
 export type AttemptStartedFacts = {
@@ -731,6 +739,8 @@ function leaseOnClaimed(
       case 'continuation': return reject('guard_failed', 'busy', 'the prior Run lease is not released by that Run');
       // ATT-14 is the first claim only: a requeue claim re-holds the lease its afterRun released (ATT-16).
       case 'requeue': return reject('guard_failed', 'busy', 'the requeue claim needs the lease its afterRun released');
+      // ATT-16r: the review claim needs the lease its afterRunRef (the last holder) released.
+      case 'review': return reject('guard_failed', 'busy', 'the review claim needs the lease its afterRun released');
       default: return unreachable(basis, 'claim basis');
     }
   }
@@ -747,11 +757,26 @@ function leaseOnClaimed(
         return reject('guard_failed', 'busy', 'the continuation prior Run lease is not released by that Run');
       }
       return accept(reheldLeaseRecord(state, event.claim));
-    case 'requeue':
-      // ATT-16 (D-3): the lease was released by the TaskRequeue's afterRun; an
-      // older requeue never claims again (§5.4).
-      if (state.release.runRef.runId !== basis.requeueRef.afterRunId) {
+    case 'requeue': {
+      // ATT-16 (D-3, L10): the lease was released by the TaskRequeue's afterRun
+      // or by one of the afterRun's review rounds; an older requeue never
+      // claims again (§5.4). The purpose of the releasing Run is read in the
+      // caller's window and enters through `leaseRelease`.
+      const afterRunRef: RunRef = { aggregateType: 'Run', projectId: basis.requeueRef.projectId,
+        goalId: basis.requeueRef.goalId, runId: basis.requeueRef.afterRunId };
+      if (!leaseReleasedForContinuation({
+        release: { runRef: state.release.runRef },
+        releasingRunPurpose: basis.leaseRelease?.releasedByPurpose ?? null,
+      }, afterRunRef)) {
         return reject('stale', 'revision_conflict', 'the Task lease was not released by the requeue afterRun');
+      }
+      return accept(reheldLeaseRecord(state, event.claim));
+    }
+    case 'review':
+      // ATT-16r (L10): `afterRunRef` is the record's most recent holder
+      // (`lastHolderOf`), so the release must name exactly that Run.
+      if (state.release.runRef.runId !== basis.afterRunRef.runId) {
+        return reject('stale', 'revision_conflict', 'the Task lease was not released by the review afterRun');
       }
       return accept(reheldLeaseRecord(state, event.claim));
     default: return unreachable(basis, 'claim basis');

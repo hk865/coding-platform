@@ -62,7 +62,8 @@ import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeu
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
-import { createSessionResponsibilityBasisReader } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { createSessionResponsibilityBasisReader, readCanonicalTaskFacts, readGoalPlanWindow } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { sessionWorkLinkRefKey, decodeSessionWorkLink }
@@ -73,6 +74,7 @@ import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
 import { DEFAULT_SESSION_ARCHIVE_POLICY, type WorkflowDependencies, type WorkflowHostConfiguration }
   from '../../src/business/workflow/ports.js';
@@ -86,7 +88,8 @@ const T1 = '2026-10-09T00:00:00.000Z';
 const ROLE_Y: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' };
 const ROLE_X: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'builder', templateRevision: '2' };
 const bundles = [SESSION_LIFECYCLE_RECORD_SCHEMAS, SESSION_ANOMALY_RECORD_SCHEMAS,
-  SESSION_MESSAGE_RECORD_SCHEMAS, QUERY_JOB_RECORD_SCHEMAS, CONTROL_RECORD_SCHEMAS];
+  SESSION_MESSAGE_RECORD_SCHEMAS, QUERY_JOB_RECORD_SCHEMAS, CONTROL_RECORD_SCHEMAS,
+  UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS];
 const SCHEMAS: RecordBackendSchemas = {
   records: bundles.flatMap(bundle => bundle.records), events: bundles.flatMap(bundle => bundle.events),
   lookups: bundles.flatMap(bundle => bundle.lookups ?? []),
@@ -374,15 +377,55 @@ async function attestedStop(f: HandoverBase): Promise<void> {
   // run-reconcile-service.ts:512-548; same inputs as S1 archive IT26:596.
   // The human Host owns the instance lease; unknown_attested != interrupted_clean.
   committed(await reconcile.resolveUnknownRun(f.ctx, {
-    input: { runRef: f.run, reason: 'Person confirms the old writer has stopped', kernelTurnOpen: true, inputsConfirmed: null },
+    input: { runRef: f.run, reason: 'Person confirms the old writer has stopped', kernelTurnOpen: true, inputsConfirmed: null,
+      review: { inventory: 'incomplete', inventoryProblem: 'kernel_unreadable', items: [], itemsOmitted: 0,
+        workspace: { status: 'unavailable', runBaselineKnown: false, reason: 'not_configured', detail: 'WP1' } } },
     meta: { requestId: f.requestId('attest'), expected: [await f.b2.pin()] },
   }));
+}
+
+/**
+ * K3 L21/L11: the attested record is `needs_decision`; the human resolves it
+ * through the same two owner calls the Host routes use (direct "I'll handle it"
+ * and "continue") before the human requeue, so the later continuation passes
+ * the review gate with `hold: 'released'` and no confirmation card.
+ */
+async function holdAndReleaseAttested(f: HandoverBase): Promise<void> {
+  const reads = createRunStateReader({ records: f.base.records });
+  let sequence = 0;
+  const reviews = createUnknownCallReviewService({
+    records: f.base.records,
+    reads,
+    readReviewDisplays: async () => ({ status: 'ready', value: new Map() }),
+    taskProjection: async (_ctx, task) => {
+      const goalRef: GoalRef = { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId };
+      const window = await readGoalPlanWindow(f.base.records, goalRef);
+      if (window.status !== 'ready') return window;
+      if (window.plan === null) {
+        return { status: 'rejected', code: 'not_found', reason: 'the Goal has no active Plan' };
+      }
+      return readCanonicalTaskFacts(f.base.records, goalRef, window.plan, task.taskId);
+    },
+    now: f.now, eventId: () => `${f.requestId('review-event')}-${String(++sequence)}`,
+  });
+  const read = await reviews.readReview(f.ctx, { runRef: f.run });
+  if (read.status !== 'ready') throw new Error(`WP1 review read failed: ${JSON.stringify(read)}`);
+  const expected = [{ ref: read.value.ref, revision: read.value.revision }];
+  const held = await reviews.holdReview(f.ctx, { input: { reviewRef: read.value.ref, text: null },
+    meta: { requestId: f.requestId('review-hold'), expected } });
+  if (held.status !== 'committed') throw new Error(`WP1 review hold failed: ${JSON.stringify(held)}`);
+  const released = await reviews.releaseHold(f.ctx, { input: { reviewRef: read.value.ref },
+    meta: { requestId: f.requestId('review-release'), expected: [{ ref: read.value.ref, revision: held.value.revision }] } });
+  if (released.status !== 'committed' || released.value.disposition?.hold !== 'released') {
+    throw new Error(`WP1 review release failed: ${JSON.stringify(released)}`);
+  }
 }
 
 export async function createInterruptedHandoverFixture(options: { responsibilities?: boolean } = {}) {
   const f = await createBase();
   try {
     await attestedStop(f);
+    await holdAndReleaseAttested(f);
     const requeue = await f.requeue();
     const composition = options.responsibilities === false
       ? await createHandoverWorkflow(f.b2, { now: f.now,

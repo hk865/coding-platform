@@ -100,6 +100,7 @@ import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../..
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -218,6 +219,7 @@ function proposalRefKey(proposal: PlanProposal): string {
 
 const additionalSchemas: RecordBackendSchemas[] = [QUERY_JOB_RECORD_SCHEMAS, SESSION_MESSAGE_RECORD_SCHEMAS,
   DECISION_RECORD_SCHEMAS, COMPLETION_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS,
+  UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS,
   SESSION_LIFECYCLE_RECORD_SCHEMAS];
 
 // These test-only indexes enumerate every registered aggregate on the SAME
@@ -265,7 +267,7 @@ export async function openS5RuntimeFixture(kind: S5FixtureKind = 'memory',
   const records = observed.records;
   const allocations = createS5Allocations();
   const { allocationCounts, newId, now } = allocations;
-  const bodyPath = join(directory, 's5-bodies.sqlite');
+  const bodyPath = join(directory, 'artifacts.sqlite');
   let bodies: RawArtifactStorePort;
   let closeBodies: () => Promise<void>;
   if (kind === 'sqlite') {

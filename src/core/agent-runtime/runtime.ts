@@ -17,9 +17,11 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import type { OperationReceipt, Page, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
 import type { RunRef } from '../../contracts/dispatch.js';
+import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
+import type { TaskRow } from '../work-graph/model/plan-contracts.js';
 import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
 import { GOAL_FAN_OUT_ACTOR, reworkActorClassOf } from '../../contracts/task-requeue.js';
-import { StoreError } from '../../../vendor/coding-agent/dist/public-api.js';
+import { ProcessSandbox, StoreError, WorkspaceSandbox } from '../../../vendor/coding-agent/dist/public-api.js';
 import { createExecutionDriver } from './execution-driver.js';
 import { createExecutionObservation } from './execution-observation.js';
 import { createRuntimeControlCoordinator } from './execution-control.js';
@@ -33,7 +35,10 @@ import { isPausedInterrupted } from '../work-graph/state/run-machine.js';
 import { createQueryPreparation } from './query-preparation.js';
 import { createQueryExecutionDriver } from './query-execution.js';
 import { createQueryObservation } from './query-observation.js';
-import type { RuntimeExecutionDependencies, TurnClosureDependencies } from './execution-contracts.js';
+import type { RuntimeExecutionDependencies, TurnClosureDependencies, ReadonlyCommandHostFacts } from './execution-contracts.js';
+import { readonlyCommandSandboxOptions } from './readonly-command-tool.js';
+import { WORKSPACE_DENIED_PREFIXES } from '../workspace/denied-prefixes.js';
+import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { AgentRuntimeService, RuntimeExecutionPort } from './ports.js';
 import type { RuntimeCapabilities } from './contracts.js';
 import type { CreateSessionRequest, SessionHistoryEntry, SessionHistoryRequest } from './session-operations.js';
@@ -140,25 +145,43 @@ function createCloseOpenTurn(
   type RefusalReason = Extract<TurnClosureOutcome, { status: 'refused' }>['reason'];
   const refusal = (reason: RefusalReason): TurnClosureOutcome => ({ status: 'refused', reason });
 
-  /** RUN-24 authorization: the TaskRequeue covers the afterRun and its requester
-   * is a person or the Goal-resume fan-out. The plan is the only place the
-   * requester is recorded, so a read that proves nothing refuses (rule 3): it
-   * must never allow a closure it cannot authorize. */
-  async function requeueAuthorizes(
-    ctx: CoreCallContext, taskId: string, afterRunRef: RunRef, requeueRef: TaskRequeueRef,
-  ): Promise<boolean> {
-    if (requeueRef.projectId !== afterRunRef.projectId || requeueRef.goalId !== afterRunRef.goalId
-      || requeueRef.taskId !== taskId || requeueRef.afterRunId !== afterRunRef.runId) return false;
+  /** The one TaskRow read both the paused (RUN-24) and the L27 review-purpose
+   * authorization use. A read that proves nothing is `null` and never
+   * authorizes (rule 3). */
+  async function readTaskRow(ctx: CoreCallContext, taskId: string, afterRunRef: RunRef): Promise<TaskRow | null> {
     try {
       const read = await deps.plans.queryTaskGraph(ctx, { goalRef: { aggregateType: 'Goal',
         projectId: afterRunRef.projectId, goalId: afterRunRef.goalId } });
-      if (read.status !== 'ready') return false;
-      const row = read.value.tasks.find((candidate) => candidate.ref.taskId === taskId);
-      const entry = row?.rework?.entries.find((candidate) => candidate.ref.afterRunId === afterRunRef.runId);
-      if (entry === undefined) return false;
-      if (reworkActorClassOf(null, entry.requestedBy) === 'human') return true;
-      return entry.requestedBy.kind === 'system' && entry.requestedBy.id === GOAL_FAN_OUT_ACTOR.id;
-    } catch { return false; }
+      if (read.status !== 'ready') return null;
+      return read.value.tasks.find((candidate) => candidate.ref.taskId === taskId) ?? null;
+    } catch { return null; }
+  }
+
+  /** RUN-24 authorization: the TaskRequeue covers the afterRun and its requester
+   * is a person or the Goal-resume fan-out. The plan is the only place the
+   * requester is recorded, so a missing row refuses (rule 3): it must never
+   * allow a closure it cannot authorize. */
+  function requeueAuthorizes(
+    row: TaskRow | null, taskId: string, afterRunRef: RunRef, requeueRef: TaskRequeueRef,
+  ): boolean {
+    if (requeueRef.projectId !== afterRunRef.projectId || requeueRef.goalId !== afterRunRef.goalId
+      || requeueRef.taskId !== taskId || requeueRef.afterRunId !== afterRunRef.runId) return false;
+    const entry = row?.rework?.entries.find((candidate) => candidate.ref.afterRunId === afterRunRef.runId);
+    if (entry === undefined) return false;
+    if (reworkActorClassOf(null, entry.requestedBy) === 'human') return true;
+    return entry.requestedBy.kind === 'system' && entry.requestedBy.id === GOAL_FAN_OUT_ACTOR.id;
+  }
+
+  /** K3 L27: a review-purpose Run is authorized by the review record itself
+   * once its ending is known and `settle_review` has taken it out of
+   * `activeRound` — it is read-only, never requeued, and closing its dangling
+   * Turn only makes the Session available again. */
+  function reviewPurposeAuthorizes(row: TaskRow | null, reviewRef: UnknownCallReviewRef, runId: string): boolean {
+    const review = row?.unknownCallReview;
+    if (review === undefined || review.status === 'unreadable') return false;
+    if (review.ref.aggregateType !== reviewRef.aggregateType || review.ref.projectId !== reviewRef.projectId
+      || review.ref.goalId !== reviewRef.goalId || review.ref.runId !== reviewRef.runId) return false;
+    return review.activeRound?.runRef.runId !== runId;
   }
 
   /**
@@ -265,11 +288,24 @@ function createCloseOpenTurn(
     const run23 = run.outcome === 'cancelled' && observation !== undefined
       && observation.kind === 'interrupted_clean' && observation.pausedIntentRef === null;
     const run22 = run.outcome === 'crashed' && observation !== undefined && observation.kind === 'human_attested';
+    // K3 L27: RUN-25 (crashed + takeover_unresolved) is authorized by the
+    // Host-instance takeover proof itself, so it needs no TaskRequeue — the same
+    // shape as RUN-22.
+    const run25 = run.outcome === 'crashed' && observation !== undefined && observation.kind === 'takeover_unresolved';
+    // L27: read the TaskRow once for both authorizations. A review-purpose Run
+    // (never RUN-25, D1) whose ending is known and which is no longer
+    // `activeRound` needs no TaskRequeue. RUN-19/22/23 already pass the
+    // non-paused branch, so this admits the paused review round (RUN-24).
+    const reviewPurpose = run.purpose?.kind === 'unknown_call_review' ? run.purpose : null;
+    const row = pausedInterrupted ? await readTaskRow(ctx, run.task.taskId, afterRunRef) : null;
+    const reviewAuthorized = pausedInterrupted && reviewPurpose !== null
+      && reviewPurposeAuthorizes(row, reviewPurpose.reviewRef, run.ref.runId);
     if (pausedInterrupted) {
-      if (requeueRef === null || !(await requeueAuthorizes(ctx, run.task.taskId, afterRunRef, requeueRef))) {
+      if (!reviewAuthorized
+        && (requeueRef === null || !requeueAuthorizes(row, run.task.taskId, afterRunRef, requeueRef))) {
         return refusal('continuation_not_authorized');
       }
-    } else if (!(run19 || run23 || run22)) {
+    } else if (!(run19 || run23 || run22 || run25)) {
       return refusal('not_closable_run');
     }
     // 3. Session facts
@@ -365,11 +401,103 @@ function createCloseOpenTurn(
   };
 }
 
+/**
+ * K3 (G6, L25; §2 K L4 item 5): the read-only closure-capability check the
+ * start-up classifier asks before it attaches a RUN-25 candidate. It proves
+ * what `closeOpenTurn` would prove about storage and the Kernel seam, minus the
+ * write and the Run end: the closure is installed, this Host holds the lease,
+ * the Session is readable, and its Kernel store is current and publishes
+ * `closeOpenTurn`/`readTurnBounds`. The Kernel head is compared by the
+ * classifier's own probe (`head_mismatch`).
+ */
+function createTurnClosureSupport(
+  deps: RuntimeExecutionDependencies,
+): NonNullable<RuntimeExecutionPort['turnClosureSupport']> {
+  const unsupported = (reason: string): { status: 'unsupported'; reason: string } => ({ status: 'unsupported', reason });
+  return async (ctx, input) => {
+    const closure = deps.turnClosure;
+    if (closure === undefined) return unsupported('the Runtime does not publish closeOpenTurn');
+    if (closure.lease !== 'owned') return unsupported('this Host does not hold the Host instance lease');
+    let card;
+    try { card = await deps.sessions.readSession(ctx, input.sessionRef); }
+    catch (error) { return unsupported(`the Session could not be read: ${error instanceof Error ? error.message : String(error)}`); }
+    if (card.status !== 'ready') return unsupported('the Session is not readable');
+    const session = card.value.record;
+    if (deps.kernel.closeOpenTurn === undefined || deps.kernel.readTurnBounds === undefined) {
+      return unsupported('the Kernel does not publish closeOpenTurn');
+    }
+    const location = deps.kernelStores.byAdapterId(session.kernel.adapterId);
+    if (location === null || 'expectedSessionId' in location) {
+      return unsupported('the Session Kernel store is legacy or another adapter, so it cannot close a Turn');
+    }
+    return { status: 'supported' };
+  };
+}
+
+/**
+ * K3 L13/U5/R3: the read-only `reviewCapability` query. It answers whether the
+ * review/proposal round for this workspace+Role could register the real
+ * `run_readonly_command` tool: the Host switch is on, the whole workspace is
+ * readable and `ProcessSandbox` proves the read-only sandbox with EXACTLY the
+ * options the real tool would be built with (`readonlyCommandSandboxOptions`).
+ * It selects the binding by Role and never resolves the model. It never writes,
+ * never starts a round and never falls back to a host shell.
+ */
+function createReviewCapability(
+  deps: RuntimeExecutionDependencies,
+): NonNullable<RuntimeExecutionPort['reviewCapability']> {
+  const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
+  const unavailable = (reason: string): { status: 'unavailable'; reason: string } => ({ status: 'unavailable', reason });
+  return async (ctx, input) => {
+    const workspace: WorkspaceRef = {
+      aggregateType: 'Workspace', projectId: input.workspace.projectId, workspaceId: input.workspace.workspaceId,
+    };
+    let facts: ReadonlyCommandHostFacts | null;
+    try { facts = await deps.readonlyCommandAccess?.(input) ?? null; }
+    catch (error) { return unavailable(`the Host read-only command switch could not be read: ${message(error)}`); }
+    if (facts === null || facts.access !== 'all_except_denied') {
+      return unavailable('the Host read-only command switch is off');
+    }
+    let resolved;
+    try { resolved = await deps.workspaceHost.resolveRoot(workspace); }
+    catch (error) { return unavailable(`the workspace root could not be resolved: ${message(error)}`); }
+    if (resolved.status !== 'ready') return unavailable(resolved.reason);
+    let authorized;
+    try { authorized = await deps.workspaceHost.authorize(ctx, workspace); }
+    catch (error) { return unavailable(`the Host read policy could not be read: ${message(error)}`); }
+    if (authorized.status !== 'ready') return unavailable(authorized.reason);
+    if (!authorized.value.allowsRead('.')) return unavailable('the Host read grant is not the whole workspace');
+    let handle: WorkspaceSandbox;
+    try {
+      handle = await WorkspaceSandbox.create(resolved.value.root, { deniedPrefixes: [...WORKSPACE_DENIED_PREFIXES] });
+    } catch (error) { return unavailable(`the workspace handle could not be created: ${message(error)}`); }
+    try {
+      // D-PROBE: the probe and the real tool share ONE options object.
+      const options = readonlyCommandSandboxOptions({
+        ...facts.processSandboxOptions,
+        ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
+      });
+      const profile = await ProcessSandbox.probe(resolved.value.root, handle, options);
+      if (!profile.available) return unavailable(profile.reason ?? 'the read-only sandbox is unavailable');
+      return { status: 'available' };
+    } catch (error) {
+      return unavailable(`the read-only sandbox probe failed: ${message(error)}`);
+    }
+  };
+}
+
 export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRuntimeService {
   if (deps === undefined) return { port: basePort() };
 
   const contextAssembler = createContextAssembler(deps);
-  const preparation = createExecutionPreparation(deps, contextAssembler);
+  // Rework 2 item 2: the Task-closure reader is REQUIRED by `prepare`. An old
+  // direct caller that does not wire the optional shell dependency gets a
+  // FAIL-CLOSED reader (rejected `unavailable`), never "absent means open";
+  // the composition root always wires the real reader.
+  const readTaskClosure: NonNullable<RuntimeExecutionDependencies['readTaskClosure']> =
+    deps.readTaskClosure ?? (async () => ({ status: 'rejected' as const, code: 'unavailable' as const,
+      reason: 'this Runtime construction did not wire the Task-closure reader' }));
+  const preparation = createExecutionPreparation({ ...deps, readTaskClosure }, contextAssembler);
   // R4.3a: the ONE internal control coordinator is assembled before the observer
   // and driver so both share the exact same instance and its private
   // exit/cleanup proof seam. The raw `controls` dependency is optional; without
@@ -614,5 +742,12 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
   if (deps.turnClosure !== undefined) {
     port.closeOpenTurn = createCloseOpenTurn(deps, historyCursorOwner);
   }
+  // K3 (G6): the read-only check is published whenever the closure dependency is.
+  if (deps.turnClosure !== undefined) {
+    port.turnClosureSupport = createTurnClosureSupport(deps);
+  }
+  // K3 L13/U5: the review-round read-only capability is always published; without
+  // the Host switch dependency it answers `unavailable` (fail closed).
+  port.reviewCapability = createReviewCapability(deps);
   return { port };
 }

@@ -7,19 +7,25 @@ import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';
 import type { QueryJobAnswerSnapshot, QueryJobIntentV1 } from '../../contracts/query-job.js';
 import type { RoleBindingRefV1, RunRef, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
+import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
+import type { CommandRerunRequestRef } from '../../contracts/command-rerun-request.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
+import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import type { GoalDecisionCauseReadV1 } from '../../core/work-graph/model/decision-contracts.js';
 import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
 import type { CreateGoalInput, GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
 import type { TaskClaimPort } from '../../core/work-graph/model/claim-contracts.js';
+import type { UnknownCallReviewPort } from '../../core/work-graph/model/unknown-call-review-contracts.js';
 import type { InitialPlanProposalResult, PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
 import type { EvidencePort } from '../../core/work-graph/model/evidence-contracts.js';
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { RegisteredCheckRunner } from '../../core/agent-runtime/check-execution.js';
 import type { SessionResponsibilityPort } from '../../core/work-graph/sessions/session-responsibility-service.js';
+import type { RunControlPort } from '../../core/work-graph/tasks/control-contracts.js';
 import type { InternalSessionArchivePort } from './session-archive.js';
+import type { DecisionActionsPort } from './decision-actions.js';
 
 /**
  * Slice 5 §4.5 (F48): the finite decision-resolution DTOs are declared ONCE in
@@ -29,6 +35,27 @@ import type { InternalSessionArchivePort } from './session-archive.js';
 export type {
   ResolveDecisionInputV1, ResolveDecisionReadV1,
 } from '../../core/work-graph/model/decision-contracts.js';
+
+/**
+ * K3 B3 (ruling 4, answer 7): one answered, unapplied card the start-up hands
+ * to the ONE Workflow advance, keyed by its decision source. The UCR owner's
+ * `listUnappliedAnswers` and the CRR reader both feed it through the same
+ * `k3-decision-answer-by-source-goal` index; the Workflow dispatches the
+ * matching advance by `kind`.
+ */
+export type RedriveAnswerV1 =
+  | { kind: 'unknown_call_review'; reviewRef: UnknownCallReviewRef; answerMessageRef: SessionMessageRef }
+  | { kind: 'command_rerun_request'; requestRef: CommandRerunRequestRef; answerMessageRef: SessionMessageRef };
+
+/**
+ * K3 UR7 rework 1 (answer 7): ONE internal discriminated failed-card ref. The
+ * continuous selection accumulates failures of both card kinds; the kind keys
+ * the ref so a CRR request is never mistaken for a UCR record and a later
+ * failure never replaces an earlier one.
+ */
+export type FailedCardRefV1 =
+  | { kind: 'unknown_call_review'; reviewRef: UnknownCallReviewRef }
+  | { kind: 'command_rerun_request'; requestRef: CommandRerunRequestRef };
 
 /** N0-only accepted shape. The full GoalInput proposal/decision protocol is
  * deliberately absent until WorkGraph publishes its real proposal Port. */
@@ -75,6 +102,26 @@ export type WorkflowCalls = {
   requeue_task: NonNullable<TaskClaimPort['requeueTask']>;
   reverify_round: NonNullable<EvidencePort['reverifyRound']>;
   /**
+   * K3 (spec §2, §3.4 UR4/UR2, L16): the one Workflow step that settles a
+   * review record (`round_ended`), or settles it directly when the read-only
+   * command capability is unavailable (`review_unavailable`). It is the exact
+   * UnknownCallReview owner method. Session B adds `apply_review_disposition`;
+   * `cancel_review_round` is declared beside it below.
+   */
+  settle_review: UnknownCallReviewPort['settleReview'];
+  /**
+   * K3 §3.4 UR3h / L21 (ruling 3): the Workflow's own automation cancels a
+   * review round claimed but never entered (including one paused before entry),
+   * through the existing control owner and pinned to the Run revision it read.
+   */
+  cancel_review_round: RunControlPort['submitControl'];
+  /**
+   * K3 §3.4 UR7/UR7b (L19, ruling 9): run ② (the adapter table) and ③ on an
+   * already answered review card, keyed by the answer's captured source kind.
+   * The coordinator replays ② by the answer-derived identity; no second answer.
+   */
+  apply_review_disposition: DecisionActionsPort['advanceReviewDisposition'];
+  /**
    * E15 (wiring 1 §4.4, L10): hand the continued Task's responsibility to the
    * new Session. This is exactly `SessionResponsibilityPort`'s own method,
    * called as the platform automation actor with a deterministic `wf-auto:`
@@ -100,6 +147,20 @@ export type WorkflowStepKind = keyof WorkflowCalls;
 export type WorkflowSessionRequeue = { requeueRef: TaskRequeueRef; budget: TaskBudgetV1 | null };
 
 /**
+ * K3 (spec §2 L10/L12/L13): the review round a new Session is created for. It
+ * is mutually exclusive with `WorkflowSessionRequeue`. `afterRunRef` is
+ * `lastHolderOf(record)` (the most recent round Run, or the record's original
+ * Run when it has no rounds); the new Session claims with this review.
+ */
+export type WorkflowSessionReview = {
+  reviewRef: UnknownCallReviewRef;
+  expectedRevision: number;
+  phase: 'review' | 'proposal';
+  afterRunRef: RunRef;
+  budget: TaskBudgetV1;
+};
+
+/**
  * What a handover step carries so the claim of the continuation can follow it
  * (wiring 1 §2.3, L10/L17): the continued Task and its Plan, the new Session,
  * and, on the crash-recovery path, the requeue this advancement claims with.
@@ -109,6 +170,8 @@ export type WorkflowHandoverContinuation = {
   planRef: PlanRevisionRef;
   successor: SessionRef;
   requeue?: WorkflowSessionRequeue;
+  /** K3 L12: a review-round create_session's handover claims with this review. */
+  review?: WorkflowSessionReview;
 };
 
 /**
@@ -123,9 +186,9 @@ export type WorkflowHandoverContinuation = {
 export type WorkflowOperation = {
   [K in WorkflowStepKind]: { kind: K; request: Parameters<WorkflowCalls[K]>[1] }
     & (K extends 'create_session'
-      ? { taskRef: TaskTriple; planRef: PlanRevisionRef; requeue?: WorkflowSessionRequeue }
+      ? { taskRef: TaskTriple; planRef: PlanRevisionRef; requeue?: WorkflowSessionRequeue; review?: WorkflowSessionReview }
       : K extends 'close_open_turn'
-        ? { taskRef: TaskTriple; planRef: PlanRevisionRef; requeue: WorkflowSessionRequeue }
+        ? { taskRef: TaskTriple; planRef: PlanRevisionRef; requeue?: WorkflowSessionRequeue; review?: WorkflowSessionReview }
       : K extends 'transfer_responsibility' | 'archive_predecessor'
         ? WorkflowHandoverContinuation : {})
 }[WorkflowStepKind];
@@ -146,6 +209,33 @@ export type WorkflowAdvanceBase = {
    * lets same-Goal independent Tasks advance on their own.
    */
   taskId?: string;
+  /**
+   * K3 L28 step 6b (c) kind 4 / UR7b: the answers the start-up reconcile hands
+   * over for this Goal, each driven by its own `reviewRef` (M2). Optional
+   * everywhere: an ordinary advance has none (UR7 covers the selected Run's
+   * record), so the historical callers and the `{ listReviews }`-only start-up
+   * seam are unchanged.
+   */
+  answers?: RedriveAnswerV1[];
+};
+
+/**
+ * K3-46 rework 4: Host-driver-only carry of cards whose ② already failed in this
+ * continuous selection; never a public advance input. The Workflow's advance
+ * takes it as a separate internal argument that the public route never passes.
+ */
+export type WorkflowAdvanceInternal = {
+  /**
+   * K3 UR7 rework 1 (answer 7): the union carry of both failed card kinds. The
+   * Workflow's advance takes it as a separate internal argument that the public
+   * route never passes.
+   */
+  failedCardRefs?: FailedCardRefV1[];
+  /**
+   * B1 rework 4 legacy UCR-only carry. The installed Host driver still sends
+   * this field; it is parsed into the same union set and kept for compatibility.
+   */
+  failedReviewRefs?: UnknownCallReviewRef[];
 };
 
 /** `select_work` is read-only; `perform` names one already-determined step. */
@@ -166,6 +256,20 @@ export type WorkflowAdvanceResult = CoreRejection | {
     state: 'advance' | 'waiting' | 'completed';
     receipt: WorkflowStepReceipt | null;
     next: WorkflowAdvanceInput | null;
+    /**
+     * K3 UR7 rework 1 (answer 7): the union failed-card set the Host driver
+     * carries into the next step of the same continuous selection. Present
+     * beside `next` (never inside it) only when the successor is a `select_work`
+     * or another `apply_review_disposition` and the set is non-empty; absent
+     * otherwise and on every `waiting`/`completed` result.
+     */
+    failedCardRefs?: FailedCardRefV1[];
+    /**
+     * K3-46 rework 4 compatibility projection of `failedCardRefs`: the UCR refs
+     * only, still sent to the installed Host driver. A CRR-only set leaves this
+     * absent so the driver's UCR array never holds a foreign shape.
+     */
+    failedReviewRefs?: UnknownCallReviewRef[];
     reason: string | null;
     /**
      * Slice 1 E17 (§4.2 S:823): the per-Session failures of the bounded
@@ -181,6 +285,12 @@ export type WorkflowAdvanceResult = CoreRejection | {
      * never fabricates a GoalPhase or changes the display reduction.
      */
     decisionCause?: GoalDecisionCauseReadV1 | null;
+    /**
+     * K3 L11/UR6 (ruling 6): a `waiting` selection blocked by an unsettled
+     * review card carries the card's formal source, so the display can open
+     * exactly that card. Absent/null keeps the historical reason-only result.
+     */
+    source?: DecisionSourceV1 | null;
   };
 };
 

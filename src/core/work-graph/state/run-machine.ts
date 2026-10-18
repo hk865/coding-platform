@@ -38,6 +38,12 @@ import {
   type RunSnapshot, type RuntimeEventV1, type RuntimeInputBindingV1, type TaskBudgetV1, type TaskLeaseSnapshot,
 } from '../../../contracts/dispatch.js';
 import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import type {
+  HostTakeoverProofV1, UnknownCallReviewDraftV1, UnknownCallReviewRef, WorkspaceCaptureV1,
+} from '../../../contracts/unknown-call-review.js';
+import { admitsAutoCleanupTakeover, containedByHostStop } from './unknown-call-kinds.js';
+import { leaseReleasedForContinuation } from './review-lease.js';
+import { newUnknownCallReview } from './unknown-call-review.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
@@ -439,7 +445,17 @@ export type RunEvent =
    */
   | { kind: 'reconcile_unknown'; claim: TaskClaim; basis: RunReconciliationBasisV1;
       cause: RunUnknownCause; unresolvedToolCallIds: readonly string[]; observedThroughPosition: number | null;
-      turn: RunTurnFacts | null; recordedAt: string }
+      turn: RunTurnFacts | null; recordedAt: string;
+      /**
+       * K3 (L25): the classifier's automatic-closure candidate, or the
+       * `blockedBy` it already proved. Absent for every pre-K3 RUN-20 event.
+       */
+      autoCleanup?: AutoCleanupCandidateV1 | { blockedBy: string };
+      /**
+       * K3 RUN-25 only: the commit's event id for the synthesized `run_crashed`
+       * (the §2 event sketch carries `recordedAt` but no event id; UNSPECIFIED).
+       */
+      factEventId?: string }
   /** RUN-21 (K/R). */
   | ({ kind: 'late_evidence'; claim: TaskClaim; basis: RunReconciliationBasisV1; recordedAt: string;
       factEventId: string } & RunTerminalEvidence)
@@ -458,6 +474,21 @@ export const RUN_UNRESOLVED_TERMINAL_REASON = 'tool_calls_unresolved';
 /** The operator of a RUN-22 attestation (contract (a) `human_attested.attestedBy`). */
 export type RunAttestor = Extract<RunReconciliationV1['observation'], { kind: 'human_attested' }>['attestedBy'];
 
+/**
+ * K3 RUN-25 (L25, §2 `AutoCleanupCandidateV1`, plus U1's `unresolvedCalls`): the
+ * classifier's automatic-closure candidate. The state machine re-checks its own
+ * guard side against `RunGuardContext`; the service maps the real
+ * `run-reconcile-contracts.ts` shape onto this one.
+ */
+export type AutoCleanupCandidateV1 = {
+  proof: HostTakeoverProofV1;
+  closure: { status: 'supported'; headActiveRunId: string };
+  workspace: WorkspaceCaptureV1;
+  /** U1: every unresolved call with its Kernel tool name (G3). */
+  unresolvedCalls: Array<{ callId: string; toolName: string }>;
+  draft: UnknownCallReviewDraftV1;
+};
+
 /** RUN-01 facts beyond the shared context (`claim-service.ts:510-666`); `null` for every other event. */
 export type RunClaimContext = {
   /** The target Session already has an occupancy (`claim-service.ts:543`). */
@@ -466,6 +497,14 @@ export type RunClaimContext = {
   eligibility: CoreRejection | null;
   /** First claim: the Task already has a Run (`:639-641`). */
   taskHasRun: boolean;
+  /**
+   * K3-38 (L11, D3): the selected Run's UnknownCallReview as the owner read it.
+   * Absent means "no record" (`not_found`, a K3-before record); `pending` (not
+   * `resolved`) and `held` refuse an ordinary `first`/`requeue` claim `busy`
+   * with `unknown_call_review_pending` / `unknown_call_review_held`;
+   * `unreadable` refuses `unavailable` (L7 fail-closed). A review claim passes.
+   */
+  reviewBlocker?: 'pending' | 'held' | 'unreadable';
   /** Continuation claim: the yielded prior Run the claim consumes; `null` when it is not a Run of this Task. */
   prior: null | {
     node: RunNode;
@@ -479,6 +518,8 @@ export type RunClaimContext = {
   };
   /** Requeue claim (TASK-03, D-3); `null` when the claim's `requeueRef` names no TaskRequeue of this Task. */
   requeue: ClaimRequeueFacts | null;
+  /** Review claim (TASK-03r/RUN-01r, L10); null/absent for every other basis. */
+  review?: ReviewClaimFacts | null;
   /** Assignment, role and deadline admission (`:643-666`); `null` when admitted. */
   admission: CoreRejection | null;
 };
@@ -494,7 +535,59 @@ export type ClaimRequeueFacts = {
   leaseReleasedByAfterRun: boolean;
   /** `requeue.budget` is null or canonically equal to the claim budget (C1). */
   budgetPinned: boolean;
+  /**
+   * K3 (U3, L10): the lease release facts read in the same window, so a release
+   * by one of the afterRun's review rounds also admits the continuation.
+   */
+  leaseRelease?: { releasedBy: RunRef; releasedByPurpose: RunSnapshot['purpose'] | null };
+  /** K3 (TASK-03, item 3): the requeue's afterRun, so `requeueClaimProblem` can call the shared release rule. */
+  afterRunRef?: RunRef;
 };
+
+/**
+ * K3 (L10, TASK-03r/RUN-01r): the review-claim facts, read in one window. Every
+ * failing member has its own row in `reviewClaimProblem`; `afterRunRef` is the
+ * record's most recent holder (`lastHolderOf`, L12).
+ */
+export type ReviewClaimFacts = {
+  reviewRef: UnknownCallReviewRef;
+  phase: 'review' | 'proposal';
+  round: number;
+  stateEntry: number;
+  /** The record's current revision equals the claim's `expectedRevision`. */
+  revisionMatches: boolean;
+  /** `pending_review` ↔ `review`, `awaiting_proposal` ↔ `proposal`. */
+  statusMatchesPhase: boolean;
+  hold: 'held' | 'released' | null;
+  activeRoundEmpty: boolean;
+  roundsHaveSlot: boolean;
+  /** The Task's selected Run is `record.runRef`. */
+  selectedRunIsRecordRun: boolean;
+  /** The released lease names `afterRunRef`. */
+  leaseReleasedByAfterRun: boolean;
+  /** `afterRunRef` is R or one of the record's rounds. */
+  afterRunRefIsHolder: boolean;
+  /** The projection is P6, or P4 and the covering TaskRequeue's afterRun is R. */
+  projectionAdmitsReview: boolean;
+};
+
+/**
+ * TASK-03r / RUN-01r (L10): the fourth claim basis. First failing guard wins;
+ * the order is the §3.1 row's.
+ */
+export function reviewClaimProblem(review: ReviewClaimFacts | null): Rejected | null {
+  if (review === null) return reject('illegal', 'invalid', 'the review claim names no review-record facts');
+  if (!review.revisionMatches) return reject('stale', 'revision_conflict', 'the review record revision moved');
+  if (!review.statusMatchesPhase) return reject('guard_failed', 'busy', 'the review record status and phase disagree');
+  if (review.hold === 'held') return reject('guard_failed', 'busy', 'the review record is held ("I will handle it")');
+  if (!review.activeRoundEmpty) return reject('guard_failed', 'busy', 'the review record already has an active round');
+  if (!review.roundsHaveSlot) return reject('guard_failed', 'busy', 'the review record has no free round slot');
+  if (!review.selectedRunIsRecordRun) return reject('stale', 'revision_conflict', 'the selected Run is not the review record Run');
+  if (!review.leaseReleasedByAfterRun) return reject('stale', 'revision_conflict', 'the Task lease was not released by the review afterRun');
+  if (!review.afterRunRefIsHolder) return reject('stale', 'revision_conflict', 'the review afterRun is not the record Run or one of its rounds');
+  if (!review.projectionAdmitsReview) return reject('guard_failed', 'busy', 'the Task projection does not admit a review claim');
+  return null;
+}
 
 /**
  * TASK-03 / RUN-01 (D-3, TD-3, C1) in §4.3 order: the named TaskRequeue covers
@@ -505,7 +598,14 @@ export function requeueClaimProblem(requeue: ClaimRequeueFacts | null): Rejected
   if (requeue === null || !requeue.coversSelectedRun) {
     return reject('stale', 'revision_conflict', 'the requeueRef does not name the TaskRequeue covering the selected Run');
   }
-  if (!requeue.leaseReleasedByAfterRun) {
+  // K3 (L10, item 3): use the shared release rule when the window read the
+  // release facts; a release by one of the afterRun's review rounds admits the
+  // continuation too. Without them, today's boolean stands.
+  const released = requeue.leaseRelease !== undefined && requeue.afterRunRef !== undefined
+    ? leaseReleasedForContinuation({ release: { runRef: requeue.leaseRelease.releasedBy },
+        releasingRunPurpose: requeue.leaseRelease.releasedByPurpose }, requeue.afterRunRef)
+    : requeue.leaseReleasedByAfterRun;
+  if (!released) {
     return reject('stale', 'revision_conflict', 'the Task lease was not released by the requeue afterRun');
   }
   if (!requeue.budgetPinned) return reject('illegal', 'invalid', 'the requeue pins the claim budget');
@@ -523,19 +623,40 @@ export function claimPinProblem(goalDesiredState: GoalDesiredState, activePlanMa
 }
 
 /**
+ * K3 L11: the claim refusal of one selected-Run review blocker (the owner's
+ * `reviewBlocker`). `pending`/`held` are `busy` with their exact reason text;
+ * `unreadable` is fail-closed `unavailable`. `undefined` is no blocker.
+ */
+export function reviewBlockerProblem(blocker: 'pending' | 'held' | 'unreadable' | undefined): Rejected | null {
+  switch (blocker) {
+    case 'pending': return reject('guard_failed', 'busy', 'unknown_call_review_pending');
+    case 'held': return reject('guard_failed', 'busy', 'unknown_call_review_held');
+    case 'unreadable': return reject('guard_failed', 'unavailable', 'unknown_call_review_unreadable');
+    default: return null;
+  }
+}
+
+/**
  * RUN-01 and TASK-01..03 after each machine's own Session, Task, phase and
  * lease guards, in `claim-service.ts:510-666` order: the claim basis, then the
  * assignment, role and deadline admission. Both machines answer one claim
  * commit with this one copy.
  */
 export function claimBasisProblem(
-  basis: AttemptClaimBasis, facts: Pick<RunClaimContext, 'taskHasRun' | 'prior' | 'requeue' | 'admission'>,
+  basis: AttemptClaimBasis,
+  facts: Pick<RunClaimContext, 'taskHasRun' | 'prior' | 'requeue' | 'review' | 'admission' | 'reviewBlocker'>,
 ): Rejected | null {
+  const pendingReview = (): Rejected | null => reviewBlockerProblem(facts.reviewBlocker);
   switch (basis.kind) {
-    case 'first':
+    case 'first': {
+      const pending = pendingReview();
+      if (pending !== null) return pending;
       if (facts.taskHasRun) return reject('guard_failed', 'busy', 'this Task already has a Run and cannot be claimed for the first time');
       break;
+    }
     case 'requeue': {
+      const pending = pendingReview();
+      if (pending !== null) return pending;
       // D-3 (TASK-03, TD-3, ATT-16): only the TaskRequeue covering the selected
       // Run (P4) admits a new Attempt; the Run records its `requeueRef`.
       const problem = requeueClaimProblem(facts.requeue);
@@ -543,6 +664,8 @@ export function claimBasisProblem(
       break;
     }
     case 'continuation': {
+      const pending = pendingReview();
+      if (pending !== null) return pending;
       const prior = facts.prior;
       if (prior === null) return reject('guard_failed', 'busy', 'the continuation prior Run is not a Run of this Task');
       if (prior.node !== 'YieldedWait') {
@@ -555,6 +678,11 @@ export function claimBasisProblem(
       }
       if (!prior.leaseReleasedByPrior) return reject('guard_failed', 'busy', 'the continuation prior Run lease is not released by that Run');
       if (prior.replyProblem !== null) return rejected(prior.replyProblem);
+      break;
+    }
+    case 'review': {
+      const problem = reviewClaimProblem(facts.review ?? null);
+      if (problem !== null) return problem;
       break;
     }
     default: return unreachable(basis, 'claim basis');
@@ -633,10 +761,31 @@ export type RunGuardContext = {
   kernelPaused: boolean;
   /** Every `run.input_accepted` of the Turn is confirmed; `null` when the Kernel is unreadable. */
   inputsConfirmed: boolean | null;
+  /**
+   * K3 RUN-25 guards (U1), filled by group 2. G1: the HostInstanceFacts.takeover
+   * read by WorkGraph, compared with the candidate's proof (absent = no proof).
+   */
+  takeoverProof?: HostTakeoverProofV1 | null;
+  /** K3 G7: Session active, no archive request, no handover successor, occupancy is this Run. */
+  sessionClosable?: boolean;
+  /** K3 G9: `priorAutoCleanup(R)` is explicitly false (L23). */
+  priorAutoCleanup?: boolean;
+  /** K3: the other L23 streak values written into the created record. */
+  priorUnknownProcess?: boolean;
+  streakResetRunRef?: RunRef | null;
   /** The rework actor class of the caller (§1.3): `human` = operator. */
   actor: 'human' | 'system';
   /** RUN-01 only. */
   claim: RunClaimContext | null;
+  /**
+   * K3 RUN-02 (L11, D3): present only for a review-purpose Run. The owner reads
+   * the record in the same window; `undefined` (not read yet) holds, so the
+   * guard fires only on the authoritative transition. `waitingForRound` is
+   * false when the record no longer waits for this Run (status/phase, active
+   * round, or `hold`); `instructionDigestMatches` pins the prepared review
+   * instruction's revision/phase/round to the record.
+   */
+  reviewEntry?: { waitingForRound: boolean; instructionDigestMatches: boolean } | null;
 };
 
 /** §7 events a Run commit carries for one ControlIntent (`intent:<§7 事件>`). */
@@ -667,7 +816,12 @@ export type RunEffect =
   /** The shared Kernel identity unique slot: `none → self` or `self → self`. */
   | { kind: 'claim_kernel_slot'; kernel: RunKernelBinding; expectedOwner: 'none' | 'self' }
   /** `intent:<§7 事件>` for one intent. */
-  | { kind: 'intent'; event: RunIntentEvent; intentRef: ControlIntentRef };
+  | { kind: 'intent'; event: RunIntentEvent; intentRef: ControlIntentRef }
+  /** K3 RUN-01r: the same commit writes the record's `activeRound` (UCR-03). */
+  | { kind: 'record_review_round_claim'; reviewRef: UnknownCallReviewRef; runRef: RunRef;
+      phase: 'review' | 'proposal'; round: number; stateEntry: number }
+  /** K3 RUN-25: the same commit creates the review record (UCR-01). */
+  | { kind: 'create_review_record'; review: import('../../../contracts/unknown-call-review.js').UnknownCallReviewV1 };
 
 export type RunTransition = Transition<RunState, RunEvent, RunEffect>;
 
@@ -698,6 +852,8 @@ export function newRunRecord(input: NewRunInput): RunSnapshot {
     lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null,
     ...(basis.kind === 'continuation' ? { consumedWait: structuredClone(basis.consumedWait) } : {}),
     ...(basis.kind === 'requeue' ? { requeueRef: basis.requeueRef } : {}),
+    ...(basis.kind === 'review' ? { purpose: { kind: 'unknown_call_review' as const,
+      reviewRef: structuredClone(basis.reviewRef), phase: basis.phase, round: basis.round } } : {}),
   };
 }
 
@@ -1267,6 +1423,12 @@ function onClaimCommitted(event: Extract<RunEvent, { kind: 'claim_committed' }>,
     { kind: 'outbox', change: 'pending' },
     { kind: 'hold_lease' },
     { kind: 'occupy_session', holder: claim.runRef, generation: claim.generation },
+    // RUN-01r (L10): the review claim writes the record's activeRound in the
+    // same commit (UCR-03); the service translates the effect.
+    ...(event.basis.kind === 'review' ? [{ kind: 'record_review_round_claim' as const,
+      reviewRef: structuredClone(event.basis.reviewRef), runRef: claim.runRef,
+      phase: event.basis.phase, round: event.basis.round,
+      stateEntry: ctx.claim?.review?.stateEntry ?? 0 }] : []),
   ]);
 }
 
@@ -1290,6 +1452,10 @@ function onEntryAuthorized(
   if (persisted !== null) return persisted;
   const prepared = preparedBindingGuard(run, event.envelope);
   if (prepared !== null) return prepared;
+  // K3 RUN-02 (L11, D3): a review-purpose Run enters only while the record
+  // still waits for this round and the prepared review instruction matches it.
+  const reviewEntry = reviewEntryProblem(run, ctx.reviewEntry);
+  if (reviewEntry !== null) return reviewEntry;
   if (state.legacyV1) {
     return reject('guard_failed', 'forbidden', 'the Run has a legacy V1 authorization that cannot be upgraded into a fresh begin');
   }
@@ -1325,6 +1491,27 @@ function onEntryAuthorized(
     return accept(runStateOf(reauthorizedRunRecord(run, auth, event)));
   }
   return accept(runStateOf(authorizedRunRecord(run, event)));
+}
+
+/**
+ * K3 RUN-02 (L11, D3): the review-entry re-check. Only a review-purpose Run is
+ * judged; `undefined`/`null` means the owner has not read the record yet and
+ * holds (a fact not read yet holds). A non-waiting round or a review
+ * instruction that disagrees with the prepared binding is `stale`.
+ */
+export function reviewEntryProblem(
+  run: RunSnapshot,
+  reviewEntry: RunGuardContext['reviewEntry'],
+): Rejected | null {
+  if (run.purpose?.kind !== 'unknown_call_review') return null;
+  if (reviewEntry === undefined || reviewEntry === null) return null;
+  if (!reviewEntry.waitingForRound) {
+    return reject('stale', 'source_stale', 'the review round no longer waits for this Run');
+  }
+  if (!reviewEntry.instructionDigestMatches) {
+    return reject('stale', 'source_stale', 'the review instruction no longer matches the prepared binding');
+  }
+  return null;
 }
 
 /**
@@ -2204,6 +2391,17 @@ function onReconcileUnknown(
   if (event.cause === 'tool_calls_unresolved' && event.unresolvedToolCallIds.length === 0) {
     return reject('illegal', 'invalid', 'tool_calls_unresolved names the calls without a result');
   }
+  // K3 (L25): a candidate whose WorkGraph-side guards all hold closes the Run
+  // (RUN-25); the classifier's own `blockedBy` is recorded on the RUN-20(i)
+  // observation, as is WorkGraph's first failing guard.
+  const candidate = event.autoCleanup !== undefined && 'proof' in event.autoCleanup ? event.autoCleanup : null;
+  const classifierBlocked = event.autoCleanup !== undefined && 'blockedBy' in event.autoCleanup
+    ? event.autoCleanup.blockedBy : null;
+  const guardBlocked = candidate === null ? null : autoCleanupBlockedBy(run, candidate, ctx);
+  const blockedBy = classifierBlocked ?? guardBlocked;
+  if (candidate !== null && blockedBy === null) {
+    return onReconcileUnknownAutoCleanup(state, run, entering, event, candidate, ctx);
+  }
   const claim = event.claim;
   const auth = claimedV2Binding(state, run, ctx, claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
   if (isRejected(auth)) return auth;
@@ -2214,13 +2412,89 @@ function onReconcileUnknown(
     phase: 'unknown', outcome: 'outcome_unknown', exitCode: null, endedAt: event.recordedAt, ...entered,
     terminal: null, terminalPayload: null,
     reconciliation: { status: 'quarantined', observation: { kind: 'unresolved', reason: event.cause,
-      observedThroughPosition: event.observedThroughPosition, unresolvedToolCallIds: [...event.unresolvedToolCallIds] },
+      observedThroughPosition: event.observedThroughPosition, unresolvedToolCallIds: [...event.unresolvedToolCallIds],
+      ...(blockedBy === null ? {} : { autoCleanupBlockedBy: blockedBy }) },
     basis: { ...event.basis }, recordedAt: event.recordedAt },
   });
   return accept(runStateOf(record), [
     { kind: 'attempt', event: 'attempt_ended', outcome: 'outcome_unknown' },
     ...(withTurn ? [{ kind: 'outbox', change: 'entered' } as const] : []),
     ...queuedIntentsReconciled(run, ctx),
+  ]);
+}
+
+/**
+ * L25 WorkGraph-side guard order (G10, G1, G3, G4, G5, G7, G9, G11); the first
+ * failing guard is the RUN-20(i) `autoCleanupBlockedBy`. `null` means RUN-25.
+ */
+function autoCleanupBlockedBy(run: RunSnapshot, candidate: AutoCleanupCandidateV1, ctx: RunGuardContext): string | null {
+  if (run.purpose !== undefined) return 'review_round';                                     // G10
+  if (!admitsAutoCleanupTakeover(ctx.takeoverProof)) return 'no_takeover_proof';            // G1
+  if (!sameJson(ctx.takeoverProof, candidate.proof)) return 'no_takeover_proof';
+  if (!candidate.unresolvedCalls.every((call) => containedByHostStop(call.toolName))) return 'uncontained_tool'; // G3
+  const pointer = run.controlState?.desiredState;
+  if (pointer === 'paused' || pointer === 'cancelled' || pointer === 'steered') return 'stop_pending'; // G4
+  if (ctx.inputsConfirmed !== true) return 'inputs_unconfirmed';                             // G5
+  if (ctx.sessionClosable !== true) return 'session_not_closable';                           // G7
+  if (ctx.priorAutoCleanup !== false) return 'second_auto_cleanup';                          // G9
+  const problem = candidate.draft.inventoryProblem;
+  if (candidate.draft.inventory !== 'complete' && problem !== 'too_large') return 'inventory_incomplete'; // G11
+  return null;
+}
+
+/**
+ * RUN-25 (L25): the automatic closure after a Host takeover. The Run ends
+ * `crashed` with a synthesized `run_crashed` and the `takeover_unresolved`
+ * observation, the Attempt ends crashed, the Outbox settles entered, Lease and
+ * Session (kernel turn open) are released, queued intents reconcile as RUN-19
+ * does, and the review record is created in the same commit (UCR-01).
+ */
+function onReconcileUnknownAutoCleanup(
+  state: RunState, run: RunSnapshot, entering: boolean, event: Extract<RunEvent, { kind: 'reconcile_unknown' }>,
+  candidate: AutoCleanupCandidateV1, ctx: RunGuardContext,
+): RunTransition {
+  if (event.factEventId === undefined) {
+    return reject('illegal', 'invalid', 'RUN-25 needs the synthesized terminal event id');
+  }
+  const claim = event.claim;
+  const auth = claimedV2Binding(state, run, ctx, claim, event.kind, 'the reconcile claim disagrees with the persisted claim');
+  if (isRejected(auth)) return auth;
+  const entered = enteredFactsOf(run, auth, claim, ctx, entering, event.turn?.entered ?? null);
+  if (isRejected(entered)) return entered;
+  const payload = { kind: 'crashed' as const,
+    error: `host_takeover: ${candidate.unresolvedCalls.length} tool call(s) with unknown results` };
+  const terminal = synthesizedTerminal(run, payload, event.factEventId, event.recordedAt);
+  const reviewRef: UnknownCallReviewRef = { aggregateType: 'UnknownCallReview', projectId: run.ref.projectId,
+    goalId: run.ref.goalId, runId: run.ref.runId };
+  const built = newUnknownCallReview({
+    ref: reviewRef, workspaceId: run.workspaceSnapshot.workspaceId, task: run.task, runRef: run.ref,
+    sessionRef: claim.sessionRef,
+    origin: { kind: 'takeover_unresolved',
+      hostInstanceId: event.basis.kind === 'host_instance_takeover' ? event.basis.hostInstanceId : '',
+      proof: candidate.proof },
+    inventory: candidate.draft.inventory, inventoryProblem: candidate.draft.inventoryProblem,
+    items: candidate.draft.items, itemsOmitted: candidate.draft.itemsOmitted, workspace: candidate.draft.workspace,
+    streak: { priorAutoCleanup: ctx.priorAutoCleanup === true, priorUnknownProcess: ctx.priorUnknownProcess === true,
+      resetRunRef: ctx.streakResetRunRef ?? null },
+    createdAt: event.recordedAt,
+  });
+  if (!built.ok) return built;
+  const record = reconciledEndRecord(run, auth, {
+    phase: 'settled', outcome: 'crashed', exitCode: null, endedAt: event.recordedAt, ...entered,
+    terminal: { event: terminal, factEventId: event.factEventId }, terminalPayload: payload,
+    reconciliation: { status: 'done', observation: { kind: 'takeover_unresolved', event: terminal,
+      lastPosition: event.turn?.lastPosition ?? event.observedThroughPosition ?? 0,
+      observedThroughPosition: event.observedThroughPosition ?? 0,
+      unresolvedToolCallIds: candidate.unresolvedCalls.map((call) => call.callId),
+      proof: candidate.proof, reviewRef },
+    basis: { ...event.basis }, recordedAt: event.recordedAt },
+  });
+  return accept(runStateOf(record), [
+    { kind: 'attempt', event: 'attempt_ended', outcome: 'crashed' },
+    { kind: 'outbox', change: 'settled_entered' },
+    ...endReleaseEffects(claim, ctx, { kernelTurnOpen: true }),
+    ...queuedIntentsReconciled(run, ctx),
+    { kind: 'create_review_record', review: built.next },
   ]);
 }
 

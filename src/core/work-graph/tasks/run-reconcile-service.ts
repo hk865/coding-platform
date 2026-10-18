@@ -26,7 +26,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/core/results.js';
-import type { RunReconciliationBasisV1, RunSnapshot } from '../../../contracts/dispatch.js';
+import type { RunReconciliationBasisV1, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
@@ -37,13 +37,27 @@ import {
 } from '../persistence/execution-entry-codecs.js';
 import { attemptEventFromRunEvent, type AttemptEvent, type AttemptGuardContext } from '../state/attempt-machine.js';
 import {
-  runStateOf, transitionRun, type RunEffect, type RunEvent, type RunGuardContext, type RunNode, type RunTransition,
+  runStateOf, transitionRun, type AutoCleanupCandidateV1 as StateAutoCleanupCandidate, type RunEffect, type RunEvent,
+  type RunGuardContext, type RunNode, type RunTransition,
 } from '../state/run-machine.js';
+import { newUnknownCallReview } from '../state/unknown-call-review.js';
+import { unknownCallKindOf } from '../state/unknown-call-kinds.js';
+import {
+  UNKNOWN_CALL_REVIEW_CHANGED_EVENT_TYPE, UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION,
+  encodeUnknownCallReview, encodeUnknownCallReviewChangedEvent, unknownCallReviewRefKey,
+} from './unknown-call-review-codecs.js';
+import { createSessionFactsService } from './session-facts.js';
+import { createUnknownCallReviewService } from './unknown-call-review-service.js';
+import { previousChainRefOf, streakOf } from '../state/task-failure.js';
+import type {
+  UnknownCallInventoryProblemV1, UnknownCallReviewDraftV1, UnknownCallReviewItemV1, UnknownCallReviewRef,
+  UnknownCallReviewV1,
+} from '../../../contracts/unknown-call-review.js';
 import type { SessionGuardContext, SessionRelease, SessionReleaseCause } from '../state/session-availability.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import {
   bindTrustedContext, checkRunPin, claimEffectRecords, claimLeaseOf, claimSessionOf, executionReadGuards, hostLeaseOf,
-  isRecord, isolateWrite, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, readAdmissionFacts,
+  isRecord, isolateWrite, mapStoreFailure, mergeGuards, nonEmpty, readAdmissionFacts,
   type ClaimSessionRelease,
 } from './execution-entry-service.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
@@ -102,7 +116,16 @@ function invalid(reason: string): CoreRejection { return reject('invalid', reaso
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+/** The reason of a non-ready read that is a rejection; the two other statuses get their own words. */
+function readFailureReason(read: { status: string; reason?: string }): string {
+  if (read.status === 'not_found') return 'not_found';
+  if (read.status === 'not_ready') return 'not readable at the required watermark';
+  return read.reason ?? read.status;
+}
 function fingerprintOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
+function sameJson(left: unknown, right: unknown): boolean {
+  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
+}
 function refKeyOf(value: object): string { return canonicalJson(value as unknown as JsonValue); }
 function identityKey(prefix: string, actor: HostActor, scope: { projectId: string; workspaceId: string }, requestId: string): string {
   return prefix + sha256Hex(canonicalJson({ actor: { kind: actor.kind, id: actor.id },
@@ -116,6 +139,15 @@ function runRefusal(refused: Extract<RunTransition, { ok: false }>): CoreRejecti
 }
 function isRunRef(value: unknown): boolean {
   return isRecord(value) && value['aggregateType'] === 'Run' && nonEmpty(value['projectId']) && nonEmpty(value['runId']);
+}
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+function inList<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value);
+}
+function isNonNeg(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 function attestationProblem(input: AttestationRequest): string | null {
   if (!isRunRef(input.runRef)) return 'resolveUnknownRun requires a complete RunRef';
@@ -133,6 +165,137 @@ function attestationProblem(input: AttestationRequest): string | null {
  */
 function attestationContent(input: AttestationRequest): unknown {
   return { runRef: input.runRef, reason: input.reason };
+}
+
+// --------------------------------------------------------------------------
+// K3 RUN-22 review draft (L8, UCR-02)
+// --------------------------------------------------------------------------
+
+const REVIEW_DRAFT_KEYS: readonly string[] = ['inventory', 'inventoryProblem', 'items', 'itemsOmitted', 'workspace'];
+const DRAFT_INVENTORY_PROBLEMS: readonly UnknownCallInventoryProblemV1[] = [
+  'kernel_unreadable', 'kernel_unreadable_at_stop', 'turn_not_found', 'too_many_calls', 'too_large', 'undecodable_call',
+];
+const CALL_ID_MAX_BYTES = 512;
+const MAX_DRAFT_ITEMS = 32;
+
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+type ValidatedReviewDraft = {
+  inventory: 'complete' | 'incomplete';
+  inventoryProblem: UnknownCallInventoryProblemV1 | null;
+  items: UnknownCallReviewItemV1[];
+  itemsOmitted: number;
+};
+
+/**
+ * L8's Run-side facts the owner must cross-check against the draft: the
+ * reconciliation observation's reason (the `kernel_unreadable_at_stop` rule)
+ * and the recorded `unresolvedToolCallIds` (the "recorded calls are listed"
+ * rule). Read from the same Run the machine transitions.
+ */
+type ReviewDraftFacts = { observationReason: string | null; recordedToolCallIds: readonly string[] };
+
+function reviewDraftFactsOf(run: RunSnapshot): ReviewDraftFacts {
+  const observation = run.reconciliation?.observation;
+  if (observation === undefined) return { observationReason: null, recordedToolCallIds: [] };
+  if (observation.kind === 'unresolved') {
+    return { observationReason: observation.reason, recordedToolCallIds: observation.unresolvedToolCallIds };
+  }
+  if (observation.kind === 'takeover_unresolved') {
+    return { observationReason: null, recordedToolCallIds: observation.unresolvedToolCallIds };
+  }
+  return { observationReason: null, recordedToolCallIds: [] };
+}
+
+/**
+ * L8's owner-side draft check: the receipt is already resolved, so this runs
+ * only on a miss. A draft the trusted Host reader would not produce is
+ * `invalid` and nothing is written. `inputsConfirmed === null` forces the
+ * `kernel_unreadable` inventory; the draft's own recognized problem otherwise
+ * stands, and a `complete` claim must carry no problem and omit nothing.
+ *
+ * The three Run-side L8 checks (spec 284-289): an observation reason
+ * `kernel_unreadable` cannot carry a `complete` inventory; a `complete`
+ * inventory lists every recorded unresolved call; a `too_large` inventory
+ * lists only recorded calls and counts the rest in `itemsOmitted`.
+ */
+function validatedReviewDraft(
+  draft: unknown, inputsConfirmed: boolean | null, facts: ReviewDraftFacts,
+): { ok: true; value: ValidatedReviewDraft } | { ok: false; reason: string } {
+  if (!isRecord(draft)) return { ok: false, reason: 'resolveUnknownRun requires the review draft read before the attestation' };
+  if (!hasOnlyKeys(draft, REVIEW_DRAFT_KEYS)) return { ok: false, reason: 'the review draft carries unknown fields' };
+  if (draft['inventory'] !== 'complete' && draft['inventory'] !== 'incomplete') {
+    return { ok: false, reason: 'the review draft inventory is not recognized' };
+  }
+  const rawProblem = draft['inventoryProblem'];
+  if (!(rawProblem === null || inList(rawProblem, DRAFT_INVENTORY_PROBLEMS))) {
+    return { ok: false, reason: 'the review draft inventoryProblem is not recognized' };
+  }
+  if (draft['inventory'] === 'complete' && rawProblem !== null) {
+    return { ok: false, reason: 'a complete review inventory must not name a problem' };
+  }
+  if (draft['inventory'] === 'incomplete' && rawProblem === null) {
+    return { ok: false, reason: 'an incomplete review inventory must name its problem' };
+  }
+  const items = draft['items'];
+  if (!Array.isArray(items) || items.length > MAX_DRAFT_ITEMS) {
+    return { ok: false, reason: `a review holds at most ${String(MAX_DRAFT_ITEMS)} items` };
+  }
+  const omitted = draft['itemsOmitted'];
+  if (!isNonNeg(omitted)) return { ok: false, reason: 'the review draft itemsOmitted must be a non-negative integer' };
+  if (draft['inventory'] === 'complete' && omitted !== 0) {
+    return { ok: false, reason: 'a complete review inventory omits nothing' };
+  }
+  const workspace = draft['workspace'];
+  if (!isRecord(workspace) || (workspace['status'] !== 'captured' && workspace['status'] !== 'unavailable')) {
+    return { ok: false, reason: 'the review draft workspace is malformed' };
+  }
+  if (inputsConfirmed === null && draft['inventory'] !== 'incomplete') {
+    return { ok: false, reason: 'the Kernel is unreadable, so the review inventory cannot be complete' };
+  }
+  const checked: UnknownCallReviewItemV1[] = [];
+  for (const [index, entry] of items.entries()) {
+    if (!isRecord(entry)) return { ok: false, reason: `review item ${String(index)} is not an object` };
+    if (entry['alias'] !== index + 1) return { ok: false, reason: 'review item aliases must be 1..n in Kernel order' };
+    if (!nonEmpty(entry['toolName'])) return { ok: false, reason: `review item #${String(index + 1)} names no tool` };
+    if (entry['kind'] !== unknownCallKindOf(entry['toolName'])) {
+      return { ok: false, reason: `review item #${String(index + 1)} kind disagrees with L3` };
+    }
+    if (!nonEmpty(entry['callId']) || utf8Bytes(entry['callId']) > CALL_ID_MAX_BYTES) {
+      return { ok: false, reason: `review item #${String(index + 1)} callId must be 1..512 UTF-8 bytes` };
+    }
+    checked.push(entry as unknown as UnknownCallReviewItemV1);
+  }
+  const effectiveProblem = inputsConfirmed === null ? 'kernel_unreadable' : rawProblem;
+  // L8 (spec 284-289): the Run-side checks the draft must agree with.
+  if (facts.observationReason === 'kernel_unreadable' && draft['inventory'] !== 'incomplete') {
+    return { ok: false, reason: 'the Kernel was unreadable at stop, so the review inventory cannot be complete' };
+  }
+  const listedIds = checked.map(item => item.callId);
+  const recordedIds = facts.recordedToolCallIds;
+  if (draft['inventory'] === 'complete') {
+    if (!recordedIds.every(id => listedIds.includes(id))) {
+      return { ok: false, reason: 'a complete review inventory must list every recorded unresolved call' };
+    }
+  } else if (effectiveProblem === 'too_large') {
+    if (!listedIds.every(id => recordedIds.includes(id))) {
+      return { ok: false, reason: 'every listed review item must be a recorded unresolved call' };
+    }
+    if (omitted !== recordedIds.length - listedIds.length) {
+      return { ok: false, reason: 'a too_large review inventory omits exactly the recorded calls it did not list' };
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      inventory: effectiveProblem === null ? 'complete' : 'incomplete',
+      inventoryProblem: effectiveProblem,
+      items: checked,
+      itemsOmitted: omitted,
+    },
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -220,6 +383,7 @@ function reconcileRunContext(
   facts: TaskExecutionRecord, intents: readonly ControlIntentSnapshotV1[], actor: HostActor,
   basis: RunReconciliationBasisV1, deps: RunReconcileDependencies, probe: RunGuardContext['kernelProbe'],
   turn: ReconcileTurnV1 | null,
+  auto?: AutoCleanupFacts,
 ): RunGuardContext {
   const claim = facts.outbox.claim;
   return {
@@ -230,7 +394,122 @@ function reconcileRunContext(
     exitProof: basis.kind, hostLease: hostLeaseOf(deps.hostInstance, basis), kernelProbe: probe,
     kernelPaused: turn?.kernelPaused ?? false, inputsConfirmed: turn === null ? null : turn.inputsConfirmed,
     actor: isAutomationActor(actor) ? 'system' : 'human', claim: null,
+    // K3 RUN-25 guards (U1/L25): G1 compares the Host's proof with the
+    // candidate's own; G7/G9 are the WorkGraph side. `auto` carries the facts
+    // this write read for a classifier candidate (Q5 G7, Q4 G9); every other
+    // reconcile path leaves G9 unproven (so a candidate can never slip through).
+    takeoverProof: deps.hostInstance?.takeover ?? null,
+    sessionClosable: auto?.sessionClosable ?? false,
+    priorAutoCleanup: auto?.priorAutoCleanup ?? false,
+    priorUnknownProcess: auto?.priorUnknownProcess ?? false,
+    streakResetRunRef: auto?.streakResetRunRef ?? null,
   };
+}
+
+/** K3 Q4/Q5: the facts one RUN-25 candidate needs from the WorkGraph side, read before the machine decides. */
+type AutoCleanupFacts = {
+  /** Q5 G7: Session active, no archive request, no continuation and this Run still occupying it. */
+  sessionClosable: boolean;
+  /** Q4 G9 (L23): the streak of the chain the Run continues. */
+  priorAutoCleanup: boolean;
+  priorUnknownProcess: boolean;
+  streakResetRunRef: RunRef | null;
+};
+
+/**
+ * K3 Q5 (G7): the Session is active, has no archive request, has no recorded
+ * continuation and no unchecked legacy predecessor, and the latest Work claim
+ * is this Run at the same claim generation. A read failure is `unavailable`
+ * (the caller writes nothing).
+ */
+async function readSessionClosable(
+  records: RunReconcileDependencies['records'], ctx: CoreCallContext, facts: TaskExecutionRecord,
+): Promise<{ ok: true; value: boolean } | { ok: false; rejection: CoreRejection }> {
+  const sessionFacts = createSessionFactsService({ records });
+  let read;
+  try {
+    read = await sessionFacts.readSessionFacts(ctx, facts.outbox.claim.sessionRef);
+  } catch (error) {
+    return { ok: false, rejection: unavailable(`the Session facts read failed: ${messageOf(error)}`) };
+  }
+  if (read.status !== 'ready') {
+    return { ok: false, rejection: unavailable(`the Session facts are not readable: ${readFailureReason(read)}`) };
+  }
+  const value = read.value;
+  const occupancy = value.session.occupancy;
+  const occupiedByRun = occupancy !== null && occupancy !== undefined && occupancy.kind === 'execution'
+    && sameJson(occupancy.executionRef, facts.run.ref);
+  const latest = value.latestWork;
+  return { ok: true, value: value.session.lifecycle === 'active'
+    && (value.session.archiveRequest ?? null) === null
+    && value.continuations.length === 0
+    && value.legacyPending === false
+    && occupiedByRun
+    && latest !== null && sameJson(latest.runRef, facts.run.ref)
+    && latest.generation === facts.outbox.claim.generation };
+}
+
+/**
+ * K3 Q4 (G9, L23): walk the Run's work chain backwards as `task-failure.ts`
+ * `chainRunIds` does, read every chain Run and its review record by key, and
+ * compute `streakOf`. Every Run and record read becomes a version guard in the
+ * same commit; an absent record key is guarded absent. Any read failure is
+ * `unavailable` and the caller writes nothing.
+ */
+async function readStreakFacts(
+  deps: RunReconcileDependencies, ctx: CoreCallContext, facts: TaskExecutionRecord,
+): Promise<{ ok: true; streak: Pick<AutoCleanupFacts, 'priorAutoCleanup' | 'priorUnknownProcess' | 'streakResetRunRef'>;
+    guards: RecordGuard[] } | { ok: false; rejection: CoreRejection }> {
+  const runs: RunSnapshot[] = [facts.run];
+  const guards: RecordGuard[] = [];
+  const seen = new Set<string>([facts.run.ref.runId]);
+  let cursor: RunSnapshot = facts.run;
+  while (true) {
+    const previous = previousChainRefOf(cursor);
+    if (previous === null || seen.has(previous.runId)) break;
+    if (previous.projectId !== facts.run.ref.projectId || previous.goalId !== facts.run.ref.goalId) break;
+    let read;
+    try {
+      read = await deps.reads.readExecution(ctx, previous);
+    } catch (error) {
+      return { ok: false, rejection: unavailable(`the chain Run read failed: ${messageOf(error)}`) };
+    }
+    if (read.status === 'not_found') break;
+    if (read.status !== 'ready') {
+      return { ok: false, rejection: unavailable(`the chain Run is not readable: ${readFailureReason(read)}`) };
+    }
+    const record = read.value;
+    seen.add(previous.runId);
+    runs.push(record.run);
+    guards.push({ refKey: refKeyOf(record.run.ref), expectedRevision: record.run.revision });
+    cursor = record.run;
+  }
+  const reviews: UnknownCallReviewV1[] = [];
+  const reviewService = createUnknownCallReviewService({ records: deps.records });
+  for (const run of runs.slice(1)) {
+    let review;
+    try {
+      review = await reviewService.readReview(ctx, { runRef: run.ref });
+    } catch (error) {
+      return { ok: false, rejection: unavailable(`the chain review read failed: ${messageOf(error)}`) };
+    }
+    if (review.status === 'not_found') {
+      guards.push({ refKey: unknownCallReviewRefKey(reviewRefOfRun(run.ref)), expectedRevision: null });
+      continue;
+    }
+    if (review.status !== 'ready') {
+      return { ok: false, rejection: unavailable(`the chain review is not readable: ${readFailureReason(review)}`) };
+    }
+    reviews.push(review.value);
+    guards.push({ refKey: unknownCallReviewRefKey(review.value.ref), expectedRevision: review.value.revision });
+  }
+  const streak = streakOf(facts.run, runs, reviews);
+  return { ok: true, streak: { priorAutoCleanup: streak.priorAutoCleanup,
+    priorUnknownProcess: streak.priorUnknownProcess, streakResetRunRef: streak.resetRunRef }, guards };
+}
+
+function reviewRefOfRun(runRef: RunRef): UnknownCallReviewRef {
+  return { aggregateType: 'UnknownCallReview', projectId: runRef.projectId, goalId: runRef.goalId, runId: runRef.runId };
 }
 
 /** The Run event of one reconcile input, stamped with the commit instant and event id. */
@@ -243,10 +522,22 @@ function reconcileEventOf(
   switch (result.kind) {
     case 'not_entered':
       return { kind: 'reconcile_not_entered', claim, basis: input.basis, kernel: result.kernel, recordedAt };
-    case 'unknown':
+    case 'unknown': {
+      // K3 (L25): the Runtime candidate is mapped onto the machine's shape,
+      // which judges G3 on every unresolved call name (U1/Q1). A candidate runs
+      // RUN-25 and carries the synthesized terminal event id.
+      const auto = result.autoCleanup;
+      const autoCleanup: StateAutoCleanupCandidate | { blockedBy: string } | undefined =
+        auto === undefined ? undefined
+          : 'blockedBy' in auto ? { blockedBy: auto.blockedBy }
+            : { proof: auto.proof, closure: auto.closure, workspace: auto.workspace,
+              unresolvedCalls: auto.unresolvedCalls, draft: auto.draft };
       return { kind: 'reconcile_unknown', claim, basis: input.basis, cause: result.cause,
         unresolvedToolCallIds: result.unresolvedToolCallIds, observedThroughPosition: result.observedThroughPosition,
-        turn: result.turn === null ? null : turnFacts(result.turn), recordedAt };
+        turn: result.turn === null ? null : turnFacts(result.turn), recordedAt,
+        ...(autoCleanup === undefined ? {} : { autoCleanup }),
+        ...(autoCleanup !== undefined && !('blockedBy' in autoCleanup) ? { factEventId } : {}) };
+    }
     case 'interrupted_clean':
       return { kind: 'reconcile_interrupted_clean', claim, basis: input.basis, turn: turnFacts(result.turn), recordedAt, factEventId };
     case 'paused_stop':
@@ -335,9 +626,16 @@ function attemptEventOfEnd(
   switch (runEvent.kind) {
     case 'reconcile_interrupted_clean':
     case 'stop_paused':
-    case 'reconcile_unknown':
       mapped = attemptEventFromRunEvent({ kind: runEvent.kind, claim, endOutcome: outcome, endedAt: recordedAt, eventId,
         sequence, entry, turnStartedAt: facts.run.startedAt === null ? runEvent.turn?.entered?.enteredAt ?? null : null });
+      break;
+    case 'reconcile_unknown':
+      // K3 RUN-25: the machine's synthesized terminal ends the Attempt with a
+      // known outcome, which is the `reconcile_terminal` row (ATT-08..10); the
+      // RUN-20(i) unknown end keeps `reconcile_unknown`.
+      mapped = attemptEventFromRunEvent({ kind: outcome === 'outcome_unknown' ? 'reconcile_unknown' : 'reconcile_terminal',
+        claim, endOutcome: outcome, endedAt: recordedAt, eventId, sequence, entry,
+        turnStartedAt: facts.run.startedAt === null ? runEvent.turn?.entered?.enteredAt ?? null : null });
       break;
     case 'reconcile_not_entered':
     case 'stop_not_entered':
@@ -372,9 +670,15 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     receipt: Extract<StoreCommitReceipt, { status: 'committed' }>, identity: string, fingerprint: string, actor: HostActor,
     operation: Operation,
   ): Promise<WriteResult<RunSnapshot>> {
-    const loaded = await loadReplayEvent(records, receipt);
-    if (!loaded.ok) return loaded.rejection;
-    const decoded = executionRunReconciledEventFromEvent(loaded.event);
+    // K3 (L7): a record-creating commit carries the review's
+    // `UnknownCallReviewChanged@1` event too, so the original reconcile event
+    // is the LAST one (the receipt cursor names it). Read it exactly.
+    const at = await records.eventAt(receipt.cursor);
+    if (at.status !== 'ready') return mapStoreFailure(at);
+    if (!receipt.eventIds.includes(at.value.event.eventId)) {
+      return unavailable('the recorded event is not part of the returned commit');
+    }
+    const decoded = executionRunReconciledEventFromEvent(at.value.event);
     if (decoded.status !== 'decoded') return unavailable(`the recorded reconcile event is not decodable: ${decoded.reason}`);
     const event = decoded.value;
     if (event.identityKey !== identity || event.fingerprint !== fingerprint || event.operation !== operation) {
@@ -388,27 +692,47 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
    * The ONE commit of a decided Run transition: the Run (when it changed),
    * the claim's records (`claim` null when the transition names none), the
    * settled intents, under the execution-window guards and every intent read
-   * (the machine judged their status); one replay event.
+   * (the machine judged their status). A record-creating commit writes the
+   * review's `UnknownCallReviewChanged@1` event first and the Run reconcile
+   * event LAST (the receipt cursor names the reconcile event, so replay keeps
+   * working without scanning the commit).
    */
   async function commitDecided(input: {
     identity: string; fingerprint: string; actor: HostActor; operation: Operation; facts: TaskExecutionRecord;
     runPin: VersionPin; decided: Decided; intents: readonly ControlIntentSnapshotV1[]; nowIso: string; eventId: string;
-    claim: ClaimWrites | null; intentFacts: IntentFacts; signal: AbortSignal;
+    claim: ClaimWrites | null; intentFacts: IntentFacts; signal: AbortSignal; requestId: string;
     /** Further records the decision read (the Goal of CTL-08(a)), guarded at the revision read. */
     readGuards?: readonly RecordGuard[];
     /** Slice 2B L5: the tally written in this SAME commit (no extra event). */
     activity?: RunActivityFactsV1;
+    /**
+     * K3 RUN-22: the review record the owner built from `input.review`, written
+     * in this SAME commit (UCR-02). RUN-25's record arrives as a
+     * `create_review_record` effect instead.
+     */
+    reviewRecord?: UnknownCallReviewV1 | null;
   }): Promise<WriteResult<RunSnapshot>> {
     const { facts, decided } = input;
     const nextRun = decided.next.record ?? facts.run;
     const written: EncodedRecord[] = nextRun === facts.run ? [] : [encodeRun(nextRun)];
-    const claimEffects = decided.effects.filter(effect => effect.kind !== 'intent');
+    const claimEffects = decided.effects.filter(effect => effect.kind !== 'intent' && effect.kind !== 'create_review_record');
     if (claimEffects.length > 0) {
       if (input.claim === null) throw new Error('a reconcile end with claim effects names its §5 event');
       const claimRecords = claimEffectRecords(claimEffects, facts, input.claim.pairing, input.claim.attemptEvent, input.claim.release);
       if (!claimRecords.ok) return claimRecords.rejection;
       written.push(...claimRecords.records);
     }
+    // K3 (UCR-01/UCR-02, L7): the review record is created in the SAME commit
+    // as the Run end, guarded absent, and every change (creation included)
+    // writes its own `UnknownCallReviewChanged@1` event carrying the whole
+    // post-change record.
+    const reviewRecords: UnknownCallReviewV1[] = [
+      ...decided.effects.flatMap(effect => effect.kind === 'create_review_record' ? [effect.review] : []),
+      ...(input.reviewRecord === undefined || input.reviewRecord === null ? [] : [input.reviewRecord]),
+    ];
+    const reviewGuards: RecordGuard[] = reviewRecords.map(review =>
+      ({ refKey: unknownCallReviewRefKey(review.ref), expectedRevision: null }));
+    for (const review of reviewRecords) written.push(encodeUnknownCallReview(review));
     const intentWrites = reconciledIntentRecords(decided.effects, input.intents, { ...input.intentFacts,
       runBefore: facts.run, runAfter: nextRun, observedAt: input.nowIso });
     if (!intentWrites.ok) return intentWrites.rejection;
@@ -433,14 +757,23 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     if (written.length === 0) return invalid('the Run has nothing for the reconcile to write');
     const intentGuards: RecordGuard[] = input.intents.map(intent => ({ refKey: refKeyOf(intent.ref), expectedRevision: intent.revision }));
     const merged = mergeGuards([...executionReadGuards(facts, refKeyOf(facts.run.ref), input.runPin), ...intentGuards,
-      ...intentWrites.guards, ...(input.readGuards ?? []), ...(activityGuard === null ? [] : [activityGuard])]);
+      ...intentWrites.guards, ...(input.readGuards ?? []), ...(activityGuard === null ? [] : [activityGuard]),
+      ...reviewGuards]);
     if (!merged.ok) return merged.rejection;
     const event: ExecutionRunReconciledEvent = { eventId: input.eventId, eventType: EXECUTION_RUN_RECONCILED_EVENT_TYPE,
       schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, occurredAt: input.nowIso, identityKey: input.identity,
       actor: input.actor, fingerprint: input.fingerprint, operation: input.operation, run: nextRun };
+    const reviewEvents = reviewRecords.map((review, index) => encodeUnknownCallReviewChangedEvent({
+      eventId: `${input.eventId}:ucr:${String(index)}`, eventType: UNKNOWN_CALL_REVIEW_CHANGED_EVENT_TYPE,
+      schemaVersion: UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION, occurredAt: input.nowIso, identityKey: input.identity,
+      fingerprint: input.fingerprint, actor: { kind: input.actor.kind, id: input.actor.id }, requestId: input.requestId,
+      change: 'created', review }));
     const bindings = sessionCursorBindings(written);
     const prepared: PreparedCommit = { identityKey: input.identity, fingerprint: input.fingerprint, guards: merged.guards,
-      records: written, claims: [], indexGuards: [], indexChanges: [], events: [encodeExecutionRunReconciledEvent(event)],
+      records: written, claims: [], indexGuards: [], indexChanges: [],
+      // The reconcile event stays last: the receipt cursor names it, which is
+      // the event a replay restores the Run from.
+      events: [...reviewEvents, encodeExecutionRunReconciledEvent(event)],
       ...(bindings.length === 0 ? {} : { commitCursorBindings: bindings }) };
     if (input.signal.aborted) return reject('cancelled', 'the reconcile was cancelled before commit');
     const receipt = await records.commit(prepared);
@@ -459,7 +792,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     contentOf: (input: T) => unknown,
   ): { ok: false; rejection: CoreRejection } | {
     ok: true; input: T; scopeCtx: CoreCallContext; scope: { projectId: string; workspaceId: string }; actor: HostActor;
-    signal: AbortSignal; identity: string; fingerprint: string; pin: VersionPin;
+    signal: AbortSignal; identity: string; fingerprint: string; pin: VersionPin; requestId: string;
   } {
     const ownedCtx = bindTrustedContext(ctx);
     if (!ownedCtx.ok) return { ok: false, rejection: ownedCtx.rejection };
@@ -478,7 +811,8 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       identity = identityKey(prefix, actor, scope, owned.requestId);
       fingerprint = fingerprintOf({ kind, actor, input: contentOf(input), expected: [checked.pin] });
     } catch { return { ok: false, rejection: invalid('the reconcile request is not canonicalizable JSON') }; }
-    return { ok: true, input, scopeCtx, scope, actor, signal, identity, fingerprint, pin: checked.pin };
+    return { ok: true, input, scopeCtx, scope, actor, signal, identity, fingerprint, pin: checked.pin,
+      requestId: owned.requestId };
   }
 
   /** The shared front of the three writes: trusted context, isolation, shape, pin, identity, replay, reads. */
@@ -487,11 +821,11 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     problemOf: (input: T) => string | null, contentOf: (input: T) => unknown = input => input,
   ): Promise<{ ok: false; result: WriteResult<RunSnapshot> } | {
     ok: true; input: T; actor: HostActor; signal: AbortSignal; identity: string; fingerprint: string; pin: VersionPin;
-    facts: TaskExecutionRecord; intents: ControlIntentSnapshotV1[];
+    facts: TaskExecutionRecord; intents: ControlIntentSnapshotV1[]; requestId: string;
   }> {
     const front = identify(ctx, request, prefix, kind, problemOf, contentOf);
     if (!front.ok) return { ok: false, result: front.rejection };
-    const { input, scopeCtx, scope, actor, signal, identity, fingerprint, pin } = front;
+    const { input, scopeCtx, scope, actor, signal, identity, fingerprint, pin, requestId } = front;
     const lookup = await records.lookupCommit({ identityKey: identity, fingerprint });
     if (lookup.status === 'ready') return { ok: false, result: await replay(lookup.value, identity, fingerprint, actor, operation) };
     if (lookup.code !== 'not_found') return { ok: false, result: mapStoreFailure(lookup) };
@@ -503,7 +837,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     }
     const intentsRead = await readRunIntents(records, facts.run);
     if (!intentsRead.ok) return { ok: false, result: intentsRead.rejection };
-    return { ok: true, input, actor, signal, identity, fingerprint, pin, facts, intents: intentsRead.value };
+    return { ok: true, input, actor, signal, identity, fingerprint, pin, facts, intents: intentsRead.value, requestId };
   }
 
   function stamp(): { ok: true; nowIso: string; eventId: string } | { ok: false; rejection: CoreRejection } {
@@ -522,7 +856,22 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       const { input, facts, intents } = begun;
       const result = input.result;
       const turn = result.kind === 'not_entered' ? null : result.turn;
-      const runCtx = reconcileRunContext(facts, intents, begun.actor, input.basis, deps, input.probe, turn);
+      // K3 (Q4/Q5): a classifier candidate carries the WorkGraph-side guard
+      // facts. Read them before the machine decides; a read failure writes
+      // nothing. Every chain Run and record read is guarded in the commit.
+      const candidate = result.kind === 'unknown' && result.autoCleanup !== undefined && 'proof' in result.autoCleanup
+        ? result.autoCleanup : null;
+      let auto: AutoCleanupFacts | undefined;
+      let autoGuards: readonly RecordGuard[] = [];
+      if (candidate !== null) {
+        const closable = await readSessionClosable(deps.records, ctx, facts);
+        if (!closable.ok) return closable.rejection;
+        const streak = await readStreakFacts(deps, ctx, facts);
+        if (!streak.ok) return streak.rejection;
+        auto = { sessionClosable: closable.value, ...streak.streak };
+        autoGuards = streak.guards;
+      }
+      const runCtx = reconcileRunContext(facts, intents, begun.actor, input.basis, deps, input.probe, turn, auto);
       const state = runStateOf(facts.run);
       const claim = facts.outbox.claim;
       const stamped = stamp();
@@ -537,15 +886,19 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       const nodeBefore: RunNode = notEntered ? 'Revoked' : state.node;
       const takeover = input.basis.kind === 'host_instance_takeover';
       const hasClaimEffects = decided.effects.some(effect => effect.kind !== 'intent');
+      // K3 RUN-25: the takeover-unresolved close releases the Session with its
+      // own cause (U2); RUN-20(i) releases nothing (releaseCauseOf -> null).
+      const takeoverUnresolved = decided.effects.some(effect => effect.kind === 'create_review_record');
       const pointerRef = facts.run.controlState?.intentRef ?? null;
       return await commitDecided({ identity: begun.identity, fingerprint: begun.fingerprint, actor: begun.actor,
         operation: 'reconcile_run', facts, runPin: begun.pin, decided, intents, nowIso: stamped.nowIso,
-        eventId: stamped.eventId, signal: begun.signal,
+        eventId: stamped.eventId, signal: begun.signal, readGuards: autoGuards, requestId: begun.requestId,
         claim: hasClaimEffects ? {
           pairing: pairingOf(nodeBefore, facts, runCtx),
           attemptEvent: attemptEventOfEnd(runEvent, nextRun, facts, stamped.nowIso, stamped.eventId),
-          release: releaseOf(releaseCauseOf(runEvent.kind), cause => reconcileRelease(cause, nodeBefore,
-            takeover ? 'reconcile' : 'service', runCtx.hostLease, turn?.inputsConfirmed ?? true, true)),
+          release: releaseOf(takeoverUnresolved ? 'reconcile_takeover_unresolved' : releaseCauseOf(runEvent.kind),
+            cause => reconcileRelease(cause, nodeBefore, takeover ? 'reconcile' : 'service', runCtx.hostLease,
+              turn?.inputsConfirmed ?? true, true)),
         } : null,
         intentFacts: { nodeBefore, hostInstanceId: takeover ? deps.hostInstance?.hostInstanceId ?? null : null,
           acceptedSteers: turn?.acceptedSteers ?? [],
@@ -574,6 +927,25 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       }, attestationContent);
       if (!begun.ok) return begun.result;
       const { input, facts, intents, actor } = begun;
+      // L8/UCR-02: a review round's own Run attested by the operator creates no
+      // record (L15); every other unknown end creates one in this same commit.
+      const createsReview = facts.run.purpose?.kind !== 'unknown_call_review';
+      let draft: ValidatedReviewDraft | null = null;
+      if (createsReview) {
+        const checked = validatedReviewDraft(input.review, input.inputsConfirmed, reviewDraftFactsOf(facts.run));
+        if (!checked.ok) return invalid(checked.reason);
+        draft = checked.value;
+      }
+      // K3 Q4 (L23): the record carries the chain's streak; the chain Runs and
+      // records read are guarded in this same commit.
+      let streakFacts: Pick<AutoCleanupFacts, 'priorAutoCleanup' | 'priorUnknownProcess' | 'streakResetRunRef'> | null = null;
+      let autoGuards: readonly RecordGuard[] = [];
+      if (draft !== null) {
+        const streak = await readStreakFacts(deps, ctx, facts);
+        if (!streak.ok) return streak.rejection;
+        streakFacts = streak.streak;
+        autoGuards = streak.guards;
+      }
       // L-1: the attestation names this Host instance; without the held lease the machine answers `busy`.
       const hostInstance = deps.hostInstance;
       const basis: RunReconciliationBasisV1 = { kind: 'host_instance_takeover', hostInstanceId: hostInstance?.hostInstanceId ?? 'none' };
@@ -589,9 +961,27 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       const decided = transitionRun(state, runEvent, runCtx);
       if (!decided.ok) return runRefusal(decided);
       const nextRun = decided.next.record ?? facts.run;
+      let reviewRecord: UnknownCallReviewV1 | null = null;
+      if (draft !== null) {
+        const reviewRef: UnknownCallReviewRef = { aggregateType: 'UnknownCallReview', projectId: facts.run.ref.projectId,
+          goalId: facts.run.ref.goalId, runId: facts.run.ref.runId };
+        const built = newUnknownCallReview({
+          ref: reviewRef, workspaceId: facts.run.workspaceSnapshot.workspaceId, task: facts.run.task, runRef: facts.run.ref,
+          sessionRef: claim.sessionRef,
+          origin: { kind: 'human_attested', attestedBy: { kind: actor.kind, id: actor.id }, reason: input.reason },
+          inventory: draft.inventory, inventoryProblem: draft.inventoryProblem, items: draft.items,
+          itemsOmitted: draft.itemsOmitted, workspace: input.review.workspace,
+          streak: { priorAutoCleanup: streakFacts?.priorAutoCleanup === true,
+            priorUnknownProcess: streakFacts?.priorUnknownProcess === true,
+            resetRunRef: streakFacts?.streakResetRunRef ?? null },
+          createdAt: stamped.nowIso,
+        });
+        if (!built.ok) return reject(built.code, built.detail);
+        reviewRecord = built.next;
+      }
       return await commitDecided({ identity: begun.identity, fingerprint: begun.fingerprint, actor,
         operation: 'resolve_unknown', facts, runPin: begun.pin, decided, intents, nowIso: stamped.nowIso,
-        eventId: stamped.eventId, signal: begun.signal,
+        eventId: stamped.eventId, signal: begun.signal, reviewRecord, readGuards: autoGuards, requestId: begun.requestId,
         claim: {
           pairing: pairingOf('EndedUnknown', facts, runCtx),
           attemptEvent: attemptEventOfEnd(runEvent, nextRun, facts, stamped.nowIso, stamped.eventId),
@@ -697,7 +1087,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       const cancel = runEvent !== null && runEvent.kind === 'stop_not_entered';
       return await commitDecided({ identity: begun.identity, fingerprint: begun.fingerprint, actor,
         operation: 'reconcile_controls', facts, runPin: begun.pin, decided, intents, nowIso: stamped.nowIso,
-        eventId: stamped.eventId, signal: begun.signal, readGuards: goalGuards,
+        eventId: stamped.eventId, signal: begun.signal, readGuards: goalGuards, requestId: begun.requestId,
         claim: cancel && runEvent !== null ? {
           pairing: pairingOf(state.node, facts, runCtx),
           attemptEvent: attemptEventOfEnd(runEvent, nextRun, facts, stamped.nowIso, stamped.eventId),

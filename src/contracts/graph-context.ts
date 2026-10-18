@@ -22,7 +22,7 @@ export type { PlatformDutyV1 };
 export type ContextCallKindV1 = 'work' | 'continuation' | 'handoff' | 'review'
   | 'secretary' | 'copy' | 'planning' | 'attention';
 export type ContextSectionNameV1 = 'role' | 'goal' | 'task' | 'footprint'
-  | 'notes' | 'reminders' | 'inputs' | 'continuation';
+  | 'notes' | 'reminders' | 'inputs' | 'continuation' | 'unknown_call_review';
 export type GraphNodeRefV1 =
   | { kind: 'goal'; ref: GoalRef }
   | { kind: 'stage'; planRef: PlanRevisionRef; stageId: string }

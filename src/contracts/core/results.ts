@@ -29,6 +29,7 @@ export type ReadResult<T> = {
 } | {
     status: "not_found";
 } | { status: 'not_ready'; observed: ReadStamp | null; required: ReadStamp } | CoreRejection;
+/** A committed write always carries its real commit cursor; a branch that writes nothing must not report committed. */
 export type WriteResult<T> = {
     status: "committed";
     value: T;

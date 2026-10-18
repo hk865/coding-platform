@@ -30,7 +30,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreError, ReadResult } from '../../../contracts/core/results.js';
 import type { RoleBindingRefV1, RunRef } from '../../../contracts/dispatch.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { RecordGuard } from '../../record-store/ports.js';
 import {
@@ -43,6 +43,7 @@ import {
 } from '../sessions/session-record-codecs.js';
 import { dispatchOutboxRefKey, taskAttemptRefKey } from './claim-record-codecs.js';
 import type { ExecutionEntryDependencies } from '../model/execution-entry-contracts.js';
+import { agentActorOf } from '../model/tool-commit-arguments.js';
 import {
   mergeGuards,
   readStoredManifest,
@@ -209,11 +210,7 @@ export async function identifyDelegatedWriter(
   if (!sameRef(facts.session.ref, plainSessionRefToAggregate(sessionRef))) {
     return unavailable('the claim Session mapping changed');
   }
-  const actor: Extract<ActorRef, { kind: 'agent' }> = {
-    kind: 'agent',
-    id: 'session:' + sha256Hex(canonicalJson(sessionRef as unknown as JsonValue)),
-    runRef,
-  };
+  const actor = agentActorOf(sessionRef, runRef);
   return { status: 'ready', value: {
     actor,
     runRef,

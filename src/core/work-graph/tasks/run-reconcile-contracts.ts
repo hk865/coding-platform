@@ -21,6 +21,9 @@ import type {
 } from '../model/execution-entry-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import type { RunActivityFactsV1 } from '../../../contracts/run-activity.js';
+import type {
+  HostTakeoverProofV1, UnknownCallReviewDraftV1, WorkspaceCaptureV1,
+} from '../../../contracts/unknown-call-review.js';
 
 /** The Kernel Turn a reconcile read (§6.2 `reconcile_interrupted_clean`, `stop_paused`, `reconcile_unknown`). */
 export type ReconcileTurnV1 = {
@@ -39,6 +42,21 @@ export type ReconcileTurnV1 = {
   inputsConfirmed: boolean;
 };
 
+/**
+ * K3 (L25, §2 + U1): the classifier's automatic-closure candidate. The
+ * WorkGraph machine re-checks its own guard side against `RunGuardContext` and
+ * maps this shape onto its own `AutoCleanupCandidateV1`; `unresolvedCalls`
+ * carries every unresolved call so G3 is judged on names, not on the (possibly
+ * creation-budget-cut) draft items.
+ */
+export type AutoCleanupCandidateV1 = {
+  proof: HostTakeoverProofV1;
+  closure: { status: 'supported'; headActiveRunId: string };
+  workspace: WorkspaceCaptureV1;
+  unresolvedCalls: Array<{ callId: string; toolName: string }>;
+  draft: UnknownCallReviewDraftV1;
+};
+
 /** §6.1 contract (c) `ReconciledObservation`, as the Runtime classifier gives it. */
 export type ReconcileRunInput = {
   runRef: RunRef;
@@ -51,7 +69,13 @@ export type ReconcileRunInput = {
     | { kind: 'not_entered'; kernel: KernelExecutionBinding }
     /** RUN-20: (i) tool calls without a result, (ii) an unreadable Kernel, (iii) an unrebuildable continuation. */
     | { kind: 'unknown'; cause: RunUnknownCause; unresolvedToolCallIds: string[]; observedThroughPosition: number | null;
-        turn: ReconcileTurnV1 | null }
+        turn: ReconcileTurnV1 | null;
+        /**
+         * K3 RUN-25 (L25): the classifier's automatic-closure candidate when
+         * every Runtime-side guard held, or the first `blockedBy` it proved.
+         * Absent for every pre-K3 RUN-20 event.
+         */
+        autoCleanup?: AutoCleanupCandidateV1 | { blockedBy: string } }
     /** RUN-19 / RUN-24: no Kernel terminal, nothing in flight; the WG machine picks the row by the pointer. */
     | { kind: 'interrupted_clean'; turn: ReconcileTurnV1 }
     /**
@@ -78,6 +102,11 @@ export type ResolveUnknownRunInput = {
   kernelTurnOpen: boolean;
   /** Every accepted input confirmed; `null` when the Kernel is unreadable. */
   inputsConfirmed: boolean | null;
+  /**
+   * K3 (L8, KR3): the review draft the Host entry read before attesting. The
+   * owner checks the receipt first and only validates this on a miss.
+   */
+  review: UnknownCallReviewDraftV1;
 };
 
 /** What the operator's attestation request itself carries (its fingerprint), before the Host entry reads the Kernel. */

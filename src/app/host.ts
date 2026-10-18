@@ -56,7 +56,7 @@ import {
 } from './attention-observer.js';
 import { renderAttentionChanges } from '../core/agent-runtime/context-assembler.js';
 import { READONLY_COMMAND_TOOL_NAME } from '../core/agent-runtime/readonly-command-tool.js';
-import type { RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
+import type { ReadonlyCommandAccessInput, RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
 import type { ReadResult } from '../contracts/core/results.js';
 import type { BootstrapExecution, BootstrapResponse, BootstrapReviewMaterial, CoreScope, WorkbenchActor } from './core-http-types.js';
 import {
@@ -369,6 +369,15 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           return narrow(await bindings.resolveQueryConfiguration!(ctx, input), ctx);
         },
       }),
+      // R3 (L13/U5): forward the capability with the SAME switch narrowing, so
+      // a programmatic runtime cannot report `available` for a workspace whose
+      // `allowReadonlyCommands` switch is off.
+      ...(bindings.readonlyCommandAccess === undefined ? {} : {
+        async readonlyCommandAccess(input: ReadonlyCommandAccessInput) {
+          if (runtimeNarrowing.readonlyCommandsDisabledScopes?.has(scopeKey(input.workspace)) === true) return null;
+          return bindings.readonlyCommandAccess!(input);
+        },
+      }),
     };
   };
 
@@ -501,7 +510,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       storage,
       workspace: bindings,
       commitObserver,
-      hostInstance: { hostInstanceId: instanceLease.hostInstanceId, lease: instanceLease.lease },
+      hostInstance: { hostInstanceId: instanceLease.hostInstanceId, lease: instanceLease.lease, takeover: instanceLease.takeover },
       ...(options.now === undefined ? {} : { now: options.now }),
       ...(architectureSource === undefined ? {} : { architectureSource }),
       ...(options.lightScan === undefined ? {} : { lightScan: options.lightScan }),
@@ -1052,6 +1061,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     platform: { sessions: platform.sessions, executions: platform.executions, controls: platform.controls,
       plans: platform.plans, reconcile: platform.reconcile },
     hostInstanceId: instanceLease.hostInstanceId,
+    takeover: instanceLease.takeover,
     scopes: scopes.map(scope => ({ projectId: scope.projectId, workspaceId: scope.workspaceId })),
     context: reconcileContext,
     fanOut: (ctx, goalRef, options) => goalFanOut.fanOut(ctx, goalRef, options),
@@ -1081,7 +1091,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       try {
         await collaborationDriver.start(hostScopeContext(scope, actor), {
           advance: { schemaVersion: 1, goalRef: goal.goalRef, flowId: `startup-redrive:${goal.goalRef.goalId}`,
-            sessionHint: null, kind: 'select_work' },
+            sessionHint: null, kind: 'select_work',
+            ...(goal.answers === undefined || goal.answers.length === 0 ? {} : { answers: goal.answers }) },
           queryProfileIds: profileIds,
         });
       } catch { /* a refused start leaves the Goal for the next workflow/advance or driver-start */ }
@@ -1127,6 +1138,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     report.queries.push(...added.queries);
     report.checks.push(...added.checks);
     report.controls.push(...added.controls);
+    // K3 L28 step 2b: the late-opened workspace's open review records join the
+    // same report (the main start path wires `reconcile.reviews` identically).
+    report.reviews.push(...added.reviews);
     report.fanOut.push(...added.fanOut);
     report.redriveGoals.push(...added.redriveGoals);
     report.problems.push(...added.problems);

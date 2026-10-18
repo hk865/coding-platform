@@ -18,7 +18,7 @@ import type { MaterialPort } from '../core/work-graph/model/material-contracts.j
 import { createWorkspaceAccessFactory, type WorkspaceHostBindings } from '../core/workspace/access.js';
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../core/workspace/workspace-tools.js';
 import { createAgentRuntime } from '../core/agent-runtime/runtime.js';
-import { createExecutionEntryService } from '../core/work-graph/tasks/execution-entry-service.js';
+import { createExecutionEntryService, readManifestFromEnvelope } from '../core/work-graph/tasks/execution-entry-service.js';
 import { createModelCallService } from '../core/work-graph/tasks/model-call-service.js';
 import { createSessionMailbox, createMessageWriteOwner } from '../core/work-graph/communication/mailbox-service.js';
 import { createDecisionMessageService } from '../core/work-graph/communication/decision-service.js';
@@ -39,8 +39,8 @@ import { createMessageDutiesFactsAdapter } from '../core/work-graph/configuratio
 import { createUndeliveredReplyNoticeSource } from '../core/work-graph/views/undelivered-reply-notices.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import {
-  createDecisionReadModel, createGoalCauseCardSource, createNoteReviewCardSource,
-  createPlanningQuestionCardSource,
+  createCommandRerunRequestCardSource, createDecisionReadModel, createGoalCauseCardSource,
+  createNoteReviewCardSource, createPlanningQuestionCardSource, createUnknownCallReviewCardSource,
 } from '../core/work-graph/views/decision-read-model.js';
 import { createGoalConflictAssembler } from '../core/work-graph/views/goal-conflicts.js';
 import { createAutomaticReworkNoticeSource } from '../core/work-graph/views/automatic-rework-notices.js';
@@ -55,6 +55,7 @@ import type { SessionMailboxPort } from '../core/work-graph/model/communication-
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
 import { createWorkflow } from '../business/workflow/workflow.js';
+import { createCommandRerunRequestApplicationAdapter } from '../business/workflow/decision-actions.js';
 import type { DecisionApplicationAdapter } from '../business/workflow/decision-actions.js';
 import { createSessionDutyResolver } from './session-duty.js';
 import { DEFAULT_SESSION_ARCHIVE_POLICY } from '../business/workflow/ports.js';
@@ -106,7 +107,7 @@ import { createPlanService, createRequestCandidateService } from '../core/work-g
 import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-service.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createSessionResponsibilityBasisReader, createNoteRunTaskResolver } from '../core/work-graph/tasks/plan-readers.js';
+import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import { SESSION_RECORD_SCHEMAS, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
@@ -118,6 +119,21 @@ import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../core/work-graph/sessions/li
 import { createSessionFactsService } from '../core/work-graph/tasks/session-facts.js';
 import { createSessionResponsibilityService } from '../core/work-graph/sessions/session-responsibility-service.js';
 import { createSessionAnomalyService } from '../core/work-graph/tasks/session-anomaly-service.js';
+import { createUnknownCallReviewService } from '../core/work-graph/tasks/unknown-call-review-service.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../core/work-graph/tasks/unknown-call-review-codecs.js';
+import { readUnappliedAnswers } from '../core/work-graph/tasks/unknown-call-review-answers.js';
+import { createCommandRerunRequestService } from '../core/work-graph/tasks/command-rerun-request-service.js';
+import { COMMAND_RERUN_REQUEST_RECORD_SCHEMAS } from '../core/work-graph/tasks/command-rerun-request-codecs.js';
+import { createCommandRecognizer } from '../core/work-graph/tasks/command-recognition.js';
+import { readKernelCommandFacts } from '../core/agent-runtime/context-assembler.js';
+import { readTaskReviews } from '../core/work-graph/tasks/task-review-reader.js';
+import { captureWorkspaceChange, type WorkspaceChangeCaptureResult } from '../core/workspace/workspace-change-capture.js';
+import { readWorkspaceBaselineFromBundle } from '../core/workspace/workspace-baseline-artifact.js';
+import { WORKSPACE_DENIED_PREFIXES } from '../core/workspace/denied-prefixes.js';
+import { createToolCommitLookup } from './tool-commit-lookup.js';
+import type {
+  UnknownCallReviewV1, WorkspaceBaselineV1, WorkspaceCaptureV1,
+} from '../contracts/unknown-call-review.js';
 import { createLegacySessionProvenanceReader } from '../core/work-graph/tasks/session-provenance-facts.js';
 import { SLICE1_LOOKUP_INDEXES } from '../core/work-graph/model/session-facts-contracts.js';
 import { createKernelStoreRegistry } from '../core/agent-runtime/kernel-store-locator.js';
@@ -128,11 +144,15 @@ import type { DecisionApplicationReceiptV1 } from '../contracts/core/session-mes
 import type { SessionRef } from '../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { VersionPin } from '../contracts/core/identity.js';
+import type { GoalRef } from '../contracts/ledger.js';
 import type { RoleConfigurationRef } from '../contracts/core/identity.js';
+import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../contracts/review-admission.js';
 import type { PlatformDutyV1 } from '../contracts/platform-duty.js';
 import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
 import type { RuntimeCapabilities } from '../core/agent-runtime/contracts.js';
-import type { RuntimeExecutionDependencies, RuntimeHostBindings } from '../core/agent-runtime/execution-contracts.js';
+import type {
+  ContinuationWorkspaceSource, ReadonlyCommandAccessInput, RuntimeExecutionDependencies, RuntimeHostBindings,
+} from '../core/agent-runtime/execution-contracts.js';
 import type {
   AuthorizeConfiguration, ExecutionEntryDependencies, ExecutionEntryPort,
 } from '../core/work-graph/model/execution-entry-contracts.js';
@@ -167,12 +187,14 @@ import { createRunActivityService } from '../core/work-graph/tasks/run-activity-
 import { createReconcileCandidateReader } from '../core/work-graph/tasks/reconcile-reads.js';
 import { createSessionHealthService } from '../core/work-graph/sessions/session-health.js';
 import {
-  readAttestationFacts, reconcileQueryRunAtStartup, reconcileRunAtStartup, reconcileRunControlsAtStartup,
+  readAttestationFacts, readReviewDraftAtEntry, reconcileQueryRunAtStartup, reconcileRunAtStartup,
+  reconcileRunControlsAtStartup,
 } from '../core/agent-runtime/run-reconcile.js';
+import { readUnknownCallReviewDraft } from '../core/agent-runtime/unknown-call-draft.js';
 import type { SessionMappingProbe } from '../core/agent-runtime/session-operations.js';
 import type { TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
 import type { QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
-import type { RunRef, RunSnapshot } from '../contracts/dispatch.js';
+import type { RunRef, RunSnapshot, SourceRefV1 } from '../contracts/dispatch.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
 import type { WriteResult } from '../contracts/core/results.js';
 import {
@@ -490,14 +512,33 @@ function createAuthorizeConfiguration(host: RuntimeHostBindings): AuthorizeConfi
     if (!sameJson(permissions, input.permissions)) {
       return { status: 'rejected', code: 'forbidden', reason: 'the accepted Run permissions disagree with the prepared manifest permissions' };
     }
-    const ceiling = resolution.status === 'resolved' ? resolution.spec.permissions : null;
-    if (permissions.policyRevision !== input.run.roleBinding.policyRevision
-      || !permissions.tools.every(tool => current.tools.includes(tool) && (ceiling === null || ceiling.tools.includes(tool)))
-      || !permissions.writeScope.every(path => current.writeScope.includes(path))
-      || (ceiling?.writeScope === 'none' && permissions.writeScope.length !== 0)
-      || (permissions.tools.includes('shell') && (current.shellWorkspaceAccess !== 'all_except_denied'
-        || permissions.writeScope.length !== 1 || permissions.writeScope[0] !== '.'))) {
-      return { status: 'rejected', code: 'forbidden', reason: 'the prepared permissions are not allowed by the current Host and Role ceilings' };
+    const policyRevisionMatches = permissions.policyRevision === input.run.roleBinding.policyRevision;
+    if (isReviewRoundPurpose(input.run.purpose)) {
+      // R4/L13: a review-purpose Run is admitted by its fixed tool set and
+      // empty write scope with Host layer 1 still holding; the Role's tool
+      // ceiling is skipped (the Role was resolved with empty declared
+      // permissions by the entry lane).
+      const admissionProblem = reviewRoundAdmissionProblem({
+        purpose: input.run.purpose,
+        tools: permissions.tools,
+        writeScope: permissions.writeScope,
+        hostTools: current.tools,
+        readonlyCommandAccess: current.readonlyCommandAccess ?? null,
+        roleValid: true,
+      });
+      if (!policyRevisionMatches || admissionProblem !== null) {
+        return { status: 'rejected', code: 'forbidden', reason: `the review round permissions are not admitted: ${admissionProblem ?? 'policy_revision_mismatch'}` };
+      }
+    } else {
+      const ceiling = resolution.status === 'resolved' ? resolution.spec.permissions : null;
+      if (!policyRevisionMatches
+        || !permissions.tools.every(tool => current.tools.includes(tool) && (ceiling === null || ceiling.tools.includes(tool)))
+        || !permissions.writeScope.every(path => current.writeScope.includes(path))
+        || (ceiling?.writeScope === 'none' && permissions.writeScope.length !== 0)
+        || (permissions.tools.includes('shell') && (current.shellWorkspaceAccess !== 'all_except_denied'
+          || permissions.writeScope.length !== 1 || permissions.writeScope[0] !== '.'))) {
+        return { status: 'rejected', code: 'forbidden', reason: 'the prepared permissions are not allowed by the current Host and Role ceilings' };
+      }
     }
     let hostTemplate: typeof input.hostTemplate;
     if (resolution.status === 'resolved') {
@@ -569,7 +610,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
   // Slice 1 (spec §2.8): the validated archive policy this Host runs with.
   const archivePolicy = sessionArchivePolicyOf(options.sessionArchivePolicy);
   const hostInstance: HostInstanceFacts | undefined = options.hostInstance === undefined ? undefined
-    : { hostInstanceId: options.hostInstance.hostInstanceId, lease: options.hostInstance.lease };
+    : { hostInstanceId: options.hostInstance.hostInstanceId, lease: options.hostInstance.lease,
+      ...(options.hostInstance.takeover === undefined ? {} : { takeover: options.hostInstance.takeover }) };
   // C8 (A.2 step 5.6): the Host-installed automatic-rework policy; the defaults (3 / true) until the
   // Host installs its settings (`registerAutomationPolicy`). Read live by the requeue owner and the read model.
   let automationPolicy: TaskAutomationPolicyV1 = { ...DEFAULT_TASK_AUTOMATION_POLICY };
@@ -592,6 +634,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records,
       ...CONTROL_RECORD_SCHEMAS.records, ...EVIDENCE_RECORD_SCHEMAS.records, ...QUERY_JOB_RECORD_SCHEMAS.records,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.records,
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records,
+      ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.records,
       ...COMPLETION_RECORD_SCHEMAS.records, ...DECISION_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records,
       ...NOTE_RECORD_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
@@ -602,6 +646,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events, ...EVIDENCE_RECORD_SCHEMAS.events, ...QUERY_JOB_RECORD_SCHEMAS.events,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.events,
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
+      ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.events,
       ...COMPLETION_RECORD_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events,
       ...NOTE_RECORD_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
@@ -612,6 +658,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [], ...SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [],
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.lookups ?? [], ...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...EVIDENCE_RECORD_SCHEMAS.lookups ?? [], ...QUERY_JOB_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [],
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? [],
+      ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...COMPLETION_RECORD_SCHEMAS.lookups ?? [], ...DECISION_RECORD_SCHEMAS.lookups ?? [],
       ...LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? [], ...NOTE_RECORD_SCHEMAS.lookups ?? []],
   };
@@ -657,7 +705,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       now, limits: DEFAULT_WORKSPACE_LIMITS,
       ...(options.fileGraph === undefined ? {} : { fileGraph: options.fileGraph }),
       ...(options.lightScan === undefined ? {} : { lightScan: options.lightScan }),
-      ...(options.sourceAnalyzers === undefined ? {} : { sourceAnalyzers: options.sourceAnalyzers }) });
+      ...(options.sourceAnalyzers === undefined ? {} : { sourceAnalyzers: options.sourceAnalyzers }),
+      deniedPrefixes: WORKSPACE_DENIED_PREFIXES });
     const roleService = createRoleConfigurationService({ records: backend.records, now, eventId: randomUUID });
     const bootstrap = createProjectBootstrapServices({ records: backend.records, now, eventId: randomUUID });
     // Slice 5 §3.2: the configured operator is the Host's real start actor. The
@@ -681,6 +730,76 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     });
     const sessionAnomalies = createSessionAnomalyService({
       records: backend.records, lookups: backend.records, sessionFacts, now,
+    });
+    // K3 (§2 L7, L14/L15/L16): the UnknownCallReview owner. The read-only half
+    // is group 2; group 3 adds the review-round write, settlement (which reads
+    // the round's Run and, for D6, the writing round's prepared manifest) and
+    // the two list indexes.
+    let boundDecisionMessagesForReview: DecisionMessagePort | null = null;
+    const unknownCallReviews = createUnknownCallReviewService({
+      records: backend.records, lookups: backend.records, reads: executionReader,
+      readReviewDisplays: async (ctx, input) => {
+        const read = await executionReader.readExecution(ctx, input.roundRunRef);
+        if (read.status === 'not_found') return { status: 'not_found' };
+        if (read.status === 'not_ready') return { status: 'not_ready', observed: read.observed, required: read.required };
+        if (read.status === 'rejected') return read;
+        const envelope = read.value.run.envelope;
+        if (envelope === null) return { status: 'not_found' };
+        const manifest = await readManifestFromEnvelope({ bodies },
+          envelope as unknown as Record<string, unknown>, input.roundRunRef);
+        if (!manifest.ok) return manifest.rejection;
+        const items = manifest.value.manifest.unknownCallReview?.items ?? [];
+        return { status: 'ready', value: new Map(items.map(item => [item.alias, item.display])) };
+      },
+      // K3 D3/L21 (ruling 2): the hold guard pins the SAME canonical Task
+      // projection the claim service guards with: `readGoalPlanWindow` then
+      // `readCanonicalTaskFacts`, never a second reader.
+      taskProjection: async (_ctx, task) => {
+        const goalRef = { aggregateType: 'Goal' as const, projectId: task.projectId, goalId: task.goalId };
+        const window = await readGoalPlanWindow(backend.records, goalRef);
+        if (window.status !== 'ready') return window;
+        if (window.plan === null) {
+          return { status: 'rejected', code: 'not_found', reason: 'the Goal has no active Plan' };
+        }
+        return readCanonicalTaskFacts(backend.records, goalRef, window.plan, task.taskId);
+      },
+      // K3 L19: the disposition's 附言 is the saved answer body text; the SAME
+      // decision-message owner reads it (no second body reader).
+      readAnswerText: async (ctx, { source }) => {
+        if (boundDecisionMessagesForReview === null) {
+          return { status: 'rejected', code: 'unavailable', reason: 'the decision messages are not bound yet' };
+        }
+        const read = await boundDecisionMessagesForReview.readDecisionAnswer(ctx, { source });
+        if (read.status !== 'ready') return read;
+        return { status: 'ready', value: read.value.body === null ? null : read.value.body.text };
+      },
+      // K3 L19a: the disposition's blocked commands read the original Turn's
+      // command/cwd through the SAME K L9 window the continuation brief uses,
+      // and `package.json` script expansion through the ONE workspace read port.
+      readKernelCommandFacts: (ctx, input) => readKernelCommandFacts({ kernelStores, kernel }, ctx, input),
+      readWorkspace: { readWorkspace: workspace.tools.readWorkspace },
+      now, eventId: randomUUID,
+    });
+    // K3 L19a (spec §3.2b): the CommandRerunRequest owner. The ONE recognizer is
+    // shared by the owner, the card source and the Runtime's shell hook/request
+    // tool; `listTaskReviews` pages the UCR owner's own task filter to the end.
+    const commandRecognizer = createCommandRecognizer({
+      readWorkspace: { readWorkspace: workspace.tools.readWorkspace } });
+    const commandRerunRequests = createCommandRerunRequestService({
+      records: backend.records, lookups: backend.records,
+      listTaskReviews: async (ctx, { goalRef, taskId }) => {
+        if (ctx.workspaceId === undefined) {
+          return { status: 'rejected', code: 'unavailable', reason: 'the bound workspace is not available' };
+        }
+        return readTaskReviews(ctx, unknownCallReviews,
+          { goalRef, taskId, workspace: { projectId: goalRef.projectId, workspaceId: ctx.workspaceId } });
+      },
+      // Rework 1 item 4: `closed` is derived ONCE from the SAME canonical Task
+      // facts every other reader uses (satisfied, cancelled, superseded).
+      readTaskClosure: async (_ctx, task) => readTaskClosure(backend.records,
+        { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
+      recognize: commandRecognizer,
+      now, eventId: randomUUID,
     });
     // Slice 1 E14 (§2.2): the SAME legacy-provenance reader reaches the Session
     // directory and maintenance's provenance backfill, never a second instance.
@@ -799,7 +918,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         : boundNoteDecisionSource.applyNoteDecision(ctx, input),
     };
     const decisionSources = createDecisionSourceFacts({ records: backend.records, plans: planService,
-      noteDecisions: noteDecisionSourcePort });
+      noteDecisions: noteDecisionSourcePort, unknownCallReviews, workspace: { readWorkspace: workspace.tools.readWorkspace },
+      // K3 L19a: the SAME CRR owner, original-Run execution read and Kernel
+      // command reader (the K L9 window) the card source uses.
+      commandRerunRequests, commandRerunExecutions: executionReader,
+      readKernelCommandFacts: (ctx, input) => readKernelCommandFacts({ kernelStores, kernel }, ctx, input) });
     // §4.5: the formal identity/fingerprint of a settings commit are persisted
     // verbatim in its event body, so the finite coordinator can hand the real
     // `DecisionApplicationReceiptV1` to `recordDecisionApplication` from the
@@ -824,6 +947,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         messages: mailbox, materials: rawMaterials, messageWrites, sources: decisionSources }),
       sendUserMessage: mailbox.sendUserMessage.bind(mailbox),
     };
+    boundDecisionMessagesForReview = rawDecisionMessages;
     // §2.8/§4.1: the single in-process display-token key and the one notice
     // position comparator. The key is never persisted and never enters `state`.
     const noticeDisplayKey = randomBytes(32);
@@ -855,10 +979,22 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // over the SAME records/note-decision holder the rest of the platform owns.
     const noteReviewCards = createNoteReviewCardSource({ records: backend.records,
       noteDecisions: noteDecisionSourcePort });
+    // K3 L18: the review-card source over the SAME records/owner the rest of
+    // the platform owns. It is a derived card source; no card table is created.
+    const unknownCallReviewCards = createUnknownCallReviewCardSource({
+      records: backend.records, reviews: unknownCallReviews, workspace: { readWorkspace: workspace.tools.readWorkspace } });
+    // K3 L19a: the `command_rerun_request` card source over the SAME CRR owner,
+    // review owner, execution reader and Kernel command reader. Derived; no card
+    // table is created.
+    const commandRerunRequestCards = createCommandRerunRequestCardSource({
+      records: backend.records, requests: commandRerunRequests, reviews: unknownCallReviews,
+      executions: executionReader,
+      readKernelCommandFacts: (ctx, input) => readKernelCommandFacts({ kernelStores, kernel }, ctx, input) });
     const noteReviewNotices = createNoteReviewNoticeSource({ records: backend.records });
     const rawDecisionReads = createDecisionReadModel({
       records: backend.records,
-      cardSources: [goalCauseCards, planningQuestionCards, noteReviewCards],
+      cardSources: [goalCauseCards, planningQuestionCards, noteReviewCards, unknownCallReviewCards,
+        commandRerunRequestCards],
       noticeSources: [automaticReworkNotices, undeliveredReplyNotices, noteReviewNotices],
       conflicts: goalConflicts,
       positions: noticePositions,
@@ -869,6 +1005,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // The ONE verification workspace reader: the evidence owner captures rounds
     // with it and the requeue owner takes its digest-only source (LA-5).
     const verificationWorkspaceReader = new VerificationWorkspaceReader();
+    // K3 L6: the same reader plus the read-only byte reads the continuation
+    // note's file diffs need (baseline blob by id, current file by path).
+    const continuationWorkspaceSource: ContinuationWorkspaceSource = {
+      captureDigest: (root) => verificationWorkspaceReader.captureDigest(root),
+      capture: (root) => verificationWorkspaceReader.capture(root),
+      readBaselineBlob: (root, blobId) => workspace.readContinuationBaselineBlob(root, blobId),
+      readCurrentFile: (root, path) => workspace.readContinuationCurrentFile(root, path),
+    };
     // A.2 step 5.4 (D-3, C1): the requeue owner shares the records, the WG11
     // reader, the material service, the mailbox (a new input message is read
     // under its reader rules, ND-9) and the delegated-write admission.
@@ -1054,7 +1198,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       const entry = createExecutionEntryService(entryDependencies);
       resultWriter = entry;
       const modelRequests = createModelCallService(entryDependencies);
-      const dependencies: RuntimeExecutionDependencies = {
+      const dependencies: RuntimeExecutionDependencies & {
+        readTaskClosure: (ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) => Promise<import('../contracts/core/results.js').ReadResult<TaskClosureV1>>;
+      } = {
         claims: claimService, executions: executionReader, entry, historyWriter, modelRequests,
         roles: roleService, plans: planService, messages: mailbox, sessions: sessionDirectory,
         // Slice 5 §4.6: the SAME user-decision owner the platform publishes, so
@@ -1074,7 +1220,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         ...(options.sourceAnalyzers === undefined ? {} : { sourceAnalyzers: options.sourceAnalyzers }),
         ...(queryExecution === undefined ? {} : { queryExecution }),
         // C3: the continuation brief's checkpoint uses the SAME workspace reader as the evidence owner.
-        workspaceSource: verificationWorkspaceReader,
+        workspaceSource: continuationWorkspaceSource,
         // A.2 step 5.6: the in-process ends without a Kernel terminal (RUN-16, RUN-23).
         runReconcile,
         // K slice M1/M3/L5: the dangling-Turn closure's health owner and this
@@ -1086,7 +1232,20 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         // L8 (book ruling 12): the one reminder read the context assembler takes
         // before the model. It shares `catalog` and `observed`.
         architectureReminders,
+        // Rework 1 item 4: `prepare` reads the ONE canonical Task closure before
+        // building the binding and the continuation's blocked lines.
+        readTaskClosure: async (_ctx, task) => readTaskClosure(backend.records,
+          { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
         notes: noteToolDeps,
+        // K3 L14/L13/U5: the SAME review owner the routes/Workflow publish, and
+        // the Host's workspace-level read-only facts for `reviewCapability`.
+        unknownCallReviews,
+        // K3 L19a: the SAME CRR owner and the ONE recognizer the composition's
+        // card source and shell hook use; the request tool and the shell hook
+        // read them at Run start (no second parser or reader).
+        commandRerunRequests, commandRecognizer,
+        ...(host.readonlyCommandAccess === undefined ? {}
+          : { readonlyCommandAccess: (input: ReadonlyCommandAccessInput) => host.readonlyCommandAccess!(input) }),
         host, kernel, resourceCaps, now, newId: randomUUID,
       };
       runtime = createAgentRuntime(dependencies);
@@ -1136,6 +1295,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // reuse an existing TaskRequeue instead of rewriting it. The same owner
       // instance as `requeueTask`, never a second service.
       readTaskRequeue: (...args) => trackedCall(() => requeueService.readTaskRequeue(...args), unavailable),
+      // K3 L21 D9 (ruling 4): the record-keyed replay read of the derived
+      // release-hold requeue, from the same owner instance and never a write.
+      readTaskRequeueByIdentity: (...args) => trackedCall(
+        () => requeueService.readTaskRequeueByIdentity(...args), unavailable),
     };
     const roles: RoleConfigurationPort = {
       installRoleSpec: (ctx, command) => trackedCall(() => roleService.installRoleSpec(ctx, command),
@@ -1624,6 +1787,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         resolveScribeRecipient: (ctx: CoreCallContext) => Promise<ReadResult<SessionRef | null>>;
       } = {
         writeNote, reviewNote, withdrawNote, readNote, listByAnchor, countCurrentNotes, checkNotes,
+        // K3 L4: the read-only committed-receipt lookup stays on the note owner group
+        // so the owner lookup is reachable through the same public `notes` surface.
+        ...(noteWrite.lookupToolCommit === undefined ? {} : { lookupToolCommit: noteWrite.lookupToolCommit }),
         memoryLookup, memoryNeighbors, memoryHistory, memoryConflicts, memoryFind, memoryStale, listNotes,
         listPlanVersions, listCatalogVersions,
         readScribeTodos: noteScribeTodos.readScribeTodos,
@@ -1643,7 +1809,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const workflowDependencies: WorkflowDependencies = {
       tasks: rawGoals, plans: planService, sessions: sessionDirectory,
       claims: { ...claimService, requeueTask: requeueService.requeueTask,
-        readTaskRequeue: requeueService.readTaskRequeue },
+        readTaskRequeue: requeueService.readTaskRequeue,
+        readTaskRequeueByIdentity: requeueService.readTaskRequeueByIdentity },
       executions: executionReader, runtime: rawRuntime, evidence: rawEvidence, checks: rawCheckRunner,
       sourceAuthority,
       // Slice 1 (spec §3.3): the new optional narrow ports. The SAME
@@ -1713,12 +1880,31 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       goalExecutedFiles,
       applicationReceipt,
       // Slice 4C-2 U6: the note_review step ② adapter for the finite decision
-      // coordinator; `goal_conflict` keeps its built-in chain.
-      decisionApplications: { note_review: noteApplication },
+      // coordinator; `goal_conflict` keeps its built-in chain. K3 L19 adds the
+      // ONE `unknown_call_review` row: the owner's answer-derived disposition.
+      decisionApplications: {
+        note_review: noteApplication,
+        unknown_call_review: {
+          async apply(ctx, { answerRef, source, selection, requestId, expected }) {
+            const result = await unknownCallReviews.applyDisposition(ctx, {
+              input: { source, selection, decisionMessageRef: answerRef },
+              meta: { requestId, expected },
+            });
+            return { status: 'ready', value: { action: result, receipt: null } };
+          },
+        },
+        // K3 L19a (ruling 4): the `command_rerun_request` answer application
+        // beside B1's row, over the SAME CRR owner.
+        command_rerun_request: createCommandRerunRequestApplicationAdapter(commandRerunRequests),
+      },
       // Slice 2B P12: the WorkGraph RunActivity owner the Workflow backfill scans
       // and writes through (the SAME instance the activity reads and the end
       // commits use, §0.4).
       runActivity,
+      // K3 L7/L11/L12/L16: the SAME UnknownCallReview owner the routes and
+      // Runtime publish; the Workflow reads the selected Run's record and
+      // performs `settle_review` through it.
+      unknownCallReviews,
     };
     const rawWorkflow = createWorkflow(workflowDependencies);
     /**
@@ -1764,21 +1950,120 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // that holds the instance lease calls it, before any execution driver starts;
     // every write is judged by its owner machine (R events need `owned`).
     const classifierMessages = mailbox;
+    /** K3 L5: the immutable artifact content type of a full workspace change capture. */
+    const WORKSPACE_CHANGE_CAPTURE_CONTENT_TYPE = 'application/vnd.platform.workspace-change-capture+json';
+    // K3 (Q2/L4): the owners' published committed-call lookups, dispatched by
+    // tool name. A row-4 name no owner publishes stays `lookup_not_published`.
+    const toolCommitLookup = createToolCommitLookup([
+      mailbox.lookupToolCommit, rawDecisionMessages.lookupToolCommit, planService.lookupToolCommit,
+      noteWrite.lookupToolCommit, commandRerunRequests.lookupToolCommit,
+    ]);
+    // K3 (Q3/L5): the classifier's and the attestation entry's workspace capture.
+    // It reads the prepared manifest at `bundleRef`, takes its run-start
+    // baseline (absent/unavailable compares with the current HEAD), runs the
+    // new traversal over the Host's root with the platform's denied prefixes,
+    // and stores the full capture as an immutable Artifact.
+    const captureWorkspace = async (
+      ctx: CoreCallContext, input: { workspaceId: string; bundleRef: import('../contracts/artifact.js').ArtifactRef },
+    ): Promise<WorkspaceCaptureV1> => {
+      const unavailable = (
+        runBaselineKnown: boolean, reason: 'not_git' | 'unstable' | 'too_many_changes' | 'read_failed' | 'not_configured',
+        detail: string,
+      ): WorkspaceCaptureV1 => ({ status: 'unavailable', runBaselineKnown, reason,
+        detail: detail.length > 500 ? detail.slice(0, 500) : detail });
+      let root: string;
+      try {
+        const resolved = await options.workspace.resolveRoot({ aggregateType: 'Workspace', projectId: ctx.projectId,
+          workspaceId: input.workspaceId });
+        if (resolved.status !== 'ready') {
+          return unavailable(false, 'read_failed', `the workspace root could not be resolved: ${resolved.reason}`);
+        }
+        root = resolved.value.root;
+      } catch (error) {
+        return unavailable(false, 'read_failed', `the workspace root could not be resolved: ${String(error)}`);
+      }
+      let baseline: WorkspaceBaselineV1 | null = null;
+      let runRef: RunRef | null = null;
+      let sourceRefs: SourceRefV1[] = [];
+      // Item 10: one read/decode/degrade of the prepared bundle's baseline,
+      // shared with the context assembler (`readWorkspaceBaselineFromBundle`).
+      const bundle = await readWorkspaceBaselineFromBundle(bodies, input.bundleRef);
+      if (bundle !== null) {
+        const manifest = bundle.manifest as { claim?: { runRef?: RunRef }; sourceRefs?: unknown };
+        if (manifest.claim?.runRef !== undefined) runRef = manifest.claim.runRef;
+        // K3 L4 (RUN-25): the capture Artifact reuses the prepared manifest's
+        // run-start source pin (`plan-revision` + `workspace`), exactly the list
+        // `execution-preparation.ts` stores the manifest and baseline with.
+        if (Array.isArray(manifest.sourceRefs) && manifest.sourceRefs.length > 0) {
+          sourceRefs = manifest.sourceRefs as SourceRefV1[];
+        }
+        baseline = bundle.baseline;
+      }
+      let captured: WorkspaceChangeCaptureResult;
+      try {
+        captured = await captureWorkspaceChange({ root, deniedPrefixes: WORKSPACE_DENIED_PREFIXES, baseline });
+      } catch (error) {
+        return unavailable(baseline !== null, 'read_failed', `the workspace capture failed: ${String(error)}`);
+      }
+      if (captured.status !== 'captured') {
+        return unavailable(captured.baselineKnown, captured.reason, captured.detail);
+      }
+      if (runRef === null) return unavailable(baseline !== null, 'read_failed', 'the prepared manifest names no owning Run');
+      // K3 L4: never store an empty `sourceRefs`; the body codec refuses it and
+      // the capture would answer `unavailable` instead of the RUN-25 evidence.
+      if (sourceRefs.length === 0) {
+        return unavailable(baseline !== null, 'read_failed', 'the prepared manifest names no usable sourceRefs');
+      }
+      let storedCapture;
+      try {
+        storedCapture = await bodies.put({
+          body: JSON.stringify(captured.capture), contentType: WORKSPACE_CHANGE_CAPTURE_CONTENT_TYPE, sourceRefs,
+          origin: { kind: 'run', owner: runRef }, requestedAt: now(),
+        });
+      } catch (error) {
+        return unavailable(captured.baselineKnown, 'read_failed', `storing the workspace capture failed: ${String(error)}`);
+      }
+      if (storedCapture.status !== 'ready') {
+        return unavailable(captured.baselineKnown, 'read_failed', `storing the workspace capture failed: ${storedCapture.reason}`);
+      }
+      return { status: 'captured', runBaselineKnown: captured.baselineKnown, baseCommit: captured.capture.baseCommit,
+        headNow: captured.capture.headNow, captureRef: storedCapture.value.ref, changedCount: captured.capture.changed.length,
+        sample: captured.sample, notVisible: captured.capture.notVisible,
+        notVisibleOmitted: captured.capture.notVisibleOmitted };
+    };
     const reconcile = {
       candidates: reconcileCandidates,
+      // K3 L28 step 2b/6b: the SAME `UnknownCallReview` owner the routes and the
+      // Workflow read. B1 adds the UR7b answer list and the saved-answer read;
+      // `listReviews` stays.
+      reviews: {
+        listReviews: unknownCallReviews.listReviews.bind(unknownCallReviews),
+        listUnappliedAnswers: unknownCallReviews.listUnappliedAnswers.bind(unknownCallReviews),
+        // K3 L19a (ruling 4/answer 7): the CRR answers through the SAME
+        // `k3-decision-answer-by-source-goal` reader, so 6b(c) kind 4 lists both
+        // kinds and the Workflow drives each by its own source ref.
+        readCommandRerunRequestAnswers: (ctx: CoreCallContext, { goalRef }: { goalRef: GoalRef }) =>
+          readUnappliedAnswers({ records: backend.records }, ctx, { kind: 'command_rerun_request', goalRef }),
+        readDecisionAnswer: rawDecisionMessages.readDecisionAnswer.bind(rawDecisionMessages),
+      },
       probe: (session: Parameters<typeof historyOwner.probe>[0]['session'], signal: AbortSignal): Promise<SessionMappingProbe> =>
         trackedCall(() => historyOwner.probe({ session, signal }),
           () => ({ verdict: 'cancelled' as const, activeRunId: null, reason: 'platform is closing' })),
       recordSessionHealth: (...args: Parameters<typeof sessionHealth.recordSessionHealth>) =>
         trackedCall(() => sessionHealth.recordSessionHealth(...args), unavailable),
-      reconcileRun: (ctx: CoreCallContext, input: { record: TaskExecutionRecord; hostInstanceId: string; probe: SessionMappingProbe }) =>
+      reconcileRun: (ctx: CoreCallContext, input: { record: TaskExecutionRecord; hostInstanceId: string;
+        takeover?: import('../contracts/unknown-call-review.js').HostTakeoverProofV1 | null;
+        probe: SessionMappingProbe }) =>
         trackedCall(async () => {
           if (resultWriter === undefined) {
             return { runRef: input.record.run.ref, row: 'W-*', status: 'left' as const,
               reason: 'this Host has no trusted Runtime binding to read the Kernel' };
           }
           return reconcileRunAtStartup({ owner: historyOwner, messages: classifierMessages, controls: rawControls,
-            entry: resultWriter, reconcile: runReconcile, now, newId: randomUUID }, ctx, input);
+            entry: resultWriter, reconcile: runReconcile, now, newId: randomUUID,
+            ...(runtime.port.turnClosureSupport === undefined
+              ? {} : { turnClosureSupport: runtime.port.turnClosureSupport.bind(runtime.port) }),
+            captureWorkspace, lookupToolCommit: toolCommitLookup }, ctx, input);
         }, () => ({ runRef: input.record.run.ref, row: 'W-*', status: 'failed' as const, reason: 'platform is closing' })),
       reconcileQuery: (ctx: CoreCallContext, input: { record: QueryExecutionRecord; hostInstanceId: string; probe: SessionMappingProbe }) =>
         trackedCall(async () => {
@@ -1859,12 +2144,17 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       if (admitted !== null) return admitted;
       const auth = record.run.executionAuthorization;
       const kernel = auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2 ? auth.kernel : null;
-      const facts = kernel === null ? { ok: true as const, kernelTurnOpen: false, inputsConfirmed: null }
-        : await readAttestationFacts({ owner: historyOwner, messages: classifierMessages }, ctx, { session: record.session,
-          executionRef: record.run.ref, kernel, startPosition: record.run.executionHistory?.startPosition ?? null });
+      const facts = kernel === null
+        ? { ok: true as const, kernelTurnOpen: false, inputsConfirmed: null,
+            draft: await readUnknownCallReviewDraft({ lookupToolCommit: toolCommitLookup, captureWorkspace }, ctx, { record,
+              kernel: { adapterId: '', kernelSessionId: '', runId: '', turnId: '' }, turnFound: false,
+              kernelReadable: false, kernelUnreadableAtStop: false, unresolved: [] }) }
+        : await readReviewDraftAtEntry({ owner: historyOwner, messages: classifierMessages,
+          lookupToolCommit: toolCommitLookup, captureWorkspace }, ctx, { record, kernel,
+          startPosition: record.run.executionHistory?.startPosition ?? null });
       if (!facts.ok) return facts.rejection;
       return runReconcile.resolveUnknownRun(ctx, { input: { runRef, reason: input.reason, kernelTurnOpen: facts.kernelTurnOpen,
-        inputsConfirmed: facts.inputsConfirmed }, meta: request.meta });
+        inputsConfirmed: facts.inputsConfirmed, review: facts.draft }, meta: request.meta });
     }
     async function resolveUnknownQueryRun(ctx: CoreCallContext, request: GraphWrite<{ queryRunRef: QueryRunRef; reason: string }>,
     ): Promise<WriteResult<QueryExecutionRecord>> {
@@ -1945,6 +2235,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, controls, evidence, checks, roles, architecture, projects, completionPolicies,
       queries,
+      // K3 (§2 L7): the read-only UnknownCallReview owner, published for the
+      // `unknown-call-reviews/read` route (group 3/4 extend it with writes).
+      unknownCallReviews,
       // Slice 1 (spec §4.4): the new owner groups the route layer binds. They are
       // the same instances injected into `sessions`, `queries` and the Workflow.
       sessionFacts, responsibilities, sessionAnomalies,

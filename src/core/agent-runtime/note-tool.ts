@@ -18,9 +18,11 @@
  * the service's `forbidden`, not a second tool-level check.
  */
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
-import type { NoteDraftAnchorV1, NoteDraftV1, NoteFactV1, NoteKind, NoteSectionsV1 } from '../../contracts/note.js';
 import type {
   NoteCheckPort, NoteCheckV1, NoteDispositionResult, NoteWritePort, WriteNoteInput,
+} from '../work-graph/model/note-contracts.js';
+import {
+  recordNoteRequestOf, type RecordNoteArgs, type RecordNoteRequestV1,
 } from '../work-graph/model/note-contracts.js';
 import {
   toolSchema as z,
@@ -29,6 +31,11 @@ import {
   type ToolResult,
   type WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
+
+// K3 (decision 72, U1): the shared builder lives in WorkGraph/model so the owner
+// lookup can use it too; it stays exported here for the existing tool surface.
+export { recordNoteRequestOf };
+export type { RecordNoteRequestV1 };
 
 export const NOTE_TOOL_NAMES = ['record_note'] as const;
 
@@ -177,49 +184,6 @@ type WriteArgs = z.infer<typeof writeSchema>;
 type ReviewArgs = z.infer<typeof reviewSchema>;
 type WithdrawArgs = z.infer<typeof withdrawSchema>;
 
-/**
- * RW-14 (U1): the ONE pure builder from the accepted model args to the
- * `writeNote` / `reviewNote` / `withdrawNote` request objects. It is the only
- * place the model JSON becomes a request: the trusted `commandId` is injected,
- * absent lists/bodies/pointers take their defaults, and no model-supplied
- * identity (principal, goalId, plan/catalog revision) can enter.
- */
-export type RecordNoteRequestV1 =
-  | { op: 'write'; request: WriteNoteInput }
-  | { op: 'review'; request: Parameters<NoteWritePort['reviewNote']>[1] }
-  | { op: 'withdraw'; request: Parameters<NoteWritePort['withdrawNote']>[1] };
-
-export function recordNoteRequestOf(args: WriteArgs | ReviewArgs | WithdrawArgs,
-  commandId: string): RecordNoteRequestV1 {
-  if (args.op === 'write') {
-    const common = {
-      topic: args.topic,
-      conclusion: args.conclusion,
-      anchor: args.anchor as NoteDraftAnchorV1,
-      extraAnchors: (args.extraAnchors ?? []) as NoteDraftAnchorV1[],
-      facts: (args.facts ?? []) as NoteFactV1[],
-      basisFiles: args.basisFiles ?? [],
-      structural: args.structural ?? false,
-      replaces: args.replaces ?? [],
-      contradicts: args.contradicts ?? [],
-      coexistWith: args.coexistWith ?? [],
-    };
-    const note: NoteDraftV1 = args.kind === 'understanding'
-      ? { ...common, kind: 'understanding', sections: args.sections as NoteSectionsV1 }
-      : { ...common, kind: args.kind as Exclude<NoteKind, 'understanding'>, body: args.body as string };
-    return { op: 'write', request: { commandId, note,
-      expectedPointerRevision: args.expectedPointerRevision ?? null, goalId: null } };
-  }
-  if (args.op === 'review') {
-    return { op: 'review', request: { commandId, noteId: args.noteId, expectedVersion: args.expectedVersion,
-      expectedPointerRevision: args.expectedPointerRevision ?? null, verdict: args.verdict,
-      ...(args.resolution === undefined ? {} : { resolution: args.resolution }),
-      reason: args.reason ?? null } };
-  }
-  return { op: 'withdraw', request: { commandId, noteId: args.noteId, expectedVersion: args.expectedVersion,
-    reason: args.reason ?? null } };
-}
-
 const description = 'Record a note: `{ op: "write" | "review" | "withdraw", ... }`. '
   + 'Write at task end, rework, plan adoption or archive (MVP B09). Before writing, look first: use the memory `lookup` '
   + 'branch for the existing `topics` of the anchor and the `find` branch, and reuse an existing topic. Anchor so the note '
@@ -323,7 +287,7 @@ export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
     try {
       // RW-14: the accepted args become a request in ONE place; the tool only
       // dispatches on the op.
-      const built = recordNoteRequestOf(accepted as WriteArgs | ReviewArgs | WithdrawArgs, commandId);
+      const built = recordNoteRequestOf(accepted as RecordNoteArgs, commandId);
       if (built.op === 'write') return await write(callId, built.request, context);
       if (built.op === 'review') {
         const result: NoteDispositionResult = await fixedNotes.reviewNote(context, built.request);

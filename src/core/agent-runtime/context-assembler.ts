@@ -13,14 +13,19 @@
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import {
   CONTINUATION_BRIEF_LIMITS, ContinuationBriefCapacityError, continuationBriefDigest, continuationBriefShapeProblem,
-  renderContinuationBriefZh, type ContinuationBriefV1, type ContinuationSourceCheckpointV1,
+  renderContinuationBriefZh, type ContinuationBlockedCommandLineV1, type ContinuationBriefV1,
+  type ContinuationSourceCheckpointV1,
 } from '../../contracts/continuation-brief.js';
+import type { CommandRerunRequestV1 } from '../../contracts/command-rerun-request.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { ArchitectureReminderFactsV1 } from '../../contracts/architecture-observation.js';
 import type { RoleConfigurationRef, WorkspaceScope } from '../../contracts/core/identity.js';
-import type { PreparedQueryManifestV1, PreparedTaskManifestV1 } from '../../contracts/core/prepared-execution.js';
+import {
+  renderUnknownCallReviewZh,
+  type PreparedQueryManifestV1, type PreparedTaskManifestV1, type UnknownCallReviewInputV1,
+} from '../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
-import type { TaskTriple } from '../../contracts/dispatch.js';
+import type { RunRef, TaskTriple } from '../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import type {
   AttentionChangesV1, AttentionGraphReadRequestV1, ContextAssemblyBindingV1,
@@ -28,26 +33,44 @@ import type {
   InputDeclarationV1, InputSelectionV1, NoteIndexRowV1, NotesUnderstandingRowV1, PlatformDutyV1, TaskInputPageV1,
 } from '../../contracts/graph-context.js';
 import { goalContextDigestV1 } from '../../contracts/graph-context.js';
-import type { GoalSnapshot } from '../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
 import type { PlanRevisionSnapshot, RuntimeTask } from '../../contracts/plan.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { TaskRequeueSnapshotV1 } from '../../contracts/task-requeue.js';
 import type { SessionAnomalyAnchorRef } from '../../contracts/session-anomaly.js';
+import type { SessionRecord } from '../../contracts/core/session.js';
+import type { UnknownCallReviewV1, WorkspaceBaselineV1, CapturedPathV1, UnknownCallReviewRef,
+  KernelCallRefV1 } from '../../contracts/unknown-call-review.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
+import type { CommandRerunRequestReadPort } from '../work-graph/model/command-rerun-request-contracts.js';
 import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
 import type { ContinuationBasis, TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import type { GraphContextFactsV1, GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
+import type { KernelCommandFactV1 } from '../work-graph/model/kernel-command-read-contracts.js';
 import { assembleAnomalySection, assembleContinuationBrief, readPreviousTurn, type BriefWorkspaceFacts,
-  type PreviousTurnFacts, type PreviousTurnRetry } from './continuation-brief-assembly.js';
+  type PreviousTurnFacts, type PreviousTurnRetry, type ReviewFileRead } from './continuation-brief-assembly.js';
 import { platformRoleProfile } from './role-profiles.js';
 import { decodeKernelEntry } from './kernel-turn-facts.js';
-import { createSessionHistoryCursorOwner } from './session-operations.js';
+import { readTaskReviews } from '../work-graph/tasks/task-review-reader.js';
+import { orderBlockedCommands } from '../work-graph/tasks/blocked-command-order.js';
+import { unknownCallReviewRefKey } from '../work-graph/tasks/unknown-call-review-codecs.js';
+import {
+  commandRerunRequestDeclaredForms, compareCommandRerunRequestNewestFirst,
+} from '../work-graph/tasks/command-rerun-request-card.js';
+import { createSessionHistoryCursorOwner, type SessionHistoryCursorOwner } from './session-operations.js';
 import {
   ARCHITECTURE_REMINDER_UNAVAILABLE_KEY, architectureReminderRowEntries,
 } from './architecture-reminders.js';
-import type { ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
+import { isProtectedWorkspacePath } from '../workspace/continuation-diff-reads.js';
+import { requeueHistorySourceOf } from '../work-graph/state/task-failure.js';
+import {
+  readWorkspaceBaselineFromBundle, readWorkspaceCaptureChanges,
+} from '../workspace/workspace-baseline-artifact.js';
+import type {
+  ContinuationWorkspaceBytes, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies,
+} from './execution-contracts.js';
 
 export type { AttentionGraphReadRequestV1 } from '../../contracts/graph-context.js';
 
@@ -64,6 +87,7 @@ export const CONTEXT_SECTION_HEADERS: Readonly<Record<ContextSectionNameV1, stri
   reminders: '## Reminders',
   inputs: '## Selected inputs',
   continuation: '',
+  unknown_call_review: '',
 };
 
 export const CONTEXT_SECTION_ORDER: readonly ContextSectionNameV1[] = [
@@ -87,11 +111,12 @@ export type ArchitectureReminderReadPort = {
 
 export type ContextAssemblerDependencies = Pick<RuntimeExecutionDependencies,
   'executions' | 'roles' | 'materials' | 'bodies'>
-  & Partial<Pick<RuntimeExecutionDependencies, 'plans' | 'sessions' | 'kernelStores' | 'workspaceHost' | 'workspaceSource' | 'kernel'>>
+  & Partial<Pick<RuntimeExecutionDependencies, 'plans' | 'sessions' | 'kernelStores' | 'workspaceHost' | 'workspaceSource' | 'kernel' | 'unknownCallReviews'>>
   & {
     graphContext?: GraphContextReadPort; taskInputs?: TaskContextInputPort;
     architectureReminders?: ArchitectureReminderReadPort;
-  };
+    /** K3 B3 item 7: the Task's requests for the blocked section; optional for old test doubles. */
+    commandRerunRequests?: CommandRerunRequestReadPort };
 
 export type AssembledContextV1 = {
   input: string; binding: ContextAssemblyBindingV1;
@@ -100,7 +125,18 @@ export type AssembledContextV1 = {
   selectedTaskInputs: PreparedTaskManifestV1['selectedTaskInputs'];
   /** Slice 1 §2.7: the anchors named by the brief's anomaly section (absent/null when it has none). */
   anomalyAnchorRefs?: SessionAnomalyAnchorRef[] | null;
+  /** K3 L13: the structured review instruction of a review-purpose Run. */
+  unknownCallReview?: UnknownCallReviewInputV1;
+  /**
+   * K3 L13 (D8): the byte offset where the rendered review instruction starts
+   * in `input` (its trailing section). `prepare` re-renders from this offset when
+   * it trims the instruction to fit the manifest.
+   */
+  reviewSectionStart?: number | null;
 };
+
+/** D8: one command and its cwd together may not exceed this many UTF-8 bytes. */
+export const REVIEW_COMMAND_MAX_BYTES = 4 * 1024;
 
 export interface ContextAssembler {
   assembleTask(ctx: CoreCallContext, input: {
@@ -137,6 +173,9 @@ function byKey(left: { key: string }, right: { key: string }): number {
 }
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
@@ -228,6 +267,8 @@ export function renderContext(input: {
   required: { role: string; goal: string | null; task: string | null };
   optional: Partial<Record<'footprint' | 'notes' | 'reminders' | 'inputs', { key: string; text: string }[]>>;
   continuationSuffix: string | null;
+  /** R1: the rendered `unknown_call_review` section of a review-purpose Work Run. */
+  reviewSuffix?: string | null;
   residentBudgetBytes: number;
 }): { input: string; sections: ContextAssemblyBindingV1['sections']; residentBytes: number; totalBytes: number } {
   const present = OPTIONAL_SECTIONS
@@ -339,8 +380,148 @@ export function renderContext(input: {
     sections.push({ name: 'continuation', startByte: start, endByte: byteLength, omitted: 0 });
   }
 
+  // R1/D1: the review instruction is the LAST section and is emitted only for a
+  // review-purpose Work Run (`reviewSuffix` is null on every other call).
+  if (input.reviewSuffix !== null && input.reviewSuffix !== undefined) {
+    append('\n\n');
+    const start = byteLength;
+    append(input.reviewSuffix);
+    sections.push({ name: 'unknown_call_review', startByte: start, endByte: byteLength, omitted: 0 });
+  }
+
   const text = pieces.join('');
   return { input: text, sections, residentBytes, totalBytes: byteLength };
+}
+
+// ------------------------------------------------------------------------ //
+// K3 L13: the review-round instruction (structured + rendered)              //
+// ------------------------------------------------------------------------ //
+
+/** L13: the command/cwd pair read from the original Run's Kernel facts. */
+export type ReviewCommandFactV1 = { command: string | null; cwd: string | null };
+
+/** Cut a string to at most `maxBytes` UTF-8 bytes on a code-point boundary. */
+function truncateUtf8(text: string, maxBytes: number): string {
+  if (maxBytes <= 0) return '';
+  if (utf8Bytes(text) <= maxBytes) return text;
+  let used = 0;
+  let out = '';
+  const encoder = new TextEncoder();
+  for (const character of text) {
+    const size = encoder.encode(character).length;
+    if (used + size > maxBytes) break;
+    out += character;
+    used += size;
+  }
+  return out;
+}
+
+/**
+ * K3 L13/D8: the structured `UnknownCallReviewInputV1` for a review round. Only
+ * `process` items are listed, by alias; the structured items never carry the
+ * Kernel callId (D8). A command whose command+cwd exceeds 4 KiB is cut and marked
+ * `truncated`; without the full Kernel command the record's own 512-char cut is
+ * `truncated` too. The written conclusion of an earlier unfinished round is
+ * carried as `current`.
+ */
+export function buildUnknownCallReviewInputV1(input: {
+  review: UnknownCallReviewV1;
+  reviewRef: UnknownCallReviewRef;
+  phase: 'review' | 'proposal';
+  round: number;
+  commandFacts?: ReadonlyMap<number, ReviewCommandFactV1>;
+  targets?: number[] | null;
+  personText?: string | null;
+  /** L18/lead answer 3: the disposition answer's annotations, in answer order (proposal only). */
+  annotations?: Array<{ path: string | null; text: string }>;
+  /** L20/D7: the undetermined platform aliases of a mixed card (proposal only). */
+  platformTargets?: number[];
+  /**
+   * F/L6: the full changed-path list from the capture Artifact, or null/absent
+   * when it cannot be read (then the record's 50-path sample is the fallback).
+   */
+  fullChanges?: CapturedPathV1[] | null;
+}): UnknownCallReviewInputV1 {
+  const { review } = input;
+  const processItems = review.items.filter(item => item.kind === 'process');
+  const items = processItems.map((item) => {
+    const fact = input.commandFacts?.get(item.alias);
+    const command = fact?.command ?? item.summary.command;
+    const cwd = fact?.cwd ?? item.summary.cwd;
+    const commandBytes = command === null ? 0 : utf8Bytes(command);
+    const originalCwdBytes = cwd === null ? 0 : utf8Bytes(cwd);
+    const overLimit = commandBytes + originalCwdBytes > REVIEW_COMMAND_MAX_BYTES;
+    const truncated = overLimit || (fact === undefined && item.summary.truncated);
+    // F: cut the cwd to the 4 KiB budget FIRST, then give the command the rest.
+    const boundedCwd = cwd === null ? null : truncateUtf8(cwd, REVIEW_COMMAND_MAX_BYTES);
+    const cwdBytes = boundedCwd === null ? 0 : utf8Bytes(boundedCwd);
+    const budget = Math.max(0, REVIEW_COMMAND_MAX_BYTES - cwdBytes);
+    const boundedCommand = command === null
+      ? null
+      : truncated ? { text: truncateUtf8(command, budget), truncated: true } : { text: command, truncated: false };
+    const sameBatch = review.items
+      .filter(other => other.alias !== item.alias && other.kernel.declaredPosition === item.kernel.declaredPosition)
+      .map(other => other.alias);
+    const concluded = item.observed.by === 'review_round' || item.observed.by === 'settlement';
+    return {
+      alias: item.alias, toolName: item.toolName,
+      display: truncated ? 'truncated' as const : 'full' as const,
+      command: boundedCommand, cwd: boundedCwd, startedAt: item.startedAt, sameBatch,
+      current: concluded ? item.observed : null,
+      // L20/lead answer 3: proposal only, so the review phase's structured bytes
+      // stay identical. Trimming nulls command/cwd but keeps this record cut.
+      ...(input.phase === 'proposal' ? { summaryCommand: item.summary.command } : {}),
+    };
+  });
+  const captured = review.workspace;
+  let workspace: UnknownCallReviewInputV1['workspace'];
+  if (captured.status === 'captured') {
+    // F/L6: the first 200 from the FULL capture; the record's sample is only the
+    // fallback when the capture Artifact is not readable.
+    const changedSample = (input.fullChanges ?? captured.sample).slice(0, 200);
+    workspace = {
+      status: 'captured', runBaselineKnown: captured.runBaselineKnown,
+      notVisible: [...captured.notVisible], notVisibleOmitted: captured.notVisibleOmitted,
+      changedSample, changedOmitted: Math.max(0, captured.changedCount - changedSample.length),
+    };
+  } else {
+    workspace = {
+      status: 'unavailable', runBaselineKnown: captured.runBaselineKnown,
+      notVisible: [], notVisibleOmitted: 0, changedSample: [], changedOmitted: 0,
+    };
+  }
+  return {
+    reviewRef: { ...input.reviewRef }, revision: review.revision, phase: input.phase, round: input.round,
+    items, targets: input.targets ?? null, personText: input.personText ?? null,
+    annotations: (input.annotations ?? []).map(annotation => ({ ...annotation })),
+    platformTargets: [...(input.platformTargets ?? [])].sort((left, right) => left - right),
+    workspace,
+  };
+}
+
+/**
+ * K3 L13/D8: the next trim in the fixed order — the changed sample from the
+ * back, then `notVisible` from the back, then items from the last one. `null`
+ * is the floor (alias + tool name stay on every item).
+ */
+export function trimUnknownCallReviewInput(review: UnknownCallReviewInputV1): UnknownCallReviewInputV1 | null {
+  const workspace = review.workspace;
+  if (workspace.changedSample.length > 0) {
+    return { ...review, workspace: { ...workspace,
+      changedSample: workspace.changedSample.slice(0, -1), changedOmitted: workspace.changedOmitted + 1 } };
+  }
+  if (workspace.notVisible.length > 0) {
+    return { ...review, workspace: { ...workspace,
+      notVisible: workspace.notVisible.slice(0, -1), notVisibleOmitted: workspace.notVisibleOmitted + 1 } };
+  }
+  const lastExpanded = [...review.items].reverse().find(item => item.display !== 'unexpanded');
+  if (lastExpanded === undefined) return null;
+  const at = review.items.indexOf(lastExpanded);
+  // L20/lead answer 3: `command`/`cwd`/`current` go; a proposal item's
+  // `summaryCommand` stays with the spread so the proposal block can still show
+  // the record's cut.
+  return { ...review, items: review.items.map((item, index) => index === at
+    ? { ...item, display: 'unexpanded' as const, command: null, cwd: null, current: null } : item) };
 }
 
 // ------------------------------------------------------------------------ //
@@ -760,6 +941,7 @@ function assembleSections(input: {
   task: string | null;
   optional: Partial<Record<OptionalSectionName, OptionalRow[]>>;
   continuationSuffix: string | null;
+  reviewSuffix?: string | null;
   residentBudgetBytes: number;
 }): { input: string; sections: ContextAssemblyBindingV1['sections']; residentBytes: number; totalBytes: number } {
   return renderContext({
@@ -767,6 +949,7 @@ function assembleSections(input: {
     required: { role: input.role, goal: input.goal, task: input.task },
     optional: input.optional,
     continuationSuffix: input.continuationSuffix,
+    reviewSuffix: input.reviewSuffix ?? null,
     residentBudgetBytes: input.residentBudgetBytes,
   });
 }
@@ -831,7 +1014,9 @@ export async function briefWorkspaceFactsFor(
     uncommitted = { status: 'unavailable', baseCommit: null, paths: [], omitted: 0,
       reason: captured === null ? 'the workspace capture failed' : `the workspace capture is ${captured.status}` };
   } else if (captured.sourceProof.kind === 'git-head-worktree') {
-    const paths = captured.sourceProof.changedFiles;
+    // K3-04/L5: a Host-denied path is never named anywhere in the brief, so the
+    // older whole-workspace reader's changed list is filtered here too.
+    const paths = captured.sourceProof.changedFiles.filter((path) => !isProtectedWorkspacePath(path));
     uncommitted = { status: 'git', baseCommit: captured.sourceProof.baseCommit,
       paths: paths.slice(0, CONTINUATION_BRIEF_LIMITS.paths), omitted: Math.max(0, paths.length - CONTINUATION_BRIEF_LIMITS.paths),
       reason: null };
@@ -844,6 +1029,132 @@ export async function briefWorkspaceFactsFor(
 type SessionBasisOutcome =
   | { status: 'ready'; value: PreparedTaskManifestV1['sessionBasis'] | null }
   | { status: 'cancelled' };
+/** L6: either side of a file diff is capped at 1 MiB. */
+const REVIEW_DIFF_MAX_BYTES = 1024 * 1024;
+
+/** Classify raw read bytes into the assembly's read-only union; a read failure degrades to no diff. */
+function classifyReviewBytes(result: ContinuationWorkspaceBytes): ReviewFileRead {
+  if (result.status !== 'ready') {
+    const reason = result.reason;
+    if (reason === 'too_large' || reason === 'not_text' || reason === 'protected') return { status: 'unavailable', reason };
+    return { status: 'unavailable', reason: 'read_failed' };
+  }
+  const bytes = result.bytes;
+  if (bytes.byteLength > REVIEW_DIFF_MAX_BYTES) return { status: 'unavailable', reason: 'too_large' };
+  for (const byte of bytes) if (byte === 0) return { status: 'unavailable', reason: 'binary' };
+  try {
+    return { status: 'ready', text: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
+  } catch {
+    return { status: 'unavailable', reason: 'not_text' };
+  }
+}
+/** L5: the afterRun's prepared manifest baseline, or null when there is none/unreadable. */
+async function readRunStartBaseline(
+  bodies: NonNullable<ContextAssemblerDependencies['bodies']>, previous: TaskExecutionRecord,
+): Promise<WorkspaceBaselineV1 | null> {
+  const bundleRef = previous.run.envelope?.bundleRef;
+  if (bundleRef === undefined) return null;
+  return (await readWorkspaceBaselineFromBundle(bodies, bundleRef))?.baseline ?? null;
+}
+/** L6 (item 6a): the FULL changed list from the capture Artifact, or null when it cannot be read. */
+async function readReviewCaptureChanges(
+  deps: ContextAssemblerDependencies, review: UnknownCallReviewV1 | null,
+): Promise<CapturedPathV1[] | null> {
+  const capture = review?.workspace;
+  if (capture === undefined || capture.status !== 'captured' || deps.bodies === undefined) return null;
+  return readWorkspaceCaptureChanges(deps.bodies, capture.captureRef);
+}
+/**
+ * K3 L6: the run-start baseline and current content for every file-edit path of
+ * the afterRun's review. Every read is read-only and degrades; a missing reader
+ * or workspace yields an empty map (no diff), never a failure of the brief.
+ * Cancellation is not a failure (slice 8 §13.8): the signal, or a `resolveRoot`
+ * that names cancellation, answers `cancelled`.
+ */
+async function unknownCallReviewFilesFor(
+  deps: ContextAssemblerDependencies, record: TaskExecutionRecord, previous: TaskExecutionRecord,
+  review: UnknownCallReviewV1 | null, signal: AbortSignal,
+): Promise<ReadonlyMap<string, { baseline: ReviewFileRead; current: ReviewFileRead }> | null | 'cancelled'> {
+  if (review === null) return null;
+  const paths = [...new Set(review.items.flatMap((item) => item.kind === 'file_edit' ? item.summary.paths : []))];
+  if (paths.length === 0) return null;
+  const source = deps.workspaceSource;
+  if (source?.readBaselineBlob === undefined || source.readCurrentFile === undefined
+    || deps.workspaceHost === undefined || deps.bodies === undefined) return new Map();
+  if (signal.aborted) return 'cancelled';
+  let root: string;
+  try {
+    const resolved = await deps.workspaceHost.resolveRoot({ aggregateType: 'Workspace', projectId: record.run.ref.projectId,
+      workspaceId: record.session.workspaceId });
+    if (resolved.status === 'rejected' && resolved.code === 'cancelled') return 'cancelled';
+    if (signal.aborted) return 'cancelled';
+    if (resolved.status !== 'ready') return new Map();
+    root = resolved.value.root;
+  } catch {
+    return signal.aborted ? 'cancelled' : new Map();
+  }
+  const baseline = await readRunStartBaseline(deps.bodies, previous);
+  // The body and file reads have no cancelled result of their own: judge them by the signal.
+  if (signal.aborted) return 'cancelled';
+  const files = new Map<string, { baseline: ReviewFileRead; current: ReviewFileRead }>();
+  for (const path of paths) {
+    if (isProtectedWorkspacePath(path)) {
+      files.set(path, { baseline: { status: 'unavailable', reason: 'protected' },
+        current: { status: 'unavailable', reason: 'protected' } });
+      continue;
+    }
+    const entry = baseline?.dirty.find((candidate) => candidate.path === path);
+    // L6 (spec 220): a dirty `present` entry stores only a blob id and a
+    // `deleted` entry stores no content, so either is status only: never read
+    // `HEAD:<path>` or a baseline blob for a path the baseline already names.
+    // A path clean at Run start has no dirty entry: its old side is the start
+    // HEAD blob, read by tree ref (`<headCommit>:<path>`) with `git cat-file
+    // blob` (line 215).
+    const baselineRead: ReviewFileRead = entry !== undefined || baseline === null
+      ? { status: 'unavailable', reason: 'baseline_dirty' }
+      : classifyReviewBytes(await source.readBaselineBlob(root, `${baseline.headCommit}:${path}`));
+    const currentRead = classifyReviewBytes(await source.readCurrentFile(root, path));
+    if (signal.aborted) return 'cancelled';
+    files.set(path, { baseline: baselineRead, current: currentRead });
+  }
+  return files;
+}
+
+/**
+ * K3 L12: the last completed-Turn boundary at or before `through`, from the same
+ * bounded Kernel window read. `undefined` means the history could not be read
+ * (the callers answer null/undefined); `null` means it held no terminal event;
+ * `cancelled` means the signal or the window owner named cancellation, which is
+ * never "no history" (slice 8 §13.8).
+ */
+async function lastTerminalBoundary(
+  owner: SessionHistoryCursorOwner,
+  session: Parameters<SessionHistoryCursorOwner['readPositionWindow']>[0]['session'],
+  through: number, signal: AbortSignal,
+): Promise<number | null | undefined | 'cancelled'> {
+  let boundary: number | null = null;
+  let cursor = 0;
+  for (let page = 0; page < 64 && cursor < through; page += 1) {
+    if (signal.aborted) return 'cancelled';
+    let window;
+    try {
+      window = await owner.readPositionWindow({ session, afterPosition: cursor, throughPosition: through, limit: 200, signal });
+    } catch { return signal.aborted ? 'cancelled' : undefined; }
+    if (signal.aborted) return 'cancelled';
+    if (window.status === 'rejected' && window.code === 'cancelled') return 'cancelled';
+    if (window.status !== 'ready') return undefined;
+    for (const entry of window.value.entries) {
+      const item = decodeKernelEntry(entry);
+      if (item === null) return undefined;
+      if (item.record.recordType === 'agent.event' && KERNEL_TERMINAL_EVENTS.includes(item.record.payload.event.type)) {
+        boundary = item.position;
+      }
+    }
+    cursor = window.value.nextPosition;
+    if (!window.value.hasMore) break;
+  }
+  return boundary;
+}
 
 async function sessionBasisForContext(
   deps: ContextAssemblerDependencies, record: TaskExecutionRecord, basis: ContinuationBasis, signal: AbortSignal,
@@ -902,6 +1213,239 @@ async function sessionBasisForContext(
 }
 
 /**
+ * K3 L12: a review round in a fresh Session seeds the model history from the
+ * ORIGINAL Run, derived exactly as `requeueHistorySourceOf(afterRun)` (there is
+ * no TaskRequeue for a review round). The last completed Turn boundary at or
+ * before the source's position is the seed; `throughPosition: null` is the
+ * explicit empty baseline. A source Session that is the round's own Session, or
+ * a claim Session that already has a cursor, seeds nothing.
+ */
+async function reviewSessionBasis(
+  deps: ContextAssemblerDependencies, record: TaskExecutionRecord, original: TaskExecutionRecord, signal: AbortSignal,
+): Promise<PreparedTaskManifestV1['sessionBasis'] | undefined | 'cancelled'> {
+  const source = requeueHistorySourceOf(original.run, []);
+  if (source === null || deps.kernelStores === undefined) return undefined;
+  const claimSession = record.session;
+  if (source.sessionRef.projectId === record.outbox.claim.sessionRef.projectId
+    && source.sessionRef.sessionId === record.outbox.claim.sessionRef.sessionId) return undefined;
+  if (claimSession.historyCursor !== null) return undefined;
+  if (source.adapterId !== claimSession.kernel.adapterId) return undefined;
+  if (source.throughPosition === null) {
+    return { sourceKernelSessionId: source.kernelSessionId, throughPosition: null };
+  }
+  const sourceSession = original.session.kernel.adapterId === source.adapterId
+    && original.session.kernel.kernelSessionId === source.kernelSessionId
+    ? original.session
+    : { ...claimSession,
+        ref: { ...claimSession.ref, projectId: source.sessionRef.projectId, sessionId: source.sessionRef.sessionId },
+        kernel: { ...claimSession.kernel, adapterId: source.adapterId, kernelSessionId: source.kernelSessionId } };
+  const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores,
+    ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }) });
+  const boundary = await lastTerminalBoundary(owner, sourceSession, source.throughPosition, signal);
+  if (boundary === undefined || boundary === 'cancelled') return boundary;
+  return { sourceKernelSessionId: source.kernelSessionId, throughPosition: boundary };
+}
+
+/**
+ * K L9/L19a: the ONE original-Kernel command/cwd reader shared by the review
+ * instruction and the disposition. It reads the same bounded window the
+ * continuation brief uses and maps each requested callId to the arguments the
+ * original Turn's `assistant.message_completed` record declares. A call whose
+ * arguments are not found is absent; any unreadable/foreign Session is
+ * `unavailable`, never an empty map.
+ */
+export async function readKernelCommandFacts(
+  deps: Pick<ContextAssemblerDependencies, 'kernelStores' | 'kernel'>,
+  ctx: { signal?: AbortSignal },
+  input: { session: SessionRecord; calls: readonly KernelCallRefV1[] },
+): Promise<ReadResult<ReadonlyMap<string, KernelCommandFactV1>>> {
+  if (deps.kernelStores === undefined) {
+    return rejected('unavailable', 'the Kernel stores are not wired for the command read');
+  }
+  const groups = new Map<string, KernelCallRefV1[]>();
+  for (const call of input.calls) {
+    const group = groups.get(call.kernelSessionId);
+    if (group === undefined) groups.set(call.kernelSessionId, [call]);
+    else group.push(call);
+  }
+  for (const kernelSessionId of groups.keys()) {
+    if (input.session.kernel.kernelSessionId !== kernelSessionId) {
+      return rejected('unavailable', `the Session does not map to Kernel session ${kernelSessionId}`);
+    }
+  }
+  const positions = input.calls
+    .map(call => call.declaredPosition)
+    .filter(position => Number.isSafeInteger(position) && position >= 0);
+  if (positions.length === 0) return { status: 'ready', value: new Map() };
+  const declared = new Map<string, unknown>();
+  const signal = ctx.signal ?? new AbortController().signal;
+  try {
+    const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores,
+      ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }) });
+    const max = Math.max(...positions);
+    let cursor = Math.max(0, Math.min(...positions) - 1);
+    let completed = false;
+    for (let page = 0; page < 64; page += 1) {
+      if (cursor >= max) { completed = true; break; }
+      const window = await owner.readPositionWindow({ session: input.session, afterPosition: cursor,
+        throughPosition: max, limit: 200, signal });
+      if (window.status !== 'ready') {
+        // F-076: a cancelled window keeps its cancellation; the original
+        // rejection is passed on instead of being renamed `unavailable`.
+        if (window.status === 'rejected') return window;
+        return rejected('unavailable', 'the Kernel command window is not readable at the required watermark');
+      }
+      for (const entry of window.value.entries) {
+        const item = decodeKernelEntry(entry);
+        if (item === null || item.record.recordType !== 'agent.event') continue;
+        const event = item.record.payload.event;
+        if (event.type !== 'assistant.message_completed') continue;
+        for (const group of groups.values()) {
+          const first = group[0];
+          if (first === undefined || event.meta.runId !== first.kernelRunId
+            || event.meta.turnId !== first.turnId) continue;
+          for (const call of event.payload.toolCalls) {
+            if (!declared.has(call.callId)) declared.set(call.callId, call.arguments);
+          }
+        }
+      }
+      if (!window.value.hasMore) {
+        // F-101: ready only when the requested window was read to its end.
+        if (window.value.nextPosition < max) {
+          return rejected('unavailable', 'the Kernel command window ended before the requested position');
+        }
+        completed = true;
+        break;
+      }
+      const next = window.value.nextPosition;
+      // F-101: a cursor that does not advance is never a partial ready map.
+      if (next <= cursor) return rejected('unavailable', 'the Kernel command cursor did not advance');
+      cursor = next;
+    }
+    // F-101: page 64 finishing exactly on the end is ready; anything left fails.
+    if (!completed) return rejected('unavailable', 'the Kernel command window did not end within 64 pages');
+  } catch (error) {
+    // F-076: an aborted signal is a cancellation, not an unreadable window.
+    if (signal.aborted) return rejected('cancelled', 'the Kernel command read was cancelled');
+    return rejected('unavailable', `the Kernel command read failed: ${messageOf(error)}`);
+  }
+  const facts = new Map<string, KernelCommandFactV1>();
+  for (const call of input.calls) {
+    const args = declared.get(call.callId);
+    if (!isRecord(args)) continue;
+    facts.set(call.callId, {
+      command: typeof args['command'] === 'string' ? args['command'] : null,
+      cwd: typeof args['cwd'] === 'string' ? args['cwd'] : null,
+    });
+  }
+  return { status: 'ready', value: facts };
+}
+
+/**
+ * K3 L13: the full command/cwd of each `process` item from the ORIGINAL Run's
+ * Kernel facts (the record only keeps a 512-char summary). Best-effort for an
+ * unreadable Kernel (the alias stays absent and the builder falls back to the
+ * record's own summary), but F-076/F-101: a cancellation is not "unreadable" —
+ * it keeps its `cancelled` rejection so prepare ends cancelled.
+ */
+async function reviewCommandFacts(
+  deps: ContextAssemblerDependencies, review: UnknownCallReviewV1, original: TaskExecutionRecord, signal: AbortSignal,
+): Promise<{ status: 'ready'; value: ReadonlyMap<number, ReviewCommandFactV1> } | CoreRejection> {
+  const facts = new Map<number, ReviewCommandFactV1>();
+  const processItems = review.items.filter(item => item.kind === 'process');
+  const first = processItems[0];
+  if (first === undefined
+    || original.session.kernel.kernelSessionId !== first.kernel.kernelSessionId) {
+    return { status: 'ready', value: facts };
+  }
+  const read = await readKernelCommandFacts(
+    { ...(deps.kernelStores === undefined ? {} : { kernelStores: deps.kernelStores }),
+      ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }) },
+    { signal },
+    { session: original.session, calls: processItems.map(item => item.kernel) },
+  );
+  if (read.status !== 'ready') {
+    return read.status === 'rejected' && read.code === 'cancelled'
+      ? read : { status: 'ready', value: facts };
+  }
+  for (const item of processItems) {
+    const fact = read.value.get(item.kernel.callId);
+    if (fact === undefined) continue;
+    facts.set(item.alias, {
+      command: fact.command ?? item.summary.command,
+      cwd: fact.cwd ?? item.summary.cwd,
+    });
+  }
+  return { status: 'ready', value: facts };
+}
+
+/**
+ * K3 L13: read the review record the round's `purpose.reviewRef` names, read the
+ * original Run for its Kernel command facts and its history source, and build the
+ * structured instruction and its rendered text. The record read is fail-closed
+ * exactly like every other must-read in `prepare`.
+ */
+async function assembleReviewForContext(
+  deps: ContextAssemblerDependencies, ctx: CoreCallContext, record: TaskExecutionRecord,
+  purpose: { reviewRef: UnknownCallReviewRef; phase: 'review' | 'proposal'; round: number },
+): Promise<{ ok: true; review: UnknownCallReviewInputV1; text: string; sessionBasis: PreparedTaskManifestV1['sessionBasis'] | undefined }
+  | { ok: false; rejection: CoreRejection }> {
+  const owner = deps.unknownCallReviews;
+  if (owner === undefined) {
+    return { ok: false, rejection: rejected('unavailable', 'the UnknownCallReview owner is not wired for a review round') };
+  }
+  let read;
+  try { read = await owner.readReview(ctx, { ref: purpose.reviewRef }); }
+  catch (error) { return { ok: false, rejection: rejected('unavailable', `the review record read failed: ${messageOf(error)}`) }; }
+  if (read.status !== 'ready') return { ok: false, rejection: mapRead(read) };
+  const review = read.value;
+  // A `ready` record is a complete `UnknownCallReviewV1` by contract; a narrow
+  // double that returns less fails closed instead of fabricating an instruction.
+  if (!isRecord(review.ref) || !isRecord(review.workspace) || !Array.isArray(review.items)) {
+    return { ok: false, rejection: rejected('invalid', 'the stored review record is not a complete review') };
+  }
+  const originalRef: RunRef = { aggregateType: 'Run', projectId: review.ref.projectId,
+    goalId: review.ref.goalId, runId: review.ref.runId };
+  let original;
+  try { original = await deps.executions.readExecution(ctx, originalRef); }
+  catch (error) { return { ok: false, rejection: rejected('unavailable', `the original Run read failed: ${messageOf(error)}`) }; }
+  if (original.status !== 'ready') return { ok: false, rejection: mapRead(original) };
+  const sessionBasis = await reviewSessionBasis(deps, record, original.value, ctx.signal);
+  if (sessionBasis === 'cancelled') {
+    return { ok: false, rejection: rejected('cancelled', 'the preparation was cancelled during the review session basis read') };
+  }
+  const commandFacts = await reviewCommandFacts(deps, review, original.value, ctx.signal);
+  // F-076/F-101: a cancelled Kernel command read is carried to prepare, which
+  // then ends `cancelled`; every other unreadable Kernel keeps the fallback.
+  if (commandFacts.status !== 'ready') return { ok: false, rejection: commandFacts };
+  // F/L6: read the full capture Artifact; null (unreadable) falls back to the sample.
+  const fullChanges = await readReviewCaptureChanges(deps, review);
+  // L20/lead answer 3: only the proposal phase carries the person's text and
+  // annotations; `targets` and the mixed card's platform aliases stay null/empty
+  // in the review phase, whose instruction is unchanged.
+  const proposal = purpose.phase === 'proposal';
+  const aliasOf = (callIds: readonly string[] | null): number[] => {
+    const wanted = new Set(callIds ?? []);
+    return review.items.filter(item => wanted.has(item.callId))
+      .map(item => item.alias).sort((left, right) => left - right);
+  };
+  const targets = proposal ? aliasOf(review.proposalTargets) : null;
+  const personText = proposal ? review.disposition?.text ?? null : null;
+  const annotations = proposal ? review.disposition?.annotations ?? [] : [];
+  const platformTargets = proposal
+    ? aliasOf(review.items
+      .filter(item => item.kind === 'platform' && item.observed.verdict === 'undetermined'
+        && (review.dispositionTargets ?? []).includes(item.callId)
+        && !(review.proposalTargets ?? []).includes(item.callId))
+      .map(item => item.callId))
+    : [];
+  const structured = buildUnknownCallReviewInputV1({ review, reviewRef: purpose.reviewRef,
+    phase: purpose.phase, round: purpose.round, commandFacts: commandFacts.value, fullChanges,
+    targets, personText, annotations, platformTargets });
+  return { ok: true, review: structured, text: renderUnknownCallReviewZh(structured), sessionBasis };
+}
+
+/**
  * Slice 1 §4.1 (T10): `TaskRequeue.archiveOrigin != null` marks an archive
  * ordinary claim. It keeps the real TaskRequeue fact chain and the anchored
  * brief but never seeds the old line's full Kernel history: the session basis
@@ -929,8 +1473,99 @@ export function runEnteredKernel(run: TaskExecutionRecord['run']): boolean {
     && auth.kernel !== null && auth.phase === 'entered';
 }
 
+/**
+ * K3 B3 item 7 / lead answer 5: the Task's blocked commands for the
+ * continuation section. The Task's review records are read through the goal
+ * index (`{ goalRef, taskId }`, paged to the end); the Task's requests through
+ * `k3-crr-by-task` in exactly ceil(R/200) pages of 200. Each blocked alias is
+ * joined with the newest request of that alias in that record (`used`/`closed`
+ * render nothing) and every declared form across its requests in declaration
+ * order, deduplicated. The result is ordered by (record createdAt, alias).
+ * A read failure is `unavailable`; the port is optional only so old doubles
+ * without blocked commands keep working, and a continuation whose afterRun
+ * record itself blocked a command fails `unavailable` instead of dropping it.
+ */
+export async function readTaskBlockedCommands(
+  deps: Pick<ContextAssemblerDependencies, 'unknownCallReviews' | 'commandRerunRequests'>,
+  ctx: CoreCallContext,
+  input: { task: TaskTriple; workspace: WorkspaceScope; afterRunBlocked: boolean;
+    /** Rework 1 item 1: the ONE review-record read `prepare` already made. */
+    reviews?: readonly UnknownCallReviewV1[] },
+): Promise<ReadResult<ContinuationBlockedCommandLineV1[]>> {
+  const reviews = deps.unknownCallReviews;
+  const records: UnknownCallReviewV1[] = input.reviews === undefined ? [] : [...input.reviews];
+  // A closed Task passes `[]`: it carries no blocked lines at all.
+  if (input.reviews !== undefined && records.length === 0) return { status: 'ready', value: [] };
+  if (input.reviews === undefined && reviews === undefined) {
+    return input.afterRunBlocked
+      ? rejected('unavailable', 'the blocked-command record reader is not wired')
+      : { status: 'ready', value: [] };
+  }
+  const goalRef: GoalRef = { aggregateType: 'Goal', projectId: input.task.projectId, goalId: input.task.goalId };
+  if (input.reviews === undefined) {
+    // F-075: the ONE paging read (shared with prepare and the CRR owner).
+    const read = await readTaskReviews(ctx, reviews,
+      { goalRef, taskId: input.task.taskId, workspace: input.workspace });
+    if (read.status !== 'ready') return read;
+    records.push(...read.value);
+  }
+  const requestsRead = deps.commandRerunRequests;
+  if (requestsRead === undefined) {
+    return rejected('unavailable', 'the command-rerun-request read port is not wired');
+  }
+  const requests: CommandRerunRequestV1[] = [];
+  const seenRequestCursors = new Set<string>();
+  let requestCursor: string | undefined;
+  for (let page = 0; page < 10_000; page += 1) {
+    let read;
+    try {
+      read = await requestsRead.listRequests(ctx, {
+        workspace: input.workspace,
+        filter: { goalId: input.task.goalId, taskId: input.task.taskId },
+        page: { limit: 200, ...(requestCursor === undefined ? {} : { cursor: requestCursor }) },
+      });
+    } catch (error) {
+      return rejected('unavailable', `the command-rerun-request read failed: ${messageOf(error)}`);
+    }
+    if (read.status !== 'ready') return mapRead(read);
+    for (const request of read.value.items) {
+      if (request.task.taskId === input.task.taskId) requests.push(request);
+    }
+    const next = read.value.nextCursor;
+    if (next === null) break;
+    if (seenRequestCursors.has(next)) return rejected('unavailable', 'the command-rerun-request pages did not advance');
+    seenRequestCursors.add(next);
+    requestCursor = next;
+    if (page === 9_999) return rejected('unavailable', 'the command-rerun-request pages did not end');
+  }
+  // F-074: the WHOLE Task's blocked commands follow the ONE global flatten +
+  // order (record createdAt, alias, ref-key tie-break), the SAME order the
+  // recognizer uses; the per-record alias sort would disagree on a tie.
+  const lines: ContinuationBlockedCommandLineV1[] = orderBlockedCommands(records.map(record => ({
+    createdAt: record.createdAt,
+    refKey: unknownCallReviewRefKey(record.ref),
+    commands: record.blockedCommands.map(command => ({ alias: command.alias, value: { record, command } })),
+  }))).map(({ record, command }) => {
+    const forAlias = requests
+      .filter((request) => request.reviewRef.runId === record.ref.runId && request.alias === command.alias);
+    // F-098: the card module owns the ONE "newest request" order (createdAt
+    // descending, then the request ref code-unit descending); the brief takes
+    // the first of it, never a second locale/ascending copy.
+    const newest = [...forAlias].sort(compareCommandRerunRequestNewestFirst)[0];
+    const state = newest === undefined ? null
+      : newest.state === 'pending' || newest.state === 'allowed' || newest.state === 'denied'
+        || newest.state === 'denied_final' ? newest.state : null;
+    // The card's ONE declaration-order/dedup rule, so the brief and the card
+    // cannot disagree on the forms either.
+    return { alias: command.alias, reviewRunId: record.ref.runId, requestState: state,
+      declaredForms: commandRerunRequestDeclaredForms(forAlias) };
+  });
+  return { status: 'ready', value: lines };
+}
+
 async function assembleBriefForContext(
   deps: ContextAssemblerDependencies, now: () => string, ctx: CoreCallContext, record: TaskExecutionRecord,
+  taskReviews?: readonly UnknownCallReviewV1[],
 ): Promise<{ ok: true; brief: ContinuationBriefV1; sessionBasis: PreparedTaskManifestV1['sessionBasis'] | null;
     anomalyAnchorRefs: SessionAnomalyAnchorRef[] | null }
   | { ok: false; rejection: CoreRejection }> {
@@ -1000,9 +1635,30 @@ async function assembleBriefForContext(
     : { sessionRef: { projectId: source.sessionRef.projectId, sessionId: source.sessionRef.sessionId }, throughPosition: sessionBasis.throughPosition };
   // Slice 1 §2.7: this Task's not-yet-picked-up anchors, bounded to the earliest eight.
   const anomalies = assembleAnomalySection(basis.value.pendingAnomalies ?? []);
+  // K3 L20/L6: the afterRun's review record and the read-only file sides its diff needs.
+  const unknownCallReview = basis.value.unknownCallReview ?? null;
+  const unknownCallReviewFiles = await unknownCallReviewFilesFor(deps, record, previous, unknownCallReview, ctx.signal);
+  if (unknownCallReviewFiles === 'cancelled') {
+    return { ok: false, rejection: rejected('cancelled', 'the preparation was cancelled during the review file read') };
+  }
+  const unknownCallReviewCaptureChanges = await readReviewCaptureChanges(deps, unknownCallReview);
+  // K3 B3 item 7: the Task's blocked commands, including earlier records when the
+  // afterRun has none. A read failure is `unavailable`, never a silent drop.
+  const blockedRead = await readTaskBlockedCommands(deps, ctx, {
+    task: record.run.task,
+    workspace: { projectId: record.run.ref.projectId, workspaceId: record.run.workspaceSnapshot.workspaceId },
+    afterRunBlocked: (unknownCallReview?.blockedCommands ?? []).length > 0,
+    ...(taskReviews === undefined ? {} : { reviews: taskReviews }),
+  });
+  if (blockedRead.status !== 'ready') return { ok: false, rejection: mapRead(blockedRead) };
   const brief = assembleContinuationBrief({
     basis: basis.value, factsRecord: facts, factsHops, factsTruncated: truncated,
     turn, workspace, claimSessionRef: record.outbox.claim.sessionRef, seededFrom, anomalies,
+    unknownCallReview,
+    ...(unknownCallReviewFiles === null ? {} : { unknownCallReviewFiles }),
+    ...(unknownCallReview === null ? {} : { unknownCallReviewCapture: unknownCallReview.workspace }),
+    ...(unknownCallReviewCaptureChanges === null ? {} : { unknownCallReviewCaptureChanges }),
+    ...(blockedRead.value.length === 0 ? {} : { blockedCommands: blockedRead.value }),
   });
   const problem = continuationBriefShapeProblem(brief);
   if (problem !== null) return { ok: false, rejection: rejected('unavailable', `the assembled continuation brief is malformed: ${problem}`) };
@@ -1021,6 +1677,8 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
     execution: TaskExecutionRecord; role: RoleSpecResolutionV1;
     configuration: ResolvedRuntimeConfiguration;
     permissions: TaskEnvelopeV1['permissions'];
+    /** Rework 1 item 1: the ONE Task review-record read `prepare` made. */
+    taskReviews?: readonly UnknownCallReviewV1[];
   }): Promise<ReadResult<AssembledContextV1>> {
     const execution = input.execution;
     const run = execution?.run;
@@ -1199,12 +1857,14 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
     let continuationBrief: ContinuationBriefV1 | null = null;
     let sessionBasis: PreparedTaskManifestV1['sessionBasis'] | undefined;
     let continuationSuffix: string | null = null;
+    let reviewSuffix: string | null = null;
     let anomalyAnchorRefs: SessionAnomalyAnchorRef[] | null = null;
+    let unknownCallReview: UnknownCallReviewInputV1 | undefined;
     if (run?.requeueRef !== undefined) {
       if (clock === undefined) {
         return rejected('unsupported', 'the context assembler needs the Host clock to assemble a continuation brief');
       }
-      const assembled = await assembleBriefForContext(deps, clock, ctx, execution);
+      const assembled = await assembleBriefForContext(deps, clock, ctx, execution, input.taskReviews);
       if (ctx.signal.aborted) return cancelled('the preparation was cancelled during the continuation brief assembly');
       if (!assembled.ok) return assembled.rejection;
       continuationBrief = assembled.brief;
@@ -1220,6 +1880,20 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
       }
     }
 
+    // K3 L13: a review-purpose Run renders the review instruction as the
+    // trailing section and carries it structurally; its history source is the
+    // original Run (L12), never a TaskRequeue.
+    const reviewPurpose = run?.purpose?.kind === 'unknown_call_review' ? run.purpose : undefined;
+    if (reviewPurpose !== undefined) {
+      const assembledReview = await assembleReviewForContext(deps, ctx, execution, reviewPurpose);
+      if (!assembledReview.ok) return assembledReview.rejection;
+      // R1: the review text is its OWN trailing section, never the continuation
+      // section; review and continuation are mutually exclusive.
+      reviewSuffix = assembledReview.text;
+      unknownCallReview = assembledReview.review;
+      sessionBasis = assembledReview.sessionBasis;
+    }
+
     const rendered = assembleSections({
       role: roleSection,
       goal: goalSection,
@@ -1228,6 +1902,7 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
         footprint: extensionRows.footprint, notes: extensionRows.notes, reminders, inputs: inputRows,
       },
       continuationSuffix,
+      reviewSuffix,
       residentBudgetBytes,
     });
 
@@ -1268,10 +1943,13 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
       inputSelections: [...inputSelections],
       extensions: annotations(extensions),
     };
+    const reviewSectionStart = unknownCallReview === undefined ? null
+      : rendered.sections.find(section => section.name === 'unknown_call_review')?.startByte ?? null;
     return {
       status: 'ready',
       value: { input: rendered.input, binding, continuationBrief, sessionBasis, selectedTaskInputs,
-        ...(anomalyAnchorRefs === null ? {} : { anomalyAnchorRefs }) },
+        ...(anomalyAnchorRefs === null ? {} : { anomalyAnchorRefs }),
+        ...(unknownCallReview === undefined ? {} : { unknownCallReview, reviewSectionStart }) },
     };
   }
 

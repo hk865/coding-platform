@@ -43,6 +43,7 @@ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fin
 import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
 import { roleSpecContentDigest } from '../../../contracts/role-spec.js';
 import { isAutomationActor, type TaskRequeueRef, type TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
+import type { UnknownCallReviewRef, UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type {
   CommitCursorBinding, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
 } from '../../record-store/ports.js';
@@ -57,8 +58,11 @@ import {
 } from '../state/attempt-machine.js';
 import { messageMachineStateOf, messageSatisfiesWait } from '../state/message-machine.js';
 import {
-  runControlNodeOf, runStateOf, transitionRun, type ClaimRequeueFacts, type RunEvent, type RunGuardContext,
+  runControlNodeOf, runStateOf, transitionRun, type ClaimRequeueFacts, type ReviewClaimFacts,
+  type RunEvent, type RunGuardContext,
 } from '../state/run-machine.js';
+import { lastHolderOf, transitionUnknownCallReview, UNKNOWN_CALL_REVIEW_MAX_ROUNDS } from '../state/unknown-call-review.js';
+import { leaseReleasedForContinuation } from '../state/review-lease.js';
 import {
   occupancyAdmissionProblem, occupySessionRecord, sessionDispatchAdmissionProblem, sessionMachineStateOf,
   transitionSession, type SessionEffect, type SessionOccupation,
@@ -72,6 +76,10 @@ import {
   encodeDispatchOutboxEntry, encodeTaskAttemptSnapshot,
   encodeTaskClaimedEvent, taskClaimedEventFromEvent, type TaskClaimedEvent,
 } from './claim-record-codecs.js';
+import {
+  decodeUnknownCallReview, encodeUnknownCallReview, encodeUnknownCallReviewChangedEvent,
+  unknownCallReviewRefKey, UNKNOWN_CALL_REVIEW_CHANGED_EVENT_TYPE, UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION,
+} from './unknown-call-review-codecs.js';
 import type { ClaimTaskInput, TaskClaim, TaskClaimDependencies, TaskClaimPort } from '../model/claim-contracts.js';
 import type { SessionFactsV1, SessionWorkWaitV1 } from '../model/session-facts-contracts.js';
 import type { GoalSettingsPort } from '../model/decision-contracts.js';
@@ -212,13 +220,28 @@ const UNREAD_PRIOR: NonNullable<TaskClaimFacts['prior']> = { node: 'YieldedWait'
   leaseReleasedByPrior: true, replyProblem: null };
 /** A requeue claim's TaskRequeue before it is read: every guard on it holds. */
 const UNREAD_REQUEUE: ClaimRequeueFacts = { coversSelectedRun: true, leaseReleasedByAfterRun: true, budgetPinned: true };
+/**
+ * A review claim's record before it is read: every guard holds, so the claim
+ * reaches the reads that decide them (TASK-03r's own facts are filled once the
+ * record and the task projection are read).
+ */
+function unreadReview(reviewRef: UnknownCallReviewRef): ReviewClaimFacts {
+  return { reviewRef, phase: 'review', round: 1, stateEntry: 1, revisionMatches: true, statusMatchesPhase: true,
+    hold: null, activeRoundEmpty: true, roundsHaveSlot: true, selectedRunIsRecordRun: true,
+    leaseReleasedByAfterRun: true, afterRunRefIsHolder: true, projectionAdmitsReview: true };
+}
 /** The Attempt and Outbox of a claim are created with no paired Run yet (§5.2: `Absent` only while claiming). */
 const CLAIMING: AttemptGuardContext = { runNode: 'Absent', runLastEventSeq: 0, ownsSession: false, ownsLease: false };
 
-/** First claim, W2 continuation, or a claim after a TaskRequeue (D-3, TASK-03). */
-function claimBasisOf(input: ClaimTaskInput): AttemptClaimBasis {
+/** First claim, W2 continuation, a claim after a TaskRequeue (D-3, TASK-03) or a review claim (TASK-03r, L10). */
+function claimBasisOf(input: ClaimTaskInput, review: UnknownCallReviewV1 | null): AttemptClaimBasis {
   if (input.consumedWait !== undefined) return { kind: 'continuation', consumedWait: input.consumedWait };
   if (input.requeueRef !== undefined) return { kind: 'requeue', requeueRef: input.requeueRef };
+  if (input.review !== undefined) {
+    if (review === null) throw new Error('the review basis requires its record');
+    return { kind: 'review', reviewRef: review.ref, expectedRevision: input.review.expectedRevision,
+      phase: input.review.phase, round: review.rounds.length + 1, afterRunRef: lastHolderOf(review) };
+  }
   return { kind: 'first' };
 }
 
@@ -256,16 +279,71 @@ function claimPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: Can
  */
 function requeueClaimFacts(
   requeueRef: TaskRequeueRef, state: CanonicalTaskState, requeues: readonly TaskRequeueSnapshotV1[],
-  lease: TaskLeaseSnapshot | null, input: ClaimTaskInput,
+  lease: TaskLeaseSnapshot | null, input: ClaimTaskInput, runs: readonly RunSnapshot[] = [],
 ): ClaimRequeueFacts | null {
   const requeue = requeues.find(candidate => sameRef(candidate.ref, requeueRef));
   if (requeue === undefined) return null;
+  const afterRunRef: RunRef = { aggregateType: 'Run', projectId: requeueRef.projectId, goalId: requeueRef.goalId,
+    runId: requeue.ref.afterRunId };
+  const release = lease?.release;
+  const releasing = release === undefined ? undefined : runs.find(run => run.ref.runId === release.runRef.runId);
+  // K3 (L10): the shared release rule, so a release by one of the afterRun's
+  // review rounds admits the continuation too. The releasing Run's purpose is
+  // read in this same window (`runs`).
+  const released = release !== undefined && leaseReleasedForContinuation({
+    release: { runRef: release.runRef }, releasingRunPurpose: releasing?.purpose ?? null,
+  }, afterRunRef);
   return {
     coversSelectedRun: state.requeueRef !== null && sameRef(state.requeueRef, requeueRef),
-    leaseReleasedByAfterRun: lease !== null && lease.release !== undefined
-      && lease.release.runRef.runId === requeue.ref.afterRunId,
+    leaseReleasedByAfterRun: released,
     budgetPinned: requeue.budget === null || sameRef(requeue.budget, input.budget),
+    afterRunRef,
+    ...(release === undefined ? {} : { leaseRelease: { releasedBy: release.runRef,
+      releasedByPurpose: releasing?.purpose ?? null } }),
   };
+}
+
+/**
+ * K3 (L10, TASK-03r/RUN-01r): the review-claim facts from the record and the
+ * task projection read in the same window. `afterRunRef` is the record's most
+ * recent holder (L12); every boolean is one row of `reviewClaimProblem`.
+ */
+function reviewClaimFacts(
+  record: UnknownCallReviewV1,
+  request: NonNullable<ClaimTaskInput['review']>,
+  context: { selectedRunRef: RunRef | null; projection: { row: string }; coveringRequeueAfterRunId: string | null;
+    lease: TaskLeaseSnapshot | null },
+): ReviewClaimFacts {
+  const afterRunRef = lastHolderOf(record);
+  const release = context.lease?.release;
+  return {
+    reviewRef: record.ref,
+    phase: request.phase,
+    round: record.rounds.length + 1,
+    stateEntry: record.stateEntry,
+    revisionMatches: record.revision === request.expectedRevision,
+    statusMatchesPhase: (record.status === 'pending_review' && request.phase === 'review')
+      || (record.status === 'awaiting_proposal' && request.phase === 'proposal'),
+    hold: record.disposition?.hold ?? null,
+    activeRoundEmpty: record.activeRound === null,
+    roundsHaveSlot: record.rounds.length < UNKNOWN_CALL_REVIEW_MAX_ROUNDS,
+    selectedRunIsRecordRun: context.selectedRunRef !== null && sameRef(context.selectedRunRef, record.runRef),
+    leaseReleasedByAfterRun: release !== undefined && sameRef(release.runRef, afterRunRef),
+    afterRunRefIsHolder: sameRef(afterRunRef, record.runRef)
+      || record.rounds.some(round => sameRef(round.runRef, afterRunRef)),
+    projectionAdmitsReview: context.projection.row === 'P6'
+      || (context.projection.row === 'P4' && context.coveringRequeueAfterRunId === record.runRef.runId),
+  };
+}
+
+/**
+ * K3 L11/D3: the ordinary-claim blocker of a selected Run's review record.
+ * `held` ("I will handle it") wins over the status; any status other than
+ * `resolved` is `pending`; a `resolved`+released record is no blocker.
+ */
+function reviewBlockerOf(record: UnknownCallReviewV1): 'pending' | 'held' | undefined {
+  if ((record.disposition?.hold ?? null) === 'held') return 'held';
+  return record.status === 'resolved' ? undefined : 'pending';
 }
 
 /**
@@ -358,7 +436,8 @@ function claimRunContext(facts: TaskClaimFacts, actor: Extract<ActorRef, { kind:
     inputsConfirmed: null,
     actor: isAutomationActor(actor) ? 'system' : 'human',
     claim: { sessionOccupied: false, eligibility: null, taskHasRun: facts.taskHasRun,
-      prior: facts.prior, requeue: facts.requeue, admission: facts.admission },
+      prior: facts.prior, requeue: facts.requeue, review: facts.review ?? null, admission: facts.admission,
+      ...(facts.reviewBlocker === undefined ? {} : { reviewBlocker: facts.reviewBlocker }) },
   };
 }
 
@@ -415,6 +494,10 @@ function claimRecords(effects: readonly TaskEffect[], write: {
       }
       case 'occupy_session':
         records.session = encodeSessionRecord(occupySessionRecord(write.session, write.occupation));
+        break;
+      case 'record_review_round_claim':
+        // K3 (UCR-03): the review record rides this same commit, written by
+        // `claimTask` beside `claimRecords`; it is no Run/Attempt/Lease row.
         break;
       default:
         throw new Error(`task_claimed has no ${effect.kind} effect`);
@@ -549,6 +632,28 @@ function validateInputShape(input: ClaimTaskInput, scope: WorkspaceScope): CoreR
     if (input.requeueRef.projectId !== scope.projectId || input.requeueRef.goalId !== goalRef['goalId']
       || input.requeueRef.taskId !== input.taskId) {
       return reject('invalid', 'the requeueRef names another Task');
+    }
+  }
+  if (input.review !== undefined) {
+    // K3 TASK-03r (L10): a review claim names a review record of THIS Task and
+    // is exclusive with the other two bases.
+    if (input.consumedWait !== undefined || input.requeueRef !== undefined) {
+      return reject('invalid', 'review, requeueRef and consumedWait are mutually exclusive');
+    }
+    const review = input.review;
+    const ref = isRecord(review) ? review['reviewRef'] : undefined;
+    if (!isRecord(ref) || ref['aggregateType'] !== 'UnknownCallReview' || !nonEmpty(ref['projectId'])
+      || !nonEmpty(ref['goalId']) || !nonEmpty(ref['runId'])) {
+      return reject('invalid', 'claimTask requires a complete UnknownCallReviewRef');
+    }
+    if (!(review['phase'] === 'review' || review['phase'] === 'proposal')) {
+      return reject('invalid', 'the review claim phase must be review or proposal');
+    }
+    if (!isSafeRevision(review['expectedRevision'])) {
+      return reject('invalid', 'the review claim expectedRevision must be a safe non-negative integer');
+    }
+    if (ref['projectId'] !== scope.projectId || ref['goalId'] !== goalRef['goalId']) {
+      return reject('invalid', 'the review request names another Goal or project');
     }
   }
   return null;
@@ -800,6 +905,8 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       consumedWait: input.consumedWait ?? null,
       // TD-3: part of the fingerprint only when present, so a first claim keeps its fingerprint.
       ...(input.requeueRef === undefined ? {} : { requeueRef: input.requeueRef }),
+      // K3 TASK-03r: likewise for a review claim.
+      ...(input.review === undefined ? {} : { review: input.review }),
       expected: expectedCanonical,
     } as unknown as JsonValue));
     return { identityKey, fingerprint };
@@ -814,8 +921,12 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     input: ClaimTaskInput,
     actorBound: boolean,
   ): Promise<WriteResult<TaskClaim>> {
-    if (receipt.eventIds.length !== 1 || !nonEmpty(receipt.eventIds[0])) {
-      return unavailable('the recorded claim receipt does not name exactly one event');
+    // K3: a review claim's commit also carries its `UnknownCallReviewChanged`
+    // before the claim event, so the claim event is the LAST one the receipt
+    // names (the cursor); an ordinary claim still names exactly one.
+    const lastEventId = receipt.eventIds[receipt.eventIds.length - 1];
+    if (receipt.eventIds.length === 0 || !nonEmpty(lastEventId)) {
+      return unavailable('the recorded claim receipt names no event');
     }
     const at = await records.eventAt(receipt.cursor);
     if (at.status !== 'ready') return mapStoreFailure(at);
@@ -825,7 +936,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     const decoded = taskClaimedEventFromEvent(at.value.event);
     if (decoded.status !== 'decoded') return unavailable(`the recorded claim event is not decodable: ${decoded.reason}`);
     const event = decoded.value;
-    if (event.eventId !== receipt.eventIds[0]) return unavailable('the recorded event id disagrees with the claim receipt');
+    if (event.eventId !== lastEventId) return unavailable('the recorded event id disagrees with the claim receipt');
     if (event.identityKey !== identityKey || event.fingerprint !== fingerprint) {
       return unavailable('the recorded claim identity/fingerprint disagrees with the idempotency receipt');
     }
@@ -880,7 +991,26 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
 
     // 2. Current Goal / accepted Plan / Workspace / Session. TASK-01..03 judge
     //    the facts read so far after each read; a fact not read yet holds.
-    const basis = claimBasisOf(input);
+    // K3 TASK-03r (L10): a review claim reads its record in this same window;
+    // the record guard joins the commit and `afterRunRef` is `lastHolderOf`.
+    let reviewRecord: UnknownCallReviewV1 | null = null;
+    let reviewKey: string | null = null;
+    if (input.review !== undefined) {
+      reviewKey = unknownCallReviewRefKey(input.review.reviewRef);
+      const reviewRead = await records.readMany([reviewKey]);
+      if (reviewRead.status !== 'ready') return mapStoreFailure(reviewRead);
+      if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during the review read');
+      const encoded = reviewRead.value.records.find(record => record.refKey === reviewKey);
+      if (encoded === undefined) return reject('invalid', 'the review claim names no review record');
+      const decoded = decodeUnknownCallReview(encoded);
+      if (decoded.status !== 'decoded') return unavailable(`the review record is damaged: ${decoded.reason}`);
+      reviewRecord = decoded.value;
+      if (reviewRecord.ref.projectId !== scope.projectId || reviewRecord.ref.goalId !== input.goalRef.goalId
+        || reviewRecord.task.taskId !== input.taskId) {
+        return forbidden('the review record belongs to another Task or scope');
+      }
+    }
+    let basis = claimBasisOf(input, reviewRecord);
     const goalRead = await readGoal(records, input.goalRef);
     if (goalRead.status !== 'ready') return mapReaderRejection(goalRead);
     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during the goal read');
@@ -923,7 +1053,9 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
         && refKeyOf(goal.activePlanRevision) === refKeyOf(input.planRef),
       sessionProblem: null, structuralProblem: null, lease: { status: 'free' }, taskHasRun: false,
       prior: basis.kind === 'continuation' ? UNREAD_PRIOR : null,
-      requeue: basis.kind === 'requeue' ? UNREAD_REQUEUE : null, admission: null,
+      requeue: basis.kind === 'requeue' ? UNREAD_REQUEUE : null,
+      review: basis.kind === 'review' && reviewRecord !== null ? unreadReview(reviewRecord.ref) : null,
+      admission: null,
     };
     // Adds the facts just read and asks TASK-01..03 again.
     const judge = (read: Partial<TaskClaimFacts>): CoreRejection | null => {
@@ -1029,10 +1161,61 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     const requeueRef = input.requeueRef;
     if (requeueRef !== undefined) {
       releasedLease = facts.leasesByTaskId.get(input.taskId) ?? null;
-      requeue = requeueClaimFacts(requeueRef, state, facts.requeuesByTaskId.get(input.taskId) ?? [], releasedLease, input);
+      requeue = requeueClaimFacts(requeueRef, state, facts.requeuesByTaskId.get(input.taskId) ?? [], releasedLease, input,
+        facts.runsByTaskId.get(input.taskId) ?? []);
+      // K3 (L10, ATT-16): the releasing Run and its purpose, read in this same
+      // window, must reach the attempt machine through the claim basis too;
+      // `claimBasisOf` built the basis before the requeue records were read.
+      if (basis.kind === 'requeue' && requeue?.leaseRelease !== undefined) {
+        basis = { ...basis, leaseRelease: requeue.leaseRelease };
+      }
+    }
+    // K3 TASK-03r (L10): the review claim's guards from the record and the task
+    // projection read above; `releasedLease` is the lease ATT-16r re-holds.
+    let review: ReviewClaimFacts | null = null;
+    if (basis.kind === 'review' && reviewRecord !== null && input.review !== undefined && taskState !== null) {
+      releasedLease = facts.leasesByTaskId.get(input.taskId) ?? null;
+      const covering = state.requeueRef === null ? null
+        : (facts.requeuesByTaskId.get(input.taskId) ?? [])
+          .find(candidate => sameRef(candidate.ref, state.requeueRef!)) ?? null;
+      review = reviewClaimFacts(reviewRecord, input.review, {
+        selectedRunRef: phaseFacts.selectedRun?.ref ?? null,
+        projection: taskState,
+        coveringRequeueAfterRunId: covering?.afterRunRef.runId ?? null,
+        lease: releasedLease,
+      });
+    }
+    // K3 L11/D3: every claim of this Task guards the selected Run's review
+    // record; an ordinary claim (first/requeue) must also refuse while the
+    // record is unsettled or held, and `unavailable` when it cannot be read.
+    // The record read in `readCanonicalTaskFacts` is the ONE authoritative
+    // read; a review claim reuses the record read at step 2 for its CAS.
+    let reviewBlocker: TaskClaimFacts['reviewBlocker'];
+    let selectedReviewGuard: { refKey: string; expectedRevision: number | null } | null = null;
+    if (basis.kind === 'review' && reviewKey !== null && reviewRecord !== null) {
+      selectedReviewGuard = { refKey: reviewKey, expectedRevision: reviewRecord.revision };
+      reviewBlocker = reviewBlockerOf(reviewRecord);
+    } else if (state.execution !== null) {
+      const selectedReviewKey = unknownCallReviewRefKey({ aggregateType: 'UnknownCallReview',
+        projectId: state.execution.projectId, goalId: state.execution.goalId, runId: state.execution.runId });
+      const selectedReview = state.unknownCallReview;
+      if (selectedReview === null) {
+        // NULL here is only the authoritative not_found of the ONE canonical
+        // read (a ready read whose key is missing); every failed read, including
+        // a store without the review schema, is `unreadable` (L7 option A).
+        // Guard "still absent" directly, without a probe.
+        selectedReviewGuard = { refKey: selectedReviewKey, expectedRevision: null };
+      } else if (selectedReview.status === 'unreadable') {
+        reviewBlocker = 'unreadable';
+      } else {
+        selectedReviewGuard = { refKey: selectedReviewKey, expectedRevision: selectedReview.revision };
+        reviewBlocker = selectedReview.hold === 'held' ? 'held'
+          : selectedReview.status === 'resolved' ? undefined : 'pending';
+      }
     }
     refused = judge({ structuralProblem: structuralProblemOf(eligibility), lease: state.lease,
-      taskHasRun: facts.taskHasRun === true, prior, requeue });
+      taskHasRun: facts.taskHasRun === true, prior, requeue, review,
+      ...(reviewBlocker === undefined ? {} : { reviewBlocker }) });
     if (refused !== null) return refused;
     // S1-DISPATCH-01: the direct Work claim refuses a copy provenance, a pending
     // archive request and a Work wait here, not only in `chooseSession`. The ONE
@@ -1129,6 +1312,22 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
         workspaceRevision: workspaceRecord.revision },
       runContext: claimRunContext(claimFacts, actor) });
     if ('status' in written) return written;
+    // K3 UCR-03 (L10): the review claim writes the record's `activeRound` in the
+    // SAME commit, guarded at the revision read, with its own
+    // `UnknownCallReviewChanged` event.
+    let reviewRecordAfter: UnknownCallReviewV1 | null = null;
+    if (basis.kind === 'review' && reviewRecord !== null) {
+      const decided = transitionUnknownCallReview(reviewRecord, { kind: 'round_claimed', runRef, phase: basis.phase,
+        round: basis.round }, {
+        expectedRevision: reviewRecord.revision, updatedAt: claimedAt, actor,
+        activeRunEnded: false, activeRunCompleted: false, fenceHumanOnly: false, reviewUnavailable: false,
+        autonomy: 'after_plan_confirmation', incompleteCommandAliases: [], missingSelfCheckAliases: [],
+        originalRunSelected: true,
+      });
+      if (!decided.ok) return reject(decided.code, decided.detail);
+      if (decided.next === null) throw new Error('round_claimed must write the review record');
+      reviewRecordAfter = decided.next;
+    }
     const event: TaskClaimedEvent = { eventId, eventType: 'TaskClaimed', schemaVersion: 1, occurredAt: claimedAt,
       identityKey, actor, fingerprint, claim };
 
@@ -1152,18 +1351,29 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     for (const guard of roleFacts.guards) addGuard(guard.refKey, guard.expectedRevision);
     if (continuationMessageGuard !== null) addGuard(continuationMessageGuard.refKey, continuationMessageGuard.expectedRevision);
     for (const record of [written.lease, written.attempt, written.run, written.outbox]) addGuard(record.refKey, null);
+    // K3 UCR-03/L11 (D3): the selected Run's review record's own CAS — the
+    // revision read in this window, or "still absent" for a K3-before Run.
+    if (selectedReviewGuard !== null) addGuard(selectedReviewGuard.refKey, selectedReviewGuard.expectedRevision);
     // 2C item 10: the link row's own CAS (null when the Session never held one).
     if (nextResponsibleLink !== null) addGuard(responsibleLinkKey, currentResponsibleLink?.revision ?? null);
     const guards: RecordGuard[] = [...guardMap].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision }));
 
     const linkRecords: EncodedRecord[] = nextResponsibleLink === null ? [] : [encodePendingSessionWorkLink(nextResponsibleLink)];
     const linkBindings: CommitCursorBinding[] = nextResponsibleLink === null ? [] : [{ refKey: responsibleLinkKey, field: 'since' }];
+    const reviewRecords: EncodedRecord[] = reviewRecordAfter === null ? [] : [encodeUnknownCallReview(reviewRecordAfter)];
+    const reviewEvents = reviewRecordAfter === null ? [] : [encodeUnknownCallReviewChangedEvent({
+      eventId: `${eventId}:ucr:0`, eventType: UNKNOWN_CALL_REVIEW_CHANGED_EVENT_TYPE,
+      schemaVersion: UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION, occurredAt: claimedAt, identityKey, fingerprint,
+      actor, requestId, change: 'round_claimed', review: reviewRecordAfter,
+    })];
     const prepared: PreparedCommit = { identityKey, fingerprint, guards,
-      records: [written.lease, written.attempt, written.run, written.outbox, written.session, ...linkRecords],
+      records: [written.lease, written.attempt, written.run, written.outbox, written.session, ...linkRecords,
+        ...reviewRecords],
       claims: [], indexGuards: [], indexChanges: [],
       // The link record rides the claim commit (SES-15 interval, `since` bound
-      // to the commit cursor); the commit's one event stays TaskClaimed.
-      events: [encodeTaskClaimedEvent(event)],
+      // to the commit cursor); the claim event stays last so the receipt cursor
+      // names it (a review claim prepends its `UnknownCallReviewChanged`).
+      events: [...reviewEvents, encodeTaskClaimedEvent(event)],
       ...(linkBindings.length === 0 ? {} : { commitCursorBindings: linkBindings }) };
 
     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled before commit');

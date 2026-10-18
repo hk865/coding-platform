@@ -56,6 +56,10 @@ import {
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import type { TrustedCheckConfiguration } from '../../../contracts/verification.js';
+import type { ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
+import {
+  agentActorOf, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
+} from '../model/tool-commit-arguments.js';
 import {
   automationVerdict, buildTaskFailureFacts,
   type GateFailureInputV1, type WorkFailureInputV1,
@@ -908,6 +912,11 @@ function workFailureInput(definition: RuntimeTask, state: CanonicalTaskState, fa
     runs,
     requeues: facts.requeuesByTaskId.get(definition.taskId) ?? [],
     requeueRefusal: selectedRun === null ? null : facts.requeueRefusalsByRunId.get(selectedRun.ref.runId) ?? null,
+    // K3 L7/L22: the selected Task's full review records make AV-2b / AV-4c
+    // fire; the selected Run's key being present but unreadable (or its record
+    // undecodable) is the fail-closed `reviewUnreadable` the Task row projects.
+    reviews: facts.reviewsByTaskId.get(definition.taskId) ?? [],
+    reviewUnreadable: selectedRun !== null && state.unknownCallReview?.status === 'unreadable',
   };
 }
 
@@ -997,6 +1006,8 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
     ...(dispositionChange === undefined ? {} : { dispositionChange }),
     currentAttempt: state.currentAttempt,
     execution: state.execution,
+    // K3 L7: the selected Run's review record, or its fail-closed `unreadable`.
+    ...(state.unknownCallReview === null ? {} : { unknownCallReview: state.unknownCallReview }),
     eligibilityScope: 'task_state',
     eligibility,
     // Literal accepted-Plan projection only. These fields never open material
@@ -2261,9 +2272,49 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       afterRunRevision: selected.find((entry) => entry.run !== null && sameRef(entry.run.ref, continuation.afterRunRef))?.run?.revision ?? 0 })) } };
   }
 
+  /**
+   * K3 L4: the read-only committed-receipt lookup the `propose_future_plan`
+   * owner publishes. It reuses `proposePlanAsAgent`'s Agent identity (the
+   * formal session-derived actor) and its fingerprint, rebuilding the request
+   * from the Kernel-recorded arguments alone; it never writes and never reads
+   * any business fact beyond the idempotency row.
+   */
+  async function lookupToolCommit(ctx: CoreCallContext, input: ToolCommitLookupInput): Promise<ToolCommitLookupResult> {
+    void ctx;
+    if (input.toolName !== 'propose_future_plan') return toolCommitLookupUnknownTool(input.toolName);
+    const raw = input.arguments;
+    if (!isRecord(raw) || !isRecord(raw['draft']) || !isRecord(raw['reason'])) {
+      return { status: 'undetermined', reason: 'invalid_arguments' };
+    }
+    const origin = input.origin;
+    const goalRef = goalRefFromUnknown({
+      aggregateType: 'Goal', projectId: origin.runRef.projectId, goalId: origin.runRef.goalId,
+    }, origin.runRef.projectId);
+    if (goalRef === null) return { status: 'undetermined', reason: 'invalid_origin' };
+    const requestId = toolCommitRequestId(input);
+    const actor = agentActorOf(origin.sessionRef, origin.runRef);
+    const expectedPins = orderedPlanPins(raw['expected']);
+    const identityKey = PLAN_PROPOSE_IDENTITY_PREFIX + commandIdentityKey({
+      projectId: origin.runRef.projectId, actor, idempotencyKey: requestId,
+    });
+    const fingerprint = agentCommandFingerprint('PlanProposeAgent', {
+      projectId: origin.runRef.projectId, workspaceId: origin.workspaceId, goalRef,
+      basedOn: raw['basedOn'], draft: raw['draft'], reason: raw['reason'], expected: expectedPins,
+      requestRef: null, replaces: null,
+    });
+    let lookup: Awaited<ReturnType<GoalRecordTransactionPort['lookupCommit']>>;
+    try {
+      lookup = await records.lookupCommit({ identityKey, fingerprint });
+    } catch {
+      return { status: 'undetermined', reason: 'the plan receipt lookup failed' };
+    }
+    return toolCommitLookupResult(lookup);
+  }
+
   return { queryGoal, readPlanProposal, proposePlan, applyPlanChange, proposeInitialPlanFromAnswer,
     readInitialPlanAnswerFacts,
-    queryTaskGraph, queryReadyTasks, queryGoalDisplay, queryGoalLiveRuns, queryGoalResumeContinuations };
+    queryTaskGraph, queryReadyTasks, queryGoalDisplay, queryGoalLiveRuns, queryGoalResumeContinuations,
+    lookupToolCommit };
 }
 
 /**

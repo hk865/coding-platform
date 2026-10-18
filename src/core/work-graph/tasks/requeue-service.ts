@@ -31,7 +31,7 @@
  *      Task unless the class skips it (ND-5, ND-6) — `no_new_basis`;
  *  12. one commit through `transitionTask` (and VR-09 on the chain head).
  */
-import type { ActorRef } from '../../../contracts/command-event.js';
+import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { ControlIntentRef } from '../../../contracts/control-intent.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
@@ -69,8 +69,8 @@ import { sessionArchiveChangedEventFromEvent } from '../sessions/lifecycle-recor
 import { noProgressKey } from '../state/no-progress.js';
 import { decisionActionPolicy } from '../state/decision-policy.js';
 import {
-  countEndedGoalRuns, deriveReworkClass, nextRequeueAutoCount, reworkFenceOf, reworkPermission, taskReworkRefusalEffects,
-  type StopIntentV1, type VerifiedArchiveInterruptionV1,
+  countEndedGoalRuns, deriveReworkClass, nextRequeueAutoCount, requeueConfirmedByReview, reworkFenceOf, reworkPermission,
+  taskReworkRefusalEffects, type StopIntentV1, type VerifiedArchiveInterruptionV1,
 } from '../state/task-failure.js';
 import {
   requeueBasisCompared, requeueBudgetIncreased, taskMachineStateOf, taskRequeueStateProblem, transitionTask,
@@ -78,6 +78,7 @@ import {
 } from '../state/task-machine.js';
 import type { Rejected as MachineRefusal } from '../state/transition.js';
 import { isFinalizedNonPass, roundChainHead, transitionRound, type RoundChainHeadV1 } from '../state/verification-machine.js';
+import { leaseReleasedForContinuation } from '../state/review-lease.js';
 import { goalFanOutRequestId } from '../state/goal-machine.js';
 import { controlIntentRefFor } from './control-service.js';
 import {
@@ -86,7 +87,9 @@ import {
   taskRequeuedEventFromEvent, taskRequeueRefKey, taskReworkRefusalRefKey, taskReworkRefusedEventFromEvent,
   type TaskRequeuedEvent, type TaskReworkRefusedEvent,
 } from './claim-record-codecs.js';
-import type { RequeueTaskInput, TaskClaimPort, TaskRequeueReadV1 } from '../model/claim-contracts.js';
+import type {
+  ReadTaskRequeueByIdentityInputV1, RequeueTaskInput, TaskClaimPort, TaskRequeueReadV1,
+} from '../model/claim-contracts.js';
 import type { GoalSettingsPort } from '../model/decision-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
@@ -450,6 +453,22 @@ export async function readRequeueWindow(
 }
 
 /**
+ * K3 L11: the selected Run's review fact as the requeue owner reads it, from
+ * the ONE canonical window (`readCanonicalTaskFacts`). `null` is only the
+ * authoritative `not_found` (a K3-before Run) and no blocker; `held` wins over
+ * the status; any non-`resolved` status is `pending`; every failed read is the
+ * shared `unreadable` (fail-closed), never absence.
+ */
+function selectedReviewBlockerOf(
+  review: CanonicalTaskState['unknownCallReview'],
+): 'pending' | 'held' | 'unreadable' | undefined {
+  if (review === null) return undefined;
+  if (review.status === 'unreadable') return 'unreadable';
+  if (review.hold === 'held') return 'held';
+  return review.status === 'resolved' ? undefined : 'pending';
+}
+
+/**
  * ND-9 (§13.1, §13.7 point 1): each requested new input as the owner reads it,
  * judged by `newBasisInputProblem`: an Artifact through `openArtifact`, a
  * session message through the mailbox owner, under its reader rules (one of
@@ -569,11 +588,25 @@ function stateRefusal(refused: MachineRefusal, window: RequeueWindow): Rejection
   return reject(refused.code, refused.detail);
 }
 
+/**
+ * K3 L22: whether the person's applied review-card disposition already
+ * confirmed the ONE system requeue after `afterRunId`. The full record is in
+ * the same canonical window (`reviewsByTaskId`); a missing record is not a
+ * confirmation. `handle_myself` counts only after its release.
+ */
+function requeueConfirmedByCardOf(window: RequeueWindow, taskId: string, afterRunId: string): boolean {
+  const review = (window.facts.reviewsByTaskId.get(taskId) ?? [])
+    .find(candidate => candidate.runRef.runId === afterRunId);
+  return review !== undefined && requeueConfirmedByReview(review);
+}
+
 // --------------------------------------------------------------------------
 // The service
 // --------------------------------------------------------------------------
 
-export function createTaskRequeueService(deps: TaskRequeueDependencies): Required<Pick<TaskClaimPort, 'requeueTask' | 'readTaskRequeue'>> {
+export function createTaskRequeueService(
+  deps: TaskRequeueDependencies,
+): Required<Pick<TaskClaimPort, 'requeueTask' | 'readTaskRequeue' | 'readTaskRequeueByIdentity'>> {
   const records = deps.records;
   const policyOf = (): TaskAutomationPolicyV1 => deps.automationPolicy?.() ?? DEFAULT_TASK_AUTOMATION_POLICY;
 
@@ -849,10 +882,30 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
       return reject('revision_conflict', 'the requeue refusal changed since the caller read it',
         currentRefusal === null ? undefined : [{ ref: refusalRef, revision: currentRefusal.revision }]);
     }
-    // The Lease was released by the afterRun and its claim Session is no longer held by it.
+    // The Lease was released by the afterRun (or by one of the afterRun's
+    // review rounds, L10) and its claim Session is no longer held by it. The
+    // releasing Run's purpose is read in this same window.
     const lease = window.facts.leasesByTaskId.get(task.taskId) ?? null;
-    if (lease === null || lease.release === undefined || lease.release.runRef.runId !== afterRun.ref.runId) {
+    const release = lease?.release;
+    const releasing = release === undefined ? undefined
+      : (window.facts.runsByTaskId.get(task.taskId) ?? []).find(run => run.ref.runId === release.runRef.runId);
+    if (release === undefined || !leaseReleasedForContinuation({
+      release: { runRef: release.runRef }, releasingRunPurpose: releasing?.purpose ?? null,
+    }, afterRun.ref)) {
       return reject('busy', 'the Task lease is not released by the afterRun');
+    }
+    // K3 L11: the selected Run's review record gates every requeue. A system or
+    // agent requeue is refused while it is unsettled or held; a human requeue is
+    // accepted while merely unsettled (its claim still waits), but a held
+    // record without an archive origin is refused — release-hold is the only
+    // "continue". The record comes from the ONE canonical window above.
+    const reviewBlocker = selectedReviewBlockerOf(window.canonical.unknownCallReview);
+    if (reviewBlocker === 'unreadable') return reject('unavailable', 'unknown_call_review_unreadable');
+    if (reviewBlocker !== undefined && actorClass !== 'human') {
+      return reject('busy', reviewBlocker === 'held' ? 'unknown_call_review_held' : 'unknown_call_review_pending');
+    }
+    if (reviewBlocker === 'held' && !hasArchiveOrigin) {
+      return reject('busy', 'unknown_call_review_held: 点“继续”（release-hold）接着做');
     }
     const execution = await deps.reads.readExecution(internalReadContext(owned), afterRun.ref);
     if (execution.status !== 'ready') {
@@ -937,7 +990,12 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
     // the existing budget/cap fences stay first. The injected settings owner is
     // read when present; otherwise the Goal already read (and guarded) here is
     // the current settings source.
-    if (policyCode === null && actorClass !== 'human') {
+    // K3 L22: an applied review-card disposition (rerun_as_is/skip_as_done, an
+    // approved safer method, or a released "I'll handle it") IS the person's
+    // confirmation of this ONE system requeue, so every_step does not ask again.
+    const requeueConfirmedByCard = actorClass === 'system'
+      && requeueConfirmedByCardOf(window, task.taskId, afterRun.ref.runId);
+    if (policyCode === null && actorClass !== 'human' && !requeueConfirmedByCard) {
       let autonomy = goalSettingsOf(goal).autonomy;
       if (deps.goalSettings !== undefined) {
         const settingsRead = await deps.goalSettings.readGoalSettings(owned.ctx, { goalRef });
@@ -1120,6 +1178,67 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
     return { status: 'ready', value: { requeue, cursor: lookup.value.cursor } };
   }
 
+  /**
+   * K3 L21 D9 (ruling 4, K3-41 replay): the no-write read of the derived
+   * release-hold requeue. A `TaskRequeue(task, R)` is immutable and its `since`
+   * commit cursor names the one `TaskRequeued` event; that event's
+   * `identityKey` is compared with `identityOf(actor, scope, requestId)` — the
+   * same identity the write used, with no fingerprint and no fresh pins. A hit
+   * answers `{requeue, cursor: since}`; a missing record, another identity,
+   * another Task/afterRun, an undecodable record/event or a mismatched cursor
+   * is `not_found`; only a store read failure is that failure. Never writes.
+   */
+  async function readTaskRequeueByIdentity(
+    ctx: CoreCallContext, input: ReadTaskRequeueByIdentityInputV1,
+  ): Promise<ReadResult<TaskRequeueReadV1>> {
+    const ownedCall = ownCall(ctx);
+    if (!ownedCall.ok) return ownedCall.rejection;
+    const owned = ownedCall.value;
+    if (owned.principal.kind !== 'host') return reject('forbidden', 'only a Host can read a committed requeue receipt');
+    const host = hostActorOf(owned);
+    if (!host.ok) return host.rejection;
+    const task = input.taskRef;
+    const afterRunRef = input.afterRunRef;
+    if (!nonEmpty(task.projectId) || !nonEmpty(task.goalId) || !nonEmpty(task.taskId)
+      || !nonEmpty(afterRunRef.projectId) || !nonEmpty(afterRunRef.goalId) || !nonEmpty(afterRunRef.runId)
+      || !nonEmpty(input.requestId)) {
+      return reject('invalid', 'the requeue replay read requires the Task, afterRun and requestId');
+    }
+    const key = taskRequeueRefKey({ aggregateType: 'TaskRequeue', projectId: task.projectId, goalId: task.goalId,
+      taskId: task.taskId, afterRunId: afterRunRef.runId });
+    const recordRead = await records.readMany([key]);
+    if (recordRead.status !== 'ready') return mapStoreFailure(recordRead);
+    const record = recordRead.value.records.find(candidate => candidate.refKey === key);
+    if (record === undefined) return { status: 'not_found' };
+    let since: unknown;
+    try {
+      since = (JSON.parse(record.json) as Record<string, unknown>)['since'];
+    } catch {
+      return { status: 'not_found' };
+    }
+    if (!nonEmpty(since)) return { status: 'not_found' };
+    // The record's own Store-bound `since` field; a damaged value is absence, not a read.
+    const sinceCursor = since as CommitCursor;
+    const at = await records.eventAt(sinceCursor);
+    if (at.status !== 'ready') return mapStoreFailure(at);
+    if (!sameCursor(at.value.cursor, sinceCursor)) return { status: 'not_found' };
+    const decoded = taskRequeuedEventFromEvent(at.value.event);
+    if (decoded.status !== 'decoded') return { status: 'not_found' };
+    const requeue = decoded.value.requeue;
+    if (requeue.task.projectId !== task.projectId || requeue.task.goalId !== task.goalId
+      || requeue.task.taskId !== task.taskId || requeue.ref.afterRunId !== afterRunRef.runId) {
+      return { status: 'not_found' };
+    }
+    let identity: string;
+    try {
+      identity = identityOf(host.actor, owned.scope, input.requestId);
+    } catch {
+      return reject('invalid', 'the requeue replay request is not canonicalizable JSON');
+    }
+    if (decoded.value.identityKey !== identity) return { status: 'not_found' };
+    return { status: 'ready', value: { requeue, cursor: sinceCursor } };
+  }
+
   type CommitBase = {
     owned: OwnedCall; identity: string; fingerprint: string; actor: ActorRef; goalRef: GoalRef; window: RequeueWindow;
     afterRun: RunSnapshot; admissionGuards: readonly RecordGuard[];
@@ -1205,5 +1324,5 @@ export function createTaskRequeueService(deps: TaskRequeueDependencies): Require
     return { status: 'committed', value: write.value, replayed: false, cursor: receipt.cursor };
   }
 
-  return { requeueTask, readTaskRequeue };
+  return { requeueTask, readTaskRequeue, readTaskRequeueByIdentity };
 }

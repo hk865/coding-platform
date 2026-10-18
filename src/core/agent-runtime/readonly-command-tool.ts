@@ -84,6 +84,33 @@ export type ReadonlyCommandToolInput = {
   authorization: ReadonlyCommandAuthorization;
 };
 
+/**
+ * U5/D-PROBE: the ONE sandbox options object the capability probe and the real
+ * read-only command share. Extracted so `reviewCapability` probes with exactly
+ * the mount/executable/resource options `run_readonly_command` would run with,
+ * instead of an optimistic default. A `resourceCaps` entry is ignored by
+ * `ProcessSandbox.probe` (its signature has no such key) exactly as before.
+ */
+export type ReadonlyCommandSandboxOptions = {
+  workspaceMode: 'read_only';
+  readOnlyPaths?: string[];
+  executablePath?: string;
+  resourceCaps?: ResourceCapSource;
+};
+
+export function readonlyCommandSandboxOptions(input: {
+  readOnlyPaths?: readonly string[];
+  executablePath?: string;
+  resourceCaps?: ResourceCapSource;
+}): ReadonlyCommandSandboxOptions {
+  return {
+    workspaceMode: 'read_only' as const,
+    ...(input.readOnlyPaths === undefined ? {} : { readOnlyPaths: [...input.readOnlyPaths] }),
+    ...(input.executablePath === undefined ? {} : { executablePath: input.executablePath }),
+    ...(input.resourceCaps === undefined ? {} : { resourceCaps: input.resourceCaps }),
+  };
+}
+
 type ReadonlyToolErrorCode = Extract<ToolResult, { status: 'error' }>['error']['code'];
 
 /** L10：非 0 退出和自己超时的消息末尾按上限事件加尾注；成功、取消和 M10 固定消息不加。 */
@@ -246,12 +273,7 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
         // read-only mount/executable configuration instead of an optimistic
         // default. The same trusted workspace handle carries the denied
         // prefixes; the tool sets no custom protected paths or bwrapPath.
-        const sandboxOptions = {
-          workspaceMode: 'read_only' as const,
-          ...(input.readOnlyPaths === undefined ? {} : { readOnlyPaths: [...input.readOnlyPaths] }),
-          ...(input.executablePath === undefined ? {} : { executablePath: input.executablePath }),
-          ...(input.resourceCaps === undefined ? {} : { resourceCaps: input.resourceCaps }),
-        };
+        const sandboxOptions = readonlyCommandSandboxOptions(input);
         const profile = await ProcessSandbox.probe(input.workspaceRoot, input.workspace, sandboxOptions);
         const process = new ProcessSandbox(profile, input.workspaceRoot, input.workspace, sandboxOptions);
         result = await process.execute({
@@ -348,4 +370,70 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
       commandPreview: typeof argumentsValue['command'] === 'string' ? argumentsValue['command'].slice(0, 512) : '',
     }),
   };
+}
+
+/**
+ * U5: the result shape of the handler's layer-3 grant re-read, structurally the
+ * `WorkspaceHostBindings.authorize` result. Kept local so this module owns no
+ * Host import.
+ */
+export type ReadonlyCommandCurrentAuthorization =
+  | { status: 'ready'; value: { permissionRevision: string; allowsRead(path: string): boolean } }
+  | { status: 'rejected'; code: string; reason: string };
+
+/**
+ * U5: the trusted inputs the Work driver, the Query driver and the review
+ * capability all resolve before a tool is built.
+ */
+export type ReadonlyCommandRegistrationInput = {
+  /** The Run/Query selected `run_readonly_command` in its manifest intersection. */
+  requested: boolean;
+  /** The resolved Host grant's explicit read-only command switch. */
+  access: 'all_except_denied' | undefined;
+  /** The already-read Host workspace authorization, when it was ready. */
+  authorization: { permissionRevision: string; allowsRead(path: string): boolean } | undefined;
+  workspaceRoot: string;
+  processSandboxOptions: { readOnlyPaths?: string[]; executablePath?: string };
+  resourceCaps?: ResourceCapSource;
+  /** Re-reads the current Host read grant at the handler boundary (layer 3). */
+  authorizeCurrent: () => Promise<ReadonlyCommandCurrentAuthorization>;
+};
+
+/**
+ * U5: the ONE construction the Work driver, the Query driver and the review
+ * round call. It applies the same L18 layer-1 gate (explicit switch, whole
+ * workspace readable) and returns a `(workspace) => ToolDefinition` factory, or
+ * `undefined` when any layer is absent — the caller keeps its own authorization
+ * choice by supplying `authorizeCurrent` and the revision it read.
+ */
+export function registerReadonlyCommandTool(
+  input: ReadonlyCommandRegistrationInput,
+): ((workspace: WorkspaceSandbox) => ToolDefinition) | undefined {
+  if (!input.requested || input.access !== 'all_except_denied' || input.authorization === undefined
+    || !input.authorization.allowsRead('.')) return undefined;
+  const permissionRevision = input.authorization.permissionRevision;
+  const root = input.workspaceRoot;
+  const readOnlyPaths = input.processSandboxOptions.readOnlyPaths === undefined
+    ? undefined : [...input.processSandboxOptions.readOnlyPaths];
+  const executablePath = input.processSandboxOptions.executablePath;
+  const resourceCaps = input.resourceCaps;
+  const authorizeCurrent = input.authorizeCurrent;
+  return (workspaceHandle: WorkspaceSandbox): ToolDefinition => createReadonlyCommandTool({
+    workspace: workspaceHandle,
+    workspaceRoot: root,
+    ...(readOnlyPaths === undefined ? {} : { readOnlyPaths }),
+    ...(executablePath === undefined ? {} : { executablePath }),
+    ...(resourceCaps === undefined ? {} : { resourceCaps }),
+    authorization: {
+      permissionRevision,
+      current: async () => {
+        let current;
+        try { current = await authorizeCurrent(); }
+        catch { return { status: 'rejected' as const, reason: 'the Host read policy could not be verified' }; }
+        if (current.status !== 'ready') return { status: 'rejected' as const, reason: current.reason };
+        return { status: 'ready' as const, permissionRevision: current.value.permissionRevision,
+          wholeWorkspaceRead: current.value.allowsRead('.') };
+      },
+    },
+  });
 }

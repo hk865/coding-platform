@@ -25,14 +25,25 @@ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { DecodeResult, EncodedRecord, StoreFailure } from '../../record-store/ports.js';
 import type { DecisionSourceFactsPort, NoteDecisionSourcePort, S5RecordPort } from '../model/decision-contracts.js';
+import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
+import type { CommandRerunRequestReadPort } from '../model/command-rerun-request-contracts.js';
+import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
+import type { KernelCommandReader } from '../model/kernel-command-read-contracts.js';
+import type { CommandRerunRequestV1 } from '../../../contracts/command-rerun-request.js';
+import { commandRerunRequestCardFacts } from '../tasks/command-rerun-request-card.js';
 import type { PlanProposal, PlanProposalRef, PlanTaskPort } from '../model/plan-contracts.js';
 import { decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord } from '../queries/query-record-codecs.js';
 import { decodeGoalPhaseSnapshot } from '../tasks/completion-record-codecs.js';
 import { createGoalDecisionCauseReader } from '../tasks/goal-decision-reader.js';
 import { parseInitialPlanningResponseV2 } from '../tasks/initial-plan.js';
-import { readProposal, readRequestCandidateHead } from '../tasks/plan-readers.js';
+import { readProposal, readRequestCandidateHead, readTaskClosure } from '../tasks/plan-readers.js';
 import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
+import { decodeRun } from '../materials/run-snapshot-decoder.js';
+import { UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX, unknownCallReviewCardFacts,
+  unknownCallReviewTargetPaths } from '../tasks/unknown-call-review-card.js';
+import { readReviewTargetDigests } from '../tasks/unknown-call-review-target-digests.js';
+import type { WorkspaceToolsPort } from '../../workspace/ports.js';
 import { goalConflictFacts } from '../state/goal-settings-machine.js';
 import { decodeSessionMessageRecord } from '../sessions/message-record-codecs.js';
 import { readApplicationReceiptFacts } from './decision-application.js';
@@ -55,6 +66,28 @@ export type DecisionSourceFactsDependencies = {
    * `note_review` source is explicitly `unavailable`, never an empty source.
    */
   noteDecisions?: NoteDecisionSourcePort;
+  /**
+   * K3 L18: the UnknownCallReview owner's direct read. Optional; without it a
+   * `unknown_call_review` source is explicitly `unavailable`, never an empty
+   * source. Only `readReview` is needed here (the card source reads the list).
+   */
+  unknownCallReviews?: Pick<UnknownCallReviewReadPort, 'readReview'>;
+  /**
+   * K3 L19a: the CommandRerunRequest owner's direct read. Optional; without it
+   * (or the Kernel reader/execution read below) a `command_rerun_request`
+   * source is explicitly `unavailable`, never an inferred open card.
+   */
+  commandRerunRequests?: Pick<CommandRerunRequestReadPort, 'listRequests' | 'readRequest'>;
+  /** L19a: the original Run's Kernel command text (the card's blocked command). */
+  readKernelCommandFacts?: KernelCommandReader;
+  /** L19a: the original Run's Session, the Kernel reader's input. */
+  commandRerunExecutions?: Pick<ExecutionReadPort, 'readExecution'>;
+  /**
+   * K3 L18: the workspace owner's read seam for each target path's current
+   * digest. Optional so the frozen `{ records }` construction keeps compiling;
+   * absent, every file object's digest is `null`.
+   */
+  workspace?: Pick<WorkspaceToolsPort, 'readWorkspace'>;
 };
 
 /**
@@ -102,6 +135,11 @@ function canonicalOf(value: unknown): string | null {
 function sameJson(left: unknown, right: unknown): boolean {
   const leftKey = canonicalOf(left);
   return leftKey !== null && leftKey === canonicalOf(right);
+}
+
+/** The CRR aggregate ref is a stored record; the frozen AggregateRef union predates it (see the card). */
+function requestPinOf(request: CommandRerunRequestV1): VersionPin {
+  return { ref: structuredClone(request.ref) as unknown as VersionPin['ref'], revision: request.revision };
 }
 
 function clonePins(pins: readonly VersionPin[]): VersionPin[] {
@@ -695,6 +733,152 @@ export function createDecisionSourceFacts(
             objects = card.objects.map((object) => structuredClone(object));
             options = card.options.map((option) => structuredClone(option));
           }
+          break;
+        }
+        case 'unknown_call_review': {
+          // K3 L18: re-derive the whole card from the real record, the original
+          // Run snapshot and the Goal's current plan window. The caller's pins
+          // are never trusted.
+          const reviewProblem = scopeProblem(identity.reviewRef, scope);
+          if (reviewProblem !== null) return reviewProblem;
+          const goalProblem = scopeProblem(source.goalRef, scope);
+          if (goalProblem !== null) return goalProblem;
+          const goalRead = await readGoal(source.goalRef);
+          if (goalRead.status !== 'ready') return goalRead;
+          goal = goalRead.value;
+          if (goal.workspaceRef.projectId !== scope.projectId || goal.workspaceRef.workspaceId !== scope.workspaceId) {
+            return reject('forbidden', 'the review source Goal is outside the bound scope');
+          }
+          if (deps.unknownCallReviews === undefined) {
+            return reject('unavailable', 'no UnknownCallReview reader is bound for an unknown_call_review source');
+          }
+          const reviewRead = await deps.unknownCallReviews.readReview(ctx, { ref: identity.reviewRef });
+          if (reviewRead.status === 'not_found') return reject('not_found', 'the review record does not exist');
+          if (reviewRead.status !== 'ready') return reviewRead;
+          const record = reviewRead.value;
+          if (record.revision !== identity.revision) {
+            return reject('revision_conflict', 'the review record moved since the card was read',
+              [{ ref: structuredClone(record.ref), revision: record.revision }]);
+          }
+          if (record.task.goalId !== goal.ref.goalId) {
+            return reject('invalid', 'the review record belongs to another Goal');
+          }
+          const runRead = await readEncoded(record.runRef);
+          if (!runRead.ok) return runRead.rejection;
+          const decodedRun = decodeRun(runRead.record);
+          if (!decodedRun.ok) {
+            return reject('unavailable', `the original Run snapshot is damaged: ${decodedRun.reason}`);
+          }
+          // Ruling 4: the ONE canonical Task closure (satisfied/cancelled/
+          // superseded), not the Plan disposition. A read failure is rejected.
+          const closure = await readTaskClosure(records, goal.ref, record.task.taskId);
+          if (closure.status !== 'ready') return closure;
+          const fileDigests = await readReviewTargetDigests(ctx, deps.workspace,
+            unknownCallReviewTargetPaths(record).slice(0, UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX));
+          const facts = unknownCallReviewCardFacts({ record, goal, run: decodedRun.value,
+            taskActive: !closure.value.closed, fileDigests });
+          pins = clonePins(facts.source.pins);
+          objects = facts.objects.map((object) => structuredClone(object));
+          options = facts.closedReason === null ? facts.options.map((option) => structuredClone(option)) : [];
+          goalBases = (facts.source.goalBases ?? []).map((basis) => structuredClone(basis));
+          closed = facts.closedReason !== null;
+          break;
+        }
+        case 'command_rerun_request': {
+          // K3 L19a: re-derive the whole card from the real request, its review
+          // record, the original Run's Kernel command and the Goal window. The
+          // caller's pins are never trusted.
+          const requestProblem = scopeProblem(identity.requestRef, scope);
+          if (requestProblem !== null) return requestProblem;
+          const goalProblem = scopeProblem(source.goalRef, scope);
+          if (goalProblem !== null) return goalProblem;
+          const goalRead = await readGoal(source.goalRef);
+          if (goalRead.status !== 'ready') return goalRead;
+          goal = goalRead.value;
+          if (goal.workspaceRef.projectId !== scope.projectId || goal.workspaceRef.workspaceId !== scope.workspaceId) {
+            return reject('forbidden', 'the request source Goal is outside the bound scope');
+          }
+          if (deps.commandRerunRequests === undefined || deps.unknownCallReviews === undefined
+            || deps.readKernelCommandFacts === undefined || deps.commandRerunExecutions === undefined) {
+            return reject('unavailable', 'the CommandRerunRequest readers are not bound for a command_rerun_request source');
+          }
+          const requestRead = await deps.commandRerunRequests.readRequest(ctx, { ref: identity.requestRef });
+          if (requestRead.status === 'not_found') return reject('not_found', 'the rerun request does not exist');
+          if (requestRead.status !== 'ready') return requestRead;
+          const request = requestRead.value;
+          if (request.revision !== identity.revision) {
+            return reject('revision_conflict', 'the rerun request moved since the card was read',
+              [requestPinOf(request)]);
+          }
+          if (request.ref.goalId !== goal.ref.goalId) {
+            return reject('invalid', 'the rerun request belongs to another Goal');
+          }
+          const reviewRead = await deps.unknownCallReviews.readReview(ctx, { ref: request.reviewRef });
+          if (reviewRead.status === 'not_found') return reject('not_found', 'the request review record does not exist');
+          if (reviewRead.status !== 'ready') return reviewRead;
+          const record = reviewRead.value;
+          if (record.task.goalId !== goal.ref.goalId) {
+            return reject('invalid', 'the request review record belongs to another Goal');
+          }
+          // Ruling 4: the ONE canonical Task closure, not the Plan disposition.
+          const closure = await readTaskClosure(records, goal.ref, request.ref.taskId);
+          if (closure.status !== 'ready') return closure;
+          const taskActive = !closure.value.closed;
+          const blocked = record.blockedCommands.find(entry =>
+            entry.reviewRunId === request.reviewRef.runId && entry.alias === request.alias);
+          if (blocked === undefined) {
+            return reject('unavailable',
+              `the blocked command #${String(request.alias)} of ${request.reviewRef.runId} is not recorded`);
+          }
+          let execution;
+          try {
+            execution = await deps.commandRerunExecutions.readExecution(ctx, record.runRef);
+          } catch (error) {
+            const failure = error as { status?: unknown; code?: unknown } | null;
+            if (failure !== null && typeof failure === 'object' && failure.status === 'rejected'
+              && typeof failure.code === 'string') {
+              return failure as unknown as CoreRejection;
+            }
+            return reject('unavailable', 'the original Run is not readable for the blocked command');
+          }
+          if (execution.status !== 'ready') {
+            return execution.status === 'rejected' ? execution
+              : reject('unavailable', 'the original Run is not readable for the blocked command');
+          }
+          const factsRead = await deps.readKernelCommandFacts(ctx, { session: execution.value.session,
+            calls: [blocked.kernelCallRef],
+            ...(ctx.signal === undefined ? {} : { signal: ctx.signal }) });
+          if (factsRead.status !== 'ready') {
+            return factsRead.status === 'rejected' ? factsRead
+              : reject('unavailable', 'the blocked command text is not readable from the Kernel');
+          }
+          const blockedText = factsRead.value.get(blocked.kernelCallRef.callId)?.command ?? null;
+          if (blockedText === null) {
+            return reject('unavailable', 'the blocked command text is not readable from the Kernel');
+          }
+          const siblings: CommandRerunRequestV1[] = [];
+          let siblingCursor: string | undefined;
+          for (;;) {
+            const page = await deps.commandRerunRequests.listRequests(ctx, {
+              workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId },
+              filter: { goalId: request.ref.goalId, taskId: request.ref.taskId },
+              page: { limit: 200, ...(siblingCursor === undefined ? {} : { cursor: siblingCursor }) },
+            });
+            if (page.status !== 'ready') {
+              return page.status === 'rejected' ? page
+                : reject('unavailable', 'the alias rerun requests are not readable');
+            }
+            siblings.push(...page.value.items);
+            if (page.value.nextCursor === null) break;
+            siblingCursor = page.value.nextCursor;
+          }
+          const facts = commandRerunRequestCardFacts({ request, review: record, goal,
+            blockedCommandText: blockedText, aliasRequests: siblings, taskActive });
+          pins = clonePins(facts.source.pins);
+          objects = facts.objects.map((object) => structuredClone(object));
+          options = facts.closedReason === null ? facts.options.map((option) => structuredClone(option)) : [];
+          goalBases = (facts.source.goalBases ?? []).map((basis) => structuredClone(basis));
+          closed = facts.closedReason !== null;
           break;
         }
         case 'message_release':

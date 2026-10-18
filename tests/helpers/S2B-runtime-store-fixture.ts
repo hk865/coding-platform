@@ -45,6 +45,7 @@ import type { ModelRequestPort } from '../../src/core/work-graph/tasks/model-cal
 import type { RuntimeExecutionDependencies, RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createModelCallService } from '../../src/core/work-graph/tasks/model-call-service.js';
@@ -156,6 +157,9 @@ export async function createS2BRuntimeStoreFixture(
   let entry!: ExecutionEntryPort; let modelRequests!: ModelRequestPort;
   function buildDeps(overrides: B2RuntimeFixtureOverrides = {}): RuntimeExecutionDependencies {
     const executions = createRunStateReader({ records });
+    // Rework 10 package R: the REQUIRED Task-review reader is the real owner
+    // over this fixture's one real records store and its Run reader.
+    const unknownCallReviews = createUnknownCallReviewService({ records, reads: executions, now, eventId });
     const roles = createRoleConfigurationService({ records, now, eventId });
     const reads = createMaterialRecordReaders(records);
     const materials = createMaterialService({ bodies, authority: reads.authority, now });
@@ -194,6 +198,7 @@ export async function createS2BRuntimeStoreFixture(
       ...(overrides.hostInstance === undefined ? {} : { hostInstance: overrides.hostInstance }), now, eventId }) : undefined;
     return { claims: claimFixture.makeService(records), executions, entry: overrides.entry ?? entry, modelRequests: overrides.modelRequests ?? modelRequests,
       roles, plans, sessions, materials, bodies, historyWriter: createExecutionHistoryService({ records, now, eventId }), activity, graphHistory: createGraphExecutionHistoryReader({ executions, history: activity }), sessionOperations, kernelStores: selectedKernelStores,
+      unknownCallReviews,
       workspaceHost: overrides.workspaceHost ?? {
         async resolveRoot(scope) { return scope.projectId === claimFixture.scope.projectId && scope.workspaceId === claimFixture.scope.workspaceId ? { status: 'ready', value: { root: claimFixture.directory, workspaceRevision: 1 } } : { status: 'rejected', code: 'forbidden', reason: 'Unknown scope' }; },
         async authorize(ctx, scope) {

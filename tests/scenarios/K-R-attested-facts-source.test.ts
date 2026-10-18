@@ -22,6 +22,7 @@ import type { SubmittedControl } from '../../src/contracts/control-intent.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
+import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import { AG2B_CONSUMER_ID, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite, plain, startAG2bHost, type AG2bHost } from '../helpers/AG2b-collaboration-fixture.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import {
@@ -39,6 +40,28 @@ import {
 } from './support/common.js';
 
 afterEach(cleanupScenarios);
+
+/**
+ * K3 L21/L11: the attested record is `needs_decision`; the person resolves it
+ * through the direct hold and "continue" routes before the automatic
+ * continuation, so the gate lets the continuation through.
+ */
+async function resolveAttestedReview(host: AG2bHost, runRef: RunRef, label: string): Promise<void> {
+  const read = await post<ReadResult<UnknownCallReviewV1>>(host, 'unknown-call-reviews/read',
+    plain(AG2B_SCOPE, { runRef }));
+  if (read.status !== 'ready') throw new Error(`the attested review record must read: ${JSON.stringify(read)}`);
+  const review = read.value;
+  expect(review).toMatchObject({ status: 'needs_decision', decisionReasons: ['inventory_incomplete'] });
+  const held = await post<WriteResult<UnknownCallReviewV1>>(host, 'unknown-call-reviews/hold', graphWrite(AG2B_SCOPE,
+    { reviewRef: review.ref, text: null }, `${label}-hold`, [{ ref: review.ref, revision: review.revision }]));
+  if (held.status !== 'committed') throw new Error(`the review hold must commit: ${JSON.stringify(held)}`);
+  const released = await post<WriteResult<{ hold: WriteResult<UnknownCallReviewV1>; requeue: unknown }>>(host,
+    'unknown-call-reviews/release-hold', graphWrite(AG2B_SCOPE, { reviewRef: review.ref }, `${label}-release`,
+      [{ ref: review.ref, revision: held.value.revision }]));
+  if (released.status !== 'committed') throw new Error(`the review release must commit: ${JSON.stringify(released)}`);
+  expect(released.value).toMatchObject({ hold: { status: 'committed', value: { disposition: { hold: 'released' } } },
+    requeue: null });
+}
 
 const NO_REDRIVE = { schemaVersion: 1 as const, autoReworkLimit: 3, resumeOnStartup: false };
 
@@ -157,6 +180,7 @@ it('KA-09 (KE3, L9/D2): an entered, locator-less, attested requeue continuation 
     // 5. The next start's maintenance closes the dangling Turn; the interrupted verdict auto-requeues.
     await writeAutomationSettings(h.database, NO_REDRIVE);
     await h.restart({});
+    await resolveAttestedReview(h.host, run2Ref, 'kr-attested');
     const continuation = await driveChecked(h.host, inv, selectWork('kr-attested-continue', true), { stopBefore: 'open_checks' });
     expect(continuation.next?.kind === 'perform' ? continuation.next.operation.kind : null, 'the drive stops after the continuation Run').toBe('open_checks');
     const row = await workRow(h.host);
@@ -185,6 +209,7 @@ it('KA-09 (KE3, L9/D12): a never-entered, requeued Run between the attested Run 
   try {
     await writeAutomationSettings(h.database, NO_REDRIVE);
     await h.restart({});
+    await resolveAttestedReview(h.host, run2Ref, 'kr-attested-d12');
     // The maintenance closes the dangling Turn; the interrupted verdict requeues and claims Run 3. Stop
     // before it starts: Run 3 is claimed but never enters the Kernel.
     const toRun3 = await driveChecked(h.host, inv, selectWork('kr-attested-d12-r3', true), { stopBefore: 'start' });
@@ -292,6 +317,7 @@ it('KA-09 (KE3, L9/D11): a cross-Session continuation of an interrupted Run read
       if (sessionRef === undefined) throw new Error('the original Session must be known');
       // Retire the original Session: the continuation must be claimed in another one (cross-Session).
       await archiveSessionOn(third, sessionRef, 'kr-d11');
+      await resolveAttestedReview(third, crashed.runRef, 'kr-d11');
       // A fresh invariant target re-reads the world after the restart.
       const driveInv: InvariantTarget = { database };
       const continuation = await driveChecked(third, driveInv, selectWork('kr-d11-continue', true), { stopBefore: 'open_checks' });
@@ -358,6 +384,7 @@ it('KA-09 (KE3, L9): a platform position record that lags the Kernel still lists
       expect(closed.session).toMatchObject({ lifecycle: 'active', occupancy: null, health: 'available', healthConclusion: null });
       // A fresh invariant target re-reads the world after the restart (the crashed Host's cached world predates the attestation).
       const driveInv: InvariantTarget = { database };
+      await resolveAttestedReview(third, crashed.runRef, 'kr-lag');
       const continuation = await driveChecked(third, driveInv, selectWork('kr-lag-continue', true), { stopBefore: 'open_checks' });
       expect(continuation.next?.kind === 'perform' ? continuation.next.operation.kind : null, 'the drive stops after the continuation Run').toBe('open_checks');
       const row = await workRow(third);

@@ -13,7 +13,11 @@ import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js'
  */
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../contracts/core/results.js';
-import type { RunRef, RunSnapshot } from '../contracts/dispatch.js';
+import type { RunRef, RunSnapshot, TaskTriple } from '../contracts/dispatch.js';
+import type { ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
+import { canonicalJson, sha256Hex } from '../contracts/fingerprint.js';
+import type { UnknownCallReviewRef, UnknownCallReviewV1 } from '../contracts/unknown-call-review.js';
+import { reworkFenceOf } from '../core/work-graph/state/task-failure.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
 import type { CommitCursor } from '../contracts/command-event.js';
 import { seqOfCommitCursor } from '../contracts/ledger.js';
@@ -31,6 +35,8 @@ import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
 import type { SessionResponsibilityPort } from '../core/work-graph/sessions/session-responsibility-service.js';
 import type { SessionAnomalyPort } from '../core/work-graph/tasks/session-anomaly-service.js';
+// K3 (§2 L7): the read-only UnknownCallReview owner of `unknown-call-reviews/read`.
+import type { UnknownCallReviewReadPort, UnknownCallReviewPort } from '../core/work-graph/model/unknown-call-review-contracts.js';
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
 import type { GraphContextReadPort } from '../core/work-graph/model/graph-context-contracts.js';
 import type { GoalTaskPort } from '../core/work-graph/model/task-contracts.js';
@@ -75,6 +81,9 @@ import {
   type Slice1CoreRouteDto,
   // Slice 2C (spec §2): the same typed assembly for the seven line/detail routes.
   type Slice2CCoreRouteDto,
+  // K3 (§2 L7): the read-only review lookup's body/result pairing.
+  type K3CoreRouteDto,
+  type UnknownCallReviewReleaseHoldValue,
 } from './core-http-types.js';
 
 /** One named binding per route. The types are the exact public port methods;
@@ -159,6 +168,12 @@ export type CoreRouteBindings = {
   stopCommand: WorkbenchToolsPort['stopCommand'];
   // A.2 step 5.4: the requeue owner (TD-6) and the continuation brief read (C3).
   requeueTask: NonNullable<TaskClaimPort['requeueTask']>;
+  /** K3 L21 (UCR-15): the human direct "I'll handle it" (UCR-15). */
+  holdUnknownCallReview: UnknownCallReviewPort['holdReview'];
+  /** K3 L21 ruling 4: releaseHold, then the human requeue when the original Run's fence is human. */
+  releaseUnknownCallReviewHold: (
+    ctx: CoreCallContext, request: Parameters<UnknownCallReviewPort['releaseHold']>[1],
+  ) => Promise<WriteResult<UnknownCallReviewReleaseHoldValue>>;
   readContinuationBrief: NonNullable<RuntimeExecutionPort['readContinuationBrief']>;
   // A.2 step 5.5 (G7): the Goal control with its fan-out, and the Goal display, through the Host driver.
   setGoalControl: GoalControlPort['setGoalControl'];
@@ -182,6 +197,10 @@ export type CoreRouteBindings = {
   transferSessionResponsibility: SessionResponsibilityPort['transferSessionResponsibility'];
   readTaskArchiveState: SessionAnomalyPort['readTaskArchiveState'];
   listSessionAnomalies: SessionAnomalyPort['listSessionAnomalies'];
+  /** K3 (§2 L7): the read-only review lookup, by record ref or original Run. */
+  readUnknownCallReview: UnknownCallReviewReadPort['readReview'];
+  /** K3 (§2 L7): the review list by Goal+status or workspace+open. */
+  listUnknownCallReviews: UnknownCallReviewReadPort['listReviews'];
   readUndeliveredReplies: NonNullable<SessionMailboxPort['readUndeliveredReplies']>;
   // Slice 3: the two read-only graph routes, forwarded verbatim.
   lookGraph: GraphContextReadPort['lookGraph'];
@@ -259,8 +278,12 @@ export type CoreRoutePlatform = {
     'capabilities' | 'createSession' | 'readSessionHistory' | 'readTaskExecutionHistory' | 'startRun' | 'deliverControl'>
     & Required<Pick<RuntimeExecutionPort, 'prepareQuery' | 'startQuery' | 'observeQuery'>>
     & Pick<RuntimeExecutionPort, 'readContinuationBrief'>;
-  /** A.2 step 5.4: the requeue owner; a narrow platform without it answers `unsupported`. */
-  claims: Pick<TaskClaimPort, 'requeueTask'>;
+  /**
+   * A.2 step 5.4: the requeue owner; a narrow platform without it answers
+   * `unsupported`. K3 L21 D9: `readTaskRequeueByIdentity` is the optional
+   * no-write replay read the release-hold route asks first.
+   */
+  claims: Pick<TaskClaimPort, 'requeueTask' | 'readTaskRequeueByIdentity'>;
   /** A.2 step 5.9 (VR-14): the successor-round owner; a narrow platform without it answers `unsupported`. */
   evidence: Pick<EvidencePort, 'reverifyRound'>;
   messages: Pick<SessionMailboxPort, 'sendMessage' | 'readInbox' | 'readMessage' | 'readMessageBody'>
@@ -283,6 +306,10 @@ export type CoreRoutePlatform = {
   responsibilities: Pick<SessionResponsibilityPort, 'transferSessionResponsibility'>;
   /** Slice 1 (spec §4.4): the anchor read owner; `recordSessionAnomaly` stays off HTTP. */
   sessionAnomalies: Pick<SessionAnomalyPort, 'readTaskArchiveState' | 'listSessionAnomalies'>;
+  /** K3 (§2 L7, L21): optional so a narrow platform answers `unsupported`; the
+   * real composition publishes the read owner and the two human write owners. */
+  unknownCallReviews?: Pick<UnknownCallReviewReadPort, 'readReview' | 'listReviews'>
+    & Pick<UnknownCallReviewPort, 'holdReview' | 'releaseHold'>;
   /** A.2 step 5.6 (RUN-22): optional so a narrow platform answers `unsupported`. */
   resolveUnknownRun?(ctx: CoreCallContext, request: GraphWrite<ResolveUnknownRunRequestV1>): Promise<WriteResult<RunSnapshot>>;
   /** A.2 step 5.6 (QRR-06). */
@@ -429,6 +456,12 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   'sessions/transfer-responsibility': { kind: 'graph_write', binding: 'transferSessionResponsibility', owner: 'responsibilities.transferSessionResponsibility' },
   'tasks/archive-state': { kind: 'plain', binding: 'readTaskArchiveState', owner: 'sessionAnomalies.readTaskArchiveState' },
   'anomalies/list': { kind: 'plain', binding: 'listSessionAnomalies', owner: 'sessionAnomalies.listSessionAnomalies' },
+  'unknown-call-reviews/read': { kind: 'plain', binding: 'readUnknownCallReview', owner: 'unknownCallReviews.readReview' },
+  'unknown-call-reviews/list': { kind: 'plain', binding: 'listUnknownCallReviews', owner: 'unknownCallReviews.listReviews' },
+  // K3 L21: the two human write entries (UCR-15/UCR-14). `release-hold` is one
+  // response { hold, requeue | null } (ruling 4); it succeeds iff releaseHold did.
+  'unknown-call-reviews/hold': { kind: 'graph_write', binding: 'holdUnknownCallReview', owner: 'unknownCallReviews.holdReview' },
+  'unknown-call-reviews/release-hold': { kind: 'graph_write', binding: 'releaseUnknownCallReviewHold', owner: 'unknownCallReviews.releaseHold' },
   'messages/undelivered-replies': { kind: 'plain', binding: 'readUndeliveredReplies', owner: 'messages.readUndeliveredReplies' },
   // Slice 3: the two public read-only graph routes.
   'graph/look': { kind: 'plain', binding: 'lookGraph', owner: 'graphContext.lookGraph' },
@@ -777,6 +810,23 @@ export function createPlatformCoreRouteBindings(
       : platform.sessionAnomalies.readTaskArchiveState.bind(platform.sessionAnomalies),
     listSessionAnomalies: platform.sessionAnomalies === undefined ? unsupported('the platform does not publish sessionAnomalies.listSessionAnomalies')
       : platform.sessionAnomalies.listSessionAnomalies.bind(platform.sessionAnomalies),
+    readUnknownCallReview: platform.unknownCallReviews === undefined
+      ? unsupported('the platform does not publish unknownCallReviews.readReview')
+      : platform.unknownCallReviews.readReview.bind(platform.unknownCallReviews),
+    listUnknownCallReviews: platform.unknownCallReviews === undefined
+      ? unsupported('the platform does not publish unknownCallReviews.listReviews')
+      : platform.unknownCallReviews.listReviews.bind(platform.unknownCallReviews),
+    holdUnknownCallReview: platform.unknownCallReviews === undefined || platform.unknownCallReviews.holdReview === undefined
+      ? unsupported('the platform does not publish unknownCallReviews.holdReview')
+      : platform.unknownCallReviews.holdReview.bind(platform.unknownCallReviews),
+    releaseUnknownCallReviewHold: platform.unknownCallReviews === undefined || platform.unknownCallReviews.releaseHold === undefined
+      ? unsupported('the platform does not publish unknownCallReviews.releaseHold')
+      : async (ctx, request) => {
+        const hold = await platform.unknownCallReviews!.releaseHold(ctx, request);
+        if (hold.status !== 'committed') return hold;
+        const requeue = await releaseHoldRequeue(platform, ctx, request, hold.value);
+        return { status: 'committed', value: { hold, requeue }, replayed: hold.replayed, cursor: hold.cursor };
+      },
     readUndeliveredReplies: platform.messages.readUndeliveredReplies === undefined
       ? unsupported('the Host mailbox does not publish the undelivered-reply read (readUndeliveredReplies)')
       : platform.messages.readUndeliveredReplies.bind(platform.messages),
@@ -862,6 +912,89 @@ export function createPlatformCoreRouteBindings(
   };
 }
 
+/**
+ * K3 L21 ruling 4 (D9): after `releaseHold`, the same operator's human
+ * `requeueTask` is the "continue" ONLY when the original Run's rework fence is
+ * human (`reworkFenceOf(R, pointer)`); every other Task just releases. The
+ * request identity derives from the release-hold request, so a re-click after a
+ * crash between the two owner calls replays both receipts (L29 row 13).
+ */
+async function releaseHoldRequeue(
+  platform: CoreRoutePlatform, ctx: CoreCallContext,
+  request: Parameters<UnknownCallReviewPort['releaseHold']>[1],
+  record: UnknownCallReviewV1,
+): Promise<UnknownCallReviewReleaseHoldValue['requeue']> {
+  // K3 L21 D9 (ruling 4): both owner calls are idempotent on their own identity,
+  // and the derived requeue is keyed by `(Task, R)`. Its record-keyed replay read
+  // answers BEFORE the fresh pins (which a later Goal control moves) are read, so
+  // a re-click restores the original TaskRequeue instead of a fingerprint conflict.
+  const task: TaskTriple = record.task;
+  const requeueRequestId = 'k3-release-hold-requeue:' + sha256Hex(canonicalJson({
+    releaseRequestId: request.meta.requestId, taskRef: task, afterRunRef: record.runRef,
+  } as never));
+  const replayRead = platform.claims.readTaskRequeueByIdentity;
+  if (replayRead !== undefined) {
+    const replay = await replayRead.call(platform.claims, ctx, {
+      taskRef: task, afterRunRef: record.runRef, requestId: requeueRequestId,
+    });
+    if (replay.status === 'ready') {
+      return { status: 'committed', value: { kind: 'requeued', requeue: replay.value.requeue },
+        replayed: true, cursor: replay.value.cursor };
+    }
+    if (replay.status === 'rejected') return replay;
+  }
+  const runRead = await platform.executions.readExecution(ctx, record.runRef).catch(() => null);
+  // Ruling 4 (K3-41): `null` means "the fence is not human"; a failed or thrown
+  // read is the read's own rejection, never absence and never a fence answer.
+  if (runRead === null) {
+    return { status: 'rejected', code: 'unavailable', reason: 'the original Run could not be read' };
+  }
+  if (runRead.status !== 'ready') {
+    return runRead.status === 'rejected'
+      ? { status: 'rejected', code: runRead.code, reason: runRead.reason }
+      : { status: 'rejected', code: 'unavailable', reason: `the original Run could not be read (${runRead.status})` };
+  }
+  const run = runRead.value.run;
+  let pointer: ControlIntentSnapshotV1 | null = null;
+  const intentRef = run.controlState?.intentRef;
+  if (intentRef !== undefined) {
+    const intentRead = await platform.controls.readControl(ctx, intentRef).catch(() => null);
+    if (intentRead === null) {
+      return { status: 'rejected', code: 'unavailable', reason: 'the original Run control intent could not be read' };
+    }
+    if (intentRead.status !== 'ready') {
+      return intentRead.status === 'rejected'
+        ? { status: 'rejected', code: intentRead.code, reason: intentRead.reason }
+        : { status: 'rejected', code: 'unavailable',
+          reason: `the original Run control intent could not be read (${intentRead.status})` };
+    }
+    pointer = intentRead.value;
+  }
+  if (reworkFenceOf(run, pointer) !== 'human_only') return null;
+  const requeue = platform.claims.requeueTask;
+  if (requeue === undefined) {
+    return { status: 'rejected', code: 'unsupported', reason: 'the Host does not publish the requeue owner' };
+  }
+  const goalRef = { aggregateType: 'Goal' as const, projectId: task.projectId, goalId: task.goalId };
+  const goalRead = await platform.plans.queryGoal(ctx, goalRef);
+  if (goalRead.status !== 'ready') {
+    return goalRead.status === 'rejected'
+      ? { status: 'rejected', code: goalRead.code, reason: goalRead.reason }
+      : { status: 'rejected', code: 'unavailable', reason: `the Goal could not be read (${goalRead.status})` };
+  }
+  const requeueRequest = {
+    input: { taskRef: task, afterRunRef: record.runRef, reason: 'continue after the review hold was released' },
+    meta: {
+      requestId: requeueRequestId,
+      expected: [
+        { ref: goalRef, revision: goalRead.value.goal.revision },
+        { ref: record.runRef, revision: run.revision },
+      ],
+    },
+  };
+  return await requeue.call(platform.claims, ctx, requeueRequest as never);
+}
+
 /** A returned domain result is a rejection when it carries the closed
  * `status:'rejected'` discriminator. Reads keep that body at HTTP 200; a
  * GraphWrite rejection is re-raised so the server maps its real code onto the
@@ -892,6 +1025,8 @@ export async function dispatchCoreRoute(
   // Slice 2C (spec §2): the same reachability anchor for the seven line/detail
   // DTO aliases; nothing at runtime reads this alias.
   type Slice2CDto = Slice2CCoreRouteDto;
+  // K3 (§2 L7): the reachability anchor for the review-read DTO alias.
+  type K3Dto = K3CoreRouteDto;
   if (parsed.kind !== spec.kind) {
     throw new CoreRouteRejectionError({
       status: 'rejected', code: 'invalid',
@@ -994,6 +1129,10 @@ export async function dispatchCoreRoute(
       case 'sessions/transfer-responsibility': return bindings.transferSessionResponsibility(ctx, graphWrite.request as never);
       case 'tasks/archive-state': return bindings.readTaskArchiveState(ctx, plain.input as never);
       case 'anomalies/list': return bindings.listSessionAnomalies(ctx, plain.input as never);
+      case 'unknown-call-reviews/read': return bindings.readUnknownCallReview(ctx, plain.input as never);
+      case 'unknown-call-reviews/list': return bindings.listUnknownCallReviews(ctx, plain.input as never);
+      case 'unknown-call-reviews/hold': return bindings.holdUnknownCallReview(ctx, graphWrite.request as never);
+      case 'unknown-call-reviews/release-hold': return bindings.releaseUnknownCallReviewHold(ctx, graphWrite.request as never);
       case 'messages/undelivered-replies': return bindings.readUndeliveredReplies(ctx, plain.input as never);
       case 'graph/look': return bindings.lookGraph(ctx, plain.input as never);
       case 'graph/find': return bindings.findGraph(ctx, plain.input as never);

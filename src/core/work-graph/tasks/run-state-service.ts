@@ -44,6 +44,7 @@ import { CONTINUATION_BRIEF_LIMITS } from '../../../contracts/continuation-brief
 import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
 import type { SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
+import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { LookupValue, RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type { DecodeResult, EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
@@ -56,6 +57,7 @@ import { decodeControlIntentSnapshot } from '../persistence/control-record-codec
 import { decodeRun, type Decoded } from '../materials/run-snapshot-decoder.js';
 import { SESSION_ANOMALY_BY_TASK_LOOKUP } from '../model/session-facts-contracts.js';
 import { decodeSessionAnomalyAnchor } from './session-anomaly-codecs.js';
+import { decodeUnknownCallReview, unknownCallReviewRefKey } from './unknown-call-review-codecs.js';
 import { deriveSessionAnomalyView } from '../state/session-anomaly.js';
 import {
   decodeSessionRecord,
@@ -777,6 +779,20 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
     if (previous.status !== 'ready') return previous.status === 'not_found' ? incomplete('the requeue afterRun is missing') : previous;
     later(previous.value.readThrough);
 
+    // K3 L20: the afterRun's review record, when one exists. The review section
+    // is informational; a damaged or unreadable record degrades to none rather
+    // than failing the whole continuation basis (the fail-closed gates are the
+    // claim/reconcile owners', not this read).
+    const reviewRead = await readOne(
+      unknownCallReviewRefKey({ aggregateType: 'UnknownCallReview', projectId: previous.value.run.ref.projectId,
+        goalId: previous.value.run.ref.goalId, runId: previous.value.run.ref.runId }),
+      decodeUnknownCallReview, 'unknown-call review');
+    let unknownCallReview: UnknownCallReviewV1 | null = null;
+    if (reviewRead.ok && reviewRead.value !== null) {
+      unknownCallReview = reviewRead.value;
+      later(reviewRead.readThrough);
+    }
+
     // Every TaskRequeue of the Task, keyed by each ended Run of it.
     const lookups = lookupPortOf(records);
     if (lookups === null) return incomplete('the Run candidate index port is not configured');
@@ -930,7 +946,7 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
     later(pending.readThrough);
     return { status: 'ready', value: { run, requeue, allRequeues, previous: previous.value,
       previousIntents: { pointer, steers }, previousWait, round, newInputBodies, replyBodies, factsChain, readThrough,
-      pendingAnomalies: pending.anchors } };
+      pendingAnomalies: pending.anchors, unknownCallReview } };
   };
   return { readExecution, listExecutions, readContinuationBasis };
 }

@@ -146,6 +146,7 @@ export type SessionReleaseCause =
   | 'stop_not_entered'                                           // RUN-09 → SES-05 (D-7)
   | 'reconcile_terminal' | 'reconcile_interrupted_clean'         // RUN-17/18/19/24 → SES-06 (新增)
   | 'late_evidence' | 'stop_paused'                              // RUN-21/23 → SES-06 (新增)
+  | 'reconcile_takeover_unresolved'                             // RUN-25 → SES-06 (K3 U2)
   | 'unknown_attested'                                           // RUN-22 → SES-07 (新增)
   | 'query_terminal_observed' | 'query_reconcile_terminal'       // QRR-03 → SES-08
   | 'query_reconcile_not_entered' | 'query_reconcile_interrupted_clean' // QRR-01/02/04 → SES-09 (新增)
@@ -567,6 +568,7 @@ const RELEASE_CAUSES: Readonly<Record<SessionReleaseCause, {
   terminal_observed: { row: 'SES-04', holder: 'Run', source: 'K', turn: 'always', attested: false },
   stop_not_entered: { row: 'SES-05', holder: 'Run', source: 'U', turn: 'per_holder', attested: false },
   reconcile_terminal: { row: 'SES-06', holder: 'Run', source: 'R', turn: 'always', attested: false },
+  reconcile_takeover_unresolved: { row: 'SES-06', holder: 'Run', source: 'R', turn: 'always', attested: false },
   reconcile_interrupted_clean: { row: 'SES-06', holder: 'Run', source: 'R', turn: 'always', attested: false },
   late_evidence: { row: 'SES-06', holder: 'Run', source: 'KR', turn: 'always', attested: false },
   stop_paused: { row: 'SES-06', holder: 'Run', source: 'KR', turn: 'always', attested: false },
@@ -736,6 +738,7 @@ function released(state: ActiveState, cause: SessionReleaseCause, ctx: SessionGu
       return releasedNotEntered(state, holder);
     case 'reconcile_terminal':
     case 'reconcile_interrupted_clean':
+    case 'reconcile_takeover_unresolved':
     case 'late_evidence':
     case 'stop_paused':
       return releasedOnRunEnd(state, holder);                   // SES-06

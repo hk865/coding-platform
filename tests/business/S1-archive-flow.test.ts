@@ -44,8 +44,10 @@ import { createSessionResponsibilityBasisReader } from '../../src/core/work-grap
 import { taskRequeueRefKey } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
@@ -90,6 +92,7 @@ const ADDITIONAL_SCHEMAS: RecordBackendSchemas = {
   records: [
     ...SESSION_LIFECYCLE_RECORD_SCHEMAS.records,
     ...SESSION_ANOMALY_RECORD_SCHEMAS.records,
+    ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records,
     ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
     ...QUERY_JOB_RECORD_SCHEMAS.records,
     ...CONTROL_RECORD_SCHEMAS.records,
@@ -97,6 +100,7 @@ const ADDITIONAL_SCHEMAS: RecordBackendSchemas = {
   events: [
     ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
     ...SESSION_ANOMALY_RECORD_SCHEMAS.events,
+    ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
     ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
     ...QUERY_JOB_RECORD_SCHEMAS.events,
     ...CONTROL_RECORD_SCHEMAS.events,
@@ -104,6 +108,7 @@ const ADDITIONAL_SCHEMAS: RecordBackendSchemas = {
   lookups: [
     ...(SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? []),
     ...(SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? []),
+    ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
     ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []),
     ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []),
     ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
@@ -255,6 +260,9 @@ async function open(kind: 'memory' | 'sqlite', options: OpenOptions = {}): Promi
       modelRequests: b2.model,
       controls, runReconcile: reconcile,
       roles,
+      // Rework 10 package R: the REQUIRED Task-review reader is the real owner
+      // over this fixture's one real records store and Run reader.
+      unknownCallReviews: createUnknownCallReviewService({ records, reads, now, eventId }),
       plans: base.plans,
       sessions: base.sessionsPort,
       materials,
@@ -595,6 +603,8 @@ describe.each(['sqlite'] as const)('S1 archive flow (%s)', (kind) => {
       attestUnknownRun: async (ctx, request) => {
         const attested = await f.reconcile.resolveUnknownRun(ctx, { input: {
         runRef: request.input.runRef, reason: request.input.reason, kernelTurnOpen: true, inputsConfirmed: null,
+        review: { inventory: 'incomplete', inventoryProblem: 'kernel_unreadable', items: [], itemsOmitted: 0,
+          workspace: { status: 'unavailable', runBaselineKnown: false, reason: 'not_configured', detail: 'IT26' } },
         }, meta: request.meta });
         expect(attested, JSON.stringify(attested)).toMatchObject({ status: 'committed', value: { outcome: 'crashed' } });
         expect((await f.record()).occupancy).toBeNull();

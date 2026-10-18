@@ -15,12 +15,11 @@ import type { CoreRejection, ReadResult } from '../../../contracts/core/results.
 import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
 import { decisionSourceKey,
-  type DecisionOptionV1, type GoalDecisionBasisV1, type GoalFootprintV1,
+  type DecisionOptionV1, type GoalFootprintV1,
   type GoalSettingsV1 } from '../../../contracts/goal-decisions.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { ModuleRef } from '../../../contracts/core/identity.js';
-import type { EncodedRecord } from '../../record-store/ports.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type {
   DecisionCardV1,
@@ -30,6 +29,7 @@ import type {
 } from '../model/decision-contracts.js';
 import { decodeGoalSnapshot, readGoalSettings } from '../persistence/record-codecs.js';
 import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
+import { lookupAll } from '../persistence/lookup-all.js';
 import {
   atLeastCursorResult, storeFailureToRejection,
 } from '../persistence/read-result-failures.js';
@@ -37,6 +37,7 @@ import { GOAL_BY_WORKSPACE_INDEX } from '../tasks/plan-readers.js';
 import { decodeGoalPhaseSnapshot } from '../tasks/completion-record-codecs.js';
 import { goalConflictFacts } from '../state/goal-settings-machine.js';
 import { pathOwnershipOf } from '../notes/note-path-ownership.js';
+import { goalDecisionBasis } from '../tasks/goal-basis.js';
 
 // The two shared RecordStore failure helpers live in `persistence` (the
 // `tasks -> views` edge is forbidden); re-exported here for the existing
@@ -74,7 +75,9 @@ export const CONFLICT_OPTIONS: readonly DecisionOptionV1[] = Object.freeze([
 // Shared read-only helpers (used by every `views/` reader)                     //
 // -------------------------------------------------------------------------- //
 
-export type LookupBatch<T> = { items: T[]; watermark: CommitCursor | null; truncated: boolean };
+// The shared stable-window pager lives in `persistence` (the lowest layer both
+// `views/` and `tasks/` may import); re-exported here for the existing readers.
+export { lookupAll, type LookupBatch } from '../persistence/lookup-all.js';
 
 /** §4.1 line 772: a source lookup window that keeps changing is retried at most 4 times. */
 const WINDOW_MAX_ATTEMPTS = 4;
@@ -112,46 +115,6 @@ export async function readWatermark(
   return { status: 'ready', value: read.value.readThrough };
 }
 
-/** §4.1 line 772: one §4.1 lookup page is at most 200 records. */
-const LOOKUP_PAGE_LIMIT = 200;
-
-/**
- * One registered index's complete candidate set, paged by `after` to the very
- * end (2A L10: the shared reads have no whole-window cap). §4.1 line 772: a page
- * that observed a later commit than the window's first page makes the window
- * inconsistent; the whole read is retried (<=4) and a persistently changing
- * index is reported `unavailable`, never stamped with a mixed watermark.
- * `truncated` stays in the type (P5) and is always `false`: the read reaches
- * the end, so a complete count is always safe to report.
- */
-export async function lookupAll<T = EncodedRecord>(
-  records: DecisionReadRecordsPort,
-  index: string,
-  values: readonly (string | number | boolean | null)[],
-): Promise<LookupBatch<T>> {
-  for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
-    const items: T[] = [];
-    let first: CommitCursor | null | undefined;
-    let stable = true;
-    let after: string | undefined;
-    for (;;) {
-      const page = await records.lookup({ index, values, limit: LOOKUP_PAGE_LIMIT,
-        ...(after === undefined ? {} : { after }) });
-      if (page.status !== 'ready') throw page;
-      const pageWatermark = page.value.readThrough;
-      if (first === undefined) first = pageWatermark;
-      else if (first !== pageWatermark) stable = false;
-      for (const record of page.value.records) items.push(record as unknown as T);
-      const next = page.value.next;
-      if (next === null || next === undefined) break;
-      after = next;
-    }
-    if (stable) return { items, watermark: first ?? null, truncated: false };
-  }
-  throw { status: 'rejected', code: 'unavailable',
-    reason: `lookup index ${index} did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts` };
-}
-
 /** Every Goal of a workspace through the existing `a2-goal-by-workspace` index. */
 export async function listWorkspaceGoals(
   records: DecisionReadRecordsPort,
@@ -183,11 +146,7 @@ export function normalizedGoalSettings(goal: GoalSnapshot): GoalSettingsV1 {
   return readGoalSettings(goal);
 }
 
-export function goalDecisionBasis(goal: GoalSnapshot): GoalDecisionBasisV1 {
-  return { goalRef: { ...goal.ref }, workspaceRef: { ...goal.workspaceRef }, objective: goal.objective,
-    activePlanRef: goal.activePlanRevision === null ? null : { ...goal.activePlanRevision },
-    settings: structuredClone(normalizedGoalSettings(goal)) };
-}
+export { goalDecisionBasis } from '../tasks/goal-basis.js';
 
 /** §4.3 line 829: the two ways a Goal stops generating new conflict cards. */
 export type GoalTerminalState = { cancelled: boolean; completed: boolean };

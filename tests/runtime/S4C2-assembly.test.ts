@@ -144,12 +144,18 @@ function harness(fixture: S4ANoteFixture, config: Partial<ResolvedRuntimeConfigu
   const host = {
     async resolveConfiguration() { return { status: 'ready' as const, value: runtimeConfiguration(config) }; },
   };
+  const unknownCallReviews = fixture.platform.unknownCallReviews;
   const assembler = createContextAssembler({
     executions, roles, materials: materialsDouble(), bodies, graphContext, taskInputs: fixture.platform.taskInputs,
+    unknownCallReviews,
   });
   const deps: ExecutionPreparationDependencies = {
     executions, roles, bodies, host, now: () => S4A_AT, newId: () => 's4c2-id',
-    graphContext, taskInputs: fixture.platform.taskInputs,
+    graphContext, taskInputs: fixture.platform.taskInputs, unknownCallReviews,
+    // Item 2: this assembly prepare never reads the Task closure; fail closed
+    // if it ever does (never an absent → open default).
+    readTaskClosure: async () => ({ status: 'rejected' as const, code: 'unavailable' as const,
+      reason: 'this test does not read the Task closure' }),
   };
   return { fixture, preparation: createExecutionPreparation(deps, assembler), assembler, bodies };
 }
@@ -410,8 +416,8 @@ describe('S4C2 real-chain assembly', () => {
   });
 
   // ── C-06: an ineligible understanding is exactly ONE warning line, no body. ─
-  it('C-06 (memory) an ineligible understanding renders one warning line without a body', async () => {
-    const f = await createS4ANoteFixture('memory');
+  it.each(['memory', 'sqlite'] as const)('C-06 (%s) an ineligible understanding renders one warning line without a body', async kind => {
+    const f = await createS4ANoteFixture(kind);
     try {
       const noteId = await write(f, understandingDraft({ kind: 'goal', goalId: GOAL }, 'stale conclusion', 's', [FILE_A]), GOAL);
       await writeFile(join(f.root, FILE_A), 'export const a = 2;\n');

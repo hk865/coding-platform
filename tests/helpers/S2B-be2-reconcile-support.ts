@@ -36,6 +36,7 @@ import type { RunActivityViewV1, ActivityCalendarV1 } from '../../src/core/work-
 import { createActivityBackfill, type ActivityBackfillOperations } from '../../src/business/workflow/activity-backfill.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import { B2_AT } from './B2-runtime-fixture.js';
@@ -54,9 +55,12 @@ export const BE2_HOST_3: HostInstanceFacts = { hostInstanceId: 's2b-be2-host-3',
  */
 export function be2ExtraSchemas(): RecordBackendSchemas {
   return {
-    records: [...EVIDENCE_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records],
-    events: [...EVIDENCE_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events],
-    lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? [])],
+    records: [...EVIDENCE_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records,
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records],
+    events: [...EVIDENCE_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events,
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events],
+    lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
+      ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? [])],
   };
 }
 

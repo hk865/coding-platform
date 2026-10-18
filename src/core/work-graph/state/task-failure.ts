@@ -52,6 +52,7 @@ import {
   type TaskReworkOperation,
   type TaskReworkRefusalCode, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
+import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import { roundFailureFacts, runFailureOrigin } from './no-progress.js';
 import { isPausedInterrupted, runUnresolvedBlocker } from './run-machine.js';
@@ -163,7 +164,7 @@ export type ReworkClassDerivationV1 =
     stop: ReworkStopV1;
   }
   | {
-    row: 'FC-3' | 'FC-6' | 'FC-7' | 'FC-8' | 'FC-9' | 'FC-10' | 'FC-13' | 'FC-15' | 'FC-16' | 'S1-FC-ARCHIVE';
+    row: 'FC-3' | 'FC-6' | 'FC-7' | 'FC-7b' | 'FC-8' | 'FC-9' | 'FC-10' | 'FC-13' | 'FC-15' | 'FC-16' | 'S1-FC-ARCHIVE';
     kind: 'class';
     failureClass: ReworkFailureClass;
     interruption: 'executing' | 'paused' | null;
@@ -238,6 +239,11 @@ export function deriveReworkClass(run: RunSnapshot, pointerIntent: StopIntentV1 
         return observation.pausedIntentRef !== null
           ? rework('FC-6', 'interrupted', 'paused')
           : rework('FC-7', 'interrupted', 'executing');
+      }
+      // FC-7b (K3 L26): a RUN-25 takeover closure counts as an interruption,
+      // uncounted and with no no-progress key.
+      if (observation !== undefined && observation.kind === 'takeover_unresolved') {
+        return rework('FC-7b', 'interrupted', 'executing');
       }
       return rework('FC-9', 'run_failed');
     }
@@ -550,8 +556,74 @@ export function requeueHistorySourceOf(
  * raw candidates, never filtered by Plan or Task, so the refusal writer and the
  * read model count the same set.
  */
-export function countEndedGoalRuns(runs: readonly Pick<RunSnapshot, 'status'>[]): number {
-  return runs.filter((run) => run.status === 'ended').length;
+export function countEndedGoalRuns(
+  runs: readonly (Pick<RunSnapshot, 'status'> & { purpose?: RunSnapshot['purpose'] })[],
+): number {
+  // K3 (L10, L22): a review-purpose Run never enters the Goal's ended count.
+  return runs.filter((run) => run.status === 'ended' && run.purpose?.kind !== 'unknown_call_review').length;
+}
+
+/**
+ * K3 (L23, U5): the "consecutive" algorithm for the selected Run R, computed at
+ * R's review-record creation. Walk back along the task's work chain
+ * (`requeueRef.afterRunId`, then `consumedWait.runRef`) until the first reset
+ * point, exclusive. A reset point is a Run whose terminal the Kernel wrote
+ * (`runtime_terminal`, RUN-07/17/18/21, including `yielded`); platform
+ * synthetics (RUN-19/23/24/25) and attestation (RUN-22) are not reset points.
+ * A review round has no `requeueRef`/`consumedWait`, so it is never on the chain.
+ *
+ * `priorAutoCleanup` is true when a RUN-25-ended Run lies between the reset
+ * point and R. `priorUnknownProcess` is true when any such Run's record has a
+ * `process` item (RUN-25 or attestation). `resetRunRef` names the reset point,
+ * or null when the walk reached the chain start.
+ */
+export function streakOf(
+  run: Pick<RunSnapshot, 'ref' | 'requeueRef' | 'consumedWait'>,
+  runs: readonly RunSnapshot[],
+  reviews?: readonly UnknownCallReviewV1[],
+): { priorAutoCleanup: boolean; priorUnknownProcess: boolean; resetRunRef: RunRef | null } {
+  const byRunId = new Map(runs.map((candidate) => [candidate.ref.runId, candidate]));
+  const between: RunSnapshot[] = [];
+  const seen = new Set<string>([run.ref.runId]);
+  let cursor: RunSnapshot | null = byRunId.get(run.ref.runId) ?? null;
+  let resetRunRef: RunRef | null = null;
+  while (cursor !== null) {
+    const previous = previousChainRefOf(cursor);
+    if (previous === null) break;
+    const candidate = byRunId.get(previous.runId);
+    if (candidate === undefined || seen.has(candidate.ref.runId)) break;
+    if (isStreakResetPoint(candidate)) {
+      // L23: the reset point is excluded from the walk but named; the Runs
+      // collected between it and R are still judged.
+      resetRunRef = candidate.ref;
+      break;
+    }
+    seen.add(candidate.ref.runId);
+    between.push(candidate);
+    cursor = candidate;
+  }
+  return {
+    priorAutoCleanup: between.some((candidate) => candidate.reconciliation?.observation.kind === 'takeover_unresolved'),
+    priorUnknownProcess: between.some((candidate) => (reviews ?? []).some((review) =>
+      review.runRef.runId === candidate.ref.runId && review.items.some((item) => item.kind === 'process'))),
+    resetRunRef,
+  };
+}
+
+/** K3 L23: the predecessor of one Run on the task's work chain (`requeueRef`/`consumedWait`). */
+export function previousChainRefOf(run: Pick<RunSnapshot, 'requeueRef' | 'consumedWait'>): RunRef | null {
+  if (run.requeueRef !== undefined) {
+    return { aggregateType: 'Run', projectId: run.requeueRef.projectId, goalId: run.requeueRef.goalId,
+      runId: run.requeueRef.afterRunId };
+  }
+  return run.consumedWait === undefined ? null : run.consumedWait.runRef;
+}
+
+/** L23: only a Kernel-written terminal resets "consecutive"; platform terminals do not. */
+function isStreakResetPoint(run: RunSnapshot): boolean {
+  if (run.status !== 'ended') return false;
+  const observation = run.reconciliation?.observation;
+  return observation === undefined || observation.kind === 'runtime_terminal';
 }
 
 /** What a refusal's staleness is judged against at read time. */
@@ -656,6 +728,17 @@ export type WorkFailureInputV1 = FailureInputCommonV1 & {
   requeues: readonly TaskRequeueSnapshotV1[];
   /** The latest requeue refusal under the selected Run's key; null when absent. */
   requeueRefusal: TaskReworkRefusalSnapshotV1 | null;
+  /**
+   * K3 (U5): the UnknownCallReview records read for this Task; the selected
+   * Run's record (matched by `runRef.runId`) drives AV-2b / AV-4c. The owner
+   * reader wiring is group 4.
+   */
+  reviews?: readonly UnknownCallReviewV1[];
+  /**
+   * K3: the selected Run's record key exists but could not be read (L7
+   * fail-closed). Smallest complement to `reviews` (UNSPECIFIED, U5).
+   */
+  reviewUnreadable?: boolean;
 };
 /** A gate Task: its own chain (`VerificationRoundByTask`), anchored on the first producer Run (§9 VD-15). */
 export type GateFailureInputV1 = FailureInputCommonV1 & {
@@ -673,7 +756,7 @@ export type TaskFailureInputV1 = WorkFailureInputV1 | GateFailureInputV1;
 // ------------------------------------------------------------------------ //
 /** AV-10 has no branch: it only states that AV-8 already covers a stored cap refusal. */
 export type WorkVerdictRow =
-  | 'AV-0' | 'AV-1' | 'AV-2' | 'AV-3' | 'AV-4' | 'AV-5' | 'AV-6'
+  | 'AV-0' | 'AV-1' | 'AV-2' | 'AV-2b' | 'AV-3' | 'AV-4' | 'AV-4c' | 'AV-5' | 'AV-6'
   | 'AV-7a' | 'AV-7b' | 'AV-7c' | 'AV-7d' | 'AV-8' | 'AV-9' | 'AV-11' | 'AV-12';
 export type GateVerdictRow =
   | 'GV-0' | 'GV-1' | 'GV-2' | 'GV-3' | 'GV-3′' | 'GV-4' | 'GV-5' | 'GV-6' | 'GV-7' | 'GV-8' | 'GV-9' | 'GV-10';
@@ -732,6 +815,12 @@ function headOf(chain: RoundChainHeadV1): RoundSnapshot | null {
   return chain.kind === 'head' ? chain.head : null;
 }
 
+/** K3: the selected Run's review record among the caller-read records. */
+function selectedReviewOf(input: WorkFailureInputV1, run: RunSnapshot | null): UnknownCallReviewV1 | null {
+  if (run === null || input.reviews === undefined) return null;
+  return input.reviews.find((review) => review.runRef.runId === run.ref.runId) ?? null;
+}
+
 function workView(input: WorkFailureInputV1): WorkView {
   const run = input.selectedRun;
   const clock = clockOf(input);
@@ -772,6 +861,20 @@ function workVerdict(view: WorkView, limit: number): { row: WorkVerdictRow; verd
     return { row: 'AV-6', verdict: stopped('not_reworkable', { cause: 'origin_unresolvable' }) };
   }
   if (derivation.row === 'FC-2') return { row: 'AV-2', verdict: stopped('unknown_outcome') };
+  // AV-2b (L11/L22): the selected Run's review record is not resolved, or the
+  // read failed, so nothing else may advance the Task.
+  const review = selectedReviewOf(input, run);
+  if (input.reviewUnreadable === true || (review !== null && review.status !== 'resolved')) {
+    return { row: 'AV-2b', verdict: stopped('unknown_call_review', {
+      reviewStatus: input.reviewUnreadable === true ? 'unreadable' : review!.status }) };
+  }
+  // AV-4c (L21): a direct "I'll handle it" resolved+held record stops the Task
+  // before AV-3, so an existing human requeue cannot bypass it.
+  if (review !== null && review.status === 'resolved' && review.disposition?.choice === 'handle_myself'
+    && review.disposition.hold === 'held') {
+    return { row: 'AV-4c', verdict: stopped('task_paused', {
+      fence: 'human_pause', pausedBy: 'human', reviewHold: true }) };
+  }
   if (view.covering !== null) {
     return { row: 'AV-3', verdict: { kind: 'claim_requeued', requeueRef: { ...view.covering.ref },
       budget: view.covering.budget === null ? null : { ...view.covering.budget } } };
@@ -953,9 +1056,53 @@ function workFailureFacts(view: WorkView, policy: TaskAutomationPolicyV1, verdic
     source: sourceFacts(head, [view.requeueRefusal, view.reverifyRefusal]),
     requeueActors: workRequeueActors(view),
     reverifyActors: workReverifyActors(view),
+    ...unknownCallReviewFacts(input, run),
     automation: automationFacts(view.priorAutoCount, view.covering?.ref ?? null, view.requeueRefusal, view.reverifyRefusal,
       verdict, policy),
   };
+}
+
+/**
+ * K3 (L22, §2): the selected Run's review facts in the failure facts. Absent
+ * when the Task has no record for this Run; `unreadable` is the fail-closed
+ * value when the owner could not read it.
+ */
+function unknownCallReviewFacts(
+  input: WorkFailureInputV1, run: RunSnapshot,
+): Pick<TaskFailureFactsV1, 'unknownCallReview'> | Record<string, never> {
+  if (input.reviewUnreadable === true) {
+    return { unknownCallReview: { status: 'unreadable', hold: null, requeueConfirmed: false } };
+  }
+  const review = selectedReviewOf(input, run);
+  if (review === null) return {};
+  return { unknownCallReview: {
+    status: review.status,
+    hold: review.disposition?.hold ?? null,
+    requeueConfirmed: requeueConfirmedByReview(review),
+  } };
+}
+
+/**
+ * L22: the user's disposition already confirmed the one system requeue of this
+ * original Run: `rerun_as_is` / `skip_as_done`, an approved safer method, or a
+ * released "I'll handle it". It only covers the requeue of this Run
+ * (`coveringRequeue` absent); later Runs are unaffected.
+ */
+export function requeueConfirmedByReview(review: UnknownCallReviewV1): boolean {
+  if (review.status !== 'resolved') return false;
+  const disposition = review.disposition;
+  if (disposition === null) return false;
+  switch (disposition.choice) {
+    case 'rerun_as_is':
+    case 'skip_as_done':
+      return true;
+    case 'safer_method':
+      return disposition.approval?.decision === 'approve';
+    case 'handle_myself':
+      return disposition.hold === 'released';
+    default:
+      return unreachable(disposition.choice, 'review disposition choice');
+  }
 }
 
 function gateFailureFacts(view: GateView, policy: TaskAutomationPolicyV1, verdict: TaskAutomationVerdictV1): TaskFailureFactsV1 | null {

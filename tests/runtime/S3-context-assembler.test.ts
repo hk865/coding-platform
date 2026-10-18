@@ -16,7 +16,7 @@
  * assembler a stub, so the assembler rows are red with
  * `not implemented: …`; that is the expected part-1 state.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -44,6 +44,7 @@ import type { ResolvedRuntimeConfiguration } from '../../src/core/agent-runtime/
 import type { ExecutionPreparationDependencies } from '../../src/core/agent-runtime/execution-preparation.js';
 import { createExecutionPreparation } from '../../src/core/agent-runtime/execution-preparation.js';
 import type { RawArtifactPut, RawArtifactRecord, RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
+import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import type { StoreResult } from '../../src/core/record-store/ports.js';
 import type { TaskClaimOutbox } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { TaskContextInputPort } from '../../src/core/work-graph/model/context-input-contracts.js';
@@ -51,6 +52,9 @@ import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execut
 import type { GraphContextFactsV1, GraphContextReadPort } from '../../src/core/work-graph/model/graph-context-contracts.js';
 import type { MaterialPort } from '../../src/core/work-graph/model/material-contracts.js';
 import type { QueryPreparationFacts } from '../../src/core/work-graph/queries/contracts.js';
+import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
+import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import {
   CONTEXT_FORMAT_VERSION, CONTEXT_SECTION_HEADERS, CONTEXT_SECTION_ORDER, QUERY_CONTEXT_PRELUDE,
   WORK_CONTEXT_PRELUDE, createContextAssembler, renderAttentionChanges, renderContext,
@@ -349,14 +353,26 @@ function assemblerBase(): ContextAssemblerDependencies {
 }
 
 /** The assembler with only the minimum substitution; every row names its own deps. */
-function assemblerWith(deps: { graphContext?: GraphContextReadPort; taskInputs?: TaskContextInputPort } = {}) {
+function assemblerWith(deps: {
+  graphContext?: GraphContextReadPort;
+  taskInputs?: TaskContextInputPort;
+  unknownCallReviews?: ReturnType<typeof createUnknownCallReviewService>;
+} = {}) {
   const base = assemblerBase();
   return createContextAssembler({
     ...base,
     ...(deps.graphContext === undefined ? {} : { graphContext: deps.graphContext }),
     ...(deps.taskInputs === undefined ? {} : { taskInputs: deps.taskInputs }),
+    ...(deps.unknownCallReviews === undefined ? {} : { unknownCallReviews: deps.unknownCallReviews }),
   });
 }
+
+/** CA03/CA04/CA15: the required Task-review reader is the production owner over
+ * one empty real in-memory record store; every backend opened here is closed. */
+const reviewBackends: ReturnType<typeof createInMemoryRecordBackend>[] = [];
+afterEach(async () => {
+  for (const backend of reviewBackends.splice(0)) await backend.close();
+});
 
 type ReadCounts = { graph: number; inputs: number; brief: number };
 
@@ -387,7 +403,18 @@ function preparationHarness(options: {
     async readTaskInputs() { counts.inputs += 1; return { status: 'ready', value: [] }; },
     async readTaskInputPage() { counts.inputs += 1; return { status: 'not_found' }; },
   };
-  const assembler = assemblerWith({ graphContext, taskInputs });
+  // Rework 10 package R: the required Task-review reader is the production
+  // owner over a real (empty) in-memory record store, read by a real Run reader
+  // (an empty page, never a hand-returned result).
+  const reviewBackend = createInMemoryRecordBackend({ schemas: UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS });
+  reviewBackends.push(reviewBackend);
+  const unknownCallReviews = createUnknownCallReviewService({
+    records: reviewBackend.records,
+    reads: createRunStateReader({ records: reviewBackend.records }),
+    now: () => AT,
+    eventId: () => 's3-ca-review',
+  });
+  const assembler = assemblerWith({ graphContext, taskInputs, unknownCallReviews });
   const deps: ExecutionPreparationDependencies = {
     executions: { readExecution: async () => ({ status: 'ready', value: record }) },
     roles: { resolveRoleBindingFacts: async () => ({ result: { status: 'ready', value: roleResolution() }, guards: [] }) },
@@ -395,8 +422,13 @@ function preparationHarness(options: {
     host: { resolveConfiguration: async () => ({ status: 'ready', value: runtimeConfiguration() }) },
     now: () => AT,
     newId: () => 's3-ca-id',
+    unknownCallReviews,
     graphContext,
     taskInputs,
+    // Item 2: this assembly prepare never reads the Task closure; fail closed
+    // if it ever does (never an absent → open default).
+    readTaskClosure: async () => ({ status: 'rejected' as const, code: 'unavailable' as const,
+      reason: 'this test does not read the Task closure' }),
   };
   return { record, bodies, counts, facts, assembler, preparation: createExecutionPreparation(deps, assembler) };
 }

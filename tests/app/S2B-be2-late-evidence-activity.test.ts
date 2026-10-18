@@ -24,6 +24,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import { createSessionHistoryCursorOwner } from '../../src/core/agent-runtime/session-operations.js';
+import { readReviewDraftAtEntry } from '../../src/core/agent-runtime/run-reconcile.js';
 import { createS2BRuntimeStoreFixture, type S2BRuntimeStoreFixture } from '../helpers/S2B-runtime-store-fixture.js';
 import { blockingTool } from '../helpers/S2B-runtime-tools-support.js';
 import {
@@ -169,9 +170,21 @@ it('2B-14 (c) (RUN-22): a human attestation of an unknown end leaves the tally u
     expect(before).toMatchObject({ status: 'counted', recordedAt: '2026-09-26T03:00:00.000Z' });
 
     fx.setNow('2026-09-26T03:30:00.000Z');
-    const attached = await restartHost(fx, BE2_HOST_2, controls).deps.runReconcile!.resolveUnknownRun(fx.ctx, {
+    // K3 (lead §5.3): the Run went RUN-20(i) with one unresolved call, so the
+    // review draft is read through the same path as the Host entry (no lookup,
+    // no capture wired -> workspace not_configured) and passed as `review`.
+    const restarted = restartHost(fx, BE2_HOST_2, controls);
+    const runRead = await restarted.deps.executions.readExecution(fx.ctx, fx.claim.runRef);
+    if (runRead.status !== 'ready') throw new Error(`the Run must be readable: ${JSON.stringify(runRead)}`);
+    const auth = runRead.value.run.executionAuthorization;
+    const kernel = auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2 ? auth.kernel : null;
+    if (kernel === null) throw new Error('2B-14 (c) needs a Kernel binding');
+    const draft = await readReviewDraftAtEntry({ owner: restarted.classifier.owner }, fx.ctx, { record: runRead.value,
+      kernel, startPosition: runRead.value.run.executionHistory?.startPosition ?? null });
+    if (!draft.ok) throw new Error(`the review draft must be readable: ${JSON.stringify(draft.rejection)}`);
+    const attached = await restarted.deps.runReconcile!.resolveUnknownRun(fx.ctx, {
       input: { runRef: fx.claim.runRef, reason: 'S2B 2B-14c: a person checked the workspace by hand',
-        kernelTurnOpen: true, inputsConfirmed: true },
+        kernelTurnOpen: draft.kernelTurnOpen, inputsConfirmed: draft.inputsConfirmed, review: draft.draft },
       meta: { requestId: 's2b-14c-attest', expected: [await currentPin(fx)] },
     });
     expect(attached).toMatchObject({ status: 'committed', value: { status: 'ended', outcome: 'crashed' } });
