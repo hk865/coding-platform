@@ -1,0 +1,143 @@
+commit 2b7f5be51202d5e4414d8c1cb176e9f0571c3ccc
+Author: lead <lead@localhost>
+Date:   Sun Oct 18 19:05:38 2026 +0800
+
+    tests: let the automatic capture settle before a scenario close or crash (L8 merge, 9 restart cases)
+
+diff --git a/tests/helpers/AG2b-collaboration-fixture.ts b/tests/helpers/AG2b-collaboration-fixture.ts
+index 1aa24b2..0f82e88 100644
+--- a/tests/helpers/AG2b-collaboration-fixture.ts
++++ b/tests/helpers/AG2b-collaboration-fixture.ts
+@@ -33,6 +33,7 @@ import type { GoalRef } from '../../src/contracts/ledger.js';
+ import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
+ import type { WorkLinkTarget } from '../../src/contracts/core/identity.js';
+ import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
++import type { ArchitectureObservationStateV1 } from '../../src/contracts/architecture-observation.js';
+ import {
+   BOOTSTRAP_SUFFIX,
+   CORE_API_PREFIX,
+@@ -325,15 +326,42 @@ export function ag2bPlanDraft(workIds: readonly string[] = [AG2B_WORK_TASK_ID]):
+ 
+ /** The frozen R5c graph relationship seed over the real HTTP routes: project,
+  * workspace, completion policy, initial architecture, Goal and an adopted Plan
+- * with one ordinary work plus the Goal gate. */
+-export async function seedAG2bWorkGraph(host: AG2bHost, workIds: readonly string[] = [AG2B_WORK_TASK_ID]): Promise<{ workTarget: WorkLinkTarget; goalRef: GoalRef }> {
++ * with one ordinary work plus the Goal gate. The automatic captures the seed starts settle before it
++ * returns (`settleAutoCapture`) unless `settle: false` leaves them running. */
++export async function seedAG2bWorkGraph(host: AG2bHost, workIds: readonly string[] = [AG2B_WORK_TASK_ID],
++  options: { settle?: boolean } = {}): Promise<{ workTarget: WorkLinkTarget; goalRef: GoalRef }> {
+   await seedAG2bWorkGraphThrough(async (suffix, body) => await (await corePost(host.base, suffix, host.token, body)).json() as unknown, workIds);
++  if (options.settle !== false) await settleAutoCapture(host);
+   return {
+     workTarget: { kind: 'task', ref: { projectId: AG2B_SCOPE.projectId, goalId: AG2B_GOAL_REF.goalId, taskId: AG2B_WORK_TASK_ID } },
+     goalRef: AG2B_GOAL_REF,
+   };
+ }
+ 
++/**
++ * L8: a Host with the lease starts an automatic architecture capture on its own (workspace
++ * registration, catalog adoption or revision, a check PASS). It runs detached and commits later;
++ * a close leaves it pending and the next start retries it. A case whose next window must write
++ * nothing (a restart, a crash, a replay) lets it settle first, through the ONE public
++ * `architecture/observation-state` read, polled every 10 ms for at most 30 s: settled when the
++ * workspace has no request record, its request is satisfied (`pending: false`) or its failure is
++ * recorded. A Host without the lease never captures, so nothing is awaited there.
++ */
++export async function settleAutoCapture(host: AG2bHost): Promise<void> {
++  if (host.host.reconcile.lease !== 'owned') return;
++  const deadline = Date.now() + 30_000;
++  for (;;) {
++    const state = await (await corePost(host.base, 'architecture/observation-state', host.token,
++      plain(AG2B_SCOPE, { workspace: AG2B_SCOPE }))).json() as ReadResult<ArchitectureObservationStateV1>;
++    if (state.status === 'ready') {
++      const capture = state.value.autoCapture;
++      if (capture === null || !capture.pending || capture.status === 'failed') return;
++    }
++    if (Date.now() >= deadline) throw new Error(`the automatic capture did not settle within 30 s: ${JSON.stringify(state)}`);
++    await new Promise(resolve => setTimeout(resolve, 10));
++  }
++}
++
+ /** One formal seed write: a core route suffix and its `graphWrite` body; answers the owner's result. */
+ export type AG2bSeedWrite = (suffix: string, body: ReturnType<typeof graphWrite>) => Promise<unknown>;
+ 
+diff --git a/tests/scenarios/A8-host-restart-lease.test.ts b/tests/scenarios/A8-host-restart-lease.test.ts
+index e40720f..5c01e96 100644
+--- a/tests/scenarios/A8-host-restart-lease.test.ts
++++ b/tests/scenarios/A8-host-restart-lease.test.ts
+@@ -51,7 +51,9 @@ it('A8-L5 (HL-05, HL-06, HL-07): a lock naming a live process that is no Host (t
+   const database = await tempDir('a8-l5-db-');
+   const publicDir = await publicDirectory();
+   const seeded = await startAG2bHost(publicDir, { root, database });
+-  try { await seedAG2bWorkGraph(seeded); } finally { await seeded.host.close(); }
++  // L8: the seed's automatic capture is left running, so the close leaves it pending (book ruling 5); the Host
++  // without the lease below meets it and must not retry it.
++  try { await seedAG2bWorkGraph(seeded, undefined, { settle: false }); } finally { await seeded.host.close(); }
+   const inv: InvariantTarget = { database };
+   await assertInvariantsAt(inv, 'A8-L5 seeded');
+   const lockPath = join(database, HOST_INSTANCE_LOCK_FILE);
+@@ -309,7 +311,9 @@ it('HL-04: a damaged lock is held as another Host\'s: no reconcile, no Kernel en
+   const database = await tempDir('a2-lease4-db-');
+   const publicDir = await publicDirectory();
+   const seeded = await startAG2bHost(publicDir, { root, database });
+-  try { await seedAG2bWorkGraph(seeded); } finally { await seeded.host.close(); }
++  // L8: the seed's automatic capture is left running, so the close leaves it pending (book ruling 5); the Host
++  // without the lease below meets it and must not retry it.
++  try { await seedAG2bWorkGraph(seeded, undefined, { settle: false }); } finally { await seeded.host.close(); }
+   const lockPath = join(database, HOST_INSTANCE_LOCK_FILE);
+   await writeFile(lockPath, 'a damaged lock');
+   const before = ledgerEvents(database);   // A.2 step 6
+diff --git a/tests/scenarios/harness.ts b/tests/scenarios/harness.ts
+index a3d14a7..31b6815 100644
+--- a/tests/scenarios/harness.ts
++++ b/tests/scenarios/harness.ts
+@@ -77,7 +77,7 @@ import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../
+ import {
+   AG2B_CHECK_COMMAND, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_INSTRUCTION, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_INSTRUCTION,
+   AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, ag2bChecksConfiguration, cleanupAG2b, permissionRevision, plain,
+-  seedAG2bWorkGraph, seedAG2bWorkGraphThrough, startAG2bHost, writeAG2bWorkspace, type AG2bHost,
++  seedAG2bWorkGraph, seedAG2bWorkGraphThrough, settleAutoCapture, startAG2bHost, writeAG2bWorkspace, type AG2bHost,
+ } from '../helpers/AG2b-collaboration-fixture.js';
+ import {
+   answer, cleanupRestart, deferred, post, publicDirectory, tempDir, writeAutomationSettings, writeStaleLock, type AdvanceValue, type Deferred,
+@@ -560,6 +560,11 @@ export abstract class ScenarioBase {
+   /** The ledger's event types in commit order. */
+   ledgerEventTypes(): string[] { return eventTypesIn(this.database); }
+   counts(): ScenarioCounts { return { modelCalls: this.modelCalls(), ...fileCounts(this.database) }; }
++  /**
++   * L8: waits until the live Host's automatic architecture capture settles (`settleAutoCapture`). A
++   * platform scenario has no Host, so nothing captures there. `advance()` calls it after a check round.
++   */
++  async settleAutoCapture(): Promise<void> {}
+ 
+   /** `select_work` on the seeded Goal; Goal-level unless `taskId` is given. */
+   select(flowId: string, taskId?: string): WorkflowAdvanceInput {
+@@ -589,6 +594,8 @@ export abstract class ScenarioBase {
+           const label = `${invariants.label}#${step} ${receipt.kind}`;
+           await assertInvariants(this, label, stepOfReceipt(receipt, this.stepActor(), this.policy, label));
+         }
++        // L8: a PASS starts the Host's automatic capture; a later "writes nothing" window must not see it.
++        if (receipt.kind === 'finalize_checks') await this.settleAutoCapture();
+       }
+       if (result.value.state === 'completed' || result.value.next === null) {
+         return { steps, receipts, state: result.value.state, reason: result.value.reason, next: null };
+@@ -899,6 +906,7 @@ export class HostScenario extends ScenarioBase {
+ 
+   /** The live Host (a new one after every restart). */
+   get host(): AG2bHost { return this.current.host; }
++  override async settleAutoCapture(): Promise<void> { await settleAutoCapture(this.current.host); }
+   /** The start-up reconcile report of the live Host (§12.1 step 7). */
+   get reconcile(): HostReconcileReportV1 { return this.current.host.host.reconcile; }
+   stepActor(): WorkbenchActor { return this.settings.actor; }
+diff --git a/tests/scenarios/support/receipts.ts b/tests/scenarios/support/receipts.ts
+index 7316a91..34d43b6 100644
+--- a/tests/scenarios/support/receipts.ts
++++ b/tests/scenarios/support/receipts.ts
+@@ -52,6 +52,7 @@ export async function performOnce(h: HostScenario, input: WorkflowAdvanceInput,
+   if (result.status !== 'ready') throw new Error(`${label}: the Workflow call was not ready: ${JSON.stringify(result)}`);
+   const receipt = result.value.receipt;
+   if (receipt !== null) await assertInvariants(h, label, stepOfReceipt(receipt, h.stepActor(), h.automationPolicy(), label));
++  if (receipt?.kind === 'finalize_checks') await h.settleAutoCapture();
+   return result.value;
+ }
+ 

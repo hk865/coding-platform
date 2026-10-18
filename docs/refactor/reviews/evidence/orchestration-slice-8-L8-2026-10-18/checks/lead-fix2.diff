@@ -1,0 +1,48 @@
+commit 0dea31dcdbc53d195885123ff79faf6336aad350
+Author: lead <lead@localhost>
+Date:   Sun Oct 18 18:27:01 2026 +0800
+
+    lead: automatic capture needs the lease; the start-up retry also needs automation.resumeOnStartup (merge full suite: 46 restart cases wrote one request per start)
+
+diff --git a/src/app/host.ts b/src/app/host.ts
+index 56f9fff..8f78198 100644
+--- a/src/app/host.ts
++++ b/src/app/host.ts
+@@ -533,7 +533,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
+     ...(platform.trackDetached === undefined ? {} : { track: platform.trackDetached }),
+   });
+   // The platform's formal triggers now reach the driver, everywhere in this Host.
+-  architectureCaptureTrigger = event => autoCapture.projectChanged(event.projectId, event.kind);
++  // A Host without the lease writes nothing (HL-02, HL-07), so it never captures.
++  if (leaseOwned) architectureCaptureTrigger = event => autoCapture.projectChanged(event.projectId, event.kind);
+   /**
+    * L8 (book ruling 1): the ONE shared registration step of both paths. It
+    * triggers only once the scope's root is bound in this Host's `byScope`; the
+@@ -541,7 +542,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
+    * non-replayed committed `registerWorkspace` (wrapped below).
+    */
+   const captureWorkspaceRegistration = (scope: CoreScope): void => {
+-    if (!byScope.has(scopeKey(scope))) return;
++    if (!leaseOwned || !byScope.has(scopeKey(scope))) return;
+     autoCapture.workspaceRegistered({ projectId: scope.projectId, workspaceId: scope.workspaceId });
+   };
+ 
+@@ -1060,10 +1061,14 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
+     leaseRow: instanceLease.row, leaseReason: instanceLease.reason, report: reconcileReport };
+   // L8 (book ruling 5): after the workspaces are bound (settings restore included)
+   // every pending bound workspace gets a `startup_retry`; detached, and a pending
+-  // workspace not bound in this Host is simply not passed here.
+-  autoCapture.retryPending(workspaces.map(workspace => ({
+-    projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
+-  })));
++  // workspace not bound in this Host is simply not passed here. Like the start-up
++  // re-drive below it needs the lease and `automation.resumeOnStartup`: with it off
++  // a start only reconciles (§12.10 step 5) and the next trigger retries.
++  if (leaseOwned && platform.automationPolicy().resumeOnStartup) {
++    autoCapture.retryPending(workspaces.map(workspace => ({
++      projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
++    })));
++  }
+   // §12.1 step 6b (LA-6): the start-up re-drive starts the existing collaboration driver for each selected
+   // Goal (a pending automation verdict or a not-entered Run), gated by `automation.resumeOnStartup`; every
+   // step it takes is judged by the owners, and its rework steps run as the Workflow's automation actor.

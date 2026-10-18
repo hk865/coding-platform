@@ -1,0 +1,25 @@
+# D1 assertion ledger slice-base..s8l8-r2 (tests)
+
+## REMOVED assertion: 15
+tests/data/S8D-observed-v2-codecs.test.ts:87: expect(decoded.value).toEqual({ schemaVersion: 2, nodes: [], edges: [], unresolved: [] });
+tests/data/S8D-observed-v2-codecs.test.ts:111: expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1]]), 1).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:112: expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0]]), 1).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:113: expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1.5]]), 2).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:114: expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[-1, 0]]), 1).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:117: expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1]])).status).toBe('decoded');
+tests/data/S8D-observed-v2-codecs.test.ts:122: expect(decodeObservedFileGraphChunk(badDigest, 1).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:130: expect(validateObservedFileGraphChunkV2(parsedWith('')).status).toBe('decoded');
+tests/data/S8D-observed-v2-codecs.test.ts:132: expect(validateObservedFileGraphChunkV2(parsedWith('x'.repeat(4096))).status).toBe('decoded');
+tests/data/S8D-observed-v2-codecs.test.ts:133: expect(validateObservedFileGraphChunkV2(parsedWith('x'.repeat(4097))).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:134: expect(decodeObservedFileGraphChunk(JSON.stringify(parsedWith('x'.repeat(4096)))).status).toBe('decoded');
+tests/data/S8D-observed-v2-codecs.test.ts:135: expect(decodeObservedFileGraphChunk(JSON.stringify(parsedWith('x'.repeat(4097)))).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:140: expect(decodeObservedFileGraphChunk(chunkJson(nodes, []), 2).status).toBe('invalid');
+tests/data/S8E-old-format-rejection.test.ts:54: expect(decodeObservedFileGraphChunk(JSON.stringify({ schemaVersion: 2, nodes: [], edges: [], unresolved: [] })))
+tests/data/S8E-old-format-rejection.test.ts:64: expect(decodeObservedFileGraphChunk(JSON.stringify({ schemaVersion: 1, nodes: [], edges: [] })).status).toBe('invalid');
+
+## DELETED test files: 0
+
+# lines to justify (excluding MOVED): 15, plus 0 deleted files
+
+# D3 pure-file guard: 1 *-pure.test.ts files
+# D3 hits: 0

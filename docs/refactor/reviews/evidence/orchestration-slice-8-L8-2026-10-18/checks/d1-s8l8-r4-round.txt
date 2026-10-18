@@ -1,0 +1,65 @@
+# D1 assertion ledger s8l8-r3..s8l8-r4 (tests)
+
+## MOVED: 1
+
+## REMOVED assertion: 36
+tests/app/S8A-L8-capture-start.test.ts:454: await expect(pending).resolves.toMatchObject({ status: 'rejected', code: 'cancelled' });
+tests/app/S8A-L8-capture-start.test.ts:478: await expect(pending).resolves.toMatchObject({ status: 'rejected', code: 'cancelled' });
+tests/app/S8A-L8-capture-start.test.ts:507: await expect(pending).resolves.toMatchObject({ status: 'rejected', code: 'cancelled' });
+tests/app/S8A-L8-capture-start.test.ts:510: expect(state).toMatchObject({ status: 'ready', value: { current: null } });
+tests/app/S8A-L8-capture-start.test.ts:526: expect(result).toMatchObject({ status: 'committed', replayed: false });
+tests/app/S8A-L8-capture-start.test.ts:528: expect(state.status).toBe('ready');
+tests/app/S8A-L8-capture-start.test.ts:529: if (state.status === 'ready') expect(state.value.current).not.toBeNull();
+tests/app/S8A-L8-capture-start.test.ts:545: expect(first).toMatchObject({ status: 'committed', replayed: false });
+tests/app/S8A-L8-capture-start.test.ts:553: await expect(pending).resolves.toMatchObject({ status: 'rejected', code: 'cancelled' });
+tests/app/S8A-L8-capture-start.test.ts:556: expect(state.status).toBe('ready');
+tests/app/S8A-L8-capture-start.test.ts:557: if (state.status === 'ready') expect(state.value.current).not.toBeNull();
+tests/app/S8A-L8-capture-start.test.ts:578: await expect(pending).resolves.toMatchObject({ status: 'rejected', code: 'cancelled' });
+tests/app/S8A-L8-capture-start.test.ts:580: expect(after).toMatchObject({ status: 'ready', value: null });
+tests/app/S8A-L8-capture-start.test.ts:606: await expect(pending).resolves.toMatchObject({ status: 'rejected', code: 'cancelled' });
+tests/app/S8A-L8-capture-start.test.ts:609: expect(reads).toBe(1);
+tests/app/S8A-L8-capture-start.test.ts:611: expect(after).toMatchObject({ status: 'ready', value: null });
+tests/app/S8A-L8-capture-start.test.ts:627: expect(result).toMatchObject({ status: 'committed', replayed: false, value: { requestSeq: 1, status: 'requested' } });
+tests/app/S8A-L8-capture-start.test.ts:629: expect(state.status).toBe('ready');
+tests/app/S8A-L8-capture-start.test.ts:631: expect(state.value.autoCapture).toMatchObject({ requestSeq: 1, status: 'requested', pending: true });
+tests/app/S8A-L8-capture-start.test.ts:654: expect(first).toMatchObject({ status: 'committed', replayed: false });
+tests/app/S8A-L8-capture-start.test.ts:657: expect(result).toMatchObject({ status: 'committed', replayed: true,
+tests/app/S8A-L8-capture-start.test.ts:678: expect(first).toMatchObject({ status: 'committed', replayed: false });
+tests/app/S8A-L8-capture-start.test.ts:681: expect(result).toMatchObject({ status: 'rejected', code: 'unavailable',
+tests/app/S8A-L8-capture-start.test.ts:702: expect(first).toMatchObject({ status: 'committed', replayed: false });
+tests/app/S8A-L8-capture-start.test.ts:703: await expect(platform.architecture.requestAutoCapture(hostContext(A, controller.signal),
+tests/app/S8A-L8-capture-start.test.ts:704: requestBody('cancel-request-restore-throw'))).rejects.toThrow('injected event restore throw');
+tests/app/S8A-L8-capture-start.test.ts:720: expect(request).toMatchObject({ status: 'committed' });
+tests/app/S8A-L8-capture-start.test.ts:722: expect(before.status).toBe('ready');
+tests/app/S8A-L8-capture-start.test.ts:732: await expect(pending).resolves.toMatchObject({ status: 'rejected', code: 'cancelled' });
+tests/app/S8A-L8-capture-start.test.ts:734: expect(after).toMatchObject({ status: 'ready', value: { revision, status: 'requested' } });
+tests/app/S8A-L8-capture-start.test.ts:755: expect(request).toMatchObject({ status: 'committed' });
+tests/app/S8A-L8-capture-start.test.ts:766: await expect(pending).resolves.toMatchObject({ status: 'rejected', code: 'cancelled' });
+tests/app/S8A-L8-capture-start.test.ts:768: expect(after).toMatchObject({ status: 'ready', value: { revision, status: 'requested' } });
+tests/app/S8A-L8-capture-start.test.ts:784: expect(request).toMatchObject({ status: 'committed' });
+tests/app/S8A-L8-capture-start.test.ts:790: expect(result).toMatchObject({ status: 'committed', replayed: false,
+tests/app/S8A-L8-capture-start.test.ts:793: expect(after).toMatchObject({ status: 'ready',
+
+## REMOVED test or describe: 15
+tests/app/S8A-L8-capture-start.test.ts:416: it('captureSourceChanges returns cancelled when its early lookup throws after the caller cancelled', async () => {
+tests/app/S8A-L8-capture-start.test.ts:437: it('captureSourceChanges returns cancelled when its commit throws after the caller cancelled', async () => {
+tests/app/S8A-L8-capture-start.test.ts:458: it('captureSourceChanges returns cancelled when the commit does not commit after the caller cancelled', async () => {
+tests/app/S8A-L8-capture-start.test.ts:482: it('captureSourceChanges returns cancelled when a body put resolves with a business failure after the caller cancelled', async () => {
+tests/app/S8A-L8-capture-start.test.ts:514: it('captureSourceChanges keeps its committed result when the signal is set right after the commit', async () => {
+tests/app/S8A-L8-capture-start.test.ts:533: it('captureSourceChanges returns cancelled when an early replay resolves after the caller cancelled', async () => {
+tests/app/S8A-L8-capture-start.test.ts:561: it('requestAutoCapture returns cancelled when its early lookup throws after the caller cancelled', async () => {
+tests/app/S8A-L8-capture-start.test.ts:584: it('requestAutoCapture returns cancelled without a conflict retry when the commit does not commit after the caller cancelled', async () => {
+tests/app/S8A-L8-capture-start.test.ts:615: it('requestAutoCapture keeps its committed result when the signal is set right after the commit', async () => {
+tests/app/S8A-L8-capture-start.test.ts:636: it('requestAutoCapture keeps its replayed commit when the restore succeeds after the signal is set', async () => {
+tests/app/S8A-L8-capture-start.test.ts:662: it('requestAutoCapture keeps the late restore failure when the signal is set', async () => {
+tests/app/S8A-L8-capture-start.test.ts:686: it('requestAutoCapture keeps the late restore throw when the signal is set', async () => {
+tests/app/S8A-L8-capture-start.test.ts:708: it('failAutoCapture returns cancelled when its early lookup throws after the caller cancelled', async () => {
+tests/app/S8A-L8-capture-start.test.ts:738: it('failAutoCapture returns cancelled when the commit does not commit after the caller cancelled', async () => {
+tests/app/S8A-L8-capture-start.test.ts:772: it('failAutoCapture keeps its committed result when the signal is set right after the commit', async () => {
+
+## DELETED test files: 0
+
+# lines to justify (excluding MOVED): 51, plus 0 deleted files
+
+# D3 pure-file guard: 1 *-pure.test.ts files
+# D3 hits: 0

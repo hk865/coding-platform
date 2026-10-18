@@ -1,0 +1,27 @@
+## L8 — complete except the bwrap-blocked PASS rows
+
+**Rulings, RED → GREEN.** R1 triggers: one shared Host registration step (settings flow after `addWorkspaceState`; route wrapper after a non-replayed commit, only for a bound root), adoption/revision notifications after non-replayed commits, and one wrapper around the single `rawEvidence.finalizeChecks` (public port and Workflow share it). RED: disabling the settings step made that row time out; GREEN. R2: one serial driver, coalescing; the held-capture test shows request 2 pending during capture 1 and exactly one more run. R3: state-layer request/failure constructors + two events/codecs; request-then-fail, stale guard writes nothing, `satisfiedRequestSeq = max(...)`, computed `pending` (10/10). R4: `auto-capture:<project>:<workspace>:<seq>`; replayed adoption starts none. R5: startup retry, next-trigger retry, close aborts before the platform drain. R6: `moduleMappingsOf` for the driver, `[]` without a catalog (first capture's module layer empty). R7: pointer writes `previousObservedRef` in the same commit. R8: route `architecture/observation-state`. R9: new move rule (unique deleted/added digest). R10/R11/R12: task-scoped dependency/ungrouped rows, 10-row cap, relative time, assembler section.
+
+**Test rows.** A-03: 14 pure tests (four literals, 12→10 + `另有 2 条架构提醒没列出`, `，不确定`, `还没有观测`, empty, moves, time thresholds) and 2 public-prepare tests (memory+SQLite) with two real captures and a real claim. A-04: registration (settings + route, memory/SQLite), replayed registration, first adoption and revision once each, replayed adoption none, first-capture module layer empty and its uncovered files, failed capture (both backends) then next trigger and next Host start, trigger during a running capture, close-with-queued-request, manual route. Manual/automatic `max` interleaving: observation-service seam with a gated injected workspace (real capture). PASS through Workflow and public finalize: **unfinished** — no `/usr/bin/bwrap`; A2 6/6 and R6-host 1/9 fail identically on `slice-base`.
+
+**Production +1,505/−30 (net +1,475), over the 1,000–1,300 estimate.** Why: the request record needed a state layer plus two events/decoders (196 codec lines); the service's request/failure/watermark/state/reminder methods are 412; the driver is 256; the pure reminder module 201. New: observation contracts 57, state 92, reminder-facts reader 31, reminder rows 201, driver 256. Changed: service +412/−18, codecs +196/−2, `create-platform` +76/−4, `host` +65/−2, assembler +50/−2, architecture contracts +27/−1, path helper +37, catalog +14, routes +9, execution-contracts +6, HTTP types +4/−1, UI route label +2, module-target +1. Tests added 1,426 new lines plus state-writes +8 and WP2 +10/−2.
+
+**Changed old test.** Only `tests/composition/WP2-wiring.test.ts`: F06 omitted reminders 2→3, re-counted by hand (note_review 0 + message_release 1 + goal-understanding 1 + new `还没有观测` 1). Nothing loosened.
+
+**How the failure test fails.** The workspace root is renamed away before `workspaces/register`; the sandbox's `realpath` fails and the capture rejects `unavailable`, so no observation is written; the request keeps `status:'failed'`, `pending:true`. The root is renamed back, then a real adoption trigger (or the next Host start) writes `startup_retry` and clears it. No failure record is written by hand.
+
+**Reads per preparation.** Catalog = 2 `readMany`; pointer = 1; request record = 1; latest = 1 record `readMany` + 1 module-body artifact + 1 file-graph chunk artifact; previous the same when present; comparison reuses the latest load (0 extra). 10 store/artifact reads with a previous, 7 without.
+
+**Checks.** Final combined vitest on the 7 changed/new files: 7 files, 94 tests passed. Per file: observation-state 10, reminders 14, reminders-public 2, auto-capture-host 11, adoption-capture 2, state-writes 19, WP2 36. Also green: WP2-scenario 2, S3-context-assembler 15, S4C2-assembly 13, S4C2-platform 1, R3d 12, R3d-R3g 1, R5a 2. R6-host 8/9 and A2 0/6 blocked by the missing bwrap (reproduced on base). `npm run typecheck` 0; `check:architecture` “next source boundaries: OK”; `npm run build` 0. `.dsh-scratch/` deleted.
+
+**UNSPECIFIED (smallest options).**
+1. PASS test rows (above) and replayed finalize: blocked by bwrap; the wrapper exists (`!replayed && outcome==='PASS'`).
+2. `autoCapture` projection omits `ref/revision/schemaVersion/workspace` (read is per workspace).
+3. Auto captures pass `previous: null`, so their change counts count every exported file as added; the pointer's `previousObservedRef` still records the replaced observation.
+4. `moduleMappingsOf` is shared by the driver, but the UI cannot value-import contracts (boundary rule), so `requests.ts` keeps its one-line map. Options: a narrow UI exemption or a route.
+5. `observationState.current.captureRef` is `ObservedCaptureRef`; `queryArchitecture` needs the persisted ref, obtained in the adoption test by an idempotent replay (`replayed:true`, starts no capture). Options: return the persisted ref or add it.
+6. Host `lightScan` pass-through added to hold a real capture (existing platform fault seam).
+7. Dedicated `host:auto-capture` system actor (no exported Host `SYSTEM_ACTOR`).
+8. A rejected catalog read at capture start leaves the request pending (no failed write).
+9. A failed reminder read propagates the preparation rejection.
+10. `requestedAt` uses the driver's real clock; the failed event's `occurredAt` is the original `requestedAt`.

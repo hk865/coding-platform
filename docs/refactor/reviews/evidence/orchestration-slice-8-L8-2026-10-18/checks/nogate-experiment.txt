@@ -1,0 +1,18 @@
+Experiment (2026-10-18 19:13, merge tree 2b7f5be with the resumeOnStartup condition dropped from the start-up retry, lease gate kept; 11 scenario files + L8 tests, bubblewrap, 3 workers)
+ FAIL  tests/scenarios/A10-check-recovery.test.ts > A10-R5, A10-R4 (C-01, C-04, VR-07, VR-14, §13.7, LA-6): a work check interrupted by a crash is finalized INCONCLUSIVE after the restart and re-verified automatically w
+ FAIL  tests/scenarios/A10-check-recovery.test.ts > A10-R5, C-06, A10-R4: the successor round's check is interrupted by a second crash; the projections follow C-04, and one more exempt round PASSes
+ FAIL  tests/scenarios/A10-check-recovery.test.ts > A10-R6 (C-01, GV-3, GV-10, P20, TASK-15, TASK-30): the gate's check interrupted by a crash is re-verified on the anchored producer Run after the restart; PASS completes
+ FAIL  tests/scenarios/A10-check-recovery.test.ts > A10-R2 (C-02 under GAP-24, VD-10): a check whose process ended with its report stored but whose result was never booked stays executing until the restart, which interru
+ FAIL  tests/scenarios/A8-host-restart-entry.test.ts > A8-2a, A8-1c (W-05, W-03, RUN-16, RUN-03, I-19): an Entering Run with no Kernel Turn is revoked at the restart and the same claim re-authorizes with the bound brief;
+ FAIL  tests/scenarios/A8-host-restart-entry.test.ts > A8-1b (W-02, I-19, LA-6, §12.1 step 6b (b)): a requeue Run authorized and never begun is re-driven by the start-up re-drive with no workflow/advance; the bound brie
+ FAIL  tests/scenarios/A8-host-restart-entry.test.ts > A8-1a requeue variant (W-01, W-24, C3, LA-6): a requeue Run claimed and never prepared is re-prepared by the start-up re-drive; its brief is assembled then, from the
+ FAIL  tests/scenarios/A8-host-restart-paused.test.ts > A8-3n (closing supported; KA-10, W-11, RUN-19, LA-7, §13.4 #17, LA-6): the Kernel paused, a resume queued, the crash before the re-entry: an ordinary interruption 
+ FAIL  tests/scenarios/A8-host-restart-paused.test.ts > A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L7, decisions 42 item 2 and 43): the Kernel paused, a resume queued, the crash before the re-ent
+ FAIL  tests/scenarios/A8-host-restart-paused.test.ts > LA-1 and contract (e) (closing supported; KA-07, KA-09, A8-3l step 5, A8-3r): a person's 继续 closes the dangling Kernel Turn and the continuation runs in the ori
+ FAIL  tests/scenarios/A8-host-restart-paused.test.ts > LA-1 and contract (e) (closing unsupported; A8-3l step 5, A8-3r, K L8): the continuation in a new Session is seeded with the original Session's completed history an
+ FAIL  tests/scenarios/A8-host-restart-rework.test.ts > A8-R1 (W-21, C8, LA-6): a crash between the automatic requeue and its claim; the start-up re-drive claims with the requeueRef (exactly one new Run), off waits for a
+ FAIL  tests/scenarios/A8-host-restart.test.ts > §12.1 step 6b (LA-6, W-01): a claimed Run left by a stopped Host is re-driven with the same claim at the next start, unless the Host setting turns the re-drive off
+ FAIL  tests/scenarios/A8-host-restart.test.ts > §12.1 step 6b (a), W-11, RUN-19, §13.4 #17, LA-1, K KA1: an interrupted Run is requeued by the start-up re-drive, uncounted, in the same Session once the start-up mainte
+ Test Files  5 failed | 29 passed (34)
+      Tests  14 failed | 351 passed (365)
+   Duration  320.58s (transform 14.44s, setup 0ms, import 53.23s, tests 900.96s, environment 4ms)

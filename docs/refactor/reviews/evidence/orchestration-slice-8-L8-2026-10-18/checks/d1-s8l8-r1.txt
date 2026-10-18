@@ -1,0 +1,8 @@
+# D1 assertion ledger slice-base..s8l8-r1 (tests)
+
+## DELETED test files: 0
+
+# lines to justify (excluding MOVED): 0, plus 0 deleted files
+
+# D3 pure-file guard: 0 *-pure.test.ts files
+# D3 hits: 0

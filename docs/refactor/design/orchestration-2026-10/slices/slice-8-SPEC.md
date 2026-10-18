@@ -27,6 +27,8 @@
 
 和正文冲突时以本后注为准。
 
+**后注（L8 合入，lead 2026-10-18）：** L8 已合入（de70ff41）。施工、全审和四轮返工中定下的读法写在 [§13](#13-l8-施工和验收中的限定lead2026-10-18)，和前面各节冲突时以 §13 为准：自动抓只在非重放的登记、采用、修订和 PASS 之后触发；每个 Host 一个串行、合并的驱动；请求记录带 `requestSeq` 和 revision，失败写属于正在跑的那一轮；Host 启动补抓，关闭先停队列再 abort；块正文每块带工作区范围，空块也带；提交和取消只有一种先后；提醒依赖在 12 个文件、6 块时读 12 次，加一个文件、7 + 6 块时读 21 次；决定 80 起测试规则第 1–3 版和 D1 账本每轮都跑。经过见[证据](../../../reviews/evidence/orchestration-slice-8-L8-2026-10-18/README.md)。
+
 **后注（8D 和 §10 段合入，lead 2026-10-18）：** 8D 和 §10 段已一起合入（4041c305）。施工、审查和返工中定下的读法写在 [§12](#12-8d-和-10-段施工和验收中的限定lead2026-10-18)，和前面各节冲突时以 §12 为准：严格捕获照旧（导出上限、完整快照），只有观测模式精简，映射器的模式必填；模块层由语言状态和走到的来源决定，不按解析成功数；`noResolve` 照 TS 程序的规则，类型引用的行号取类型节点的开始；块的写和读共用一个校验器，空说明符合法、超过 4,096 字符的说明符让捕获 `invalid`、单项超过块大小是 `capacity`；观测的清单分 git 和跳过名单两种，git 的“不是 git 仓库”和“git 不能用”分开，截断时报“至少 n”；决定 79 删掉只读旧格式的路径，包括整项 `null` 的 `inventory`；规定的平台验收行经公开入口、双后端；A-24 仅内存，A-27 的类型引用行号保留扫描层测试。经过见[证据](../../../reviews/evidence/orchestration-slice-8D-2026-10-18/README.md)。
 
 > **2026-10-15 晚：按决定 60、61、62 和 7D 第二稿改了文件级观测、自动抓、根路径、区域和修订负责去向、结构修订提议；冻结前 lead 逐行审；又按 7D 勘误 E1–E11 和决定 63 改；又按审查二（19 条）的 lead 裁定改；lead 逐行审过这一稿，补的地方标“审查二 lead 补”；Codex 最后一次快速核对的必改由 lead 改完（标“审查二快速核对第 n 条”）；经你同意又加了一次只看改动的额外核对，它的必改由 lead 改完（标“审查二额外核对 Dn”）。**已冻结（2026-10-15 晚，你确认了测试入口）。**
@@ -938,3 +940,123 @@ listFiles(ctx, input: { captureRef: ObservedCaptureRef; cursor: string | null })
   - §10 施工：容量文字 `… (reached n)`；git 不能用的原因字面量；被忽略数据库的 `:(glob)` 清单加 `--no-literal-pathspecs`；沙箱每次读的上限 32 MiB；严格读取保留旧跳过表，只有观测用 8 个名字的名单；节点、边、没解析的引用分块装；64 KiB 只算保留的行（用 `\n` 连，摘要不算）；`summary.files` 是导出的项目输入数；A-16 断言正文 v2（清单不公开）、夹具 `remove` 保留 Host 授权、`tests/fixtures` 不进类型检查和 vitest——这些随决定 79 撤回，相关测试、夹具及配置均删除；`FileGraphPageNodeV1` 的投影放在 `loadFileGraph`（页面那条路在 production-reach 允许清单里）。（`dsh/scale-final.md`；`codex/scale-review.out.md` 第 9 条）
   - §10 返工 1：`mapArchitectureSource` 的模式默认 `'observation'`（返工 2 不接受，改成必填）；超过 4,096 字符的说明符让捕获 `invalid`；单项超块的容量文字；A-18 的 300 条边在模块层断言（返工 2 要求文件层也查）；共享文件的行数按驱动项归因，只有总数是精确的。（`dsh/scale-rework-1-final.md`；`codex/scale-review2.out.md` 第 1、4、7、8 条）
   - §10 返工 2：abort 用 `setImmediate` 排队（`setTimeout(0)` 会输给扫描器自己的 `setImmediate` 让出）；`neighbors` 页不带被查文件自己的边，断言精确的唯一目标节点；拒绝文字 `ObservedArchitecture inventory must be an object`。（`dsh/scale-rework-2-final.md`；`codex/scale-review3.out.md`）
+
+## 13. L8 施工和验收中的限定（lead，2026-10-18）
+
+本节记下 L8 施工、全审和四轮返工中定下的读法；和前面各节冲突时以本节为准。经过和证据见[证据](../../../reviews/evidence/orchestration-slice-8-L8-2026-10-18/README.md)；合入提交 de70ff41。L8 是工作区登记、正式采用和 PASS 之后的自动抓，请求记录和它的失败与重试，观测状态的读，以及准备执行时的过时架构提醒。8D 和 §10 段的读法（§12）不变。
+
+### 13.1 触发和驱动
+
+- **只在非重放的提交成功后触发。** 三条路：① 工作区登记，根在 Host 里绑定以后（设置页流程和 `core-routes.ts` 的路由共用这一步，不放在 `project-bootstrap-service.ts` 里）；② 正式目录采用，初次和每次修订；③ 正式检查定案且结果是 `PASS`。每次非重放提交发送一次触发；等待中的触发会合并，不保证每次提交对应一次抓取。PASS 只包一个 `rawEvidence.finalizeChecks` 实例，公开包装器和 Workflow 都走它；提交观察器只有类型和项目、没有结果，单独不够。触发是脱离的，调用方拿到的还是原来的回执；采用和 PASS 到达这个项目在本 Host 里绑定的每个工作区。（`books/l8-impl.md` 第 1 条；`books/l8-rework-1.md` 第 1 条；`codex/review1.out.md` 第 1 条）
+- **启动恢复已有登记不触发。** 设置页恢复走 `openWorkspace`，它只交启动补抓；只有本次非重放的登记才触发。（`books/l8-rework-1.md` 第 1 条；`codex/review1.out.md` 第 1 条；`dsh/rework1-final.md` 第 1 项）
+- **每个 Host 一个串行、合并的驱动。** 同一时刻只跑一个抓取；一个工作区已在等待时，新触发并进它；正在跑时，再来的触发只排队一次。它按平台其它脱离工作记账。（`books/l8-impl.md` 第 2 条）
+- **驱动自己的键用无歧义的元组编码。** 驱动的 scope key 是 `[projectId, workspaceId]` 的规范 JSON，两个字段不会因拼接而撞；当前实现见 `auto-capture-driver.ts:72`，任务书的 `:65` 是历史行号。（`books/l8-rework-2.md` 第 7 条、`codex/audit.out.md` 的 `P12`；`dsh/rework2-final.md` G）
+- **抓取身份。** `meta.requestId = auto-capture:<projectId>:<workspaceId>:<requestSeq>`；一个 `requestSeq` 最多开始一次抓取，输入在开始时取好；任何重试先写新请求，拿新的 `requestSeq`；同一个键不配不同的输入。（`books/l8-impl.md` 第 4 条；`books/l8-rework-2.md` 第 2 条；`codex/book2.out.md` 第 2 条）
+- **触发类型和范围在等待之前定好。** 一次触发只用一种类型，作用范围在第一个 await 之前固定；触发类型的规则只有一份。（`books/l8-rework-2.md` G 的 `P13`、`S06`–`S08`；`dsh/rework2-final.md` G）
+- **手动抓取照旧。** `architecture/capture` 的按钮和路由不变；`mappings` 变成可选，缺省时由服务按活动目录生成，界面不再自己算一份。（`books/l8-rework-1.md` 第 4 条；`codex/review1.out.md` 第 4 条）
+- **没有公开步骤重发旧命令。** 驱动的重试每次写新请求、新身份；`requestAutoCapture`、`failAutoCapture` 和自动抓取的重放分支只由测试手造命令才到得了，放在 T（§13.12）。（`books/l8-rework-3.md` 第 5 条；`books/l8-rework-4.md` 第 2 条）
+
+### 13.2 请求记录、失败和重试
+
+- **每个工作区一条当前记录，按新 revision 重写。** 形状是 `{ workspace, requestSeq, trigger: 'workspace_registered' | 'catalog_adopted' | 'catalog_revised' | 'check_passed' | 'startup_retry', requestedAt, status: 'requested' | 'failed', failure: { code, reason } | null }`。触发被接受时、排队之前就写 `requestSeq + 1` 和 `status: 'requested'`，这样排着队、还没开始的请求在关闭以后也还在。（`books/l8-impl.md` 第 3 条）
+- **开始快照。** 驱动开始一次抓取时只读一次记录，拿 `{ requestSeq, revision }`；这个 `requestSeq` 同时是抓取身份和开始水位，`revision` 守着失败写。失败时写 `status: 'failed'` 和原因，保留 `requestSeq`；revision 已变就什么也不写，不重读、不强写失败。提交前取消不发布观测或失败记录；已写入的正文不回滚，已取得 `committed` 回执的结果保持。（`books/l8-impl.md` 第 3 条；`codex/book1.out.md` 第 3 条）
+- **pending 是算出来的，不存。** `record.requestSeq > pointer.satisfiedRequestSeq`，没有指针按 0。指针对 `satisfiedRequestSeq` 取 `max(当前值, 开始水位)`，仍在指针的 revision 守卫下；手动抓取在服务入口冻结自己的开始水位，早开始、晚提交也不会把水位写小。（`books/l8-impl.md` 第 3 条；`codex/book2.out.md` 第 1、2 条）
+- **失败写属于正在跑的那一轮。** 驱动把自己的 signal 传给 `failAutoCapture`；Host 关闭会取消它；它在提交开始之前检查 signal。（`books/l8-rework-2.md` 第 4 条、`codex/audit.out.md` 的 `S12`）
+- **抓取开始时的读失败也记一条。** 目录读被拒或抛错进同一个失败出口，带真实原因，受开始 revision 守卫；`not_found` 对目录是合法结果。开始读观测状态被拒或抛错也进这个出口；它的 `not_found`／`not_ready` 不当作合法的“没有目录”，rejected 保留原代码，非 rejected 和 throw 记 unavailable。目录 `not_ready` 仍直接退出、保持 pending，review2 接受这个当前不可产生的例外。（`codex/review2.out.md` 的必须改第 2 条；`codex/verify2.out.md` 的 `K2`、`K2-01`–`K2-03`；`dsh/rework2-final.md` B；`books/l8-rework-3.md` A）
+- **失败原因的截断和事件时刻。** 状态构造器只留原因的前 2,000 个字符，编解码拒绝 2,001 个；`failed` 事件的 `occurredAt` 是写失败的时刻，记录保留原来的 `requestedAt`。（`books/l8-rework-1.md` 第 3 条；`dsh/rework1-final.md` 第 3 项）
+- **Host 启动补抓。** 工作区绑定以后，本 Host 里每个 pending 的工作区写一条新请求（`trigger: 'startup_retry'`，`requestSeq + 1`）并排队；没在本 Host 绑定的工作区保持 pending。下一个真实触发也会重试它。（`books/l8-impl.md` 第 5 条）
+- **记不下来的后台失败是已知限制。** 写请求出错、读请求记录出错、失败写本身出错、启动扫描读状态出错，以及登记已提交之后绑定失败，都可能让这一轮不出声；已有 pending 由之后成功的启动扫描或真实触发重试，没有 pending 时不保证启动恢复。完整列表见 §13.11。（`books/l8-rework-2.md` 第 3 条；`codex/book4.out.md` 第 1 条；`checks/l8-business-classification.md` 的 `P01`–`P04`、`P10`）
+
+### 13.3 Host 关闭和重启
+
+- **关闭顺序。** 先停队列，再用驱动自己的 AbortController 取消正在跑的抓取，然后才让平台排空待处理工作；abort 必须在平台原来的“等 pending 工作”之前。提交前取消不发布观测或失败记录，请求保持 pending，留给下一次启动；已取得 `committed` 回执的结果保持。（`books/l8-impl.md` 第 5 条；`codex/audit.out.md` 的 `P11`；`books/l8-rework-2.md` 第 4 条）
+- **真实重启。** A 正在跑、B 排队时做一次真实 `host.close()`；在同一个 SQLite 库上开新 Host，两边的请求都以 `startup_retry`、`requestSeq + 1` 重试。重启需要持久化，这一行只跑 SQLite。（`books/l8-rework-2.md` 的 E；`dsh/rework2-final.md` E）
+- **内存后端的重启另测。** 第一个 Host 登记 B，B 真的进入 `captureObservation`；关闭；第二个 Host 只绑定 A。等它的启动工作完成边界以后，公开读显示 B 的请求没变、B 的进入次数没增加。内存后端由 A4 工厂包装让两个平台共用同一个真实记录后端，Host 的逻辑关闭照常，物理关闭放在最后。（`books/l8-rework-3.md` 的 D；`dsh/rework3-final.md` D）
+- **关闭时排队的请求保持 pending，下一次启动补抓。** 这一行和正常关闭分开测。（`books/l8-impl.md` 第 5 条；`books/l8-rework-1.md` 第 6 条）
+- **等的是完成边界，不是定时轮询。** Host 关闭的助手等门控的 `entered` Promise 和原 signal 的 `abort` 事件（监听在 close 之前装好，或先查 `signal.aborted`）；通知次数和完成边界代替 sleep。（`books/l8-rework-3.md` 的 F；`dsh/rework3-final.md` F）
+- **自动抓要有租约；启动重试还要“启动时自动续做”开着。**〔合入时 lead 补，决定 81-6；开关这一半由用户定，决定 82〕没有租约的 Host 不接正式触发、不做登记后的抓取、不做启动重试（HL-02、HL-07：没有租约的 Host 不写任何东西）。启动重试和启动时的续做（§12.1 第 6b 步）一样要 `automation.resumeOnStartup`：开着（默认）时照第 5 条重试；关着时启动只做核对（§12.10 第 5 步），还在等的工作区留给下一个触发或设置页的手动按钮。起因：合并树的第一次全量 591 个文件里 11 个、46 项失败，都是重启时多写一条请求，其中没有租约的 Host 也写了一条（A8-L5）。（`checks/merge-full-suite-1.txt`；`checks/lead-fix2.diff`）
+- **测试里“重启不写任何东西”之前先等抓取做完。**〔合入时〕测试工作区里，登记和检查通过会触发抓取；Host 很快关闭或模拟崩溃时抓取被取消、留在 pending，下一次启动按上一条合法重试，就多写一条。产品行为不变；测试在播种之后和每轮检查定案（`finalize_checks`）之后，经公开的 `architecture/observation-state` 等抓取做完（`settleAutoCapture`：每 10 ms 读一次，30 秒上限；没有请求记录、不再 pending、失败已记下都算做完；没有租约的 Host 不等）。A8-L5 和 HL-04 特意不等，让没有租约的 Host 碰上还在等的请求。变异检查：去掉等待，9 项重新失败；去掉租约检查，A8-L5 和 HL-04 失败。（`checks/tests-settle.diff`；Claude 子 agent，决定 81-4）
+
+### 13.4 映射、最新和上一次
+
+- **没有采用目录时 `mappings: []`。** 只抓文件层，模块层是空的；这与 8A 的服务行为一致，只是 L8 第一次有生产调用方。（`books/l8-impl.md` 第 6 条）
+- **有目录时用一份共享的映射规则。** 驱动和手动路由都调 `moduleMappingsOf`（活动目录）；`architecture/capture` 的 `mappings` 缺省时由服务生成，界面不再送、也不再有第二份 `map`。上下文和 actor 按 Host 抓取时的做法，用专用的 `host:auto-capture` 系统 actor。（`books/l8-impl.md` 第 6 条；`books/l8-rework-1.md` 第 4 条；`dsh/impl-final.md` UNSPECIFIED 4、7）
+- **最新和上一次在一次提交里写。** 当前指针同时写 `previousObservedRef`：它是本次成功提交替换掉的观测，不比较 `observedAt`；手动抓取和自动抓取交错时，生成时间与提交顺序可以不同。观测从不删除，所以上一次一直读得到。（`books/l8-impl.md` 第 7 条）
+- **自动抓取把开始快照里的当前观测当作 `previous`。** 这样改动数不是把所有导出文件都算成新增；读口同时返回 `current.persistedRef` 和 `previousPersistedRef`，查询不用靠重放拿引用。（`books/l8-rework-1.md` 的接受建议；`dsh/rework1-final.md` 的接受建议；`codex/review1.out.md` 的 UNSPECIFIED 3、5）
+- **手动和自动交错时水位取大。** 手动抓取先开始、后提交，也不会把自动抓取已经写高的 `satisfiedRequestSeq` 写小；不算 pending。（`books/l8-impl.md` 第 3 条；`codex/book2.out.md` 第 1 条）
+
+### 13.5 观测状态的读
+
+- **一个普通路由和一个 port 方法。** `architecture/observation-state` 按工作区返回 `{ current: { captureRef, observedAt, persistedRef } | null, previous: captureRef | null, previousPersistedRef: <持久引用> | null, autoCapture: <记录，带算出的 pending: boolean> | null }`。`autoCapture` 不重复带内部元数据（记录本身按工作区读）。（`books/l8-impl.md` 第 8 条；`dsh/impl-final.md` UNSPECIFIED 2；`books/l8-rework-1.md` 的接受建议）
+- **HTTP 入口不接受内部水位。** `architecture/capture` 的公开 HTTP 输入和它的运行时解析拒绝 `requestSeq`；`architecture/observation-state` 的输入契约没有声明这个字段，运行时读取并校验 workspace，不检查多出来的 `requestSeq`。只有驱动经非公开路径传开始水位。（`books/l8-rework-2.md` 的 G、`P16`；`dsh/rework2-final.md` G）
+- **测试用它等待。** 对这一个公开读做有界轮询，就是等触发、失败和重试的办法；没有测试专用钩子。（`books/l8-impl.md` 第 8 条）
+- **读的取消。** `readAutoCapture` 和 `observationState` 在每个 await 之后检查调用方的 signal；已取消就返回 `cancelled`，返回 ready 之前再检查一次。（`books/l8-rework-3.md` 第 3 条）
+
+### 13.6 块格式和工作区范围
+
+- **每块都带工作区范围，空块也带。** 闭形状是 `{ schemaVersion: 2, projectId, workspaceId, nodes, edges, unresolved }`；节点块、边块、没解析引用块和空块都用这个外壳。外壳由转义后的范围值和固定结构拼出来，绝不在 JSON 里找数组位置来插字段。（`books/l8-rework-2.md` 第 8 条；`codex/book3.out.md` 的 B R2-1、R2-2；`dsh/rework2-final.md` A）
+- **同范围复用，保留存储返回的引用。** 同一个工作区后续抓取可以复用同范围的块；读块按请求的范围解码，正文范围必须和记录一致；来源和路径授权检查照旧。旧的无范围块、记录范围不一致的块都拒绝；只读新形状（决定 79）。（`books/l8-rework-2.md` 第 8 条；`codex/verify2.out.md` 的 `K1-01`–`K1-10`；`dsh/rework2-final.md` A）
+- **上限。** 每块 256 KiB、最多 64 块，空块也计入；A-12 的 297／294 字节两例和“`needs 65 chunks; the limit is 64`”不变；L8 的 500 字节例子是 6／7 块。一个空块外壳的例子是 111 字节：`{"schemaVersion":2,"projectId":"s8a-l8-observation","workspaceId":"main","nodes":[],"edges":[],"unresolved":[]}`。（`books/l8-rework-2.md` 第 8 条；`dsh/rework2-final.md` A；`codex/verify3.out.md` 第 5 节）
+- **K1 是生产缺陷。** 同一项目里两个内容相同的工作区（clone、worktree、空项目），后登记的那个读不出自己的观测，提醒和文件图都坏，之后每次抓取读前图也失败。返工 2 给每块加范围后修好。（`checks/l8-business-classification.md` 的 `K1`；`codex/review2.out.md` 的 UNSPECIFIED 6；`dsh/rework2-final.md` A）
+
+### 13.7 提醒和准备
+
+- **四种提醒和顺序。** 声明的依赖没有 import、import 没有声明的依赖、新文件没归组、可能移动；每种内部按路径、再按行的其余部分排。文字是 `<种类>：<内容>（<时刻>的观测）`，时刻按准备时钟减最近一次 `observedAt` 向下取整：不到 1 分钟“刚才”，不到 60 分钟“N 分钟前”，不到 24 小时“N 小时前”，否则“N 天前”。（`books/l8-impl.md` 第 11 条）
+- **最多列出 10 条提醒。** 超过时另加一行 `另有 N 条架构提醒没列出`，总计可为 11 行；没有成功观测时只有一行 `还没有观测`；有观测但没有可说的就不出这一段。`certainty: 'unknown'` 的依赖行在内容末尾、时间括号之前加 `，不确定`，例如 `…，不确定（3 小时前的观测）`。（`books/l8-impl.md` 第 11 条；`codex/book1.out.md` 第 5 条）
+- **最终顺序。** 先按第 11 条的规则排，再给每行一个固定宽度的序号作键；装配器再按键排序也不会把 `src/a/inner` 排到 `src/a` 前面。公开 `prepare` 用 `src/a` 和 `src/a-inner` 证明同一种 `/`<`:` 风险；精确的 `src/a`／`src/a/inner` 对只在纯测试里（一个文件系统放不下两者）。（`books/l8-rework-1.md` 第 2 条；`codex/review1.out.md` 第 2 条；`dsh/rework1-final.md` 第 2 项）
+- **移动和没归组。** 一条“可能移动”要求一个删除路径和一个新增路径各自恰好带同一个 digest，不套用 `diffContent`（它要求两份完整清单里唯一）。没归组只看最新观测里没归组的文件，最长公共目录前缀必须严格最长，并列不算任何模块；没有目录或任务没有模块时只剩移动行。（`books/l8-impl.md` 第 9、10 条）
+- **提醒读失败不挡准备，取消挡。** 非取消的读失败给一行 `架构提醒不可用`，准备继续；取消仍然让准备取消。（`books/l8-rework-1.md` 的接受建议；`codex/review2.out.md` 的必须改第 3 条；`books/l8-rework-3.md` 第 4 条）
+- **提醒文字固定，不加来源 pin。** 这一版不加 provenance pin。（`books/l8-rework-2.md` 第 6 条）
+- **读一次。** 一次准备对每份观测最多加载一次，正式比较和移动复用最新的那一份。（`books/l8-impl.md` 第 12 条；`codex/book1.out.md` 第 9 条）
+
+### 13.8 取消和提交
+
+- **写操作只有一种先后（rework 3 第 2 条，六点）。** 对 `capture`、`requestAutoCapture`、`failAutoCapture`：① 提交开始之前检查 signal；② 在这次调用拿到 `committed` 回执之前，await 正常返回、抛错或被拒而调用方 signal 已置位，返回 `cancelled`（包括早期查找和恢复、提交前的读）；signal 未置位时保持今天的结果和抛出；③ 提交返回的不是 `committed`，到此 signal 已置位就返回 `cancelled`，不做冲突重试（这不说明存储有没有写）；否则保持今天的映射和有界重试；④ 提交返回 `committed`（不是重放），结果就成立，之后 signal 再变也不改；⑤ 提交返回 `committed, replayed: true` 且随后的事件恢复成功，结果也成立；恢复返回失败就保留失败，抛错就保留抛出，绝不构造 `committed`、不回滚、不改判 `cancelled`；⑥ 提交抛错以后没有 lost-reply 恢复，不新增；清理不覆盖主结果。（`books/l8-rework-3.md` 第 2 条；`books/l8-rework-2.md` 第 5 条；`codex/book5.out.md` 第 1 条的建议条款）
+- **读的取消。** `readAutoCapture` 和 `observationState` 按第 3 条：await 返回、抛错或被拒时 signal 已置位就返回 `cancelled`，返回 ready 前再查一次。（`books/l8-rework-3.md` 第 3 条）
+- **取消穿过准备。** 从提醒读到最后把准备好的材料放进去，原 signal 已置位，或一个有取消结果的依赖明确返回 `{ status: 'rejected', code: 'cancelled' }`，准备都以取消结束。范围包括上游缺输入事实（`context-assembler.ts:1084–1098`）、输入页、接续依据和 Turn 窗口、工作区 `resolveRoot`（`:799`）、会话依据窗口（`:850`），以及装配器和 put 的边界。取消穿过共享 helper，不变成 unavailable 事实或 `null`。结果类型没有取消结果的 port（`StoreError`、`captureDigest`、`readTurnBounds`）只按 signal 判断，不新增也不伪造结果类型。改共享 helper 时同时核对归档改过文件的读（`execution-preparation.ts:55–56,132`）和 `session-anomaly-facts.ts:123`。put 之前取消是 0 次 put；put 中取消不返回 ready，写下的正文不回滚。（`books/l8-rework-3.md` 第 4 条；`codex/verify2.out.md` 的 `C-1`；`codex/book5.out.md` 第 2 条）
+- **准备好的抓取在返回处被取消，仍然释放。** 真实 `captureObservation` 已经返回 ready、signal 在这条边界上置位时，返回 `cancelled`，并且经过拥有它的 `finally` 释放抓取；不是 ready 的抓取保持原来的取消优先级。（`books/l8-rework-4.md` 的 P1；`codex/verify4.out.md` 的 P1；`dsh/rework4-final.md` P1）
+- **清理不改写先前的错误。** `cancelled` 还是抛出，在抓到异常时、清理之前决定；清理期间 signal 才置位，不把原来的抛出改成 `cancelled`。清理用自己的新 signal；`hasCommittedReceipt` 和晚恢复的失败／抛出照旧。（`books/l8-rework-4.md` 的 P2；`codex/verify4.out.md` 的 P2）
+- **归档改过文件的读保留归档调用自己的取消。** 当前文件里工作区、执行、Turn 三处读取的 await 在 `:136`、`:173`、`:185`，之后的检查在 `:144`、`:182`、`:186`；`:123` 的 `readPreviousTurn` 仍直接返回，由 `:186` 兜底。执行读取的 catch（`:174`–`:178`）先查 signal，再保留 `unavailable`；每个 ready 出口之前检查；signal 未置位时保持今天的结果。原 signal 是这次归档调用自己的（HTTP 里是请求 controller），不是 Run 的停止 controller。lead 在 verify4 之后补的是工作区退路 `:204` 的 await 返回后、`:206` 再查一次取消（`checks/lead-fix.diff`）。（`books/l8-rework-4.md` 的 P3；`codex/verify4.out.md` 的 P3；`checks/lead-fix.diff`）
+- **接受的类型表达。** 内部 union `{ status: 'ready'; value } | { status: 'cancelled' }` 可以，signal 必填；不为形式另加 `cancelled` 字段。（`books/l8-rework-4.md` 第 1 条；`codex/verify3.out.md` 的 UNSPECIFIED 1）
+
+### 13.9 读取次数
+
+- **指定夹具下的提醒依赖读取是 12 或 21 次。** 12 个文件、6 块、没有上一次观测时 12 次 = 5 次记录 + 7 次正文；加第 13 个文件、当前 7 块和 previous 6 块时 21 次 = 6 次记录 + 15 次正文。它约束一次准备不重复读同一份观测，让准备不因重复读变慢。
+- **按调用计，不按 key 计。** 每次记录库 `readMany` 调用算 1，每次正文 `read` 调用算 1，不管它返回什么；计数窗口只在真实 reminder reader 执行期间开启，reader 返回就关闭，不延续到 put；别的准备依赖和事后的材料读不算。（`books/l8-rework-2.md` 第 9 条；`books/l8-rework-3.md` 第 6 条；`codex/verify3.out.md` 第 5 节）
+- **字面值不改。** 如果修正后的计数器量出别的数，停下那一行、报看到的调用，不改 12／21。七条恢复的事实检查（ready、`previous` 先空后不空、12／13／12 个节点）在计数窗口外，用同一场景的公开读。（`books/l8-rework-3.md` 第 6 条、C；`dsh/rework3-final.md` C）
+
+### 13.10 测试
+
+- **走公开步骤。** 触发用真实登记、采用、修订和 PASS；失败把工作区根移走，让抓取真的被拒；门控、计数和完成的 Promise 包在真实依赖外面。不手写事实，不手造只有驱动才产生的命令，不读库核对。内存和 SQLite 各跑一遍；持久化重启行按明确裁定只测 SQLite，夹具只支持一种后端时必须记为未覆盖，不能自动当豁免。（`books/l8-impl.md` 第 3 节；`books/l8-rework-2.md` D；`books/l8-rework-3.md` A；`books/l8-rework-4.md` D）
+- **PASS 三行要 bwrap。** Workflow 定案、公开 `finalizeChecks`、同一定案重放，各跑真实 Run 和检查；沙箱里只失败在缺 `/usr/bin/bwrap`，由 lead 在有 bwrap 的环境跑。A2 不能替代（它没装自动抓驱动）。（`books/l8-rework-1.md` 第 7 条；`dsh/rework1-final.md` 第 7 项；`codex/review1.out.md` 第 7 条）
+- **规则表 v2 接受的前置状态。** `T01`、`T02` 的计划草稿经公开的 `plans.proposePlan`（路由 `plans/propose`，A1）；`T03`–`T14` 的工作区根、revision、授权和运行时配置算 Host 输入（A8）；路径 H1、H6、H7 因此不需要。（`books/l8-rework-2.md` 第 2 条；`codex/book4.out.md` 第 1 段）
+- **H4 的读者。** 用 `platform.materials.openArtifact` 加 Host 上下文、`usage: 'historical_explanation'`，不换成 Run 身份。（`books/l8-rework-3.md` 第 7 条；`dsh/rework3-final.md` E）
+- **R 恢复的检查。** 重放登记的回执之后，公开读显示 `autoCapture { requestSeq: 1, pending: false }`；采用后的 request 2 检查保留，作完成边界。（`books/l8-rework-4.md` 的 R；`dsh/rework4-final.md` R）
+- **任务书检查都用了。** 施工书 `books/l8-impl.md` 先过 Codex 两遍：`codex/book1.out.md` 7 条必须改、`codex/book2.out.md` 3 条必须改，改完才施工；实现审查 `codex/review1.out.md` 7 条必须改，加上 lead 的 bwrap 检查报出的 2 项（生产可达的 `architectureReminderRows`、Z01 的提交计数），成为返工 1 的第 8、9 项；`codex/review2.out.md` 的必须改和 UNSPECIFIED 6（块正文没有工作区范围，是生产缺陷）进返工 2。（`codex/book1.out.md`；`codex/book2.out.md`；`codex/review1.out.md`；`codex/review2.out.md`；`books/l8-rework-1.md` 第 8、9 条）
+- **决定 80 的全审。** `codex/audit.*` 读完 33/33 个范围文件，给出 `KNOWN` 1–5、`T01`–`T71`、`P01`–`P16`、`S01`–`S12`、`Q1`–`Q6`；`codex/book3.out.md` 核任务书，`checks/test-rule-sheet-v1.md`–`-v3.md` 是规则表，`checks/d1-ledger.py` 每轮跑。返工 2 做冻结表（第 1–9 条），`codex/book4.out.md` 改了三处文字；`codex/verify2.out.md` 数 90 个 id：61 修好、27 部分、2 没修，另有 B-1、B-2、B-3、C-1 四个生产缺陷。返工 3 做剩下的行（第 1–7 条），`codex/book5.out.md` 核过；`codex/verify3.out.md` 数 20 修好、13 部分、1 条账本削弱、17 个新规则实例、3 个生产缺陷。返工 4 只做与业务有关的行，`codex/book6.out.md` 核过；`codex/verify4.out.md` 判 4/5 修好、P3 部分，P3 的最后一个 await 由 lead 直接修（`checks/lead-fix.diff`）。（`codex/audit.out.md`；`codex/book3.out.md`；`checks/test-rule-sheet-v1.md`–`-v3.md`；`checks/d1-ledger.py`；`codex/verify2.out.md`；`codex/verify3.out.md`；`codex/verify4.out.md`）
+- **D1 账本每轮都跑。** 返工 1：0 条；返工 2：本轮 86 条、累计 15 条（都是 `K1-01`／`K1-06` 的范围改写），但 verify2 判 11 条是削弱；返工 3：本轮 21 条（H 11、G 2、K 5、F 1、I 2）、累计 15 条，verify3 判 1 条是削弱；返工 4：本轮 51 条（全是 D 删掉的 15 个用例和 36 条断言）、累计 15 条、0 条削弱；每轮 D3 都是 0。删除的 15 个内部命令用例和它们的 helper 见 `books/l8-rework-4.md` 的 D；手动 `architecture/capture` 的公开重放保留。（`checks/d1-s8l8-r1.txt`；`checks/d1-s8l8-r2-round.txt`；`checks/d1-s8l8-r2-cumulative.txt`；`checks/d1-s8l8-r3-round.txt`；`checks/d1-s8l8-r3-cumulative.txt`；`checks/d1-s8l8-r4-round.txt`；`checks/d1-s8l8-r4-cumulative.txt`；`books/l8-rework-4.md` D）
+- **接受的 UNSPECIFIED（按轮）。** 施工：PASS 行要 bwrap；`autoCapture` 省略内部元数据；自动抓取开始时 `previous: null`（返工 1 改成开始快照的当前观测）；界面不能值导入契约；返回持久引用；Host 的 `lightScan` 透传；专用系统 actor；目录读被拒时请求先保持 pending（返工 1 改成失败写）；提醒读失败会让准备失败（返工 1 改成一行 `架构提醒不可用`）；`requestedAt` 用驱动时钟。返工 1 之后：引用形状、调用参数指纹、失败时刻静态核对、替代路径排序例、Z01 等待接受；关闭后经真实平台读 pending、显式装配器的可选 `materials` 接受。返工 2：开始读失败的文案接受；T19 的 SQLite-only 不接受，返工 3 补内存行；关闭后读 pending 和 `materials` 可选接受。返工 3：内部 union 接受；UNSPECIFIED 2（requeue 的逐 await）、3（lookup-miss 后的 late replay）、4（fail 晚恢复的静态核对）、5（复制的组合回调）进 T，J 的 `input = null` 是独立一行也进 T。返工 4：P3 只跑 SQLite（夹具固定在 `tests/helpers/S1-runtime-scenario-fixture.ts:159`）属实，但不是后端豁免，两例仍缺内存，进 T。（`dsh/impl-final.md`；`codex/review2.out.md`；`dsh/rework1-final.md`；`dsh/rework2-final.md`；`codex/verify2.out.md`；`dsh/rework3-final.md`；`codex/verify3.out.md`；`dsh/rework4-final.md`；`codex/verify4.out.md`）
+- **合并全量的数字以合并树为准。** 有 bwrap 的分轮检查见 `checks/round-checks.txt`：`s8l8-1` 414 个文件、2 项失败（生产可达和 Z01 计数，返工 1 前）；`s8l8-r1` 419 个文件、3,904 项过、5 项跳过；`s8l8-r2` 424 个文件、3,983 项过、5 项跳过；`s8l8-r3` 424 个文件、4,031 项过、5 项跳过；`s8l8-r4` 425 个文件、4,007 项过、5 项跳过。合并树（2b7f5be）的全量 591 个文件全过、8,741 项过、5 项跳过（`checks/merge-full-suite-summary.txt`）。
+
+### 13.11 已知限制
+
+- **“启动时自动续做”关着时，启动不补抓。** 还在等的工作区等下一个触发或设置页的手动按钮（§13.3）。
+
+- **记不下来的后台失败保持安静。** `P01`–`P04`、`P10`、`S09`–`S11`：写请求、读请求记录、写失败、启动扫描读状态和登记后绑定出错时，这一轮可能没有记录；已有 pending 由之后成功的启动扫描或真实触发重试，没有 pending 时启动不保证恢复，工作区等下一个真实触发。这一轮不加新的诊断接口。（`books/l8-rework-2.md` 第 3 条；`codex/book4.out.md` 第 1 条；`checks/l8-business-classification.md` 的 `P01`–`P04`、`P10`；`books/l8-rework-3.md` 第 1 条）
+- **归档自己仍把取消的 facts 读成不可用。** 平台入口和读口的取消已经修好，但 `session-archive.ts:244–248` 仍把 runtime reader 的任何 rejected（含 `cancelled`）转成 unavailable facts；这是更下游的旧退路，留 T。（`books/l8-rework-4.md` 的 P3；`codex/verify3.out.md` 第 7 节；`codex/verify4.out.md` 的 P3）
+- **P3 的行只跑 SQLite。** 夹具固定在 `createTaskClaimFixture('sqlite', …)`，两例仍缺内存后端；进 T。（`dsh/rework4-final.md` 的 UNSPECIFIED；`codex/verify4.out.md` 的 UNSPECIFIED）
+- **8D 和 §10 段的已知限制不变**（§12 和 8D 证据的验收）；L8 不改观测的扫描和清单；模块正文格式保持不变，文件图块的 v2 正文增加工作区范围。（§12；`books/l8-rework-2.md` 第 8 条）
+- **没有调用真实模型。**
+
+### 13.12 移到清理轮 T
+
+- **重放分支：** `requestAutoCapture`、`failAutoCapture` 和自动抓取的 replay。真实驱动每次写新请求，没有公开步骤重发旧命令；生产代码按 rework 3 的形状保留，测试删掉。（`books/l8-rework-3.md` 第 5 条；`books/l8-rework-4.md` 第 2 条；`codex/verify3.out.md` 的 H；`codex/verify4.out.md` 的 D）
+- **取消分支：** `requestAutoCapture` 的 acceptance cancellation 不可达：驱动每次接受新建 controller，从不 abort 它（`auto-capture-driver.ts:109`）。`failAutoCapture` 的 cancellation 可达：它用正在跑那一轮的 signal，Host 关闭会 abort；P06 已保留失败快照读取期间关闭的证明（`tests/work-graph/S8A-L8-observation-state.test.ts:849`），其余行在 T。lead 的更正：返工 4 第 2 条把两者都写成不可达，对 `failAutoCapture` 不成立。（`books/l8-rework-4.md` 第 2 条；`dsh/rework2-final.md` B；`codex/verify3.out.md` 的 P06）
+- **返工 3 的部分行 A：** 普通公开 prepare 缺的逐 await 取消证明（catalog／observed facts、服务 basis／latest／previous、独立 assembler 边界），以及 requeue 前置的逐 await 行；完整缺项见 `codex/verify3.out.md` 第 1 节 A 部分的逐 await 表（第 54 行起）。（`dsh/rework3-final.md` 的 UNSPECIFIED 2；`codex/verify3.out.md` 的 A）
+- **返工 3 的部分行 B：** 触发要经真实的组合回调；测试复制了 wrapper。（`dsh/rework3-final.md` 的 UNSPECIFIED 5；`codex/verify3.out.md` 的 UNSPECIFIED 5；`codex/verify3.out.md` 的 B）
+- **返工 3 的部分行 J：** reminder reader 明确返回 `cancelled`、signal 未置位时的 `input = null`；这是独立的一行，不是 UNSPECIFIED 2–5 中的某一项。（`dsh/rework3-final.md` 的 J；`codex/verify3.out.md` 的 J）
+- **返工 3 的 UNSPECIFIED 4：** fail 的晚恢复覆盖移除没有测试，因为快照守卫在任何重放提交之前就回 `revision_conflict`。（`dsh/rework3-final.md` 的 UNSPECIFIED 4；`codex/verify3.out.md` 的 UNSPECIFIED 4；`books/l8-rework-4.md` 第 1 条）
+- **P3 行的测试造法：** 手造的 `probe: { verdict: 'missing', activeRunId: null }` 交给内部健康 owner、自己的归档组合、只支持 SQLite 的后端（`tests/helpers/S1-runtime-scenario-fixture.ts:159`）。（`dsh/rework4-final.md` 的 UNSPECIFIED；`codex/verify4.out.md` 的 UNSPECIFIED 和“新增违规 2 个 case”）
+- **旧 WP2 的欠账：** `K4-25`–`K4-53`、`T33`–`T69`、`Q6`；L8 只对改过的行负责。（`books/l8-rework-2.md` 第 1 条）
+- **`host.ts:183` 的键：** Host 的旧 NUL scope 拼接不在这一轮改，驱动的键已经单独改成规范元组。（`books/l8-rework-2.md` 第 7 条；`codex/verify2.out.md`、`codex/verify3.out.md` 的 DEFERRED）
+- **`Pub:332` 写下的正文没有读回：** 标题说保留了已写 body，但只证明真实 put 的调用次数；没有生产回滚，这一轮不补非阻塞测试。（`codex/verify3.out.md` 第 7 节）

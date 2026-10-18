@@ -1,0 +1,100 @@
+# D1 assertion ledger s8l8-r1..s8l8-r2 (tests)
+
+## MOVED: 2
+
+## REMOVED assertion: 77
+tests/app/S8A-L8-auto-capture-gate.test.ts:224: expect(afterIdleTrigger.autoCapture).toMatchObject({ requestSeq: 2, trigger: 'catalog_adopted', pending: false });
+tests/app/S8A-L8-auto-capture-gate.test.ts:322: expect(aWaiting.autoCapture).toMatchObject({ requestSeq: 1, pending: true });
+tests/app/S8A-L8-auto-capture-gate.test.ts:328: expect(bPending.autoCapture).toMatchObject({ requestSeq: 1, status: 'requested', pending: true });
+tests/app/S8A-L8-auto-capture-gate.test.ts:329: expect(bPending.current).toBeNull();
+tests/app/S8A-L8-auto-capture-gate.test.ts:331: expect(bEnteredBeforeRetry).toBeGreaterThan(0);
+tests/app/S8A-L8-auto-capture-gate.test.ts:346: expect(bAfterRetry.autoCapture).toMatchObject({ requestSeq: 1, status: 'requested', pending: true });
+tests/app/S8A-L8-auto-capture-gate.test.ts:347: expect(bAfterRetry.current).toBeNull();
+tests/app/S8A-L8-auto-capture-gate.test.ts:348: expect(gates.b.entered).toBe(bEnteredBeforeRetry);
+tests/composition/S8A-L8-capture-mappings.test.ts:290: expect(requested).toMatchObject({ status: 'committed', value: { requestedAt, status: 'requested' } });
+tests/composition/S8A-L8-capture-mappings.test.ts:297: expect(failed).toMatchObject({ status: 'committed', value: { requestedAt, status: 'failed' } });
+tests/composition/S8A-L8-capture-mappings.test.ts:300: expect(read).toMatchObject({ status: 'ready', value: { requestedAt, status: 'failed',
+tests/data/S8D-observed-v2-codecs.test.ts:87: expect(decoded.value).toEqual({ schemaVersion: 2, nodes: [], edges: [], unresolved: [] });
+tests/data/S8D-observed-v2-codecs.test.ts:111: expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1]]), 1).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:112: expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0]]), 1).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:113: expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1.5]]), 2).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:114: expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[-1, 0]]), 1).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:117: expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1]])).status).toBe('decoded');
+tests/data/S8D-observed-v2-codecs.test.ts:122: expect(decodeObservedFileGraphChunk(badDigest, 1).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:130: expect(validateObservedFileGraphChunkV2(parsedWith('')).status).toBe('decoded');
+tests/data/S8D-observed-v2-codecs.test.ts:132: expect(validateObservedFileGraphChunkV2(parsedWith('x'.repeat(4096))).status).toBe('decoded');
+tests/data/S8D-observed-v2-codecs.test.ts:133: expect(validateObservedFileGraphChunkV2(parsedWith('x'.repeat(4097))).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:134: expect(decodeObservedFileGraphChunk(JSON.stringify(parsedWith('x'.repeat(4096)))).status).toBe('decoded');
+tests/data/S8D-observed-v2-codecs.test.ts:135: expect(decodeObservedFileGraphChunk(JSON.stringify(parsedWith('x'.repeat(4097)))).status).toBe('invalid');
+tests/data/S8D-observed-v2-codecs.test.ts:140: expect(decodeObservedFileGraphChunk(chunkJson(nodes, []), 2).status).toBe('invalid');
+tests/data/S8E-old-format-rejection.test.ts:54: expect(decodeObservedFileGraphChunk(JSON.stringify({ schemaVersion: 2, nodes: [], edges: [], unresolved: [] })))
+tests/data/S8E-old-format-rejection.test.ts:64: expect(decodeObservedFileGraphChunk(JSON.stringify({ schemaVersion: 1, nodes: [], edges: [] })).status).toBe('invalid');
+tests/work-graph/S8A-L8-observation-state.test.ts:319: expect(second.autoCapture).toMatchObject({ requestSeq: 2, pending: false });
+tests/work-graph/S8A-L8-observation-state.test.ts:331: expect(afterReplay.autoCapture).toMatchObject({ requestSeq: 2, pending: false });
+tests/work-graph/S8A-L8-observation-state.test.ts:335: expect(pointer).not.toBeNull();
+tests/work-graph/S8A-L8-observation-state.test.ts:336: expect(pointer!.satisfiedRequestSeq).toBe(2);
+tests/work-graph/S8A-L8-observation-state.test.ts:443: expect((await pointerOf(fx))!.satisfiedRequestSeq).toBe(2);
+tests/work-graph/S8A-L8-observation-state.test.ts:496: expect(rejected.autoCapture).toMatchObject({ requestSeq: 3, status: 'failed', pending: true });
+tests/work-graph/S8A-L8-observation-state.test.ts:510: expect(thrown.autoCapture).toMatchObject({ requestSeq: 5, status: 'failed', pending: true });
+tests/work-graph/S8A-L8-observation-state.test.ts:557: expect((await pointerOf(fx))!.satisfiedRequestSeq).toBe(1);
+tests/work-graph/S8A-L8-observation-state.test.ts:575: expect(first).toMatchObject({ status: 'committed' });
+tests/work-graph/S8A-L8-observation-state.test.ts:578: expect(firstChunks).toBeGreaterThan(1);
+tests/work-graph/S8A-L8-observation-state.test.ts:600: expect(firstFacts).toMatchObject({ status: 'ready' });
+tests/work-graph/S8A-L8-observation-state.test.ts:602: expect(firstFacts.value.state.previous).toBeNull();
+tests/work-graph/S8A-L8-observation-state.test.ts:603: expect(firstFacts.value.latest?.nodes).toHaveLength(12);
+tests/work-graph/S8A-L8-observation-state.test.ts:606: expect(firstLatestChunks).toBe(firstChunks);
+tests/work-graph/S8A-L8-observation-state.test.ts:607: expect(firstCounts.readMany + firstCounts.bodies).toBe(6 + firstChunks);
+tests/work-graph/S8A-L8-observation-state.test.ts:613: expect(second).toMatchObject({ status: 'committed' });
+tests/work-graph/S8A-L8-observation-state.test.ts:616: expect(secondChunks).toBeGreaterThan(1);
+tests/work-graph/S8A-L8-observation-state.test.ts:623: expect(secondFacts).toMatchObject({ status: 'ready' });
+tests/work-graph/S8A-L8-observation-state.test.ts:625: expect(secondFacts.value.state.previous).not.toBeNull();
+tests/work-graph/S8A-L8-observation-state.test.ts:626: expect(secondFacts.value.latest?.nodes).toHaveLength(13);
+tests/work-graph/S8A-L8-observation-state.test.ts:627: expect(secondFacts.value.previous?.nodes).toHaveLength(12);
+tests/work-graph/S8A-L8-observation-state.test.ts:632: expect(latestChunks).toBe(secondChunks);
+tests/work-graph/S8A-L8-observation-state.test.ts:633: expect(previousChunks).toBe(firstChunks);
+tests/work-graph/S8A-L8-observation-state.test.ts:634: expect(secondCounts.readMany + secondCounts.bodies).toBe(8 + latestChunks + previousChunks);
+tests/work-graph/S8A-L8-reminders-public.test.ts:333: expect(state).toMatchObject({ status: 'ready' });
+tests/work-graph/S8A-L8-reminders-public.test.ts:335: expect(state.value.current).not.toBeNull();
+tests/work-graph/S8A-L8-reminders-public.test.ts:336: expect(state.value.previous).not.toBeNull();
+tests/work-graph/S8A-L8-reminders-public.test.ts:337: expect(Number.isNaN(Date.parse(state.value.current!.observedAt))).toBe(false);
+tests/work-graph/S8A-L8-reminders-public.test.ts:338: expect(state.value.current!.captureRef.captureId).not.toBe(state.value.previous!.captureId);
+tests/work-graph/S8A-L8-reminders-public.test.ts:339: expect(state.value.current!.captureRef.captureId).toBe(fx.captureIds[1]);
+tests/work-graph/S8A-L8-reminders-public.test.ts:340: expect(state.value.previous!.captureId).toBe(fx.captureIds[0]);
+tests/work-graph/S8A-L8-reminders-public.test.ts:343: expect(prepared.status).not.toBe('rejected');
+tests/work-graph/S8A-L8-reminders-public.test.ts:345: expect(architectureRows(input)).toEqual([
+tests/work-graph/S8A-L8-reminders-public.test.ts:371: expect(prepared.status).not.toBe('rejected');
+tests/work-graph/S8A-L8-reminders-public.test.ts:395: expect(prepared.status).not.toBe('rejected');
+tests/work-graph/S8A-L8-reminders-public.test.ts:417: expect(prepared.status).not.toBe('rejected');
+tests/work-graph/S8A-L8-reminders-public.test.ts:432: expect(state).toMatchObject({ status: 'ready' });
+tests/work-graph/S8A-L8-reminders-public.test.ts:434: expect(state.value.current).toBeNull();
+tests/work-graph/S8A-L8-reminders-public.test.ts:436: expect(prepared.status).not.toBe('rejected');
+tests/work-graph/S8A-L8-reminders-public.test.ts:455: expect(prepared.status).not.toBe('rejected');
+tests/work-graph/S8A-L8-reminders-public.test.ts:472: expect(prepared.status).toBe('ready');
+tests/work-graph/S8A-L8-reminders-public.test.ts:488: expect(prepared.status).toBe('ready');
+tests/work-graph/S8A-L8-reminders-public.test.ts:504: expect(prepared).toMatchObject({ status: 'rejected', code: 'cancelled' });
+tests/work-graph/S8A-L8-reminders-public.test.ts:505: expect(input).toBeNull();
+tests/work-graph/S8A-L8-reminders-public.test.ts:527: expect(savedRef.captureId).not.toBe(fx.captureIds[0]);
+tests/work-graph/S8A-L8-reminders-public.test.ts:537: expect(before.prepared.status).toBe('ready');
+tests/work-graph/S8A-L8-reminders-public.test.ts:554: expect(beforeRetry.prepared.status).toBe('ready');
+tests/work-graph/S8A-L8-reminders-pure.test.ts:202: expect(one(at(59_000))).toBe('新文件没归组：src/a/core/loose.ts（刚才的观测）');
+tests/work-graph/S8A-L8-reminders-pure.test.ts:203: expect(one(at(59 * 60_000))).toBe('新文件没归组：src/a/core/loose.ts（59 分钟前的观测）');
+tests/work-graph/S8A-L8-reminders-pure.test.ts:204: expect(one(at(23 * 3_600_000))).toBe('新文件没归组：src/a/core/loose.ts（23 小时前的观测）');
+tests/work-graph/S8A-L8-reminders-pure.test.ts:205: expect(one(at(3 * 24 * 3_600_000))).toBe('新文件没归组：src/a/core/loose.ts（3 天前的观测）');
+
+## REMOVED test or describe: 9
+tests/app/S8A-L8-auto-capture-gate.test.ts:309: describe.each(['memory', 'sqlite'] as const)('L8 automatic capture gate — unbound pending [%s]', backend => {
+tests/app/S8A-L8-auto-capture-gate.test.ts:310: it('does not retry a pending request of a workspace not bound in this Host', async () => {
+tests/composition/S8A-L8-capture-mappings.test.ts:281: it('keeps the requested time on the record after the failure write', async () => {
+tests/work-graph/S8A-L8-observation-state.test.ts:564: it.each(BACKENDS)('L8-6 %s: one reminder read loads each observation once (counted outside the preparation dependencies)', async kind => {
+tests/work-graph/S8A-L8-reminders-public.test.ts:327: describe('A-03 through the public createExecutionPreparation.prepare', () => {
+tests/work-graph/S8A-L8-reminders-pure.test.ts:175: it('without a catalog or a task module only the move rows remain', () => {
+tests/work-graph/S8A-L8-reminders-pure.test.ts:181: it('a move needs exactly one deleted and one added path carrying the digest', () => {
+tests/work-graph/S8A-L8-reminders-pure.test.ts:195: it('renders the floor of the elapsed time at each threshold', () => {
+tests/work-graph/S8A-L8-reminders-pure.test.ts:221: it('keeps the literal src/a before src/a/inner paths with ascending keys', () => {
+
+## DELETED test files: 0
+
+# lines to justify (excluding MOVED): 86, plus 0 deleted files
+
+# D3 pure-file guard: 1 *-pure.test.ts files
+# D3 hits: 0
