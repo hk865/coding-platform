@@ -10,6 +10,8 @@
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import { COVERAGE_ISSUES_MAX, type FileGraphNodeV1, type LanguageCoverageV1,
   type ObservationInventoryV1 } from '../../../contracts/architecture-inspection.js';
+import { AUTO_CAPTURE_FAILURE_REASON_MAX_CHARS, isAutoCaptureTrigger,
+  type ArchitectureAutoCaptureRecordV1 } from '../../../contracts/architecture-observation.js';
 import type { ArchitectureSourceSnapshotV1 } from '../../../contracts/architecture-source.js';
 import { architectureSourceIssues, pathOwnershipOf } from '../../../contracts/architecture-source.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
@@ -17,13 +19,19 @@ import type { PersistedSourceCaptureRef, SourceCaptureRef } from '../../../contr
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { DecodeResult, EncodedDomainEvent, EncodedRecord, EncodedRecordSchema, RecordBackendSchemas } from '../../record-store/ports.js';
 import { isProjectInputPath } from '../../workspace/project-source-snapshot.js';
-import type { ObservedArchitectureRecord, ObservedArchitectureRef, ObservedFileGraphChunkV2,
-  ObservedFileGraphManifest, ObservedFileGraphManifestV2,
+import type { ObservedArchitectureRecord, ObservedArchitectureRef, ObservedFileGraphChunkScope,
+  ObservedFileGraphChunkV2, ObservedFileGraphManifest, ObservedFileGraphManifestV2,
   ObservedFileGraphUnresolvedV1, ObservedSummaryV2, WorkspaceArchitectureObservationCurrentRecord,
   WorkspaceArchitectureObservationCurrentRef } from './contracts.js';
 
 export const OBSERVED_ARCHITECTURE_SCHEMA_ID = 'ObservedArchitecture@1';
 export const OBSERVATION_CURRENT_SCHEMA_ID = 'WorkspaceArchitectureObservationCurrent@1';
+/** L8 request record (book ruling 3); its state-layer writer is
+ * `state/architecture-capture.ts`. */
+export const ARCHITECTURE_AUTO_CAPTURE_SCHEMA_ID = 'ArchitectureAutoCapture@1';
+export const ARCHITECTURE_AUTO_CAPTURE_REQUESTED_EVENT = 'ArchitectureAutoCaptureRequested';
+export const ARCHITECTURE_AUTO_CAPTURE_FAILED_EVENT = 'ArchitectureAutoCaptureFailed';
+export const ARCHITECTURE_AUTO_CAPTURE_EVENT_VERSION = 1;
 export const ARCHITECTURE_SOURCE_OBSERVED_EVENT = 'ArchitectureSourceObserved';
 export const ARCHITECTURE_SOURCE_OBSERVED_EVENT_VERSION = 1;
 export const OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE = 'application/vnd.coding-platform.observed-architecture+json';
@@ -61,6 +69,25 @@ export type ArchitectureSourceObservedEventV1 = {
   actor: ActorRef;
   occurredAt: string;
   payload: { source: PersistedSourceCaptureRef; observedAt: string };
+};
+
+/** One event per request-record write (requested / failed), carrying the whole
+ * record as its payload. */
+export type ArchitectureAutoCaptureEventV1 = {
+  eventId: string;
+  eventType: typeof ARCHITECTURE_AUTO_CAPTURE_REQUESTED_EVENT | typeof ARCHITECTURE_AUTO_CAPTURE_FAILED_EVENT;
+  schemaVersion: 1;
+  projectId: string;
+  workspaceId: string;
+  aggregateType: 'ArchitectureAutoCapture';
+  aggregateId: string;
+  aggregateRevision: number;
+  causationId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  actor: ActorRef;
+  occurredAt: string;
+  payload: { record: ArchitectureAutoCaptureRecordV1 };
 };
 
 // --------------------------------------------------------------------------
@@ -280,18 +307,30 @@ function readFileGraphManifest(value: unknown):
     edgeCount: value['edgeCount'], unresolvedCount: value['unresolvedCount'] } };
 }
 
-/** One current chunk body: `schemaVersion: 2`, a closed node list, index pairs
- * into the one global node table and the unresolved entries. The earlier 8A
- * node/path-edge chunk (schemaVersion 1) is rejected (decision 79). `nodeCount`
- * is the manifest's global node count; index pairs must stay inside it.
+/** One current chunk body: `schemaVersion: 2`, both scope fields, a closed node
+ * list, index pairs into the one global node table and the unresolved entries.
+ * The earlier 8A node/path-edge chunk (schemaVersion 1) and the unscoped v2
+ * chunk are rejected (decision 79); a missing scope is never filled in from the
+ * record. `scope` is the canonical capture scope the reader (or the writer's
+ * pre-put check) expects the body to carry. `nodeCount` is the manifest's global
+ * node count; index pairs must stay inside it.
  *
  * This is THE one chunk-body validator (task book §2 item 4): the decoder calls
  * it after parsing, and the writer calls it for every chunk body before the
  * first `bodies.put`, so a committed chunk is exactly one the decoder accepts. */
-export function validateObservedFileGraphChunkV2(parsed: unknown, nodeCount?: number): DecodeResult<ObservedFileGraphChunkV2> {
+export function validateObservedFileGraphChunkV2(parsed: unknown, scope: ObservedFileGraphChunkScope,
+  nodeCount?: number): DecodeResult<ObservedFileGraphChunkV2> {
   if (!isRecord(parsed)) return invalid('observed file graph chunk must be an object');
   if (parsed['schemaVersion'] !== 2) return invalid('observed file graph chunk schemaVersion must be 2');
-  if (!exactKeys(parsed, ['schemaVersion', 'nodes', 'edges', 'unresolved'])) return invalid('observed file graph chunk has unknown or missing top-level keys');
+  if (!exactKeys(parsed, ['schemaVersion', 'projectId', 'workspaceId', 'nodes', 'edges', 'unresolved'])) {
+    return invalid('observed file graph chunk has unknown or missing top-level keys');
+  }
+  if (!nonEmpty(parsed['projectId']) || !nonEmpty(parsed['workspaceId'])) {
+    return invalid('observed file graph chunk scope must carry a projectId and workspaceId');
+  }
+  if (parsed['projectId'] !== scope.projectId || parsed['workspaceId'] !== scope.workspaceId) {
+    return invalid('observed file graph chunk scope differs from the capture scope');
+  }
   if (!Array.isArray(parsed['nodes'])) return invalid('observed file graph chunk nodes must be an array');
   const nodes: FileGraphNodeV1[] = [];
   for (const raw of parsed['nodes']) {
@@ -304,14 +343,17 @@ export function validateObservedFileGraphChunkV2(parsed: unknown, nodeCount?: nu
   if (edges === null) return invalid('observed file graph chunk has an invalid index edge list');
   const unresolved = readFileGraphUnresolvedV2(parsed['unresolved']);
   if (unresolved === null) return invalid('observed file graph chunk has an invalid unresolved list');
-  return { status: 'decoded', value: { schemaVersion: 2, nodes, edges, unresolved } };
+  return { status: 'decoded', value: { schemaVersion: 2, projectId: parsed['projectId'],
+    workspaceId: parsed['workspaceId'], nodes, edges, unresolved } };
 }
 
-/** Parse one stored chunk body and hand it to the shared validator above. */
-export function decodeObservedFileGraphChunk(json: string, nodeCount?: number): DecodeResult<ObservedFileGraphChunk> {
+/** Parse one stored chunk body and hand it to the shared validator above with
+ * the canonical capture scope the caller read from the observation record. */
+export function decodeObservedFileGraphChunk(json: string, scope: ObservedFileGraphChunkScope,
+  nodeCount?: number): DecodeResult<ObservedFileGraphChunk> {
   const parsed = parseObject(json, 'Observed file graph chunk');
   if (typeof parsed === 'string') return invalid(parsed);
-  return validateObservedFileGraphChunkV2(parsed, nodeCount);
+  return validateObservedFileGraphChunkV2(parsed, scope, nodeCount);
 }
 
 /** The concatenated graph behind one manifest (the loader calls this after it has
@@ -532,6 +574,21 @@ function validateObservationCurrent(record: EncodedRecord): DecodeResult<Encoded
   const observed = readObservedArchitectureRef(parsed['observedRef']);
   if (observed === null) return invalid('ObservationCurrent observedRef is incomplete');
   if (observed.projectId !== ref.projectId || observed.workspaceId !== ref.workspaceId) return invalid('ObservationCurrent observedRef is outside the pointer scope');
+  // Ruling 7: the replaced observation is part of the current format; a pointer
+  // without the key is an earlier shape and is rejected (decision 79).
+  const previous = parsed['previousObservedRef'];
+  if (previous !== null) {
+    const decodedPrevious = readObservedArchitectureRef(previous);
+    if (decodedPrevious === null) return invalid('ObservationCurrent previousObservedRef is incomplete');
+    if (decodedPrevious.projectId !== ref.projectId || decodedPrevious.workspaceId !== ref.workspaceId) {
+      return invalid('ObservationCurrent previousObservedRef is outside the pointer scope');
+    }
+  }
+  // Ruling 3: the satisfied request sequence is stored with the pointer; it is
+  // the computed `pending` basis, so it is required.
+  if (!isSafeRevision(parsed['satisfiedRequestSeq'])) {
+    return invalid('ObservationCurrent satisfiedRequestSeq must be a safe non-negative integer');
+  }
   return { status: 'decoded', value: copyRecord(record) };
 }
 
@@ -564,6 +621,122 @@ function validateArchitectureSourceObservedEvent(event: EncodedDomainEvent): Dec
 }
 
 // --------------------------------------------------------------------------
+// L8 automatic-capture request record and its two events
+// --------------------------------------------------------------------------
+
+function readAutoCaptureRef(value: unknown): ArchitectureAutoCaptureRecordV1['ref'] | null {
+  if (!isRecord(value) || value['aggregateType'] !== 'ArchitectureAutoCapture') return null;
+  if (!nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId'])) return null;
+  return { aggregateType: 'ArchitectureAutoCapture', projectId: value['projectId'], workspaceId: value['workspaceId'] };
+}
+
+/** Shape check only; the typed record is built by the allowlisted decoder. */
+function architectureAutoCaptureProblem(parsed: UnknownRecord, outerRefKey?: string, outerRevision?: number): string | null {
+  if (!exactKeys(parsed, ['ref', 'revision', 'schemaVersion', 'workspace', 'requestSeq',
+    'trigger', 'requestedAt', 'status', 'failure'])) {
+    return 'ArchitectureAutoCapture record has unknown or missing top-level keys';
+  }
+  const ref = readAutoCaptureRef(parsed['ref']);
+  if (ref === null) return 'ArchitectureAutoCapture record has no complete ref';
+  if (outerRefKey !== undefined && canonicalJson(ref as unknown as JsonValue) !== outerRefKey) {
+    return 'ArchitectureAutoCapture ref is not the outer canonical ref_key';
+  }
+  if (!isSafeRevision(parsed['revision']) || parsed['revision'] < 1) {
+    return 'ArchitectureAutoCapture revision must be a safe integer >= 1';
+  }
+  if (outerRevision !== undefined && parsed['revision'] !== outerRevision) {
+    return 'ArchitectureAutoCapture revision disagrees with the outer revision';
+  }
+  if (parsed['schemaVersion'] !== 1) return 'ArchitectureAutoCapture schemaVersion must be 1';
+  const workspace = parsed['workspace'];
+  if (!isRecord(workspace) || !exactKeys(workspace, ['projectId', 'workspaceId'])
+    || workspace['projectId'] !== ref.projectId || workspace['workspaceId'] !== ref.workspaceId) {
+    return 'ArchitectureAutoCapture workspace disagrees with its ref';
+  }
+  if (!isSafeRevision(parsed['requestSeq']) || parsed['requestSeq'] < 1) {
+    return 'ArchitectureAutoCapture requestSeq must be a safe integer >= 1';
+  }
+  if (!isAutoCaptureTrigger(parsed['trigger'])) {
+    return 'ArchitectureAutoCapture trigger is not a known trigger';
+  }
+  if (!nonEmpty(parsed['requestedAt'])) return 'ArchitectureAutoCapture requestedAt must be a non-empty string';
+  if (parsed['status'] !== 'requested' && parsed['status'] !== 'failed') {
+    return 'ArchitectureAutoCapture status must be requested or failed';
+  }
+  if (parsed['status'] === 'requested') {
+    if (parsed['failure'] !== null) return 'ArchitectureAutoCapture requested record must not carry a failure';
+    return null;
+  }
+  const failure = parsed['failure'];
+  if (!isRecord(failure) || !exactKeys(failure, ['code', 'reason'])
+    || !nonEmpty(failure['code']) || typeof failure['reason'] !== 'string'
+    || failure['reason'].length > AUTO_CAPTURE_FAILURE_REASON_MAX_CHARS) {
+    return 'ArchitectureAutoCapture failed record must carry a code and a reason of at most '
+      + AUTO_CAPTURE_FAILURE_REASON_MAX_CHARS + ' characters';
+  }
+  return null;
+}
+
+function validateArchitectureAutoCapture(record: EncodedRecord): DecodeResult<EncodedRecord> {
+  if (record.schemaId !== ARCHITECTURE_AUTO_CAPTURE_SCHEMA_ID) {
+    return invalid('expected schemaId ' + ARCHITECTURE_AUTO_CAPTURE_SCHEMA_ID + ', got ' + record.schemaId);
+  }
+  const parsed = parseObject(record.json, 'ArchitectureAutoCapture record');
+  if (typeof parsed === 'string') return invalid(parsed);
+  const problem = architectureAutoCaptureProblem(parsed, record.refKey, record.revision);
+  if (problem !== null) return invalid(problem);
+  return { status: 'decoded', value: copyRecord(record) };
+}
+
+function validateArchitectureAutoCaptureEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
+  if (event.eventType !== ARCHITECTURE_AUTO_CAPTURE_REQUESTED_EVENT
+    && event.eventType !== ARCHITECTURE_AUTO_CAPTURE_FAILED_EVENT) {
+    return invalid('expected ' + ARCHITECTURE_AUTO_CAPTURE_REQUESTED_EVENT + ' or ' + ARCHITECTURE_AUTO_CAPTURE_FAILED_EVENT);
+  }
+  if (event.schemaVersion !== ARCHITECTURE_AUTO_CAPTURE_EVENT_VERSION) {
+    return invalid('expected ' + event.eventType + '@' + ARCHITECTURE_AUTO_CAPTURE_EVENT_VERSION);
+  }
+  const parsed = parseObject(event.json, 'ArchitectureAutoCapture event');
+  if (typeof parsed === 'string') return invalid(parsed);
+  for (const field of ['eventId', 'eventType', 'schemaVersion', 'occurredAt'] as const) {
+    if (parsed[field] !== event[field]) return invalid('ArchitectureAutoCapture outer ' + field + ' disagrees with the event JSON');
+  }
+  if (!nonEmpty(parsed['projectId']) || !nonEmpty(parsed['workspaceId'])) return invalid('ArchitectureAutoCapture scope is incomplete');
+  if (parsed['aggregateType'] !== 'ArchitectureAutoCapture' || !nonEmpty(parsed['aggregateId'])) {
+    return invalid('ArchitectureAutoCapture aggregate identity is incomplete');
+  }
+  if (!nonEmpty(parsed['causationId']) || !nonEmpty(parsed['correlationId']) || !nonEmpty(parsed['idempotencyKey'])) {
+    return invalid('ArchitectureAutoCapture command identity is incomplete');
+  }
+  const actor = parsed['actor'];
+  if (!isRecord(actor) || !nonEmpty(actor['id']) || (actor['kind'] !== 'human' && actor['kind'] !== 'system' && actor['kind'] !== 'agent')) {
+    return invalid('ArchitectureAutoCapture actor is not a valid ActorRef');
+  }
+  const payload = parsed['payload'];
+  if (!isRecord(payload) || !exactKeys(payload, ['record']) || !isRecord(payload['record'])) {
+    return invalid('ArchitectureAutoCapture payload must carry the request record');
+  }
+  const rawRecord = payload['record'];
+  const ref = readAutoCaptureRef(rawRecord['ref']);
+  if (ref === null) return invalid('ArchitectureAutoCapture payload record has no complete ref');
+  // The record is decoded through the one record decoder so its shape rules and
+  // the event's scope check can never drift apart.
+  const record = decodeArchitectureAutoCapture({ refKey: canonicalJson(ref as unknown as JsonValue),
+    schemaId: ARCHITECTURE_AUTO_CAPTURE_SCHEMA_ID, revision: rawRecord['revision'] as number, json: JSON.stringify(rawRecord) });
+  if (record.status !== 'decoded') return invalid('ArchitectureAutoCapture payload record is invalid: ' + record.reason);
+  if (record.value.ref.projectId !== parsed['projectId'] || record.value.ref.workspaceId !== parsed['workspaceId']) {
+    return invalid('ArchitectureAutoCapture record is outside the event scope');
+  }
+  if (parsed['aggregateId'] !== record.value.workspace.workspaceId) {
+    return invalid('ArchitectureAutoCapture aggregateId must be the record workspace');
+  }
+  if (parsed['aggregateRevision'] !== record.value.revision) {
+    return invalid('ArchitectureAutoCapture aggregateRevision disagrees with the record');
+  }
+  return { status: 'decoded', value: copyEvent(event) };
+}
+
+// --------------------------------------------------------------------------
 // Registration and encoders
 // --------------------------------------------------------------------------
 
@@ -573,10 +746,18 @@ const OBSERVED_ARCHITECTURE_RECORD_SCHEMA: EncodedRecordSchema = {
 const OBSERVATION_CURRENT_RECORD_SCHEMA: EncodedRecordSchema = {
   schemaId: OBSERVATION_CURRENT_SCHEMA_ID, aggregateType: 'WorkspaceArchitectureObservationCurrent', validate: validateObservationCurrent,
 };
+const ARCHITECTURE_AUTO_CAPTURE_RECORD_SCHEMA: EncodedRecordSchema = {
+  schemaId: ARCHITECTURE_AUTO_CAPTURE_SCHEMA_ID, aggregateType: 'ArchitectureAutoCapture',
+  validate: validateArchitectureAutoCapture,
+};
 
 export const OBSERVED_ARCHITECTURE_RECORD_SCHEMAS: RecordBackendSchemas = {
-  records: [OBSERVED_ARCHITECTURE_RECORD_SCHEMA, OBSERVATION_CURRENT_RECORD_SCHEMA],
-  events: [{ eventType: ARCHITECTURE_SOURCE_OBSERVED_EVENT, schemaVersion: ARCHITECTURE_SOURCE_OBSERVED_EVENT_VERSION, validate: validateArchitectureSourceObservedEvent }],
+  records: [OBSERVED_ARCHITECTURE_RECORD_SCHEMA, OBSERVATION_CURRENT_RECORD_SCHEMA, ARCHITECTURE_AUTO_CAPTURE_RECORD_SCHEMA],
+  events: [
+    { eventType: ARCHITECTURE_SOURCE_OBSERVED_EVENT, schemaVersion: ARCHITECTURE_SOURCE_OBSERVED_EVENT_VERSION, validate: validateArchitectureSourceObservedEvent },
+    { eventType: ARCHITECTURE_AUTO_CAPTURE_REQUESTED_EVENT, schemaVersion: ARCHITECTURE_AUTO_CAPTURE_EVENT_VERSION, validate: validateArchitectureAutoCaptureEvent },
+    { eventType: ARCHITECTURE_AUTO_CAPTURE_FAILED_EVENT, schemaVersion: ARCHITECTURE_AUTO_CAPTURE_EVENT_VERSION, validate: validateArchitectureAutoCaptureEvent },
+  ],
   lookups: [],
 };
 
@@ -588,6 +769,28 @@ export function encodeObservationCurrent(record: WorkspaceArchitectureObservatio
 }
 export function encodeArchitectureSourceObservedEvent(event: ArchitectureSourceObservedEventV1): EncodedDomainEvent {
   return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion, occurredAt: event.occurredAt, json: JSON.stringify(event) };
+}
+export function encodeArchitectureAutoCapture(record: ArchitectureAutoCaptureRecordV1): EncodedRecord {
+  return { refKey: canonicalJson(record.ref as unknown as JsonValue), schemaId: ARCHITECTURE_AUTO_CAPTURE_SCHEMA_ID, revision: record.revision, json: JSON.stringify(record) };
+}
+export function encodeArchitectureAutoCaptureEvent(event: ArchitectureAutoCaptureEventV1): EncodedDomainEvent {
+  return { eventId: event.eventId, eventType: event.eventType, schemaVersion: event.schemaVersion, occurredAt: event.occurredAt, json: JSON.stringify(event) };
+}
+export function decodeArchitectureAutoCapture(record: EncodedRecord): DecodeResult<ArchitectureAutoCaptureRecordV1> {
+  const checked = validateArchitectureAutoCapture(record);
+  if (checked.status !== 'decoded') return checked;
+  const parsed = JSON.parse(record.json) as ArchitectureAutoCaptureRecordV1;
+  const failure = parsed.failure === null ? null : { code: parsed.failure.code, reason: parsed.failure.reason };
+  return { status: 'decoded', value: {
+    ref: { ...parsed.ref }, revision: parsed.revision, schemaVersion: 1,
+    workspace: { ...parsed.workspace }, requestSeq: parsed.requestSeq, trigger: parsed.trigger,
+    requestedAt: parsed.requestedAt, status: parsed.status, failure,
+  } };
+}
+export function decodeArchitectureAutoCaptureEvent(event: EncodedDomainEvent): DecodeResult<ArchitectureAutoCaptureEventV1> {
+  const checked = validateArchitectureAutoCaptureEvent(event);
+  if (checked.status !== 'decoded') return checked;
+  return { status: 'decoded', value: JSON.parse(event.json) as ArchitectureAutoCaptureEventV1 };
 }
 
 export function decodeObservedArchitectureRecord(record: EncodedRecord): DecodeResult<ObservedArchitectureRecord> {

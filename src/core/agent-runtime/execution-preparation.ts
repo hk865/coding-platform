@@ -23,14 +23,22 @@ import { MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import { continuationBriefDigest, type ContinuationBriefV1 } from '../../contracts/continuation-brief.js';
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import {
-  briefWorkspaceFactsFor, createContextAssembler, type ContextAssembler, type ContextAssemblerDependencies,
+  briefWorkspaceFactsFor, createContextAssembler, type BriefWorkspaceFactsOutcome, type ContextAssembler,
+  type ContextAssemblerDependencies,
 } from './context-assembler.js';
-import type { BriefWorkspaceFacts } from './continuation-brief-assembly.js';
 import type { PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
 
+/**
+ * The default assembler consumes the preparation ports plus the optional
+ * context/brief ports (including the L8 reminder reader), so the factory
+ * declares exactly that instead of casting. A direct caller that passes its own
+ * assembler need not supply the assembler-only ports.
+ */
 export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies,
   'executions' | 'roles' | 'bodies' | 'host' | 'now' | 'newId'>
-  & Partial<Pick<RuntimeExecutionDependencies, 'kernelStores' | 'workspaceHost' | 'workspaceSource' | 'graphContext' | 'taskInputs'>>;
+  & Partial<Pick<RuntimeExecutionDependencies,
+    'materials' | 'plans' | 'sessions' | 'kernelStores' | 'workspaceHost' | 'workspaceSource'
+    | 'kernel' | 'graphContext' | 'taskInputs' | 'architectureReminders'>>;
 
 // Slice 1 §4.1 (T10): the archive-origin rule lives with the brief assembly (slice 3 moved the brief into the
 // context assembler); re-exported here, where slice 1 declared it.
@@ -44,8 +52,10 @@ export type BriefWorkspaceFactsDependencies =
  * The brief's own source checkpoint (digest-only, LA-5) and the uncommitted paths of the workspace. Slice 1
  * (§2.6) reads it for the archive changed-file snapshot; the one implementation is the context assembler's.
  */
-export async function briefWorkspaceFacts(deps: BriefWorkspaceFactsDependencies, record: TaskExecutionRecord): Promise<BriefWorkspaceFacts> {
-  return briefWorkspaceFactsFor(deps, () => deps.now(), record);
+export async function briefWorkspaceFacts(
+  deps: BriefWorkspaceFactsDependencies, record: TaskExecutionRecord, signal: AbortSignal,
+): Promise<BriefWorkspaceFactsOutcome> {
+  return briefWorkspaceFactsFor(deps, () => deps.now(), record, signal);
 }
 
 export type ExecutionPreparationService = {
@@ -130,10 +140,22 @@ export function rehydratePreparedExecution(record: Pick<TaskExecutionRecord, 'ru
     inputBinding: structuredClone(run.inputBinding) };
 }
 
+/** The default assembler genuinely needs `materials`; a missing one is an
+ * explicit setup error, never a cast that hides it. */
+function defaultContextAssemblerDependencies(
+  deps: ExecutionPreparationDependencies,
+): ContextAssemblerDependencies {
+  const materials = deps.materials;
+  if (materials === undefined) {
+    throw new Error('the default context assembler requires the materials port');
+  }
+  return { ...deps, materials };
+}
+
 export function createExecutionPreparation(deps: ExecutionPreparationDependencies, contextAssembler?: ContextAssembler): ExecutionPreparationService {
   // §4.2/G5.7: a missing second argument constructs the same one assembler once;
   // the legacy text builder is unreachable and gone.
-  const assembler = contextAssembler ?? createContextAssembler(deps as unknown as ContextAssemblerDependencies);
+  const assembler = contextAssembler ?? createContextAssembler(defaultContextAssemblerDependencies(deps));
   return {
     async prepare(ctx: CoreCallContext, request: PrepareTaskExecutionRequest): Promise<ReadResult<PreparedTaskExecution>> {
       const owned = ownContext(ctx);
@@ -265,8 +287,11 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
           execution: record.value, role: roleResolution, configuration: hostConfig, permissions,
         });
       } catch (error) {
+        if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled while the context was assembled');
         return rejected('unavailable', `the context assembly failed: ${messageOf(error)}`);
       }
+      // Cancellation wins over both a ready and a rejected assembly result.
+      if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled while the context was assembled');
       if (assembled.status !== 'ready') return assembled;
       input = assembled.value.input;
       inputDigest = sha256Hex(input);
@@ -293,6 +318,9 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       if (Buffer.byteLength(manifestJson, 'utf8') > MAX_PREPARED_MANIFEST_BYTES) {
         return rejected('capacity', `the bounded prepared manifest exceeds ${String(MAX_PREPARED_MANIFEST_BYTES)} bytes`);
       }
+      // A cancellation that happened before the put must not write anything; a
+      // put already started cannot be rolled back (an unreachable body may stay).
+      if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled before the prepared manifest was stored');
       let stored;
       try {
         stored = await deps.bodies.put({
@@ -300,8 +328,12 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
           origin: { kind: 'run', owner: runRef }, requestedAt: deps.now(),
         });
       } catch (error) {
+        if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled while the prepared manifest was stored');
         return rejected('unavailable', `storing the prepared manifest failed: ${messageOf(error)}`);
       }
+      // The put already completed, but a cancellation while it waited wins: the
+      // preparation is not reported ready (the unreachable body is not rolled back).
+      if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled while the prepared manifest was stored');
       if (stored.status !== 'ready') {
         const code = stored.reason !== undefined && stored.reason.includes('size') ? 'capacity' : 'unavailable';
         return rejected(code, `storing the prepared manifest failed: ${stored.reason}`);

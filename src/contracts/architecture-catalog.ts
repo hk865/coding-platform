@@ -12,6 +12,7 @@
  * baseline body stay with the existing WorkGraph owner because they depend on
  * WorkGraph call/write/guard types.
  */
+import type { ArchitectureSourceMapping } from './architecture-source.js';
 import type { ModuleRef } from './core/identity.js';
 import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from './governance.js';
 
@@ -71,3 +72,16 @@ export type ArchitectureCatalogPinV1 = {
   catalogRef: ArchitectureCatalogRef;
   baseline: ArchitectureBaselinePin;
 };
+
+/**
+ * L8 (book ruling 6): the ONE module-mapping rule shared by the settings page's
+ * manual capture and the automatic capture driver. An adopted catalog maps each
+ * formal module to its declared paths; interfaces are not source owners here.
+ */
+export function moduleMappingsOf(catalog: AdoptedArchitecture): ArchitectureSourceMapping[] {
+  return catalog.modules.map(module => ({
+    id: module.ref.moduleId,
+    kind: 'module' as const,
+    paths: module.paths,
+  }));
+}

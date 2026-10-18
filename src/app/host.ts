@@ -49,6 +49,7 @@ import { DEFAULT_TASK_AUTOMATION_POLICY } from '../contracts/task-requeue.js';
 import { createChangeFeed } from './change-feed.js';
 import { createCollaborationDriver } from './collaboration-driver.js';
 import { createGoalFanOutDriver } from './goal-fan-out-driver.js';
+import { AUTO_CAPTURE_ACTOR, createAutoCaptureDriver } from './auto-capture-driver.js';
 import { createWorkbenchTools } from './workbench-tools.js';
 import {
   attentionSignalToJson, createAttentionObserver, createAttentionScanner, type AttentionScopeV1, type AttentionSignal,
@@ -125,6 +126,9 @@ export type LocalWorkbenchHostOptions = {
   port?: number;
   review?: BootstrapReviewMaterial;
   architectureSource?: TargetPlatformOptions['architectureSource'];
+  /** L8 (book §3): the platform's existing trusted observation fault seam,
+   * forwarded unchanged; a test holds a capture to prove queue behavior. */
+  lightScan?: TargetPlatformOptions['lightScan'];
   kernelStores?: TargetPlatformOptions['kernelStores'];
   /** Serializable trusted runtime configuration. It is converted, before the
    * first await, into the existing `RuntimeHostBindings` port; it is mutually
@@ -473,6 +477,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // re-drives the waiting Goal resume (GOAL-14). Neither observer can affect a
   // commit or the other observer.
   let goalFanOutCommitted: ((notice: RecordCommitNotice) => void) | undefined;
+  // L8 (book ruling 1): the mutable trigger sink handed to the platform BEFORE
+  // the driver exists; each formal adoption/revision/PASS calls it after its
+  // non-replayed commit, and the driver is installed right after the platform.
+  let architectureCaptureTrigger:
+    ((event: { kind: 'catalog_adopted' | 'catalog_revised' | 'check_passed'; projectId: string }) => void) | undefined;
   const commitObserver: RecordCommitObserver = {
     started(head) { changes.started(head); },
     committed(notice) {
@@ -495,6 +504,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       hostInstance: { hostInstanceId: instanceLease.hostInstanceId, lease: instanceLease.lease },
       ...(options.now === undefined ? {} : { now: options.now }),
       ...(architectureSource === undefined ? {} : { architectureSource }),
+      ...(options.lightScan === undefined ? {} : { lightScan: options.lightScan }),
       ...(options.kernelStores === undefined ? {} : { kernelStores: options.kernelStores }),
       ...(runtime === undefined ? {} : { runtime }),
       ...(checks === undefined ? {} : { checks }),
@@ -502,11 +512,39 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       sourcePolicyFor,
       resourceCaps,
       operatorActor: actor,
+      // L8: the sink exists before the driver; its calls are ignored until then.
+      onArchitectureCaptureTrigger: event => { architectureCaptureTrigger?.(event); },
     });
   } catch (error) {
     await instanceLease.release().catch(() => undefined);
     throw error;
   }
+
+  // L8 (book ruling 2): ONE automatic-capture driver for this Host, over the
+  // platform's observed/catalog ports. Its detached work is the platform's own
+  // tracked work, so `platform.close()` waits for exactly the same set.
+  const autoCapture = createAutoCaptureDriver({
+    architecture: platform.architecture,
+    catalog: platform.architecture,
+    boundWorkspaces: () => workspaces.map(workspace => ({
+      projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
+    })),
+    actor: AUTO_CAPTURE_ACTOR,
+    ...(platform.trackDetached === undefined ? {} : { track: platform.trackDetached }),
+  });
+  // The platform's formal triggers now reach the driver, everywhere in this Host.
+  // A Host without the lease writes nothing (HL-02, HL-07), so it never captures.
+  if (leaseOwned) architectureCaptureTrigger = event => autoCapture.projectChanged(event.projectId, event.kind);
+  /**
+   * L8 (book ruling 1): the ONE shared registration step of both paths. It
+   * triggers only once the scope's root is bound in this Host's `byScope`; the
+   * settings path calls it after `addWorkspaceState`, the route path after a
+   * non-replayed committed `registerWorkspace` (wrapped below).
+   */
+  const captureWorkspaceRegistration = (scope: CoreScope): void => {
+    if (!leaseOwned || !byScope.has(scopeKey(scope))) return;
+    autoCapture.workspaceRegistered({ projectId: scope.projectId, workspaceId: scope.workspaceId });
+  };
 
   // The AG2b collaboration driver is a Host-layer handle over the ONE platform
   // above. Newly opened scopes append their trusted profiles at runtime.
@@ -865,6 +903,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         projectRevision = projectRead.value.revision;
       }
       const existingRegistration = await platform.projects.readWorkspaceRegistration(ctx, scope);
+      // L8 (book ruling 1): only a registration THIS call wrote triggers a
+      // capture. A start-up restore finds the existing registration ready and
+      // is handled by `retryPending` alone.
+      let registeredNow = false;
       if (existingRegistration.status !== 'ready') {
         const registered = await platform.projects.registerWorkspace(ctx, {
           input: { workspace: scope },
@@ -874,6 +916,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           ] },
         });
         if (registered.status !== 'committed') return { status: 'rejected', code: 'unavailable', reason: 'the workspace could not be registered' };
+        registeredNow = !registered.replayed;
       }
       const registration = await platform.projects.readWorkspaceRegistration(ctx, scope);
       const workspaceRevision = registration.status === 'ready' ? registration.value.workspace.revision : 0;
@@ -886,6 +929,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         ...(request.writeAllowed ? { writePrefixes: ['.'] } : {}),
         ...(request.commandsAllowed && request.writeAllowed ? { allowCommands: true } : {}),
       });
+      // L8: the settings path's registration step, after the root is bound,
+      // and only when this call performed a non-replayed registration.
+      if (registeredNow) captureWorkspaceRegistration(scope);
       return { status: 'ready', value: { scope: { ...scope } } };
     } catch {
       return { status: 'rejected', code: 'unavailable', reason: 'the workspace could not be opened' };
@@ -1013,6 +1059,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const reconcileReport = leaseOwned ? await reconcileScopes(workspaces.map(workspace => workspace.scope)) : null;
   const hostReconcile: HostReconcileReportV1 = { hostInstanceId: instanceLease.hostInstanceId, lease: instanceLease.lease,
     leaseRow: instanceLease.row, leaseReason: instanceLease.reason, report: reconcileReport };
+  // L8 (book ruling 5): after the workspaces are bound (settings restore included)
+  // every pending bound workspace gets a `startup_retry`; detached, and a pending
+  // workspace not bound in this Host is simply not passed here. Like the start-up
+  // re-drive below it needs the lease and `automation.resumeOnStartup`: with it off
+  // a start only reconciles (§12.10 step 5) and the next trigger retries.
+  if (leaseOwned && platform.automationPolicy().resumeOnStartup) {
+    autoCapture.retryPending(workspaces.map(workspace => ({
+      projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
+    })));
+  }
   // §12.1 step 6b (LA-6): the start-up re-drive starts the existing collaboration driver for each selected
   // Goal (a pending automation verdict or a not-entered Run), gated by `automation.resumeOnStartup`; every
   // step it takes is judged by the owners, and its rework steps run as the Workflow's automation actor.
@@ -1503,10 +1559,22 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
 
   // The real route bindings share the ONE platform instance assembled above.
+  const routeBindings = createPlatformCoreRouteBindings(platform, collaborationDriver, workbenchTools.tools, goalFanOut,
+    { readReconcileReport: async () => ({ status: 'ready', value: structuredClone(hostReconcile) }) });
+  // L8 (book ruling 1): the route-registration path uses the SAME shared step as
+  // the settings flow, only after a NON-REPLAYED committed registration. The
+  // step itself triggers only when `byScope` already holds the scope.
+  const registerWorkspace: CoreRouteBindings['registerWorkspace'] = async (ctx, request) => {
+    const written = await routeBindings.registerWorkspace(ctx, request);
+    if (written.status === 'committed' && !written.replayed) {
+      const ref = written.value.ref;
+      captureWorkspaceRegistration({ projectId: ref.projectId, workspaceId: ref.workspaceId });
+    }
+    return written;
+  };
   const server: WorkbenchServer = createWorkbenchServer({
     token,
-    bindings: leaseGated(createPlatformCoreRouteBindings(platform, collaborationDriver, workbenchTools.tools, goalFanOut,
-      { readReconcileReport: async () => ({ status: 'ready', value: structuredClone(hostReconcile) }) })),
+    bindings: leaseGated({ ...routeBindings, registerWorkspace }),
     actor,
     bootstrap: buildBootstrap,
     changes,
@@ -1529,6 +1597,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     },
     close(): Promise<void> {
       closePromise ??= (async () => {
+        // L8 (P11, book ruling 5): stop the queue and abort the running capture
+        // FIRST, before the other drains. A queued B accepted just before the
+        // close must not start while those drains run; the cancelled capture
+        // writes nothing, so its request stays pending for the next start.
+        const autoCaptureClosed = autoCapture.close();
         await server.close();
         const workbenchToolsClosed = workbenchTools.close();
         attentionAbort.abort('host_closing');
@@ -1539,6 +1612,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         await collaborationDriver.close();
         await goalFanOut.close();
         await workbenchToolsClosed;
+        await autoCaptureClosed;
         await platform.close();
         // HL-06: the lock file goes only while it still names this instance; a Host that never held it never touches it.
         await instanceLease.release().catch(() => undefined);

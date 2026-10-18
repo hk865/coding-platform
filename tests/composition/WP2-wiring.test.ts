@@ -535,12 +535,14 @@ it('F06 [budget] a real continuation is kept whole while reminder rows that do n
   const omissionHeader = '## Context omissions\n';
   const omissionEnd = input.indexOf('\n\n## 接续说明');
   expect(omissionEnd).toBeGreaterThan(input.indexOf(omissionHeader));
-  // HAND COUNT after 4C-2 B: the note_review missing-source hint no longer exists
-  // (its source is registered/available), the message_release missing-source hint
-  // still counts 1, and the goal-understanding update-due reminder still counts 1:
-  // 0 + 1 + 1 = 2 omitted reminder rows.
+  // HAND COUNT after 4C-2 B and L8: the note_review missing-source hint no longer
+  // exists (its source is registered/available), the message_release missing-source
+  // hint still counts 1, the goal-understanding update-due reminder still counts 1,
+  // and the new architecture reminder section contributes 1 `还没有观测` row
+  // (no successful observation in this preparation):
+  // 0 + 1 + 1 + 1 = 3 omitted reminder rows.
   expect(input.slice(input.indexOf(omissionHeader) + omissionHeader.length, omissionEnd))
-    .toBe('reminders: 另有 2 条，用‘看’读');
+    .toBe('reminders: 另有 3 条，用‘看’读');
   expect(input).not.toContain('待决来源尚未接入：note_review');
 });
 

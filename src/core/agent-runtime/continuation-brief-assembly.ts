@@ -181,9 +181,13 @@ async function readBoundedWindow(
       window = await owner.readPositionWindow({ session: record.session, afterPosition: cursor, throughPosition: frozenThrough,
         limit: Math.min(PAGE_LIMIT, CONTINUATION_BRIEF_LIMITS.kernelRecords - decoded.length), signal });
     } catch (error) {
+      if (signal.aborted) return { ok: false, retry: { kernel: 'retry', code: 'cancelled', reason: 'the Turn history read was cancelled' } };
       return { ok: false, retry: { kernel: 'retry', code: 'unavailable',
         reason: `the Turn history read failed: ${error instanceof Error ? error.message : String(error)}` } };
     }
+    // A page that resolves after the caller cancelled is cancellation, never a
+    // partial Turn read.
+    if (signal.aborted) return { ok: false, retry: { kernel: 'retry', code: 'cancelled', reason: 'the Turn history read was cancelled' } };
     if (window.status !== 'ready') {
       const reason = window.status === 'rejected' ? window.reason : `the Turn history is ${window.status}`;
       if (window.status === 'rejected' && (window.code === 'cancelled' || window.code === 'unavailable')) {
@@ -311,7 +315,18 @@ export async function readPreviousTurn(
   const hasRecordedEnd = locator !== undefined && locator.endPosition !== null;
   if (options.sameSession === true && !hasRecordedEnd) {
     if (signal.aborted) return { kernel: 'retry', code: 'cancelled', reason: 'the Turn bounds read was cancelled' };
-    const bounds = await owner.readTurnBounds({ session: record.session, kernelRunId: kernel.runId, signal });
+    let bounds;
+    try {
+      bounds = await owner.readTurnBounds({ session: record.session, kernelRunId: kernel.runId, signal });
+    } catch (error) {
+      // Only the signal turns this port's throw into cancellation; a throw with
+      // the signal clear keeps today's propagation.
+      if (signal.aborted) return { kernel: 'retry', code: 'cancelled', reason: 'the Turn bounds read was cancelled' };
+      throw error;
+    }
+    // `readTurnBounds` has no cancelled result of its own: judge it by the
+    // signal, never by a fabricated dependency result.
+    if (signal.aborted) return { kernel: 'retry', code: 'cancelled', reason: 'the Turn bounds read was cancelled' };
     if (bounds.status === 'unsupported' || bounds.status === 'unreadable') {
       return { kernel: 'retry', code: 'unavailable', reason: bounds.reason };
     }

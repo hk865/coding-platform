@@ -36,9 +36,15 @@ const node = (path: string, char: string, overrides: Partial<FileGraphNodeV1> = 
   path, digest: digest(char), byteSize: 1, language: 'typescript', nonBlankLines: 1, indexed: true, ...overrides,
 });
 
-/** Cap selected by hand: one full v2 node (~160 bytes + ~60 bytes of array frame)
- * fits in one body, two do not; edge pairs share a chunk. */
-const CAP = 240;
+/** The chunk body scope: both fields are required in the current format. */
+const SCOPE = { projectId: 'p1', workspaceId: 'w1' };
+
+/** Cap selected by hand. The empty scoped envelope is 93 bytes
+ * (`{"schemaVersion":2,"projectId":"p1","workspaceId":"w1","nodes":[],` +
+ * `"edges":[],"unresolved":[]}`) and one full v2 node is 161 bytes, so one node
+ * fits exactly (93 + 161 = 254) and two do not (93 + 161 + 1 + 161 = 416);
+ * edge pairs share a chunk. */
+const CAP = 254;
 
 const graph: ChunkGraph = {
   // Deliberately unsorted: the writer must sort the whole node table by path.
@@ -51,11 +57,11 @@ const graph: ChunkGraph = {
 
 describe('S8D observed v2 chunks', () => {
   it('writes v2 chunks over the global path-sorted node table and round-trips across chunks', () => {
-    const bodies = serializeFileGraphChunks(normalizeFileGraph(graph), CAP);
+    const bodies = serializeFileGraphChunks(normalizeFileGraph(graph), SCOPE, CAP);
     expect(bodies.length).toBeGreaterThanOrEqual(4); // three node chunks plus at least one edge chunk
     for (const body of bodies) expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(CAP);
 
-    const chunks = bodies.map(body => decodeObservedFileGraphChunk(body, graph.nodes.length));
+    const chunks = bodies.map(body => decodeObservedFileGraphChunk(body, SCOPE, graph.nodes.length));
     for (const chunk of chunks) {
       expect(chunk.status).toBe('decoded');
       if (chunk.status !== 'decoded') return;
@@ -79,12 +85,12 @@ describe('S8D observed v2 chunks', () => {
   });
 
   it('writes exactly one empty v2 chunk for an empty graph', () => {
-    const bodies = serializeFileGraphChunks(normalizeFileGraph({ nodes: [], edges: [], unresolved: [] }), CAP);
+    const bodies = serializeFileGraphChunks(normalizeFileGraph({ nodes: [], edges: [], unresolved: [] }), SCOPE, CAP);
     expect(bodies).toHaveLength(1);
-    const decoded = decodeObservedFileGraphChunk(bodies[0]!, 0);
+    const decoded = decodeObservedFileGraphChunk(bodies[0]!, SCOPE, 0);
     expect(decoded.status).toBe('decoded');
     if (decoded.status !== 'decoded') return;
-    expect(decoded.value).toEqual({ schemaVersion: 2, nodes: [], edges: [], unresolved: [] });
+    expect(decoded.value).toEqual({ schemaVersion: 2, ...SCOPE, nodes: [], edges: [], unresolved: [] });
     expect(bodies[0]).toContain('"schemaVersion":2');
   });
 
@@ -93,7 +99,7 @@ describe('S8D observed v2 chunks', () => {
     // envelope, so it cannot start a chunk either and the writer must say capacity.
     const huge = node('b.ts', 'b', { path: 'x'.repeat(4096) });
     expect(() => serializeFileGraphChunks(
-      normalizeFileGraph({ nodes: [node('a.ts', 'a'), huge], edges: [], unresolved: [] }), CAP))
+      normalizeFileGraph({ nodes: [node('a.ts', 'a'), huge], edges: [], unresolved: [] }), SCOPE, CAP))
       .toThrow(/chunk capacity/);
   });
 });
@@ -103,43 +109,43 @@ describe('S8D observed v2 chunk validation', () => {
     path, digest: digest(char), byteSize: 1, language: 'typescript', nonBlankLines: 1, indexed: true,
   });
   const chunkJson = (nodes: unknown[], edges: unknown[]): string =>
-    JSON.stringify({ schemaVersion: 2, nodes, edges, unresolved: [] });
+    JSON.stringify({ schemaVersion: 2, ...SCOPE, nodes, edges, unresolved: [] });
 
   it('rejects an out-of-range edge index, a malformed pair and a bad node digest', () => {
     const nodes = [literalNode('a.ts')];
     // The manifest node count is 1, so [0,1] points outside the global table.
-    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1]]), 1).status).toBe('invalid');
-    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0]]), 1).status).toBe('invalid');
-    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1.5]]), 2).status).toBe('invalid');
-    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[-1, 0]]), 1).status).toBe('invalid');
+    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1]]), SCOPE, 1).status).toBe('invalid');
+    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0]]), SCOPE, 1).status).toBe('invalid');
+    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1.5]]), SCOPE, 2).status).toBe('invalid');
+    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[-1, 0]]), SCOPE, 1).status).toBe('invalid');
     // Without the manifest count the same pair is structurally legal; the
     // loader-level merge rejects it against the node table.
-    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1]])).status).toBe('decoded');
+    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1]]), SCOPE).status).toBe('decoded');
     const badDigest = JSON.stringify({
-      schemaVersion: 2, edges: [], unresolved: [],
+      schemaVersion: 2, ...SCOPE, edges: [], unresolved: [],
       nodes: [{ ...literalNode('a.ts'), digest: 'not-a-digest' }],
     });
-    expect(decodeObservedFileGraphChunk(badDigest, 1).status).toBe('invalid');
+    expect(decodeObservedFileGraphChunk(badDigest, SCOPE, 1).status).toBe('invalid');
   });
 
   it('accepts the real empty specifier and enforces the one 4096-character limit', () => {
     const parsedWith = (specifier: string) => ({
-      schemaVersion: 2, nodes: [], edges: [], unresolved: [{ from: 'a.ts', specifier, reason: null }],
+      schemaVersion: 2, ...SCOPE, nodes: [], edges: [], unresolved: [{ from: 'a.ts', specifier, reason: null }],
     });
     // `import "";` is real syntax, so the empty specifier is legal on both sides.
-    expect(validateObservedFileGraphChunkV2(parsedWith('')).status).toBe('decoded');
+    expect(validateObservedFileGraphChunkV2(parsedWith(''), SCOPE).status).toBe('decoded');
     // The writer and the decoder share this validator, so there is ONE limit.
-    expect(validateObservedFileGraphChunkV2(parsedWith('x'.repeat(4096))).status).toBe('decoded');
-    expect(validateObservedFileGraphChunkV2(parsedWith('x'.repeat(4097))).status).toBe('invalid');
-    expect(decodeObservedFileGraphChunk(JSON.stringify(parsedWith('x'.repeat(4096)))).status).toBe('decoded');
-    expect(decodeObservedFileGraphChunk(JSON.stringify(parsedWith('x'.repeat(4097)))).status).toBe('invalid');
+    expect(validateObservedFileGraphChunkV2(parsedWith('x'.repeat(4096)), SCOPE).status).toBe('decoded');
+    expect(validateObservedFileGraphChunkV2(parsedWith('x'.repeat(4097)), SCOPE).status).toBe('invalid');
+    expect(decodeObservedFileGraphChunk(JSON.stringify(parsedWith('x'.repeat(4096))), SCOPE).status).toBe('decoded');
+    expect(decodeObservedFileGraphChunk(JSON.stringify(parsedWith('x'.repeat(4097))), SCOPE).status).toBe('invalid');
   });
 
   it('rejects a duplicate node in one chunk and across chunks', () => {
     const nodes = [literalNode('a.ts'), literalNode('a.ts', 'b')];
-    expect(decodeObservedFileGraphChunk(chunkJson(nodes, []), 2).status).toBe('invalid');
-    const first = decodeObservedFileGraphChunk(chunkJson([literalNode('a.ts')], []), 2);
-    const second = decodeObservedFileGraphChunk(chunkJson([literalNode('a.ts')], []), 2);
+    expect(decodeObservedFileGraphChunk(chunkJson(nodes, []), SCOPE, 2).status).toBe('invalid');
+    const first = decodeObservedFileGraphChunk(chunkJson([literalNode('a.ts')], []), SCOPE, 2);
+    const second = decodeObservedFileGraphChunk(chunkJson([literalNode('a.ts')], []), SCOPE, 2);
     expect(first.status).toBe('decoded');
     expect(second.status).toBe('decoded');
     if (first.status !== 'decoded' || second.status !== 'decoded') return;
@@ -153,7 +159,7 @@ describe('S8D observed v2 chunk validation', () => {
   });
 
   it('rejects chunk totals that disagree with the manifest (wrong count)', () => {
-    const decoded = decodeObservedFileGraphChunk(chunkJson([literalNode('a.ts')], []), 2);
+    const decoded = decodeObservedFileGraphChunk(chunkJson([literalNode('a.ts')], []), SCOPE, 2);
     expect(decoded.status).toBe('decoded');
     if (decoded.status !== 'decoded') return;
     const manifest: ObservedFileGraphManifestV2 = {
@@ -166,13 +172,69 @@ describe('S8D observed v2 chunk validation', () => {
     if (merged.status !== 'decoded') return;
     expect(merged.value.nodes.map(entry => entry.path)).toEqual(['a.ts']);
     // An index pair that decodes without a manifest count is rejected by the merge.
-    const edges = decodeObservedFileGraphChunk(chunkJson([literalNode('a.ts')], [[0, 1]]));
+    const edges = decodeObservedFileGraphChunk(chunkJson([literalNode('a.ts')], [[0, 1]]), SCOPE);
     expect(edges.status).toBe('decoded');
     if (edges.status !== 'decoded') return;
     expect(mergeObservedFileGraphChunks(correct, [edges.value]).status).toBe('invalid');
     // The unresolved count is part of the exact manifest check too.
     const unresolvedManifest: ObservedFileGraphManifestV2 = { ...correct, unresolvedCount: 1 };
     expect(mergeObservedFileGraphChunks(unresolvedManifest, [decoded.value]).status).toBe('invalid');
+  });
+});
+
+describe('S8D observed v2 chunk scope (pure codec, A5)', () => {
+  const emptyGraph = { nodes: [], edges: [], unresolved: [] } as const;
+
+  it('rejects an old unscoped chunk instead of filling its scope in', () => {
+    // The earlier v2 chunk body had no project/workspace fields. It is an older
+    // format (decision 79), so the decoder rejects it rather than filling the
+    // scope in from the record.
+    expect(decodeObservedFileGraphChunk(
+      JSON.stringify({ schemaVersion: 2, nodes: [], edges: [], unresolved: [] }), SCOPE))
+      .toMatchObject({ status: 'invalid' });
+  });
+
+  it('rejects a chunk body whose scope differs from the expected capture scope', () => {
+    const body = serializeFileGraphChunks(normalizeFileGraph(emptyGraph), SCOPE, CAP)[0]!;
+    // The body itself is valid; only its scope disagrees with the canonical
+    // scope the reader passes. It must not be accepted or read as an empty chunk.
+    const decoded = decodeObservedFileGraphChunk(body, { projectId: 'p2', workspaceId: 'w1' }, 0);
+    expect(decoded.status).toBe('invalid');
+    if (decoded.status !== 'invalid') return;
+    expect(decoded.reason).toContain('scope');
+  });
+
+  it('encodes escaped scope ids as UTF-8 and round-trips them without counting characters', () => {
+    // projectId `p"ø`: JSON escapes the quote as `\"` and UTF-8 encodes `ø` as
+    // two bytes; workspaceId `w\y`: JSON escapes the backslash as `\\`.
+    // The fixed structure plus both quoted ids is 89 bytes; the escaped project
+    // id adds 5 interior bytes (p, backslash, quote, the two bytes of `ø`) and
+    // the escaped workspace id adds 4 (w, two backslashes, y), so the envelope
+    // is 89 + 5 + 4 = 98 UTF-8 bytes. It is 97 UTF-16 code units because `ø` is
+    // one code unit but two bytes.
+    const projectId = 'p"ø';
+    const workspaceId = 'w\\y';
+    const scope = { projectId, workspaceId };
+    const expected = '{"schemaVersion":2,"projectId":"p\\"ø","workspaceId":"w\\\\y","nodes":[],"edges":[],"unresolved":[]}';
+    const bodies = serializeFileGraphChunks(normalizeFileGraph(emptyGraph), scope, 98);
+    expect(bodies).toEqual([expected]);
+    expect(Buffer.byteLength(expected, 'utf8')).toBe(98);
+    expect(expected.length).toBe(97);
+    // 97 is the character count, not the byte count: a 97-byte cap cannot hold
+    // this 98-byte envelope, so the writer must reject it.
+    expect(() => serializeFileGraphChunks(normalizeFileGraph(emptyGraph), scope, 97))
+      .toThrow(/chunk capacity/);
+    const decoded = decodeObservedFileGraphChunk(bodies[0]!, scope, 0);
+    expect(decoded.status).toBe('decoded');
+    if (decoded.status !== 'decoded') return;
+    expect(decoded.value).toEqual({ schemaVersion: 2, ...scope, nodes: [], edges: [], unresolved: [] });
+  });
+
+  it('counts the empty chunk envelope itself toward the byte cap', () => {
+    // The empty p1/w1 envelope is 93 bytes; a 92-byte cap cannot hold even that
+    // chunk, so an empty graph is capacity, not one oversized chunk.
+    expect(() => serializeFileGraphChunks(normalizeFileGraph(emptyGraph), SCOPE, 92))
+      .toThrow(/chunk capacity/);
   });
 });
 
@@ -189,8 +251,8 @@ describe('S8D observed v2 unresolved pass-through', () => {
       nodes: [node('a.ts', 'a'), node('b.ts', 'b')],
       edges: [],
       unresolved,
-    }), CAP);
-    const decoded = bodies.map(body => decodeObservedFileGraphChunk(body, 2))
+    }), SCOPE, CAP);
+    const decoded = bodies.map(body => decodeObservedFileGraphChunk(body, SCOPE, 2))
       .flatMap(chunk => chunk.status === 'decoded' && chunk.value.schemaVersion === 2 ? chunk.value.unresolved : []);
     expect(decoded).toEqual(unresolved);
   });

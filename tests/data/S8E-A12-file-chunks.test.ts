@@ -28,7 +28,7 @@ const entries: [string, string][] = [
 const TYPESCRIPT = { path: '', nonBlankLines: 0, language: 'typescript' };
 const node = (path: string, nonBlankLines: number) => ({ ...TYPESCRIPT, path, nonBlankLines });
 
-// One full v2 node fits this size, two do not (hand-computed from the literal
+// One full v2 node fits each cap, two do not (hand-computed from the literal
 // fields, not from codec output). Every fixture path is 4 characters (`a.ts`),
 // every digest is 64 hex characters, every byteSize below 100 (2 digits), every
 // `nonBlankLines` is 1 digit and `indexed` is `true`:
@@ -36,9 +36,12 @@ const node = (path: string, nonBlankLines: number) => ({ ...TYPESCRIPT, path, no
 //   + `,"byteSize":` 12 + 2 digits + `,"language":` 12 + `"typescript"` 12
 //   + `,"nonBlankLines":` 17 + 1 digit + `,"indexed":` 11 + `true` 4 + `}` 1
 //   = 162 bytes per node.
-//   Node envelope: `{"schemaVersion":2,"nodes":[` 28 + `],"edges":[],"unresolved":[]}` 29 = 57.
-//   One node body = 57 + 162 = 219 <= 240; two = 57 + 162 + 1 + 162 = 382 > 240.
-const CHUNK_BYTES = 240;
+//   A scoped empty envelope is 89 + projectId bytes + workspaceId bytes (`main`
+//   is 4); the scope ids need no escaping. For `s8e-a12-chunks-<backend>`
+//   (21-byte project) it is 114 bytes, so one node body is 114 + 162 = 276 and
+//   two are 114 + 162 + 1 + 162 = 439. The cap keeps the same 183-byte array
+//   budget as the previous 240-byte cap over the 57-byte unscoped envelope.
+const CHUNK_BYTES = 297;
 
 const NODES = [
   node('a.ts', 3), node('b.ts', 1), node('c.ts', 2), node('d.ts', 1),
@@ -90,19 +93,22 @@ for (const backend of BACKENDS) {
   });
 
   it(`A-12 rejects an observation whose node, edge and unresolved chunks exceed 64 [${backend}]`, async () => {
-    // Same CHUNK_BYTES = 240 and 57-byte envelope. 59 nodes are 164 bytes: each
-    // `nNN.ts` path is 2 bytes longer than the 162-byte `a.ts` shape above. n00
-    // has 100 bytes of source (5x20-byte import lines), so its byteSize is 3
-    // digits and its node is 165 bytes. Either fits alone
-    // (57+165 = 222 <= 240) and no two fit (57+165+1+164 = 387 > 240), so
-    // 60 nodes n00..n59 are 60 node chunks. n01..n59 each import n00, so 59
-    // index pairs `[i,0]`: 9 are 5 bytes (i=1..9) and 50 are 6 bytes (i=10..59).
-    // With an edge envelope of 39 + 18 = 57 bytes the greedy packer fits
-    // 9*5 + 18*6 + 26 commas = 179 bytes (57 + 179 = 236 <= 240, the next
-    // 6-byte item would make 243), then 26*6 + 25 commas = 181 (57 + 181 = 238),
+    // Same hand arithmetic with the scoped envelope. For `s8e-a12-cap-<backend>`
+    // (18-byte project) the empty envelope is 89 + 18 + 4 = 111 bytes, so the
+    // cap is 111 + 183 = 294. 59 nodes are 164 bytes: each `nNN.ts` path is
+    // 2 bytes longer than the 162-byte `a.ts` shape above. n00 has 100 bytes of
+    // source (5x20-byte import lines), so its byteSize is 3 digits and its node
+    // is 165 bytes. Either fits alone (111+165 = 276 <= 294) and no two fit
+    // (111+165+1+164 = 441 > 294), so 60 nodes n00..n59 are 60 node chunks.
+    // n01..n59 each import n00, so 59 index pairs `[i,0]`: 9 are 5 bytes
+    // (i=1..9) and 50 are 6 bytes (i=10..59). With an edge envelope of
+    // 93 + 18 = 111 bytes (the same 183-byte content budget), the greedy packer
+    // fits 9*5 + 18*6 + 26 commas = 179 bytes (111 + 179 = 290 <= 294, the next
+    // 6-byte item would make 297), then 26*6 + 25 commas = 181 (111 + 181 = 292),
     // then 6*6 + 5 commas = 41 => 3 edge chunks. The 5 missing imports of n00
-    // are 55-byte entries: 3 + 2 commas = 167 (57 + 167 = 224) then 2 + 1 = 111
-    // (57 + 111 = 168) => 2 unresolved chunks. Total 60 + 3 + 2 = 65 > 64.
+    // are 55-byte entries: 3 + 2 commas = 167 (111 + 167 = 278) then 2 + 1 = 111
+    // (111 + 111 = 222) => 2 unresolved chunks. Total 60 + 3 + 2 = 65 > 64.
+    const CHUNK_BYTES = 294;
     const many: [string, string][] = [];
     for (let index = 0; index < 60; index += 1) {
       const name = `n${String(index).padStart(2, '0')}.ts`;

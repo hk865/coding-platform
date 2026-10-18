@@ -28,6 +28,8 @@ const ROUTE_LABELS: Record<CoreRouteSuffix, string> = {
   'architecture/compare': '比较观察结构',
   'architecture/compare-formal': '对比正式与观察结构',
   'architecture/impact': '查看结构影响',
+  // L8 (book ruling 8): the one public observation state; display label only.
+  'architecture/observation-state': '查看观测状态',
   'plans/propose': '提交计划草案',
   'plans/apply': '采用计划',
   'plans/proposal': '查看计划草案',

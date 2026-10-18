@@ -1,6 +1,8 @@
 /** R3d observed-source slice. These records are evidence of a capture, never an adopted architecture. */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
-import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import type { AdoptedArchitecture, ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import type { ArchitectureAutoCaptureFailureV1, ArchitectureAutoCaptureRecordV1,
+  ArchitectureObservationStateV1, ArchitectureReminderFactsV1, AutoCaptureTriggerV1 } from '../../../contracts/architecture-observation.js';
 import type { ArchitectureSourceMapping } from '../../../contracts/architecture-source.js';
 import type { CodeGraphEdge, CodeGraphNode, FileGraphNodeV1, FileGraphPageV1, FormalObservedComparisonV1,
   LanguageCoverageV1, ObservedCaptureRef, ObservationInventoryV1 } from '../../../contracts/architecture-inspection.js';
@@ -40,10 +42,16 @@ export type ObservedFileGraphUnresolvedV1 = {
 };
 /**
  * §10 item 6 v2 chunk body. Node order is the one global path-sorted table; an
- * edge `[i, j]` indexes that table and may point across chunks.
+ * edge `[i, j]` indexes that table and may point across chunks. Both scope
+ * fields are required and come from the validated capture scope: every node,
+ * edge, unresolved and empty chunk carries the same scope, and an unscoped
+ * earlier-shape chunk is rejected rather than filled in (decision 79).
  */
+export type ObservedFileGraphChunkScope = { projectId: string; workspaceId: string };
 export type ObservedFileGraphChunkV2 = {
   schemaVersion: 2;
+  projectId: string;
+  workspaceId: string;
   nodes: FileGraphNodeV1[];
   edges: [number, number][];
   unresolved: ObservedFileGraphUnresolvedV1[];
@@ -70,6 +78,10 @@ export type ObservedArchitectureRecord = {
 export type WorkspaceArchitectureObservationCurrentRecord = {
   ref: WorkspaceArchitectureObservationCurrentRef; revision: number; schemaVersion: 1;
   observedRef: ObservedArchitectureRef;
+  /** Ruling 7: the observation this pointer replaced, written in the same commit. */
+  previousObservedRef: ObservedArchitectureRef | null;
+  /** Ruling 3: the highest request sequence a committed observation satisfies. */
+  satisfiedRequestSeq: number;
 };
 export type ObservedArchitectureSelection = { kind: 'observed'; capture: PersistedSourceCaptureRef };
 /** A mechanical change, with no architectural or policy verdict. */
@@ -102,9 +114,35 @@ export type ObservedArchitectureImpact = {
 /** A narrow implemented subset of the eventual ArchitecturePort. */
 export interface ObservedArchitecturePort {
   captureSourceChanges(ctx: CoreCallContext, request: GraphWrite<{
-    workspace: WorkspaceScope; mappings: ArchitectureSourceMapping[];
-    previous: PersistedSourceCaptureRef | null;
+    workspace: WorkspaceScope;
+    /** Book ruling 6 (one mapping rule): absent means the server derives the
+     * mappings from the ACTIVE catalog (`[]` when there is none). An explicit
+     * list, including `[]`, keeps the caller's exact mappings. */
+    mappings?: ArchitectureSourceMapping[];
+    /** Accepted suggestion "previous ref at start": absent means the capture
+     * uses the current observation at entry as the previous persisted ref;
+     * `null` still means no previous observation. */
+    previous?: PersistedSourceCaptureRef | null;
+    /** L8: the driver's start-snapshot request sequence; absent for a manual
+     * capture, which reads the request record's sequence once at entry. */
+    requestSeq?: number;
   }>): Promise<WriteResult<PersistedSourceCaptureRef>>;
+  /** L8 request record (book ruling 3): one current record per workspace. */
+  requestAutoCapture(ctx: CoreCallContext, request: GraphWrite<{
+    workspace: WorkspaceScope; trigger: AutoCaptureTriggerV1; requestedAt: string;
+  }>): Promise<WriteResult<ArchitectureAutoCaptureRecordV1>>;
+  failAutoCapture(ctx: CoreCallContext, request: GraphWrite<{
+    workspace: WorkspaceScope; expectedRevision: number; failure: ArchitectureAutoCaptureFailureV1;
+  }>): Promise<WriteResult<ArchitectureAutoCaptureRecordV1>>;
+  readAutoCapture(ctx: CoreCallContext, input: { workspace: WorkspaceScope }):
+    Promise<ReadResult<ArchitectureAutoCaptureRecordV1 | null>>;
+  /** Book ruling 8: the one public observation state, with computed `pending`. */
+  observationState(ctx: CoreCallContext, input: { workspace: WorkspaceScope }):
+    Promise<ReadResult<ArchitectureObservationStateV1>>;
+  /** Book ruling 12: the one load behind the reminder rows. */
+  readReminderFacts(ctx: CoreCallContext, input: {
+    workspace: WorkspaceScope; catalog: AdoptedArchitecture | null;
+  }): Promise<ReadResult<ArchitectureReminderFactsV1>>;
   queryArchitecture(ctx: CoreCallContext, input: {
     selection: ObservedArchitectureSelection; anchor?: ObservedGraphAnchor;
     depth: number; relations: ('dependency' | 'interface')[]; page: ObservedGraphPageRequest;

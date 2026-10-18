@@ -15,6 +15,7 @@
  */
 import { afterEach, expect, it } from 'vitest';
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
+import type { ArchitectureObservationStateV1 } from '../../src/contracts/architecture-observation.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
@@ -26,7 +27,7 @@ import {
   claimSuccessorRun, createWP2Platform, decisionRequestArgs, preparedBundleInput, requestText, type WP2PlatformFixture,
 } from '../helpers/WP2-platform-support.js';
 import {
-  cleanupScenarios, hostCtx, openHostScenario, type ScenarioCommit,
+  cleanupScenarios, hostCtx, openHostScenario, type HostScenario, type ScenarioCommit,
 } from './harness.js';
 import { consult } from './support/brief.js';
 import {
@@ -52,6 +53,23 @@ async function drive(f: WP2PlatformFixture, flowId: string): Promise<Extract<Wor
     input = result.value.next;
   }
   throw new Error('the Workflow did not settle');
+}
+
+/**
+ * Item 9 / ruling 8: the ONE public `architecture/observation-state` read is
+ * polled (bounded, 10 ms) until the real PASS's automatic capture has no pending
+ * request. Without it the capture's commit lands inside a counted notices read
+ * and the assertion below sees one commit too many.
+ */
+async function waitForAutoCapture(h: HostScenario): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const state = await h.post<ReadResult<ArchitectureObservationStateV1>>('architecture/observation-state',
+      plain(AG2B_SCOPE, { workspace: AG2B_SCOPE }));
+    if (state.status === 'ready' && state.value.autoCapture !== null && state.value.autoCapture.pending === false) return;
+    if (Date.now() >= deadline) throw new Error(`the automatic capture did not settle: ${JSON.stringify(state)}`);
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
 }
 
 it('Z02 automatic advancement: a secretary member asks the user to decide, the card reaches the queue, the NEXT prepared reminder input carries its row, and answering removes the row', async () => {
@@ -194,6 +212,9 @@ it('Z01 automatic advancement through the scenario harness: a yielded wait is an
       // The Host route and the seen route share the Host composition's display
       // key, so a token issued here is valid for `decisions/notices/seen`.
       // §5.2 line 308/§8.5: the read makes no new commit and calls no model.
+      // The real PASS also starts an automatic capture; wait (through the one
+      // public observation-state read) until its request is satisfied first.
+      await waitForAutoCapture(h);
       const commitsBefore = commits.length;
       const callsBefore = h.modelCalls();
       const page = await h.post<ReadResult<DecisionQueueReadV1>>('decisions/queue', plain(AG2B_SCOPE, {

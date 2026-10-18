@@ -15,13 +15,16 @@
  * exist or keep their content.
  */
 import { randomUUID } from 'node:crypto';
-import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import { moduleMappingsOf, type AdoptedArchitecture, type ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { FileGraphNodeV1, FileGraphPageNodeV1, FileGraphPageV1, FormalObservedComparisonV1,
   LanguageCoverageV1, ObservedCaptureRef, ObservationInventoryV1 } from '../../../contracts/architecture-inspection.js';
+import { isAutoCaptureTrigger } from '../../../contracts/architecture-observation.js';
+import type { ArchitectureAutoCaptureFailureV1, ArchitectureAutoCaptureRecordV1,
+  ArchitectureObservationStateV1, ArchitectureReminderFactsV1, AutoCaptureTriggerV1 } from '../../../contracts/architecture-observation.js';
 import type { ArchitectureSourceMapping, ArchitectureSourceSnapshotV1 } from '../../../contracts/architecture-source.js';
 import { ARTIFACT_MAX_SIZE_BYTES, artifactBodyDigest, artifactBodySize } from '../../../contracts/artifact.js';
 import { commandIdentityKey } from '../../../contracts/command-event.js';
-import type { CommitCursor } from '../../../contracts/command-event.js';
+import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreError, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
@@ -36,23 +39,29 @@ import type { GoalRecordTransactionPort, RecordGuard, StoreFailure } from '../..
 import type { WorkspaceAccessFactory, WorkspaceReadAccess } from '../../workspace/access.js';
 import type { CaptureSourceRequest, CaptureSummary, WorkspaceError, WorkspaceResult, WorkspaceToolsPort } from '../../workspace/ports.js';
 import type { ProjectFileGraphV1 } from '../../workspace/architecture-language-provider.js';
+import { newArchitectureCaptureFailureRecord, newArchitectureCaptureRequestRecord,
+  architectureAutoCaptureState } from '../state/architecture-capture.js';
 import { compareObservedGraphs } from './architecture-delta.js';
 import {
+  ARCHITECTURE_AUTO_CAPTURE_FAILED_EVENT, ARCHITECTURE_AUTO_CAPTURE_REQUESTED_EVENT,
   ARCHITECTURE_SOURCE_OBSERVED_EVENT, FILE_GRAPH_CHUNK_CONTENT_TYPE, OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE,
-  decodeArchitectureSourceObservedEvent, decodeObservedArchitectureBody, decodeObservedFileGraphChunk,
-  decodeObservationCurrent, decodeObservedArchitectureRecord, encodeArchitectureSourceObservedEvent,
+  decodeArchitectureAutoCapture, decodeArchitectureAutoCaptureEvent, decodeArchitectureSourceObservedEvent,
+  decodeObservedArchitectureBody, decodeObservedFileGraphChunk,
+  decodeObservationCurrent, decodeObservedArchitectureRecord, encodeArchitectureAutoCapture,
+  encodeArchitectureAutoCaptureEvent, encodeArchitectureSourceObservedEvent,
   encodeObservationCurrent, encodeObservedArchitecture, mergeObservedFileGraphChunks, readPersistedSourceCaptureRef,
   validateObservedFileGraphChunkV2,
-  type ArchitectureSourceObservedEventV1, type ObservedArchitectureBody, type ObservedArchitectureBodyV2,
-  type ObservedFileGraphChunk,
+  type ArchitectureAutoCaptureEventV1, type ArchitectureSourceObservedEventV1, type ObservedArchitectureBody,
+  type ObservedArchitectureBodyV2, type ObservedFileGraphChunk,
 } from './architecture-record-codecs.js';
 import { readRevisionByRef } from './catalog-service.js';
+import type { ArchitectureCatalogPort } from './catalog-contracts.js';
 import { compareFormalObservedGraphs } from './formal-comparison.js';
 import { FileGraphCursorError, FILE_GRAPH_MAX_IMPACT_DEPTH, FILE_GRAPH_PAGE_SIZE, impactPage,
   listFilesPage, neighborsPage, type FileGraphData, type FileGraphPageData } from './file-graph-index.js';
 import type { ObservedArchitectureComparison, ObservedArchitectureImpact, ObservedArchitectureNeighborhood,
   ObservedArchitecturePort, ObservedArchitectureRecord, ObservedArchitectureRef, ObservedArchitectureSelection,
-  ObservedFileGraphManifestV2, ObservedGraphAnchor, ObservedGraphPageRequest,
+  ObservedFileGraphChunkScope, ObservedFileGraphManifestV2, ObservedGraphAnchor, ObservedGraphPageRequest,
   ObservedSummaryV2, WorkspaceArchitectureObservationCurrentRecord,
   WorkspaceArchitectureObservationCurrentRef } from './contracts.js';
 import { ObservedGraphCursorError, buildObservedImpact, buildObservedNeighborhood } from './graph-index.js';
@@ -74,10 +83,19 @@ export type ObservedArchitectureDependencies = {
   /** Test injection for the file-graph chunk size; production uses
    * `ARTIFACT_MAX_SIZE_BYTES`. */
   fileGraph?: { chunkBytes?: number };
+  /** L8 book ruling 6 (one mapping rule): when a capture omits `mappings`, the
+   * service resolves them from the ACTIVE catalog with `moduleMappingsOf`.
+   * Production passes the real catalog service. Optional so the many tests that
+   * build this service directly keep compiling; an absent `mappings` with no
+   * catalog is `unsupported`, never a silent `[]`. */
+  catalog?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
 };
 
 const MAX_PAGE = 2048;
 const CAPTURE_IDENTITY_PREFIX = 'observed-architecture:';
+const AUTO_CAPTURE_REQUEST_IDENTITY_PREFIX = 'architecture-auto-capture-request:';
+const AUTO_CAPTURE_FAILED_IDENTITY_PREFIX = 'architecture-auto-capture-failed:';
+const AUTO_CAPTURE_REQUEST_ATTEMPTS = 4;
 
 type Rejection = { status: 'rejected'; code: CoreError; reason: string; current?: VersionPin[] };
 type Owned<T> = { status: 'owned'; value: T } | { status: 'invalid'; reason: string };
@@ -144,6 +162,11 @@ function canonicalOf(value: unknown): string {
 function readWorkspaceScope(value: unknown): WorkspaceScope | null {
   if (!isRecord(value) || !nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId'])) return null;
   return { projectId: value['projectId'], workspaceId: value['workspaceId'] };
+}
+function readAutoCaptureFailure(value: unknown): ArchitectureAutoCaptureFailureV1 | null {
+  if (!isRecord(value) || !exactKeys(value, ['code', 'reason'])) return null;
+  if (!nonEmpty(value['code']) || typeof value['reason'] !== 'string') return null;
+  return { code: value['code'], reason: value['reason'] };
 }
 function readMappings(value: unknown): ArchitectureSourceMapping[] | null {
   // An empty list is legal (task book item 8): a TS project without an adopted
@@ -294,6 +317,11 @@ function packFileGraphChunks<T>(prefix: string, suffix: string, serialized: read
       size += 1 + itemBytes;
     }
   }
+  if (alwaysFlush && serialized.length === 0 && overhead > cap) {
+    // The empty graph still writes one envelope; its own bytes count toward the
+    // cap, so a cap smaller than the envelope is capacity with no items at all.
+    overflow ??= { itemBytes: overhead, cap };
+  }
   if (alwaysFlush || serialized.length > 0) {
     chunks.push(prefix + serialized.slice(start).join(',') + suffix);
   }
@@ -336,18 +364,22 @@ export function normalizeFileGraph(graph: FileGraphChunkInput): NormalizedFileGr
  * chunk is a contiguous run of the global table), then edge pairs, then
  * unresolved entries; every chunk body is at most `cap` bytes and all three
  * kinds count toward the 64-chunk budget. The empty graph still writes one
- * empty v2 chunk. */
-export function serializeFileGraphChunks(graph: NormalizedFileGraph, cap: number): string[] {
-  const empty = JSON.stringify({ schemaVersion: 2, nodes: [] as unknown[], edges: [] as unknown[], unresolved: [] as unknown[] });
-  const nodesOpen = empty.indexOf('[]', empty.indexOf('"nodes"'));
-  const edgesOpen = empty.indexOf('[]', empty.indexOf('"edges"'));
-  const unresolvedOpen = empty.indexOf('[]', empty.indexOf('"unresolved"'));
-  const nodePrefix = empty.slice(0, nodesOpen + 1);
-  const nodeSuffix = empty.slice(nodesOpen + 1);
-  const edgePrefix = empty.slice(0, edgesOpen + 1);
-  const edgeSuffix = empty.slice(edgesOpen + 1);
-  const unresolvedPrefix = empty.slice(0, unresolvedOpen + 1);
-  const unresolvedSuffix = empty.slice(unresolvedOpen + 1);
+ * empty v2 chunk, and its envelope counts toward the cap too.
+ *
+ * The envelope is assembled from the ESCAPED scope values and a fixed structure;
+ * it is never located by searching the JSON for `"nodes"`/`[]`, because a legal
+ * id may itself contain those characters. Every node, edge, unresolved and empty
+ * chunk carries the same required scope. */
+export function serializeFileGraphChunks(graph: NormalizedFileGraph,
+  scope: ObservedFileGraphChunkScope, cap: number): string[] {
+  const head = '{"schemaVersion":2,"projectId":' + JSON.stringify(scope.projectId)
+    + ',"workspaceId":' + JSON.stringify(scope.workspaceId);
+  const nodePrefix = head + ',"nodes":[';
+  const nodeSuffix = '],"edges":[],"unresolved":[]}';
+  const edgePrefix = head + ',"nodes":[],"edges":[';
+  const edgeSuffix = '],"unresolved":[]}';
+  const unresolvedPrefix = head + ',"nodes":[],"edges":[],"unresolved":[';
+  const unresolvedSuffix = ']}';
   const packed = [
     packFileGraphChunks(nodePrefix, nodeSuffix, graph.nodes.map(node => JSON.stringify(node)), cap, true),
     packFileGraphChunks(edgePrefix, edgeSuffix, graph.edges.map(edge => JSON.stringify(edge)), cap, false),
@@ -437,6 +469,13 @@ function bindHostWriteContext(ctx: CoreCallContext, scope: WorkspaceScope):
   if (reader.projectId !== scope.projectId || reader.workspaceId !== scope.workspaceId) return forbidden('the host material reader is outside the requested workspace');
   if (!actorsAgree(reader.actor, actor)) return forbidden('the host principal and material reader disagree');
   return { status: 'ok', actor };
+}
+/** Read-side scope check: a read never widens to another project/workspace. */
+function ctxScopeProblem(ctx: CoreCallContext, scope: WorkspaceScope): Rejection | null {
+  if (!ctx || typeof ctx !== 'object') return forbidden('a bound call context is required');
+  if (ctx.projectId !== scope.projectId) return forbidden('the call context is outside the requested project');
+  if (ctx.workspaceId !== scope.workspaceId) return forbidden('the call context is outside the requested workspace');
+  return null;
 }
 
 // --------------------------------------------------------------------------
@@ -534,24 +573,38 @@ type ExportedFile = { path: string; digest: string };
 type LoadedObservation = {
   body: ObservedArchitectureBody;
   sourceCursor: CommitCursor;
+  /** The stored observation record's persisted ref (record `source`), read in
+   * the same load so callers never need a second record read for it. */
+  persistedRef: PersistedSourceCaptureRef;
   /** The capture's exported project inputs for change counting: v1 `body.files`,
    * v2 `isProjectInputPath(node.path)` over the chunk nodes (lead answer 10). */
   exportedFiles: ExportedFile[];
+  /** The one chunked file graph this load already assembled, so the L8 reminder
+   * read shares it between `latest`/`previous` and the formal comparison. */
+  fileGraph: LoadedFileGraph;
 };
+
+/** Existing callers pass the persisted capture ref; the L8 pointer only stores
+ * the observed aggregate ref, so the loader derives the persisted source from
+ * the record it reads instead of a second record read by the caller. */
+type ObservationLoadSelection = ObservedArchitectureSelection | { kind: 'observed'; ref: ObservedArchitectureRef };
 
 async function loadObservation(deps: {
   access: WorkspaceAccessFactory; bodies: RawArtifactStorePort; records: GoalRecordTransactionPort;
-}, ctx: CoreCallContext, selection: ObservedArchitectureSelection): Promise<{ status: 'ready'; value: LoadedObservation } | Rejection> {
-  const capture = selection.capture;
-  if (ctx.projectId !== capture.capture.projectId || ctx.workspaceId !== capture.capture.workspaceId) {
+}, ctx: CoreCallContext, selection: ObservationLoadSelection): Promise<{ status: 'ready'; value: LoadedObservation } | Rejection> {
+  const observationsRef: ObservedArchitectureRef = 'ref' in selection
+    ? selection.ref
+    : { aggregateType: 'ObservedArchitecture', projectId: selection.capture.capture.projectId,
+        workspaceId: selection.capture.capture.workspaceId, captureId: selection.capture.capture.captureId };
+  if (ctx.projectId !== observationsRef.projectId || ctx.workspaceId !== observationsRef.workspaceId) {
     return forbidden('the call context is outside the persisted observation workspace');
   }
-  const workspaceRef: WorkspaceRef = { aggregateType: 'Workspace', projectId: capture.capture.projectId, workspaceId: capture.capture.workspaceId };
+  const workspaceRef: WorkspaceRef = { aggregateType: 'Workspace', projectId: observationsRef.projectId, workspaceId: observationsRef.workspaceId };
   const opened = await deps.access.open(ctx, workspaceRef);
   if (opened.status !== 'ready') return mapWorkspaceFailure(opened);
   const access: WorkspaceReadAccess = opened.value;
   try {
-    const ref: ObservedArchitectureRef = { aggregateType: 'ObservedArchitecture', projectId: capture.capture.projectId, workspaceId: capture.capture.workspaceId, captureId: capture.capture.captureId };
+    const ref = observationsRef;
     const refKey = canonicalOf(ref);
     const read = await deps.records.readMany([refKey]);
     if (read.status !== 'ready') return mapStoreFailure(read);
@@ -559,6 +612,7 @@ async function loadObservation(deps: {
     if (encoded === undefined) return rejected('not_found', 'the persisted observation record does not exist');
     const decodedRecord = decodeObservedArchitectureRecord(encoded);
     if (decodedRecord.status !== 'decoded') return unavailable('the canonical observation record is damaged');
+    const capture = 'capture' in selection ? selection.capture : decodedRecord.value.source;
     if (canonicalOf(decodedRecord.value.source) !== canonicalOf(capture)) {
       return invalid('the persisted reference does not match the canonical observation record');
     }
@@ -596,7 +650,8 @@ async function loadObservation(deps: {
     if (body.architecture.configPath !== null && !access.authorization.allowsRead(body.architecture.configPath)) {
       return forbidden('the current Host grant does not cover the frozen source path ' + body.architecture.configPath);
     }
-    return { status: 'ready', value: { body, sourceCursor, exportedFiles } };
+    return { status: 'ready', value: { body, sourceCursor, persistedRef: decodedRecord.value.source,
+      exportedFiles, fileGraph: graph.value } };
   } finally {
     await access.release();
   }
@@ -645,14 +700,14 @@ async function readFileGraphChunks(deps: { bodies: RawArtifactStorePort }, acces
     const stored = raw.value;
     if (canonicalOf(stored.ref) !== canonicalOf(chunkRef)) return unavailable('the stored chunk ref does not match the persisted chunk ref');
     if (stored.origin.kind !== 'platform_operation' || stored.origin.projectId !== captureRef.projectId
-      || (stored.origin.workspaceId !== undefined && stored.origin.workspaceId !== captureRef.workspaceId)) {
+      || stored.origin.workspaceId !== captureRef.workspaceId) {
       return unavailable('the stored chunk origin is not this workspace platform observation');
     }
     if (artifactBodyDigest(stored.body) !== chunkRef.digest || artifactBodySize(stored.body) !== chunkRef.sizeBytes) {
       return unavailable('the stored chunk digest does not match the persisted chunk ref');
     }
     // Index pairs are validated against the manifest's global node count.
-    const chunk = decodeObservedFileGraphChunk(stored.body, manifest.nodeCount);
+    const chunk = decodeObservedFileGraphChunk(stored.body, captureRef, manifest.nodeCount);
     if (chunk.status !== 'decoded') return unavailable('the stored file graph chunk is damaged: ' + chunk.reason);
     chunks.push(chunk.value);
   }
@@ -726,6 +781,130 @@ async function restoreObservedCapture(records: GoalRecordTransactionPort, receip
 }
 
 // --------------------------------------------------------------------------
+// L8 auto-capture request record, pointer and observation state
+// --------------------------------------------------------------------------
+
+function autoCaptureRefOf(scope: WorkspaceScope): ArchitectureAutoCaptureRecordV1['ref'] {
+  return { aggregateType: 'ArchitectureAutoCapture', projectId: scope.projectId, workspaceId: scope.workspaceId };
+}
+function currentObservationRefOf(scope: WorkspaceScope): WorkspaceArchitectureObservationCurrentRef {
+  return { aggregateType: 'WorkspaceArchitectureObservationCurrent', projectId: scope.projectId, workspaceId: scope.workspaceId };
+}
+
+/** The request record is the START SNAPSHOT for a failure write, so every
+ * caller reads it exactly once through this helper. */
+async function readAutoCaptureRecord(records: GoalRecordTransactionPort, scope: WorkspaceScope):
+  Promise<{ status: 'ready'; value: ArchitectureAutoCaptureRecordV1 | null } | Rejection> {
+  const refKey = canonicalOf(autoCaptureRefOf(scope));
+  const read = await records.readMany([refKey]);
+  if (read.status !== 'ready') return mapStoreFailure(read);
+  const encoded = read.value.records.find(record => record.refKey === refKey);
+  if (encoded === undefined) return { status: 'ready', value: null };
+  const decoded = decodeArchitectureAutoCapture(encoded);
+  if (decoded.status !== 'decoded') return unavailable('the auto-capture request record is damaged');
+  return { status: 'ready', value: decoded.value };
+}
+
+async function readCurrentObservationPointer(records: GoalRecordTransactionPort, scope: WorkspaceScope):
+  Promise<{ status: 'ready'; value: WorkspaceArchitectureObservationCurrentRecord | null } | Rejection> {
+  const ref = currentObservationRefOf(scope);
+  const refKey = canonicalOf(ref);
+  const read = await records.readMany([refKey]);
+  if (read.status !== 'ready') return mapStoreFailure(read);
+  const encoded = read.value.records.find(record => record.refKey === refKey);
+  if (encoded === undefined) return { status: 'ready', value: null };
+  const decoded = decodeObservationCurrent(encoded);
+  if (decoded.status !== 'decoded') return unavailable('the current observation pointer is damaged');
+  return { status: 'ready', value: decoded.value };
+}
+
+async function readObservationRecord(records: GoalRecordTransactionPort, ref: ObservedArchitectureRef):
+  Promise<{ status: 'ready'; value: ObservedArchitectureRecord } | Rejection> {
+  const refKey = canonicalOf(ref);
+  const read = await records.readMany([refKey]);
+  if (read.status !== 'ready') return mapStoreFailure(read);
+  const encoded = read.value.records.find(record => record.refKey === refKey);
+  if (encoded === undefined) return rejected('not_found', 'the persisted observation record does not exist');
+  const decoded = decodeObservedArchitectureRecord(encoded);
+  if (decoded.status !== 'decoded') return unavailable('the canonical observation record is damaged');
+  return { status: 'ready', value: decoded.value };
+}
+
+type ObservationStateBasis = {
+  pointer: WorkspaceArchitectureObservationCurrentRecord | null;
+  request: ArchitectureAutoCaptureRecordV1 | null;
+};
+
+/** The reads shared by `observationState` and `readReminderFacts`: the pointer
+ * (one read) and the request record (one read). `observationState` adds the
+ * current observation record for `observedAt`/`persistedRef` and, when the
+ * pointer has a previous one, that record for `previousPersistedRef`;
+ * `readReminderFacts` loads each observation once through `loadObservation`,
+ * which already includes the chunk graph it shares with the comparison. */
+async function readObservationStateBasis(records: GoalRecordTransactionPort, scope: WorkspaceScope):
+  Promise<{ status: 'ready'; value: ObservationStateBasis } | Rejection> {
+  const pointer = await readCurrentObservationPointer(records, scope);
+  if (pointer.status !== 'ready') return pointer;
+  const request = await readAutoCaptureRecord(records, scope);
+  if (request.status !== 'ready') return request;
+  return { status: 'ready', value: { pointer: pointer.value, request: request.value } };
+}
+
+/** The accepted "persisted ref" suggestion: the state carries the observation
+ * record's stored ref for `current` and `previous` so a caller can query without
+ * a replay. Both values come from observation records the caller already reads. */
+function observationStateOf(basis: ObservationStateBasis,
+  current: { observedAt: string; persistedRef: PersistedSourceCaptureRef } | null,
+  previousPersistedRef: PersistedSourceCaptureRef | null): ArchitectureObservationStateV1 {
+  const { pointer, request } = basis;
+  return {
+    current: pointer === null || current === null
+      ? null
+      : { captureRef: pointer.observedRef, persistedRef: current.persistedRef, observedAt: current.observedAt },
+    previous: pointer?.previousObservedRef ?? null,
+    previousPersistedRef: pointer?.previousObservedRef === null || pointer?.previousObservedRef === undefined
+      ? null : previousPersistedRef,
+    autoCapture: architectureAutoCaptureState(request, pointer?.satisfiedRequestSeq ?? 0),
+  };
+}
+
+function makeAutoCaptureEvent(
+  eventType: typeof ARCHITECTURE_AUTO_CAPTURE_REQUESTED_EVENT | typeof ARCHITECTURE_AUTO_CAPTURE_FAILED_EVENT,
+  record: ArchitectureAutoCaptureRecordV1, occurredAt: string, requestId: string, identityKey: string, actor: ActorRef,
+): ArchitectureAutoCaptureEventV1 {
+  return {
+    eventId: randomUUID(), eventType, schemaVersion: 1,
+    projectId: record.ref.projectId, workspaceId: record.ref.workspaceId,
+    aggregateType: 'ArchitectureAutoCapture', aggregateId: record.workspace.workspaceId,
+    aggregateRevision: record.revision, causationId: identityKey, correlationId: requestId,
+    idempotencyKey: requestId, actor, occurredAt,
+    payload: { record },
+  };
+}
+
+async function restoreAutoCapture(records: GoalRecordTransactionPort,
+  receipt: Extract<Awaited<ReturnType<GoalRecordTransactionPort['commit']>>, { status: 'committed' }>,
+  expected: { identityKey: string; projectId: string; workspaceId: string; idempotencyKey: string; actor: ActorRef }):
+  Promise<{ status: 'restored'; value: ArchitectureAutoCaptureRecordV1 } | Rejection> {
+  if (receipt.identityKey !== expected.identityKey) return unavailable('the idempotency receipt belongs to another identity');
+  if (receipt.eventIds.length !== 1) return unavailable('the auto-capture receipt must reference exactly one event');
+  const located = await records.eventAt(receipt.cursor);
+  if (located.status !== 'ready') return mapStoreFailure(located);
+  if (String(located.value.cursor) !== String(receipt.cursor)) return unavailable('eventAt returned a different cursor');
+  const decoded = decodeArchitectureAutoCaptureEvent(located.value.event);
+  if (decoded.status !== 'decoded') return unavailable('the original auto-capture event is corrupt: ' + decoded.reason);
+  const event = decoded.value;
+  if (event.eventId !== receipt.eventIds[0]) return unavailable('the receipt points at another event');
+  if (event.projectId !== expected.projectId || event.workspaceId !== expected.workspaceId) {
+    return unavailable('the original auto-capture event is outside the recovered scope');
+  }
+  if (event.idempotencyKey !== expected.idempotencyKey || !actorsAgree(event.actor, expected.actor)) {
+    return unavailable('the original auto-capture event carries another identity');
+  }
+  return { status: 'restored', value: event.payload.record };
+}
+
+// --------------------------------------------------------------------------
 // The service
 // --------------------------------------------------------------------------
 
@@ -757,7 +936,16 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     }
   }
 
-  async function captureSourceChanges(ctx: CoreCallContext, request: { input: { workspace: WorkspaceScope; mappings: ArchitectureSourceMapping[]; previous: PersistedSourceCaptureRef | null }; meta: { requestId: string; expected: readonly VersionPin[] } }): Promise<WriteResult<PersistedSourceCaptureRef>> {
+  async function captureSourceChanges(ctx: CoreCallContext, request: { input: { workspace: WorkspaceScope; mappings?: ArchitectureSourceMapping[]; previous?: PersistedSourceCaptureRef | null; requestSeq?: number }; meta: { requestId: string; expected: readonly VersionPin[] } }): Promise<WriteResult<PersistedSourceCaptureRef>> {
+    // Ruling 2: before this call holds its own committed receipt, a throw or
+    // rejection with the caller's signal set is a cancellation; after the
+    // receipt the committed result (or the late restore's own failure/throw)
+    // stands. No lost-reply recovery is added.
+    let hasCommittedReceipt = false;
+    // Rework 3 ruling 2: a throw after the capture must be judged when it is
+    // caught, before the finally cleanup; the cleanup never rewrites it.
+    let decidedBeforeCleanup = false;
+    try {
     // Synchronous input isolation: a caller mutating the request after this call cannot change the capture.
     const owned = ownJsonInput(request, 'captureSourceChanges request');
     if (owned.status === 'invalid') return invalid(owned.reason);
@@ -768,14 +956,32 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     if (!isRecord(rawInput) || !isRecord(rawMeta)) return invalid('captureSourceChanges requires an input and meta object');
     const scope = readWorkspaceScope(rawInput['workspace']);
     if (scope === null) return invalid('captureSourceChanges requires a project/workspace scope');
-    const mappings = readMappings(rawInput['mappings']);
-    if (mappings === null) return invalid('captureSourceChanges requires explicit module/interface mappings');
+    // Book ruling 6: `mappings` is OPTIONAL. An explicit value (including `[]`)
+    // is validated now and kept exactly; an omitted one is resolved after the
+    // idempotency replay from the ACTIVE catalog.
+    const mappingsRaw = rawInput['mappings'];
+    let callerMappings: ArchitectureSourceMapping[] | undefined;
+    if (mappingsRaw !== undefined) {
+      const parsedMappings = readMappings(mappingsRaw);
+      if (parsedMappings === null) return invalid('captureSourceChanges mappings must be complete module/interface mappings');
+      callerMappings = parsedMappings;
+    }
+    const requestSeqRaw = rawInput['requestSeq'];
+    if (requestSeqRaw !== undefined && !safeInteger(requestSeqRaw)) {
+      return invalid('captureSourceChanges requestSeq must be a safe non-negative integer');
+    }
+    const explicitRequestSeq = requestSeqRaw === undefined ? null : requestSeqRaw as number;
+    // Accepted suggestion "previous ref at start": `undefined` (omitted) is not
+    // `null`; only the omitted case reads the pointer at capture entry.
     const previousRaw = rawInput['previous'];
-    let previous: PersistedSourceCaptureRef | null = null;
-    if (previousRaw !== null) {
-      const parsed = readPersistedSourceCaptureRef(previousRaw);
-      if (parsed === null) return invalid('previous must be null or a complete persisted source capture ref');
-      previous = parsed;
+    let callerPrevious: PersistedSourceCaptureRef | null | undefined;
+    if (previousRaw !== undefined) {
+      if (previousRaw === null) callerPrevious = null;
+      else {
+        const parsed = readPersistedSourceCaptureRef(previousRaw);
+        if (parsed === null) return invalid('previous must be null or a complete persisted source capture ref');
+        callerPrevious = parsed;
+      }
     }
     const requestId = rawMeta['requestId'];
     if (!nonEmpty(requestId)) return invalid('captureSourceChanges requires meta.requestId');
@@ -785,15 +991,25 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     if (pins.status !== 'ok') return pins;
 
     const identityKey = CAPTURE_IDENTITY_PREFIX + commandIdentityKey({ projectId: scope.projectId, actor: bound.actor, idempotencyKey: requestId });
-    // The fingerprint covers only caller-command facts (scope, mappings, previous, expected pins),
-    // never the trusted Host capture route: a later config change must replay the original receipt.
+    // The fingerprint covers only caller-command facts (scope, the CALLER's mappings and previous, expected pins
+    // and the explicit request sequence), never the trusted Host capture route or the mappings/previous the server
+    // resolves: absent stays absent, so a replay and the first run share one fingerprint.
     const fingerprint = sha256Hex(canonicalJson({ schemaVersion: 1, commandType: 'CaptureObservedArchitecture',
-      projectId: scope.projectId, workspaceId: scope.workspaceId, mappings, previous, expected: pins.pins } as unknown as JsonValue));
+      projectId: scope.projectId, workspaceId: scope.workspaceId,
+      ...(callerMappings === undefined ? {} : { mappings: callerMappings }),
+      ...(callerPrevious === undefined ? {} : { previous: callerPrevious }),
+      requestSeq: explicitRequestSeq,
+      expected: pins.pins } as unknown as JsonValue));
     const expected = { identityKey, projectId: scope.projectId, workspaceId: scope.workspaceId, idempotencyKey: requestId, actor: bound.actor };
 
     const early = await records.lookupCommit({ identityKey, fingerprint });
+    // Ruling 5: an early replay only looks up and restores an earlier commit;
+    // after each await the caller's signal wins and the earlier commit is
+    // untouched. The normal commit boundary below is unchanged.
+    if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled before replay');
     if (early.status === 'ready') {
       const restored = await restoreObservedCapture(records, early.value, expected);
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled before replay');
       if (restored.status !== 'restored') return restored;
       return { status: 'committed', value: restored.value, replayed: true, cursor: early.value.cursor };
     }
@@ -802,16 +1018,64 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     if (source.provider !== 'typescript' || (source.configPath !== null && typeof source.configPath !== 'string')) return rejected('unsupported', 'the configured architecture source provider is not installed');
     if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled before capture');
 
+    // Book ruling 6: the ONE mapping rule. Without an active catalog the module
+    // layer is `[]` (file layer only); a service built without the catalog
+    // dependency rejects an omitted `mappings` instead of silently using `[]`.
+    let mappings: ArchitectureSourceMapping[];
+    if (callerMappings !== undefined) mappings = callerMappings;
+    else if (deps.catalog === undefined) {
+      return rejected('unsupported', 'captureSourceChanges without mappings requires the architecture catalog');
+    } else {
+      const revision = await deps.catalog.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
+      if (revision.status === 'not_found') mappings = [];
+      else if (revision.status === 'ready') {
+        mappings = revision.value.catalog === null ? [] : moduleMappingsOf(revision.value.catalog.catalog);
+      } else if (revision.status === 'rejected') return revision;
+      else return unavailable('the active architecture catalog revision is not readable');
+    }
+
+    // Ruling 3: fix the start watermark at ENTRY, before the capture runs. The
+    // driver supplies its start-snapshot requestSeq; a manual capture reads the
+    // request record once; without a record the watermark is 0.
+    let startWatermark = explicitRequestSeq;
+    if (startWatermark === null) {
+      const request = await readAutoCaptureRecord(records, scope);
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
+      if (request.status !== 'ready') return request;
+      startWatermark = request.value?.requestSeq ?? 0;
+    }
+
     const canonical = await readCanonicalScope(records, scope);
+    if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
     if (canonical.status !== 'ready') return canonical;
     const pinConflict = compareExpectedPins(scope, pins.pins, canonical.projectRevision, canonical.workspaceRevision);
     if (pinConflict !== null) return pinConflict;
+    // Accepted suggestion "previous ref at start": the pointer is read once, and
+    // the observation it names is loaded ONCE here (its persisted ref and files
+    // are both reused below); `previous: null` never reads the pointer.
+    let previous: PersistedSourceCaptureRef | null;
     let priorFiles: ExportedFile[] | null = null;
-    if (previous !== null) {
+    if (callerPrevious !== undefined) previous = callerPrevious;
+    else {
+      const pointer = await readCurrentObservationPointer(records, scope);
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
+      if (pointer.status !== 'ready') return pointer;
+      if (pointer.value === null) previous = null;
+      else {
+        const prior = await loadObservation(deps, ctx, { kind: 'observed', ref: pointer.value.observedRef });
+        if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
+        if (prior.status !== 'ready') return prior;
+        previous = prior.value.persistedRef;
+        priorFiles = prior.value.exportedFiles;
+      }
+    }
+    if (priorFiles === null && previous !== null) {
       // The previous observation is a historical persisted read: it reuses the same Host-authorized
       // loader (current scope authorization, canonical ref/body digest/origin and per-path grants)
       // before any body is opened. It need not still be retained in this process.
       const prior = await loadObservation(deps, ctx, { kind: 'observed', capture: previous });
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       if (prior.status !== 'ready') return prior;
       priorFiles = prior.value.exportedFiles;
     }
@@ -823,18 +1087,25 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       ...(source.configPath === null ? {} : { configPath: source.configPath }),
     };
     const captured = await workspace.captureObservation(ctx, captureRequest);
-    if (captured.status !== 'ready') return mapWorkspaceFailure(captured);
+    if (captured.status !== 'ready') {
+      // A non-ready capture keeps today's precedence: cancellation first.
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
+      return mapWorkspaceFailure(captured);
+    }
     const captureRef = captured.value.ref;
     try {
-      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled before verification');
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       const verified = await workspace.verifyCapture(ctx, captureRef);
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       if (verified.status !== 'ready') return mapWorkspaceFailure(verified);
       const exported = await workspace.exportCapture(ctx, captureRef);
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       if (exported.status !== 'ready') return mapWorkspaceFailure(exported);
       // 8A file layer: capture it before the module mapping so a project with no
       // TS/JS sources never calls `mapArchitectureSource` with an empty source set
       // (task book item 8). The persisted module-level body is still written first.
       const fileGraphResult = await workspace.captureFileGraph(ctx, { capture: captureRef });
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       if (fileGraphResult.status !== 'ready') return mapWorkspaceFailure(fileGraphResult);
       const fileGraph = fileGraphResult.value;
       const tsCoverage = fileGraph.languages.find(language => language.language === 'typescript');
@@ -848,6 +1119,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
         ? await workspace.captureArchitectureSource(ctx, { capture: captureRef, mappings })
         : { status: 'ready' as const, value: emptyArchitectureSnapshot({ scope, capture: captureRef, mappings,
             configPath: exported.value.summary.coverage.projectConfiguration, commitHash: exported.value.summary.commitHash }) };
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       if (mapped.status !== 'ready') return mapWorkspaceFailure(mapped);
 
       // Body first: a failure after this point leaves an unreachable body, never a half-published observation.
@@ -886,14 +1158,15 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       // reject fails the whole capture here instead of being committed unreadable.
       let chunkBodies: string[];
       try {
-        chunkBodies = serializeFileGraphChunks(normalizedFileGraph, deps.fileGraph?.chunkBytes ?? ARTIFACT_MAX_SIZE_BYTES);
+        chunkBodies = serializeFileGraphChunks(normalizedFileGraph, scope,
+          deps.fileGraph?.chunkBytes ?? ARTIFACT_MAX_SIZE_BYTES);
       } catch (error) {
         if (error instanceof FileGraphChunkCapacityError) return rejected('capacity', error.message);
         throw error;
       }
       if (chunkBodies.length > 64) return rejected('capacity', 'the file graph needs ' + chunkBodies.length + ' chunks; the limit is 64');
       for (const chunkBody of chunkBodies) {
-        const chunkCheck = validateObservedFileGraphChunkV2(JSON.parse(chunkBody), normalizedFileGraph.nodes.length);
+        const chunkCheck = validateObservedFileGraphChunkV2(JSON.parse(chunkBody), scope, normalizedFileGraph.nodes.length);
         if (chunkCheck.status !== 'decoded') {
           return invalid('the assembled file graph chunk is not self-consistent: ' + chunkCheck.reason);
         }
@@ -901,6 +1174,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       const sourceRef: SourceRefV1 = { kind: 'workspace', refId: scope.workspaceId, revision: String(canonical.workspaceRevision), digest: captureRef.sourceDigest };
       const put = await bodies.put({ body: bodyJson, contentType: OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE,
         sourceRefs: [sourceRef], origin: { kind: 'platform_operation', projectId: scope.projectId, workspaceId: scope.workspaceId, requestId, actor: bound.actor }, requestedAt: observedAt });
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       if (put.status !== 'ready') return mapBodyPutFailure(put);
       const persistedRef: PersistedSourceCaptureRef = { capture: captureRef, material: put.value.ref };
 
@@ -911,6 +1185,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       for (const chunkBody of chunkBodies) {
         const chunkPut = await bodies.put({ body: chunkBody, contentType: FILE_GRAPH_CHUNK_CONTENT_TYPE,
           sourceRefs: [sourceRef], origin: { kind: 'platform_operation', projectId: scope.projectId, workspaceId: scope.workspaceId, requestId, actor: bound.actor }, requestedAt: observedAt });
+        if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
         if (chunkPut.status !== 'ready') return mapBodyPutFailure(chunkPut);
         chunkRefs.push(chunkPut.value.ref);
       }
@@ -921,6 +1196,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
 
       // A second live verification: if the source moved after the immutable body was saved, do not publish the pointer.
       const recheck = await workspace.verifyCapture(ctx, captureRef);
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       if (recheck.status !== 'ready') return mapWorkspaceFailure(recheck);
 
       const observedRef: ObservedArchitectureRef = { aggregateType: 'ObservedArchitecture', projectId: scope.projectId,
@@ -931,17 +1207,27 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       const currentRef: WorkspaceArchitectureObservationCurrentRef = { aggregateType: 'WorkspaceArchitectureObservationCurrent',
         projectId: scope.projectId, workspaceId: scope.workspaceId };
       const currentRead = await records.readMany([canonicalOf(currentRef)]);
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       if (currentRead.status !== 'ready') return mapStoreFailure(currentRead);
       const currentEncoded = currentRead.value.records.find(record => record.refKey === canonicalOf(currentRef));
       let currentRevision: number | null = null;
+      let currentObservedRef: ObservedArchitectureRef | null = null;
+      let currentSatisfiedRequestSeq = 0;
       if (currentEncoded !== undefined) {
         const decoded = decodeObservationCurrent(currentEncoded);
         if (decoded.status !== 'decoded') return unavailable('the current observation pointer is damaged');
         currentRevision = decoded.value.revision;
+        currentObservedRef = decoded.value.observedRef;
+        currentSatisfiedRequestSeq = decoded.value.satisfiedRequestSeq;
       }
       if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled before commit');
+      // Rulings 3 and 7: the pointer also records the observation it replaces and
+      // the highest start watermark it satisfies. `max` keeps a manual capture that
+      // started earlier and commits later from lowering a newer automatic one.
       const nextCurrent: WorkspaceArchitectureObservationCurrentRecord = { ref: currentRef,
-        revision: (currentRevision ?? 0) + 1, schemaVersion: 1, observedRef };
+        revision: (currentRevision ?? 0) + 1, schemaVersion: 1, observedRef,
+        previousObservedRef: currentObservedRef,
+        satisfiedRequestSeq: Math.max(currentSatisfiedRequestSeq, startWatermark) };
       const guards: RecordGuard[] = [
         { refKey: canonicalRefKey(projectRefFor(scope.projectId)), expectedRevision: canonical.projectRevision },
         { refKey: canonicalRefKey(workspaceRefFor(scope.projectId, scope.workspaceId)), expectedRevision: canonical.workspaceRevision },
@@ -957,15 +1243,325 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       const committed = await records.commit({ identityKey, fingerprint, guards,
         records: [encodeObservedArchitecture(observedRecord), encodeObservationCurrent(nextCurrent)], claims: [],
         indexGuards: [], indexChanges: [], events: [encodeArchitectureSourceObservedEvent(event)] });
-      if (committed.status !== 'committed') return mapStoreFailure(committed);
+      if (committed.status !== 'committed') {
+        // Ruling 2: a commit that did not commit, with the signal set by then,
+        // is a cancellation (no retry exists here); otherwise today's mapping.
+        if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled before the commit completed');
+        return mapStoreFailure(committed);
+      }
+      hasCommittedReceipt = true;
       if (!committed.replayed) return { status: 'committed', value: persistedRef, replayed: false, cursor: committed.cursor };
       const restored = await restoreObservedCapture(records, committed, expected);
       if (restored.status !== 'restored') return restored;
       return { status: 'committed', value: restored.value, replayed: true, cursor: committed.cursor };
+    } catch (error) {
+      // Rework 3 ruling 2: decide cancelled versus the throw HERE, when it is
+      // caught, before the cleanup runs; the cleanup cannot change the result.
+      decidedBeforeCleanup = true;
+      if (!hasCommittedReceipt && ctx?.signal?.aborted) return rejected('cancelled', 'the observation was cancelled');
+      throw error;
     } finally {
       // Release the temporary capture on every outcome after publication; the durable observation is the body.
       await releaseCaptureQuietly(workspace, ctx, captureRef);
     }
+    } catch (error) {
+      if (!decidedBeforeCleanup && !hasCommittedReceipt && ctx?.signal?.aborted) return rejected('cancelled', 'the observation was cancelled');
+      throw error;
+    }
+  }
+
+  async function requestAutoCapture(ctx: CoreCallContext, request: { input: { workspace: WorkspaceScope; trigger: AutoCaptureTriggerV1; requestedAt: string }; meta: { requestId: string; expected: readonly VersionPin[] } }): Promise<WriteResult<ArchitectureAutoCaptureRecordV1>> {
+    // Ruling 2: a throw/rejection before this call holds its own committed
+    // receipt is cancelled when the caller's signal is set; after the receipt
+    // the committed result stands.
+    let hasCommittedReceipt = false;
+    try {
+    const owned = ownJsonInput(request, 'requestAutoCapture request');
+    if (owned.status === 'invalid') return invalid(owned.reason);
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'the auto-capture request was cancelled before admission');
+    const body = owned.value as unknown as { input?: unknown; meta?: unknown };
+    if (!isRecord(body.input) || !isRecord(body.meta)) return invalid('requestAutoCapture requires an input and meta object');
+    const scope = readWorkspaceScope(body.input['workspace']);
+    if (scope === null) return invalid('requestAutoCapture requires a project/workspace scope');
+    const trigger = body.input['trigger'];
+    if (!isAutoCaptureTrigger(trigger)) return invalid('requestAutoCapture requires a known trigger');
+    const requestedAt = body.input['requestedAt'];
+    if (!nonEmpty(requestedAt)) return invalid('requestAutoCapture requires a non-empty requestedAt');
+    const requestId = body.meta['requestId'];
+    if (!nonEmpty(requestId)) return invalid('requestAutoCapture requires meta.requestId');
+    const bound = bindHostWriteContext(ctx, scope);
+    if (bound.status !== 'ok') return bound;
+
+    const identityKey = AUTO_CAPTURE_REQUEST_IDENTITY_PREFIX
+      + commandIdentityKey({ projectId: scope.projectId, actor: bound.actor, idempotencyKey: requestId });
+    const fingerprint = sha256Hex(canonicalJson({ schemaVersion: 1, commandType: 'RequestArchitectureAutoCapture',
+      projectId: scope.projectId, workspaceId: scope.workspaceId, trigger, requestedAt } as unknown as JsonValue));
+    const expected = { identityKey, projectId: scope.projectId, workspaceId: scope.workspaceId,
+      idempotencyKey: requestId, actor: bound.actor };
+    const early = await records.lookupCommit({ identityKey, fingerprint });
+    // Ruling 5: after every await the caller's signal wins unless this call's
+    // own commit has already completed. An early replay only looks up and
+    // restores an earlier commit, so it must not report that commit after a
+    // cancellation; the earlier commit itself is untouched.
+    if (ctx.signal.aborted) return rejected('cancelled', 'the auto-capture request was cancelled');
+    if (early.status === 'ready') {
+      const restored = await restoreAutoCapture(records, early.value, expected);
+      if (ctx.signal.aborted) return rejected('cancelled', 'the auto-capture request was cancelled');
+      if (restored.status !== 'restored') return restored;
+      return { status: 'committed', value: restored.value, replayed: true, cursor: early.value.cursor };
+    }
+    if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
+    if (early.code !== 'not_found') return unavailable(early.code + ': ' + early.reason);
+
+    // Ruling 3: read the current record once per attempt, build the next request
+    // from it, and guard that exact revision. A conflict means another writer
+    // accepted a newer request first, so re-read and retry a few times.
+    let conflict: Rejection | null = null;
+    for (let attempt = 0; attempt < AUTO_CAPTURE_REQUEST_ATTEMPTS; attempt += 1) {
+      const current = await readAutoCaptureRecord(records, scope);
+      if (ctx.signal.aborted) return rejected('cancelled', 'the auto-capture request was cancelled');
+      if (current.status !== 'ready') return current;
+      const record = newArchitectureCaptureRequestRecord({ current: current.value, workspace: scope, trigger, requestedAt });
+      const guards: RecordGuard[] = [{ refKey: canonicalOf(record.ref), expectedRevision: current.value?.revision ?? null }];
+      // Ruling 3: a requested event happens at the caller's requested time; a
+      // failed one at the real time the failure is written (the record keeps
+      // the original `requestedAt`).
+      const event = makeAutoCaptureEvent(ARCHITECTURE_AUTO_CAPTURE_REQUESTED_EVENT, record, record.requestedAt,
+        requestId, identityKey, bound.actor);
+      // Ruling 5: the signal is checked immediately before the commit starts;
+      // a commit that already completed keeps its committed result.
+      if (ctx.signal.aborted) return rejected('cancelled', 'the auto-capture request was cancelled');
+      const committed = await records.commit({ identityKey, fingerprint, guards,
+        records: [encodeArchitectureAutoCapture(record)], claims: [], indexGuards: [], indexChanges: [],
+        events: [encodeArchitectureAutoCaptureEvent(event)] });
+      if (committed.status === 'committed') {
+        hasCommittedReceipt = true;
+        if (!committed.replayed) return { status: 'committed', value: record, replayed: false, cursor: committed.cursor };
+        const restored = await restoreAutoCapture(records, committed, expected);
+        if (restored.status !== 'restored') return restored;
+        return { status: 'committed', value: restored.value, replayed: true, cursor: committed.cursor };
+      }
+      // Ruling 2: a commit that did not commit, with the signal set by then,
+      // is a cancellation with NO conflict retry; otherwise today's mapping
+      // and bounded retry stay.
+      if (ctx.signal.aborted) return rejected('cancelled', 'the auto-capture request was cancelled');
+      if (committed.code !== 'revision_conflict') return mapStoreFailure(committed);
+      conflict = rejected('revision_conflict', committed.reason);
+    }
+    return conflict ?? unavailable('the auto-capture request did not commit');
+    } catch (error) {
+      if (!hasCommittedReceipt && ctx?.signal?.aborted) return rejected('cancelled', 'the auto-capture request was cancelled');
+      throw error;
+    }
+  }
+
+  async function failAutoCapture(ctx: CoreCallContext, request: { input: { workspace: WorkspaceScope; expectedRevision: number; failure: ArchitectureAutoCaptureFailureV1 }; meta: { requestId: string; expected: readonly VersionPin[] } }): Promise<WriteResult<ArchitectureAutoCaptureRecordV1>> {
+    // Ruling 2: a throw/rejection before this call holds its own committed
+    // receipt is cancelled when the caller's signal is set; after the receipt
+    // the committed result stands.
+    let hasCommittedReceipt = false;
+    try {
+    const owned = ownJsonInput(request, 'failAutoCapture request');
+    if (owned.status === 'invalid') return invalid(owned.reason);
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'the auto-capture failure write was cancelled before admission');
+    const body = owned.value as unknown as { input?: unknown; meta?: unknown };
+    if (!isRecord(body.input) || !isRecord(body.meta)) return invalid('failAutoCapture requires an input and meta object');
+    const scope = readWorkspaceScope(body.input['workspace']);
+    if (scope === null) return invalid('failAutoCapture requires a project/workspace scope');
+    const expectedRevision = body.input['expectedRevision'];
+    if (!safeInteger(expectedRevision)) return invalid('failAutoCapture requires a safe non-negative expectedRevision');
+    const failure = readAutoCaptureFailure(body.input['failure']);
+    if (failure === null) return invalid('failAutoCapture requires a {code, reason} failure');
+    const requestId = body.meta['requestId'];
+    if (!nonEmpty(requestId)) return invalid('failAutoCapture requires meta.requestId');
+    const bound = bindHostWriteContext(ctx, scope);
+    if (bound.status !== 'ok') return bound;
+
+    const identityKey = AUTO_CAPTURE_FAILED_IDENTITY_PREFIX
+      + commandIdentityKey({ projectId: scope.projectId, actor: bound.actor, idempotencyKey: requestId });
+    const fingerprint = sha256Hex(canonicalJson({ schemaVersion: 1, commandType: 'FailArchitectureAutoCapture',
+      projectId: scope.projectId, workspaceId: scope.workspaceId, expectedRevision, failure } as unknown as JsonValue));
+    const expected = { identityKey, projectId: scope.projectId, workspaceId: scope.workspaceId,
+      idempotencyKey: requestId, actor: bound.actor };
+    const early = await records.lookupCommit({ identityKey, fingerprint });
+    // Ruling 4 + 5: the failure write belongs to the running round. After each
+    // await its signal wins; an early replay that only restores an earlier
+    // failed commit must not report it after a cancellation, and the earlier
+    // commit is untouched.
+    if (ctx.signal.aborted) return rejected('cancelled', 'the auto-capture failure write was cancelled');
+    if (early.status === 'ready') {
+      const restored = await restoreAutoCapture(records, early.value, expected);
+      if (ctx.signal.aborted) return rejected('cancelled', 'the auto-capture failure write was cancelled');
+      if (restored.status !== 'restored') return restored;
+      return { status: 'committed', value: restored.value, replayed: true, cursor: early.value.cursor };
+    }
+    if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
+    if (early.code !== 'not_found') return unavailable(early.code + ': ' + early.reason);
+
+    // Ruling 3: the start snapshot is read once here; a stale guard revision
+    // returns a conflict and writes NOTHING - it never re-reads and forces
+    // `failed` over a newer request.
+    const snapshot = await readAutoCaptureRecord(records, scope);
+    if (ctx.signal.aborted) return rejected('cancelled', 'the auto-capture failure write was cancelled');
+    if (snapshot.status !== 'ready') return snapshot;
+    if (snapshot.value === null) return rejected('not_found', 'the auto-capture request record does not exist');
+    if (snapshot.value.revision !== expectedRevision) {
+      return rejected('revision_conflict', 'the auto-capture request record revision has changed');
+    }
+    const record = newArchitectureCaptureFailureRecord({ current: snapshot.value, failure });
+    // Lead ruling: the `failed` event's occurredAt is the REAL time the failure
+    // is written; only the event carries it (the record keeps `requestedAt`).
+    const event = makeAutoCaptureEvent(ARCHITECTURE_AUTO_CAPTURE_FAILED_EVENT, record, new Date().toISOString(),
+      requestId, identityKey, bound.actor);
+    // Ruling 5: check immediately before the commit starts; a commit that has
+    // already completed keeps its committed result.
+    if (ctx.signal.aborted) return rejected('cancelled', 'the auto-capture failure write was cancelled');
+    const committed = await records.commit({ identityKey, fingerprint,
+      guards: [{ refKey: canonicalOf(record.ref), expectedRevision }],
+      records: [encodeArchitectureAutoCapture(record)], claims: [], indexGuards: [], indexChanges: [],
+      events: [encodeArchitectureAutoCaptureEvent(event)] });
+    if (committed.status !== 'committed') {
+      // Ruling 2: a commit that did not commit, with the signal set by then,
+      // is a cancellation; otherwise today's mapping stays.
+      if (ctx.signal.aborted) return rejected('cancelled', 'the auto-capture failure write was cancelled');
+      return mapStoreFailure(committed);
+    }
+    hasCommittedReceipt = true;
+    if (!committed.replayed) return { status: 'committed', value: record, replayed: false, cursor: committed.cursor };
+    const restored = await restoreAutoCapture(records, committed, expected);
+    if (restored.status !== 'restored') return restored;
+    return { status: 'committed', value: restored.value, replayed: true, cursor: committed.cursor };
+    } catch (error) {
+      if (!hasCommittedReceipt && ctx?.signal?.aborted) return rejected('cancelled', 'the auto-capture failure write was cancelled');
+      throw error;
+    }
+  }
+
+  async function readAutoCapture(ctx: CoreCallContext, input: { workspace: WorkspaceScope }): Promise<ReadResult<ArchitectureAutoCaptureRecordV1 | null>> {
+    // Ruling 3: a read that throws/rejects while the caller's signal is set is
+    // a cancellation; the ready return is also checked again below.
+    try {
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'the auto-capture read was cancelled');
+    const owned = ownJsonInput(input, 'readAutoCapture input');
+    if (owned.status === 'invalid') return invalid(owned.reason);
+    const raw = owned.value as unknown as Record<string, unknown>;
+    const scope = readWorkspaceScope(raw['workspace']);
+    if (scope === null) return invalid('readAutoCapture requires a project/workspace scope');
+    const problem = ctxScopeProblem(ctx, scope);
+    if (problem !== null) return problem;
+    const read = await readAutoCaptureRecord(records, scope);
+    // Ruling 5: the read never reports `ready` after its await when the
+    // caller's signal was set while it was in flight.
+    if (ctx.signal.aborted) return rejected('cancelled', 'the auto-capture read was cancelled');
+    return read;
+    } catch (error) {
+      if (ctx?.signal?.aborted) return rejected('cancelled', 'the auto-capture read was cancelled');
+      throw error;
+    }
+  }
+
+  async function observationState(ctx: CoreCallContext, input: { workspace: WorkspaceScope }): Promise<ReadResult<ArchitectureObservationStateV1>> {
+    // Ruling 3: a read that throws/rejects while the caller's signal is set is
+    // a cancellation; the ready return is also checked again below.
+    try {
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'the observation-state read was cancelled');
+    const owned = ownJsonInput(input, 'observationState input');
+    if (owned.status === 'invalid') return invalid(owned.reason);
+    const raw = owned.value as unknown as Record<string, unknown>;
+    const scope = readWorkspaceScope(raw['workspace']);
+    if (scope === null) return invalid('observationState requires a project/workspace scope');
+    const problem = ctxScopeProblem(ctx, scope);
+    if (problem !== null) return problem;
+    // Ruling 8 + accepted "persisted ref" suggestion: pointer (one read) + the
+    // current observation record for `observedAt`/`persistedRef` (one, no extra
+    // read for the ref) + the request record (one, inside the shared basis).
+    // `previousPersistedRef` needs its own observation record read, and only
+    // when the pointer actually has a previous observation.
+    const basis = await readObservationStateBasis(records, scope);
+    // Ruling 5: after the basis read the caller's signal wins over ready.
+    if (ctx.signal.aborted) return rejected('cancelled', 'the observation-state read was cancelled');
+    if (basis.status !== 'ready') return basis;
+    let current: { observedAt: string; persistedRef: PersistedSourceCaptureRef } | null = null;
+    let previousPersistedRef: PersistedSourceCaptureRef | null = null;
+    if (basis.value.pointer !== null) {
+      const observed = await readObservationRecord(records, basis.value.pointer.observedRef);
+      if (ctx.signal.aborted) return rejected('cancelled', 'the observation-state read was cancelled');
+      if (observed.status !== 'ready') return observed;
+      current = { observedAt: observed.value.observedAt, persistedRef: observed.value.source };
+      if (basis.value.pointer.previousObservedRef !== null) {
+        const prior = await readObservationRecord(records, basis.value.pointer.previousObservedRef);
+        if (ctx.signal.aborted) return rejected('cancelled', 'the observation-state read was cancelled');
+        if (prior.status !== 'ready') return prior;
+        previousPersistedRef = prior.value.source;
+      }
+    }
+    // Ruling 5: also check immediately before the ready return.
+    if (ctx.signal.aborted) return rejected('cancelled', 'the observation-state read was cancelled');
+    return { status: 'ready', value: observationStateOf(basis.value, current, previousPersistedRef) };
+    } catch (error) {
+      if (ctx?.signal?.aborted) return rejected('cancelled', 'the observation-state read was cancelled');
+      throw error;
+    }
+  }
+
+  async function readReminderFacts(ctx: CoreCallContext, input: { workspace: WorkspaceScope; catalog: AdoptedArchitecture | null }): Promise<ReadResult<ArchitectureReminderFactsV1>> {
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'the architecture-reminder read was cancelled');
+    const owned = ownJsonInput(input, 'readReminderFacts input');
+    if (owned.status === 'invalid') return invalid(owned.reason);
+    const raw = owned.value as unknown as Record<string, unknown>;
+    const scope = readWorkspaceScope(raw['workspace']);
+    if (scope === null) return invalid('readReminderFacts requires a project/workspace scope');
+    const catalogRaw = raw['catalog'];
+    if (catalogRaw !== null && (!isRecord(catalogRaw) || !Array.isArray(catalogRaw['modules'])
+      || !Array.isArray(catalogRaw['dependencies']))) {
+      return invalid('readReminderFacts catalog must be null or an adopted catalog');
+    }
+    const catalog = catalogRaw as AdoptedArchitecture | null;
+    const problem = ctxScopeProblem(ctx, scope);
+    if (problem !== null) return problem;
+
+    // Ruling 12: the pointer and the request record once, then each observation
+    // ONCE through `loadObservation` (which already includes the chunk graph);
+    // the comparison and the moves share that one latest graph.
+    const basis = await readObservationStateBasis(records, scope);
+    // Ruling 5: after every await the caller's signal wins over `ready`, and a
+    // cancellation must not degrade into the reminder fallback.
+    if (ctx.signal.aborted) return rejected('cancelled', 'the architecture-reminder read was cancelled');
+    if (basis.status !== 'ready') return basis;
+    const { pointer } = basis.value;
+    let latest: ArchitectureReminderFactsV1['latest'] = null;
+    let latestGraph: LoadedFileGraph | null = null;
+    let current: { observedAt: string; persistedRef: PersistedSourceCaptureRef } | null = null;
+    if (pointer !== null) {
+      const loaded = await loadObservation(deps, ctx, { kind: 'observed', ref: pointer.observedRef });
+      if (ctx.signal.aborted) return rejected('cancelled', 'the architecture-reminder read was cancelled');
+      if (loaded.status !== 'ready') return loaded;
+      latest = { observedAt: loaded.value.body.observedAt,
+        nodes: loaded.value.fileGraph.nodes.map(node => ({ path: node.path, digest: node.digest })) };
+      latestGraph = loaded.value.fileGraph;
+      // The persisted ref comes from the record this load already read.
+      current = { observedAt: loaded.value.body.observedAt, persistedRef: loaded.value.persistedRef };
+    }
+    let previous: ArchitectureReminderFactsV1['previous'] = null;
+    let previousPersistedRef: PersistedSourceCaptureRef | null = null;
+    if (pointer !== null && pointer.previousObservedRef !== null) {
+      const loaded = await loadObservation(deps, ctx, { kind: 'observed', ref: pointer.previousObservedRef });
+      if (ctx.signal.aborted) return rejected('cancelled', 'the architecture-reminder read was cancelled');
+      if (loaded.status !== 'ready') return loaded;
+      previous = { observedAt: loaded.value.body.observedAt,
+        nodes: loaded.value.fileGraph.nodes.map(node => ({ path: node.path, digest: node.digest })) };
+      previousPersistedRef = loaded.value.persistedRef;
+    }
+    const findings = catalog === null || latestGraph === null ? [] : compareFormalObservedGraphs({
+      architecture: catalog,
+      fileGraph: { nodes: latestGraph.nodes, edges: latestGraph.edges, unresolved: latestGraph.unresolved,
+        languages: latestGraph.languages, complete: latestGraph.complete, inventory: latestGraph.inventory },
+    });
+    // Ruling 5: also check immediately before the ready return.
+    if (ctx.signal.aborted) return rejected('cancelled', 'the architecture-reminder read was cancelled');
+    return { status: 'ready', value: {
+      state: observationStateOf(basis.value, current, previousPersistedRef), catalog, latest, previous, findings,
+    } };
   }
 
   async function queryArchitecture(ctx: CoreCallContext, input: {
@@ -1154,6 +1750,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     return { status: 'ready', value: { catalog, captureRef, findings, noVerdict: true } };
   }
 
-  return { captureSourceChanges, queryArchitecture, compareArchitecture, queryImpact,
+  return { captureSourceChanges, requestAutoCapture, failAutoCapture, readAutoCapture, observationState,
+    readReminderFacts, queryArchitecture, compareArchitecture, queryImpact,
     listFiles, neighbors, impact, compareFormalObserved };
 }

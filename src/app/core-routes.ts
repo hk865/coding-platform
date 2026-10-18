@@ -99,6 +99,8 @@ export type CoreRouteBindings = {
   compareArchitecture: ObservedArchitecturePort['compareArchitecture'];
   compareFormalObserved: ObservedArchitecturePort['compareFormalObserved'];
   queryImpact: ObservedArchitecturePort['queryImpact'];
+  // L8 (book ruling 8): the one public observation state with computed pending.
+  observationState: ObservedArchitecturePort['observationState'];
   proposePlan: PlanTaskPort['proposePlan'];
   applyPlanChange: PlanTaskPort['applyPlanChange'];
   readPlanProposal: PlanTaskPort['readPlanProposal'];
@@ -354,6 +356,8 @@ export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
   'architecture/compare': { kind: 'plain', binding: 'compareArchitecture', owner: 'architecture.compareArchitecture' },
   'architecture/compare-formal': { kind: 'plain', binding: 'compareFormalObserved', owner: 'architecture.compareFormalObserved' },
   'architecture/impact': { kind: 'plain', binding: 'queryImpact', owner: 'architecture.queryImpact' },
+  // L8 (book ruling 8): the one public observation state; the tests' bounded wait.
+  'architecture/observation-state': { kind: 'plain', binding: 'observationState', owner: 'architecture.observationState' },
   'plans/propose': { kind: 'graph_write', binding: 'proposePlan', owner: 'plans.proposePlan' },
   'plans/apply': { kind: 'graph_write', binding: 'applyPlanChange', owner: 'plans.applyPlanChange' },
   'plans/proposal': { kind: 'plain', binding: 'readPlanProposal', owner: 'plans.readPlanProposal' },
@@ -533,6 +537,12 @@ export function parseCoreRouteRequest(suffix: CoreRouteSuffix, raw: unknown): Pa
       if (key !== 'input' && key !== 'meta') return invalid(`request may not carry "${key}"`);
     }
     if (!('input' in request)) return invalid('request.input is required');
+    // L8 (P16): `requestSeq` is the driver's trusted start watermark, not a
+    // public manual input; the manual capture reads the current request record.
+    if (suffix === 'architecture/capture' && isPlainObject(request.input)
+      && Object.prototype.hasOwnProperty.call(request.input, 'requestSeq')) {
+      return invalid('architecture/capture request.input may not carry "requestSeq"');
+    }
     const meta = request.meta;
     if (!isPlainObject(meta)) return invalid('request.meta must be an object');
     for (const key of Object.keys(meta)) {
@@ -654,6 +664,10 @@ export function createPlatformCoreRouteBindings(
     compareArchitecture: platform.architecture.compareArchitecture.bind(platform.architecture),
     compareFormalObserved: platform.architecture.compareFormalObserved.bind(platform.architecture),
     queryImpact: platform.architecture.queryImpact.bind(platform.architecture),
+    // L8: a narrow platform without the owner answers explicit `unsupported`.
+    observationState: platform.architecture.observationState === undefined
+      ? unsupported('the platform does not publish architecture.observationState')
+      : platform.architecture.observationState.bind(platform.architecture),
     proposePlan: platform.plans.proposePlan.bind(platform.plans),
     applyPlanChange: platform.plans.applyPlanChange.bind(platform.plans),
     readPlanProposal: platform.plans.readPlanProposal.bind(platform.plans),
@@ -914,6 +928,7 @@ export async function dispatchCoreRoute(
       case 'architecture/compare': return bindings.compareArchitecture(ctx, plain.input as never);
       case 'architecture/compare-formal': return bindings.compareFormalObserved(ctx, plain.input as never);
       case 'architecture/impact': return bindings.queryImpact(ctx, plain.input as never);
+      case 'architecture/observation-state': return bindings.observationState(ctx, plain.input as never);
       case 'plans/propose': return bindings.proposePlan(ctx, graphWrite.request as never);
       case 'plans/apply': return bindings.applyPlanChange(ctx, graphWrite.request as never);
       case 'plans/proposal': return bindings.readPlanProposal(ctx, plain.input as never);

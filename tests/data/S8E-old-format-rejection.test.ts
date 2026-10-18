@@ -13,6 +13,7 @@ import {
 } from '../../src/core/work-graph/architecture/architecture-record-codecs.js';
 
 const digest = (character: string): string => character.repeat(64);
+const SCOPE = { projectId: 'p1', workspaceId: 'w1' };
 
 const CAPTURE = {
   projectId: 'p1', workspaceId: 'w1', captureId: 'c1', workspaceRevision: 1,
@@ -51,8 +52,13 @@ const decodeRecord = (record: Record<string, unknown>) => decodeObservedArchitec
 it('rejects an earlier body, chunk and record shape instead of migrating it', () => {
   // The current shapes decode, so each rejection below is about the old shape.
   expect(decodeObservedArchitectureBody(JSON.stringify(body), [])).toMatchObject({ status: 'decoded' });
-  expect(decodeObservedFileGraphChunk(JSON.stringify({ schemaVersion: 2, nodes: [], edges: [], unresolved: [] })))
-    .toMatchObject({ status: 'decoded' });
+  expect(decodeObservedFileGraphChunk(JSON.stringify({
+    schemaVersion: 2, ...SCOPE, nodes: [], edges: [], unresolved: [],
+  }), SCOPE)).toMatchObject({ status: 'decoded' });
+  // The v2 chunk without the two scope fields is the earlier shape: rejected,
+  // never filled in from the record.
+  expect(decodeObservedFileGraphChunk(JSON.stringify({ schemaVersion: 2, nodes: [], edges: [], unresolved: [] }), SCOPE))
+    .toMatchObject({ status: 'invalid' });
   expect(decodeRecord(recordBase)).toMatchObject({ status: 'decoded' });
 
   // The 8A v1 body (`files` + a full capture summary + indexedSources) is invalid.
@@ -61,10 +67,10 @@ it('rejects an earlier body, chunk and record shape instead of migrating it', ()
 
   // The 8A v1 chunk (node/edge object shape, no unresolved list) and a v2 chunk
   // carrying a path-shaped edge instead of global index pairs are invalid.
-  expect(decodeObservedFileGraphChunk(JSON.stringify({ schemaVersion: 1, nodes: [], edges: [] })).status).toBe('invalid');
+  expect(decodeObservedFileGraphChunk(JSON.stringify({ schemaVersion: 1, nodes: [], edges: [] }), SCOPE).status).toBe('invalid');
   expect(decodeObservedFileGraphChunk(JSON.stringify({
-    schemaVersion: 2, nodes: [node], edges: [['a.ts', 'b.ts']], unresolved: [],
-  })).status).toBe('invalid');
+    schemaVersion: 2, ...SCOPE, nodes: [node], edges: [['a.ts', 'b.ts']], unresolved: [],
+  }), SCOPE).status).toBe('invalid');
 
   // A record missing any current required field is unreadable (not a migration
   // and not an empty success page).

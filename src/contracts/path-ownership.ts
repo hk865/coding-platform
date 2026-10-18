@@ -61,3 +61,40 @@ export function pathOwnershipOf<T>(path: string,
   if (owners.length > 1) return { status: 'tie', owners, prefix: bestPrefix };
   return { status: 'owner', owner: owners[0]!, prefix: bestPrefix };
 }
+
+/** The directory segments of a file path; its own last segment is never one. */
+function fileDirectorySegments(filePath: string): string[] {
+  const stripped = filePath.endsWith('/') ? filePath.slice(0, -1) : filePath;
+  if (stripped.length === 0 || stripped === '.') return [];
+  return stripped.split('/').filter(segment => segment.length > 0).slice(0, -1);
+}
+
+/** The segments of a candidate module path; `.` declares no directory segment. */
+function modulePathSegments(modulePath: string): string[] {
+  const stripped = modulePath.endsWith('/') ? modulePath.slice(0, -1) : modulePath;
+  if (stripped.length === 0 || stripped === '.') return [];
+  return stripped.split('/').filter(segment => segment.length > 0);
+}
+
+/**
+ * Number of common leading DIRECTORY segments of `filePath` and `modulePath`,
+ * at least 1 counts only; `.` scores 0; the file's own last segment is never a
+ * directory. Pure string measure: no filesystem and no `path` normalization.
+ */
+export function commonDirectoryPrefixLength(filePath: string, modulePath: string): number {
+  const file = fileDirectorySegments(filePath);
+  const module = modulePathSegments(modulePath);
+  let common = 0;
+  while (common < file.length && common < module.length && file[common] === module[common]) common += 1;
+  return common >= 1 ? common : 0;
+}
+
+/** The best score of any of the candidate module paths. */
+export function bestModuleDirectoryPrefixLength(filePath: string, modulePaths: readonly string[]): number {
+  let best = 0;
+  for (const modulePath of modulePaths) {
+    const score = commonDirectoryPrefixLength(filePath, modulePath);
+    if (score > best) best = score;
+  }
+  return best;
+}

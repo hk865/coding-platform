@@ -107,6 +107,11 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
     fields: 'all', use: 'state/task-machine.ts newTaskRequeueRecord' },
   { file: 'src/contracts/task-requeue.ts', name: 'TaskReworkRefusalSnapshotV1', kind: 'record',
     fields: 'all', use: 'state/task-failure.ts newTaskReworkRefusalRecord' },
+  // Slice 8 L8 (book ruling 3): the per-workspace automatic-capture request
+  // record; only its state-layer constructors and projection write it.
+  { file: 'src/contracts/architecture-observation.ts', name: 'ArchitectureAutoCaptureRecordV1', kind: 'record',
+    fields: ['status', 'failure', 'revision', 'requestSeq'],
+    use: 'state/architecture-capture.ts newArchitectureCaptureRequestRecord, newArchitectureCaptureFailureRecord or architectureAutoCaptureState' },
   { file: 'src/contracts/session-anomaly.ts', name: 'SessionAnomalyAnchorV1', kind: 'record',
     fields: 'all', use: 'state/session-anomaly.ts newSessionAnomalyAnchorRecord' },
   { file: 'src/contracts/control-intent.ts', name: 'ControlIntentSnapshotV1', kind: 'record',
@@ -204,6 +209,9 @@ const ALLOWED_DECODERS: readonly { file: string; functions: readonly string[] }[
     'decodeCurrentPointerSnapshot', 'noteWrittenEventFromEvent', 'noteDispositionChangedEventFromEvent',
     'currentPointerMovedEventFromEvent'] },
   { file: 'materials/record-readers.ts', functions: ['validateRunSnapshot', 'validateQueryRunSnapshot'] },
+  // Slice 8 L8: the one decoder for the auto-capture request record/events.
+  { file: 'architecture/architecture-record-codecs.ts', functions: ['decodeArchitectureAutoCapture',
+    'decodeArchitectureAutoCaptureEvent'] },
 ];
 
 const WRAPPER_ALIASES = new Set(['Partial', 'Readonly', 'Pick', 'Omit', 'Required']);

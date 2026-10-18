@@ -16,7 +16,8 @@ import {
   renderContinuationBriefZh, type ContinuationBriefV1, type ContinuationSourceCheckpointV1,
 } from '../../contracts/continuation-brief.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
-import type { RoleConfigurationRef } from '../../contracts/core/identity.js';
+import type { ArchitectureReminderFactsV1 } from '../../contracts/architecture-observation.js';
+import type { RoleConfigurationRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { PreparedQueryManifestV1, PreparedTaskManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { TaskTriple } from '../../contracts/dispatch.js';
@@ -43,6 +44,9 @@ import { assembleAnomalySection, assembleContinuationBrief, readPreviousTurn, ty
 import { platformRoleProfile } from './role-profiles.js';
 import { decodeKernelEntry } from './kernel-turn-facts.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
+import {
+  ARCHITECTURE_REMINDER_UNAVAILABLE_KEY, architectureReminderRowEntries,
+} from './architecture-reminders.js';
 import type { ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
 
 export type { AttentionGraphReadRequestV1 } from '../../contracts/graph-context.js';
@@ -70,10 +74,24 @@ export const WORK_CONTEXT_PRELUDE = '# Verified runtime task input\n\nThis is th
 /** §4.3: the Query prelude keeps the original header AND its bounded-Query line. */
 export const QUERY_CONTEXT_PRELUDE = '# Verified read-only Query input\n\nThis is the current bounded Query context assembled from formal platform facts; it is not a transcript.';
 
+/**
+ * L8 (book ruling 12; interface §8): the one reminder read the assembler takes
+ * before the model. `read` loads the observation state, the active catalog and
+ * the two node lists once. A cancelled read cancels the preparation; any other
+ * rejection becomes the single `架构提醒不可用` row and the preparation continues.
+ */
+export type ArchitectureReminderReadPort = {
+  read(ctx: CoreCallContext, workspace: WorkspaceScope):
+    Promise<ReadResult<ArchitectureReminderFactsV1>>;
+};
+
 export type ContextAssemblerDependencies = Pick<RuntimeExecutionDependencies,
   'executions' | 'roles' | 'materials' | 'bodies'>
   & Partial<Pick<RuntimeExecutionDependencies, 'plans' | 'sessions' | 'kernelStores' | 'workspaceHost' | 'workspaceSource' | 'kernel'>>
-  & { graphContext?: GraphContextReadPort; taskInputs?: TaskContextInputPort };
+  & {
+    graphContext?: GraphContextReadPort; taskInputs?: TaskContextInputPort;
+    architectureReminders?: ArchitectureReminderReadPort;
+  };
 
 export type AssembledContextV1 = {
   input: string; binding: ContextAssemblyBindingV1;
@@ -760,12 +778,24 @@ function assembleSections(input: {
 /** The Kernel `agent.event` types that end a Turn: a completed history boundary (LA-1). */
 const KERNEL_TERMINAL_EVENTS: readonly string[] = ['run.completed', 'run.failed', 'run.cancelled', 'run.limit_exceeded', 'run.yielded', 'run.interrupted'];
 
+/**
+ * Ruling 4: the workspace facts helper has no business-failure result of its
+ * own, so it returns a small discriminated union and never downgrades a
+ * dependency's explicit cancellation (or the caller's signal) into
+ * `unavailable` facts.
+ */
+export type BriefWorkspaceFactsOutcome =
+  | { status: 'ready'; value: BriefWorkspaceFacts }
+  | { status: 'cancelled' };
+
 export async function briefWorkspaceFactsFor(
   deps: Partial<Pick<RuntimeExecutionDependencies, 'workspaceHost' | 'workspaceSource'>>, now: () => string,
-  record: TaskExecutionRecord,
-): Promise<BriefWorkspaceFacts> {
+  record: TaskExecutionRecord, signal: AbortSignal,
+): Promise<BriefWorkspaceFactsOutcome> {
   const at = now();
-  const unavailable = (reason: string): BriefWorkspaceFacts => ({
+  const cancelled = (): BriefWorkspaceFactsOutcome => ({ status: 'cancelled' });
+  const ready = (facts: BriefWorkspaceFacts): BriefWorkspaceFactsOutcome => ({ status: 'ready', value: facts });
+  const unavailable = (reason: string): BriefWorkspaceFactsOutcome => ready({
     briefCheckpoint: { kind: 'brief', at, workspaceRevision: null, sourceDigest: null, unavailableReason: reason },
     uncommitted: { status: 'unavailable', baseCommit: null, paths: [], omitted: 0, reason },
   });
@@ -773,18 +803,29 @@ export async function briefWorkspaceFactsFor(
   if (source === undefined || deps.workspaceHost === undefined || record?.run === undefined) {
     return unavailable('the workspace source reader is not configured');
   }
+  if (signal.aborted) return cancelled();
   let resolved;
   try {
     resolved = await deps.workspaceHost.resolveRoot({ aggregateType: 'Workspace', projectId: record.run.ref.projectId,
       workspaceId: record.session.workspaceId });
-  } catch (error) { return unavailable(`the workspace root could not be resolved: ${messageOf(error)}`); }
+  } catch (error) {
+    if (signal.aborted) return cancelled();
+    return unavailable(`the workspace root could not be resolved: ${messageOf(error)}`);
+  }
+  // A dependency that names cancellation ends the read as cancelled even when
+  // the caller's own signal is still clear.
+  if (resolved.status === 'rejected' && resolved.code === 'cancelled') return cancelled();
+  if (signal.aborted) return cancelled();
   if (resolved.status !== 'ready') return unavailable(`the workspace root could not be resolved: ${resolved.reason}`);
   const digest = await source.captureDigest(resolved.value.root).catch((error: unknown) =>
     ({ status: 'unavailable' as const, reason: messageOf(error) }));
+  // `captureDigest` has no cancelled result of its own: judge it by the signal.
+  if (signal.aborted) return cancelled();
   const briefCheckpoint: ContinuationSourceCheckpointV1 = digest.status === 'ready'
     ? { kind: 'brief', at, workspaceRevision: resolved.value.workspaceRevision, sourceDigest: digest.sourceDigest, unavailableReason: null }
     : { kind: 'brief', at, workspaceRevision: resolved.value.workspaceRevision, sourceDigest: null, unavailableReason: digest.reason };
   const captured = await source.capture(resolved.value.root).catch(() => null);
+  if (signal.aborted) return cancelled();
   let uncommitted: BriefWorkspaceFacts['uncommitted'];
   if (captured === null || captured.status !== 'ready') {
     uncommitted = { status: 'unavailable', baseCommit: null, paths: [], omitted: 0,
@@ -797,42 +838,59 @@ export async function briefWorkspaceFactsFor(
   } else {
     uncommitted = { status: 'not_git', baseCommit: null, paths: [], omitted: 0, reason: null };
   }
-  return { briefCheckpoint, uncommitted };
+  return ready({ briefCheckpoint, uncommitted });
 }
+
+type SessionBasisOutcome =
+  | { status: 'ready'; value: PreparedTaskManifestV1['sessionBasis'] | null }
+  | { status: 'cancelled' };
 
 async function sessionBasisForContext(
   deps: ContextAssemblerDependencies, record: TaskExecutionRecord, basis: ContinuationBasis, signal: AbortSignal,
-): Promise<PreparedTaskManifestV1['sessionBasis'] | null> {
+): Promise<SessionBasisOutcome> {
+  const cancelled = (): SessionBasisOutcome => ({ status: 'cancelled' });
+  const none = (): SessionBasisOutcome => ({ status: 'ready', value: null });
+  if (signal.aborted) return cancelled();
   const source = basis.requeue.historySource;
-  if (source === null || deps.kernelStores === undefined) return null;
+  if (source === null || deps.kernelStores === undefined) return none();
   const claimSession = record.session;
   if (source.sessionRef.projectId === record.outbox.claim.sessionRef.projectId
-    && source.sessionRef.sessionId === record.outbox.claim.sessionRef.sessionId) return null;
-  if (claimSession.historyCursor !== null) return null;
-  if (source.adapterId !== claimSession.kernel.adapterId) return null;
-  if (source.throughPosition === null) return { sourceKernelSessionId: source.kernelSessionId, throughPosition: null };
+    && source.sessionRef.sessionId === record.outbox.claim.sessionRef.sessionId) return none();
+  if (claimSession.historyCursor !== null) return none();
+  if (source.adapterId !== claimSession.kernel.adapterId) return none();
+  if (source.throughPosition === null) {
+    return { status: 'ready', value: { sourceKernelSessionId: source.kernelSessionId, throughPosition: null } };
+  }
   const onChain = [basis.previous, ...basis.factsChain.map((hop) => hop.run)].find((candidate) =>
     candidate.session.ref.projectId === source.sessionRef.projectId && candidate.session.ref.sessionId === source.sessionRef.sessionId);
   const sourceSession = onChain?.session ?? { ...claimSession,
     ref: { ...claimSession.ref, projectId: source.sessionRef.projectId, sessionId: source.sessionRef.sessionId },
     kernel: { ...claimSession.kernel, adapterId: source.adapterId, kernelSessionId: source.kernelSessionId } };
   if (sourceSession.kernel.kernelSessionId !== source.kernelSessionId || sourceSession.kernel.adapterId !== source.adapterId) {
-    return null;
+    return none();
   }
   const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores,
     ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }) });
   let boundary: number | null = null;
   let cursor = 0;
   for (let page = 0; page < 64 && cursor < source.throughPosition; page += 1) {
+    if (signal.aborted) return cancelled();
     let window;
     try {
       window = await owner.readPositionWindow({ session: sourceSession, afterPosition: cursor,
         throughPosition: source.throughPosition, limit: 200, signal });
-    } catch { return null; }
-    if (window.status !== 'ready') return null;
+    } catch {
+      if (signal.aborted) return cancelled();
+      return none();
+    }
+    if (signal.aborted) return cancelled();
+    // The window owner supports cancellation; never turn its explicit answer
+    // into "no session basis" (a null value that silently seeds nothing).
+    if (window.status === 'rejected' && window.code === 'cancelled') return cancelled();
+    if (window.status !== 'ready') return none();
     for (const entry of window.value.entries) {
       const item = decodeKernelEntry(entry);
-      if (item === null) return null;
+      if (item === null) return none();
       if (item.record.recordType === 'agent.event' && KERNEL_TERMINAL_EVENTS.includes(item.record.payload.event.type)) {
         boundary = item.position;
       }
@@ -840,7 +898,7 @@ async function sessionBasisForContext(
     cursor = window.value.nextPosition;
     if (!window.value.hasMore) break;
   }
-  return { sourceKernelSessionId: source.kernelSessionId, throughPosition: boundary };
+  return { status: 'ready', value: { sourceKernelSessionId: source.kernelSessionId, throughPosition: boundary } };
 }
 
 /**
@@ -882,7 +940,11 @@ async function assembleBriefForContext(
   }
   let basis: ReadResult<ContinuationBasis>;
   try { basis = await readBasis.call(deps.executions, ctx, { runRef: record.run.ref }); }
-  catch (error) { return { ok: false, rejection: rejected('unavailable', `the continuation basis read failed: ${messageOf(error)}`) }; }
+  catch (error) {
+    if (ctx.signal.aborted) return { ok: false, rejection: rejected('cancelled', 'the preparation was cancelled during the continuation basis read') };
+    return { ok: false, rejection: rejected('unavailable', `the continuation basis read failed: ${messageOf(error)}`) };
+  }
+  if (ctx.signal.aborted) return { ok: false, rejection: rejected('cancelled', 'the preparation was cancelled during the continuation basis read') };
   if (basis.status !== 'ready') return { ok: false, rejection: mapRead(basis) };
   const previous = basis.value.previous;
   const fallbackFacts = basis.value.factsChain.at(-1)?.run ?? previous;
@@ -916,11 +978,22 @@ async function assembleBriefForContext(
   const truncated = facts !== previous && facts.run.executionHistory === undefined
     && basis.value.factsChain.length >= CONTINUATION_BRIEF_LIMITS.factsFromHops && facts.run.requeueRef !== undefined;
   if (turn.kernel === 'retry') return { ok: false, rejection: rejected(turn.code, `the previous Turn is not readable now: ${turn.reason}`) };
-  const workspace = await briefWorkspaceFactsFor(deps, now, record);
+  const workspaceOutcome = await briefWorkspaceFactsFor(deps, now, record, ctx.signal);
+  if (workspaceOutcome.status !== 'ready') {
+    return { ok: false, rejection: rejected('cancelled', 'the preparation was cancelled during the workspace facts read') };
+  }
+  const workspace = workspaceOutcome.value;
   // §4.1 T10 (slice 1): an archive-origin ordinary claim is a NEW pickup, never the old line's continuation.
-  const sessionBasis = archiveOriginSkipsHistorySeed(basis.value.requeue)
-    ? null
-    : await sessionBasisForContext(deps, record, basis.value, ctx.signal);
+  let sessionBasis: PreparedTaskManifestV1['sessionBasis'] | null;
+  if (archiveOriginSkipsHistorySeed(basis.value.requeue)) {
+    sessionBasis = null;
+  } else {
+    const sessionOutcome = await sessionBasisForContext(deps, record, basis.value, ctx.signal);
+    if (sessionOutcome.status !== 'ready') {
+      return { ok: false, rejection: rejected('cancelled', 'the preparation was cancelled during the session basis read') };
+    }
+    sessionBasis = sessionOutcome.value;
+  }
   const source = basis.value.requeue.historySource;
   const seededFrom = sessionBasis === null || sessionBasis === undefined || sessionBasis.throughPosition === null || source === null
     ? null
@@ -960,6 +1033,7 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
     const dutyResult = effectiveDuty(input.role, input.configuration, session?.role);
     if ('rejection' in dutyResult) return dutyResult.rejection;
     const duty = dutyResult.duty;
+    const cancelled = (reason: string): CoreRejection => rejected('cancelled', reason);
 
     let facts: GraphContextFactsV1 | null = null;
     if (deps.graphContext !== undefined && claim !== undefined) {
@@ -999,6 +1073,56 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
     }
     reminders.push(...extensionRows.reminders);
 
+    // L8 (book ruling 12, interface §8): the stale-architecture rows share the
+    // reminder section. Only a configured reader and a claim take the read; the
+    // workspace and the task module are resolved exactly as `taskPayload` does.
+    // Lead ruling (a failed reminder read): any failure except cancellation shows
+    // the single honest row and lets the preparation continue; a `cancelled`
+    // rejection still cancels and is returned unchanged.
+    if (deps.architectureReminders !== undefined && claim !== undefined) {
+      if (clock === undefined) {
+        return rejected('unsupported', 'the context assembler needs the Host clock to assemble architecture reminders');
+      }
+      const workspaceId = session?.workspaceId ?? run?.workspaceSnapshot?.workspaceId
+        ?? plan?.goalRef.projectId ?? claim.task.projectId;
+      const task = plan?.tasks.find((candidate) => candidate.taskId === claim.task.taskId);
+      const taskModuleRef = task?.scope.kind === 'module'
+        ? { projectId: plan?.ref.projectId ?? claim.task.projectId, moduleId: task.scope.moduleRef }
+        : null;
+      const unavailable = (): void => {
+        reminders.push({ key: ARCHITECTURE_REMINDER_UNAVAILABLE_KEY, text: '架构提醒不可用' });
+      };
+      const cancelledReminder = (): CoreRejection =>
+        cancelled('the architecture reminder read was cancelled');
+      let reminderRead: ReadResult<ArchitectureReminderFactsV1> | null = null;
+      try {
+        reminderRead = await deps.architectureReminders.read(ctx, {
+          projectId: claim.task.projectId, workspaceId,
+        });
+      } catch {
+        // Cancellation wins over the fallback row: never downgrade an aborted
+        // preparation into one "unavailable" reminder.
+        if (ctx.signal.aborted) return cancelledReminder();
+        unavailable();
+      }
+      if (reminderRead !== null) {
+        // A returned cancellation OR a signal cancelled while the read resolved
+        // ends the preparation; every other failure is the one honest row.
+        if (reminderRead.status === 'rejected' && reminderRead.code === 'cancelled') return reminderRead;
+        if (ctx.signal.aborted) return cancelledReminder();
+        if (reminderRead.status === 'ready') {
+          const now = clock();
+          for (const row of architectureReminderRowEntries({
+            facts: reminderRead.value, taskModuleRef, now,
+          })) {
+            reminders.push({ key: row.key, text: row.text });
+          }
+        } else {
+          unavailable();
+        }
+      }
+    }
+
     const inputSelections: InputSelectionV1[] = facts?.inputs ?? [];
     const missingSelections = inputSelections.filter((selection) => selection.state !== 'selected');
     // §4.1/G5.4: `facts.executions` holds only the focus Task's Run, so a bounded
@@ -1019,8 +1143,13 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
           includeInputs: false,
         });
       } catch (error) {
+        if (ctx.signal.aborted) return cancelled('the preparation was cancelled during the upstream graph context read');
         enriched = rejected('unavailable', `the upstream graph context read failed: ${messageOf(error)}`);
       }
+      if (ctx.signal.aborted) return cancelled('the preparation was cancelled during the upstream graph context read');
+      // Ruling 4 (C-1): the upstream read supports cancellation; its explicit
+      // `cancelled` answer ends the preparation even when the signal is clear.
+      if (enriched.status === 'rejected' && enriched.code === 'cancelled') return enriched;
       // The reminder index is optional enrichment; a bounded read that cannot
       // return the upstream Runs leaves the message at the honest
       // "no current execution record" fallback instead of blocking entry.
@@ -1042,8 +1171,10 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
             candidateKey, afterCursor: null, maxBytes: 4096,
           });
         } catch (error) {
+          if (ctx.signal.aborted) return cancelled('the preparation was cancelled during the task input page read');
           return rejected('unavailable', `the task input page read failed: ${messageOf(error)}`);
         }
+        if (ctx.signal.aborted) return cancelled('the preparation was cancelled during the task input page read');
         if (page.status !== 'ready') return page;
         const pageSelection = page.value.selection;
         if (pageSelection.state !== 'selected' || pageSelection.source === null) {
@@ -1074,6 +1205,7 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
         return rejected('unsupported', 'the context assembler needs the Host clock to assemble a continuation brief');
       }
       const assembled = await assembleBriefForContext(deps, clock, ctx, execution);
+      if (ctx.signal.aborted) return cancelled('the preparation was cancelled during the continuation brief assembly');
       if (!assembled.ok) return assembled.rejection;
       continuationBrief = assembled.brief;
       sessionBasis = assembled.sessionBasis === null ? undefined : assembled.sessionBasis;

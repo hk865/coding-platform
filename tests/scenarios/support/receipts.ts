@@ -52,6 +52,7 @@ export async function performOnce(h: HostScenario, input: WorkflowAdvanceInput, 
   if (result.status !== 'ready') throw new Error(`${label}: the Workflow call was not ready: ${JSON.stringify(result)}`);
   const receipt = result.value.receipt;
   if (receipt !== null) await assertInvariants(h, label, stepOfReceipt(receipt, h.stepActor(), h.automationPolicy(), label));
+  if (receipt?.kind === 'finalize_checks') await h.settleAutoCapture();
   return result.value;
 }
 

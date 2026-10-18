@@ -77,7 +77,7 @@ import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../
 import {
   AG2B_CHECK_COMMAND, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_INSTRUCTION, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_INSTRUCTION,
   AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, ag2bChecksConfiguration, cleanupAG2b, permissionRevision, plain,
-  seedAG2bWorkGraph, seedAG2bWorkGraphThrough, startAG2bHost, writeAG2bWorkspace, type AG2bHost,
+  seedAG2bWorkGraph, seedAG2bWorkGraphThrough, settleAutoCapture, startAG2bHost, writeAG2bWorkspace, type AG2bHost,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import {
   answer, cleanupRestart, deferred, post, publicDirectory, tempDir, writeAutomationSettings, writeStaleLock, type AdvanceValue, type Deferred,
@@ -560,6 +560,11 @@ export abstract class ScenarioBase {
   /** The ledger's event types in commit order. */
   ledgerEventTypes(): string[] { return eventTypesIn(this.database); }
   counts(): ScenarioCounts { return { modelCalls: this.modelCalls(), ...fileCounts(this.database) }; }
+  /**
+   * L8: waits until the live Host's automatic architecture capture settles (`settleAutoCapture`). A
+   * platform scenario has no Host, so nothing captures there. `advance()` calls it after a check round.
+   */
+  async settleAutoCapture(): Promise<void> {}
 
   /** `select_work` on the seeded Goal; Goal-level unless `taskId` is given. */
   select(flowId: string, taskId?: string): WorkflowAdvanceInput {
@@ -589,6 +594,8 @@ export abstract class ScenarioBase {
           const label = `${invariants.label}#${step} ${receipt.kind}`;
           await assertInvariants(this, label, stepOfReceipt(receipt, this.stepActor(), this.policy, label));
         }
+        // L8: a PASS starts the Host's automatic capture; a later "writes nothing" window must not see it.
+        if (receipt.kind === 'finalize_checks') await this.settleAutoCapture();
       }
       if (result.value.state === 'completed' || result.value.next === null) {
         return { steps, receipts, state: result.value.state, reason: result.value.reason, next: null };
@@ -899,6 +906,7 @@ export class HostScenario extends ScenarioBase {
 
   /** The live Host (a new one after every restart). */
   get host(): AG2bHost { return this.current.host; }
+  override async settleAutoCapture(): Promise<void> { await settleAutoCapture(this.current.host); }
   /** The start-up reconcile report of the live Host (§12.1 step 7). */
   get reconcile(): HostReconcileReportV1 { return this.current.host.host.reconcile; }
   stepActor(): WorkbenchActor { return this.settings.actor; }

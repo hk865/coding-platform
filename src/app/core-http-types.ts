@@ -272,7 +272,9 @@ export type CoreRouteSuffix =
   | 'notes/withdraw'
   | 'notes/review'
   | 'plans/versions'
-  | 'architecture/versions';
+  | 'architecture/versions'
+  // L8 (book ruling 8): the one public observation state with computed pending.
+  | 'architecture/observation-state';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -301,7 +303,16 @@ export type ArchitectureAdoptInitialBody = GraphWriteBody<ArchitectureCatalogPor
 export type ArchitectureAdoptInitialResponse = RouteResponse<ArchitectureCatalogPort['adoptInitialArchitecture']>;
 export type ArchitectureReadBody = PlainBody<ArchitectureCatalogPort['readArchitectureRevision']>;
 export type ArchitectureReadResponse = RouteResponse<ArchitectureCatalogPort['readArchitectureRevision']>;
-export type ArchitectureCaptureBody = GraphWriteBody<ObservedArchitecturePort['captureSourceChanges']>;
+/** L8 (P16): the public manual capture body. The driver's trusted start
+ * watermark (`requestSeq`) is not a public input, so the DTO omits it; the port
+ * keeps accepting it for the driver's direct, non-public owner call. */
+export type ArchitectureCaptureBody = {
+  scope: CoreScope;
+  request: {
+    input: Omit<SecondArgument<ObservedArchitecturePort['captureSourceChanges']>['input'], 'requestSeq'>;
+    meta: SecondArgument<ObservedArchitecturePort['captureSourceChanges']>['meta'];
+  };
+};
 export type ArchitectureCaptureResponse = RouteResponse<ObservedArchitecturePort['captureSourceChanges']>;
 export type ArchitectureQueryBody = PlainBody<ObservedArchitecturePort['queryArchitecture']>;
 export type ArchitectureQueryResponse = RouteResponse<ObservedArchitecturePort['queryArchitecture']>;

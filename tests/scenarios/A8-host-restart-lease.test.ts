@@ -51,7 +51,9 @@ it('A8-L5 (HL-05, HL-06, HL-07): a lock naming a live process that is no Host (t
   const database = await tempDir('a8-l5-db-');
   const publicDir = await publicDirectory();
   const seeded = await startAG2bHost(publicDir, { root, database });
-  try { await seedAG2bWorkGraph(seeded); } finally { await seeded.host.close(); }
+  // L8: the seed's automatic capture is left running, so the close leaves it pending (book ruling 5); the Host
+  // without the lease below meets it and must not retry it.
+  try { await seedAG2bWorkGraph(seeded, undefined, { settle: false }); } finally { await seeded.host.close(); }
   const inv: InvariantTarget = { database };
   await assertInvariantsAt(inv, 'A8-L5 seeded');
   const lockPath = join(database, HOST_INSTANCE_LOCK_FILE);
@@ -309,7 +311,9 @@ it('HL-04: a damaged lock is held as another Host\'s: no reconcile, no Kernel en
   const database = await tempDir('a2-lease4-db-');
   const publicDir = await publicDirectory();
   const seeded = await startAG2bHost(publicDir, { root, database });
-  try { await seedAG2bWorkGraph(seeded); } finally { await seeded.host.close(); }
+  // L8: the seed's automatic capture is left running, so the close leaves it pending (book ruling 5); the Host
+  // without the lease below meets it and must not retry it.
+  try { await seedAG2bWorkGraph(seeded, undefined, { settle: false }); } finally { await seeded.host.close(); }
   const lockPath = join(database, HOST_INSTANCE_LOCK_FILE);
   await writeFile(lockPath, 'a damaged lock');
   const before = ledgerEvents(database);   // A.2 step 6

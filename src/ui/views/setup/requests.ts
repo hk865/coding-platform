@@ -200,11 +200,11 @@ export function buildArchitectureReadRequest(): unknown | null {
 export function buildObservedCaptureRequest(): unknown | null {
   const current = state();
   if (current.project === null || current.workspace === null || current.adopted === null) return null;
-  const modules = current.adopted.catalog === null ? [] : current.adopted.catalog.catalog.modules;
-  if (modules.length === 0) return null;
-  const mappings = modules.map(module => ({ id: module.ref.moduleId, kind: 'module' as const, paths: module.paths }));
+  // Book ruling 6 (one mapping rule): the browser sends no `mappings`; the
+  // server derives them from the ACTIVE catalog, so this file never imports
+  // `moduleMappingsOf` (check-boundaries allows the UI only UI modules + DTOs).
   const scope = current.config.scope;
-  return { scope, request: { input: { workspace: scope, mappings, previous: current.observedCapture },
+  return { scope, request: { input: { workspace: scope, previous: current.observedCapture },
     meta: { requestId: freshRequestId('architecture/capture'), expected: [pinOf(current.project), pinOf(current.workspace)] } } };
 }
 

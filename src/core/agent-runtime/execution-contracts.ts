@@ -234,6 +234,13 @@ export type RuntimeExecutionDependencies = {
   host: RuntimeHostBindings;
   kernel: typeof import('../../../vendor/coding-agent/dist/public-api.js');
   /**
+   * L8 (spec L8; book ruling 12): the one architecture-reminder read the context
+   * assembler takes before the model. Optional so an old direct Runtime caller
+   * keeps working; when present, a cancelled read cancels the preparation and
+   * any other rejection becomes the single `架构提醒不可用` row.
+   */
+  architectureReminders?: import('./context-assembler.js').ArchitectureReminderReadPort;
+  /**
    * L13: the Host's live resource-cap source. The Runtime passes it to every
    * readonly-command tool it builds and merges it into the Kernel input at the
    * last hop (`runObservedModel`); it enters no configuration/authorization/

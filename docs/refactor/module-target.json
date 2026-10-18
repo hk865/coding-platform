@@ -68,6 +68,7 @@
           "path": "architecture/",
           "dependencies": [
             "model",
+            "state",
             "persistence"
           ]
         },

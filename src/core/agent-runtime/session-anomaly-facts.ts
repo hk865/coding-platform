@@ -45,7 +45,7 @@ const MIXED_OWNERSHIP_WARNING = '工作区里还没提交的改动，可能混�
 const REASON_LIMIT = 2000;
 const PATHS_LIMIT = CONTINUATION_BRIEF_LIMITS.paths;
 
-function rejected(code: 'invalid' | 'unavailable', reason: string): { status: 'rejected'; code: 'invalid' | 'unavailable'; reason: string } {
+function rejected(code: 'invalid' | 'unavailable' | 'cancelled', reason: string): { status: 'rejected'; code: 'invalid' | 'unavailable' | 'cancelled'; reason: string } {
   return { status: 'rejected', code, reason };
 }
 
@@ -122,31 +122,44 @@ export function createArchiveChangedFilesReader(
       const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
       return await readPreviousTurn(owner, record, ctx.signal);
     } catch (error) {
+      if (ctx.signal.aborted) {
+        return { kernel: 'retry', code: 'cancelled', reason: 'the Turn history read was cancelled' };
+      }
       return { kernel: 'retry', code: 'unavailable', reason: `the Turn history read failed: ${reasonOf(error)}` };
     }
   };
 
-  const worktreeFacts = async (record: TaskExecutionRecord): Promise<ArchiveChangedFilesV1> => {
+  const worktreeFacts = async (ctx: CoreCallContext, record: TaskExecutionRecord):
+  Promise<ReadResult<ArchiveChangedFilesV1>> => {
     let facts;
     try {
-      facts = await briefWorkspaceFacts(deps, record);
+      facts = await briefWorkspaceFacts(deps, record, ctx.signal);
     } catch (error) {
-      return value({ source: 'unknown', status: 'unavailable', confirmed: [], possible: [], omitted: 0, baseCommit: null,
-        reason: `the workspace capture failed: ${reasonOf(error)}` });
+      if (ctx.signal.aborted) return rejected('cancelled', 'the workspace capture was cancelled');
+      return { status: 'ready', value: value({ source: 'unknown', status: 'unavailable', confirmed: [], possible: [],
+        omitted: 0, baseCommit: null, reason: `the workspace capture failed: ${reasonOf(error)}` }) };
     }
-    const uncommitted = facts.uncommitted;
+    // A capture that resolves with the caller's signal set is the caller's
+    // cancellation, never a workspace fact this reader may report as ready.
+    if (ctx.signal.aborted) return rejected('cancelled', 'the archive changed-files read was cancelled during the workspace capture');
+    // The shared brief helper now distinguishes cancellation from a workspace
+    // failure; this reader never reports a cancelled read as "no changes".
+    if (facts.status !== 'ready') return rejected('cancelled', 'the workspace facts read was cancelled');
+    const uncommitted = facts.value.uncommitted;
     if (uncommitted.status === 'git') {
+      if (ctx.signal.aborted) return rejected('cancelled', 'the archive changed-files read was cancelled during the workspace capture');
       const capped = capPaths([], uncommitted.paths);
       // The 64-cap omission plus any the capture already reported.
-      return value({ source: 'worktree', status: 'known', confirmed: [], possible: capped.possible,
+      return { status: 'ready', value: value({ source: 'worktree', status: 'known', confirmed: [], possible: capped.possible,
         omitted: capped.omitted + uncommitted.omitted, baseCommit: uncommitted.baseCommit,
-        reason: MIXED_OWNERSHIP_WARNING });
+        reason: MIXED_OWNERSHIP_WARNING }) };
     }
     const detail = uncommitted.status === 'not_git'
       ? 'the workspace is not a git repository, so the HEAD-to-worktree changes cannot be listed'
       : (uncommitted.reason ?? 'the workspace capture is unavailable');
-    return value({ source: 'unknown', status: 'unavailable', confirmed: [], possible: [], omitted: 0, baseCommit: null,
-      reason: `the changed files are unknown: ${detail}` });
+    if (ctx.signal.aborted) return rejected('cancelled', 'the archive changed-files read was cancelled during the workspace capture');
+    return { status: 'ready', value: value({ source: 'unknown', status: 'unavailable', confirmed: [], possible: [],
+      omitted: 0, baseCommit: null, reason: `the changed files are unknown: ${detail}` }) };
   };
 
   return {
@@ -159,11 +172,21 @@ export function createArchiveChangedFilesReader(
       try {
         read = await deps.executions.readExecution(ctx, runRef);
       } catch (error) {
+        // The caller's cancellation wins over the read's own failure: a
+        // cancelled archive is never reported as an unavailable snapshot.
+        if (ctx.signal.aborted) return rejected('cancelled', 'the archive changed-files read was cancelled during the execution read');
         return rejected('unavailable', `the execution read failed: ${reasonOf(error)}`);
       }
+      // An execution read that resolves after the caller cancelled must not go
+      // on to report a ready snapshot for a cancel the caller already made.
+      if (ctx.signal.aborted) return rejected('cancelled', 'the archive changed-files read was cancelled during the execution read');
       if (read.status !== 'ready') return read;
       const record = read.value;
       const turn = await kernelFacts(ctx, record);
+      if (ctx.signal.aborted) return rejected('cancelled', 'the archive changed-files read was cancelled during the Turn history read');
+      // A cancelled Turn read is the caller's cancellation, never the worktree
+      // fallback (which would turn it into an "unknown" snapshot).
+      if (turn.kernel === 'retry' && turn.code === 'cancelled') return rejected('cancelled', turn.reason);
       if (turn.kernel === 'not_entered') {
         return { status: 'ready', value: value({ source: 'kernel', status: 'not_entered', confirmed: [], possible: [],
           omitted: 0, baseCommit: null, reason: null }) };
@@ -177,7 +200,11 @@ export function createArchiveChangedFilesReader(
       }
       // The Kernel window cannot be read (unavailable or a transient retry):
       // fall back to the current HEAD → worktree capture, all paths possible.
-      return { status: 'ready', value: await worktreeFacts(record) };
+      if (ctx.signal.aborted) return rejected('cancelled', 'the archive changed-files read was cancelled before the workspace fallback');
+      const fallback = await worktreeFacts(ctx, record);
+      // The caller's cancellation also wins after the fallback resolves.
+      if (ctx.signal.aborted) return rejected('cancelled', 'the archive changed-files read was cancelled during the workspace fallback');
+      return fallback;
     },
   };
 }

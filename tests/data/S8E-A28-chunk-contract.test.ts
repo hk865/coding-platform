@@ -49,9 +49,9 @@ for (const backend of BACKENDS) {
   });
 
   it(`A-28 maps an item that cannot fit its chunk envelope to capacity [${backend}]`, async () => {
-    // A full node body is ~219 bytes including the envelope, so a 10-byte chunk
-    // cannot hold it. The packer must say capacity for the FIRST item instead of
-    // committing a chunk body larger than the injected size.
+    // A full node body is ~274 bytes including the scoped envelope, so a 10-byte
+    // chunk cannot hold it. The packer must say capacity for the FIRST item
+    // instead of committing a chunk body larger than the injected size.
     const f = await fixture(backend, `s8e-a28-small-${backend}`, [['a.ts', 'export {};\n']],
       { fileGraph: { maxNodes: 20000, maxEdges: 100000, chunkBytes: 10 } });
     fixtures.push(f);

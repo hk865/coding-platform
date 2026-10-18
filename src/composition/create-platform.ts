@@ -190,6 +190,7 @@ import type {
   NodeDetailReadPort, WorkLineReadPort, WorkLineSettingsPort,
 } from '../core/work-graph/model/work-line-contracts.js';
 import { createWorkLineConversation } from './work-line-conversation.js';
+import { createArchitectureReminderFactsReader } from './architecture-reminder-facts.js';
 
 export type TargetPlatformOptions = {
   storage: { kind: 'memory' } | { kind: 'sqlite'; directory: string };
@@ -206,6 +207,16 @@ export type TargetPlatformOptions = {
   /** §11.2 trusted test injection for the one observation light scan: a fault hook
    * and the raw-reference cap. Passed through; never model input. */
   lightScan?: { fault?: (event: { phase: 'language' } | { phase: 'file'; path: string }) => void; maxRawReferences?: number };
+  /**
+   * L8 (interface §7): after a NON-REPLAYED successful catalog adoption, revision
+   * or a PASS finalized check, the composition notifies the Host so its one serial
+   * auto-capture driver can accept a new request. Called inside try/catch; the
+   * caller's result is unchanged.
+   */
+  onArchitectureCaptureTrigger?: (event: {
+    kind: 'catalog_adopted' | 'catalog_revised' | 'check_passed';
+    projectId: string;
+  }) => void;
   /** Trusted startup configuration; never taken from a model tool request. */
   kernelStores?: Parameters<typeof createKernelStoreRegistry>[0];
   /** Trusted Host execution binding. Its model/tool/template grant is the only
@@ -723,10 +734,17 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...(queryExecution === undefined ? {} : { execution: queryExecution }),
       consultations: { readMessage: mailbox.readMessage.bind(mailbox), readMessageBody: mailbox.readMessageBody.bind(mailbox) },
     });
+    const catalog = createArchitectureCatalogService({ records: backend.records });
+    // L8 (book ruling 6): the SAME catalog instance resolves an omitted capture
+    // `mappings`, so the automatic/manual capture and the reminder read share
+    // one active-catalog decision.
     const observed = createObservedArchitecture({ records: backend.records, bodies, access, workspace: workspace.tools,
+      catalog,
       source: options.architectureSource ?? { provider: 'typescript', configPath: 'tsconfig.json' },
       ...(options.fileGraph?.chunkBytes === undefined ? {} : { fileGraph: { chunkBytes: options.fileGraph.chunkBytes } }) });
-    const catalog = createArchitectureCatalogService({ records: backend.records });
+    // L8 (interface §7): the ONE writer of reminder facts. The assembler gets this
+    // reader through the Runtime dependencies; it shares `catalog` and `observed`.
+    const architectureReminders = createArchitectureReminderFactsReader({ catalog, observed });
     // R6 cold-start: the live per-workspace trusted checks configuration the
     // Host registers after an explicit user approval. It is read by a FRESH
     // round only; an already-open round keeps the configuration it froze. The
@@ -892,7 +910,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         action: 'auto_reverify', actorClass, countedNext, cap });
       return verdict === 'needs_decision' ? 'needs_decision' : 'automatic_notice';
     };
-    const rawEvidence = createEvidenceService({
+    /** L8: the ONE trigger notification. A Host callback that throws cannot change
+     * the operation's result (it is already committed and returned below). */
+    const fireArchitectureCaptureTrigger = (
+      kind: 'catalog_adopted' | 'catalog_revised' | 'check_passed', projectId: string,
+    ): void => {
+      try { options.onArchitectureCaptureTrigger?.({ kind, projectId }); } catch { /* the caller's result is unchanged */ }
+    };
+    const evidenceOwner = createEvidenceService({
       records: backend.records, materials: rawMaterials, executions: executionReader,
       workspaceHost: options.workspace, source: verificationWorkspaceReader,
       ...(options.checks === undefined ? {} : { configuration: options.checks }),
@@ -906,6 +931,22 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       }),
       now, newId: randomUUID,
     });
+    // L8 (book ruling 1): wrap the ONE Evidence instance's `finalizeChecks` where it
+    // is built, so the public evidence port and the Workflow's rawEvidence both use
+    // the same wrapped method and a PASS is notified exactly once.
+    const rawEvidence: typeof evidenceOwner = {
+      ...evidenceOwner,
+      finalizeChecks: async (ctx, request) => {
+        // Fix the notification scope BEFORE the await: a later ctx mutation must
+        // not retarget the trigger.
+        const projectId = ctx.projectId;
+        const result = await evidenceOwner.finalizeChecks(ctx, request);
+        if (result.status === 'committed' && !result.replayed && result.value.outcome === 'PASS') {
+          fireArchitectureCaptureTrigger('check_passed', projectId);
+        }
+        return result;
+      },
+    };
     const rawCheckRunner = createRegisteredCheckRunner({ evidence: rawEvidence,
       workspaceHost: options.workspace, kernel, resourceCaps, now });
     // A.2 step 5.6 (S8, A8): the reconcile owners share the ONE records/reader pair; the Runtime
@@ -972,6 +1013,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       void result.then(() => pending.delete(result), () => pending.delete(result));
       return result;
     }
+    /** L8 (book ruling 2; interface §10): Host detached work joins the SAME drain
+     * set. Unlike `trackedCall` it NEVER refuses after close began: the Host starts
+     * the driver before close and the driver aborts its running capture first. */
+    function trackDetached<T>(work: Promise<T>): Promise<T> {
+      pending.add(work);
+      void work.then(() => pending.delete(work), () => pending.delete(work));
+      return work;
+    }
     const unavailable = (): CoreRejection => ({ status: 'rejected', code: 'unavailable', reason: 'platform is closing' });
     // Slice 3 C6: the SAME two read-only owners reach the Runtime, the graph
     // routes and the attention scanner, each with every read drained through the
@@ -1034,6 +1083,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         turnClosure: { recordSessionHealth: (...args) => sessionHealth.recordSessionHealth(...args),
           lease: hostInstance === undefined ? null : hostInstance.lease },
         graphContext, taskInputs,
+        // L8 (book ruling 12): the one reminder read the context assembler takes
+        // before the model. It shares `catalog` and `observed`.
+        architectureReminders,
         notes: noteToolDeps,
         host, kernel, resourceCaps, now, newId: randomUUID,
       };
@@ -1124,6 +1176,12 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     const architecture: typeof observed & ArchitectureCatalogPort = {
       captureSourceChanges: (...args) => trackedCall(() => observed.captureSourceChanges(...args), unavailable),
+      // L8 request record and the one public observation state (book rulings 3, 8, 12).
+      requestAutoCapture: (...args) => trackedCall(() => observed.requestAutoCapture(...args), unavailable),
+      failAutoCapture: (...args) => trackedCall(() => observed.failAutoCapture(...args), unavailable),
+      readAutoCapture: (...args) => trackedCall(() => observed.readAutoCapture(...args), unavailable),
+      observationState: (...args) => trackedCall(() => observed.observationState(...args), unavailable),
+      readReminderFacts: (...args) => trackedCall(() => observed.readReminderFacts(...args), unavailable),
       queryArchitecture: (...args) => trackedCall(() => observed.queryArchitecture(...args), unavailable),
       compareArchitecture: (...args) => trackedCall(() => observed.compareArchitecture(...args), unavailable),
       queryImpact: (...args) => trackedCall(() => observed.queryImpact(...args), unavailable),
@@ -1131,8 +1189,27 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       neighbors: (...args) => trackedCall(() => observed.neighbors(...args), unavailable),
       impact: (...args) => trackedCall(() => observed.impact(...args), unavailable),
       compareFormalObserved: (...args) => trackedCall(() => observed.compareFormalObserved(...args), unavailable),
-      adoptInitialArchitecture: (...args) => trackedCall(() => catalog.adoptInitialArchitecture(...args), unavailable),
-      reviseArchitectureCatalog: (...args) => trackedCall(() => catalog.reviseArchitectureCatalog(...args), unavailable),
+      // L8 (interface §7): fire only after a NON-REPLAYED successful adoption or
+      // revision; the callback's own failure never changes the returned result.
+      adoptInitialArchitecture: (...args) => trackedCall(async () => {
+        // Fix the notification scope BEFORE the await: a later ctx mutation must
+        // not retarget the trigger.
+        const projectId = args[0].projectId;
+        const result = await catalog.adoptInitialArchitecture(...args);
+        if (result.status === 'committed' && !result.replayed) {
+          fireArchitectureCaptureTrigger('catalog_adopted', projectId);
+        }
+        return result;
+      }, unavailable),
+      reviseArchitectureCatalog: (...args) => trackedCall(async () => {
+        // Fix the notification scope BEFORE the await (same rule as adoption).
+        const projectId = args[0].projectId;
+        const result = await catalog.reviseArchitectureCatalog(...args);
+        if (result.status === 'committed' && !result.replayed) {
+          fireArchitectureCaptureTrigger('catalog_revised', projectId);
+        }
+        return result;
+      }, unavailable),
       readArchitectureRevision: (...args) => trackedCall(() => catalog.readArchitectureRevision(...args), unavailable),
     };
     // Drain these Plan calls before closing the stores (initial planning also reads
@@ -1932,6 +2009,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         if (index >= 0) bindings[index] = structuredClone(input.binding);
         else bindings.push(structuredClone(input.binding));
       },
+      /** L8: the Host's detached-work seam for the one auto-capture driver. The
+       * promise joins the close drain; the Host installs it before close. */
+      trackDetached,
       close(): Promise<void> {
         isClosing = true;
         closing ??= (async () => {
@@ -1957,7 +2037,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     for (const key of ['sessionFacts', 'responsibilities', 'sessionAnomalies', 'graphContext', 'taskInputs',
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
       'runActivity', 'activity', 'timeline',
-      'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes'] as const) {
+      'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

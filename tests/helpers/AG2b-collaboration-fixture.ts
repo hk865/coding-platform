@@ -33,6 +33,7 @@ import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import type { WorkLinkTarget } from '../../src/contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
+import type { ArchitectureObservationStateV1 } from '../../src/contracts/architecture-observation.js';
 import {
   BOOTSTRAP_SUFFIX,
   CORE_API_PREFIX,
@@ -325,13 +326,40 @@ export function ag2bPlanDraft(workIds: readonly string[] = [AG2B_WORK_TASK_ID]):
 
 /** The frozen R5c graph relationship seed over the real HTTP routes: project,
  * workspace, completion policy, initial architecture, Goal and an adopted Plan
- * with one ordinary work plus the Goal gate. */
-export async function seedAG2bWorkGraph(host: AG2bHost, workIds: readonly string[] = [AG2B_WORK_TASK_ID]): Promise<{ workTarget: WorkLinkTarget; goalRef: GoalRef }> {
+ * with one ordinary work plus the Goal gate. The automatic captures the seed starts settle before it
+ * returns (`settleAutoCapture`) unless `settle: false` leaves them running. */
+export async function seedAG2bWorkGraph(host: AG2bHost, workIds: readonly string[] = [AG2B_WORK_TASK_ID],
+  options: { settle?: boolean } = {}): Promise<{ workTarget: WorkLinkTarget; goalRef: GoalRef }> {
   await seedAG2bWorkGraphThrough(async (suffix, body) => await (await corePost(host.base, suffix, host.token, body)).json() as unknown, workIds);
+  if (options.settle !== false) await settleAutoCapture(host);
   return {
     workTarget: { kind: 'task', ref: { projectId: AG2B_SCOPE.projectId, goalId: AG2B_GOAL_REF.goalId, taskId: AG2B_WORK_TASK_ID } },
     goalRef: AG2B_GOAL_REF,
   };
+}
+
+/**
+ * L8: a Host with the lease starts an automatic architecture capture on its own (workspace
+ * registration, catalog adoption or revision, a check PASS). It runs detached and commits later;
+ * a close leaves it pending and the next start retries it. A case whose next window must write
+ * nothing (a restart, a crash, a replay) lets it settle first, through the ONE public
+ * `architecture/observation-state` read, polled every 10 ms for at most 30 s: settled when the
+ * workspace has no request record, its request is satisfied (`pending: false`) or its failure is
+ * recorded. A Host without the lease never captures, so nothing is awaited there.
+ */
+export async function settleAutoCapture(host: AG2bHost): Promise<void> {
+  if (host.host.reconcile.lease !== 'owned') return;
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const state = await (await corePost(host.base, 'architecture/observation-state', host.token,
+      plain(AG2B_SCOPE, { workspace: AG2B_SCOPE }))).json() as ReadResult<ArchitectureObservationStateV1>;
+    if (state.status === 'ready') {
+      const capture = state.value.autoCapture;
+      if (capture === null || !capture.pending || capture.status === 'failed') return;
+    }
+    if (Date.now() >= deadline) throw new Error(`the automatic capture did not settle within 30 s: ${JSON.stringify(state)}`);
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
 }
 
 /** One formal seed write: a core route suffix and its `graphWrite` body; answers the owner's result. */
