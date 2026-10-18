@@ -1,0 +1,2918 @@
+diff --git a/src/core/agent-runtime/context-assembler.ts b/src/core/agent-runtime/context-assembler.ts
+index cbcdc57..12454a3 100644
+--- a/src/core/agent-runtime/context-assembler.ts
++++ b/src/core/agent-runtime/context-assembler.ts
+@@ -33,6 +33,7 @@ import type {
+   InputDeclarationV1, InputSelectionV1, NoteIndexRowV1, NotesUnderstandingRowV1, PlatformDutyV1, TaskInputPageV1,
+ } from '../../contracts/graph-context.js';
+ import { goalContextDigestV1 } from '../../contracts/graph-context.js';
++import { edgeDeclarationId, legacyDeclarationId } from '../../contracts/input-declaration-id.js';
+ import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
+ import type { PlanRevisionSnapshot, RuntimeTask } from '../../contracts/plan.js';
+ import { revisionAssignments } from '../../contracts/plan.js';
+@@ -753,9 +754,9 @@ function obligationsForTask(plan: PlanRevisionSnapshot, taskId: string) {
+ }
+ 
+ /**
+- * §4.3/G5.4: all declarations of the claim Plan for the consumer, legacy and
+- * edge alike, sorted by declarationId. The same identity rule the graph reader
+- * uses (`views/graph-context-reader.ts:declarationsForTask`).
++ * §4.3/G5.4: all declarations of the claim Plan for the consumer, edge and
++ * legacy alike, edge first; the caller sorts by declarationId. The same
++ * identity rule the graph reader uses (`views/graph-context-reader.ts:declarationsForTask`).
+  */
+ function declarationsForTask(plan: PlanRevisionSnapshot, taskId: string): InputDeclarationV1[] {
+   const tripleOf = (id: string): TaskTriple => ({ projectId: plan.ref.projectId, goalId: plan.goalRef.goalId, taskId: id });
+@@ -763,9 +764,7 @@ function declarationsForTask(plan: PlanRevisionSnapshot, taskId: string): InputD
+   for (const edge of plan.executionDag.dependsOn) {
+     if (edge.taskId !== taskId) continue;
+     out.push({
+-      declarationId: 'edge:' + sha256Hex(canonicalJson({
+-        planRef: plan.ref, consumerTaskId: edge.taskId, dependsOnId: edge.dependsOnId, requires: edge.requires,
+-      } as unknown as JsonValue)),
++      declarationId: edgeDeclarationId(plan.ref, edge),
+       consumer: tripleOf(edge.taskId),
+       planRef: plan.ref,
+       upstream: tripleOf(edge.dependsOnId),
+@@ -777,7 +776,7 @@ function declarationsForTask(plan: PlanRevisionSnapshot, taskId: string): InputD
+     for (const requirement of plan.inputRequirements) {
+       if (requirement.consumerTaskId !== taskId) continue;
+       out.push({
+-        declarationId: 'legacy:' + requirement.requirementId,
++        declarationId: legacyDeclarationId(requirement.requirementId),
+         consumer: tripleOf(requirement.consumerTaskId),
+         planRef: plan.ref,
+         upstream: null,
+diff --git a/src/core/work-graph/tasks/claim-service.ts b/src/core/work-graph/tasks/claim-service.ts
+index 7647349..159c3e1 100644
+--- a/src/core/work-graph/tasks/claim-service.ts
++++ b/src/core/work-graph/tasks/claim-service.ts
+@@ -1,5 +1,5 @@
+ /**
+- * R4c.1 — atomic Task ownership admission.
++ * Atomic Task ownership admission.
+  *
+  * One `claimTask` call binds a trusted Host request to ONE atomic Store commit:
+  * `TaskLease@1`, the claimed `TaskAttempt@1`, a `Run@1` still `starting`, the
+@@ -28,9 +28,10 @@
+  * ATT-01/14/15/24, SES-02) and all are written in the one commit.
+  */
+ import type { ActorRef } from '../../../contracts/command-event.js';
+-import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
++import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+ import type { RoleConfigurationRef, SessionRef, SessionWorkLinkRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+ import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
++import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
+ import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+ import type {
+   ConsumedWaitV1, DispatchOutboxRef, RoleBindingRefV1, RunContinuationV1, RunRef, RunSnapshot, TaskAttemptRef,
+@@ -40,6 +41,7 @@ import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+ import type { PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
+ import { revisionAssignments } from '../../../contracts/plan.js';
+ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { isNonNeg, isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+ import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
+ import { roleSpecContentDigest } from '../../../contracts/role-spec.js';
+ import { isAutomationActor, type TaskRequeueRef, type TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
+@@ -94,8 +96,11 @@ import type { SessionMessage } from '../model/communication-contracts.js';
+ import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
+ import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+ import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
++import { pinsFromStoreCurrent } from '../persistence/read-result-failures.js';
+ import { createSessionFactsService } from './session-facts.js';
+ import { createLegacySessionProvenanceReader } from './session-provenance-facts.js';
++import { bindTrustedHostContext, isolateTrustedWrite } from './trusted-context.js';
++import { taskPhaseFactsOf } from './task-phase-facts.js';
+ 
+ const RUN_SCHEMA_ID = 'RunSnapshot@1';
+ const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
+@@ -108,51 +113,24 @@ type Records = GoalRecordTransactionPort & RecordLookupPort;
+ // Small pure helpers
+ // --------------------------------------------------------------------------
+ 
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+-function nonEmpty(value: unknown): value is string {
+-  return typeof value === 'string' && value.length > 0;
+-}
+-function isSafeRevision(value: unknown): value is number {
+-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+-}
+-function isPositiveBudget(value: unknown): value is number {
+-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+-}
+ function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
+-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
++  return rejectedWithCurrent(code, reason, current);
+ }
+ function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
+ function busy(reason: string): CoreRejection { return reject('busy', reason); }
+ function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
+ function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
+ 
+-function sameHostActor(left: unknown, right: unknown): boolean {
+-  return isRecord(left) && isRecord(right) && left['kind'] === right['kind'] && left['id'] === right['id']
+-    && (left['kind'] === 'human' || left['kind'] === 'system');
+-}
+ function refKeyOf(ref: unknown): string {
+   return canonicalJson(ref as JsonValue);
+ }
+ function sameRef(left: unknown, right: unknown): boolean {
+   try { return refKeyOf(left) === refKeyOf(right); } catch { return false; }
+ }
+-function pinsFromCurrent(current: readonly { refKey: string; revision: number | null }[]): VersionPin[] {
+-  const pins: VersionPin[] = [];
+-  for (const entry of current) {
+-    if (entry.revision === null) continue;
+-    try {
+-      const ref = JSON.parse(entry.refKey) as unknown;
+-      if (isRecord(ref)) pins.push({ ref: ref as VersionPin['ref'], revision: entry.revision });
+-    } catch { /* unreadable ref key is not a pin */ }
+-  }
+-  return pins;
+-}
+ function mapStoreFailure(failure: StoreFailure): CoreRejection {
+   switch (failure.code) {
+     case 'revision_conflict': {
+-      const current = pinsFromCurrent(failure.current);
++      const current = pinsFromStoreCurrent(failure.current);
+       return reject('revision_conflict', failure.reason, current.length > 0 ? current : undefined);
+     }
+     case 'unique_conflict':
+@@ -233,7 +211,7 @@ function unreadReview(reviewRef: UnknownCallReviewRef): ReviewClaimFacts {
+ /** The Attempt and Outbox of a claim are created with no paired Run yet (§5.2: `Absent` only while claiming). */
+ const CLAIMING: AttemptGuardContext = { runNode: 'Absent', runLastEventSeq: 0, ownsSession: false, ownsLease: false };
+ 
+-/** First claim, W2 continuation, a claim after a TaskRequeue (D-3, TASK-03) or a review claim (TASK-03r, L10). */
++/** First claim, W2 continuation, a claim after a TaskRequeue (D-3, TASK-03) or a review claim (TASK-03r). */
+ function claimBasisOf(input: ClaimTaskInput, review: UnknownCallReviewV1 | null): AttemptClaimBasis {
+   if (input.consumedWait !== undefined) return { kind: 'continuation', consumedWait: input.consumedWait };
+   if (input.requeueRef !== undefined) return { kind: 'requeue', requeueRef: input.requeueRef };
+@@ -260,14 +238,7 @@ function claimPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: Can
+   if (execution !== null && selectedRun === null) return null;
+   const applicableReduction = state.reductionRevision === null ? null : read.reductionsByTaskId.get(task.taskId) ?? null;
+   if (state.reductionRevision !== null && applicableReduction === null) return null;
+-  return {
+-    taskKind: task.taskKind,
+-    applicableReduction,
+-    selectedRun,
+-    originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
+-    round: read.roundsByTaskId.get(task.taskId) ?? { kind: 'none' },
+-    coveringRequeue: state.requeueRef,
+-  };
++  return taskPhaseFactsOf(task, state, read);
+ }
+ 
+ /**
+@@ -287,7 +258,7 @@ function requeueClaimFacts(
+     runId: requeue.ref.afterRunId };
+   const release = lease?.release;
+   const releasing = release === undefined ? undefined : runs.find(run => run.ref.runId === release.runRef.runId);
+-  // K3 (L10): the shared release rule, so a release by one of the afterRun's
++  // The shared release rule, so a release by one of the afterRun's
+   // review rounds admits the continuation too. The releasing Run's purpose is
+   // read in this same window (`runs`).
+   const released = release !== undefined && leaseReleasedForContinuation({
+@@ -304,9 +275,9 @@ function requeueClaimFacts(
+ }
+ 
+ /**
+- * K3 (L10, TASK-03r/RUN-01r): the review-claim facts from the record and the
++ * TASK-03r/RUN-01r: the review-claim facts from the record and the
+  * task projection read in the same window. `afterRunRef` is the record's most
+- * recent holder (L12); every boolean is one row of `reviewClaimProblem`.
++ * recent holder; every boolean is one row of `reviewClaimProblem`.
+  */
+ function reviewClaimFacts(
+   record: UnknownCallReviewV1,
+@@ -337,7 +308,7 @@ function reviewClaimFacts(
+ }
+ 
+ /**
+- * K3 L11/D3: the ordinary-claim blocker of a selected Run's review record.
++ * The ordinary-claim blocker of a selected Run's review record.
+  * `held` ("I will handle it") wins over the status; any status other than
+  * `resolved` is `pending`; a `resolved`+released record is no blocker.
+  */
+@@ -496,7 +467,7 @@ function claimRecords(effects: readonly TaskEffect[], write: {
+         records.session = encodeSessionRecord(occupySessionRecord(write.session, write.occupation));
+         break;
+       case 'record_review_round_claim':
+-        // K3 (UCR-03): the review record rides this same commit, written by
++        // UCR-03: the review record rides this same commit, written by
+         // `claimTask` beside `claimRecords`; it is no Run/Attempt/Lease row.
+         break;
+       default:
+@@ -520,72 +491,16 @@ type OwnedCtx = { ok: true; ctx: CoreCallContext; actor: Extract<ActorRef, { kin
+ /** Bind the trusted Host scope and identity before the first await; the
+  * AbortSignal is preserved by reference so cancellation is never lost. */
+ function ownCallContext(ctx: CoreCallContext): OwnedCtx {
+-  const raw = ctx as unknown as {
+-    projectId?: unknown; workspaceId?: unknown; principal?: unknown; materialReader?: unknown; signal?: unknown;
+-  } | null | undefined;
+-  if (raw === null || raw === undefined) return { ok: false, rejection: reject('invalid', 'a Task claim requires a bound call context') };
+-  const projectId = raw.projectId;
+-  const workspaceId = raw.workspaceId;
+-  if (!nonEmpty(projectId) || !nonEmpty(workspaceId)) {
+-    return { ok: false, rejection: forbidden('a Task claim requires a bound project/workspace context') };
+-  }
+-  const signal = raw.signal;
+-  if (typeof signal !== 'object' || signal === null
+-    || typeof (signal as { aborted?: unknown }).aborted !== 'boolean'
+-    || typeof (signal as { addEventListener?: unknown }).addEventListener !== 'function') {
+-    return { ok: false, rejection: forbidden('a Task claim requires the bound AbortSignal') };
+-  }
+-  let principal: unknown;
+-  let materialReader: unknown;
+-  try {
+-    principal = structuredClone(raw.principal);
+-    materialReader = structuredClone(raw.materialReader);
+-  } catch {
+-    return { ok: false, rejection: reject('invalid', 'the call context identity cannot be isolated from the caller') };
+-  }
+-  if (!isRecord(principal) || principal['kind'] !== 'host') {
+-    return { ok: false, rejection: forbidden('a Task claim requires a trusted Host principal') };
+-  }
+-  const actor = principal['actor'];
+-  if (!isRecord(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !nonEmpty(actor['id'])) {
+-    return { ok: false, rejection: forbidden('a Task claim requires a trusted Host actor') };
+-  }
+-  if (!isRecord(materialReader) || materialReader['kind'] !== 'host'
+-    || materialReader['projectId'] !== projectId
+-    || (materialReader['workspaceId'] !== undefined && materialReader['workspaceId'] !== workspaceId)
+-    || !sameHostActor(materialReader['actor'], actor)) {
+-    return { ok: false, rejection: forbidden('the material reader is not the same trusted Host scope') };
+-  }
+-  return { ok: true,
+-    ctx: { projectId, workspaceId, principal: principal as CoreCallContext['principal'],
+-      materialReader: materialReader as MaterialReader, signal: signal as AbortSignal },
+-    actor: { kind: actor['kind'], id: actor['id'] } };
++  const bound = bindTrustedHostContext(ctx, 'a Task claim', { allowArraySignal: true });
++  if (!bound.ok) return bound;
++  return { ok: true, ctx: bound.ctx, actor: bound.actor };
+ }
+ 
+ type OwnedRequest = { ok: true; input: ClaimTaskInput; requestId: string; expected: readonly VersionPin[] }
+   | { ok: false; rejection: CoreRejection };
+ 
+ function ownRequest(request: GraphWrite<ClaimTaskInput>): OwnedRequest {
+-  const raw = request as unknown as { input?: unknown; meta?: unknown } | null | undefined;
+-  if (raw === null || raw === undefined || !isRecord(raw.input)) {
+-    return { ok: false, rejection: reject('invalid', 'a Task claim requires a request input object') };
+-  }
+-  const meta = raw.meta;
+-  if (!isRecord(meta) || !nonEmpty(meta['requestId'])) {
+-    return { ok: false, rejection: reject('invalid', 'a Task claim requires meta.requestId') };
+-  }
+-  if (!Array.isArray(meta['expected'])) {
+-    return { ok: false, rejection: reject('invalid', 'meta.expected must be an array of version pins') };
+-  }
+-  let input: ClaimTaskInput;
+-  let expected: readonly VersionPin[];
+-  try {
+-    input = structuredClone(raw.input) as ClaimTaskInput;
+-    expected = structuredClone(meta['expected']) as VersionPin[];
+-  } catch {
+-    return { ok: false, rejection: reject('invalid', 'the Task claim request cannot be isolated from the caller') };
+-  }
+-  return { ok: true, input, requestId: meta['requestId'], expected };
++  return isolateTrustedWrite(request, 'a Task claim', 'the Task claim request cannot be isolated from the caller');
+ }
+ 
+ // --------------------------------------------------------------------------
+@@ -617,7 +532,7 @@ function validateInputShape(input: ClaimTaskInput, scope: WorkspaceScope): CoreR
+     return reject('invalid', 'claimTask requires a complete RoleBindingRefV1');
+   }
+   const budget = input.budget;
+-  if (!isRecord(budget) || !isPositiveBudget(budget['tokenBudget'])) {
++  if (!isRecord(budget) || !isPos(budget['tokenBudget'])) {
+     return reject('invalid', 'budget.tokenBudget must be a positive safe integer');
+   }
+   const deadline = budget['deadline'];
+@@ -635,7 +550,7 @@ function validateInputShape(input: ClaimTaskInput, scope: WorkspaceScope): CoreR
+     }
+   }
+   if (input.review !== undefined) {
+-    // K3 TASK-03r (L10): a review claim names a review record of THIS Task and
++    // TASK-03r: a review claim names a review record of THIS Task and
+     // is exclusive with the other two bases.
+     if (input.consumedWait !== undefined || input.requeueRef !== undefined) {
+       return reject('invalid', 'review, requeueRef and consumedWait are mutually exclusive');
+@@ -649,7 +564,7 @@ function validateInputShape(input: ClaimTaskInput, scope: WorkspaceScope): CoreR
+     if (!(review['phase'] === 'review' || review['phase'] === 'proposal')) {
+       return reject('invalid', 'the review claim phase must be review or proposal');
+     }
+-    if (!isSafeRevision(review['expectedRevision'])) {
++    if (!isNonNeg(review['expectedRevision'])) {
+       return reject('invalid', 'the review claim expectedRevision must be a safe non-negative integer');
+     }
+     if (ref['projectId'] !== scope.projectId || ref['goalId'] !== goalRef['goalId']) {
+@@ -669,7 +584,7 @@ function validateExpected(
+ ): { ok: true; pins: ExpectedPins } | { ok: false; rejection: CoreRejection } {
+   if (expected.length !== 3) return { ok: false, rejection: reject('invalid', 'meta.expected must contain exactly Goal, Workspace and Session') };
+   for (const pin of expected as readonly unknown[]) {
+-    if (!isRecord(pin) || !isRecord(pin['ref']) || !isSafeRevision(pin['revision'])) {
++    if (!isRecord(pin) || !isRecord(pin['ref']) || !isNonNeg(pin['revision'])) {
+       return { ok: false, rejection: reject('invalid', 'every expected pin needs a ref and a safe non-negative revision') };
+     }
+   }
+@@ -784,10 +699,9 @@ function roleMatchRejection(
+ // --------------------------------------------------------------------------
+ 
+ /**
+- * Slice 5 §3.2/§8.2: the optional Goal-settings seam the claim entry reads
+- * before it starts new modifying work (the waiting/autonomy guards are part 2).
+- * The intersection only ADDS an optional field, so every existing composition
+- * parameter keeps compiling and the factory never throws.
++ * The optional Goal-settings seam the claim entry reads before it starts new
++ * modifying work. The intersection only ADDS an optional field, so every
++ * existing composition parameter keeps compiling and the factory never throws.
+  */
+ export type TaskClaimGoalSettingsDependencies = TaskClaimDependencies & {
+   goalSettings?: GoalSettingsPort;
+@@ -795,7 +709,7 @@ export type TaskClaimGoalSettingsDependencies = TaskClaimDependencies & {
+ 
+ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies): TaskClaimPort {
+   const records: Records = deps.records;
+-  // Slice 1 §0.2 L1: the direct Work claim uses the same-submodule Session facts
++  // The direct Work claim uses the same-submodule Session facts
+   // reader and the trusted legacy-provenance reader; an absent provenance is
+   // never treated as `new`.
+   const sessionFactsService = createSessionFactsService({ records });
+@@ -807,7 +721,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+    * none, and let the Session machine decide. A copy, a pending archive request
+    * or a wait is refused here, not only in `chooseSession`.
+    *
+-   * §3.4 S:630: the evidence the derivation read is part of this claim's
++   * §3.4: the evidence the derivation read is part of this claim's
+    * commit, so a concurrent Session write between the read and the commit is a
+    * revision conflict instead of a claim on stale facts.
+    */
+@@ -905,7 +819,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+       consumedWait: input.consumedWait ?? null,
+       // TD-3: part of the fingerprint only when present, so a first claim keeps its fingerprint.
+       ...(input.requeueRef === undefined ? {} : { requeueRef: input.requeueRef }),
+-      // K3 TASK-03r: likewise for a review claim.
++      // TASK-03r: likewise for a review claim.
+       ...(input.review === undefined ? {} : { review: input.review }),
+       expected: expectedCanonical,
+     } as unknown as JsonValue));
+@@ -921,7 +835,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+     input: ClaimTaskInput,
+     actorBound: boolean,
+   ): Promise<WriteResult<TaskClaim>> {
+-    // K3: a review claim's commit also carries its `UnknownCallReviewChanged`
++    // A review claim's commit also carries its `UnknownCallReviewChanged`
+     // before the claim event, so the claim event is the LAST one the receipt
+     // names (the cursor); an ordinary claim still names exactly one.
+     const lastEventId = receipt.eventIds[receipt.eventIds.length - 1];
+@@ -991,7 +905,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+ 
+     // 2. Current Goal / accepted Plan / Workspace / Session. TASK-01..03 judge
+     //    the facts read so far after each read; a fact not read yet holds.
+-    // K3 TASK-03r (L10): a review claim reads its record in this same window;
++    // TASK-03r: a review claim reads its record in this same window;
+     // the record guard joins the commit and `afterRunRef` is `lastHolderOf`.
+     let reviewRecord: UnknownCallReviewV1 | null = null;
+     let reviewKey: string | null = null;
+@@ -1016,7 +930,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during the goal read');
+     const goal: GoalSnapshot = goalRead.goal;
+     if (goal.workspaceRef.workspaceId !== scope.workspaceId) return forbidden('the Goal belongs to another workspace');
+-    // Slice 5 §3.1 S5-AU-01 / rule 5: a Goal waiting for a predecessor starts no
++    // S5-AU-01 / rule 5: a Goal waiting for a predecessor starts no
+     // new modifying work. The read versions join this claim's commit CAS, so a
+     // settings change after this read makes the claim lose (SS13); an existing
+     // Run is never stopped.
+@@ -1075,7 +989,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+ 
+     const workspaceKey = refKeyOf(goal.workspaceRef);
+     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(input.sessionRef));
+-    // 2C item 10: the deterministic `responsible` link ref for this claim, read
++    // The deterministic `responsible` link ref for this claim, read
+     // by key beside the Session so its guard joins the claim commit.
+     const responsibleLinkRef: SessionWorkLinkRef = {
+       aggregateType: 'SessionWorkLink', projectId: scope.projectId, sessionId: input.sessionRef.sessionId,
+@@ -1103,7 +1017,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+       if (decodedLink.status !== 'decoded') return unavailable(`the target Session work link is damaged: ${decodedLink.reason}`);
+       currentResponsibleLink = decodedLink.value;
+     }
+-    // 2C item 10 (lead ruling): a REUSED Session's claim also opens the claimed
++    // A REUSED Session's claim also opens the claimed
+     // Task's `responsible` link (SES-15) when it has no OPEN one to it. The
+     // Workflow sets `openResponsibleLink`; the created path's initial link is
+     // already open and is left alone. The exact link ref is deterministic, so
+@@ -1163,14 +1077,14 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+       releasedLease = facts.leasesByTaskId.get(input.taskId) ?? null;
+       requeue = requeueClaimFacts(requeueRef, state, facts.requeuesByTaskId.get(input.taskId) ?? [], releasedLease, input,
+         facts.runsByTaskId.get(input.taskId) ?? []);
+-      // K3 (L10, ATT-16): the releasing Run and its purpose, read in this same
++      // ATT-16: the releasing Run and its purpose, read in this same
+       // window, must reach the attempt machine through the claim basis too;
+       // `claimBasisOf` built the basis before the requeue records were read.
+       if (basis.kind === 'requeue' && requeue?.leaseRelease !== undefined) {
+         basis = { ...basis, leaseRelease: requeue.leaseRelease };
+       }
+     }
+-    // K3 TASK-03r (L10): the review claim's guards from the record and the task
++    // TASK-03r: the review claim's guards from the record and the task
+     // projection read above; `releasedLease` is the lease ATT-16r re-holds.
+     let review: ReviewClaimFacts | null = null;
+     if (basis.kind === 'review' && reviewRecord !== null && input.review !== undefined && taskState !== null) {
+@@ -1185,7 +1099,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+         lease: releasedLease,
+       });
+     }
+-    // K3 L11/D3: every claim of this Task guards the selected Run's review
++    // Every claim of this Task guards the selected Run's review
+     // record; an ordinary claim (first/requeue) must also refuse while the
+     // record is unsettled or held, and `unavailable` when it cannot be read.
+     // The record read in `readCanonicalTaskFacts` is the ONE authoritative
+@@ -1286,7 +1200,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+     const outboxRef: DispatchOutboxRef = { aggregateType: 'DispatchOutboxEntry', projectId: scope.projectId,
+       goalId: taskTriple.goalId, taskId: input.taskId, attemptId };
+     // SES-02 occupies the pinned Session for this Run; its generation (revision + 1) is the claim's.
+-    // 2C item 10: SES-15's link open rides the SAME commit/revision bump when the
++    // SES-15's link open rides the SAME commit/revision bump when the
+     // Session has no open responsible link to this Task (a reused Session).
+     const occupied = transitionSession(sessionState, { kind: 'occupancy_acquired', holder: runRef, openWorkLink }, { caller: 'service',
+       hostLease: null, pin: checkedExpected.pins.session.revision, holder: null, probe: null, kernelHeader: null,
+@@ -1312,7 +1226,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+         workspaceRevision: workspaceRecord.revision },
+       runContext: claimRunContext(claimFacts, actor) });
+     if ('status' in written) return written;
+-    // K3 UCR-03 (L10): the review claim writes the record's `activeRound` in the
++    // UCR-03: the review claim writes the record's `activeRound` in the
+     // SAME commit, guarded at the revision read, with its own
+     // `UnknownCallReviewChanged` event.
+     let reviewRecordAfter: UnknownCallReviewV1 | null = null;
+@@ -1342,7 +1256,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+     addGuard(workspaceKey, workspaceRecord.revision);
+     addGuard(refKeyOf(input.planRef), plan.revision);
+     addGuard(sessionKey, session.revision);
+-    // S1-DISPATCH-01 / §3.4 S:630: the trusted legacy derivation's guards are
++    // S1-DISPATCH-01 / §3.4: the trusted legacy derivation's guards are
+     // part of the claim commit, not dropped after the read.
+     for (const guard of dispatchGuards) addGuard(guard.refKey, guard.expectedRevision);
+     for (const guard of facts.guards) addGuard(guard.refKey, guard.expectedRevision);
+@@ -1351,10 +1265,10 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
+     for (const guard of roleFacts.guards) addGuard(guard.refKey, guard.expectedRevision);
+     if (continuationMessageGuard !== null) addGuard(continuationMessageGuard.refKey, continuationMessageGuard.expectedRevision);
+     for (const record of [written.lease, written.attempt, written.run, written.outbox]) addGuard(record.refKey, null);
+-    // K3 UCR-03/L11 (D3): the selected Run's review record's own CAS — the
+-    // revision read in this window, or "still absent" for a K3-before Run.
++    // UCR-03: the selected Run's review record's own CAS — the
++    // revision read in this window, or "still absent" for a Run with no review record.
+     if (selectedReviewGuard !== null) addGuard(selectedReviewGuard.refKey, selectedReviewGuard.expectedRevision);
+-    // 2C item 10: the link row's own CAS (null when the Session never held one).
++    // The link row's own CAS (null when the Session never held one).
+     if (nextResponsibleLink !== null) addGuard(responsibleLinkKey, currentResponsibleLink?.revision ?? null);
+     const guards: RecordGuard[] = [...guardMap].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision }));
+ 
+diff --git a/src/core/work-graph/tasks/completion.ts b/src/core/work-graph/tasks/completion.ts
+index a404a7d..d5ef17f 100644
+--- a/src/core/work-graph/tasks/completion.ts
++++ b/src/core/work-graph/tasks/completion.ts
+@@ -1,5 +1,5 @@
+ /**
+- * R3e.3 formal Task/Goal completion admission (implementation).
++ * Formal Task/Goal completion admission.
+  *
+  * `completeTaskFromHost` / `completeGoalFromHost` are the trusted Host entries
+  * over the ONE `backend.records` instance passed in by `createGoalService`. Each
+@@ -38,7 +38,9 @@ import type { TaskReductionRef, TaskReductionSnapshot } from '../../../contracts
+ import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
+ import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
+ import type { VerificationRoundRef, RoundSnapshot } from '../../../contracts/verification.js';
+-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
++import { isNonNeg, isPos } from '../../../contracts/validation/common.js';
+ import type {
+   DecodeResult, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
+ } from '../../record-store/ports.js';
+@@ -61,6 +63,7 @@ import { evidenceApplicabilityWithBasis, evidenceBindingFor, selectEffectiveEvid
+ import {
+   bindTrustedContext, isolateWrite, isRecord, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef,
+ } from './execution-entry-service.js';
++import { taskPhaseFactsOf } from './task-phase-facts.js';
+ import { decodeRun } from '../materials/run-snapshot-decoder.js';
+ import { evaluateGoalCompletion, evaluateTaskCompletion } from './completion-policy.js';
+ import {
+@@ -88,7 +91,7 @@ const GOAL_IDENTITY_PREFIX = 'r3e-complete-goal:';
+ // -------------------------------------------------------------------------- //
+ 
+ function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
+-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
++  return rejectedWithCurrent(code, reason, current);
+ }
+ function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
+ function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
+@@ -101,19 +104,10 @@ function messageOf(error: unknown): string { return error instanceof Error ? err
+ function mapRejected(rejection: Rejected): CoreRejection {
+   return reject(rejection.code, rejection.reason);
+ }
+-function refKeyOf(value: unknown): string | null {
+-  try { return canonicalJson(value as JsonValue); } catch { return null; }
+-}
+ function fingerprintOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
+ function identityKeyOf(prefix: string, actor: HostActor, projectId: string, workspaceId: string, requestId: string): string {
+   return prefix + sha256Hex(canonicalJson({ actor: { kind: actor.kind, id: actor.id }, projectId, workspaceId, requestId } as unknown as JsonValue));
+ }
+-function isPositiveSafeInteger(value: unknown): value is number {
+-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+-}
+-function isNonNegativeSafeInteger(value: unknown): value is number {
+-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+-}
+ function planRefProblem(value: unknown): string | null {
+   if (!isRecord(value) || value['aggregateType'] !== 'PlanRevision' || !nonEmpty(value['projectId']) || !nonEmpty(value['planId'])) {
+     return 'the plan ref must be a complete PlanRevisionRef';
+@@ -141,23 +135,11 @@ function roundRefProblem(value: unknown): string | null {
+  * Run, the applicable Reduction, the selected Run's round-chain signal, and an
+  * unresolvable origin, which that read shows only as a `blocked` Task with
+  * neither Run nor Reduction, and the TaskRequeue covering the selected Run
+- * (P4). The same read always returns the Run or Reduction it selected; keep this in step
+- * with `claimPhaseFacts` (`claim-service.ts`), which answers null for a missing
+- * one.
++ * (P4). It does not answer null for a missing selected Run or Reduction: each
++ * caller keeps its own extra check for that.
+  */
+ function completionPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: CanonicalTaskFacts): TaskPhaseFacts {
+-  const execution = state.execution;
+-  const selectedRun = execution === null ? null
+-    : (read.runsByTaskId.get(task.taskId) ?? []).find(run => sameRef(run.ref, execution)) ?? null;
+-  const applicableReduction = state.reductionRevision === null ? null : read.reductionsByTaskId.get(task.taskId) ?? null;
+-  return {
+-    taskKind: task.taskKind,
+-    applicableReduction,
+-    selectedRun,
+-    originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
+-    round: read.roundsByTaskId.get(task.taskId) ?? { kind: 'none' },
+-    coveringRequeue: state.requeueRef,
+-  };
++  return taskPhaseFactsOf(task, state, read);
+ }
+ 
+ /** TASK-14 (C5): the head the projection read for the selected Run's chain; null without a valid chain. */
+@@ -248,8 +230,8 @@ function checkTargetPins(
+   if (goalPin === undefined || targetPin === undefined || goalPin === targetPin) {
+     return invalid(`completion meta.expected must be exactly the Goal and ${targetLabel} pins`);
+   }
+-  if (!isPositiveSafeInteger(goalPin.revision)) return invalid('the Goal pin must be a positive safe revision');
+-  if (!isNonNegativeSafeInteger(targetPin.revision)) return invalid(`the ${targetLabel} pin must be revision 0 or higher`);
++  if (!isPos(goalPin.revision)) return invalid('the Goal pin must be a positive safe revision');
++  if (!isNonNeg(targetPin.revision)) return invalid(`the ${targetLabel} pin must be revision 0 or higher`);
+   return { goalPin, targetPin };
+ }
+ 
+@@ -344,7 +326,7 @@ export async function completeTaskFromHost(
+   const state = facts.byTaskId.get(task.taskId);
+   if (state === undefined) return incomplete('the canonical task state is not readable');
+ 
+-  const reductionKey = refKeyOf(reductionRef);
++  const reductionKey = canonicalOf(reductionRef);
+   if (reductionKey === null) return invalid('the TaskReduction ref is not canonical JSON');
+   const persistedReductionRevision = facts.guards.find(guard => guard.refKey === reductionKey)?.expectedRevision ?? null;
+   const expectedReductionRevision = pins.targetPin.revision === 0 ? null : pins.targetPin.revision;
+@@ -359,7 +341,7 @@ export async function completeTaskFromHost(
+     round, chainHead);
+   if (projectionRefusal?.ok === false) return reject(projectionRefusal.code, projectionRefusal.detail);
+ 
+-  const roundRead = await readRecord(deps.records, refKeyOf(round) as string, decodeVerificationRoundSnapshot, 'VerificationRound');
++  const roundRead = await readRecord(deps.records, canonicalOf(round) as string, decodeVerificationRoundSnapshot, 'VerificationRound');
+   if (!roundRead.ok) return roundRead.rejection;
+   const snapshot = roundRead.value as RoundSnapshot;
+   // TASK-14/15/24 judge the round before its producer Run is read (a producer not read yet holds).
+@@ -370,7 +352,7 @@ export async function completeTaskFromHost(
+   // The round's producer Run is a real identity: for a work round it is the
+   // task's own Run; for a gate round it must be a same-Goal ordinary work Run,
+   // never a fabricated gate Run.
+-  const producerKey = refKeyOf(snapshot.subjectRunRef);
++  const producerKey = canonicalOf(snapshot.subjectRunRef);
+   if (producerKey === null) return invalid('the round subject Run ref is not canonical JSON');
+   const producerRead = await readRecord(deps.records, producerKey, (record) => {
+     const decoded = decodeRun(record);
+@@ -386,7 +368,7 @@ export async function completeTaskFromHost(
+   // Read the task's formal Evidence index and the exact admitted Evidence.
+   const indexRef = { aggregateType: 'TaskEvidenceIndex' as const, projectId: goalRef.projectId,
+     goalId: goalRef.goalId, taskId: task.taskId };
+-  const indexKey = refKeyOf(indexRef) as string;
++  const indexKey = canonicalOf(indexRef) as string;
+   // TD-2 (L-3, VD-5): the evidence every TaskRequeue of the Task stored and the
+   // completion round's own chain superseded leaves the fold before it.
+   const superseded = new Set([...evidenceSupersededByRequeue(facts.requeuesByTaskId.get(task.taskId) ?? []),
+@@ -451,12 +433,12 @@ export async function completeTaskFromHost(
+   const reduction = written.reduction;
+ 
+   const guards = mergeGuards([
+-    { refKey: refKeyOf(goalRef) as string, expectedRevision: goal.revision },
+-    { refKey: refKeyOf(plan.ref) as string, expectedRevision: plan.revision },
+-    { refKey: refKeyOf(round) as string, expectedRevision: snapshot.revision },
++    { refKey: canonicalOf(goalRef) as string, expectedRevision: goal.revision },
++    { refKey: canonicalOf(plan.ref) as string, expectedRevision: plan.revision },
++    { refKey: canonicalOf(round) as string, expectedRevision: snapshot.revision },
+     { refKey: producerKey, expectedRevision: producerRun.revision },
+     { refKey: indexKey, expectedRevision: evidenceKeys.indexRevision },
+-    ...evidenceSnapshots.map(entry => ({ refKey: refKeyOf(entry.ref) as string, expectedRevision: entry.revision })),
++    ...evidenceSnapshots.map(entry => ({ refKey: canonicalOf(entry.ref) as string, expectedRevision: entry.revision })),
+     ...[...evidencePlans.plans.entries()].map(([key, originPlan]) => ({ refKey: key, expectedRevision: originPlan.revision })),
+     ...policyGuards,
+     ...facts.guards,
+@@ -590,8 +572,8 @@ export async function completeGoalFromHost(
+     if (effect.kind !== 'guard') throw new Error(`goal_completed has no ${effect.kind} effect`);
+     const guard = effect.guard;
+     switch (guard.target) {
+-      case 'goal': return [{ refKey: refKeyOf(goalRef) as string, expectedRevision: guard.expectedRevision }];
+-      case 'plan_revision': return [{ refKey: refKeyOf(guard.ref) as string, expectedRevision: plan.revision }];
++      case 'goal': return [{ refKey: canonicalOf(goalRef) as string, expectedRevision: guard.expectedRevision }];
++      case 'plan_revision': return [{ refKey: canonicalOf(guard.ref) as string, expectedRevision: plan.revision }];
+       case 'goal_phase': return [{ refKey: phaseRead.guard.refKey, expectedRevision: guard.expectedRevision }];
+       case 'pinned_policy': return policyRead.guards;
+       case 'task_facts': return facts.guards;
+@@ -651,11 +633,11 @@ async function collectEvidenceKeys(
+   const evidenceIds = [...new Set([...indexIds, ...roundEvidenceRefs.map(ref => ref.evidenceId)])]
+     .filter(evidenceId => !superseded.has(evidenceId));
+   const refs: EvidenceRef[] = evidenceIds.map(evidenceId => ({ aggregateType: 'Evidence', projectId, evidenceId }));
+-  const evidenceRead = await readBatch(records, refs.map(ref => refKeyOf(ref) as string));
++  const evidenceRead = await readBatch(records, refs.map(ref => canonicalOf(ref) as string));
+   if (evidenceRead.status !== 'ready') return { rejection: mapRejected(evidenceRead) };
+   const snapshots: EvidenceSnapshot[] = [];
+   for (const ref of refs) {
+-    const key = refKeyOf(ref) as string;
++    const key = canonicalOf(ref) as string;
+     const record = evidenceRead.batch.present.get(key);
+     if (record === undefined) {
+       if (evidenceRead.batch.missing.has(key)) return { rejection: incomplete(`the required Evidence ${ref.evidenceId} is absent`) };
+diff --git a/src/core/work-graph/tasks/context-input-service.ts b/src/core/work-graph/tasks/context-input-service.ts
+index df22bc6..73ecf37 100644
+--- a/src/core/work-graph/tasks/context-input-service.ts
++++ b/src/core/work-graph/tasks/context-input-service.ts
+@@ -1,7 +1,7 @@
+ /**
+  * Slice 3 exact task-input owner (spec §3.4 / §3.5).
+  *
+- * The frozen check order is implemented literally:
++ * The frozen check order:
+  *   synchronously clone ctx/request (keep the original AbortSignal)
+  *   -> shape/scope
+  *   -> bind the principal (work_run: canonical Run/task/claim/plan;
+@@ -16,13 +16,11 @@
+  *   -> `MaterialPort.openArtifact(..., usage: 'historical_explanation')`
+  *   -> re-check the whole canonical ArtifactRef, digest and sizeBytes
+  *   -> return the complete selection.
+- *
+- * The shared pure guard `state/context-input.ts:declaredInputProblem` owns the
+- * G-INPUT checks; the material bridge is constructed only after it passes.
+  */
+ import type { ArtifactOwnerRunRef, ArtifactRef, ArtifactRecord } from '../../../contracts/artifact.js';
+ import { artifactBodyDigest, artifactBodySize } from '../../../contracts/artifact.js';
+ import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
++import { rejected } from '../../../contracts/core/rejections.js';
+ import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+ import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+ import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
+@@ -31,10 +29,12 @@ import type {
+   InputArtifactProvenanceV1, InputDeclarationV1, InputSelectionV1,
+   SelectedInputSourceV1, TaskInputPageRequestV1, TaskInputPageV1,
+ } from '../../../contracts/graph-context.js';
++import { edgeDeclarationId, legacyDeclarationId } from '../../../contracts/input-declaration-id.js';
+ import type { GoalRef, GoalSnapshot, WorkspaceRef } from '../../../contracts/ledger.js';
+ import { sameArtifactOwnerRunRef } from '../../../contracts/material-access.js';
+ import type { PlanRevisionRef, PlanRevisionSnapshot, TaskInputRequirementV2 } from '../../../contracts/plan.js';
+ import type { QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
++import { nonEmpty } from '../../../contracts/validation/common.js';
+ import type { MaterialOrigin } from '../../record-store/body-ports.js';
+ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+ import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
+@@ -102,7 +102,7 @@ const CURSOR_PREFIX = 's3ip1.';
+ const MAX_PAGE_BYTES = 4096;
+ 
+ function rejection(code: CoreError, reason: string): CoreRejection {
+-  return { status: 'rejected', code, reason };
++  return rejected(code, reason);
+ }
+ 
+ function cancelledRejection(): CoreRejection {
+@@ -153,14 +153,10 @@ function cloneContext(ctx: CoreCallContext): CoreCallContext {
+ // Shape/scope checks
+ // --------------------------------------------------------------------------
+ 
+-function nonEmptyString(value: unknown): value is string {
+-  return typeof value === 'string' && value.length > 0;
+-}
+-
+ function taskTripleProblem(value: unknown, field: string): string | null {
+   if (typeof value !== 'object' || value === null) return `${field} must be a TaskTriple`;
+   const task = value as Record<string, unknown>;
+-  if (!nonEmptyString(task['projectId']) || !nonEmptyString(task['goalId']) || !nonEmptyString(task['taskId'])) {
++  if (!nonEmpty(task['projectId']) || !nonEmpty(task['goalId']) || !nonEmpty(task['taskId'])) {
+     return `${field} must be a complete TaskTriple`;
+   }
+   return null;
+@@ -169,7 +165,7 @@ function taskTripleProblem(value: unknown, field: string): string | null {
+ function planRefProblem(value: unknown): string | null {
+   if (typeof value !== 'object' || value === null) return 'planRef must be a PlanRevisionRef';
+   const ref = value as Record<string, unknown>;
+-  if (ref['aggregateType'] !== 'PlanRevision' || !nonEmptyString(ref['projectId']) || !nonEmptyString(ref['planId'])) {
++  if (ref['aggregateType'] !== 'PlanRevision' || !nonEmpty(ref['projectId']) || !nonEmpty(ref['planId'])) {
+     return 'planRef must be a complete PlanRevisionRef';
+   }
+   return null;
+@@ -178,20 +174,20 @@ function planRefProblem(value: unknown): string | null {
+ function inputRequestShapeProblem(request: { consumer: TaskTriple; planRef: PlanRevisionRef;
+   declarationId?: string; candidateKey?: string }): string | null {
+   return taskTripleProblem(request.consumer, 'consumer') ?? planRefProblem(request.planRef)
+-    ?? (request.declarationId !== undefined && !nonEmptyString(request.declarationId)
++    ?? (request.declarationId !== undefined && !nonEmpty(request.declarationId)
+       ? 'declarationId must be a non-empty string' : null)
+-    ?? (request.candidateKey !== undefined && !nonEmptyString(request.candidateKey)
++    ?? (request.candidateKey !== undefined && !nonEmpty(request.candidateKey)
+       ? 'candidateKey must be a non-empty string' : null);
+ }
+ 
+ function pageRequestShapeProblem(request: TaskInputPageRequestV1): string | null {
+   return taskTripleProblem(request.consumer, 'consumer') ?? planRefProblem(request.planRef)
+-    ?? (!nonEmptyString(request.declarationId) ? 'declarationId must be a non-empty string' : null)
+-    ?? (!(request.afterCursor === null || nonEmptyString(request.afterCursor))
++    ?? (!nonEmpty(request.declarationId) ? 'declarationId must be a non-empty string' : null)
++    ?? (!(request.afterCursor === null || nonEmpty(request.afterCursor))
+       ? 'afterCursor must be null or a non-empty string' : null)
+     ?? (!Number.isSafeInteger(request.maxBytes) || request.maxBytes < 1 || request.maxBytes > MAX_PAGE_BYTES
+       ? `maxBytes must be a safe integer in 1..${String(MAX_PAGE_BYTES)}` : null)
+-    ?? (request.candidateKey !== undefined && !nonEmptyString(request.candidateKey)
++    ?? (request.candidateKey !== undefined && !nonEmpty(request.candidateKey)
+       ? 'candidateKey must be a non-empty string' : null);
+ }
+ 
+@@ -370,7 +366,7 @@ function declarationsFor(plan: PlanRevisionSnapshot, consumer: TaskTriple): Inpu
+   for (const requirement of legacyRequirements(plan)) {
+     if (requirement.consumerTaskId !== consumer.taskId) continue;
+     declarations.push({
+-      declarationId: `legacy:${requirement.requirementId}`,
++      declarationId: legacyDeclarationId(requirement.requirementId),
+       consumer: { projectId: plan.goalRef.projectId, goalId: plan.goalRef.goalId, taskId: requirement.consumerTaskId },
+       planRef: plan.ref,
+       upstream: null,
+@@ -380,11 +376,8 @@ function declarationsFor(plan: PlanRevisionSnapshot, consumer: TaskTriple): Inpu
+   }
+   for (const edge of plan.executionDag.dependsOn) {
+     if (edge.taskId !== consumer.taskId) continue;
+-    const declarationId = 'edge:' + sha256Hex(canonicalJson({
+-      planRef: plan.ref, consumerTaskId: edge.taskId, dependsOnId: edge.dependsOnId, requires: edge.requires,
+-    } as unknown as JsonValue));
+     declarations.push({
+-      declarationId,
++      declarationId: edgeDeclarationId(plan.ref, edge),
+       consumer: { projectId: plan.goalRef.projectId, goalId: plan.goalRef.goalId, taskId: edge.taskId },
+       planRef: plan.ref,
+       upstream: { projectId: plan.goalRef.projectId, goalId: plan.goalRef.goalId, taskId: edge.dependsOnId },
+@@ -883,10 +876,10 @@ function decodeCursor(raw: string): PageCursor | null {
+   }
+   if (typeof parsed !== 'object' || parsed === null) return null;
+   const value = parsed as Record<string, unknown>;
+-  if (value['v'] !== 1 || !nonEmptyString(value['projectId']) || !nonEmptyString(value['workspaceId'])
++  if (value['v'] !== 1 || !nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId'])
+     || typeof value['offset'] !== 'number' || !Number.isSafeInteger(value['offset']) || value['offset'] < 0
+-    || !nonEmptyString(value['declarationId']) || cursorSourceProblem(value['source']) !== null
+-    || (value['candidateKey'] !== null && !nonEmptyString(value['candidateKey']))) {
++    || !nonEmpty(value['declarationId']) || cursorSourceProblem(value['source']) !== null
++    || (value['candidateKey'] !== null && !nonEmpty(value['candidateKey']))) {
+     return null;
+   }
+   const consumer = value['consumer'];
+diff --git a/src/core/work-graph/tasks/control-service.ts b/src/core/work-graph/tasks/control-service.ts
+index abf83f1..98946c4 100644
+--- a/src/core/work-graph/tasks/control-service.ts
++++ b/src/core/work-graph/tasks/control-service.ts
+@@ -1,5 +1,5 @@
+ /**
+- * R4.1 durable Run control service (implementation).
++ * Durable Run control service.
+  *
+  * This is the ONE raw control service the composition root owns. `submitControl`
+  * accepts a trusted Host pause/cancel/resume/steer request and atomically
+@@ -41,9 +41,11 @@ import type {
+   ControlIntentKindV1, ControlIntentRef, ControlIntentSnapshotV1, SubmitControlInput, SubmittedControl,
+ } from '../../../contracts/control-intent.js';
+ import type { VersionPin } from '../../../contracts/core/identity.js';
++import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
+ import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+ import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { canonicalJson, canonicalOf as refKeyOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { isPos } from '../../../contracts/validation/common.js';
+ import type { GoalRef } from '../../../contracts/ledger.js';
+ import { isAutomationActor } from '../../../contracts/task-requeue.js';
+ import type {
+@@ -102,7 +104,7 @@ const MAX_CONTROL_REASON_BYTES = 2048;
+ // -------------------------------------------------------------------------- //
+ 
+ function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
+-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
++  return rejectedWithCurrent(code, reason, current);
+ }
+ function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
+ function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
+@@ -186,9 +188,6 @@ function checkControlPins(
+ function fingerprintOf(value: unknown): string {
+   return sha256Hex(canonicalJson(value as JsonValue));
+ }
+-function refKeyOf(value: object): string | null {
+-  try { return canonicalJson(value as unknown as JsonValue); } catch { return null; }
+-}
+ function encodeRun(run: RunSnapshot): EncodedRecord {
+   return { refKey: refKeyOf(run.ref) as string, schemaId: RUN_SNAPSHOT_SCHEMA_ID,
+     revision: run.revision, json: JSON.stringify(run) };
+@@ -393,12 +392,9 @@ async function loadRun(deps: RunControlServiceDependencies, runRef: RunRef): Pro
+ }
+ 
+ // -------------------------------------------------------------------------- //
+-// R4.3a observation write helpers                                             //
++// Observation write helpers                                                   //
+ // -------------------------------------------------------------------------- //
+ 
+-function isPositiveSafeInteger(value: unknown): value is number {
+-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+-}
+ function recordControlObservationInputProblem(value: unknown): string | null {
+   if (!isRecord(value)) return 'a control observation requires an input object';
+   if (Object.keys(value).some(key => key !== 'intentRef' && key !== 'runRef' && key !== 'observation')) {
+@@ -423,7 +419,7 @@ function checkObservationPins(
+   if (intentPin === undefined || runPin === undefined || intentPin === runPin) {
+     return { ok: false, rejection: invalid('meta.expected must pin the intent and the Run without extras') };
+   }
+-  if (!isPositiveSafeInteger(intentPin.revision) || !isPositiveSafeInteger(runPin.revision)) {
++  if (!isPos(intentPin.revision) || !isPos(runPin.revision)) {
+     return { ok: false, rejection: invalid('the intent and Run pins must be positive safe revisions') };
+   }
+   return { ok: true, intentPin, runPin };
+diff --git a/src/core/work-graph/tasks/execution-entry-service.ts b/src/core/work-graph/tasks/execution-entry-service.ts
+index 50a0171..7fc6799 100644
+--- a/src/core/work-graph/tasks/execution-entry-service.ts
++++ b/src/core/work-graph/tasks/execution-entry-service.ts
+@@ -26,7 +26,7 @@
+  * the same commit. The model barrier (`admitEnteredRun`) asks the same
+  * machine's V2 binding, persisted claim, permit and claim Session/Lease guards.
+  */
+-import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
++import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+ import type { RoleConfigurationRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+ import {
+   renderUnknownCallReviewZh, type PreparedTaskExecution, type PreparedTaskManifestV1,
+@@ -43,7 +43,9 @@ import type {
+ import {
+   continuationBriefDigest, continuationBriefShapeProblem, renderContinuationBriefZh,
+ } from '../../../contracts/continuation-brief.js';
+-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { edgeDeclarationId, legacyDeclarationId } from '../../../contracts/input-declaration-id.js';
++import { isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
+ import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+ import { sameArtifactRef, validMaterialSourcePin, type MaterialBasisV1 } from '../../../contracts/material-access.js';
+ import { MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
+@@ -109,6 +111,8 @@ import { planRunActivityForCommit } from './run-activity-service.js';
+ import { readGoal, readGoalPhase, readGoalScope, sameCursor } from './plan-readers.js';
+ import { goalStartPolicy } from '../state/goal-settings-machine.js';
+ import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
++import { executionStoreFailureToRejection } from '../persistence/read-result-failures.js';
++import { bindTrustedHostContext, isolateTrustedWrite } from './trusted-context.js';
+ import { contextAssemblyProblem, contextGoalContentProblem, declaredInputProblem, effectivePlatformDuty } from '../state/context-input.js';
+ 
+ // --------------------------------------------------------------------------
+@@ -119,21 +123,7 @@ type HostActor = { kind: 'human' | 'system'; id: string };
+ type Rejected = { ok: false; rejection: CoreRejection };
+ type OwnedContext = { ok: true; ctx: CoreCallContext; scope: WorkspaceScope; actor: HostActor; signal: AbortSignal };
+ 
+-export function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+-export function nonEmpty(value: unknown): value is string {
+-  return typeof value === 'string' && value.length > 0;
+-}
+-function isPositiveSafeInteger(value: unknown): value is number {
+-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+-}
+-function isSafeInteger(value: unknown): value is number {
+-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+-}
+-export function isSha256Hex(value: unknown): value is string {
+-  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+-}
++export { isRecord, isSha256Hex, nonEmpty };
+ function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
+   return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
+ }
+@@ -146,39 +136,10 @@ function notFound(reason: string): CoreRejection { return reject('not_found', re
+ export function sameRef(left: unknown, right: unknown): boolean {
+   try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
+ }
+-function refKeyOf(value: object): string | null {
+-  try { return canonicalJson(value as unknown as JsonValue); } catch { return null; }
+-}
+-function parseJsonObject(json: string): Record<string, unknown> | null {
+-  try {
+-    const parsed: unknown = JSON.parse(json);
+-    return isRecord(parsed) ? parsed : null;
+-  } catch { return null; }
+-}
+-function pinsFromCurrent(current: readonly { refKey: string; revision: number | null }[]): VersionPin[] {
+-  const pins: VersionPin[] = [];
+-  for (const entry of current) {
+-    if (entry.revision === null) continue;
+-    try {
+-      const ref = JSON.parse(entry.refKey) as unknown;
+-      if (isRecord(ref)) pins.push({ ref: ref as VersionPin['ref'], revision: entry.revision });
+-    } catch { /* an unreadable ref key is not a pin */ }
+-  }
+-  return pins;
+-}
+ export function mapStoreFailure(failure: StoreFailure): CoreRejection {
+-  switch (failure.code) {
+-    case 'revision_conflict': {
+-      const current = pinsFromCurrent(failure.current);
+-      return reject('revision_conflict', failure.reason, current.length > 0 ? current : undefined);
+-    }
+-    case 'unique_conflict': return busy(`${failure.reason} (the Kernel identity slot is held by another Run)`);
+-    case 'idempotency_conflict': return reject('idempotency_conflict', failure.reason);
+-    case 'not_found': return notFound(failure.reason);
+-    case 'invalid': return invalid(failure.reason);
+-    case 'unsupported': return unavailable(failure.reason);
+-    default: return unavailable(failure.reason);
+-  }
++  return executionStoreFailureToRejection(failure as {
++    code: string; reason: string; current?: readonly { refKey: string; revision: number | null }[];
++  });
+ }
+ function mapReadResult<T>(result: Exclude<ReadResult<T>, { status: 'ready' }>): CoreRejection {
+   if (result.status === 'not_found') return notFound('the requested record does not exist');
+@@ -202,15 +163,15 @@ function isKernelBinding(value: unknown): value is KernelExecutionBinding {
+     && nonEmpty(value['runId']) && nonEmpty(value['turnId']);
+ }
+ function isKernelObservationSource(value: unknown): value is KernelObservationSource {
+-  return isKernelBinding(value) && isPositiveSafeInteger((value as { position?: unknown }).position);
++  return isKernelBinding(value) && isPos((value as { position?: unknown }).position);
+ }
+ function isRoleBinding(value: unknown): value is RoleBindingRefV1 {
+   return isRecord(value) && value['schemaVersion'] === 1 && nonEmpty(value['bindingId'])
+     && nonEmpty(value['templateId']) && nonEmpty(value['templateRevision'])
+-    && isPositiveSafeInteger(value['bindingVersion']) && nonEmpty(value['policyRevision']);
++    && isPos(value['bindingVersion']) && nonEmpty(value['policyRevision']);
+ }
+ function isWorkspacePin(value: unknown): value is { workspaceId: string; revision: number } {
+-  return isRecord(value) && nonEmpty(value['workspaceId']) && isSafeInteger(value['revision']);
++  return isRecord(value) && nonEmpty(value['workspaceId']) && isNonNeg(value['revision']);
+ }
+ function isPermissions(value: unknown): value is TaskEnvelopeV1['permissions'] {
+   return isRecord(value) && nonEmpty(value['policyRevision'])
+@@ -218,7 +179,7 @@ function isPermissions(value: unknown): value is TaskEnvelopeV1['permissions'] {
+     && Array.isArray(value['writeScope']) && value['writeScope'].every(nonEmpty);
+ }
+ function isBudget(value: unknown): value is TaskBudgetV1 {
+-  return isRecord(value) && isPositiveSafeInteger(value['tokenBudget'])
++  return isRecord(value) && isPos(value['tokenBudget'])
+     && (value['deadline'] === null || nonEmpty(value['deadline']));
+ }
+ function goalRefOf(task: TaskTriple): GoalRef {
+@@ -229,79 +190,14 @@ function goalRefOf(task: TaskTriple): GoalRef {
+ // Trusted Host context and request isolation
+ // --------------------------------------------------------------------------
+ 
+-function sameHostActor(left: unknown, right: unknown): boolean {
+-  return isRecord(left) && isRecord(right) && left['kind'] === right['kind'] && left['id'] === right['id']
+-    && (left['kind'] === 'human' || left['kind'] === 'system');
+-}
+-
+ export function bindTrustedContext(ctx: CoreCallContext): OwnedContext | Rejected {
+-  const raw = ctx as unknown as {
+-    projectId?: unknown; workspaceId?: unknown; principal?: unknown; materialReader?: unknown; signal?: unknown;
+-  } | null | undefined;
+-  if (raw === null || raw === undefined) return { ok: false, rejection: invalid('a B2 execution write requires a bound call context') };
+-  const projectId = raw.projectId;
+-  const workspaceId = raw.workspaceId;
+-  if (!nonEmpty(projectId) || !nonEmpty(workspaceId)) {
+-    return { ok: false, rejection: forbidden('a B2 execution write requires a bound project/workspace context') };
+-  }
+-  const signal = raw.signal;
+-  if (!isRecord(signal) || typeof signal['aborted'] !== 'boolean' || typeof signal['addEventListener'] !== 'function') {
+-    return { ok: false, rejection: forbidden('a B2 execution write requires the bound AbortSignal') };
+-  }
+-  let principal: unknown;
+-  let materialReader: unknown;
+-  try {
+-    principal = structuredClone(raw.principal);
+-    materialReader = structuredClone(raw.materialReader);
+-  } catch {
+-    return { ok: false, rejection: invalid('the call context identity cannot be isolated from the caller') };
+-  }
+-  if (!isRecord(principal) || principal['kind'] !== 'host') {
+-    return { ok: false, rejection: forbidden('a B2 execution write requires a trusted Host principal') };
+-  }
+-  const actor = principal['actor'];
+-  if (!isRecord(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !nonEmpty(actor['id'])) {
+-    return { ok: false, rejection: forbidden('a B2 execution write requires a trusted Host actor') };
+-  }
+-  if (!isRecord(materialReader) || materialReader['kind'] !== 'host'
+-    || materialReader['projectId'] !== projectId
+-    || (materialReader['workspaceId'] !== undefined && materialReader['workspaceId'] !== workspaceId)
+-    || !sameHostActor(materialReader['actor'], actor)) {
+-    return { ok: false, rejection: forbidden('the material reader is not the same trusted Host scope') };
+-  }
+-  return {
+-    ok: true,
+-    ctx: { projectId, workspaceId, principal: principal as CoreCallContext['principal'],
+-      materialReader: materialReader as MaterialReader, signal: signal as unknown as AbortSignal },
+-    scope: { projectId, workspaceId },
+-    actor: { kind: actor['kind'], id: actor['id'] },
+-    signal: signal as unknown as AbortSignal,
+-  };
++  return bindTrustedHostContext(ctx, 'a B2 execution write');
+ }
+ 
+ type OwnedWrite<T> = { ok: true; input: T; requestId: string; expected: readonly VersionPin[] } | Rejected;
+ 
+ export function isolateWrite<T>(request: GraphWrite<T>): OwnedWrite<T> {
+-  const raw = request as unknown as { input?: unknown; meta?: unknown } | null | undefined;
+-  if (raw === null || raw === undefined || !isRecord(raw.input)) {
+-    return { ok: false, rejection: invalid('a B2 execution write requires a request input object') };
+-  }
+-  const meta = raw.meta;
+-  if (!isRecord(meta) || !nonEmpty(meta['requestId'])) {
+-    return { ok: false, rejection: invalid('a B2 execution write requires meta.requestId') };
+-  }
+-  if (!Array.isArray(meta['expected'])) {
+-    return { ok: false, rejection: invalid('meta.expected must be an array of version pins') };
+-  }
+-  let input: T;
+-  let expected: readonly VersionPin[];
+-  try {
+-    input = structuredClone(raw.input) as T;
+-    expected = structuredClone(meta['expected']) as VersionPin[];
+-  } catch {
+-    return { ok: false, rejection: invalid('the B2 execution request cannot be isolated from the caller') };
+-  }
+-  return { ok: true, input, requestId: meta['requestId'], expected };
++  return isolateTrustedWrite(request, 'a B2 execution write', 'the B2 execution request cannot be isolated from the caller');
+ }
+ 
+ export function checkRunPin(expected: readonly VersionPin[], runRef: RunRef): { ok: true; pin: VersionPin } | Rejected {
+@@ -309,7 +205,7 @@ export function checkRunPin(expected: readonly VersionPin[], runRef: RunRef): {
+     return { ok: false, rejection: invalid('meta.expected must contain exactly one Run revision pin') };
+   }
+   const raw = expected[0] as unknown;
+-  if (!isRecord(raw) || !isRecord(raw['ref']) || !isPositiveSafeInteger(raw['revision'])) {
++  if (!isRecord(raw) || !isRecord(raw['ref']) || !isPos(raw['revision'])) {
+     return { ok: false, rejection: invalid('the expected Run pin must carry a ref and a positive safe revision') };
+   }
+   if (!sameRef(raw['ref'], runRef)) {
+@@ -332,7 +228,7 @@ export function checkRunAndPermitPins(
+   if (runPin === undefined || permitPin === undefined || runPin === permitPin) {
+     return { ok: false, rejection: invalid('meta.expected must be the Run and permit pins without extras') };
+   }
+-  if (!isPositiveSafeInteger(runPin.revision) || permitPin.revision !== 1) {
++  if (!isPos(runPin.revision) || permitPin.revision !== 1) {
+     return { ok: false, rejection: invalid('the permit pin must be revision 1 and the Run pin a positive revision') };
+   }
+   return { ok: true, runPin };
+@@ -428,7 +324,7 @@ export async function readManifestFromEnvelope(
+     const problem = sourceRefProblem(source);
+     if (problem !== null) return { ok: false, rejection: unavailable(problem) };
+   }
+-  const parsed = parseJsonObject(record.body);
++  const parsed = parseObject(record.body);
+   if (parsed === null) return { ok: false, rejection: unavailable('the stored manifest body is not a JSON object') };
+   const problem = manifestProblem(parsed);
+   if (problem !== null) return { ok: false, rejection: unavailable(`the stored prepared manifest is malformed: ${problem}`) };
+@@ -440,7 +336,7 @@ function roleResolutionProblem(role: unknown): string | null {
+   if (role['status'] === 'resolved') {
+     if (!nonEmpty(role['roleId'])) return 'a resolved role requires a roleId';
+     const revision = role['revision'];
+-    if (!isRecord(revision) || !nonEmpty(revision['roleId']) || !isPositiveSafeInteger(revision['revision'])) {
++    if (!isRecord(revision) || !nonEmpty(revision['roleId']) || !isPos(revision['revision'])) {
+       return 'a resolved role requires a complete RoleSpecRevisionRef';
+     }
+     if (!isRecord(role['spec'])) return 'a resolved role requires a RoleSpecContent object';
+@@ -593,7 +489,7 @@ export async function recheckHostRoleAdmission(
+     configurationRevision: string;
+   },
+ ): Promise<{ ok: true; value: HostRoleAdmission } | Rejected> {
+-  // R4/L13: a review-purpose Run resolves its Role with EMPTY declared
++  // A review-purpose Run resolves its Role with EMPTY declared
+   // permissions, so only the Role's tool ceiling is skipped; validity and the
+   // manifest-role match checks below stay.
+   const reviewPurpose = isReviewRoundPurpose(input.run.purpose);
+@@ -903,7 +799,7 @@ function reconcileFieldsOf(observation: TaskResultObservation): { ok: true; valu
+   }
+   const accepted = observation.acceptedSteers ?? [];
+   if (!Array.isArray(accepted) || !accepted.every(steer => isRecord(steer) && isRecord(steer.intentRef)
+-    && isPositiveSafeInteger(steer.position) && nonEmpty(steer.kernelEventId) && isSafeInteger(steer.kernelEventSequence))) {
++    && isPos(steer.position) && nonEmpty(steer.kernelEventId) && isNonNeg(steer.kernelEventSequence))) {
+     return { ok: false, rejection: invalid('acceptedSteers must name each steer and its Kernel input event') };
+   }
+   const confirmed = observation.inputsConfirmed;
+@@ -1026,7 +922,7 @@ export function executionReadGuards(facts: TaskExecutionRecord, runKey: string,
+     { refKey: dispatchOutboxRefKey(facts.outbox.ref), expectedRevision: facts.outbox.revision },
+     { refKey: planRevisionRefKey(facts.plan.ref), expectedRevision: facts.plan.revision },
+     { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(facts.outbox.claim.sessionRef)), expectedRevision: facts.session.revision },
+-    ...(facts.lease === null ? [] : [{ refKey: refKeyOf(facts.lease.ref) as string, expectedRevision: facts.lease.revision }]),
++    ...(facts.lease === null ? [] : [{ refKey: canonicalOf(facts.lease.ref) as string, expectedRevision: facts.lease.revision }]),
+   ];
+ }
+ 
+@@ -1079,7 +975,7 @@ function inputDeclarationsOf(plan: PlanRevisionSnapshot, consumer: TaskTriple):
+   for (const requirement of plan.inputRequirements ?? []) {
+     if (requirement.consumerTaskId !== consumer.taskId) continue;
+     declarations.push({
+-      declarationId: `legacy:${requirement.requirementId}`,
++      declarationId: legacyDeclarationId(requirement.requirementId),
+       consumer: { ...consumer },
+       planRef: plan.ref,
+       upstream: null,
+@@ -1090,9 +986,7 @@ function inputDeclarationsOf(plan: PlanRevisionSnapshot, consumer: TaskTriple):
+   for (const edge of plan.executionDag.dependsOn) {
+     if (edge.taskId !== consumer.taskId) continue;
+     declarations.push({
+-      declarationId: `edge:${sha256Hex(canonicalJson({
+-        planRef: plan.ref, consumerTaskId: edge.taskId, dependsOnId: edge.dependsOnId, requires: edge.requires,
+-      } as unknown as JsonValue))}`,
++      declarationId: edgeDeclarationId(plan.ref, edge),
+       consumer: { ...consumer },
+       planRef: plan.ref,
+       upstream: { projectId: consumer.projectId, goalId: consumer.goalId, taskId: edge.dependsOnId },
+@@ -1124,7 +1018,7 @@ function contextConsumptionProblem(input: {
+   goal: GoalSnapshot;
+   /** CTX-02: re-authorizing an already bound manifest validates it, it does not re-pin its sources. */
+   rebinding: boolean;
+-  /** R1/R2: the trusted Run purpose decides whether the manifest must carry the review instruction. */
++  /** The trusted Run purpose decides whether the manifest must carry the review instruction. */
+   run: RunSnapshot;
+ }): CoreRejection | null {
+   const binding = input.manifest.contextAssembly;
+@@ -1134,7 +1028,7 @@ function contextConsumptionProblem(input: {
+   if (duty.status !== 'ready') {
+     return duty.status === 'rejected' ? duty : reject('invalid', 'the effective platform duty is not available');
+   }
+-  // R1/R2/L20: "the manifest has the review field" must agree with "the Run's
++  // "the manifest has the review field" must agree with "the Run's
+   // purpose is a review-purpose round" (review OR proposal phase); either
+   // difference is forbidden. The review/proposal text is re-rendered from the
+   // structured copy, so the binding's byte interval and the rendered section
+@@ -1171,7 +1065,7 @@ function contextConsumptionProblem(input: {
+       return reject('revision_conflict', 'the assembled context named another Workspace revision');
+     }
+   }
+-  // W1-CTX-01 (wiring 1 §2.2, L2/L4): after the Workspace revision and before the
++  // W1-CTX-01: after the Workspace revision and before the
+   // input declarations, compare the shown Goal content the binding stored against
+   // the current Goal; a change re-prepares, it does not re-pin the Goal version.
+   const goalContent = contextGoalContentProblem({
+@@ -1213,19 +1107,19 @@ function contextConsumptionProblem(input: {
+  * whether a newer Goal revision (an unrelated Plan adoption) still admits the
+  * claim; a second guard at the consumed revision would contradict it and stall
+  * the claimed Run (`conflicting guards`). Every other record source stays guarded;
+- * the shown Goal content is compared instead (wiring 1 W1-CTX-01).
++ * the shown Goal content is compared instead (W1-CTX-01).
+  */
+ function contextConsumptionGuards(binding: ContextAssemblyBindingV1 | undefined, faceRunRef: RunRef): readonly RecordGuard[] {
+   if (binding === undefined) return [];
+-  const faceRunKey = refKeyOf(faceRunRef);
++  const faceRunKey = canonicalOf(faceRunRef);
+   const guards: RecordGuard[] = [];
+   const add = (ref: object, revision: number): void => {
+-    const refKey = refKeyOf(ref);
++    const refKey = canonicalOf(ref);
+     if (refKey !== null) guards.push({ refKey, expectedRevision: revision });
+   };
+   for (const source of binding.sources) {
+     if (source.kind !== 'record') continue;
+-    if (faceRunKey !== null && refKeyOf(source.ref) === faceRunKey) continue;
++    if (faceRunKey !== null && canonicalOf(source.ref) === faceRunKey) continue;
+     if ((source.ref as { aggregateType?: unknown }).aggregateType === 'Goal') continue;
+     add(source.ref, source.revision);
+   }
+@@ -1496,7 +1390,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
+       let runEvent: Extract<RunEvent, { kind: 'entry_authorized' }> = { kind: 'entry_authorized', claim, consumerId,
+         envelope: prepared.envelope, inputBinding: prepared.inputBinding };
+       let runCtx = entryRunContext(facts, claim, actor);
+-      // K3 RUN-02 (L11, D3): a review-purpose Run re-reads its record before
++      // RUN-02: a review-purpose Run re-reads its record before
+       // entry; the guard and its commit CAS are filled with the manifest below.
+       let reviewFacts: { key: string; record: UnknownCallReviewV1 } | null = null;
+       if (facts.run.purpose?.kind === 'unknown_call_review') {
+@@ -1540,7 +1434,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
+           predecessor: { exists: true, cancelled: predecessorRead.goal.desiredState === 'cancelled',
+             formallyCompletedForActivePlan: formallyCompleted } });
+         if (!policy.allowed) return reject('busy', `waiting_predecessor:${waitingRef.goalId}`);
+-        const waitingKey = refKeyOf(waitingRef);
++        const waitingKey = canonicalOf(waitingRef);
+         if (waitingKey === null) return invalid('the wait predecessor ref is not canonicalizable JSON');
+         waitingGuards.push({ refKey: waitingKey, expectedRevision: predecessorRead.goal.revision });
+         waitingGuards.push(phaseRead.guard);
+@@ -1565,7 +1459,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
+ 
+       // C3 (RUN-02, contract (e)): the continuation brief binding of the prepared manifest.
+       const briefManifest = await readManifestFromEnvelope(deps, prepared.envelope as unknown as Record<string, unknown>, claim.runRef);
+-      // R2/D5: an unreadable manifest on a review Run is its read error, never a
++      // An unreadable manifest on a review Run is its read error, never a
+       // silent hold (the review instruction can no longer be checked).
+       if (reviewFacts !== null && !briefManifest.ok) return briefManifest.rejection;
+       const manifestBrief = briefManifest.ok ? briefManifest.value.manifest.continuationBrief : undefined;
+@@ -1575,7 +1469,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
+         // Slice 1 §3.5/F84: the actually installed anchor refs must equal the
+         // binding's canonical refs; an old brief without the section holds.
+         anomalyRefsMatch: anomalyAnchorRefsMatch(manifestBrief, prepared.inputBinding) };
+-      // K3 RUN-02 (L11, D3): the record must still wait for this round, and the
++      // RUN-02: the record must still wait for this round, and the
+       // prepared review instruction must match it. A manifest without the
+       // section (a non-review prepare) holds, like an old brief.
+       if (reviewFacts !== null) {
+@@ -1614,7 +1508,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
+         ...(runEvent.activePlanRef === undefined ? {} : { activePlanRef: runEvent.activePlanRef }),
+       };
+       if (!nonEmpty(event.eventId) || !nonEmpty(event.occurredAt)) return reject('unsupported', 'the injected id/clock source produced an empty value');
+-      const goalKey = refKeyOf(goalRefOf(claim.task));
++      const goalKey = canonicalOf(goalRefOf(claim.task));
+       if (goalKey === null) return invalid('the Goal ref is not canonicalizable JSON');
+       const merged = mergeGuards([
+         ...executionReadGuards(facts, runRecord.refKey, runPin),
+@@ -1624,7 +1518,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
+         // C6: with `carried_unchanged`, the active Plan and the basis sources the verdict read.
+         ...entryPlan.guards,
+         ...admission.guards,
+-        // K3 RUN-02 (L11, D3): the review record's revision joins the entry CAS.
++        // RUN-02: the review record's revision joins the entry CAS.
+         ...(reviewFacts === null ? [] : [{ refKey: reviewFacts.key, expectedRevision: reviewFacts.record.revision }]),
+       ]);
+       if (!merged.ok) return merged.rejection;
+@@ -1883,7 +1777,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
+     const claimProblem = taskClaimProblem(observation.claim);
+     if (claimProblem !== null) return invalid(`the result claim is malformed: ${claimProblem}`);
+     const claim = observation.claim;
+-    if (!nonEmpty(observation.entry.consumerId) || !isPositiveSafeInteger(observation.entry.entryGeneration)) {
++    if (!nonEmpty(observation.entry.consumerId) || !isPos(observation.entry.entryGeneration)) {
+       return invalid('the result entry projection is incomplete');
+     }
+     // RUN-07 accepts only the V2 binding's own consumer and generation, so this is also what the commit records.
+@@ -1911,7 +1805,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
+         ...(enteredAt === null ? {} : { enteredAt }),
+         ...(acceptedSteers.length === 0 ? {} : { acceptedSteers }),
+         ...(inputsConfirmed === null ? {} : { inputsConfirmed }),
+-        // Slice 2B L5: an ending commit that carries activity covers it in its
++        // Slice 2B: an ending commit that carries activity covers it in its
+         // fingerprint; an old caller without it keeps today's identity.
+         ...(observation.activity === undefined ? {} : { activity: observation.activity }) });
+     } catch { return invalid('the result request is not canonicalizable JSON'); }
+@@ -2008,13 +1902,13 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
+         nodeBefore: state.node, hostInstanceId: deps.hostInstance?.hostInstanceId ?? null, acceptedSteers,
+         cancelRef: null, pausedStop: null, kernelPaused: false, observedAt: nowIso });
+       if (!intentWrites.ok) return intentWrites.rejection;
+-      // Slice 2B L5: the tally joins the SAME end commit as a RunActivity
++      // Slice 2B: the tally joins the SAME end commit as a RunActivity
+       // record (no event of its own). An unchanged record writes nothing.
+       let activityRecord: EncodedRecord | null = null;
+       let activityGuard: RecordGuard | null = null;
+       if (observation.activity !== undefined) {
+         const planned = await planRunActivityForCommit(records, { activity: observation.activity, run: nextRun,
+-          // R10 (review item 10): RUN-21 preserves the Run's ORIGINAL `endedAt`;
++          // RUN-21 preserves the Run's ORIGINAL `endedAt`;
+           // the activity snapshot must keep it, and `recordedAt` alone carries
+           // the replacement time. The fallback is defensive only (the Run is
+           // ending in this commit).
+@@ -2078,10 +1972,10 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
+ // --------------------------------------------------------------------------
+ 
+ function encodeRun(run: RunSnapshot): EncodedRecord {
+-  return { refKey: refKeyOf(run.ref) as string, schemaId: 'RunSnapshot@1', revision: run.revision, json: JSON.stringify(run) };
++  return { refKey: canonicalOf(run.ref) as string, schemaId: 'RunSnapshot@1', revision: run.revision, json: JSON.stringify(run) };
+ }
+ function encodeLease(lease: TaskLeaseSnapshot): EncodedRecord {
+-  return { refKey: refKeyOf(lease.ref) as string, schemaId: 'TaskLeaseSnapshot@1', revision: lease.revision, json: JSON.stringify(lease) };
++  return { refKey: canonicalOf(lease.ref) as string, schemaId: 'TaskLeaseSnapshot@1', revision: lease.revision, json: JSON.stringify(lease) };
+ }
+ 
+ // --------------------------------------------------------------------------
+@@ -2146,8 +2040,8 @@ export function taskEntryPermitProblem(permit: unknown): string | null {
+   const claimProblem = taskClaimProblem(permit['claim']);
+   if (claimProblem !== null) return claimProblem;
+   if (!nonEmpty(permit['consumerId'])) return 'the entry permit consumerId is required';
+-  if (!isPositiveSafeInteger(permit['entryGeneration'])) return 'the entry permit entryGeneration must be a positive safe integer';
+-  if (!isPositiveSafeInteger(permit['authorizationRevision'])) return 'the entry permit authorizationRevision must be a positive safe integer';
++  if (!isPos(permit['entryGeneration'])) return 'the entry permit entryGeneration must be a positive safe integer';
++  if (!isPos(permit['authorizationRevision'])) return 'the entry permit authorizationRevision must be a positive safe integer';
+   if (!isSha256Hex(permit['inputDigest'])) return 'the entry permit inputDigest must be a sha256 hex';
+   return null;
+ }
+@@ -2156,8 +2050,8 @@ function observedHistoryProblem(history: unknown): boolean {
+   // ObservedExecutionHistory carries only the Kernel identity/positions; the
+   // SessionRef comes from the claim and is added by the shared compiler.
+   if (!isRecord(history) || !isKernelBinding(history['kernel'])) return false;
+-  if (!isPositiveSafeInteger(history['startPosition']) || !isPositiveSafeInteger(history['observedThroughPosition'])) return false;
+-  if (!(history['endPosition'] === null || isPositiveSafeInteger(history['endPosition']))) return false;
++  if (!isPos(history['startPosition']) || !isPos(history['observedThroughPosition'])) return false;
++  if (!(history['endPosition'] === null || isPos(history['endPosition']))) return false;
+   return true;
+ }
+ 
+diff --git a/src/core/work-graph/tasks/execution-history-service.ts b/src/core/work-graph/tasks/execution-history-service.ts
+index 6ea0b82..b94d040 100644
+--- a/src/core/work-graph/tasks/execution-history-service.ts
++++ b/src/core/work-graph/tasks/execution-history-service.ts
+@@ -1,5 +1,5 @@
+ /**
+- * R4c.2b execution-history locator maintenance.
++ * Execution-history locator maintenance.
+  *
+  * This is the trusted Host/Runtime fact-admission capability that persists the
+  * optional `RunSnapshot.executionHistory` locator. It is NOT a second Kernel
+@@ -30,23 +30,23 @@
+  * The write is decided by the pure Run machine (STATE-MACHINES-SPEC §6,
+  * RUN-06 in `state/run-machine.ts`) through `execution-history-binding.ts`.
+  * This file keeps the request shape and scope checks before any store access,
+- * the receipt lookup first, and the execution read and the Run pin check where
+- * they always were (no Run row reads the caller's pin); the locator refusals
+- * past them, the next Run and the Kernel slot change come from the machine's
++ * the receipt lookup first, and the execution read and the Run pin check in
++ * that order (no Run row reads the caller's pin); the locator refusals after
++ * them, the next Run and the Kernel slot change come from the machine's
+  * decision, record and effect, never from a literal here.
+  */
+ import type { ActorRef } from '../../../contracts/command-event.js';
+-import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
++import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+ import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+-import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/core/results.js';
++import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
+ import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejections.js';
++import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+ import { isAutomationActor } from '../../../contracts/task-requeue.js';
+ import type {
+   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
+-  StoreFailure,
+-} from '../../record-store/ports.js';
+-import {
++} from '../../record-store/ports.js';import {
+   encodeExecutionHistoryRecordedEvent,
+   executionHistoryRecordedEventFromEvent,
+   EXECUTION_HISTORY_RECORDED_EVENT_SCHEMA_VERSION,
+@@ -64,8 +64,10 @@ import type {
+   RecordedExecutionHistory,
+ } from '../model/execution-history-contracts.js';
+ import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
++import { executionStoreFailureToRejection } from '../persistence/read-result-failures.js';
+ import { sameCursor } from './plan-readers.js';
+ import { createRunStateReader } from './run-state-service.js';
++import { bindTrustedHostContext, isolateTrustedWrite } from './trusted-context.js';
+ 
+ const HISTORY_IDENTITY_PREFIX = 'execution-history:';
+ 
+@@ -73,23 +75,10 @@ const HISTORY_IDENTITY_PREFIX = 'execution-history:';
+ // Small pure helpers
+ // --------------------------------------------------------------------------
+ 
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+-function nonEmpty(value: unknown): value is string {
+-  return typeof value === 'string' && value.length > 0;
+-}
+-function isPositiveRevision(value: unknown): value is number {
+-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+-}
+-function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
+-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
+-}
+-function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
+-function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
+-function busy(reason: string): CoreRejection { return reject('busy', reason); }
+-function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
+-function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
++function invalid(reason: string): CoreRejection { return rejected('invalid', reason); }
++function forbidden(reason: string): CoreRejection { return rejected('forbidden', reason); }
++function unavailable(reason: string): CoreRejection { return rejected('unavailable', reason); }
++function incomplete(reason: string): CoreRejection { return rejected('incomplete', reason); }
+ function messageOf(error: unknown): string {
+   return error instanceof Error ? error.message : String(error);
+ }
+@@ -104,33 +93,6 @@ function isRunRef(value: unknown): value is RunRef {
+   return isRecord(value) && value['aggregateType'] === 'Run'
+     && nonEmpty(value['projectId']) && nonEmpty(value['goalId']) && nonEmpty(value['runId']);
+ }
+-function pinsFromCurrent(current: readonly { refKey: string; revision: number | null }[]): VersionPin[] {
+-  const pins: VersionPin[] = [];
+-  for (const entry of current) {
+-    if (entry.revision === null) continue;
+-    try {
+-      const ref = JSON.parse(entry.refKey) as unknown;
+-      if (isRecord(ref)) pins.push({ ref: ref as VersionPin['ref'], revision: entry.revision });
+-    } catch { /* an unreadable ref key is not a pin */ }
+-  }
+-  return pins;
+-}
+-function mapStoreFailure(failure: StoreFailure): CoreRejection {
+-  switch (failure.code) {
+-    case 'revision_conflict': {
+-      const current = pinsFromCurrent(failure.current);
+-      return reject('revision_conflict', failure.reason, current.length > 0 ? current : undefined);
+-    }
+-    case 'unique_conflict':
+-      return busy(`${failure.reason} (the Kernel identity slot is held by another Run)`);
+-    case 'idempotency_conflict': return reject('idempotency_conflict', failure.reason);
+-    case 'not_found': return reject('not_found', failure.reason);
+-    case 'invalid': return invalid(failure.reason);
+-    case 'unsupported': return unavailable(failure.reason);
+-    case 'corrupt': return unavailable(failure.reason);
+-    default: return unavailable(failure.reason);
+-  }
+-}
+ 
+ // --------------------------------------------------------------------------
+ // Synchronous input isolation and trusted Host scope
+@@ -141,62 +103,12 @@ type OwnedCtx =
+       actor: Extract<ActorRef, { kind: 'human' | 'system' }> }
+   | { ok: false; rejection: CoreRejection };
+ 
+-function sameHostActor(left: unknown, right: unknown): boolean {
+-  return isRecord(left) && isRecord(right) && left['kind'] === right['kind'] && left['id'] === right['id']
+-    && (left['kind'] === 'human' || left['kind'] === 'system');
+-}
+-
+ /** Bind the trusted Host scope and identity before the first await; the original
+  * AbortSignal is kept by reference so cancellation can never be lost. */
+ function ownCallContext(ctx: CoreCallContext): OwnedCtx {
+-  const raw = ctx as unknown as {
+-    projectId?: unknown; workspaceId?: unknown; principal?: unknown; materialReader?: unknown; signal?: unknown;
+-  } | null | undefined;
+-  if (raw === null || raw === undefined) {
+-    return { ok: false, rejection: invalid('recordExecutionHistory requires a bound call context') };
+-  }
+-  const projectId = raw.projectId;
+-  const workspaceId = raw.workspaceId;
+-  if (!nonEmpty(projectId) || !nonEmpty(workspaceId)) {
+-    return { ok: false, rejection: forbidden('recordExecutionHistory requires a bound project/workspace context') };
+-  }
+-  const signal = raw.signal;
+-  if (!isRecord(signal) || typeof signal['aborted'] !== 'boolean'
+-    || typeof signal['addEventListener'] !== 'function') {
+-    return { ok: false, rejection: forbidden('recordExecutionHistory requires the bound AbortSignal') };
+-  }
+-  let principal: unknown;
+-  let materialReader: unknown;
+-  try {
+-    principal = structuredClone(raw.principal);
+-    materialReader = structuredClone(raw.materialReader);
+-  } catch {
+-    return { ok: false, rejection: invalid('the call context identity cannot be isolated from the caller') };
+-  }
+-  if (!isRecord(principal) || principal['kind'] !== 'host') {
+-    return { ok: false, rejection: forbidden('recordExecutionHistory requires a trusted Host principal') };
+-  }
+-  const actor = principal['actor'];
+-  if (!isRecord(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !nonEmpty(actor['id'])) {
+-    return { ok: false, rejection: forbidden('recordExecutionHistory requires a trusted Host actor') };
+-  }
+-  if (!isRecord(materialReader) || materialReader['kind'] !== 'host'
+-    || materialReader['projectId'] !== projectId
+-    || (materialReader['workspaceId'] !== undefined && materialReader['workspaceId'] !== workspaceId)
+-    || !sameHostActor(materialReader['actor'], actor)) {
+-    return { ok: false, rejection: forbidden('the material reader is not the same trusted Host scope') };
+-  }
+-  return {
+-    ok: true,
+-    ctx: {
+-      projectId, workspaceId,
+-      principal: principal as CoreCallContext['principal'],
+-      materialReader: materialReader as MaterialReader,
+-      signal: signal as unknown as AbortSignal,
+-    },
+-    scope: { projectId, workspaceId },
+-    actor: { kind: actor['kind'], id: actor['id'] },
+-  };
++  const owned = bindTrustedHostContext(ctx, 'recordExecutionHistory');
++  if (!owned.ok) return owned;
++  return { ok: true, ctx: owned.ctx, scope: owned.scope, actor: owned.actor };
+ }
+ 
+ type OwnedRequest =
+@@ -204,26 +116,8 @@ type OwnedRequest =
+   | { ok: false; rejection: CoreRejection };
+ 
+ function ownRequest(request: GraphWrite<RecordExecutionHistoryInput>): OwnedRequest {
+-  const raw = request as unknown as { input?: unknown; meta?: unknown } | null | undefined;
+-  if (raw === null || raw === undefined || !isRecord(raw.input)) {
+-    return { ok: false, rejection: invalid('recordExecutionHistory requires a request input object') };
+-  }
+-  const meta = raw.meta;
+-  if (!isRecord(meta) || !nonEmpty(meta['requestId'])) {
+-    return { ok: false, rejection: invalid('recordExecutionHistory requires meta.requestId') };
+-  }
+-  if (!Array.isArray(meta['expected'])) {
+-    return { ok: false, rejection: invalid('meta.expected must be an array of version pins') };
+-  }
+-  let input: RecordExecutionHistoryInput;
+-  let expected: readonly VersionPin[];
+-  try {
+-    input = structuredClone(raw.input) as RecordExecutionHistoryInput;
+-    expected = structuredClone(meta['expected']) as VersionPin[];
+-  } catch {
+-    return { ok: false, rejection: invalid('the execution-history request cannot be isolated from the caller') };
+-  }
+-  return { ok: true, input, requestId: meta['requestId'], expected };
++  return isolateTrustedWrite(request, 'recordExecutionHistory',
++    'the execution-history request cannot be isolated from the caller');
+ }
+ 
+ // --------------------------------------------------------------------------
+@@ -231,9 +125,9 @@ function ownRequest(request: GraphWrite<RecordExecutionHistoryInput>): OwnedRequ
+ // --------------------------------------------------------------------------
+ 
+ function positionsProblem(start: unknown, observed: unknown, end: unknown): CoreRejection | null {
+-  if (!isPositiveRevision(start)) return invalid('startPosition must be a positive safe integer');
+-  if (!isPositiveRevision(observed)) return invalid('observedThroughPosition must be a positive safe integer');
+-  if (!(end === null || isPositiveRevision(end))) {
++  if (!isPos(start)) return invalid('startPosition must be a positive safe integer');
++  if (!isPos(observed)) return invalid('observedThroughPosition must be a positive safe integer');
++  if (!(end === null || isPos(end))) {
+     return invalid('endPosition must be null or a positive safe integer');
+   }
+   if (start > observed) return invalid('startPosition must not exceed observedThroughPosition');
+@@ -261,7 +155,7 @@ function validateExpected(expected: readonly VersionPin[], runRef: RunRef): Chec
+     return { ok: false, rejection: invalid('meta.expected must contain exactly one Run revision pin') };
+   }
+   const raw = expected[0] as unknown;
+-  if (!isRecord(raw) || !isRecord(raw['ref']) || !isPositiveRevision(raw['revision'])) {
++  if (!isRecord(raw) || !isRecord(raw['ref']) || !isPos(raw['revision'])) {
+     return { ok: false, rejection: invalid('the expected Run pin must carry a ref and a positive safe revision') };
+   }
+   if (!sameRef(raw['ref'], runRef)) {
+@@ -329,7 +223,7 @@ export function createExecutionHistoryService(
+       return unavailable('the execution-history receipt does not pin this Run at the expected revision');
+     }
+     const at = await records.eventAt(receipt.cursor);
+-    if (at.status !== 'ready') return mapStoreFailure(at);
++    if (at.status !== 'ready') return executionStoreFailureToRejection(at);
+     if (!sameCursor(at.value.cursor, receipt.cursor)) {
+       return unavailable('the returned event cursor disagrees with the execution-history receipt');
+     }
+@@ -385,7 +279,7 @@ export function createExecutionHistoryService(
+       const checkedExpected = validateExpected(expected, runRef);
+       if (!checkedExpected.ok) return checkedExpected.rejection;
+       const expectedPin = checkedExpected.pin;
+-      if (scopeCtx.signal.aborted) return reject('cancelled', 'the execution-history write was cancelled before lookup');
++      if (scopeCtx.signal.aborted) return rejected('cancelled', 'the execution-history write was cancelled before lookup');
+ 
+       let identityKey: string;
+       let fingerprint: string;
+@@ -399,21 +293,21 @@ export function createExecutionHistoryService(
+         // 3. Original receipt first: a replay must not consult the current world.
+         const lookup = await records.lookupCommit({ identityKey, fingerprint });
+         if (lookup.status === 'ready') {
+-          if (scopeCtx.signal.aborted) return reject('cancelled', 'the execution-history write was cancelled during lookup');
++          if (scopeCtx.signal.aborted) return rejected('cancelled', 'the execution-history write was cancelled during lookup');
+           return await readReplay(lookup.value, actor, scope, runRef, input, expectedPin, identityKey, fingerprint);
+         }
+-        if (lookup.code !== 'not_found') return mapStoreFailure(lookup);
+-        if (scopeCtx.signal.aborted) return reject('cancelled', 'the execution-history write was cancelled during lookup');
++        if (lookup.code !== 'not_found') return executionStoreFailureToRejection(lookup);
++        if (scopeCtx.signal.aborted) return rejected('cancelled', 'the execution-history write was cancelled during lookup');
+ 
+         // 4. Verify the Run/Attempt/outbox/Plan/Session chain and scope.
+         const read = await createRunStateReader({ records }).readExecution(scopeCtx, runRef);
+-        if (read.status === 'not_found') return reject('not_found', 'the target Run does not exist');
++        if (read.status === 'not_found') return rejected('not_found', 'the target Run does not exist');
+         if (read.status === 'not_ready') return incomplete('the target Run is not readable at the required watermark');
+-        if (read.status !== 'ready') return reject(read.code, read.reason, read.current);
+-        if (scopeCtx.signal.aborted) return reject('cancelled', 'the execution-history write was cancelled during the execution read');
++        if (read.status !== 'ready') return rejectedWithCurrent(read.code, read.reason, read.current);
++        if (scopeCtx.signal.aborted) return rejected('cancelled', 'the execution-history write was cancelled during the execution read');
+         const { run, attempt, outbox, plan, session } = read.value;
+         if (run.revision !== expectedPin.revision) {
+-          return reject('revision_conflict', 'the Run changed since the caller read it');
++          return rejected('revision_conflict', 'the Run changed since the caller read it');
+         }
+ 
+         const sessionRef = outbox.claim.sessionRef;
+@@ -437,7 +331,7 @@ export function createExecutionHistoryService(
+           return invalid('the injected clock is not a legal instant');
+         }
+         const eventId = deps.eventId();
+-        if (!nonEmpty(eventId)) return reject('unsupported', 'the injected id source produced an empty event id');
++        if (!nonEmpty(eventId)) return rejected('unsupported', 'the injected id source produced an empty event id');
+ 
+         const recorded: RecordedExecutionHistory = { runRef, runRevision: nextRun.revision, history };
+         const event: ExecutionHistoryRecordedEvent = {
+@@ -459,9 +353,9 @@ export function createExecutionHistoryService(
+           indexGuards: [], indexChanges: [], events: [encodeExecutionHistoryRecordedEvent(event)],
+         };
+ 
+-        if (scopeCtx.signal.aborted) return reject('cancelled', 'the execution-history write was cancelled before commit');
++        if (scopeCtx.signal.aborted) return rejected('cancelled', 'the execution-history write was cancelled before commit');
+         const receipt = await records.commit(prepared);
+-        if (receipt.status !== 'committed') return mapStoreFailure(receipt);
++        if (receipt.status !== 'committed') return executionStoreFailureToRejection(receipt);
+         if (receipt.replayed) {
+           return await readReplay(receipt, actor, scope, runRef, input, expectedPin, identityKey, fingerprint);
+         }
+diff --git a/src/core/work-graph/tasks/goal-decision-reader.ts b/src/core/work-graph/tasks/goal-decision-reader.ts
+index 192eb89..1a08e7b 100644
+--- a/src/core/work-graph/tasks/goal-decision-reader.ts
++++ b/src/core/work-graph/tasks/goal-decision-reader.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Slice 5 §4.2 source 2 (F27): the Goal decision-cause reader.
++ * Slice 5 §4.2 source 2: the Goal decision-cause reader.
+  *
+  * It derives the real reasons a Goal needs a decision (from the saved Goal
+  * causes / active-pointer absence, plus the `every_step` automation cause) and
+@@ -8,12 +8,13 @@
+  * here is READ-ONLY (rule 20): it reads the Goal display, a pending proposal's
+  * revision and the project's active governance pointers, and writes nothing.
+  *
+- * [lead S5-A6] The dependency types expose ONLY read/lookup capabilities and
++ * The dependency types expose ONLY read/lookup capabilities and
+  * the named `PlanTaskPort` readers; no `GoalRecordTransactionPort.commit`.
+  */
+ import type { CommitCursor } from '../../../contracts/command-event.js';
+ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+ import type { CoreError, ReadResult } from '../../../contracts/core/results.js';
++import { rejected } from '../../../contracts/core/rejections.js';
+ import type { RunRef } from '../../../contracts/dispatch.js';
+ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+ import {
+@@ -80,13 +81,13 @@ const DECISION_CAUSE_CODES: ReadonlySet<string> = new Set([
+ 
+ type Rej = { status: 'rejected'; code: CoreError; reason: string };
+ function notFound(reason: string): Rej {
+-  return { status: 'rejected', code: 'not_found', reason };
++  return rejected('not_found', reason);
+ }
+ function forbidden(reason: string): Rej {
+-  return { status: 'rejected', code: 'forbidden', reason };
++  return rejected('forbidden', reason);
+ }
+ function unavailable(reason: string): Rej {
+-  return { status: 'rejected', code: 'unavailable', reason };
++  return rejected('unavailable', reason);
+ }
+ function messageOf(error: unknown): string {
+   return error instanceof Error ? error.message : String(error);
+@@ -189,7 +190,7 @@ export function createGoalDecisionCauseReader(
+   }
+ 
+   /**
+-   * §4.2 source 2 / B1/B2 / F6: the formal Task graph rows of the active Plan.
++   * §4.2 source 2: the formal Task graph rows of the active Plan.
+    * A Goal with no adopted Plan has no rows (`not_found`); any other read
+    * failure is returned, never folded into "no causes" (§4.2 line 821: an
+    * unavailable source is not an available empty array). A missing seam is
+@@ -226,7 +227,7 @@ export function createGoalDecisionCauseReader(
+   }
+ 
+   /**
+-   * §3.3 line 629 / defect-1: the formal pin of one failure Run. The saved
++   * §3.3 line 629: the formal pin of one failure Run. The saved
+    * `runRevision` is used when the failure facts read the Run; when they did not
+    * (`gateFailureFacts` with a null `anchorRun` still carries `head.subjectRunRef`
+    * as `runRef`), the Run's formal revision is read through the SAME helper the
+@@ -246,7 +247,7 @@ export function createGoalDecisionCauseReader(
+     return read;
+   }
+ 
+-  /** §3.3 line 629 / B2/defect-1: the formal pin of the failure Run one Task cause is about. */
++  /** §3.3 line 629: the formal pin of the failure Run one Task cause is about. */
+   async function failureRunOf(
+     rows: Map<string, TaskRow>, taskId: string,
+   ): Promise<{ ok: true; pin: VersionPin; runRef: RunRef } | { ok: false; rejection: Rej } | null> {
+@@ -296,7 +297,7 @@ export function createGoalDecisionCauseReader(
+         case 'auto_rework_count':
+         default: {
+           // GOAL-27 rework causes and the GOAL-30 stop causes name their active
+-          // Task; B2 adds the formal failure-Run pin so a later Run of the same
++          // Task; the formal failure-Run pin gives a later Run of the same
+           // Task gets a different `source.key` and an old answer cannot close it.
+           if (!('taskId' in displayCause)) break;
+           const failureRun = await failureRunOf(rows, displayCause.taskId);
+@@ -313,11 +314,11 @@ export function createGoalDecisionCauseReader(
+   }
+ 
+   /**
+-   * §4.5 line 888 / B1: the source-2 automation cause the Workflow's
++   * §4.5 line 888: the source-2 automation cause the Workflow's
+    * `automationConfirmation` derives for the current failure verdicts, from the
+    * same Task graph rows. It shares the ONE `automationConfirmationCause`
+    * derivation, so both entries produce the same `source.key`. A null saved
+-   * `runRevision` is resolved to the Run's formal revision first (defect-1), so
++   * `runRevision` is resolved to the Run's formal revision first, so
+    * the reader pins exactly the same Run version the Workflow reads.
+    *
+    * F1: two cards the Workflow can show are not `requeue`/`reverify` verdicts.
+@@ -330,7 +331,7 @@ export function createGoalDecisionCauseReader(
+   async function automationCauses(goal: GoalSnapshot, rows: Map<string, TaskRow>): Promise<CauseReadResult> {
+     const settings = goal.settings ?? DEFAULT_GOAL_SETTINGS_V1;
+     const causes: GoalDecisionCauseReadV1[] = [];
+-    // §4.5 line 888 / defect-1(GV-5): the ONE coverage/phase derivation the Plan
++    // §4.5 line 888: the ONE coverage/phase derivation the Plan
+     // service's gate fact builder also uses, over the same Task rows this reader
+     // just read, so the paused gate card names the action that was emitted.
+     const definitions = [...rows.values()].map((row) => row.definition);
+@@ -372,7 +373,7 @@ export function createGoalDecisionCauseReader(
+       } else {
+         continue;
+       }
+-      // §3.3 line 629 / defect-1: the Run's formal revision, never `0`. A read
++      // §3.3 line 629: the Run's formal revision, never `0`. A read
+       // failure is returned, never folded into a Task-only or fabricated pin.
+       let runRevision = failure.runRevision;
+       if (failure.runRef !== null) {
+diff --git a/src/core/work-graph/tasks/goal-settings-service.ts b/src/core/work-graph/tasks/goal-settings-service.ts
+index 5945653..a6cadf9 100644
+--- a/src/core/work-graph/tasks/goal-settings-service.ts
++++ b/src/core/work-graph/tasks/goal-settings-service.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Slice 5 §3.3 Goal-settings owner (F24).
++ * Slice 5 §3.3 Goal-settings owner.
+  *
+  * The owner of one Goal's settings, the workspace Goal order and the conflict
+  * resolution. It follows the §3.3 check order exactly: input isolation / ctx /
+@@ -25,6 +25,7 @@ import {
+   type GoalSettingsV1,
+ } from '../../../contracts/goal-decisions.js';
+ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
+ import type { GoalPhaseRef } from '../../../contracts/goal-phase.js';
+ import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+ import { isAutomationActor } from '../../../contracts/task-requeue.js';
+@@ -75,7 +76,7 @@ const LOOKUP_MAX_PAGES = 25;
+ type SettingsValue = GoalSnapshot | { goals: GoalSnapshot[] };
+ 
+ function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
+-  return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
++  return rejectedWithCurrent(code, reason, current);
+ }
+ function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
+ function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
+@@ -309,6 +310,36 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
+     return { status: 'ready', value: { goal: read.goal, settings: settingsOf(read.goal) } };
+   }
+ 
++  /**
++   * The bounded wait-predecessor walk shared by the settings write and the
++   * conflict answer. `seedRefKey` is the refKey of the Goal whose settings are
++   * being decided; reaching it again is a cycle. A failed successor read is
++   * returned unchanged, never read as "no cycle", and a walk still open after
++   * the 64-link window is `capacity`.
++   */
++  async function waitPredecessorWalk(
++    start: GoalSnapshot | null, seedRefKey: string,
++  ): Promise<{ waitingCycle: boolean } | CoreRejection> {
++    const seen = new Set<string>([seedRefKey]);
++    let cursor = start;
++    let walkFinished = false;
++    let waitingCycle = false;
++    for (let depth = 0; cursor !== null && depth < 64; depth += 1) {
++      const key = refKeyOf(cursor.ref);
++      if (seen.has(key)) { waitingCycle = true; walkFinished = true; break; }
++      seen.add(key);
++      const next = goalSettingsOf(cursor).waitForGoalRef;
++      if (next === null) { walkFinished = true; break; }
++      const nextRead = await readGoal(records, next);
++      if (nextRead.status !== 'ready') return nextRead;
++      cursor = nextRead.goal;
++    }
++    if (!walkFinished) {
++      return reject('capacity', 'the wait-predecessor chain exceeds the 64-link read window');
++    }
++    return { waitingCycle };
++  }
++
+   async function setGoalSettings(ctx: CoreCallContext, request: GraphWrite<{ goalRef: GoalRef; autonomy: GoalAutonomyV1; waitForGoalRef: GoalRef | null }>): Promise<WriteResult<GoalSnapshot>> {
+     const ownedCtx = bindTrustedContext(ctx);
+     if (!ownedCtx.ok) return ownedCtx.rejection;
+@@ -377,25 +408,11 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
+         return reject('revision_conflict', 'the predecessor Goal changed since it was read',
+           [{ ref: wait, revision: predecessor.revision }]);
+       }
+-      // A bounded predecessor walk refuses a cycle before the state call. A
+-      // failed successor read is returned (never read as "no cycle"), and a walk
+-      // that does not finish inside the bound is refused, never assumed acyclic.
+-      const seen = new Set<string>([refKeyOf(goalRef)]);
+-      let cursor: GoalSnapshot | null = predecessor;
+-      let walkFinished = false;
+-      for (let depth = 0; cursor !== null && depth < 64; depth += 1) {
+-        const key = refKeyOf(cursor.ref);
+-        if (seen.has(key)) { waitingCycle = true; walkFinished = true; break; }
+-        seen.add(key);
+-        const next = goalSettingsOf(cursor).waitForGoalRef;
+-        if (next === null) { walkFinished = true; break; }
+-        const nextRead = await readGoal(records, next);
+-        if (nextRead.status !== 'ready') return nextRead;
+-        cursor = nextRead.goal;
+-      }
+-      if (!walkFinished) {
+-        return reject('capacity', 'the wait-predecessor chain exceeds the 64-link read window');
+-      }
++      // A bounded predecessor walk refuses a cycle before the state call; a
++      // failed successor read is returned and an unfinished walk is refused.
++      const walk = await waitPredecessorWalk(predecessor, refKeyOf(goalRef));
++      if ('status' in walk) return walk;
++      waitingCycle = walk.waitingCycle;
+     }
+ 
+     const settings: GoalSettingsV1 = { ...settingsOf(goal), autonomy: input.autonomy, waitForGoalRef: wait };
+@@ -426,7 +443,7 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
+       || input.workspace.workspaceId !== scope.workspaceId) {
+       return forbidden('reorderGoals requires the bound workspace');
+     }
+-    // §8.2 scope row (lead, accept review NEW-3): an attributed answer must be in the bound Workspace.
++    // §8.2 scope row: an attributed answer must be in the bound Workspace.
+     const reorderAck: unknown = input.decisionMessageRef;
+     if (reorderAck !== undefined && reorderAck !== null) {
+       if (!isRecord(reorderAck)) return invalid('decisionMessageRef must be a SessionMessageRef');
+@@ -484,10 +501,9 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
+     const changedGoals: GoalSnapshot[] = [];
+     const changes: { before: VersionPin; after: VersionPin }[] = [];
+     for (const [index, goal] of ordered.entries()) {
+-      // An unchanged order writes no record: the Goal keeps its revision and DTO
+-      // (AP06: C stays @7 while A and B move to @8). S5-GS-02/05: a cancelled
+-      // historical Goal still appears in the pure reorder list but is never
+-      // rewritten (its settings can no longer change).
++      // An unchanged order writes no record: the Goal keeps its revision and DTO.
++      // S5-GS-02/05: a cancelled historical Goal still appears in the pure reorder
++      // list but is never rewritten (its settings can no longer change).
+       if (goal.desiredState === 'cancelled' || goalSettingsOf(goal).order === index) {
+         nextGoals.push(goal);
+         continue;
+@@ -584,7 +600,7 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
+       return invalid('resolveGoalConflict requires a goal_conflict source and a structured selection');
+     }
+     if (!nonEmpty(input.decisionMessageRef?.messageId)) return invalid('resolveGoalConflict requires the decision message ref');
+-    // §8.2 scope row (lead, accept review NEW-3): the answer must be in the bound Workspace.
++    // §8.2 scope row: the answer must be in the bound Workspace.
+     if (input.decisionMessageRef.projectId !== scope.projectId || input.decisionMessageRef.workspaceId !== scope.workspaceId) {
+       return forbidden('the decision message belongs to another workspace');
+     }
+@@ -595,7 +611,7 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
+     if (isAutomationActor(actor)) return forbidden('a platform automation actor may not resolve a Goal conflict');
+ 
+     const receiptIdentity = identityKey(GOAL_CONFLICT_IDENTITY_PREFIX, actor, scope, owned.requestId);
+-    // §4.5 line 884 (lead, D1): the fingerprint keeps the answer's captured source pins only. The supplementary
++    // §4.5 line 884: the fingerprint keeps the answer's captured source pins only. The supplementary
+     // pins a first execution reads current (the earlier GoalPhase of a wait, the uncaptured Goals of an order)
+     // are CAS guards of that execution and never part of the fingerprint, so a retry of the same requestId after
+     // those objects moved replays the original receipt instead of answering idempotency_conflict.
+@@ -656,7 +672,7 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
+         // The named rebase needs BOTH captured facts: the answer's pin for this
+         // Goal and its captured content basis.
+         const captured = capturedPins.some((candidate) => refKeyOf(candidate.ref) === refKeyOf(goal.ref));
+-        // Lead (accept review NEW-1, §2.8 line 402): the named control rebase holds for a read-only slot too.
++        // §2.8 line 402: the named control rebase holds for a read-only slot too.
+         const basis = basisFor(goal.ref);
+         if (captured && basis !== null && goal.revision > pin && goal.desiredState === 'active'
+           && goalDecisionBasisMatches(basis, goal)) {
+@@ -718,7 +734,7 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
+       || laterRead.goal.workspaceRef.workspaceId !== scope.workspaceId) {
+       return forbidden('a conflict Goal belongs to another workspace');
+     }
+-    // S5-GS-06/S5-GS-02 (#12, lead): like `conflict_order`, the application
++    // S5-GS-06/S5-GS-02: like `conflict_order`, the application
+     // waits for the resume of either paused member and is refused while either
+     // member is cancelled.
+     if (laterRead.goal.desiredState === 'paused' || earlierRead.goal.desiredState === 'paused') {
+@@ -731,7 +747,7 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
+     // Goal may be pinned OLDER than current only through the §2.8/§4.5 named
+     // control rebase: the answer captured exactly this content and the Goal is
+     // active. Every other difference is `revision_conflict`.
+-    // Lead (accept review NEW-1, §0 T02 / §2.8 line 402): the earlier Goal is only read, but it is a captured Goal
++    // §2.8 line 402: the earlier Goal is only read, but it is a captured Goal
+     // aggregate too: a control-only change (pause/resume) with the same content basis is the named rebase.
+     const earlierPin = pins.revisions[0]!;
+     if (earlierRead.goal.revision !== earlierPin) {
+@@ -767,22 +783,9 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
+       phaseGuard = phaseRead.guard;
+       // S5-GS-03: a failed successor read is returned and an unfinished walk is
+       // refused, never read as "no cycle".
+-      const seen = new Set<string>([refKeyOf(laterRef)]);
+-      let cursor: GoalSnapshot | null = earlierRead.goal;
+-      let walkFinished = false;
+-      for (let depth = 0; cursor !== null && depth < 64; depth += 1) {
+-        const key = refKeyOf(cursor.ref);
+-        if (seen.has(key)) { waitingCycle = true; walkFinished = true; break; }
+-        seen.add(key);
+-        const next = goalSettingsOf(cursor).waitForGoalRef;
+-        if (next === null) { walkFinished = true; break; }
+-        const nextRead = await readGoal(records, next);
+-        if (nextRead.status !== 'ready') return nextRead;
+-        cursor = nextRead.goal;
+-      }
+-      if (!walkFinished) {
+-        return reject('capacity', 'the wait-predecessor chain exceeds the 64-link read window');
+-      }
++      const walk = await waitPredecessorWalk(earlierRead.goal, refKeyOf(laterRef));
++      if ('status' in walk) return walk;
++      waitingCycle = walk.waitingCycle;
+     }
+ 
+     // S5-GS-03/04: the answer captured both Goals' Plan pointers; a later Plan
+@@ -871,7 +874,7 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
+     return { status: 'committed', value: committed.value as { goals: GoalSnapshot[] }, replayed: committed.replayed, cursor: committed.cursor };
+   }
+ 
+-  /** §2.8 T02-A/D8: the exact before/after of every changed Goal plus its control rebase. */
++  /** §2.8: the exact before/after of every changed Goal plus its control rebase. */
+   function captureGoalChange(input: {
+     goal: GoalSnapshot; capturedPins: readonly VersionPin[]; basis: GoalDecisionBasisV1 | null;
+     changes: { before: VersionPin; after: VersionPin }[]; basisRebases: GoalControlRebaseV1[];
+@@ -881,7 +884,7 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
+     const before = { ref: input.goal.ref, revision: input.goal.revision };
+     const after = { ref: input.goal.ref, revision: input.goal.revision + 1 };
+     if (captured === undefined) {
+-      // D8/§3.3 line 621-623: `changes` lists every Goal the commit writes. A
++      // §3.3 line 621-623: `changes` lists every Goal the commit writes. A
+       // Goal the answer did not capture (a third Goal of a conflict order) has no
+       // captured pin to check; the revision read in this call is its exact before.
+       input.changes.push({ before, after });
+diff --git a/src/core/work-graph/tasks/initial-plan.ts b/src/core/work-graph/tasks/initial-plan.ts
+index 3080768..fe49faf 100644
+--- a/src/core/work-graph/tasks/initial-plan.ts
++++ b/src/core/work-graph/tasks/initial-plan.ts
+@@ -14,6 +14,7 @@
+  */
+ import type { CoreRejection } from '../../../contracts/core/results.js';
+ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+ import type { PlanRevisionDraft } from '../../../contracts/plan.js';
+ import type {
+   InitialPlanAssignment,
+@@ -39,12 +40,6 @@ export type InitialPlanNormalization =
+ function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
+   return { status: 'rejected', code, reason };
+ }
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+-function nonEmpty(value: unknown): value is string {
+-  return typeof value === 'string' && value.length > 0;
+-}
+ 
+ /**
+  * The ONE v2 JSON parse. It judges only the outer protocol shape; the existing
+diff --git a/src/core/work-graph/tasks/model-call-contracts.ts b/src/core/work-graph/tasks/model-call-contracts.ts
+index 272e697..88ab5ac 100644
+--- a/src/core/work-graph/tasks/model-call-contracts.ts
++++ b/src/core/work-graph/tasks/model-call-contracts.ts
+@@ -1,9 +1,7 @@
+ /**
+- * B2 narrow next model-request Port (skeleton).
++ * The narrow next model-request Port: stable permit identity and
++ * single-consumption semantics.
+  *
+- * Pure DTOs migrated from the read-only legacy reference
+- * (`coding-platform/src/contracts/dispatch.ts`): stable permit identity and the
+- * single-consumption semantics. No legacy Ledger/Control service is imported.
+  * `ModelRequestPermit` is the existing call-evidence aggregate; it is not a new
+  * execution truth table. A permit is one-shot: @1 issued -> @2 consumed.
+  */
+diff --git a/src/core/work-graph/tasks/plan-readers.ts b/src/core/work-graph/tasks/plan-readers.ts
+index f938b88..b16a5d3 100644
+--- a/src/core/work-graph/tasks/plan-readers.ts
++++ b/src/core/work-graph/tasks/plan-readers.ts
+@@ -3,6 +3,8 @@
+ import type { CommitCursor } from '../../../contracts/command-event.js';
+ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+ import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
++import { rejected } from '../../../contracts/core/rejections.js';
++import { isNonNeg, isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
+ import type {
+   RunSnapshot,
+   TaskAttemptRef,
+@@ -65,6 +67,7 @@ import {
+   isBasisUnsupported, planTaskFacts, taskOriginVerdict, verifyBasisDelegation,
+   type FrozenTaskDefinition, type PlanTaskFacts,
+ } from './plan-task-basis.js';
++import { taskPhaseFactsOf } from './task-phase-facts.js';
+ import {
+   PLAN_PROPOSAL_LOOKUP_INDEX,
+   S5_PLAN_PROPOSAL_BY_REQUEST,
+@@ -112,19 +115,10 @@ const WINDOW_MAX_ATTEMPTS = 4;
+ export type Rejected = { status: 'rejected'; code: CoreError; reason: string };
+ 
+ function incomplete(reason: string): Rejected {
+-  return { status: 'rejected', code: 'incomplete', reason };
++  return rejected('incomplete', reason);
+ }
+ function unavailable(reason: string): Rejected {
+-  return { status: 'rejected', code: 'unavailable', reason };
+-}
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+-function nonEmpty(value: unknown): value is string {
+-  return typeof value === 'string' && value.length > 0;
+-}
+-function isSafeRevision(value: unknown): value is number {
+-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
++  return rejected('unavailable', reason);
+ }
+ function invalidRecord(reason: string): DecodeResult<EncodedRecord> {
+   return { status: 'invalid', reason };
+@@ -132,14 +126,6 @@ function invalidRecord(reason: string): DecodeResult<EncodedRecord> {
+ function copyRecord(record: EncodedRecord): EncodedRecord {
+   return { refKey: record.refKey, schemaId: record.schemaId, revision: record.revision, json: record.json };
+ }
+-function parseJsonObject(json: string): Record<string, unknown> | null {
+-  try {
+-    const parsed = JSON.parse(json) as unknown;
+-    return isRecord(parsed) ? parsed : null;
+-  } catch {
+-    return null;
+-  }
+-}
+ 
+ // --------------------------------------------------------------------------
+ // Registered schemas owned by this reader
+@@ -147,7 +133,7 @@ function parseJsonObject(json: string): Record<string, unknown> | null {
+ 
+ function validateTaskLeaseSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord> {
+   if (record.schemaId !== 'TaskLeaseSnapshot@1') return invalidRecord(`expected schemaId TaskLeaseSnapshot@1, got ${record.schemaId}`);
+-  const parsed = parseJsonObject(record.json);
++  const parsed = parseObject(record.json);
+   if (parsed === null) return invalidRecord('TaskLease snapshot is not a JSON object');
+   // The strict shared validator owns the @1 body plus the optional versioned
+   // release; this reader adds only the outer ref_key/revision cross-checks.
+@@ -175,7 +161,7 @@ function validateTaskCompletionAudit(value: unknown): string | null {
+     || !nonEmpty(roundRef['runId']) || !nonEmpty(roundRef['roundId'])) {
+     return 'TaskReduction completion roundRef must be a complete VerificationRoundRef';
+   }
+-  if (!isSafeRevision(value['roundRevision']) || value['roundRevision'] < 1) {
++  if (!isNonNeg(value['roundRevision']) || value['roundRevision'] < 1) {
+     return 'TaskReduction completion roundRevision must be a positive safe integer';
+   }
+   const basis = value['taskBasisRef'];
+@@ -202,7 +188,7 @@ function validateTaskCompletionAudit(value: unknown): string | null {
+ 
+ function validateTaskReductionSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord> {
+   if (record.schemaId !== 'TaskReductionSnapshot@1') return invalidRecord(`expected schemaId TaskReductionSnapshot@1, got ${record.schemaId}`);
+-  const parsed = parseJsonObject(record.json);
++  const parsed = parseObject(record.json);
+   if (parsed === null) return invalidRecord('TaskReduction snapshot is not a JSON object');
+   const ref = parsed['ref'];
+   if (!isRecord(ref) || ref['aggregateType'] !== 'TaskReduction' || !nonEmpty(ref['projectId'])
+@@ -210,7 +196,7 @@ function validateTaskReductionSnapshot(record: EncodedRecord): DecodeResult<Enco
+     return invalidRecord('TaskReduction snapshot has no complete TaskReductionRef');
+   }
+   if (canonicalJson(ref as JsonValue) !== record.refKey) return invalidRecord('TaskReduction ref is not the outer canonical ref_key');
+-  if (!isSafeRevision(parsed['revision']) || parsed['revision'] !== record.revision) return invalidRecord('TaskReduction outer revision disagrees with the JSON revision');
++  if (!isNonNeg(parsed['revision']) || parsed['revision'] !== record.revision) return invalidRecord('TaskReduction outer revision disagrees with the JSON revision');
+   if (parsed['schemaVersion'] !== 1) return invalidRecord('TaskReduction schemaVersion must be 1');
+   const planRef = parsed['planRef'];
+   if (!isRecord(planRef) || planRef['aggregateType'] !== 'PlanRevision' || planRef['projectId'] !== ref['projectId']
+@@ -240,7 +226,7 @@ function validateTaskReductionSnapshot(record: EncodedRecord): DecodeResult<Enco
+ 
+ function validateCompletionPolicyRevision(record: EncodedRecord): DecodeResult<EncodedRecord> {
+   if (record.schemaId !== 'CompletionPolicyRevisionSnapshot@1') return invalidRecord(`expected schemaId CompletionPolicyRevisionSnapshot@1, got ${record.schemaId}`);
+-  const parsed = parseJsonObject(record.json);
++  const parsed = parseObject(record.json);
+   if (parsed === null) return invalidRecord('CompletionPolicyRevision snapshot is not a JSON object');
+   const ref = parsed['ref'];
+   if (!isRecord(ref) || ref['aggregateType'] !== 'CompletionPolicyRevision' || !nonEmpty(ref['projectId'])
+@@ -248,7 +234,7 @@ function validateCompletionPolicyRevision(record: EncodedRecord): DecodeResult<E
+     return invalidRecord('CompletionPolicyRevision snapshot has no complete ref');
+   }
+   if (canonicalJson(ref as JsonValue) !== record.refKey) return invalidRecord('CompletionPolicyRevision ref is not the outer canonical ref_key');
+-  if (!isSafeRevision(parsed['revision']) || parsed['revision'] !== record.revision) return invalidRecord('CompletionPolicyRevision outer revision disagrees with the JSON revision');
++  if (!isNonNeg(parsed['revision']) || parsed['revision'] !== record.revision) return invalidRecord('CompletionPolicyRevision outer revision disagrees with the JSON revision');
+   if (parsed['schemaVersion'] !== 1) return invalidRecord('CompletionPolicyRevision schemaVersion must be 1');
+   if (parsed['policyId'] !== ref['policyId']) return invalidRecord('CompletionPolicyRevision policyId disagrees with its ref');
+   if (typeof parsed['contentRevision'] !== 'number' || !Number.isSafeInteger(parsed['contentRevision']) || parsed['contentRevision'] < 1) {
+@@ -261,7 +247,7 @@ function validateCompletionPolicyRevision(record: EncodedRecord): DecodeResult<E
+ 
+ function validateArchitectureBaselineRevision(record: EncodedRecord): DecodeResult<EncodedRecord> {
+   if (record.schemaId !== 'ArchitectureBaselineRevisionSnapshot@1') return invalidRecord(`expected schemaId ArchitectureBaselineRevisionSnapshot@1, got ${record.schemaId}`);
+-  const parsed = parseJsonObject(record.json);
++  const parsed = parseObject(record.json);
+   if (parsed === null) return invalidRecord('ArchitectureBaselineRevision snapshot is not a JSON object');
+   const ref = parsed['ref'];
+   if (!isRecord(ref) || ref['aggregateType'] !== 'ArchitectureBaselineRevision' || !nonEmpty(ref['projectId'])
+@@ -269,7 +255,7 @@ function validateArchitectureBaselineRevision(record: EncodedRecord): DecodeResu
+     return invalidRecord('ArchitectureBaselineRevision snapshot has no complete ref');
+   }
+   if (canonicalJson(ref as JsonValue) !== record.refKey) return invalidRecord('ArchitectureBaselineRevision ref is not the outer canonical ref_key');
+-  if (!isSafeRevision(parsed['revision']) || parsed['revision'] !== record.revision) return invalidRecord('ArchitectureBaselineRevision outer revision disagrees with the JSON revision');
++  if (!isNonNeg(parsed['revision']) || parsed['revision'] !== record.revision) return invalidRecord('ArchitectureBaselineRevision outer revision disagrees with the JSON revision');
+   if (parsed['schemaVersion'] !== 1) return invalidRecord('ArchitectureBaselineRevision schemaVersion must be 1');
+   if (parsed['baselineId'] !== ref['baselineId']) return invalidRecord('ArchitectureBaselineRevision baselineId disagrees with its ref');
+   if (typeof parsed['contentRevision'] !== 'number' || !Number.isSafeInteger(parsed['contentRevision']) || parsed['contentRevision'] < 1) {
+@@ -288,7 +274,7 @@ function validateArchitectureBaselineActive(record: EncodedRecord): DecodeResult
+ }
+ function validateActivePointer(record: EncodedRecord, aggregateType: string, idField: string, revisionType: string): DecodeResult<EncodedRecord> {
+   if (record.schemaId !== `${aggregateType}Snapshot@1`) return invalidRecord(`expected schemaId ${aggregateType}Snapshot@1, got ${record.schemaId}`);
+-  const parsed = parseJsonObject(record.json);
++  const parsed = parseObject(record.json);
+   if (parsed === null) return invalidRecord(`${aggregateType} snapshot is not a JSON object`);
+   const ref = parsed['ref'];
+   if (!isRecord(ref) || ref['aggregateType'] !== aggregateType || !nonEmpty(ref['projectId'])) {
+@@ -296,7 +282,7 @@ function validateActivePointer(record: EncodedRecord, aggregateType: string, idF
+   }
+   if (canonicalJson(ref as JsonValue) !== record.refKey) return invalidRecord(`${aggregateType} ref is not the outer canonical ref_key`);
+   if (parsed['projectId'] !== ref['projectId']) return invalidRecord(`${aggregateType} projectId disagrees with its ref`);
+-  if (!isSafeRevision(parsed['revision']) || parsed['revision'] !== record.revision) return invalidRecord(`${aggregateType} outer revision disagrees with the JSON revision`);
++  if (!isNonNeg(parsed['revision']) || parsed['revision'] !== record.revision) return invalidRecord(`${aggregateType} outer revision disagrees with the JSON revision`);
+   const active = parsed['activeRevision'];
+   if (!isRecord(active) || active['aggregateType'] !== revisionType || active['projectId'] !== ref['projectId'] || !nonEmpty(active[idField])) {
+     return invalidRecord(`${aggregateType} activeRevision must name a ${revisionType} in this project`);
+@@ -502,8 +488,8 @@ async function readLookupKeys(
+   let watermark: CommitCursor | null = null;
+   let first: CommitCursor | null | undefined;
+   let stable = true;
+-  // 2A L10: the shared key read is paged to the very end; no 25-page /
+-  // 5,000-key window rejects a caller any more.
++  // 2A L10: the shared key read is paged to the very end; no fixed 25-page /
++  // 5,000-key window truncates it.
+   for (;;) {
+     const request: RecordLookupRequest = after === undefined
+       ? { index, values, limit: LOOKUP_PAGE_LIMIT }
+@@ -582,8 +568,7 @@ export async function findPendingProposal(
+  * Slice 5 §2.4 per-request head read: the current candidate of ONE saved
+  * request (`s5-plan-proposal-by-goal-request`). The returned head is a live
+  * candidate even when it is derived stale; only `accepted`/`not_adopted`
+- * candidates are closed. Part 1 declares the signature; the read lands in
+- * part 2 together with the service that compiles the slot commit.
++ * candidates are closed.
+  */
+ export async function readRequestCandidateHead(
+   records: GoalRecordTransactionPort & RecordLookupPort,
+@@ -625,7 +610,7 @@ export async function readRequestCandidateHead(
+  * Slice 5 §2.4 all-candidate enumeration: every saved candidate of one Goal
+  * (each request's head plus the independent/legacy candidates). The caller
+  * must never treat one `findPendingProposal` result as the whole set (spec
+- * §8.2 "request head 并发"). Part 1 declares the signature.
++ * §8.2 "request head 并发").
+  */
+ export async function enumerateGoalCandidates(
+   records: GoalRecordTransactionPort & RecordLookupPort,
+@@ -663,6 +648,32 @@ export async function enumerateGoalCandidates(
+     reason: 'the candidate enumeration window changed while it was being read' };
+ }
+ 
++/**
++ * §2.4/T-R2-2: the terminal proposal of one request's replacement chain. Only
++ * `accepted`/`not_adopted` `candidate_v2` heads are eligible; the terminal is
++ * the head whose chain was created LAST (its first candidate's creation
++ * commit), never the last in refKey order and never "accepted first". A caller
++ * that also holds a live candidate or a fallback keeps that handling.
++ * `findCandidateProposal` compares the same positions, so both entrances select
++ * the same terminal.
++ */
++export function selectTerminalProposal(
++  heads: readonly PlanProposal[],
++  positionOf: (proposal: PlanProposal) => { refKey: string; since: CommitCursor | null },
++): PlanProposal | null {
++  let terminal: PlanProposal | null = null;
++  for (const proposal of heads) {
++    if (proposal.kind !== 'candidate_v2') continue;
++    if (proposal.status !== 'accepted' && proposal.status !== 'not_adopted') continue;
++    if (terminal === null) {
++      terminal = proposal;
++      continue;
++    }
++    if (compareProposalChainPositions(positionOf(proposal), positionOf(terminal)) > 0) terminal = proposal;
++  }
++  return terminal;
++}
++
+ /**
+  * Slice 5 §4.2 source 3 CLOSED history: the terminal request candidates of one
+  * Goal (`accepted`/`not_adopted` `candidate_v2` proposals), one per request,
+@@ -738,26 +749,12 @@ export async function enumerateClosedGoalCandidates(
+       // A still-live head is owned by the live enumeration; do not fabricate a
+       // second closed card for the same per-request identity.
+       if (heads.some((proposal) => proposal.status === 'candidate')) continue;
+-      // §2.4/T-R2-2: the request's terminal is the head whose chain was created
+-      // LAST (its first candidate's creation commit), never the last in refKey
+-      // order and never "accepted first". `findCandidateProposal` compares the
+-      // same positions, so both entrances select the same terminal.
+-      let terminal: PlanProposal | null = null;
+-      for (const proposal of heads) {
+-        if (proposal.kind !== 'candidate_v2') continue;
+-        if (proposal.status !== 'accepted' && proposal.status !== 'not_adopted') continue;
+-        if (terminal === null) {
+-          terminal = proposal;
+-          continue;
+-        }
+-        const position = compareProposalChainPositions(
+-          { refKey: planProposalRefKey(proposal.ref), since: positions.get(planProposalRefKey(proposal.ref)) ?? null },
+-          { refKey: planProposalRefKey(terminal.ref), since: positions.get(planProposalRefKey(terminal.ref)) ?? null });
+-        if (position > 0) terminal = proposal;
+-      }
++      const terminal = selectTerminalProposal(heads, (proposal) => ({
++        refKey: planProposalRefKey(proposal.ref),
++        since: positions.get(planProposalRefKey(proposal.ref)) ?? null,
++      }));
+       if (terminal !== null) proposals.push(terminal);
+     }
+-    // L11: append without an unbounded argument spread.
+     for (const proposal of independent) proposals.push(proposal);
+     proposals.sort((left, right) => {
+       const leftKey = planProposalRefKey(left.ref);
+@@ -827,8 +824,8 @@ export async function resolveGovernance(
+     || policyActiveRevision === null || architectureActiveRevision === null) {
+     return incomplete('the project has no effective CompletionPolicy/ArchitectureBaseline activation');
+   }
+-  const policyRef = policyRefFromBody(parseJsonObject(policyActive.json)?.['activeRevision'], projectId);
+-  const architectureRef = architectureRefFromBody(parseJsonObject(architectureActive.json)?.['activeRevision'], projectId);
++  const policyRef = policyRefFromBody(parseObject(policyActive.json)?.['activeRevision'], projectId);
++  const architectureRef = architectureRefFromBody(parseObject(architectureActive.json)?.['activeRevision'], projectId);
+   if (policyRef === null || architectureRef === null) return incomplete('an active governance pointer does not name a legal revision ref');
+   const policyRecordKey = canonicalJson(policyRef as unknown as JsonValue);
+   const architectureRecordKey = canonicalJson(architectureRef as unknown as JsonValue);
+@@ -842,8 +839,8 @@ export async function resolveGovernance(
+     || policyRecordRevision === null || architectureRecordRevision === null) {
+     return incomplete('an activated governance revision is missing from the ledger');
+   }
+-  const policyBody = parseJsonObject(policyRecord.json);
+-  const architectureBody = parseJsonObject(architectureRecord.json);
++  const policyBody = parseObject(policyRecord.json);
++  const architectureBody = parseObject(architectureRecord.json);
+   if (policyBody === null || architectureBody === null) return unavailable('a governance revision is not decodable');
+   if (policyBody['contentRevision'] !== policyRef.revision || policyBody['policyId'] !== policyRef.policyId
+     || architectureBody['contentRevision'] !== architectureRef.revision || architectureBody['baselineId'] !== architectureRef.baselineId) {
+@@ -920,7 +917,7 @@ export async function readPinnedCompletionPolicy(
+   if (decoded.status !== 'decoded') {
+     return unavailable(`the pinned CompletionPolicy is corrupt: ${decoded.reason}`);
+   }
+-  const body = parseJsonObject(record.json);
++  const body = parseObject(record.json);
+   if (body === null) return unavailable('the pinned CompletionPolicy is not a JSON object');
+   if (body['policyId'] !== pin.ref.policyId || body['contentRevision'] !== pin.ref.revision) {
+     return { status: 'rejected', code: 'source_stale',
+@@ -1129,7 +1126,7 @@ export async function readUnknownCallReviewOutcome(
+ }
+ 
+ function parseRun(json: string): RunSnapshot | null {
+-  const parsed = parseJsonObject(json);
++  const parsed = parseObject(json);
+   if (parsed === null) return null;
+   const ref = parsed['ref'];
+   const task = parsed['task'];
+@@ -1142,13 +1139,13 @@ function parseRun(json: string): RunSnapshot | null {
+   return parsed as unknown as RunSnapshot;
+ }
+ function parseLease(json: string): TaskLeaseSnapshot | null {
+-  const parsed = parseJsonObject(json);
++  const parsed = parseObject(json);
+   if (parsed === null) return null;
+   if (parsed['schemaVersion'] !== 1 || !nonEmpty(parsed['holderRunId']) || !nonEmpty(parsed['attemptId'])) return null;
+   return parsed as unknown as TaskLeaseSnapshot;
+ }
+ function parseReduction(json: string): TaskReductionSnapshot | null {
+-  const parsed = parseJsonObject(json);
++  const parsed = parseObject(json);
+   if (parsed === null) return null;
+   if (parsed['schemaVersion'] !== 1 || !nonEmpty(parsed['phase']) || typeof parsed['revision'] !== 'number') return null;
+   return parsed as unknown as TaskReductionSnapshot;
+@@ -2139,16 +2136,13 @@ export async function readDispositionChangeTaskFacts(
+     }
+     const lease = facts.leasesByTaskId.get(taskId) ?? null;
+     const reduction = facts.reductionsByTaskId.get(taskId) ?? null;
+-    const applicableReduction = state.reductionRevision === null ? null : reduction;
+     const guards: RecordGuard[] = [...facts.guards];
+     if (pointerIntent !== null) {
+       guards.push({ refKey: canonicalJson(pointerIntent.ref as unknown as JsonValue), expectedRevision: pointerIntent.revision });
+     }
+     tasks.push({
+       facts: { taskId, runs, lease, reduction, selectedRun, pointerIntent },
+-      phase: { taskKind: task.taskKind, applicableReduction, selectedRun,
+-        originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
+-        round: facts.roundsByTaskId.get(taskId) ?? { kind: 'none' }, coveringRequeue: state.requeueRef },
++      phase: taskPhaseFactsOf(task, state, facts),
+       guards,
+     });
+   }
+diff --git a/src/core/work-graph/tasks/plan-service.ts b/src/core/work-graph/tasks/plan-service.ts
+index 2ed7145..e860ad3 100644
+--- a/src/core/work-graph/tasks/plan-service.ts
++++ b/src/core/work-graph/tasks/plan-service.ts
+@@ -1,5 +1,5 @@
+ /**
+- * R3c Plan task service — the WorkGraph owner of Goal plan adoption and task reads.
++ * The WorkGraph owner of Goal plan adoption and task reads.
+  *
+  * This file only coordinates: it binds the caller, delegates canonical reads and
+  * task facts to `plan-readers.ts`, pure admission to `plan-validation.ts` and the
+@@ -15,17 +15,13 @@
+  * candidate / accepted proposal (§14.1) and the CAS guards of the one commit,
+  * and `transitionGoal` the moved Goal pointer.
+  *
+- * This slice implements the INITIAL plan path (candidate v2 -> accepted
+- * PlanRevision) plus the six `PlanTaskPort` reads. A v2 candidate carries a full
+- * draft, not the legacy restricted delta/target digest, so a CHANGE candidate
+- * (`basedOn !== null`) is never authorized by a non-empty `decisionRefs`: apply
+- * rejects it with `incomplete` (no accepted decision) or `unsupported`
+- * (authorized delta compilation is not implemented yet). R3c is not closed here.
+- *
+- * W1 Stage 1 additionally RECOGNIZES the v2 future-plan revision
+- * (`basedOn !== null`, schemaVersion 2) and routes it to ONE explicit
+- * `unsupported` branch; it adopts no candidate and writes nothing. The initial
+- * fold, the reads, replay and claim behavior are unchanged.
++ * Both the initial path (candidate v2 -> accepted PlanRevision, plus the six
++ * `PlanTaskPort` reads) and the future path (`basedOn !== null`, compiled
++ * against that source) dispatch here. A v2 candidate carries a full draft, not
++ * the legacy restricted delta/target digest, so a CHANGE candidate is never
++ * authorized by a non-empty `decisionRefs`: authorized delta compilation is
++ * unsupported and apply rejects it with `incomplete` (no accepted decision) or
++ * `unsupported`.
+  */
+ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
+ import { commandIdentityKey } from '../../../contracts/command-event.js';
+@@ -40,10 +36,12 @@ import type {
+   GoalDecisionBasisV1,
+ } from '../../../contracts/goal-decisions.js';
+ import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey } from '../../../contracts/goal-decisions.js';
++import { rejected as coreRejected } from '../../../contracts/core/rejections.js';
+ import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
+ import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
+ import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+ import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+ import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
+ import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js';
+@@ -253,9 +251,6 @@ function ownJsonInput<T>(value: T, what: string): Owned<T> {
+     return { status: 'invalid', reason: `${what} cannot be isolated from the caller: ${detail}` };
+   }
+ }
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+ /**
+  * Bind the caller's scope, identity and the ORIGINAL AbortSignal synchronously,
+  * before the first await. `principal`/`materialReader` are copied so a later
+@@ -294,14 +289,11 @@ function ownCallContext(ctx: CoreCallContext): Owned<CoreCallContext> {
+     signal,
+   } as unknown as CoreCallContext };
+ }
+-function nonEmpty(value: unknown): value is string {
+-  return typeof value === 'string' && value.length > 0;
+-}
+ function messageOf(error: unknown): string {
+   return error instanceof Error ? error.message : String(error);
+ }
+ function rejected(code: CoreError, reason: string): Rejection {
+-  return { status: 'rejected', code, reason };
++  return coreRejected(code, reason);
+ }
+ function forbidden(reason: string): Rejection {
+   return rejected('forbidden', reason);
+@@ -2320,8 +2312,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
+ /**
+  * Slice 5 §3.3 RequestCandidatePort (F30): the per-request candidate head read
+  * and the abandon write. It is a named factory that uses the SAME Plan owner
+- * dependencies, so part 2 can compile the request-slot commit without a second
+- * plan service. Part 1 declares the port methods only; the factory never throws.
++ * dependencies, so the request-slot commit needs no second plan service. The
++ * factory never throws.
+  */
+ export function createRequestCandidateService(deps: PlanServiceDependencies): RequestCandidatePort {
+   const { records } = deps;
+@@ -2532,7 +2524,7 @@ function gateCoverage(plan: PlanRevisionSnapshot, gate: RuntimeTask): string[] {
+ }
+ 
+ // --------------------------------------------------------------------------
+-// W2 delegated Agent admission seam (recognition only in this skeleton)
++// W2 delegated Agent admission seam
+ // --------------------------------------------------------------------------
+ 
+ /** True only for the formal work_run caller; Host/query-run keep the legacy path. */
+diff --git a/src/core/work-graph/tasks/plan-validation.ts b/src/core/work-graph/tasks/plan-validation.ts
+index 6b5af46..7bb4a62 100644
+--- a/src/core/work-graph/tasks/plan-validation.ts
++++ b/src/core/work-graph/tasks/plan-validation.ts
+@@ -1,6 +1,6 @@
+-/** Pure Plan admission rules extracted from plan-record-codecs, with one owner.
+- * Codecs validate persisted shape; this file judges obligations/DAG/assignments
+- * plus the v2 whiteboard-relation and exact-input membership rules. */
++/** Pure Plan admission rules, with one owner. Codecs validate persisted shape;
++ * this file judges obligations/DAG/assignments plus the v2 whiteboard-relation
++ * and exact-input membership rules. */
+ import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js';
+ import type {
+   AcceptanceObligation, PlanRevisionDraft, PlanRevisionSnapshot, PlanValidationError,
+@@ -8,6 +8,7 @@ import type {
+ } from '../../../contracts/plan.js';
+ import { planValidationError, revisionAssignments } from '../../../contracts/plan.js';
+ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
++import { isRecord } from '../../../contracts/validation/common.js';
+ import type { FutureCarrierRemovalV1, FutureDispositionChangeV1 } from '../state/plan-machine.js';
+ import {
+   buildFrozenTaskDefinitions, executionDefinitionsAgree, frozenTaskDefinitionsAgree, isBasisUnsupported,
+@@ -15,10 +16,6 @@ import {
+ } from './plan-task-basis.js';
+ import { buildTaskAdjacency, hasCycleInEdges, hasDirectedCycle } from '../model/task-index.js';
+ 
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+-
+ /** Task ids that actually carry an explicit `executionIntent` in this draft.
+  * The new exemption branches must key on this, never on a raw legacy count. */
+ export function explicitExecutionIntentTaskIds(draft: PlanRevisionDraft): string[] {
+diff --git a/src/core/work-graph/tasks/plan-write-admission.ts b/src/core/work-graph/tasks/plan-write-admission.ts
+index 2256d10..b21d73b 100644
+--- a/src/core/work-graph/tasks/plan-write-admission.ts
++++ b/src/core/work-graph/tasks/plan-write-admission.ts
+@@ -31,6 +31,7 @@ import type { SessionRef } from '../../../contracts/core/identity.js';
+ import type { CoreError, ReadResult } from '../../../contracts/core/results.js';
+ import type { RoleBindingRefV1, RunRef } from '../../../contracts/dispatch.js';
+ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
++import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+ import type { GoalRef } from '../../../contracts/ledger.js';
+ import type { RecordGuard } from '../../record-store/ports.js';
+ import {
+@@ -92,12 +93,6 @@ const INTERNAL_READ_ACTOR = { kind: 'system' as const, id: 'w2-plan-write-admiss
+ 
+ type Rejection = { status: 'rejected'; code: CoreError; reason: string };
+ 
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+-function nonEmpty(value: unknown): value is string {
+-  return typeof value === 'string' && value.length > 0;
+-}
+ function forbidden(reason: string): Rejection {
+   return { status: 'rejected', code: 'forbidden', reason };
+ }
+diff --git a/src/core/work-graph/tasks/request-facts-reader.ts b/src/core/work-graph/tasks/request-facts-reader.ts
+index ebf1a8b..610378a 100644
+--- a/src/core/work-graph/tasks/request-facts-reader.ts
++++ b/src/core/work-graph/tasks/request-facts-reader.ts
+@@ -14,17 +14,12 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+ import type { GoalRef } from '../../../contracts/ledger.js';
+ import type { QueryJobRef } from '../../../contracts/query-job.js';
++import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+ import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
+ import { decodeQueryJobSnapshot, decodeQueryJobSubmittedEvent } from '../queries/query-record-codecs.js';
+ import type { CandidateRequestFactsPort } from '../model/decision-contracts.js';
+ 
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+-function nonEmpty(value: unknown): value is string {
+-  return typeof value === 'string' && value.length > 0;
+-}
+ function messageOf(error: unknown): string {
+   return error instanceof Error ? error.message : String(error);
+ }
+diff --git a/src/core/work-graph/tasks/requeue-service.ts b/src/core/work-graph/tasks/requeue-service.ts
+index 05aaaf8..ca9f46f 100644
+--- a/src/core/work-graph/tasks/requeue-service.ts
++++ b/src/core/work-graph/tasks/requeue-service.ts
+@@ -1,5 +1,5 @@
+ /**
+- * A.2 step 5.4 — `requeueTask` (docs/refactor/STATE-MACHINES-SPEC.md §4
++ * `requeueTask` (docs/refactor/STATE-MACHINES-SPEC.md §4
+  * TASK-16/17/28, §4.3 "处理步骤", §13; decisions D-3, C1, C2, C8, LA-5).
+  *
+  * The one entry that lets a Task whose selected Run ended open a new Attempt:
+@@ -40,6 +40,8 @@ import type { SessionArchiveRequestV1 } from '../../../contracts/core/session-ar
+ import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
+ import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../../contracts/dispatch.js';
+ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
++import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+ import type { GoalRef, GoalSnapshot, WorkspaceRef } from '../../../contracts/ledger.js';
+ import {
+   MAX_NEW_BASIS_INPUT_REFS, newBasisInputProblem, type NewBasisInputObservationV1, type NewBasisInputRefV1,
+@@ -127,12 +129,12 @@ export type TaskRequeueDependencies = {
+    * addressed to or sent by its own Session).
+    */
+   messages: Pick<SessionMailboxPort, 'readMessage'>;
+-  /** C8 policy; absent is `DEFAULT_TASK_AUTOMATION_POLICY` (Host settings wire it in step 5.6). */
++  /** C8 policy; absent is `DEFAULT_TASK_AUTOMATION_POLICY` (Host settings wire it in). */
+   automationPolicy?(): TaskAutomationPolicyV1;
+   /**
+    * Slice 5 §3.2/§4.4: the Goal-settings read seam for the automatic-rework
+-   * autonomy policy and the notice origin. Absent keeps the existing requeue
+-   * behaviour; the waiting/autonomy guards are part 2.
++   * autonomy policy and the notice origin. Absent falls back to the Goal read
++   * in this call.
+    */
+   goalSettings?: GoalSettingsPort;
+   /** W2/TD-6: the delegated-write admission an Agent requeue goes through; absent refuses an Agent. */
+@@ -152,12 +154,6 @@ const INTERNAL_READ_ACTOR = Object.freeze({ kind: 'system' as const, id: 'task-r
+ type Rejection = CoreRejection;
+ type Rejected = { ok: false; rejection: Rejection };
+ 
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+-function nonEmpty(value: unknown): value is string {
+-  return typeof value === 'string' && value.length > 0;
+-}
+ /**
+  * The plain `{projectId,sessionId}` of an archive-origin Session, whether the
+  * caller held a plain `SessionRef` or a full `SessionAggregateRef`
+@@ -189,7 +185,7 @@ function originMessageRefProblem(value: unknown): string | null {
+   return null;
+ }
+ function reject(code: CoreError, reason: string, current?: VersionPin[]): Rejection {
+-  return { status: 'rejected', code, reason, ...(current === undefined || current.length === 0 ? {} : { current }) };
++  return rejectedWithNonEmptyCurrent(code, reason, current);
+ }
+ function refusalOf(refused: MachineRefusal | null): Rejection | null {
+   return refused === null || refused.ok ? null : reject(refused.code, refused.detail);
+diff --git a/src/core/work-graph/tasks/run-activity-service.ts b/src/core/work-graph/tasks/run-activity-service.ts
+index eca00ca..b0425b7 100644
+--- a/src/core/work-graph/tasks/run-activity-service.ts
++++ b/src/core/work-graph/tasks/run-activity-service.ts
+@@ -1,25 +1,27 @@
+ /**
+- * Slice 2B L4/L8: the WorkGraph owner of the `RunActivity` write and the
++ * Slice 2B: the WorkGraph owner of the `RunActivity` write and the
+  * backfill candidate read.
+  *
+- * `recordRunActivity` is the backfill write (L8): it builds or replaces the one
++ * `recordRunActivity` is the backfill write: it builds or replaces the one
+  * `RunActivity` record of a Run and emits `RunActivityRecorded`. It never
+  * changes a Run, Task or Attempt (decision 20) and never calls a model. The
+- * end-of-Run commits write the same record through `planRunActivity` (L5), in
++ * end-of-Run commits write the same record through `planRunActivity`, in
+  * the SAME commit as the Run transition and with no extra event.
+  *
+  * `ensureActivityRecording` creates the workspace's `ActivityRecording` once;
+  * `listActivityBackfillCandidates` scans one workspace's ended Runs by
+  * `endedAt` (new index `s2b-run-by-workspace-ended`) and answers which need a
+- * tally (L8). Every storage read failure is returned, never turned into an
++ * tally. Every storage read failure is returned, never turned into an
+  * empty candidate list (rule 3).
+  */
+ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+ import type { CommitCursor } from '../../../contracts/command-event.js';
+ import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
++import { rejected } from '../../../contracts/core/rejections.js';
+ import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+ import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
++import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+ import {
+   ACTIVITY_AUTO_RETRY_REASONS, ACTIVITY_READ_RECORD_CAP, RUN_ACTIVITY_RULE_VERSION,
+   provenNotEnteredKernel,
+@@ -54,9 +56,9 @@ export interface RunActivityPort {
+   }): Promise<ReadResult<{
+     runRefs: RunRef[];
+     next: { order: string; refKey: string } | null;
+-    /** R1: the commit cursor the candidate scan read at, so a request id is unique across Host lifetimes. */
++    /** The commit cursor the candidate scan read at, so a request id is unique across Host lifetimes. */
+     cursor: string | null;
+-    /** R1/R13: the selected Runs' existing `RunActivity` revisions (null when none), parallel to `runRefs`. */
++    /** The selected Runs' existing `RunActivity` revisions (null when none), parallel to `runRefs`. */
+     activityRevisions: readonly (number | null)[];
+   }>>;
+ }
+@@ -66,7 +68,7 @@ export type RunActivityServiceDependencies = {
+     & RecordLookupPort & RecordOrderedLookupPort;
+   now(): string;
+   eventId(): string;
+-  /** P4 injection points; production never passes them. */
++  /** Test injection points; production never passes them. */
+   readRecordCap?: number;
+   batchRuns?: number;
+ };
+@@ -80,14 +82,8 @@ export type RunActivityWriteOutcome = 'created' | 'replaced' | 'unchanged';
+ type HostActor = { kind: 'human' | 'system'; id: string };
+ type Trusted = { scope: WorkspaceScope; actor: HostActor };
+ 
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+-function nonEmpty(value: unknown): value is string {
+-  return typeof value === 'string' && value.length > 0;
+-}
+ function reject(code: CoreError, reason: string): CoreRejection {
+-  return { status: 'rejected', code, reason };
++  return rejected(code, reason);
+ }
+ function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
+ function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
+@@ -136,11 +132,11 @@ function fingerprintOf(value: unknown): string {
+ }
+ 
+ // --------------------------------------------------------------------------
+-// L4: the ONE decision table, shared by the backfill write and the end commit
++// The ONE decision table, shared by the backfill write and the end commit
+ // --------------------------------------------------------------------------
+ 
+ /**
+- * L4, applied top-down. `endCommit` is true only for the RUN-21 path inside a
++ * Applied top-down. `endCommit` is true only for the RUN-21 path inside a
+  * Run-ending commit; the backfill never replaces a current-rule `counted`
+  * record (row 4). Rows:
+  * 1. absent → created;
+@@ -171,7 +167,7 @@ export function decideRunActivityOutcome(
+ }
+ 
+ /**
+- * Build the record a write would store, and its L4 outcome. The caller writes
++ * Build the record a write would store, and its outcome. The caller writes
+  * only when the outcome is not `unchanged`. `revision` continues the existing
+  * record's sequence, so a replace is a CAS-able new revision.
+  */
+@@ -209,9 +205,10 @@ export function runActivityRefOf(run: Pick<RunSnapshot, 'ref'>): RunActivityRef
+ }
+ 
+ /**
+- * L5: build the RunActivity record an END commit appends, reading the current
+- * record and applying L4. `record === null` means the commit writes nothing
+- * (L4 rows 4 and 7). The end commit appends the record with NO extra event.
++ * Build the RunActivity record an END commit appends, reading the current
++ * record and applying the decision table. `record === null` means the commit
++ * writes nothing (rows 4 and 7). The end commit appends the record with NO
++ * extra event.
+  */
+ export async function planRunActivityForCommit(
+   records: Pick<GoalRecordTransactionPort, 'readMany'>,
+@@ -282,10 +279,10 @@ export function createRunActivityService(deps: RunActivityServiceDependencies):
+   }
+ 
+   /**
+-   * L17: the locator's Session first, else the dispatch claim's Session, else
++   * The locator's Session first, else the dispatch claim's Session, else
+    * `null` when no dispatch record exists (a legitimate old execution, F15).
+    * A dispatch read that fails (`not ready`) or throws, and a dispatch record
+-   * that does not decode, is RETURNED as a rejection: L17's last bullet says any
++   * that does not decode, is RETURNED as a rejection: the last bullet says any
+    * read failure fails the read, so it must never be written as `sessionRef:
+    * null`, which would fabricate "old execution" (rule 3).
+    */
+@@ -344,7 +341,7 @@ export function createRunActivityService(deps: RunActivityServiceDependencies):
+     if (!isRecord(facts) || (facts.status !== 'counted' && facts.status !== 'unknown')) {
+       return invalid('recordRunActivity requires RunActivityFactsV1');
+     }
+-    // R13: the optional CAS-pin the backfill captured at candidate selection. It
++    // The optional CAS-pin the backfill captured at candidate selection. It
+     // distinguishes "another writer advanced the record after selection" from an
+     // ordinary unchanged retry.
+     const expectedRevisionRaw = raw.input['expectedActivityRevision'];
+@@ -491,11 +488,11 @@ export function createRunActivityService(deps: RunActivityServiceDependencies):
+     const after = isRecord(raw['after']) && nonEmpty(raw['after']['order']) && nonEmpty(raw['after']['refKey'])
+       ? { order: raw['after']['order'] as string, refKey: raw['after']['refKey'] as string } : null;
+ 
+-    // One epoch read for the workspace: L7's "no authorization, endedAt >= since" exclusion.
++    // One epoch read for the workspace: the "no authorization, endedAt >= since" exclusion.
+     const epochKey = activityRecordingRefKey({ aggregateType: 'ActivityRecording', projectId: scope.projectId, workspaceId: scope.workspaceId });
+     const epochRead = await records.readMany([epochKey]);
+     if (epochRead.status !== 'ready') return mapStoreFailure(epochRead);
+-    // R1: the commit cursor this scan reads at. Every read in one scan observes
++    // The commit cursor this scan reads at. Every read in one scan observes
+     // the same ledger; keeping the latest non-null value gives the submission
+     // identity that changes as soon as any write (for example this backfill's
+     // first tally) commits.
+@@ -529,7 +526,7 @@ export function createRunActivityService(deps: RunActivityServiceDependencies):
+         scanCursor = String(page.value.readThrough);
+       }
+       if (page.value.records.length === 0) { next = null; break; }
+-      // Decode the Run and read each RunActivity in one batch (L8: one key read per candidate).
++      // Decode the Run and read each RunActivity in one batch (one key read per candidate).
+       const runRecords: { record: EncodedRecord; run: RunSnapshot }[] = [];
+       for (const record of page.value.records) {
+         const decoded = decodeRun(record);
+@@ -578,7 +575,7 @@ export function createRunActivityService(deps: RunActivityServiceDependencies):
+ }
+ 
+ /**
+- * L8 candidate rules. `snapshot === null` means no record yet. The shared L7
++ * Candidate rules. `snapshot === null` means no record yet. The shared
+  * predicate decides "never entered, so no record is expected"; every other Run
+  * without a locator is an old/missing execution and stays a candidate (2B-42),
+  * so the human range backfill can write its `unknown('no_history_locator')`.
+diff --git a/src/core/work-graph/tasks/session-anomaly-service.ts b/src/core/work-graph/tasks/session-anomaly-service.ts
+index ea922bf..68259dc 100644
+--- a/src/core/work-graph/tasks/session-anomaly-service.ts
++++ b/src/core/work-graph/tasks/session-anomaly-service.ts
+@@ -16,7 +16,9 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+ import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
+ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+ import type { GoalRef } from '../../../contracts/ledger.js';
++import { rejected } from '../../../contracts/core/rejections.js';
+ import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
++import { isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
+ import type { ArchiveStepRefV1, SessionArchiveRequestV1 } from '../../../contracts/core/session-archive.js';
+ import { deriveArchiveStepCommitIdentityV1 } from '../../../contracts/core/session-archive.js';
+ import type { SessionRef } from '../../../contracts/core/identity.js';
+@@ -88,28 +90,16 @@ const SESSION_EXECUTION_MAX_PAGES = 25;
+ // Small pure helpers
+ // --------------------------------------------------------------------------
+ 
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+-}
+-function nonEmpty(value: unknown): value is string {
+-  return typeof value === 'string' && value.length > 0;
+-}
+ function sameRef(left: unknown, right: unknown): boolean {
+   try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
+ }
+ function reject(code: CoreError, reason: string): CoreRejection {
+-  return { status: 'rejected', code, reason };
++  return rejected(code, reason);
+ }
+ function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
+ function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
+ function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
+ function mapReader(failure: Rejected): CoreRejection { return reject(failure.code, failure.reason); }
+-function parseJsonObject(json: string): Record<string, unknown> | null {
+-  try {
+-    const parsed: unknown = JSON.parse(json);
+-    return isRecord(parsed) ? parsed : null;
+-  } catch { return null; }
+-}
+ function plainSessionRef(ref: { projectId: string; sessionId: string }): SessionRef {
+   return { projectId: ref.projectId, sessionId: ref.sessionId };
+ }
+@@ -472,7 +462,7 @@ export function createSessionAnomalyService(stores: SessionAnomalyStores): Sessi
+     if (requestRead.sessionRef === null || !sameRef(requestRead.sessionRef, stepSession)) {
+       return reject('forbidden', 'archive_scope: the archive request belongs to another Session');
+     }
+-    // §3.2/C1: a Work anchor is authorized only by an execution this archive
++    // §3.2: a Work anchor is authorized only by an execution this archive
+     // really stopped (`work`) or by a released-occupancy request (`none`). A
+     // Query execution never authorizes a Work anchor; it is refused up front.
+     if (request.execution.kind === 'query') {
+@@ -530,7 +520,7 @@ export function createSessionAnomalyService(stores: SessionAnomalyStores): Sessi
+     // facts (retired, no same-line continuation, released occupancy, the current
+     // request this step belongs to). A retired caller that does not verify is an
+     // invalid request; a non-retired request takes S1-ANCHOR-01.
+-    // C1: a NEW anchor commit always requires the Session's CURRENT durable R to
++    // A NEW anchor commit always requires the Session's CURRENT durable R to
+     // be exactly this step's request (the receipt replay above is already
+     // allowed without it). An unresolved successor proof (`legacyPending`)
+     // cannot prove "no continuation" for the retired row.
+@@ -752,7 +742,7 @@ function encodeAnomalyCursor(cursor: AnomalyCursor): string {
+   return canonicalJson(cursor as unknown as JsonValue);
+ }
+ function decodeAnomalyCursor(rawValue: string): AnomalyCursor | null {
+-  const parsed = parseJsonObject(rawValue);
++  const parsed = parseObject(rawValue);
+   if (parsed === null || !nonEmpty(parsed['projectId']) || !nonEmpty(parsed['workspaceId'])
+     || !nonEmpty(parsed['goalId']) || !nonEmpty(parsed['after'])) return null;
+   const taskId = parsed['taskId'];
+diff --git a/src/core/work-graph/tasks/task-phase-facts.ts b/src/core/work-graph/tasks/task-phase-facts.ts
+new file mode 100644
+index 0000000..cb13f7c
+--- /dev/null
++++ b/src/core/work-graph/tasks/task-phase-facts.ts
+@@ -0,0 +1,28 @@
++/**
++ * The projection inputs of a Task from its directed canonical read
++ * (`plan-readers.ts` `readCanonicalTaskFacts`): the selected Run, the
++ * applicable Reduction, the selected Run's round-chain signal, and an
++ * unresolvable origin, which that read shows only as a `blocked` Task with
++ * neither Run nor Reduction, and the TaskRequeue covering the selected Run
++ * (P4). It does not answer null for a missing selected Run or Reduction: each
++ * caller keeps its own extra check for that.
++ */
++import type { RuntimeTask } from '../../../contracts/plan.js';
++import type { TaskPhaseFacts } from '../state/task-machine.js';
++import { sameRef } from './execution-entry-service.js';
++import type { CanonicalTaskFacts, CanonicalTaskState } from './plan-readers.js';
++
++export function taskPhaseFactsOf(task: RuntimeTask, state: CanonicalTaskState, read: CanonicalTaskFacts): TaskPhaseFacts {
++  const execution = state.execution;
++  const selectedRun = execution === null ? null
++    : (read.runsByTaskId.get(task.taskId) ?? []).find(run => sameRef(run.ref, execution)) ?? null;
++  const applicableReduction = state.reductionRevision === null ? null : read.reductionsByTaskId.get(task.taskId) ?? null;
++  return {
++    taskKind: task.taskKind,
++    applicableReduction,
++    selectedRun,
++    originUnresolvable: selectedRun === null && applicableReduction === null && state.effectivePhase === 'blocked',
++    round: read.roundsByTaskId.get(task.taskId) ?? { kind: 'none' },
++    coveringRequeue: state.requeueRef,
++  };
++}
+diff --git a/src/core/work-graph/tasks/trusted-context.ts b/src/core/work-graph/tasks/trusted-context.ts
+new file mode 100644
+index 0000000..1ba1787
+--- /dev/null
++++ b/src/core/work-graph/tasks/trusted-context.ts
+@@ -0,0 +1,116 @@
++/**
++ * Shared trusted Host context binding and write-request isolation.
++ *
++ * `bindTrustedHostContext` is the ONE skeleton that binds the real Host scope,
++ * actor and cancellation signal; `isolateTrustedWrite` is the ONE skeleton that
++ * isolates a write input and its version pins from the caller. Both run
++ * synchronously before the first await, so nothing the caller does afterwards
++ * can change what is judged or committed.
++ */
++import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
++import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
++import type { CoreError, CoreRejection } from '../../../contracts/core/results.js';
++import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
++import type { GraphWrite } from '../model/task-contracts.js';
++
++export type TrustedHostActor = { kind: 'human' | 'system'; id: string };
++export type TrustedHostContextResult =
++  | { ok: true; ctx: CoreCallContext; scope: WorkspaceScope; actor: TrustedHostActor; signal: AbortSignal }
++  | { ok: false; rejection: CoreRejection };
++
++function reject(code: CoreError, reason: string): CoreRejection {
++  return { status: 'rejected', code, reason };
++}
++function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
++function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
++
++function sameHostActor(left: unknown, right: unknown): boolean {
++  return isRecord(left) && isRecord(right) && left['kind'] === right['kind'] && left['id'] === right['id']
++    && (left['kind'] === 'human' || left['kind'] === 'system');
++}
++
++/** Bind the trusted Host scope and identity before the first await; the
++ * original AbortSignal is kept by reference so cancellation is never lost. */
++export function bindTrustedHostContext(
++  ctx: CoreCallContext, label: string, options?: { allowArraySignal?: boolean },
++): TrustedHostContextResult {
++  const raw = ctx as unknown as {
++    projectId?: unknown; workspaceId?: unknown; principal?: unknown; materialReader?: unknown; signal?: unknown;
++  } | null | undefined;
++  if (raw === null || raw === undefined) {
++    return { ok: false, rejection: invalid(`${label} requires a bound call context`) };
++  }
++  const projectId = raw.projectId;
++  const workspaceId = raw.workspaceId;
++  if (!nonEmpty(projectId) || !nonEmpty(workspaceId)) {
++    return { ok: false, rejection: forbidden(`${label} requires a bound project/workspace context`) };
++  }
++  const signal = raw.signal;
++  if (options?.allowArraySignal) {
++    if (typeof signal !== 'object' || signal === null
++      || typeof (signal as { aborted?: unknown }).aborted !== 'boolean'
++      || typeof (signal as { addEventListener?: unknown }).addEventListener !== 'function') {
++      return { ok: false, rejection: forbidden(`${label} requires the bound AbortSignal`) };
++    }
++  } else if (!isRecord(signal) || typeof signal['aborted'] !== 'boolean'
++    || typeof signal['addEventListener'] !== 'function') {
++    return { ok: false, rejection: forbidden(`${label} requires the bound AbortSignal`) };
++  }
++  let principal: unknown;
++  let materialReader: unknown;
++  try {
++    principal = structuredClone(raw.principal);
++    materialReader = structuredClone(raw.materialReader);
++  } catch {
++    return { ok: false, rejection: invalid('the call context identity cannot be isolated from the caller') };
++  }
++  if (!isRecord(principal) || principal['kind'] !== 'host') {
++    return { ok: false, rejection: forbidden(`${label} requires a trusted Host principal`) };
++  }
++  const actor = principal['actor'];
++  if (!isRecord(actor) || (actor['kind'] !== 'human' && actor['kind'] !== 'system') || !nonEmpty(actor['id'])) {
++    return { ok: false, rejection: forbidden(`${label} requires a trusted Host actor`) };
++  }
++  if (!isRecord(materialReader) || materialReader['kind'] !== 'host'
++    || materialReader['projectId'] !== projectId
++    || (materialReader['workspaceId'] !== undefined && materialReader['workspaceId'] !== workspaceId)
++    || !sameHostActor(materialReader['actor'], actor)) {
++    return { ok: false, rejection: forbidden('the material reader is not the same trusted Host scope') };
++  }
++  return {
++    ok: true,
++    ctx: { projectId, workspaceId, principal: principal as CoreCallContext['principal'],
++      materialReader: materialReader as MaterialReader, signal: signal as AbortSignal },
++    scope: { projectId, workspaceId },
++    actor: { kind: actor['kind'], id: actor['id'] },
++    signal: signal as AbortSignal,
++  };
++}
++
++/** Isolate the request input and its version pins from the caller before the
++ * first await, so later mutation of the caller's objects cannot change what is
++ * judged, fingerprinted or committed. */
++export function isolateTrustedWrite<T>(
++  request: GraphWrite<T>, label: string, cloneFailure: string,
++): { ok: true; input: T; requestId: string; expected: readonly VersionPin[] } | { ok: false; rejection: CoreRejection } {
++  const raw = request as unknown as { input?: unknown; meta?: unknown } | null | undefined;
++  if (raw === null || raw === undefined || !isRecord(raw.input)) {
++    return { ok: false, rejection: invalid(`${label} requires a request input object`) };
++  }
++  const meta = raw.meta;
++  if (!isRecord(meta) || !nonEmpty(meta['requestId'])) {
++    return { ok: false, rejection: invalid(`${label} requires meta.requestId`) };
++  }
++  if (!Array.isArray(meta['expected'])) {
++    return { ok: false, rejection: invalid('meta.expected must be an array of version pins') };
++  }
++  let input: T;
++  let expected: readonly VersionPin[];
++  try {
++    input = structuredClone(raw.input) as T;
++    expected = structuredClone(meta['expected']) as VersionPin[];
++  } catch {
++    return { ok: false, rejection: invalid(cloneFailure) };
++  }
++  return { ok: true, input, requestId: meta['requestId'], expected };
++}

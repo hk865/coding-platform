@@ -1,5 +1,7 @@
 # 当前已实现能力与复用入口
 
+**2026-10-19 C1（已合入，`35b5f5b1`）：** 决定 70 的第一轮清理：合并 `src/core/work-graph` 里重复的小工具和抄了几份的服务代码，删施工经过的注释。没有新能力、没有新路由，接口和行为不变；测试和断言一条没改，production-reach 允许清单只删了三条声明已不存在的条目（验收裁定 13）。新增的共用模块：`src/contracts/core/rejections.ts`、`src/contracts/input-declaration-id.ts`、`src/core/work-graph/persistence/event-envelope.ts`、`src/core/work-graph/persistence/event-validation.ts`、`src/core/work-graph/sessions/trusted-context.ts`、`src/core/work-graph/sessions/session-links.ts`、`src/core/work-graph/configuration/workspace-settings-reads.ts`、`src/core/work-graph/tasks/trusted-context.ts`、`src/core/work-graph/tasks/task-phase-facts.ts`、`src/core/work-graph/tasks/owner-record-read.ts`、`src/core/work-graph/views/activity-read-helpers.ts`、`src/core/work-graph/notes/store-failures.ts`、`src/core/work-graph/state/ref-equality.ts`。证据：[C1](reviews/evidence/orchestration-cleanup-C1-2026-10-19/README.md)。
+
 **2026-10-18 8D 和 §10 段（已合入）：** 观测改用轻型扫描读引用：C/C++ 的 libclang、Python 的语法树经同一个 NDJSON 执行器，按语言的覆盖带 `edges`/`notes`，逐文件结果和原因；观测有自己的文件清单（git 或固定跳过名单），TS/JS 用轻型扫描替掉分析器，一次扫描两层共用；模块正文 v2、紧凑快照、文件层 v2 的块（边存节点序号、没解析的引用带原因）；被 git 忽略的编译数据库只当配置冻结；按决定 79 只读当前格式。新能力列在 §3 的 WG58。没有新路由，没有调用真实模型。证据：[8D 和 §10 段](reviews/evidence/orchestration-slice-8D-2026-10-18/README.md)。
 
 **2026-10-18 L8（已合入）：** 自动抓（非重放的登记、采用、修订和检查 PASS 定稿后触发；每个 Host 一个串行、合并的驱动）、请求记录和失败状态、Host 启动和下一次触发重试、公开的 `architecture/observation-state` 读、准备阶段的四类过时架构提醒（最多列 10 条、超过时另加省略行，`还没有观测`、`，不确定`）、观测块的工作区 scope。新能力列在 §3 的 WG59。没有调用真实模型。证据：[L8](reviews/evidence/orchestration-slice-8-L8-2026-10-18/README.md)。

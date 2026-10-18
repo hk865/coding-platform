@@ -1,0 +1,753 @@
+[
+ {
+  "area": "TA",
+  "findings": [
+   {
+    "id": "TA-1",
+    "verdict": "confirmed",
+    "srcLines": "150-200",
+    "testLines": "0",
+    "behaviourChange": "无，前提是给共享的 bindTrustedContext/isolateWrite 加两个文案参数（如 'a Task claim'、'recordExecutionHistory'），保留各服务现有错误文案；错误码和检查顺序本来就相同",
+    "blockers": "K3 规格 v7 §6（D:/cc-lead-notes/specs/k3/slice-K3-SPEC.v7.md:1442、:1536）点名 claim-service.ts 和 execution-entry-service.ts，会和 K3 撞；slice-3-SPEC.md:356 要求保留 bindTrustedContext/isolateWrite/checkRunPin，把其他服务并过去和这条一致；不是 4C 复用，也不在今晚速改范围",
+    "overlaps": "XX-1（同几个文件里的 isRecord/nonEmpty 原语）",
+    "risk": "medium",
+    "reason": "上下文绑定有四份几乎逐字相同的副本：claim-service.ts:439-480、execution-history-service.ts:151-200、run-state-service.ts:202-250、execution-entry-service.ts:233-275（已 export，evidence-service.ts:646、completion.ts:270、control-service.ts:592、goal-control.ts:34 都在用）。写请求隔离三份：claim:485-506、history:206-227、entry:279-300。另有四份 sameHostActor（claim:123、history:144、run-state:110、entry:227），只在各自的绑定函数里用。差别只有文案前缀，claim 的 signal 判断写法不同（:449-453）但结果一样。tests/ 里没有断言这些文案（grep 0 处）。去掉三份副本加类型声明约 215 行，加参数和改调用点后净减约 150-200，比报告估的多。"
+   },
+   {
+    "id": "TA-2",
+    "verdict": "confirmed",
+    "srcLines": "100-200",
+    "testLines": "0",
+    "behaviourChange": "无",
+    "blockers": "无（状态机规则注释按 HANDOFF 保留）",
+    "overlaps": "XX-3（跨区注释，也举了 tasks 的 plan-readers.ts:1-2、run-activity-codecs.ts:1-10，要防重复计数）",
+    "risk": "low",
+    "reason": "三个例子都核实了：plan-service.ts:18-28 仍说只做初始计划、未来计划回 unsupported，但 :1638 已经调 applyFutureRevision，:2861、:3028 有 compileFuturePlanAdoption；plan-readers.ts:578-579、:621 和 plan-service.ts:2272-2273 仍写着 'Part 1 declares'；model-call-contracts.ts:2-6 还是 'skeleton' 加迁移来历。本区约 4070 行注释；带 R3c/part 1/part 2/skeleton/stage 字样的历史标记约 20 处，大多是多行块。估计数是人工估的。"
+   },
+   {
+    "id": "TA-3",
+    "verdict": "partly",
+    "srcLines": "0-20",
+    "testLines": "0",
+    "behaviourChange": "并发时有变化：任务行和展示原因今天来自两个各自确认过的读取窗口（plan-service.ts:1913-1973、:2100-2143），合并后来自同一个快照。没有竞争时结果相同",
+    "blockers": "K3 规格 v7 §6（:1442）要改 goal-decision-reader.ts（automationCauses 改用共用规则）和 plan-readers.ts；要在 PlanTaskPort 上加新读口，并改 goal-decision-reader.ts:58 的 Pick 类型",
+    "overlaps": "XX-4 第 1 行（同一条重复读取）",
+    "risk": "medium",
+    "reason": "重复读取属实：goal-decision-reader.ts:430-432 先调 queryTaskGraph（:210），再在 displayCauses 里调 queryGoalDisplay（:266）。两次都读 Goal/Plan 窗口、readCanonicalTaskFacts、GoalPhase、taskRowReworkOf，并逐个算 taskRow。生产接线是 create-platform.ts:746。但要合并，得在 PlanTaskPort 上加一个组合读口，再把两个查询拆成共享的读取部分加两种投影；readTaskRows（:201-225）对 not_found 和无计划的处理还得保留。所以主要省的是存储读取，净减行数可能接近 0，报告的 20-40 偏乐观。"
+   },
+   {
+    "id": "TA-4",
+    "verdict": "confirmed",
+    "srcLines": "20-30（只算区内；区外两份另计在 VW-4）",
+    "testLines": "0",
+    "behaviourChange": "无，前提是版本门槛、数组顺序和复制语义由调用方保留：entry 对非 v2 返回空（execution-entry-service.ts:1067），context-input 对非 v2 只跳过旧需求、照样处理依赖边（context-input-service.ts:364-365、:381）；两份都是先旧声明后依赖边，区外两份顺序相反",
+    "blockers": "K3 规格 v7 §6 点名 execution-entry-service.ts；views/graph-context-reader.ts 在 4C 复用清单上（报告也说那份保留）；slice-3-SPEC.md:234 要求保留 legacy: 声明的转换",
+    "overlaps": "VW-4（同四处，只能算一次）",
+    "risk": "medium",
+    "reason": "四份实现核实：context-input-service.ts:368-396、execution-entry-service.ts:1065-1093、agent-runtime/context-assembler.ts:442-472、views/graph-context-reader.ts:857-886。四处都用 sha256Hex(canonicalJson({planRef,consumerTaskId,dependsOnId,requires})) 生成 'edge:' 编号，用 'legacy:'+requirementId 生成旧声明编号。区内两份合并成一个纯函数，大约省掉一份 27 行，再减去参数。"
+   },
+   {
+    "id": "TA-5",
+    "verdict": "confirmed",
+    "srcLines": "15-25",
+    "testLines": "0",
+    "behaviourChange": "无。requeue（requeue-service.ts:433）和 plan-service.ts:905 判断 reductionRevision===null，另外两处判断 applicableReduction===null；只有'有 reductionRevision 却没读到 Reduction'时两者才不同，completion.ts:144-146 说同一次读取一定会返回选中的 Reduction，所以只有改库才会出现",
+    "blockers": "K3 规格 v7 §6（:1442）要改 claim-service.ts（requeueClaimFacts 改用共用判断）、requeue-service.ts 和 plan-readers.ts，会撞",
+    "overlaps": "ST-8（失败事实重复构造，相邻但不是同一段代码）",
+    "risk": "medium",
+    "reason": "拼 TaskPhaseFacts 的同一套写法有 4 处：claim-service.ts:233-248、completion.ts:148-161（注释 :144-146 明说要和 claim 手工保持一致）、requeue-service.ts:417-436、plan-readers.ts:1818-1840；plan-service.ts:888-905 也用同一种方式找 selectedRun 和 originUnresolvable。claim 遇到缺失返回 null，requeue 另外补读轮次链，这些差异留在调用方。"
+   },
+   {
+    "id": "TA-6",
+    "verdict": "confirmed",
+    "srcLines": "15-25",
+    "testLines": "0",
+    "behaviourChange": "无，前提是保留'先把所有 Goal 的活动候选读完，再读关闭候选'的顺序和各自的失败处理（活动候选跳过坏记录 plan-readers.ts:638-639，关闭候选回 unavailable :692-697）。如果改成每个 Goal 一轮循环，多个 Goal 都出错时先返回哪个错误会变",
+    "blockers": "调用方 views/decision-read-model.ts:353-386 是 K3 文件；K3 规格 v7 §6 还点名 plan-readers.ts；slice-2A-SPEC.md:119 规定两次枚举的分页上限在共用的 readLookupKeys 里，合并后照样适用",
+    "overlaps": "VW-5（同一个函数 enumerateClosedGoalCandidates 的终态选择，应该一起改）；VW-10（同一次决定队列装配）",
+    "risk": "medium",
+    "reason": "enumerateGoalCandidates（plan-readers.ts:623-656）和 enumerateClosedGoalCandidates（:665-705）按同一个 PLAN_PROPOSAL_LOOKUP_INDEX、同样的值、同样的稳定性检查各读一遍，再各自解码。唯一的生产调用方是 decision-read-model.ts:359、:376，同一次队列读取里每个 Goal 调用两次；那里还有两个类型转换包装（:118-131）。测试只直接调用活动枚举一处（tests/work-graph/S5-request-candidates.test.ts:47）。"
+   },
+   {
+    "id": "TA-7",
+    "verdict": "confirmed",
+    "srcLines": "18-35",
+    "testLines": "0",
+    "behaviourChange": "无",
+    "blockers": "K3 规格 v7 §6 点名 claim-service.ts 和 execution-entry-service.ts",
+    "overlaps": "XX-7（包含同样这三份，行数会重复计算）",
+    "risk": "low",
+    "reason": "pinsFromCurrent 有三份逐字相同：claim-service.ts:133-143、execution-entry-service.ts:153-163、execution-history-service.ts:107-117；queries/ 下另有两份近似的（query-execution.ts:170、query-job-service.ts:584）。报告漏算了一点：execution-history-service.ts:118-133 整个 mapStoreFailure 和已 export 的 execution-entry-service.ts:164-177 完全一样（unique→busy 文案相同，unsupported→unavailable），history 可以直接 import，再省约 15 行；claim 的映射不同（:150-151 unique→revision_conflict），要保留。"
+   },
+   {
+    "id": "TA-8",
+    "verdict": "confirmed",
+    "srcLines": "13-15",
+    "testLines": "0",
+    "behaviourChange": "无。governance 对象只用到 completionPolicy、architectureBaseline（plan-commit-compiler.ts:224-225）和 guards（plan-service.ts:1705），不会写进记录，存储字节不变",
+    "blockers": "无（readOriginPlans 不在 4C 复用清单上；文档里只有 2B 的历史证据 s2b-impl.md:154 提到 batchRuns）",
+    "overlaps": "none",
+    "risk": "low",
+    "reason": "VerifiedGovernance 的四个 revision 字段在 plan-commit-compiler.ts:44-47 声明，只在 plan-readers.ts:861-864 填写，src/tests 里没有其他引用。OriginPlanRead.missing 在 plan-readers.ts:1851-1853 声明、:1877/:1880 填写；readOriginPlans 的三处调用（entry-plan-reader.ts:44、:59，plan-readers.ts:1506）都只用 plansByRefKey。RunActivityServiceDependencies.batchRuns（run-activity-service.ts:71）没有人读；测试里的 batchRuns 都是传给工作流的 createActivityBackfill（activity-backfill.ts:52、:110）。四个 revision 的本地读取和 guards 要留着。"
+   },
+   {
+    "id": "TA-9",
+    "verdict": "confirmed",
+    "srcLines": "8-15",
+    "testLines": "0",
+    "behaviourChange": "无，前提是 origin 仍在原位置解码（readAdoption 里在 planProposalProblem 之后，plan-service.ts:2810-2817），不提前改变出错的先后；origin 和 proposal 取自同一次读取，只会更一致。每处少一次 readBatch",
+    "blockers": "slice-5-SPEC.md:299 要求复制原来的 since（保留）；K3 规格 v7 §6（:1446）和 slice-8 的 8B（slice-8-SPEC.md:430）都会改 plan-service.ts，但改的是别的函数",
+    "overlaps": "PE-7（evidence 里同一种'为了取 origin 再读一次'的写法，代码不同）",
+    "risk": "low",
+    "reason": "readProposal 和 readProposalOrigin（plan-readers.ts:452-485）对同一个键各做一次 readBatch。readProposalOrigin 只有 4 个生产调用，都紧跟在 readProposal 后面：plan-service.ts:1349/1353、2356/2364、2807/2817、3247/3251。tests/ 里直接调用 0 处。"
+   },
+   {
+    "id": "TA-10",
+    "verdict": "confirmed",
+    "srcLines": "10-14",
+    "testLines": "0",
+    "behaviourChange": "无，64 层上限、capacity 文案、读取失败的传播都不变",
+    "blockers": "无（slice-5-SPEC.md:506 规定不能有等待环，检查本身保留）",
+    "overlaps": "none",
+    "risk": "low",
+    "reason": "goal-settings-service.ts:392-407 和 :779-794 的循环逐行相同（seen 集合、64 层、读后继、读失败直接返回、走不完回 capacity），只是起点不同（goalRef/predecessor 对 laterRef/earlierRead.goal）。抽成一个局部函数约 18 行，两处调用各约 3 行，净减约 12 行。"
+   },
+   {
+    "id": "TA-11",
+    "verdict": "confirmed",
+    "srcLines": "0",
+    "testLines": "0",
+    "behaviourChange": "拒绝结果不变。每次进入少读一次 Artifact 正文、少算一次摘要、少解析一次；第二次读取时才出现的临时存储失败从此不会再出现（manifest 是不可变的内容地址，slice-3-SPEC.md:356）",
+    "blockers": "K3 规格 v7 §6（:1442、:1536、:1611）要改 execution-entry-service.ts 的 RUN-02 并复用 readManifestFromEnvelope，最好放在 K3 里一起做，或等 K3 合入之后",
+    "overlaps": "none",
+    "risk": "medium",
+    "reason": "execution-entry-service.ts:1528 为 continuation brief 读一次 manifest；:1536 调 authorizeAdmission，它在 :1232 用同样的 envelope 和 claim.runRef 再读一次。readManifestFromEnvelope（:392-430）每次都做摘要、大小、来源和 DTO 校验。authorizeAdmission 只有这一个调用方；把第一次的结果（成功或失败）传进去即可，工作区检查仍在前面（:1231）。"
+   }
+  ],
+  "missed": "1) K3 撞车的范围比提示词里的 K3 文件清单大。K3 规格 v7 §6（D:/cc-lead-notes/specs/k3/slice-K3-SPEC.v7.md:1442、:1446、:1536）还点名了 tasks/claim-service.ts、requeue-service.ts、run-reconcile-service.ts、execution-entry-service.ts、plan-readers.ts、goal-decision-reader.ts、reconcile-reads.ts、plan-service.ts。因此 TA-1、3、4、5、6、7、9、11 都会碰到 K3 要改的文件，报告只给 TA-6 标了 K3。2) 可能是缺陷，不是可删项：goal-decision-reader.ts:422 接收 atLeastCursor（slice-5-SPEC.md:817-818 有这个参数，decision-read-model.ts:176-177 也传进来了），但函数体从没用到它（整个文件只有 :7 注释、:66、:422 出现），所以这个来源永远不会报 not_ready。要不要改，由 lead 判断。3) TA-7 漏算了 execution-history-service.ts:118-133：它整个 mapStoreFailure 和 execution-entry-service.ts:164-177 一样，约 15 行。4) 导出扫描：tasks/ 下没有找到完全没人调用的导出函数；约 70 个导出只在本文件内使用，去掉 export 也不减行。没有发现比报告所列更大的整块可删项。"
+ },
+ {
+  "area": "ST",
+  "findings": [
+   {
+    "id": "ST-1",
+    "verdict": "confirmed",
+    "srcLines": "90-120",
+    "testLines": "10",
+    "behaviourChange": "none (types only, erased at compile; exported names kept as aliases)",
+    "blockers": "model/ is VW's area. Importers keep the same names, so sessions/message-record-codecs.ts (K3) and tasks/plan-readers.ts (4C) need no edits. Not a speed-round file.",
+    "overlaps": "none in VW/XX/SE; ST-5 (the state-side 'structurally identical to …:36-145' comments, whose line refs are stale, go too)",
+    "risk": "low",
+    "reason": "Copies confirmed side by side: state/message-machine.ts:71-167 vs model/communication-contracts.ts:44-180 (MessageWorkRunSender, QueryAnswerSender, Response, Status, SessionMessage), and state/plan-machine.ts:66-107 vs model/plan-contracts.ts:32-77 (PlanProposalRef, PlanChangeReason, CandidateRequestExtensionV1, PlanProposal). Two type-equality tests keep the copies in step: tests/state/message-machine.test.ts:924-928 and tests/state/plan-machine.test.ts:298-302. The model -> state direction is allowed (docs/refactor/module-target.json:32-35, decision 40 fix B), and model/plan-contracts.ts:21 already imports from state. The model copy carries the richer comments (e.g. :93-97, :140-152); about 20-30 lines of them must move into state, so the net saving is lower than the raw ~165 duplicated lines."
+   },
+   {
+    "id": "ST-2",
+    "verdict": "partly",
+    "srcLines": "25-35",
+    "testLines": "15-25",
+    "behaviourChange": "none at runtime: no production code reads Transition.effects of transitionAttempt",
+    "blockers": "K3 file: attempt-machine.ts (K3 v7:312-316 adds the review basis and ATT-16r). The spec shape requires effects: STATE-MACHINES-SPEC.md:148,158 (every transition returns effects that the service translates), the §5.3 effects column (:1385-1398), and :4778 (tests assert next and effects). Removing them needs a lead ruling and a spec note; decision 69 item 3 could cover it, since RunEffect superseded this output.",
+    "overlaps": "none",
+    "risk": "medium",
+    "reason": "Evidence holds. claim-service.ts:399-401 reads only created.next, and execution-entry-service.ts:965-968 reads only next.next. The commit is driven by RunEffect (state/run-machine.ts:652-666, endReleaseEffects :1873-1883), whose ownership rule is the same as releaseEffectsOf (attempt-machine.ts:507-512). So AttemptEffect (:203-207) and its assembly (:600-605, 619, 634, 647, 690) are a second description that nothing executes. The tests are more than deletions: every to(X,[...]) in the ATTEMPT_TABLE (:252-274) changes, the ownership matrix (:580-594) goes, and the pairing test (:730, :740-749) must be rewritten to drive itself."
+   },
+   {
+    "id": "ST-3",
+    "verdict": "partly",
+    "srcLines": "0-8",
+    "testLines": "0",
+    "behaviourChange": "none if done; but the claimed 25 lines do not exist",
+    "blockers": "K3 file: decision-policy.ts. K3 v7:544-546, :1076, :1204 and K3-33 (:1379) extend pausedAutomationAction as a separate derivation from the saved facts. K3 must land first.",
+    "overlaps": "none",
+    "risk": "medium",
+    "reason": "The overlap is real but small. pausedAutomationAction (decision-policy.ts:200-255) reads the saved TaskFailureFactsV1 (failure.round.autoCount/ordinal, failure.automation.lastReverifyRefusal). automationVerdict (task-failure.ts:690-695, 808-884) reads raw RoundSnapshot and refusal records through WorkView/GateView. The shared rules are already factored into verification-machine.ts:563-596 (reverifyExemptionOfFacts, successorAutoCount, ROUND_CHAIN_MAX), and both sides use them. What remains is about 6 one-line comparisons on different input shapes. Merging them needs an adapter that would roughly cancel the saving."
+   },
+   {
+    "id": "ST-4",
+    "verdict": "confirmed",
+    "srcLines": "12-20",
+    "testLines": "0",
+    "behaviourChange": "none if the summary keeps its completeness flags, rank/order/key tie-break, and the detail keeps the head pin for task and line sources",
+    "blockers": "none (line-status.ts is not on the K3 list; K3's pending_review only touches lineUnknownSource)",
+    "overlaps": "ST-9 (same file, independent)",
+    "risk": "low",
+    "reason": "deriveAttention (line-status.ts:686-733) and deriveAttentionAll (:741-761) both walk responsibleOpen, lineCards (same unknown_outcome/decide split), lineUnknownSource and writtenAnchorsPending. The anchor condition is restated at :757-759 vs :721-728. Extra: Candidate.source (:684) is filled in the summary but never read; only best.attention is returned (:733). One production caller each: views/work-line-reader.ts:533 and :3095. deriveAttentionAll has no direct test. One enumerator yielding {attention, order, key, source, incomplete?} serves both, so the saving is a bit below 25."
+   },
+   {
+    "id": "ST-5",
+    "verdict": "partly",
+    "srcLines": "10-25",
+    "testLines": "0",
+    "behaviourChange": "none",
+    "blockers": "HANDOFF.md:125 (user: keep the state-machine comments that map rules to spec rows). The pervasive 'pre-step-3 `file:line`' citations (about 47 lines in state, e.g. message-machine.ts:512-792, goal-machine.ts:85-392, plan-machine.ts:114-133) are tied to the spec's own 现状 column and should stay.",
+    "overlaps": "XX-3 (cross-area comments; it explicitly excludes state-machine rule comments); ST-1 (mirror-declaration comments)",
+    "risk": "low",
+    "reason": "The three examples hold. message-machine.ts:210 and plan-machine.ts:417 carry 'UNSPECIFIED-GUARDS: the lead freezes these field names at the part-1 review', which is stale because slice 5 has merged. session-availability.ts:244-247 is move history. Similar 'formerly inline in …' notes sit at session-availability.ts:278, 619, 818, 851, 928 and run-machine.ts:572, 580, 919, 934, mostly as half-line parentheticals, so whole removable lines stay few. The area estimate was sampled, not counted line by line."
+   },
+   {
+    "id": "ST-6",
+    "verdict": "partly",
+    "srcLines": "5-15",
+    "testLines": "0 (some of the 18 direct constructor tests need edits if the signature changes)",
+    "behaviourChange": "none: the constructor's throws cannot be reached from onTaskRequeued, which rejects first with the external codes",
+    "blockers": "§14 constructor rule: STATE-MACHINES-SPEC.md:865 ('§14 构造器规则') and :3724 (constructors only produce legal combinations). The constructor's own I-12 self-check is spec design, so keep its checks and only stop recomputing. 4C reuses only the TaskRequeue codecs and indexes, which are untouched.",
+    "overlaps": "none",
+    "risk": "medium",
+    "reason": "The duplication is real and larger than reported. onTaskRequeued (task-machine.ts:1243-1259) derives actorClass, deriveReworkClass, requeuePermission, requeueBudgetIncreased, nextRequeueAutoCount and the cap. newTaskRequeueRecord (:699-718) recomputes actorClass, the derivation, nextRequeueAutoCount and the cap. Through taskRequeueCombinationProblem (:633-660) it also reruns requeuePermission (:645-647) and an inline copy of requeueBudgetIncreased (:655-657 vs :1201-1205). One production caller (:1261); 18 direct test calls with 4 toThrow (tests/state/task-machine.test.ts). Safe forms: pass the derivation and automation computed once into the constructor, and call requeueBudgetIncreased instead of the inline copy. Removing the constructor's checks would weaken the spec's self-checking constructor."
+   },
+   {
+    "id": "ST-7",
+    "verdict": "confirmed",
+    "srcLines": "11-13",
+    "testLines": "0",
+    "behaviourChange": "none (identical bodies; do not swap in sameJson/canonicalJson, which throws or returns false on values it cannot encode)",
+    "blockers": "none",
+    "overlaps": "XX-5 (nullable canonical JSON wrappers; related but excludes throwing/structural comparators)",
+    "risk": "low",
+    "reason": "session-anomaly.ts:93-105 and session-availability.ts:1044-1056 have byte-identical bodies; only the doc comments differ. Both are private, with call sites at session-anomaly.ts:63-64 and session-availability.ts:252, 513, 1036 plus the recursive calls. Both can share one state-internal helper (state importing state is allowed). The same pattern goes further (see missed): about 15-25 more lines of small ref comparators repeated across state."
+   },
+   {
+    "id": "ST-8",
+    "verdict": "confirmed",
+    "srcLines": "3-8",
+    "testLines": "1-3",
+    "behaviourChange": "none (the verdict is already computed over the same input; cost drops by one deriveReworkClass, refusal-staleness and priorRequeueAutoCount pass per Task row per read)",
+    "blockers": "none; keep automationVerdict exported, since tests use it via verdictOf at tests/state/task-failure.test.ts:279 and spec :1283 lists it",
+    "overlaps": "ST-3 is independent",
+    "risk": "low",
+    "reason": "The only production caller is tasks/plan-service.ts:882: buildTaskFailureFacts(input, policy, automationVerdict(input, policy).verdict). No other src caller of either function exists. automationVerdict builds workView/gateView (task-failure.ts:690-695), and buildTaskFailureFacts builds them again (:912, :916); workView (:735-750) runs deriveReworkClass, reworkFenceOf, the requeue find, refusalView twice and priorRequeueAutoCount. The separate verdict parameter dates from LD-1, when the verdict was always none before 5.8; that is superseded (E3-UI-ITEMS.md:86 notes the verdict is open since 5.8)."
+   },
+   {
+    "id": "ST-9",
+    "verdict": "confirmed",
+    "srcLines": "3-4",
+    "testLines": "0",
+    "behaviourChange": "none (same return value; the earlier branch already covers it, consistent with slice-2C AT4)",
+    "blockers": "none",
+    "overlaps": "ST-4 (same file)",
+    "risk": "low",
+    "reason": "lineUnknownSource: line-status.ts:771-774 returns {unknown_run, occupancy} for holder.kind==='run' && status==='ended' && outcome==='outcome_unknown' with no further condition. :778-781 tests facts.head.health==='unavailable' && the same condition and returns the same value, so it is unreachable. The function is private, called at :717 and :756."
+   }
+  ],
+  "missed": "Nothing clearly larger than the reported totals was missed. Two extensions:\n(1) Same mirror pattern as ST-1, not reported:\n- state/attempt-machine.ts:48-66 (DispatchStateV1, DispatchOutboxRecord) duplicates model/claim-contracts.ts:82-104 (TaskDispatchStateV1, TaskClaimOutbox), about 20 lines.\n- state/run-machine.ts:342-358 (RunKernelBinding, RunEntryPermit) duplicates model/execution-entry-contracts.ts:31-43 (KernelExecutionBinding, TaskEntryPermit). That file is a K3 file.\n- attempt-machine.ts:110-111 restates RunNode even though run-machine.ts is in the same pure directory.\n(2) Small ref comparators repeated inside state, about 15-25 lines:\n- sameRunRef at task-machine.ts:759 and task-failure.ts:1317 (the latter also checks aggregateType), plus sameRun at line-status.ts:871.\n- samePlanPointer at goal-settings-machine.ts:84, a private copy of the exported plan-machine.ts:895.\n- sameTask at task-machine.ts:552 and line-status.ts:867.\n- sameRoundRef at task-machine.ts:953 (canonicalJson) and verification-machine.ts:1676 (field compare).\nA scan of state exports found many that are used only in their own file and in tests (e.g. requeueClaimProblem at run-machine.ts:504, archivedLineTag at line-status.ts:466). All have internal callers, so there is no dead code, only unneeded export keywords.\nNote: HEAD is ab46358b (docs-only commits after 1e0b1383); git diff 1e0b1383 HEAD -- src tests is empty. The .lead-ref files the report cites are not in this worktree; I checked K3 at D:/cc-lead-notes/specs/k3/slice-K3-SPEC.v7.md."
+ },
+ {
+  "area": "VW",
+  "findings": [
+   {
+    "id": "VW-1",
+    "verdict": "confirmed",
+    "srcLines": "110-135",
+    "testLines": "0",
+    "behaviourChange": "none. The bodies are identical. Each catch's `instanceof CapacityError` has to use the one shared class. The per-record and per-miss charge (task-state-timeline.ts:158-169) and the 4-attempt loops in each caller stay as they are.",
+    "blockers": "none. These are not K3, 4C or speed-round files.",
+    "overlaps": "XX-8 (same paging loops in these three files plus automatic-rework-notices and goal-executed-files-reader, so count the loops once); PE-8 (storeFailureToRejection, used inside readWatermark); goal-conflicts.ts:106 already exports a readWatermark",
+    "risk": "low",
+    "reason": "Checked side by side. CapacityError, unavailable/invalid, Budget, readEqualityAll, readOneKeyed (charges 1 per miss) and readWatermark are copied in activity-read-model.ts:144-248, track-read-model.ts:158-227 and task-state-timeline.ts:88-177. The ordered read is copied at activity-read-model.ts:173-204 and task-state-timeline.ts:113-133. isQuarterInstant and canonicalKey also repeat (activity :254, track :239). git grep finds no other copies. About 150 lines repeat in track+timeline; after imports and a shared port type the net is about 110-135. slice-2B-SPEC.md:778 (2B-27) needs the behaviour, not one copy per file."
+   },
+   {
+    "id": "VW-2",
+    "verdict": "partly",
+    "srcLines": "80-150",
+    "testLines": "0",
+    "behaviourChange": "none",
+    "blockers": "Comment cleanup in K3 files (decision-read-model.ts) and 4C files (node-detail-reader.ts) should wait for those slices.",
+    "overlaps": "XX-3, TA-2, ST-5, SE-4, PE-1 (same kind of finding in other areas; count per area)",
+    "risk": "low",
+    "reason": "The three examples hold. Example 1 is worse than history: claim-contracts.ts:76-80 says the decoder still accepts only `pending`, but claim-record-codecs.ts:316 already accepts entered and settled, so the comment is wrong. query-record-codecs.ts:1-8 is stage-1 skeleton history. work-line-reader.ts:2645 is a 'sixth round' tag. Measured: 2,559 comment lines in the area, about 120 of them carry round/review/R-number/lead-date tags, and many of those also give a real reason. So 100±40 is plausible but only a sample estimate."
+   },
+   {
+    "id": "VW-3",
+    "verdict": "confirmed",
+    "srcLines": "55-75",
+    "testLines": "0",
+    "behaviourChange": "none if callers keep their own owner sort. activity sorts by sessionId (activity-read-model.ts:853-854); track sorts by canonicalKey (track-read-model.ts:760). These differ for sessionIds with characters below '\"' or JSON escapes, and that would reorder the 'involved Sessions' lists.",
+    "blockers": "none",
+    "overlaps": "VW-1 (claimingSessionOf and gate reads need the shared readOneKeyed, Budget and readEqualityAll)",
+    "risk": "medium",
+    "reason": "activityViewOf and emptyView match word for word: activity :941-969 vs track :331-359. claimingSessionOf: :749-763 vs :362-376. Gate plan read plus open responsible links: :821-859 vs :733-765. checksBegun (activity :710, track :767) and sessionKey (:718, :232) are also duplicated. track's subjectSession adds a ForbiddenError check (track :720-724), so it rightly stays out of the merge. The report's 80 is slightly high."
+   },
+   {
+    "id": "VW-4",
+    "verdict": "confirmed",
+    "srcLines": "55-70 total, about 20-25 in VW (the graph-context-reader copy)",
+    "testLines": "0",
+    "behaviourChange": "none if call sites keep their differences. graph-context-reader and context-assembler emit edge declarations then legacy ones; context-input-service and execution-entry emit legacy then edge. execution-entry returns [] for a non-v2 plan, so no edge declarations (execution-entry-service.ts:1067). execution-entry copies consumer and requires. Consumer projectId comes from plan.ref in one copy and plan.goalRef in the others.",
+    "blockers": "4C edits context-assembler.ts (slice-4-SPEC.md:689). graph-context-reader.ts is on the 4C reuse list; only declarationsForTask would change, not the neighbour reads. Deletions are after 4C anyway.",
+    "overlaps": "TA-4 (the same four copies; TA counts the two tasks/ copies), so count once",
+    "risk": "medium",
+    "reason": "Read all four: graph-context-reader.ts:857-885, context-assembler.ts:442-472, context-input-service.ts:368-396, execution-entry-service.ts:1065-1093. The same `edge:` sha256 identity input and the same `legacy:` id appear in all four (git grep 'consumerTaskId: edge.taskId, dependsOnId' finds exactly these four)."
+   },
+   {
+    "id": "VW-5",
+    "verdict": "confirmed",
+    "srcLines": "15-20",
+    "testLines": "0",
+    "behaviourChange": "none. Both already use compareProposalChainPositions (plan-record-codecs.ts:148). The refKey functions are equal: planProposalRefKey is canonicalJson (plan-record-codecs.ts:130-131). The live-candidate checks differ and stay in the callers (decision-read-model.ts:1121 vs plan-readers.ts:731-733).",
+    "blockers": "K3 edits decision-read-model.ts. plan-readers.ts is on the 4C reuse list only for terminalCause/finishedAt and the cursor helpers, not this function.",
+    "overlaps": "TA-6 (same closed-candidate enumeration in plan-readers.ts:670-751)",
+    "risk": "medium",
+    "reason": "Side by side: the superseded set and the terminal loop at decision-read-model.ts:1123-1146 and plan-readers.ts:724-751 are the same rule. The comment at plan-readers.ts:739-742 itself says both entrances must select the same terminal."
+   },
+   {
+    "id": "VW-6",
+    "verdict": "confirmed",
+    "srcLines": "10-15",
+    "testLines": "0",
+    "behaviourChange": "none. After the validator's parseJsonObject (query-record-codecs.ts:156-159) succeeds, the second JSON.parse cannot fail. The 'X JSON is not parseable' messages at :500, :564, :609, :664 are never produced today.",
+    "blockers": "none (not RecordStore). The validators must keep returning EncodedRecord for the schema registrations (:742-762).",
+    "overlaps": "XX-9 (lists exactly these exits :494-502, :558-566, :603-611, :658-666 plus :725-733), PE-5, SE-11 (same pattern), so count once",
+    "risk": "low",
+    "reason": "Confirmed. Each decoder calls validateX, which parses and returns copyRecord, throws that away and parses again (:495-498, :559-562, :604-607, :659-662). The QueryRun decoder at :726-729 does the same and the report left it out. Few lines come out because the registration adapters must stay; the gain is one less parse per decode."
+   },
+   {
+    "id": "VW-7",
+    "verdict": "confirmed",
+    "srcLines": "15-20",
+    "testLines": "0",
+    "behaviourChange": "none. node-detail's 'the read failed' default reason and its not_found/not-ready branches (node-detail-reader.ts:85-91) stay. work-line's noteProblem and :1886 take only the code.",
+    "blockers": "4C edits node-detail-reader.ts (slice-4-SPEC.md:689, note column); deletions are after 4C",
+    "overlaps": "XX-7 (same mapping theme, other copies); PE-8 (removes the unused `current` parameter of storeFailureToRejection); a third copy outside the area at agent-runtime/session-operations.ts:78",
+    "risk": "low",
+    "reason": "node-detail-reader.ts:74-83 and work-line-reader.ts:186-195 are identical switches. Their allowed codes are the same set as read-result-failures.ts:31-33, with the same fallback to unavailable. coreCode is called at node-detail :87 and work-line :198, :204, :1886."
+   },
+   {
+    "id": "VW-8",
+    "verdict": "confirmed",
+    "srcLines": "10-12",
+    "testLines": "0-11 (positions removed from 11 createDecisionReadModel fixture calls)",
+    "behaviourChange": "none",
+    "blockers": "positions: K3 file decision-read-model.ts. ownerProblem: 4C file node-detail-reader.ts. slice-5-SPEC.md:651 names `positions` only for the settings service, not this read model.",
+    "overlaps": "VW-12 (GoalFacts/shared facts design)",
+    "risk": "low",
+    "reason": "deps.positions has zero reads; the deps.* members actually read are records, cardSources, noticeSources, conflicts and displayTokens. It is wired at create-platform.ts:760 and appears in 11 test calls. ownerProblem appears only at node-detail-reader.ts:605, 627, 643, 702, with no reader in src or tests. GoalFacts.revision/plan are declared at work-line-reader.ts:253-256 and written at :877, 891, 900, never read; the requeue pins come from window.goal.revision (:951)."
+   },
+   {
+    "id": "VW-9",
+    "verdict": "confirmed",
+    "srcLines": "8-10",
+    "testLines": "10-15 (M06's findSessions fake at WP2-undelivered-notices.test.ts:356-364 becomes dead, plus about 13 call-site edits and S2A-notices-overbound-fixture.ts:124)",
+    "behaviourChange": "none. The `truncated` flag is always false and nothing reads it (only goal-conflicts.ts:169 copies it on). The sessions dependency is never read (undelivered-reply-notices.ts:36-38, 229).",
+    "blockers": "wiring-2-SPEC.md:192 declared the `sessions` dependency. slice-2A-SPEC.md:198 superseded it (list by Session index, do not read links), and :173 says lookupAll gives no truncated; decision 69 item 3 allows deleting a superseded path. Editing frozen WP2/S2A tests needs lead sign-off.",
+    "overlaps": "none",
+    "risk": "low",
+    "reason": "undelivered-reply-notices.ts:36-38 says itself that the field is never read, and grep finds no findSessions call in the file. LookupBatch.truncated: goal-conflicts.ts:76, 148, 158, 169; nothing in src/views consumes it and no test references lookupAll, listWorkspaceGoals or LookupBatch."
+   },
+   {
+    "id": "VW-10",
+    "verdict": "partly",
+    "srcLines": "0",
+    "testLines": "0",
+    "behaviourChange": "Inside the conflict assembler (one goal and catalog read per goal in readGoalFootprint, goal-conflicts.ts:390-408), sharing is safe because the window check at :294-299 catches movement; only the catalog call count drops from N to 1. Sharing goals or terminal states between the decision queue and the conflict assembler crosses GoalConflictAssemblerPort (decision-read-model.ts:423) and ties together two separate windows: the conflict sourceCursor is its own listing watermark (goal-conflicts.ts:277), and each side retries up to 4 times on its own. That changes window semantics.",
+    "blockers": "K3 edits decision-read-model.ts",
+    "overlaps": "TA-6 (other duplicate scans in the same queue read); SE-10 (the goal-conflicts facts path)",
+    "risk": "medium",
+    "reason": "The repeated reads are real: footprint goal re-read at goal-conflicts.ts:390-396, catalog per goal at :408, terminal states at :287-291 and again at decision-read-model.ts:431-436, Goal pins per card at :440-443 and :1156-1166. The report missed that the queue also lists workspace goals twice (decision-read-model.ts:288 and, through deps.conflicts, goal-conflicts.ts:268). No lines are saved, and only the in-assembler part is clean."
+   },
+   {
+    "id": "VW-11",
+    "verdict": "confirmed",
+    "srcLines": "0",
+    "testLines": "0",
+    "behaviourChange": "none if one failed read still records both the owner problem and the participant problem (node-detail-reader.ts:640-651). A fault-injection test that fails only the second lookup would see a different result.",
+    "blockers": "4C edits node-detail-reader.ts (slice-4-SPEC.md:689)",
+    "overlaps": "VW-12, XX-4",
+    "risk": "medium",
+    "reason": "responsibleSessions (:408-410, openOnly) and participantsOf (:480-485, the 'responsible' relation, openOnly false) page the same SESSION_LINKS_BY_TASK_LOOKUP with identical values (:417-423) for every task row in buildLineIndexes (:638-649). slice-2C-SPEC.md:1325 (2C-27) requires keeping current responsibility and past participation separate, which a single read still allows."
+   },
+   {
+    "id": "VW-12",
+    "verdict": "partly",
+    "srcLines": "0",
+    "testLines": "0",
+    "behaviourChange": "The risks section publishes runsRead.readThrough as sourceCursor (node-detail-reader.ts:1281), so any shared window must publish the same watermark. The public queryTaskGraph result has no Run map, so the fix needs a new internal entry in tasks/plan-service.ts (TA area), not a change to the port's output.",
+    "blockers": "4C edits node-detail-reader.ts. The cited slice-2C-SPEC.md:228-232 is about the line list's shared per-goal cost, not node detail, so it supports the direction but does not require it.",
+    "overlaps": "XX-4 (rows 2-3 are the same finding), TA-3 (same plan-service combined-entry idea), VW-8, VW-11",
+    "risk": "high",
+    "reason": "The duplication is real: readGraph calls queryTaskGraph (node-detail-reader.ts:205-208), which already runs readCanonicalTaskFacts (plan-service.ts:1937). Then readRunsByTask calls readCanonicalTaskFacts again (:216-221) at :847-849, :1107-1109 and :1244-1248. The line summary reads the goal and task graph a third time (work-line-reader.ts:875-900), and goalScope reads the Goal yet again (:197-203). It saves no lines and the merge design is open, so only the duplication claim holds."
+   }
+  ],
+  "missed": "Nothing clearly larger. Small items: (1) queries/ helpers copied between the two query services: pinsFromCurrent at query-execution.ts:170-181 and query-job-service.ts:584-595 (XX-7 covers only the tasks/ copies), and decodeOne/DecodeOne at query-execution.ts:252-268 and query-job-service.ts:535-551, about 30 lines in all. (2) The decision queue lists workspace goals twice in one read (decision-read-model.ts:288 and goal-conflicts.ts:268 via :423), noted under VW-10. (3) Dead parameters in activity-read-model.ts attributeRound: `void record; void startedMs; void subjectKey` at :781 and :796, call at :587, about 4 lines. (4) The QueryRun decoder at query-record-codecs.ts:725-729 also parses twice; XX-9 covers it."
+ },
+ {
+  "area": "SE",
+  "findings": [
+   {
+    "id": "SE-1",
+    "verdict": "confirmed",
+    "srcLines": "60-80 (only ~30 not already counted by XX-2)",
+    "testLines": "0 deleted; 13 call sites in 5 test files must switch to the new encoder",
+    "behaviourChange": "none: every wrapper and every lifecycle encoder is exactly {eventId,eventType,schemaVersion,occurredAt,json: JSON.stringify(event)}, so the persisted bytes stay the same",
+    "blockers": "K3 will edit sessions/message-record-codecs.ts; the test fixtures that call the named encoders (tests/helpers/S5-decision-fixture.ts:881,892,908 and others) are frozen fixtures",
+    "overlaps": "XX-2 (the same envelope shape; its table B already counts lifecycle-record-codecs.ts:593-651 and message-record-codecs.ts:1170-1178,1202-1210)",
+    "risk": "low",
+    "reason": "message-record-codecs.ts:1180-1200 are seven 3-line wrappers around encodeMessageEvent (:1170). Each has exactly one production caller, the switch at mailbox-service.ts:3559-3570; only Sent and Responded have test callers. encodeArchiveWaitDisposedEvent (:1202-1210) repeats the body of encodeMessageEvent. The six encoders at lifecycle-record-codecs.ts:593-651 are identical to each other. No spec and no production-reach allowlist entry names these encoders. The same shape occurs 51 times across src, which is XX-2's scope."
+   },
+   {
+    "id": "SE-2",
+    "verdict": "confirmed",
+    "srcLines": "50-65",
+    "testLines": "0",
+    "behaviourChange": "none, provided the helper takes the entry name so each reason text stays as it is ('readInbox …', 'readOutbox …', 'the reply …'); no test asserts these texts. Cursor binding, caller key and filters stay in each entry",
+    "blockers": "",
+    "overlaps": "none (XX-7 covers mapStoreFailure, not this)",
+    "risk": "medium",
+    "reason": "Page validation at mailbox-service.ts:2202-2210 and :2345-2353 duplicates replyPageProblem (:3094-3105). The atLeastCursor parsing at :2228-2233, :2368-2373, :3154-3159 and :3241-3246 is the same code. The 13-line readThrough/not_ready/MIN_CURSOR block at :2274-2287, :2408-2421, :3177-3190 and :3290-3303 is word for word the same. persistence/read-result-failures.ts:19-28 compares cursors as strings while mailbox compares cursorSequence numbers, so it cannot replace these blocks, as the report says."
+   },
+   {
+    "id": "SE-3",
+    "verdict": "confirmed",
+    "srcLines": "50-65 (of which ~12 are the isObject/nonEmpty/canonicalOf/reject primitives that XX-1 also counts)",
+    "testLines": "0",
+    "behaviourChange": "none if the helper takes the owner name and event decoder so the reason texts ('the decision-settings owner…' / 'the line-settings owner…', 'notice-seen' / 'line-pin' receipt texts) are kept",
+    "blockers": "",
+    "overlaps": "XX-1 (primitives); PE-3 (the codec side of these two Workspace events, a different file)",
+    "risk": "low",
+    "reason": "decision-settings-service.ts:29-59 and line-settings-service.ts:48-78 are identical apart from one reason string. workspacePinProblem (:66-83) and boundWorkspacePin (:85-102) differ only in their return shape. loadWorkspace and replayWorkspace (:91-124 and :122-158) differ only in the decoder and message nouns. The commit-and-restore tails (decision-settings :236-259) follow the same pattern. Replay still decodes the original event, so the revision guards do not change."
+   },
+   {
+    "id": "SE-4",
+    "verdict": "partly",
+    "srcLines": "40-70",
+    "testLines": "0",
+    "behaviourChange": "none",
+    "blockers": "example 3 is in a K3 file (message-record-codecs.ts); slice 8A edits project-bootstrap-service.ts (slice-8-SPEC.md:429)",
+    "overlaps": "XX-3 (history comments across directories); TA-2, ST-5, VW-2, PE-1 in other areas",
+    "risk": "low",
+    "reason": "All three examples check out. mailbox-service.ts:144-151 is also factually stale: it calls isUserMessageRecipient 'still a part-1 stub', but src/contracts/core/session-message.ts:99-104 is the real implementation, so isUserRecipient (mailbox-service.ts:152-154) duplicates it. project-bootstrap-service.ts:1029-1032 describes stage one and stage two. message-record-codecs.ts:1234-1235 repeats :71-80. A keyword sample (R3d/R4b/R5a/R6 headers, 'part 2', 'stage one', 'lead fix', 'R2 exception') turns up about 30 history lines across the 4 directories. The 50-80 figure is a plausible extrapolation that I did not count line by line."
+   },
+   {
+    "id": "SE-5",
+    "verdict": "confirmed",
+    "srcLines": "40-50",
+    "testLines": "0",
+    "behaviourChange": "none if the label prefix is a parameter ('decision source' vs 'saved answer source'). readSavedAnswerReaderSessions must keep skipping the answerability check, so only the low-level read, scope and decode helpers merge",
+    "blockers": "slice 6C edits decision-source-facts.ts (slice-6-SPEC.md:384); sequence the merge with it",
+    "overlaps": "XX-7 (the same store-failure mapping), XX-1 (isObject)",
+    "risk": "low",
+    "reason": "Inside the factory, scopeProblem (decision-source-facts.ts:159-171), readEncoded (:173-192) and readDecoded (:194-203) are the same logic as the module-level readerScopeProblem (:659-672), readerReadRecord (:674-702) and readerDecode (:704-715). readerReadRecord even inlines the same code mapping as mapStoreFailure (:149-156). The only differences are the reason prefixes and the records closure."
+   },
+   {
+    "id": "SE-6",
+    "verdict": "confirmed",
+    "srcLines": "20-28",
+    "testLines": "0",
+    "behaviourChange": "only on store-inconsistency paths. Decision replays would gain the receipt-version check (mailbox-service.ts:282-285), and the failure reason changes from 'decision receipt/event' to 'mailbox …' unless a label is passed. Every decision commit goes through persist → commitPreparedSessionMessage, which always writes the message record (:344), so the message ref is always in receipt.versions and valid replays are unaffected. No test asserts these texts",
+    "blockers": "",
+    "overlaps": "none",
+    "risk": "medium",
+    "reason": "decision-service.ts:357-377 (replayMessage) and :379-389 (recheckMiss) are a subset of the module-level replaySessionMessageReceipt and recheckSessionMessageReceipt (mailbox-service.ts:249-303) in the same communication/ module, so a plain export works. MessageWriteOwnerPort (model/decision-contracts.ts:148-160) does not need a new method. The slice-5 spec (lines 635, 665) names the mailbox replay as the template."
+   },
+   {
+    "id": "SE-7",
+    "verdict": "confirmed",
+    "srcLines": "22-26",
+    "testLines": "0",
+    "behaviourChange": "none: same index, page limit, MAX_LINKS_PER_SESSION capacity text and damage text; the optional observe callback is kept",
+    "blockers": "",
+    "overlaps": "XX-8 (the same read-to-end loop pattern, though XX-8 lists only views/tasks copies), XX-7 (the identical mapStoreFailure in both files)",
+    "risk": "low",
+    "reason": "session-directory.ts:1180-1215 and session-lifecycle.ts:353-379 are the same loop over SESSION_WORK_LINKS_LOOKUP. The only differences are observe?.() at :1196 and the return field (value vs links). There are 5 internal callers: directory :1318, :1489, :1675 and lifecycle :716, :1300. The index is not SESSION_LINKS_BY_TASK_LOOKUP, so the 4C reuse list is not affected."
+   },
+   {
+    "id": "SE-8",
+    "verdict": "partly",
+    "srcLines": "15-25",
+    "testLines": "0",
+    "behaviourChange": "switching to the codec's value parsers is stricter: it adds checks for schemaVersion, completionPolicyContentProblem and isSha256 against the service's loose check (project-bootstrap-service.ts:1112-1115). Only tampered rows would now be refused, and the 'unavailable' reason texts on those paths change",
+    "blockers": "slice 8A adds an auto-capture trigger in configuration/project-bootstrap-service.ts (slice-8-SPEC.md:429)",
+    "overlaps": "XX-1 (parse primitives)",
+    "risk": "medium",
+    "reason": "The duplication is real. localPolicyRefFromValue (service :521-528) duplicates policyRefFromValue (codecs :134-143) plus a project check. The pointer checks in readCurrentCompletionPolicy (:1086-1093) repeat activePointerRevision in the same file (:530-538). The digest recomputation at :1116-1126 repeats codecs :236-249. However, policySnapshotFromValue and activeSnapshotFromValue (codecs :221, :264) are private event-payload parsers, so reusing them on record bodies means exporting them and accepting the stricter checks. The 20-line figure is plausible but rough."
+   },
+   {
+    "id": "SE-9",
+    "verdict": "confirmed",
+    "srcLines": "25-30",
+    "testLines": "0",
+    "behaviourChange": "none for valid data. Both checks run only on stored data (message-body-envelope.ts:171 during body decode; message-record-codecs.ts:690 during record validation), so only the reason wording on corrupt data could change",
+    "blockers": "K3 will edit message-record-codecs.ts (adding the unknown_call_review source; its options are plain option selections, slice-K3-SPEC.md:149-159, so the selection union does not change)",
+    "overlaps": "XX-1 (hasOnlyKeys/isObject primitives)",
+    "risk": "low",
+    "reason": "decisionSelectionProblem and decisionGoalRefProblem (message-body-envelope.ts:74-110) accept exactly the same five kinds and fields as checkDecisionSelectionShape and checkGoalRefShape (message-record-codecs.ts:546-578, :355-363). The envelope file already imports from message-record-codecs.ts (:17), so it can import the check directly. decision-service.ts:513-520 checks whether a selection fits the current source, which is a different layer and stays."
+   },
+   {
+    "id": "SE-10",
+    "verdict": "partly",
+    "srcLines": "0-20 net (the replacement needs an executed-files reader, a catalog read and file-to-module mapping, which eat most of the ~35 removed lines)",
+    "testLines": "0 deleted; needs a new public-flow case (answer a conflict that only executed files create)",
+    "behaviourChange": "YES. Today, two Goals whose overlap comes only from executed files, or from files mapped to a module, produce a card from views/goal-conflicts.ts (via decision-read-model.ts:423), yet answering it returns not_found 'the two Goals have no §4.3 footprint conflict' (decision-source-facts.ts:597-599). After the fix the answer is accepted. Each answer to a conflict would also read both Goals' executed files to the end (2B L13 cost: up to ~4,000 rows per Goal), which changes the read budget of the answer path",
+    "blockers": "slice 6C edits decision-source-facts.ts (slice-6-SPEC.md:384); keep the communication-to-views dependency direction (mapExecutedFilesToModules is in views/goal-conflicts.ts)",
+    "overlaps": "VW-10 (the goal-conflicts assembly re-reads Goals; same pipeline, different defect)",
+    "risk": "medium",
+    "reason": "The evidence holds. footprintOf (decision-source-facts.ts:232-261) hard-codes executedFiles: [] and only planned modules. That is the slice-5 stub behaviour (slice-5-SPEC.md:339), which 2B L13 replaced for the conflict view only (slice-2B-SPEC.md:385-395; views/goal-conflicts.ts:447-461). slice-5-SPEC.md:833 defines the footprint as planned modules plus executed files. Decision 69 item 3 allows removing the superseded stub. This is a correctness fix rather than a line saving, so it should be ruled on as a bug, not counted as cleanup."
+   },
+   {
+    "id": "SE-11",
+    "verdict": "confirmed",
+    "srcLines": "10-20 (mostly already counted by XX-9; the unique part is lifecycle-record-codecs.ts)",
+    "testLines": "0",
+    "behaviourChange": "none if the null defaults and wire-field stripping in the record decoder (message-record-codecs.ts:1224-1231) and the 'original value' rule for replays (:1254-1258) are kept",
+    "blockers": "K3 will edit message-record-codecs.ts; slice 8A edits architecture-record-codecs.ts and catalog-record-codecs.ts (slice-8-SPEC.md:429)",
+    "overlaps": "XX-9 (covers session-record-codecs, message-record-codecs, architecture-record-codecs, catalog-record-codecs), PE-5 (message-record-codecs.ts:1216-1220)",
+    "risk": "medium",
+    "reason": "All the cited lines parse the same JSON twice: session-record-codecs.ts:817 then :1058/:1066/:1080; lifecycle-record-codecs.ts:523 then :662-720; message-record-codecs.ts:1080/:1101 then :1219/:1252; architecture-record-codecs.ts:284 then :374; catalog-record-codecs.ts:398 then :553. The saving is mostly CPU rather than lines."
+   },
+   {
+    "id": "SE-12",
+    "verdict": "partly",
+    "srcLines": "8-12",
+    "testLines": "0 deleted; 7 test constructions must pass a plans port",
+    "behaviourChange": "none in production (create-platform.ts:703 always passes plans). Tests change: tests/work-graph/S5-decision-queue.test.ts and WP2-context-extensions.test.ts carry goal_cause cards (9 mentions each) and today skip real-cause verification; with plans required they would run verifyRealCause against their fixtures",
+    "blockers": "the {records}-only construction is in frozen S5 fixtures (comment at decision-source-facts.ts:44-48), so the lead must re-freeze them; slice 6C edits this file",
+    "overlaps": "none",
+    "risk": "medium",
+    "reason": "The optional plans field (decision-source-facts.ts:52), the null goalCauses (:142-143) and the early return in verifyRealCause (:306) are confirmed. There is 1 production construction, which passes plans. Of the 9 test constructions, 7 omit plans (the files listed in the report are correct). The src saving is real, but the report understates the test cost: goal_cause fixtures without a plans port may need rework, not just an added argument."
+   },
+   {
+    "id": "SE-13",
+    "verdict": "confirmed",
+    "srcLines": "10-18 (the 9-line type plus its 8-line doc comment and the DecisionHostSenderV1 import at :12)",
+    "testLines": "6 (allowlist JSON entry)",
+    "behaviourChange": "none; type-only",
+    "blockers": "",
+    "overlaps": "none",
+    "risk": "low",
+    "reason": "UserDecisionBodyEnvelopeV1 (message-body-envelope.ts:33-41) has 0 references in src or tests outside its declaration; the only reference is tests/architecture/production-reach-allowlist.json:868-873. production-reach.test.ts:105 fails on an allowlisted entry that has gone, so the type and the entry must be removed together. slice-5-SPEC.md:235-245 specifies the body format in prose and does not require the type name, and decodeStoredUserDecisionBody does not use the type."
+   }
+  ],
+  "missed": "The largest miss is the sessions trusted-context, request and identity helpers, copied across three services and estimated at 70-90 src lines (not covered by TA-1, which lists only tasks/). trustedContext appears three times with only the 'Session / Session lifecycle / Session responsibility call' noun different: sessions/session-directory.ts:180-205, session-lifecycle.ts:168-192 and session-responsibility-service.ts:111-134. ownRequest is identical in session-lifecycle.ts:203-221 and session-responsibility-service.ts:141-152; session-directory.ts:166-173 is a smaller variant. actorIdentity, identityKeyOf and fingerprintOf are the same in session-lifecycle.ts:381-412 and session-responsibility-service.ts:154-175, and actorIdentity appears again in session-directory.ts:213. The merge must keep the reason texts and the persisted identity/fingerprint bytes. A smaller item of about 10 lines: isUserRecipient (communication/mailbox-service.ts:152-154, with the stale comment at :144-151) duplicates src/contracts/core/session-message.ts:99-104."
+ },
+ {
+  "area": "PE",
+  "findings": [
+   {
+    "id": "PE-1",
+    "verdict": "partly",
+    "srcLines": "150-300",
+    "testLines": "0",
+    "behaviourChange": "none",
+    "blockers": "HANDOFF decision 35 (HANDOFF.md:125): the user kept the long comments that tie each rule to a spec row as part of readability. Many comments in this area are VD-/VR-/§ mappings, so they are not removable just for being long.",
+    "overlaps": "XX-3 (same comment cleanup, covers materials/ and persistence/ too); SE-4",
+    "risk": "low",
+    "reason": "The 1,447 full-line comments in the area (persistence without note, plus evidence and materials) are confirmed. The three examples hold: execution-history-codecs.ts:17-25 restates :100-127; record-readers.ts:1-21 contains history about grants deleted by decision 34; evidence-service.ts:765-770 still says 'Behaviour lands in part 2' although create-platform.ts:804-816 already injects automaticReverifyPolicy. The 300-450 figure is a guess. About 171 comment lines carry slice/spec tags, and part of these are the rule-to-spec mappings the user asked to keep, so I would plan on a smaller cut."
+   },
+   {
+    "id": "PE-2",
+    "verdict": "confirmed",
+    "srcLines": "150-200",
+    "testLines": "0",
+    "behaviourChange": "none (pure helpers with identical bodies; the error strings stay in the callers)",
+    "blockers": "Do not merge into src/core/record-store/record-codec.ts. It already exports isJsonObject/isNonEmptyString/parseJsonObject at :64/:68/:218, but tonight's speed rounds edit record-store. Later slices edit several of these files (6C plan-record-codecs, 7D1 decision-record-codecs pin fields, 8C evidence-record-codecs), so this has to be ordered against them.",
+    "overlaps": "XX-1, XX-5, XX-6 already count these same helpers src-wide. PE-2 is a subset, so count it once. XX-1 targets contracts/validation/common.ts, PE-2 targets rework-codecs.ts; the lead picks one.",
+    "risk": "low",
+    "reason": "My scan found 74 helper definitions, about 300 lines, across the 12 area files (isRecord/isObject/isJsonObject, nonEmpty, safe-integer, hasOnlyKeys, parseObject/parseJsonObject, invalid, canonicalOf, copyRecord/copyEvent). Side by side: record-codecs.ts:100-109 is byte-identical to plan-record-codecs.ts:110-119. decision-record-codecs.ts:109-132 differs from line-settings-codecs.ts:79-102 only in arrow parentheses. The parseObject copies at control:141, evidence:142, exec-history:78, exec-entry:653 and run-activity:76 are identical. Two parse conventions exist (string reason vs null) and both must stay."
+   },
+   {
+    "id": "PE-3",
+    "verdict": "partly",
+    "srcLines": "40-55",
+    "testLines": "0",
+    "behaviourChange": "none, provided eventType and schemaVersion are passed as parameters (LINE_SETTINGS_EVENT_SCHEMA_VERSION and DECISION_EVENT_SCHEMA_VERSION are separate constants, both 1)",
+    "blockers": "Slice 7D1 edits the pin fields of decision-record-codecs.ts (slice-7-SPEC.md:692).",
+    "overlaps": "PE-2; XX-2 (encoders only, not these validators); SE-3 (the matching duplication one layer up, in the services)",
+    "risk": "low",
+    "reason": "The duplication is real. line-settings-codecs.ts:109-118/:121-126/:130-144/:147-158 matches decision-record-codecs.ts:136-143/:151-160/:164-178/:404-421, and actorProblem is byte-identical. But the proposed target, merging into decision-record-codecs.ts, reverses a boundary the file documents: line-settings-codecs.ts:11-13 says the configuration service imports no slice-5 decision internals. A neutral shared module (the PE-2 one) avoids that. The estimate of 55-75 is high: the shared part is about 50 lines before the replacement calls."
+   },
+   {
+    "id": "PE-4",
+    "verdict": "confirmed",
+    "srcLines": "30-45",
+    "testLines": "0",
+    "behaviourChange": "none if the distinct reasons are kept: 'material open was cancelled' (:166, :172) vs 'material read was cancelled' (:200), and corrupt/unique_conflict -> unavailable",
+    "blockers": "",
+    "overlaps": "",
+    "risk": "low",
+    "reason": "createMaterialCore has a single caller, in the same file at material-service.ts:117, and no test references it. MaterialReadFailure/MaterialReadOutcome/MaterialCore (:27-50), failed/cancelledRead (:195-201) and the two-step mapping fromStoreFailure (:203-214) -> coreReadFailure (:182-193) exist only to convert inside the file. The 'legacy ArtifactPort' named in the comment at :25-26 no longer exists anywhere in src. The cancellation checks around the awaits are covered by tests/data/R3b-material-await-boundaries.test.ts."
+   },
+   {
+    "id": "PE-5",
+    "verdict": "partly",
+    "srcLines": "15-30",
+    "testLines": "0",
+    "behaviourChange": "none (one JSON.parse fewer per decode)",
+    "blockers": "Slice 8C edits evidence-record-codecs.ts (slice-8-SPEC.md:431). The bigger part of this redundancy sits in src/core/record-store, which the speed rounds are changing.",
+    "overlaps": "XX-9 lists the same exits (record-readers 382-397, run-snapshot-decoder 36-43, plan 1068-1084). Count it once. PE-7.",
+    "risk": "low",
+    "reason": "The double parses are real: control-record-codecs.ts:410 then :435; evidence-record-codecs.ts:353 then :389; plan-record-codecs.ts:913 then :1071; record-readers.ts:194 then run-snapshot-decoder.ts:40; record-readers.ts:387 then :391. The line gain is small, and the 25-45 figure overstates it. Also missed: the RecordStore already runs the same registered validator on every read (applyRecordSchema at sqlite-record-store.ts:404 and in-memory-record-store.ts:243). A record is therefore validated twice and parsed 3 times, and PE-5 removes only the last parse."
+   },
+   {
+    "id": "PE-6",
+    "verdict": "partly",
+    "srcLines": "30-40",
+    "testLines": "4-8",
+    "behaviourChange": "platform.evidence loses queryOriginalVerification (asserted at tests/composition/R5c-workflow-platform.test.ts:507). The optional planRef check, which returns forbidden for another project's plan (tested at A2-verification-chain.test.ts:206-209), disappears. The validation order changes: the old path checks the RunRef before binding the context. The Workflow's waiting reason for a missing port (workflow.ts:930) must be kept by hand.",
+    "blockers": "STATE-MACHINES-SPEC.md:2926 and the VD-7 row at :5596 say queryOriginalVerification is to be kept as the plan-independent alias. It was not superseded by a later slice, so deleting it needs an explicit lead ruling under decision 69 item 3.",
+    "overlaps": "",
+    "risk": "medium",
+    "reason": "The alias is confirmed: evidence-service.ts:1215-1230 checks the optional planRef and then forwards to queryRoundChainHead (:1179). There is one production caller (workflow.ts:927-931, no planRef) and the forward at create-platform.ts:1109. The tests are 5 calls, 2 mocks and 1 typeof check, as reported. The two mocks (A2-workflow-auto-rework:234, A2-workflow-reverify:205) need rewriting rather than deleting, so the test saving is smaller."
+   },
+   {
+    "id": "PE-7",
+    "verdict": "confirmed",
+    "srcLines": "12-20",
+    "testLines": "0",
+    "behaviourChange": "One readMany fewer per round update. The reasons 'the round notice origin could not be read' / 'the updated round is missing' / '...damaged' can no longer occur; they were reachable only on a store failure between the two reads, and no test asserts them.",
+    "blockers": "Slice 8 orders repairs by the round finalization cursor (slice-8-SPEC.md:44, :88), so finalizedAt must still be carried, as slice-2B-SPEC.md:415-421 requires.",
+    "overlaps": "PE-5 (readRoundRecord would also need decodeNoticeOrigin; combine them to avoid adding a parse)",
+    "risk": "low",
+    "reason": "preservedRoundNoticeOrigin (evidence-service.ts:296-321) runs readMany again on the round ref. On all four update paths (:1260, :1343, :1434, :1494) readRoundRecord (:418-432) has just read that round, and each path commits with guard_round expectedRevision equal to that read's revision (verification-machine.ts:1595, :1666). A concurrent change fails the guard either way, and the origin fields are written once, so the first read's origin is equivalent. The open path (:1145) has expectedRevision null and does not read."
+   },
+   {
+    "id": "PE-8",
+    "verdict": "confirmed",
+    "srcLines": "6-9",
+    "testLines": "0-1",
+    "behaviourChange": "none",
+    "blockers": "decision-read-model.ts (K3) calls storeFailureToRejection with one argument; it needs no edit.",
+    "overlaps": "VW-7 merges two more copies into storeFailureToRejection; they do not use current either",
+    "risk": "low",
+    "reason": "unknown_check and no_check_coverage (verification-plan.ts:28-29) appear nowhere else in src, tests or docs. compileVerificationPlan (:62-131) never reads selection, the input schemaVersion (it writes a literal 1 at :108) or policy.fastPathDiffClasses, yet the caller copies fastPath at evidence-service.ts:949-951. None of the ~30 calls to storeFailureToRejection passes a second argument; every call is (read), (page), (error as ...) or similar, so the current branch at read-result-failures.ts:35 is dead. The fixture at tests/work-graph/R3e-evidence-coverage.test.ts:93 passes schemaVersion and needs a one-line edit."
+   },
+   {
+    "id": "PE-9",
+    "verdict": "confirmed",
+    "srcLines": "4-6",
+    "testLines": "0",
+    "behaviourChange": "none in production. Test fixtures that pass a static configuration must pass a resolver instead; the workspace-mismatch result stays forbidden.",
+    "blockers": "",
+    "overlaps": "",
+    "risk": "low",
+    "reason": "The only production construction, create-platform.ts:809-821, always passes configurationFor (:813) and also the static configuration (:812). The service uses the resolver whenever one is present (evidence-service.ts:1031-1033, :1988), and the resolver itself falls back to options.checks (create-platform.ts:680-684). No spec keeps the static field. There are 20 test constructions in 17 files, some of them static, so the migration touches more test lines than it saves. Low priority."
+   },
+   {
+    "id": "PE-10",
+    "verdict": "confirmed",
+    "srcLines": "0-3",
+    "testLines": "0",
+    "behaviourChange": "none (same decision objects; fewer rebuilds of the definition and basis maps)",
+    "blockers": "Slice 8 F3 cites finalizeChecks evidence-service.ts:1550-1569 as a fact and adds repair activation after finalize (slice-8-SPEC.md:56, :92). It does not rewrite this loop.",
+    "overlaps": "",
+    "risk": "low",
+    "reason": "In the loop at evidence-service.ts:1567-1582, evidenceApplicabilityWithBasis depends only on subject.taskId (the same round subject for every check), adoptedPlan, evidencePlan and currentAnchor, all constant within the round. It rebuilds definitionsFor and buildEffectiveTaskBasis twice on every call (tasks/evidence-coverage.ts:161-167). A round has few checks, so the gain is CPU only and small. The report already says 0 lines."
+   }
+  ],
+  "missed": "(1) persistence/graph-repository.ts (344 lines) is a category-6 layer the report did not cover. The GoalGraphRepository interface (:90-95) has one implementation and one caller, tasks/task-service.ts:190-273. It defines its own result vocabulary (:39-88), maps StoreFailure into it (:155-159, :278-293, :318-331), and task-service then maps that again to CoreRejection (:193-200, :209-211, :263-273). readCreatedGoal sits on the interface but is used only inside the file. About 50-90 lines could go, as long as the exact reason strings like `${code}: ${reason}` are kept. (2) The ref and actor validators repeat beyond PE-3: 7 actor checks (control:171, decision:164, evidence:156, line-settings:130, plan:236, record-codecs:120, rework:115), 7 RunRef checks (control:164, exec-entry:76, exec-history:90, plan:249, rework:131, evidence-service:177, record-readers:66), and controlIntentRefProblem at both control:153 and rework:187. Their semantics differ (open vs closed keys, messages), so only some can merge; about 40-70 lines. XX-1 counts only the 3-line helpers, so these are not counted anywhere. (3) Category 5: every read already runs the registered validator in the RecordStore (applyRecordSchema at sqlite-record-store.ts:404 and in-memory-record-store.ts:243), and then decoders such as decodeControlIntentSnapshot (:432-436), decodePlanRevisionSnapshot (:1068-1071) and decodeRun (run-snapshot-decoder.ts:38) run the same validator again. That is 2 full validations and 2-3 parses per record. The fix touches record-store, which is out of scope and being changed by the speed rounds, so I am flagging it for the lead only. Schema section: the 8,301 lines for the 12 files is confirmed; the 1,500-2,300 line saving is an unchecked estimate."
+ },
+ {
+  "area": "XX",
+  "findings": [
+   {
+    "id": "XX-1",
+    "verdict": "confirmed",
+    "srcLines": "340-400",
+    "testLines": "0",
+    "behaviourChange": "none (same predicate bodies and type guards; only imports and local names change)",
+    "blockers": "K3: sessions/message-record-codecs.ts:199-210, views/decision-read-model.ts:1299. 4C reuse files tasks/plan-readers.ts:113-116 and views/graph-context-reader.ts:93-96 only get a predicate swap, so do it after 4C. state/run-machine.ts:2340 and state/context-input.ts:80 are in the pure state submodule (module-target.json: state imports only src/contracts), so the shared home must be src/contracts/validation/common.ts as proposed.",
+    "overlaps": "PE-2 (the persistence primitive rows, including rework-codecs.ts:23-40, which already exports isRecord/nonEmpty/hasOnlyKeys); XX-6 reuses the object predicate",
+    "risk": "low",
+    "reason": "I re-extracted every `(value: unknown): value is` function in the area. Bodies that match exactly: 62 non-array-object (59 single-quoted plus 3 double-quoted), 54 non-empty-string, 21 `isSafeInteger && >=1` (under 7 different names). hasOnlyKeys has 16 copies, all the same one line. That is 153 x 3 = 459 lines. Only isRecord exists in src/contracts/validation/common.ts:11-13. The type targets Record<string,unknown> and UnknownRecord are the same type; one copy (mailbox-service.ts:120) uses a local alias `Unknown`. Net after about 65-70 import lines is roughly 390."
+   },
+   {
+    "id": "XX-2",
+    "verdict": "confirmed",
+    "srcLines": "200-270",
+    "testLines": "0 (keep typed one-line exports; removing them touches the 13 test call sites SE-1 lists)",
+    "behaviourChange": "none (envelope fields and JSON.stringify(event) bytes unchanged)",
+    "blockers": "K3: sessions/message-record-codecs.ts:1170-1210. slice-1-SPEC.md:443 says the anomaly event header is copied rather than imported from the sessions event file. A helper in persistence/ keeps that intent, because tasks and sessions both depend on persistence and nothing goes through sessions.",
+    "overlaps": "SE-1 (7 message wrappers + encodeMessageEvent + 6 lifecycle encoders, about 100 of the 319 lines)",
+    "risk": "low",
+    "reason": "Counted by script: 45 exported encoders plus the internal encodeMessageEvent (message-record-codecs.ts:1170) have the exact body eventId/eventType/schemaVersion/occurredAt/json:JSON.stringify(event). Total 319 lines, which matches the report. Callers call them one at a time, e.g. project-bootstrap-service.ts:608, claim-service.ts:1166, architecture-service.ts:580. No shared envelope encoder exists anywhere in src. One generic helper (about 9 lines) plus 46 one-line typed exports saves about 260; keeping 3-line wrappers saves about 180."
+   },
+   {
+    "id": "XX-3",
+    "verdict": "partly",
+    "srcLines": "0 unique (the same lines are counted by TA-2/ST-5/VW-2/SE-4/PE-1); 150-250 only if counted here instead",
+    "testLines": "0",
+    "behaviourChange": "none",
+    "blockers": "State-machine rule comments are kept (HANDOFF decision 35, line 125). Skip the K3 files until K3 merges.",
+    "overlaps": "TA-2, ST-5, VW-2, SE-4, PE-1",
+    "risk": "low",
+    "reason": "The three examples hold. tasks/run-activity-codecs.ts:1-10 is history plus a boundary rationale, and the rationale (persistence->tasks edge forbidden) should stay because it explains why the 11-line re-export shim exists. run-snapshot-decoder.ts:1-8 cites task D / decision 40. plan-readers.ts:1-2 calls R4c claim checks future, but claim-service.ts:999 already calls readCanonicalTaskFacts. The 150-250 figure is an unmeasured sample. A rough grep finds about 10.5k comment lines outside state/ and about 530 with history or review keywords, so the figure is plausible but unchecked. Per-directory reports already count these same comments, so the cross-area item adds no lines of its own."
+   },
+   {
+    "id": "XX-4",
+    "verdict": "partly",
+    "srcLines": "0-60 (the shared window, its DI and window retry add code; the gain is store reads)",
+    "testLines": "0",
+    "behaviourChange": "intended none, but merging separately windowed reads changes which commit a projection reflects under concurrent writes, and the display-path messages ('the Goal display could not be read: ...', goal-decision-reader.ts:268-271) must be kept by hand",
+    "blockers": "4C edits node-detail-reader (slice-4-SPEC.md:251 L21 notes column), so this comes after 4C. goal-decision-reader's consumer is views/decision-read-model.ts (K3). queryTaskGraph/queryGoalDisplay go through the public plan port with authorizeGoal (plan-service.ts:1925, 2102), and the window must keep that. No cross-call caching (slice-2A-SPEC.md:181).",
+    "overlaps": "TA-3 (goal cause chain), VW-12 (node-detail double facts), VW-11, VW-10",
+    "risk": "high",
+    "reason": "All five chains verified. (1) goal-decision-reader.ts:424/430/432 reads the Goal, then queryTaskGraph (plan-service.ts:1937 readCanonicalTaskFacts), then queryGoalDisplay (:2121 reads it again). (2) node-detail-reader.ts:847->849 and 1107->1109; readRunsByTask :216-221 calls readCanonicalTaskFacts again because the queryTaskGraph result carries no runs (plan-service.ts:1979). (3) Hover goes assembleSessionBriefs :557 -> assembleLineBriefs (work-line-reader.ts:229-234) -> new SharedReads :290 -> queryGoal/queryTaskGraph :881-897, a third facts read of the same Goal. (4) readRequeueWindow (requeue-service.ts:402-412) is followed by readRunByRef (work-line-reader.ts:947, 1159-1164). Only one readMany and one decode are saved, because pointer, continuation and wait reads stay. Also slice-2C-SPEC.md:175 already says these per-goal facts are the same read as the task rows, but the code reads them per task (taskId-scoped, :412), so this is a spec cost deviation. (5) Sessions are decoded in readActiveSessions :1605-1608 and read again by readSession :353/635-647. The 100-180 line saving is not supported: VW-12 estimates 0 and TA-3 estimates 20-40."
+   },
+   {
+    "id": "XX-5",
+    "verdict": "confirmed",
+    "srcLines": "105-130",
+    "testLines": "0",
+    "behaviourChange": "none (try/catch around canonicalJson returning null; the catch also covers TypeError on undefined, same as today)",
+    "blockers": "K3: sessions/message-record-codecs.ts:211. state/context-input.ts:93 is a pure state file, which a helper in src/contracts/fingerprint.ts allows (next to sameJson).",
+    "overlaps": "none in other reports",
+    "risk": "low",
+    "reason": "Script found exactly 26 functions in the area whose whole body is try{return canonicalJson(x as JsonValue)}catch{return null}, totalling 142 lines. They are under 3 names (canonicalOf, refKeyOf, canonicalKey) and the list matches the report's C column. Each file already imports canonicalJson from contracts/fingerprint.js, so the helper fits into the existing import line. Net is about 142 minus a 7-line helper."
+   },
+   {
+    "id": "XX-6",
+    "verdict": "confirmed",
+    "srcLines": "90-110",
+    "testLines": "0",
+    "behaviourChange": "none",
+    "blockers": "Do not put the helper in src/core/record-store. record-codec.ts:218 already has a DecodeResult parseJsonObject, and tonight's speed rounds edit that directory. Use WG persistence/, which materials, sessions and tasks may import.",
+    "overlaps": "PE-2 (control/evidence/execution-history/execution-entry rows); XX-9 (if decoders reuse the validated body, the parseBody/parseObject in run-snapshot-decoder.ts:23, run-state-service.ts:126 and session-record-codecs.ts:152 go away anyway, so the savings overlap)",
+    "risk": "low",
+    "reason": "Script found 16 functions `(json: string): ... | null` that catch JSON.parse and accept only a non-array object, 124 lines in total, matching the report's J column. All 16 inner predicates are the same O body (e.g. control-record-codecs.ts:82-84, execution-entry-codecs.ts:54-56)."
+   },
+   {
+    "id": "XX-7",
+    "verdict": "confirmed",
+    "srcLines": "70-95",
+    "testLines": "0",
+    "behaviourChange": "none if moved verbatim (codes, '(the unique slot is held by another owner)', 'the record store reported damage:', omitting current when empty)",
+    "blockers": "none (no K3 or 4C files)",
+    "overlaps": "TA-7 (the three pinsFromCurrent copies, 18-22 lines); VW-7 is a different mapping (views)",
+    "risk": "low",
+    "reason": "mailbox-service.ts:171-191, session-directory.ts:144-165 (pins via :125-143), session-lifecycle.ts:139-159 and session-responsibility-service.ts:83-103 have the same text. Of the 17 mapStoreFailure-like functions in the area, the others really differ and must stay or take parameters: claim-service.ts:144 maps corrupt without the damage prefix, session-targets.ts:42 has no pins and no slot suffix, run-activity-service.ts:96 and execution-history-service.ts:118 map unique to busy. A natural home exists: persistence/read-result-failures.ts."
+   },
+   {
+    "id": "XX-8",
+    "verdict": "partly",
+    "srcLines": "60-80 total; 20-35 not already in VW-1",
+    "testLines": "0",
+    "behaviourChange": "none if the helper keeps both styles: views throw the failed page (activity-read-model.ts:187, 217), while goal-executed-files-reader returns storeFailureToRejection (:118, :136) and decodes inside the loop; per-row budget spend (slice-2B-SPEC.md:778) stays in the 2B readers",
+    "blockers": "none",
+    "overlaps": "VW-1 (activity/track/timeline equality and ordered helpers, 110 lines)",
+    "risk": "medium",
+    "reason": "The copies are verified. activity-read-model.ts:206-226, track-read-model.ts:187-207 and task-state-timeline.ts:135-155 are the same text; the ordered readers at :173-203 and :113-133 differ only in bound/limit. Four of the five files are in views/, and VW-1 already claims those three. What is left is automatic-rework-notices.ts:91-134 (no budget, `lookupOrdered.call`, limit 200) and goal-executed-files-reader.ts:113-148, whose inline decode loop leaves little to save."
+   },
+   {
+    "id": "XX-9",
+    "verdict": "confirmed",
+    "srcLines": "30-60 total; 10-25 not already in VW-6/SE-11/PE-5",
+    "testLines": "0",
+    "behaviourChange": "none (the second-parse failure branches, e.g. query-record-codecs.ts:730-732, cannot be reached after validation)",
+    "blockers": "Speed round 1 design S (D:/cc-lead-notes/impl/s4f/design/store-reads.draft.md:142-154) adds an optional validateBody(record, body) to EncodedRecordSchema and splits the note codecs into parseObject + decodeXBody. Do XX-9 after it lands and follow the same split, or the store's own parse (record-codec.ts:379) stays duplicated. K3: message-record-codecs.ts:1216-1259.",
+    "overlaps": "VW-6 (QueryJob/events 494-666), SE-11 (session/lifecycle/message/architecture/catalog), PE-5 (control/evidence/plan/record-readers/run-snapshot-decoder); XX-6",
+    "risk": "medium",
+    "reason": "Sites checked: decodeRun validates (record-readers.ts:194 parse) then parseBody again (run-snapshot-decoder.ts:38-41). Others: decodeQueryRunSnapshotRecord (query-record-codecs.ts:725-733), decodeSession*/WorkLink (session-record-codecs.ts:1055-1083), decodeLease (run-state-service.ts:145-152), session-facts.ts:461-468, decodeProjectSnapshot/WorkspaceSnapshot (record-codecs.ts:764-790), decodeGoalPhaseSnapshot (completion-record-codecs.ts:226-230 after recordProblem :199-207). Each parses the same JSON twice, and the store has already parsed it once."
+   },
+   {
+    "id": "XX-10",
+    "verdict": "confirmed",
+    "srcLines": "25-31",
+    "testLines": "+10 to +20",
+    "behaviourChange": "The start-up throw 'the Slice 1 lookup index X is not registered in the record-store schema set' (create-platform.ts:557-558) goes away. It can only fire in a broken build, because the same file spreads the codec bundles just above (:543-548).",
+    "blockers": "slice-1-SPEC.md:391 keeps only the index-name constants in model, and they stay. Speed round 2 (decision 66: lookup indexes only on their own record type, RecordStore-wide) may touch lookup declarations, so coordinate the timing.",
+    "overlaps": "none",
+    "risk": "low",
+    "reason": "SLICE1_LOOKUP_INDEXES and its type (model/session-facts-contracts.ts:34-54) mirror the codec declarations listed in the report. Its only production reader is create-platform.ts:552-560, which checks names only. Its only test reader is S1-codecs-indexes.test.ts:194-208 and :302-312, where it is the expected table for SV02 (spec row slice-1-SPEC.md:955). No spec requires the runtime table or the start-up check. I also re-checked that every index constant in the area has a production reader (SESSION_MESSAGE_BY_SENDER_RUN via mailbox-service.ts:2395, SESSION_ANOMALY_BY_GOAL via session-anomaly-service.ts:266), so the report's 'no unread index' holds."
+   }
+  ],
+  "missed": "1) Code that builds rejections and results, which the area brief names: 148 small helpers (reject/rejected/invalid/unavailable/forbidden/incomplete/notFound/busy), 338 lines across 74 area files, with no shared helper in src/contracts/core/results.ts. Identical copies include: 14 x `reject(code, reason, current?: VersionPin[])`, e.g. mailbox-service.ts:168, session-directory.ts:122, claim-service.ts:115, execution-history-service.ts:85. Also 13 x `invalid -> {status:'invalid'}`, 12 x `unavailable -> reject('unavailable')`, 11 x `invalid -> reject('invalid')`, 10 x forbidden, 8 x `invalid<T>: DecodeResult<T>` and 7 x incomplete. Net is likely 150-220 src lines, about XX-2's size. 2) XX-4 understates the hover cost. node-detail-reader.ts:557 calls assembleLineBriefs, which goes through assembleLineRows (work-line-reader.ts:290-303). For every hover or node summary that reads the whole workspace decision queue (readDecisionQueue :291), two legacy-provenance counts (:294, :310-311) and the active-copies index (:301), on top of the third canonical-facts read. 3) Small: laterCursor is copied in tasks/session-facts.ts:61 and tasks/session-provenance-facts.ts:72 next to the 4C-reuse original at plan-readers.ts:355 (about 10 lines)."
+ }
+]

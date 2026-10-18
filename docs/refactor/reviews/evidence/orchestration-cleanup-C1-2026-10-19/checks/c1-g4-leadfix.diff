@@ -1,0 +1,56 @@
+diff --git a/src/core/work-graph/tasks/execution-entry-service.ts b/src/core/work-graph/tasks/execution-entry-service.ts
+index 09adf65..8cf466d 100644
+--- a/src/core/work-graph/tasks/execution-entry-service.ts
++++ b/src/core/work-graph/tasks/execution-entry-service.ts
+@@ -1926,7 +1926,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
+       let activityGuard: RecordGuard | null = null;
+       if (observation.activity !== undefined) {
+         const planned = await planRunActivityForCommit(records, { activity: observation.activity, run: nextRun,
+-          // R10 (review item 10): RUN-21 preserves the Run's ORIGINAL `endedAt`;
++          // RUN-21 preserves the Run's ORIGINAL `endedAt`;
+           // the activity snapshot must keep it, and `recordedAt` alone carries
+           // the replacement time. The fallback is defensive only (the Run is
+           // ending in this commit).
+diff --git a/src/core/work-graph/tasks/run-reconcile-service.ts b/src/core/work-graph/tasks/run-reconcile-service.ts
+index 2fe3f13..b5d46a6 100644
+--- a/src/core/work-graph/tasks/run-reconcile-service.ts
++++ b/src/core/work-graph/tasks/run-reconcile-service.ts
+@@ -731,7 +731,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
+     let activityGuard: RecordGuard | null = null;
+     if (input.activity !== undefined) {
+       const planned = await planRunActivityForCommit(records, { activity: input.activity, run: nextRun,
+-        // R10 (review item 10): a reconcile that books an already-ended Run
++        // A reconcile that books an already-ended Run
+         // (RUN-21) keeps the Run's ORIGINAL `endedAt`; `input.nowIso` is only
+         // the replacement time (`recordedAt`).
+         runEndedAt: nextRun.endedAt ?? input.nowIso, sessionRef: nextRun.executionHistory?.sessionRef ?? facts.outbox.claim.sessionRef,
+diff --git a/src/core/work-graph/tasks/run-state-service.ts b/src/core/work-graph/tasks/run-state-service.ts
+index f9f08a6..00995d6 100644
+--- a/src/core/work-graph/tasks/run-state-service.ts
++++ b/src/core/work-graph/tasks/run-state-service.ts
+@@ -27,7 +27,6 @@
+  */
+ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
+ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+-import type { WorkspaceScope } from '../../../contracts/core/identity.js';
+ import type { SessionRecord } from '../../../contracts/core/session.js';
+ import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+ import type {
+@@ -190,7 +189,7 @@ function notReadyResult(observed: CommitCursor | null, required: CommitCursor):
+ // --------------------------------------------------------------------------
+ 
+ type OwnedCtx =
+-  | { ok: true; ctx: CoreCallContext; scope: WorkspaceScope; actor: Extract<ActorRef, { kind: 'human' | 'system' }> }
++  | { ok: true; ctx: CoreCallContext; actor: Extract<ActorRef, { kind: 'human' | 'system' }> }
+   | { ok: false; rejection: CoreRejection };
+ 
+ /** Bind the trusted Host scope and identity before the first await; the original
+@@ -202,7 +201,7 @@ function ownCallContext(ctx: CoreCallContext): OwnedCtx {
+     allowArraySignal: false,
+   });
+   if (!trusted.ok) return trusted;
+-  return { ok: true, ctx: trusted.ctx, scope: trusted.scope, actor: trusted.actor };
++  return { ok: true, ctx: trusted.ctx, actor: trusted.actor };
+ }
+ 
+ // --------------------------------------------------------------------------

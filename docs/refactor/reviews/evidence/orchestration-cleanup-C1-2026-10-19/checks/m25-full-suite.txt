@@ -1,0 +1,13 @@
+C1 G1+G2+G5 suite (copy s9c1m, tag c1-m25 = c1-g1 + G2 r1 + G5 r1, before the G2/G5 reworks and lead fixes; bubblewrap, 5 workers; started 01:02 local, ran alongside the final suite for its last half)
+ Test Files  1 failed | 770 passed (771)
+      Tests  1 failed | 10081 passed | 5 skipped (10087)
+   Duration  3605.28s (transform 29.82s, setup 0ms, import 470.39s, tests 13870.21s, environment 62ms)
+failing files:
+      1 tests/architecture/production-reach.test.ts
+production-reach: the four declarations still unreached are consumed by G4 and G3, which this merge does not contain:
+"src/contracts/core/rejections.ts:33 okFalse (function, 8 lines)",
+"src/contracts/input-declaration-id.ts:5 edgeDeclarationId (function, 9 lines)",
+"src/contracts/input-declaration-id.ts:14 legacyDeclarationId (function, 4 lines)",
+"src/core/work-graph/persistence/read-result-failures.ts:88 executionStoreFailureToRejection (function, 21 lines)",
+tests/state/invariants.test.ts and invariants-fuzz.test.ts: passed
+memory peak bytes / time: 4505743360 01:08:55

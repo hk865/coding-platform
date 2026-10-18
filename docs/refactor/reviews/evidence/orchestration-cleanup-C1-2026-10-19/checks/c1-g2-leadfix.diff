@@ -1,0 +1,57 @@
+diff --git a/src/core/work-graph/configuration/decision-settings-service.ts b/src/core/work-graph/configuration/decision-settings-service.ts
+index 5e7128f..e6985c7 100644
+--- a/src/core/work-graph/configuration/decision-settings-service.ts
++++ b/src/core/work-graph/configuration/decision-settings-service.ts
+@@ -36,15 +36,10 @@ import {
+  * §3.3 line 625: `markNoticesSeen.meta.expected` must be EXACTLY one well-formed
+  * pin for the bound Workspace (no extras, no duplicates, non-negative safe
+  * revision). A malformed pin is `invalid`, never a stale-pin `revision_conflict`.
+- * The check itself still reports `null`; the pin it read is kept as well, so the
+- * later comparison never indexes the caller's array again.
+  */
+-function workspacePin(
+-  expected: unknown,
+-  owned: Owned,
+-): { pinProblem: CoreRejection | null; pin: VersionPin | null } {
++function workspacePinProblem(expected: readonly VersionPin[], owned: Owned): CoreRejection | null {
+   const verdict = sharedWorkspacePinProblem(expected, owned);
+-  return 'status' in verdict ? { pinProblem: verdict, pin: null } : { pinProblem: null, pin: verdict.pin };
++  return 'status' in verdict ? verdict : null;
+ }
+ 
+ const DECISION_REPLAY_TEXTS: WorkspaceReplayTexts = {
+@@ -96,7 +91,7 @@ export function createDecisionSettingsService(
+       // §3.3 line 625: meta.expected must be exactly one well-formed pin for the
+       // bound Workspace. A duplicate/extra/negative/fractional/malformed pin is
+       // `invalid`, never a stale-pin `revision_conflict`.
+-      const { pinProblem, pin } = workspacePin(expected, owned);
++      const pinProblem = workspacePinProblem(expected, owned);
+       if (pinProblem !== null) return pinProblem;
+       const identityKey = 'workspace-notice-seen:' + sha256Hex(canonicalJson({
+         projectId: owned.projectId, workspaceId: owned.workspaceId, operator: { ...operator }, requestId,
+@@ -142,7 +137,8 @@ export function createDecisionSettingsService(
+           'the Workspace record is not readable at the required watermark');
+       }
+       const current = workspaceRead.value;
+-      const pinMatches = pin !== null && canonicalOf(pin.ref) === canonicalOf(current.ref) && pin.revision === current.revision;
++      const pin = expected.length === 1 ? expected[0] : undefined;
++      const pinMatches = pin !== undefined && canonicalOf(pin.ref) === canonicalOf(current.ref) && pin.revision === current.revision;
+       // §2.2/L3: the default-applying reader, never an inline default here.
+       const base = effectiveWorkspaceDecisionSettings(current);
+       const updates: NoticeSeenUpdateV1[] = requested.map(([category, position]) => {
+diff --git a/src/core/work-graph/configuration/workspace-settings-reads.ts b/src/core/work-graph/configuration/workspace-settings-reads.ts
+index d7a4ffb..c41a28e 100644
+--- a/src/core/work-graph/configuration/workspace-settings-reads.ts
++++ b/src/core/work-graph/configuration/workspace-settings-reads.ts
+@@ -68,8 +68,9 @@ export function isOwned(value: Owned | CoreRejection): value is Owned {
+ /**
+  * `meta.expected` must be exactly one well-formed pin for the bound Workspace:
+  * no extras, no duplicates, a safe non-negative revision. A malformed pin is
+- * `invalid`, never a stale-pin `revision_conflict`. Returns the pin it read, so
+- * an owner never indexes the caller's `expected` array a second time.
++ * `invalid`, never a stale-pin `revision_conflict`. Returns the pin it read: the
++ * line service compares with it; the decision service keeps its own later read
++ * of `expected[0]` where it compares, as before.
+  */
+ export function workspacePinProblem(expected: unknown, owned: Owned): { pin: VersionPin } | CoreRejection {
+   if (!Array.isArray(expected) || expected.length !== 1) {

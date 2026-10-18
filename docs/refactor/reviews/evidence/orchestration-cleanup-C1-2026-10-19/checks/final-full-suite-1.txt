@@ -1,0 +1,12 @@
+C1 final merge, first full suite (copy s9c1all at c1-all 1370d99; bubblewrap, 5 workers; started 01:31 local, ran alongside the G1+G2+G5 suite for its first half)
+ Test Files  2 failed | 769 passed (771)
+      Tests  2 failed | 10080 passed | 5 skipped (10087)
+   Duration  3161.18s (transform 23.06s, setup 0ms, import 370.55s, tests 15373.09s, environment 48ms)
+failing files:
+      1 tests/kernel/RL-12-15-conditions.test.ts
+      1 tests/architecture/production-reach.test.ts
+memory peak bytes / time: 5063720960 01:55:45
+build 0, typecheck 0, check:architecture 0
+
+1. tests/kernel/RL-12-15-conditions.test.ts RL-15b: expected 9999.910642 to be greater than or equal to 10000 (a 10 s probe timeout measured 0.09 ms short; the test runs the frozen Kernel build vendor/coding-agent/dist/sandbox/process/process-sandbox.js, and C1 changes only src/contracts, src/core/work-graph and one expression in src/core/agent-runtime/context-assembler.ts). Rerun alone after the fixes: 11/11 passed.
+2. tests/architecture/production-reach.test.ts: src/core/work-graph/model/claim-contracts.ts:92 TaskDispatchStateV1 (type) unreached: the lead G5 fix made TaskClaimOutbox an alias of DispatchOutboxRecord, so the alias TaskDispatchStateV1 lost its only production use. Fixed by f4b75b7 (TaskClaimOutbox back to its G5 r1 shape). The rerun then showed the next assertion of the same test, masked before: three allowlist entries of file-graph-index.ts (CursorV1, isRecord, encodeCursor; kept-for) are gone (C1 replaced them by the shared isRecord and N7 encodeCursor). Fixed by 7d60df9 (the three entries removed). production-reach then 4/4 passed; tests/architecture (5 files), tests/state/attempt-machine.test.ts (310) and RL-12-15 (11) passed; typecheck 0, check:architecture 0.

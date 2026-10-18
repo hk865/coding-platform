@@ -1,0 +1,9 @@
+C1 G1 full suite (copy s9c1g1 at c1-g1-r1, started 23:19 local, bubblewrap, 5 workers; the lead fixes committed at 23:28 as c1-g1 changed comments only)
+ Test Files  2 failed | 769 passed (771)
+      Tests  2 failed | 10080 passed | 5 skipped (10087)
+   Duration  2418.70s (transform 21.59s, setup 0ms, import 443.13s, tests 11574.59s, environment 57ms)
+failing files:
+      1 tests/scenarios/K3-07-real-host-kill.test.ts
+      1 tests/architecture/production-reach.test.ts
+memory peak bytes / time: 5272694784 23:33:23
+K3-07 needs dist/app/main.js and host.js; it passed after npm run build (later suites build first). production-reach failed only for the handed-over declarations of c1-g1-interfaces.md section 10.

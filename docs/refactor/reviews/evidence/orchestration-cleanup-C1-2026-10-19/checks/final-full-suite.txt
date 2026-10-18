@@ -1,0 +1,7 @@
+C1 merge full suite on the fixed tree (copy s9c1all at c1-all-fix2 = c1-all 1370d99 + f4b75b7 + 7d60df9; bubblewrap, 5 workers, scope 7G; build first; started 02:27 local, alone)
+ Test Files  771 passed (771)
+      Tests  10082 passed | 5 skipped (10087)
+   Duration  2880.59s (transform 19.46s, setup 0ms, import 376.26s, tests 13959.05s, environment 51ms)
+failing files: none
+memory peak bytes / time: 5303726080 02:42:42
+build 0, typecheck 0 (tsconfig.json and tsconfig.ui.json), check:architecture 0
