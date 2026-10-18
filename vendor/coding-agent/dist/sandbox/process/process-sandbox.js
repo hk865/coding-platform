@@ -1398,6 +1398,10 @@ export class ProcessSandbox {
             throw new ProcessSandboxError("launch_failed", `${finishedOutcome.reason}: ${detail}`.trim());
         }
         if (finishedOutcome.kind === "not_started_cancelled") {
+            // L31b/K3-49：取消发生在 systemd-run 已经起过之后（这里是唯一一个
+            // spawn 之后的 not_started 返回；其它返回都在 spawn 之前、没建单元）。
+            // 等停完再返回，调用方才能在返回后断言单元已经不在；最多 5 秒。
+            await stopCancelledScope(unitName);
             return this.#notStartedResult(true, false, request.outputLimitBytes, { status: "not_started" });
         }
         if (this.#workspaceMode === "read_only" &&
@@ -1854,6 +1858,91 @@ export class ProcessSandbox {
     }
 }
 _a = ProcessSandbox;
+/** L31b/K3-49：停 scope 用哪个 systemctl，以及最多等多久。 */
+const SYSTEMCTL_DEFAULT = "/usr/bin/systemctl";
+const SCOPE_STOP_DEADLINE_MS = 5_000;
+/**
+ * L31b/K3-49：命令在放行以前被取消时，Host 停掉自己建的那个 systemd scope。
+ * 资源上限片的结算只关 Host 这一端的 fd；scope 里没有进程时 systemd 收不到
+ * “已空”的通知，单元会一直留着（资源上限片 §9 的已知限制）。
+ *
+ * 只作为 RE1 的测试缝导出：DSH 沙箱没有 `/sys/fs/cgroup` 和 `/run/user`，
+ * 走不到有上限的起跑，非零退出、spawn 失败和 5 秒无回答这三条失败分支只能
+ * 直接测这个函数。生产只有 `#runCapped` 的 `not_started_cancelled` 返回前调它。
+ *
+ * 停不掉不影响结果：沙箱没有别的诊断接缝，只写一行 stderr，从不抛。
+ * `timeoutMs` 也只为测试能缩短等待；生产用 5 秒。
+ */
+export async function stopCancelledScope(unitName, options = {}) {
+    const systemctlPath = options.systemctlPath ?? process.env["CODING_AGENT_SYSTEMCTL_PATH"] ?? SYSTEMCTL_DEFAULT;
+    const deadlineMs = options.timeoutMs ?? SCOPE_STOP_DEADLINE_MS;
+    let timer = null;
+    let settled = false;
+    const finish = (reason) => {
+        if (settled)
+            return;
+        settled = true;
+        if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+        }
+        if (reason !== null) {
+            // systemctl 的 stderr 可能有多行；一行日志是约定，所以压成一行。
+            process.stderr.write(`agent-next: scope stop failed: ${unitName}: ${reason.replace(/[\r\n]+/g, " ")}\n`);
+        }
+    };
+    // 同 `#resolveResourceCaps` 的路径规则：不是绝对路径的覆盖按“停不掉”处理，
+    // 绝不静默换成另一个二进制。
+    if (!path.isAbsolute(systemctlPath)) {
+        finish("systemctl path is not absolute");
+        return;
+    }
+    let child;
+    try {
+        child = spawn(systemctlPath, ["--user", "stop", unitName], {
+            stdio: ["ignore", "ignore", "pipe"],
+        });
+    }
+    catch (error) {
+        finish(messageOf(error));
+        return;
+    }
+    await new Promise((resolve) => {
+        let stderrText = "";
+        const done = (reason) => {
+            finish(reason);
+            resolve();
+        };
+        timer = setTimeout(() => {
+            try {
+                child.kill("SIGKILL");
+            }
+            catch {
+                // 可能已退出。
+            }
+            done(`no answer within ${String(deadlineMs)}ms`);
+        }, deadlineMs);
+        timer.unref?.();
+        child.stderr?.on("data", (chunk) => {
+            if (stderrText.length < 512)
+                stderrText += chunk.toString("utf8");
+        });
+        child.once("error", (error) => {
+            done(messageOf(error));
+        });
+        child.once("close", (code, signal) => {
+            // systemctl 退出 5 是“单元没加载”：启动器在建 scope 之前就被停了，或者
+            // systemd 已经收走了它。没有东西可停，不算停不掉，不记日志。
+            if (code === 0 || code === 5) {
+                done(null);
+                return;
+            }
+            const detail = stderrText.trim().slice(0, 256);
+            const how = code === null ? `signal ${String(signal)}` : `exit ${String(code)}`;
+            done(detail === "" ? how : `${how}: ${detail}`);
+        });
+    });
+}
 // ---------------------------------------------------------------------------
 // RL resource-cap helpers (L5–L7). Pure or Host-local; no `systemctl` calls.
 // ---------------------------------------------------------------------------

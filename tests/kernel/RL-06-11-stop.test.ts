@@ -9,12 +9,21 @@
  *
  * Written here; run by the lead in WSL (§5.4): in the DSH sandbox `execute`
  * throws `sandbox_unavailable`.
+ *
+ * K3-49 (L31b): a not_started cancel after the launcher started must also stop
+ * the scope the Host named. The stop helper's failure branches run in the DSH
+ * sandbox through a fake `systemctl`; the full cancel path stays RE1.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  stopCancelledScope,
+} from "../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js";
 import {
   RL_IDENTITY,
   RL_MIB,
@@ -45,6 +54,7 @@ import {
 
 const workspaces: RLWorkspace[] = [];
 const fakes: RLFakeSystemd[] = [];
+const systemctls: RLFakeSystemctl[] = [];
 const children: ChildProcess[] = [];
 
 afterEach(async () => {
@@ -56,13 +66,55 @@ afterEach(async () => {
     }
   }
   for (const fake of fakes.splice(0)) await fake.cleanup();
+  for (const fake of systemctls.splice(0)) await fake.cleanup();
   for (const workspace of workspaces.splice(0)) await removeRLWorkspace(workspace);
+  vi.restoreAllMocks();
 });
 
 async function workspace(): Promise<RLWorkspace> {
   const created = await makeRLWorkspace();
   workspaces.push(created);
   return created;
+}
+
+interface RLFakeSystemctl {
+  readonly dir: string;
+  readonly script: string;
+  setMode(mode: string): void;
+  invocations(): Promise<string[]>;
+  cleanup(): Promise<void>;
+}
+
+/**
+ * K3-49: point `CODING_AGENT_SYSTEMCTL_PATH` at the fake `systemctl`
+ * (`tests/helpers/RL-fake-systemctl.sh`). The failure branch is
+ * sandbox-runnable: it does not need cgroups or a systemd user session.
+ */
+async function installRLFakeSystemctl(mode = "fail"): Promise<RLFakeSystemctl> {
+  const dir = await mkdtemp(path.join(tmpdir(), "rl-fake-systemctl-"));
+  const script = path.join(dir, "systemctl");
+  await copyFile(path.resolve("tests/helpers/RL-fake-systemctl.sh"), script);
+  await chmod(script, 0o755);
+  const log = path.join(dir, ".log");
+  await writeFile(log, "");
+  await writeFile(path.join(dir, ".mode"), mode);
+  const previous = process.env["CODING_AGENT_SYSTEMCTL_PATH"];
+  process.env["CODING_AGENT_SYSTEMCTL_PATH"] = script;
+  return {
+    dir,
+    script,
+    setMode(next) {
+      writeFileSync(path.join(dir, ".mode"), next);
+    },
+    async invocations() {
+      return readLines(log);
+    },
+    async cleanup() {
+      if (previous === undefined) delete process.env["CODING_AGENT_SYSTEMCTL_PATH"];
+      else process.env["CODING_AGENT_SYSTEMCTL_PATH"] = previous;
+      await rm(dir, { recursive: true, force: true });
+    },
+  };
 }
 
 const caps = fixedSource({ memoryMaxBytes: 256 * RL_MIB, tasksMax: 64 });
@@ -560,8 +612,9 @@ describe("RL-06..RL-11 stop and death", () => {
     await requireRLCapabilities(root);
     const hot = await makeRLSandbox(root, caps);
     expect((await runRL(hot, "true", 20_000)).exitCode).toBe(0);
-    const launches = async (): Promise<number> =>
-      (await fake.invocations()).filter(line => line.includes("agent-keeper")).length;
+    const launchLines = async (): Promise<string[]> =>
+      (await fake.invocations()).filter(line => line.includes("agent-keeper"));
+    const launches = async (): Promise<number> => (await launchLines()).length;
     for (let index = 0; index < 50; index += 1) {
       // Each iteration starts from an empty race file; the old test accumulated lines.
       await writeFile(path.join(root.root, ".rl-race"), "");
@@ -594,6 +647,19 @@ describe("RL-06..RL-11 stop and death", () => {
         expect(await launches(), `iteration ${String(index)}`).toBe(before + 1);
       } else {
         expect(await launches(), `iteration ${String(index)}`).toBeLessThanOrEqual(before + 1);
+        // K3-49/L31b: a not_started cancel that already reached the launcher must
+        // leave no scope behind. The Host stops the unit it named itself; a
+        // pre-spawn cancel (0 launcher invocations) has no unit to assert.
+        const invoked = (await launchLines()).slice(before);
+        if (invoked.length > 0) {
+          const match = /--unit=(agent-next-cmd-[^\s]+\.scope)/.exec(invoked[invoked.length - 1] ?? "");
+          expect(match, `iteration ${String(index)} names a unit`).not.toBeNull();
+          const unit = match?.[1] ?? "";
+          expect(
+            await waitForUnitNotFound(unit, 5_000),
+            `iteration ${String(index)} scope ${unit} is gone`,
+          ).toBe(true);
+        }
       }
     }
   });
@@ -627,5 +693,188 @@ describe("RL-06..RL-11 stop and death", () => {
     const uncapped = await killMarked(await makeRLSandbox(root), "rl-11-uncapped");
     expect(capped.exitCode).toBe(uncapped.exitCode);
     expect(capped.signal).toBe(uncapped.signal);
+  });
+});
+
+/**
+ * K3-49: put the fake launcher in its "sleep before exec" mode and cancel
+ * while it sleeps -- the RL-10b not-started-after-spawn path. `execute` only
+ * returns after the Host has stopped the unit it named (L31b).
+ */
+async function cancelWhileLauncherSleeps(
+  root: RLWorkspace,
+  fake: RLFakeSystemd,
+): Promise<Awaited<ReturnType<typeof runRL>>> {
+  fake.setMode("sleep", { RL_FAKE_SYSTEMD_SLEEP: "2" });
+  const sandbox = await makeRLSandbox(root, caps);
+  const controller = new AbortController();
+  const running = sandbox.execute({
+    command: "touch /workspace/.rl-k3-49",
+    cwd: ".",
+    timeoutMs: 30_000,
+    outputLimitBytes: 64 * 1024,
+    signal: controller.signal,
+  });
+  running.catch(() => undefined);
+  await delay(500);
+  controller.abort();
+  return running;
+}
+
+function captureStderr(): { readonly chunks: string[]; restore(): void } {
+  const chunks: string[] = [];
+  const spy = vi.spyOn(process.stderr, "write").mockImplementation(((
+    chunk: string | Uint8Array,
+  ) => {
+    chunks.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write);
+  return {
+    chunks,
+    restore() {
+      spy.mockRestore();
+    },
+  };
+}
+
+function unitOfInvocation(line: string | undefined): string {
+  return /--unit=([^\s]+)/.exec(line ?? "")?.[1] ?? "";
+}
+
+/**
+ * The stop must not change the outcome, but `timings` is wall-clock jitter
+ * unrelated to it (the not_started result is all zeros today, yet comparing
+ * every other field keeps the "byte-identical" intent honest).
+ */
+function withoutTimings(
+  result: Awaited<ReturnType<typeof runRL>>,
+): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...result };
+  delete copy["timings"];
+  return copy;
+}
+
+const STOP_UNIT = "agent-next-cmd-3f1c2e40-0000-4000-8000-000000000000.scope";
+
+describe("K3-49 scope stop (L31b)", () => {
+  it("K3-49 (RE1) a failed scope stop logs once and leaves the not_started result byte-identical", async () => {
+    const fake = await installRLFakeSystemdRun("forward");
+    fakes.push(fake);
+    const root = await workspace();
+    await requireRLCapabilities(root);
+    const hot = await makeRLSandbox(root, caps);
+    expect((await runRL(hot, "true", 20_000)).exitCode).toBe(0);
+
+    const systemctl = await installRLFakeSystemctl("ok");
+    systemctls.push(systemctl);
+
+    // Control: the same not-started cancel with a stop that succeeds.
+    const control = await cancelWhileLauncherSleeps(root, fake);
+    expect(control).toMatchObject({
+      cancelled: true,
+      exitCode: null,
+      resourceCaps: { status: "not_started" },
+    });
+    const controlLaunches = (await fake.invocations())
+      .filter(line => line.includes("agent-keeper"));
+    const unit = unitOfInvocation(controlLaunches[controlLaunches.length - 1]);
+    expect(unit).toMatch(/^agent-next-cmd-.+\.scope$/);
+    expect(await systemctl.invocations()).toContain(`--user stop ${unit}`);
+
+    // Failure: exactly one line names the unit; the result is unchanged.
+    systemctl.setMode("fail");
+    const capture = captureStderr();
+    let failed!: Awaited<ReturnType<typeof runRL>>;
+    try {
+      failed = await cancelWhileLauncherSleeps(root, fake);
+    } finally {
+      capture.restore();
+    }
+    expect(JSON.stringify(withoutTimings(failed))).toBe(JSON.stringify(withoutTimings(control)));
+    const failedLaunches = (await fake.invocations())
+      .filter(line => line.includes("agent-keeper"));
+    const failedUnit = unitOfInvocation(failedLaunches[failedLaunches.length - 1]);
+    expect(failedUnit).toMatch(/^agent-next-cmd-.+\.scope$/);
+    const stops = capture.chunks.filter(chunk => chunk.includes("agent-next: scope stop failed:"));
+    expect(stops).toHaveLength(1);
+    expect(stops[0]).toContain(`agent-next: scope stop failed: ${failedUnit}:`);
+  });
+
+  it("stops the named unit once and writes nothing when systemctl succeeds", async () => {
+    const fake = await installRLFakeSystemctl("ok");
+    systemctls.push(fake);
+    const capture = captureStderr();
+    try {
+      await stopCancelledScope(STOP_UNIT);
+    } finally {
+      capture.restore();
+    }
+    expect(capture.chunks).toEqual([]);
+    expect(await fake.invocations()).toEqual([`--user stop ${STOP_UNIT}`]);
+  });
+
+  it("logs exactly one line naming the unit when systemctl exits non-zero", async () => {
+    const fake = await installRLFakeSystemctl("fail");
+    systemctls.push(fake);
+    const capture = captureStderr();
+    try {
+      await stopCancelledScope(STOP_UNIT);
+    } finally {
+      capture.restore();
+    }
+    expect(capture.chunks).toEqual([
+      `agent-next: scope stop failed: ${STOP_UNIT}: exit 1: Failed to stop unit: access denied See system logs for details.\n`,
+    ]);
+    expect(await fake.invocations()).toEqual([`--user stop ${STOP_UNIT}`]);
+  });
+
+  it("logs exactly one line naming the unit when systemctl cannot be spawned", async () => {
+    const previous = process.env["CODING_AGENT_SYSTEMCTL_PATH"];
+    process.env["CODING_AGENT_SYSTEMCTL_PATH"] = "/nonexistent/rl-k3-49-systemctl";
+    const capture = captureStderr();
+    try {
+      await stopCancelledScope(STOP_UNIT);
+    } finally {
+      capture.restore();
+      if (previous === undefined) delete process.env["CODING_AGENT_SYSTEMCTL_PATH"];
+      else process.env["CODING_AGENT_SYSTEMCTL_PATH"] = previous;
+    }
+    expect(capture.chunks).toHaveLength(1);
+    expect(capture.chunks[0]).toContain(`agent-next: scope stop failed: ${STOP_UNIT}: `);
+    expect(capture.chunks[0]).toContain("ENOENT");
+  });
+
+  it("logs exactly one line naming the unit when systemctl does not answer in time", async () => {
+    const fake = await installRLFakeSystemctl("hang");
+    systemctls.push(fake);
+    const capture = captureStderr();
+    const started = performance.now();
+    try {
+      // The production deadline is 5 s; a short one exercises the same branch
+      // without slowing the suite down.
+      await stopCancelledScope(STOP_UNIT, { timeoutMs: 100 });
+    } finally {
+      capture.restore();
+    }
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(capture.chunks).toEqual([
+      `agent-next: scope stop failed: ${STOP_UNIT}: no answer within 100ms\n`,
+    ]);
+  });
+
+  it("logs exactly one line naming the unit when the configured path is not absolute", async () => {
+    const previous = process.env["CODING_AGENT_SYSTEMCTL_PATH"];
+    process.env["CODING_AGENT_SYSTEMCTL_PATH"] = "relative/systemctl";
+    const capture = captureStderr();
+    try {
+      await stopCancelledScope(STOP_UNIT);
+    } finally {
+      capture.restore();
+      if (previous === undefined) delete process.env["CODING_AGENT_SYSTEMCTL_PATH"];
+      else process.env["CODING_AGENT_SYSTEMCTL_PATH"] = previous;
+    }
+    expect(capture.chunks).toEqual([
+      `agent-next: scope stop failed: ${STOP_UNIT}: systemctl path is not absolute\n`,
+    ]);
   });
 });

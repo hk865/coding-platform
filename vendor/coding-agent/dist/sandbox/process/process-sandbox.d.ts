@@ -281,6 +281,22 @@ export declare class ProcessSandbox {
     }, signal?: AbortSignal, remaining?: () => number): Promise<ResourceCapCapability>;
     execute(request: ProcessExecutionRequest): Promise<ProcessExecutionResult>;
 }
+/**
+ * L31b/K3-49：命令在放行以前被取消时，Host 停掉自己建的那个 systemd scope。
+ * 资源上限片的结算只关 Host 这一端的 fd；scope 里没有进程时 systemd 收不到
+ * “已空”的通知，单元会一直留着（资源上限片 §9 的已知限制）。
+ *
+ * 只作为 RE1 的测试缝导出：DSH 沙箱没有 `/sys/fs/cgroup` 和 `/run/user`，
+ * 走不到有上限的起跑，非零退出、spawn 失败和 5 秒无回答这三条失败分支只能
+ * 直接测这个函数。生产只有 `#runCapped` 的 `not_started_cancelled` 返回前调它。
+ *
+ * 停不掉不影响结果：沙箱没有别的诊断接缝，只写一行 stderr，从不抛。
+ * `timeoutMs` 也只为测试能缩短等待；生产用 5 秒。
+ */
+export declare function stopCancelledScope(unitName: string, options?: {
+    readonly systemctlPath?: string;
+    readonly timeoutMs?: number;
+}): Promise<void>;
 /** L5：按（systemd-run 路径、bwrap 路径、uid）缓存；同时只跑一个。 */
 export declare function probeResourceCaps(): Promise<ResourceCapCapability>;
 /** L5：只读缓存，不探测；没探测过是 `unknown`。 */
