@@ -1,0 +1,175 @@
+diff --git a/src/contracts/ledger.ts b/src/contracts/ledger.ts
+index d0c7c90..ec5341a 100644
+--- a/src/contracts/ledger.ts
++++ b/src/contracts/ledger.ts
+@@ -96,12 +96,13 @@ export type VersionedRef = {
+ };
+ /**
+  * Cursor order semantics: sequential, monotonically increasing, zero-padded
+- * decimal sequence. Cursors stay OPAQUE to all consumers: only ledger adapters
+- * and the ReadModelIndex may call compareCommitCursor; everyone else must
+- * treat them as opaque tokens.
++ * ten-digit decimal sequence; larger sequences are refused so every cursor
++ * makes here reads back. Cursors stay OPAQUE to all consumers: only ledger
++ * adapters and the ReadModelIndex may call compareCommitCursor; everyone else
++ * must treat them as opaque tokens.
+  */
+ export function makeCommitCursor(sequence: number): CommitCursor {
+-    if (!Number.isSafeInteger(sequence) || sequence < 1) {
++    if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > 9_999_999_999) {
+         throw new Error("invalid cursor sequence: " + String(sequence));
+     }
+     return ("c" + String(sequence).padStart(10, "0")) as CommitCursor;
+diff --git a/src/core/work-graph/tasks/goal-decision-reader.ts b/src/core/work-graph/tasks/goal-decision-reader.ts
+index f41ce99..2349559 100644
+--- a/src/core/work-graph/tasks/goal-decision-reader.ts
++++ b/src/core/work-graph/tasks/goal-decision-reader.ts
+@@ -27,6 +27,7 @@ import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+ import type { VersionPin } from '../../../contracts/core/identity.js';
+ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+ import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
++import { atLeastCursorResult } from '../persistence/read-result-failures.js';
+ import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
+ import type { GoalDecisionCauseReadV1 } from '../model/decision-contracts.js';
+ import type { PlanTaskPort, TaskRow } from '../model/plan-contracts.js';
+@@ -91,7 +92,9 @@ function unavailable(reason: string): Rej {
+ function messageOf(error: unknown): string {
+   return error instanceof Error ? error.message : String(error);
+ }
+-function isRej(value: GoalSnapshot | Rej): value is Rej {
++/** The Goal plus the watermark its own read observed. */
++type GoalRecordRead = { goal: GoalSnapshot; readThrough: CommitCursor | null };
++function isRej(value: GoalRecordRead | Rej): value is Rej {
+   return (value as { status?: unknown }).status === 'rejected';
+ }
+ 
+@@ -115,7 +118,7 @@ export function createGoalDecisionCauseReader(
+ ): GoalDecisionCauseReader {
+   const { records, plans } = deps;
+ 
+-  async function readGoalRecord(goalRef: GoalRef): Promise<GoalSnapshot | Rej> {
++  async function readGoalRecord(goalRef: GoalRef): Promise<GoalRecordRead | Rej> {
+     const key = canonicalJson(goalRef as unknown as JsonValue);
+     let read: Awaited<ReturnType<GoalDecisionCauseReaderRecords['readMany']>>;
+     try {
+@@ -128,7 +131,7 @@ export function createGoalDecisionCauseReader(
+     if (record === undefined) return notFound(`goal ${goalRef.goalId} does not exist`);
+     const decoded = decodeGoalSnapshot(record);
+     if (decoded.status !== 'decoded') return unavailable(`goal ${goalRef.goalId} is corrupt: ${decoded.reason}`);
+-    return decoded.value;
++    return { goal: decoded.value, readThrough: read.value.readThrough };
+   }
+ 
+   async function revisionPinOf(ref: unknown): Promise<{ ok: true; pin: VersionPin } | { ok: false; rejection: Rej }> {
+@@ -424,9 +427,15 @@ export function createGoalDecisionCauseReader(
+   return {
+     async readGoalDecisionCauses(ctx: CoreCallContext, input: { goalRef: GoalRef; atLeastCursor?: CommitCursor }) {
+       if (input.goalRef.projectId !== ctx.projectId) return forbidden('the Goal belongs to another project');
+-      const goal = await readGoalRecord(input.goalRef);
+-      if (isRej(goal)) return goal;
++      const goalRead = await readGoalRecord(input.goalRef);
++      if (isRej(goalRead)) return goalRead;
++      const { goal, readThrough } = goalRead;
+       if (goal.workspaceRef.workspaceId !== ctx.workspaceId) return forbidden('the Goal belongs to another workspace');
++      // The Goal read is the first read; every later read happens after it, so
++      // a Goal read at or past the required position makes the whole result at
++      // least that new.
++      const readiness = atLeastCursorResult<GoalDecisionCauseReadV1[]>(readThrough, input.atLeastCursor);
++      if (readiness !== null) return readiness;
+ 
+       const governance = await missingGovernanceCauses(goal);
+       if (!governance.ok) return governance.rejection;
+diff --git a/tests/contracts/ledger-cursor.test.ts b/tests/contracts/ledger-cursor.test.ts
+new file mode 100644
+index 0000000..febe0d6
+--- /dev/null
++++ b/tests/contracts/ledger-cursor.test.ts
+@@ -0,0 +1,19 @@
++/** D85-5b: `makeCommitCursor` only makes ten-digit cursors that parse back. */
++import { describe, expect, it } from 'vitest';
++import { makeCommitCursor, seqOfCommitCursor } from '../../src/contracts/ledger.js';
++
++describe('D85-5b ledger cursor range', () => {
++  it('D85-5b refuses a sequence above ten digits', () => {
++    expect(() => makeCommitCursor(10_000_000_000)).toThrow('invalid cursor sequence: 10000000000');
++  });
++
++  it('D85-5b the largest ten-digit sequence is a readable cursor', () => {
++    const cursor = makeCommitCursor(9_999_999_999);
++    expect(cursor).toBe('c9999999999');
++    expect(seqOfCommitCursor(cursor)).toBe(9_999_999_999);
++  });
++
++  it('D85-5b pads a one-digit sequence to ten digits', () => {
++    expect(makeCommitCursor(1)).toBe('c0000000001');
++  });
++});
+diff --git a/tests/work-graph/S5-goal-cause-at-least-cursor.test.ts b/tests/work-graph/S5-goal-cause-at-least-cursor.test.ts
+new file mode 100644
+index 0000000..30ec199
+--- /dev/null
++++ b/tests/work-graph/S5-goal-cause-at-least-cursor.test.ts
+@@ -0,0 +1,63 @@
++/**
++ * D85-5a: `readGoalDecisionCauses` honours `atLeastCursor` (spec §4.2).
++ * The real reader runs over the shared S5 application world; the required
++ * position is the fixture's own last commit, never a value read from the reader.
++ */
++import { afterEach, describe, expect, it } from 'vitest';
++import { makeCommitCursor, seqOfCommitCursor } from '../../src/contracts/ledger.js';
++import { GOAL_B, openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
++import { owners } from '../helpers/S5-application-support.js';
++
++const fixtures: S5DecisionFixture[] = [];
++afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close(); });
++
++async function world() {
++  const fixture = await openS5DecisionFixture('memory');
++  fixtures.push(fixture);
++  const causes = owners(fixture).causes;
++  const snapshot = await fixture.storeSnapshot();
++  const last = snapshot.lastCursor;
++  if (last === null) throw new Error('the seeded fixture must have a last commit');
++  return { fixture, causes, last, lastSeq: seqOfCommitCursor(last) };
++}
++
++describe('D85-5a Goal cause read atLeastCursor', () => {
++  it('D85-5a a position past the last commit is not_ready at the Goal read watermark', async () => {
++    const { fixture, causes, last, lastSeq } = await world();
++    const asked = makeCommitCursor(lastSeq + 1);
++    const read = await causes.readGoalDecisionCauses(fixture.ctx, { goalRef: GOAL_B, atLeastCursor: asked });
++    expect(read).toEqual({
++      status: 'not_ready',
++      observed: { kind: 'platform', cursor: last },
++      required: { kind: 'platform', cursor: asked },
++    });
++  });
++
++  it('D85-5a exactly the last commit is ready and equal to the read without atLeastCursor', async () => {
++    const { fixture, causes, last } = await world();
++    const plain = await causes.readGoalDecisionCauses(fixture.ctx, { goalRef: GOAL_B });
++    const read = await causes.readGoalDecisionCauses(fixture.ctx, { goalRef: GOAL_B, atLeastCursor: last });
++    expect(read.status).toBe('ready');
++    expect(read).toEqual(plain);
++  });
++
++  it('D85-5a an earlier position is ready and equal to the read without atLeastCursor', async () => {
++    const { fixture, causes } = await world();
++    const plain = await causes.readGoalDecisionCauses(fixture.ctx, { goalRef: GOAL_B });
++    const read = await causes.readGoalDecisionCauses(fixture.ctx, { goalRef: GOAL_B,
++      atLeastCursor: makeCommitCursor(1) });
++    expect(read.status).toBe('ready');
++    expect(read).toEqual(plain);
++  });
++
++  it('D85-5a forbidden and not_found still win over not_ready', async () => {
++    const { fixture, causes, lastSeq } = await world();
++    const past = makeCommitCursor(lastSeq + 1);
++    const foreign = await causes.readGoalDecisionCauses(fixture.ctx, {
++      goalRef: { ...GOAL_B, projectId: 'another-project' }, atLeastCursor: past });
++    expect(foreign).toMatchObject({ status: 'rejected', code: 'forbidden' });
++    const missing = await causes.readGoalDecisionCauses(fixture.ctx, {
++      goalRef: { ...GOAL_B, goalId: 'missing' }, atLeastCursor: past });
++    expect(missing).toMatchObject({ status: 'rejected', code: 'not_found' });
++  });
++});

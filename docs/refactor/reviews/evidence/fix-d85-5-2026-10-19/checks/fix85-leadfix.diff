@@ -1,0 +1,13 @@
+diff --git a/src/contracts/ledger.ts b/src/contracts/ledger.ts
+index ec5341a..e438366 100644
+--- a/src/contracts/ledger.ts
++++ b/src/contracts/ledger.ts
+@@ -97,7 +97,7 @@ export type VersionedRef = {
+ /**
+  * Cursor order semantics: sequential, monotonically increasing, zero-padded
+  * ten-digit decimal sequence; larger sequences are refused so every cursor
+- * makes here reads back. Cursors stay OPAQUE to all consumers: only ledger
++ * made here reads back. Cursors stay OPAQUE to all consumers: only ledger
+  * adapters and the ReadModelIndex may call compareCommitCursor; everyone else
+  * must treat them as opaque tokens.
+  */

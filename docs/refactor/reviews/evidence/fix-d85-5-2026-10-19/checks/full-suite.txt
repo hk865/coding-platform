@@ -1,0 +1,17 @@
+Decision 85-5 full suite (copy s9fix85 at tag fix85-lead = baseline 0e1a9386 + DSH r1 + the lead's comment fix; bubblewrap, 5 workers, scope 7G; build first; started 12:15 local, alone)
+ Test Files  773 passed (773)
+      Tests  10089 passed | 5 skipped (10094)
+   Duration  2519.50s (transform 21.83s, setup 0ms, import 428.85s, tests 12092.17s, environment 59ms)
+failing files: none
+memory peak bytes / time: 5275443200 12:29:12
+build 0, typecheck 0 (tsconfig.json and tsconfig.ui.json), check:architecture 0
+
+After the suite, the lead's second fix (fix85-lead2; only tests/work-graph/S5-goal-cause-at-least-cursor.test.ts:
+LAST from a seedCommit([]) receipt instead of storeSnapshot()) was run alone:
+ ✓ tests/work-graph/S5-goal-cause-at-least-cursor.test.ts (4 tests)
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+typecheck (tsconfig.json) 0
+
+Merged tree = fix85-lead2; the four files' blobs in commit c54d00e0 equal the copy's fix85-lead2 blobs
+(ledger.ts e4383661, goal-decision-reader.ts 23495596, ledger-cursor.test.ts febe0d6d, S5-goal-cause-at-least-cursor.test.ts 9ba5207b).

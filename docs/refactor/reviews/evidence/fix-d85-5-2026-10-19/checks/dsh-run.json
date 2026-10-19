@@ -1,0 +1,37 @@
+{
+ "runName": "fix85-1019",
+ "copy": "/home/han001/dsh-work/slices/s9fix85",
+ "level": "slices",
+ "task": "/home/han001/dsh-work/slices/_books/fix85-book.md",
+ "taskSha256": "c84d9c877c4dd22349fdb3343967e4b114c72a6124d74b1b0c8d79151f944b5b",
+ "model": "headless default (deepseek-flash)",
+ "sessionIdIn": null,
+ "sessionId": "session-c02b05ad-41d8-4441-a6e7-789d7ca5222a",
+ "startedAt": "2026-10-19T04:10:02.386Z",
+ "endedAt": "2026-10-19T04:13:23.407Z",
+ "wallSeconds": 201,
+ "exitCode": 0,
+ "signal": null,
+ "stoppedBy": null,
+ "limits": {
+  "maxMinutes": 50,
+  "maxTokensReportedOnly": null,
+  "maxContext": 450000,
+  "handoffAt": 360000,
+  "handoffMinutes": 10
+ },
+ "peakContext": 66532,
+ "handoff": null,
+ "sandbox": "bubblewrap",
+ "toolCalls": 75,
+ "steps": 50,
+ "tokens": {
+  "input": 50205,
+  "cacheRead": 2314624,
+  "cacheWrite": 0,
+  "output": 15824,
+  "total": 2380653
+ },
+ "contamination": "attempted-outside",
+ "changedPaths": 4
+}
