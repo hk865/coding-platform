@@ -1,0 +1,38 @@
+{
+  "A": {
+    "area": "`src/core/work-graph/tasks/` (65 files, about 31,900 lines), `src/core/work-graph/evidence/`, `src/core/work-graph/materials/`, `src/core/work-graph/configuration/` (together about 38,700 lines).",
+    "questions": [
+      "`tasks/` has 65 files and about 32,000 lines. Are there parts (claim, execution entry and history, run state and reconcile, plans and plan readers, goal settings, K3's unknown-call review and command rerun) that change for different reasons and should be their own directories or modules? Which of them do the remaining slices add to (spec and section)?",
+      "Each write owner repeats the order trusted context → input shape → request identity / fingerprint → original receipt → one read → pure machine → admission → one commit. How many owners copy it today, how much of each copy is the same, and how many new owners do slices 6, 7 and 8 add? Would a shared owner skeleton make those smaller without changing any owner's codes, texts or check order?",
+      "C1 kept several store-failure mappings separate on purpose (`persistence/read-result-failures.ts`, C1 book §5). Are they different by design, or would one mapping with explicit parameters be clearer for the new owners?",
+      "C1 rulings item 7: the look-alikes in your area (inline safe-integer checks, the compound `isRunRef`, the throwing `refKeyOf`, the `sameRef` that catches the throw and returns a boolean, the execution-entry ref checks that allow extra fields, `sameTask` / `sameReviewRef` / `sameRunRef`). For each: different on purpose, or one helper with a parameter?"
+    ]
+  },
+  "B": {
+    "area": "`src/core/work-graph/state/` (29 files, about 20,200 lines), `src/core/work-graph/persistence/`, `src/core/work-graph/model/`, `src/contracts/`, `src/core/record-store/` (together about 45,400 lines).",
+    "questions": [
+      "Decision 70 item 3 (generate codecs from a format description; trial on the decision events and the line-settings events). List every new record and event type slices 6, 7 and 8 add (spec and section). Count, for one existing record end to end, the hand-written pieces it needs today (codec, event encoder, envelope check, store-failure mapping, ref checks, tests). Should the trial run before 6A or after, and why? What would the format description have to express for the existing records (the look-alike differences C1 kept)?",
+      "Decision 70 item 4 / decision 49 Q9 (keep only one RecordStore backend; C1 rulings item 11 hands it to you): what does keeping both backends cost today (files, lines, tests, two code paths per query), and what will the remaining slices add to both? Class?",
+      "`state/`: is the split between pure state machines and the owners that call them clear? Name machines whose rules live partly in an owner, or owners that re-check a machine's rule.",
+      "`src/contracts/` vs `work-graph/model/`: is there one clear rule for which types live where? Name the types that sit on the wrong side and what that costs."
+    ]
+  },
+  "C": {
+    "area": "`src/core/work-graph/views/`, `queries/`, `notes/`, `architecture/`, `sessions/`, `communication/` (together about 44,800 lines).",
+    "questions": [
+      "C1 rulings item 6: slice-4 spec §14 item 10 says three card sources are still hand-written instead of using the generic card source (`createCollectionCardSource` in `views/decision-read-model.ts`). Find the three, say what migrating each costs and whether it changes any behaviour (paging, caching, key reads, close checks), and which remaining slices add card sources (spec and section). Should it be done before one of them, and which?",
+      "The read models (track, timeline, activity, decision, note views and the query services) share paging, cursors and capacity limits. Is that shared today or copied? What new views or queries do slices 6, 7 and 8 add, and would they copy it again?",
+      "`sessions/` and `communication/`: slice 6A adds request rounds and building lines through one shared entry, 6B a handoff primitive with a common operation identity, 7 the secretary. Does the current structure have the places these need, or would each slice spread over several unrelated files? Name the files each would have to touch today.",
+      "`notes/` and `architecture/`: after 4C and the note-speed rounds, is anything structurally left that the remaining slices will build on (memory branches of queries in 6A / 7D2, notifications without a goal in 7D2)?"
+    ]
+  },
+  "D": {
+    "area": "`src/app/`, `src/business/`, `src/composition/`, `src/core/agent-runtime/`, `src/core/workspace/` (together about 44,400 lines). `src/ui/` is not in scope.",
+    "questions": [
+      "How many files must be edited today to add one route, one tool, one owner wired into the Host, and one Workflow step? Show one recent example from the merged slices (K3 or 4C-2). What will slices 6, 7 and 8 add of each kind?",
+      "Decision 83 (prompt templates per role action, configurable and chosen per provider and model; the budget trim keeps the current task and the role instructions; a per-model table for passing thinking back; the secretary request history; a record of the full prompt actually sent; a stale-file notice). Where would that code go in the current structure (`agent-runtime/context-assembler.ts` and its neighbours)? What would have to move or be split first so that the decision-83 section and 6A do not grow one file further?",
+      "`src/business/workflow/` still carries N0 skeleton shapes (`handleGoalInput` 'N0 shape / unsupported'). Is that a structure question for the remaining slices (does 6A or 7 build on Workflow goal input?), or unused code for T? Say which, with the spec section.",
+      "`src/composition/` and `src/app/`: is the Host's wiring of the work-graph owners one clear place, or spread? What would the remaining slices' new owners cost to wire?"
+    ]
+  }
+}

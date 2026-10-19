@@ -1,0 +1,37 @@
+{
+ "runName": "d84-condense-1019",
+ "copy": "/home/han001/dsh-work/slices/s9c1doc",
+ "level": "slices",
+ "task": "/home/han001/dsh-work/slices/_books/d84-condense.md",
+ "taskSha256": "e4830b07a2919426851d98760d76ba1e487e0e753a1ef57a8ebcd73ea075de85",
+ "model": "headless default (deepseek-flash)",
+ "sessionIdIn": null,
+ "sessionId": "session-dce2bc88-6169-4431-9bc8-73166748f56e",
+ "startedAt": "2026-10-18T19:47:13.348Z",
+ "endedAt": "2026-10-18T19:51:25.848Z",
+ "wallSeconds": 253,
+ "exitCode": 0,
+ "signal": null,
+ "stoppedBy": null,
+ "limits": {
+  "maxMinutes": 50,
+  "maxTokensReportedOnly": null,
+  "maxContext": 450000,
+  "handoffAt": 360000,
+  "handoffMinutes": 10
+ },
+ "peakContext": 164748,
+ "handoff": null,
+ "sandbox": "bubblewrap",
+ "toolCalls": 30,
+ "steps": 30,
+ "tokens": {
+  "input": 115377,
+  "cacheRead": 2834944,
+  "cacheWrite": 0,
+  "output": 56825,
+  "total": 3007146
+ },
+ "contamination": "none",
+ "changedPaths": 87
+}

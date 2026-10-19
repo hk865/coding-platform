@@ -1,6 +1,6 @@
 # 独立仓库工作入口
 
-**当前状态（2026-10-19）。** 可靠性批次已完成；编排第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）、2A、2B、2C、资源上限片、4A、4B、注记查找提速两轮、4C-1（36602e53）、8A（ce4369b1）、4C-2 A 段（e15ba172）、4C-2 B 段（f4171d51）、8D 和 §10 段（4041c305）、L8（de70ff41）、K3（d3146d69，补做 5e83681b）、C1（`35b5f5b1`）已合入。远端新分支 `feat/orchestration-slices` 已由用户推到 `ab1baee9`（2026-10-18，含 K3 和补做；之后的本地提交等用户推送），远端 `next-main` 不动，本地主检出目录已快进。K3 合入时的最后一次全量（5 个并行，含补做）771 个测试文件全过，10,082 项过、5 项跳过；C1 合入时的最后一次全量（5 个并行）771 个测试文件全过，10,082 项过、5 项跳过。接下来做 T 轮和决定 84 的结构审查（结果在 6A 的任务书之前拿到）。这些批次之后还没有用真实模型重跑，整个 MVP 没有完成。当前状态和下一步见 [STATUS](docs/refactor/STATUS.md)，决定 1–84 见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)，设计与分片见 [design/orchestration-2026-10](docs/refactor/design/orchestration-2026-10/README.md)。
+**当前状态（2026-10-19）。** 可靠性批次已完成；编排第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）、2A、2B、2C、资源上限片、4A、4B、注记查找提速两轮、4C-1（36602e53）、8A（ce4369b1）、4C-2 A 段（e15ba172）、4C-2 B 段（f4171d51）、8D 和 §10 段（4041c305）、L8（de70ff41）、K3（d3146d69，补做 5e83681b）、C1（`35b5f5b1`）已合入。远端新分支 `feat/orchestration-slices` 已由用户推到 `ab1baee9`（2026-10-18，含 K3 和补做；之后的本地提交等用户推送），远端 `next-main` 不动，本地主检出目录已快进。K3 合入时的最后一次全量（5 个并行，含补做）771 个测试文件全过，10,082 项过、5 项跳过；C1 合入时的最后一次全量（5 个并行）771 个测试文件全过，10,082 项过、5 项跳过。接下来做 T 轮；决定 84 的结构审查已做完（决定 85），6A 之前先做一轮结构调整。这些批次之后还没有用真实模型重跑，整个 MVP 没有完成。当前状态和下一步见 [STATUS](docs/refactor/STATUS.md)，决定 1–85 见 [HANDOFF 顶部](docs/refactor/HANDOFF.md)，设计与分片见 [design/orchestration-2026-10](docs/refactor/design/orchestration-2026-10/README.md)。
 
 *界面基线。* 新原型在 [Design 画布](https://claude.ai/artifact/3e5ynF3rwtMQfvJuim9mL2)上，只有用户本人能打开。
 - 用户 2026-10-05 批准了原型（画布第 9 版）。2026-10-06 按 HANDOFF 决定 25–30 改版，发布为画布第 14 版；2026-10-07 按决定 33 改了左栏工作线的点击，发布为画布第 16 版。用户确认后冻结（决定 35），画板文件和设计说明复制进 [docs/ui-reference/workbench-2026-10](docs/ui-reference/workbench-2026-10/README.md)。
@@ -27,7 +27,7 @@
 
 ## 通用仓库约束
 
-1. 必要上下文：先读 [README](README.md) → [STATUS](docs/refactor/STATUS.md)（当前状态）→ [HANDOFF 顶部](docs/refactor/HANDOFF.md)（决定 1–84）→ [编排设计目录](docs/refactor/design/orchestration-2026-10/README.md)。施工时读相关分片规格、[MVP 行为](docs/MVP-BEHAVIOR.md)和[能力索引](docs/refactor/IMPLEMENTED-CAPABILITIES.md)，沿代码与证据核对；界面工作读[冻结原型](docs/ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](docs/UI-WORKBENCH.md#ui-decisions-2026-10)。
+1. 必要上下文：先读 [README](README.md) → [STATUS](docs/refactor/STATUS.md)（当前状态）→ [HANDOFF 顶部](docs/refactor/HANDOFF.md)（决定 1–85）→ [编排设计目录](docs/refactor/design/orchestration-2026-10/README.md)。施工时读相关分片规格、[MVP 行为](docs/MVP-BEHAVIOR.md)和[能力索引](docs/refactor/IMPLEMENTED-CAPABILITIES.md)，沿代码与证据核对；界面工作读[冻结原型](docs/ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](docs/UI-WORKBENCH.md#ui-decisions-2026-10)。
 2. 原 W/coding-platform/next 相当于本根；原 W/docs 相当于本根/docs。历史 C/src、C/tests 不是本仓库 src/tests；不得把本仓库源码当旧目录删除。历史绝对路径、scope、harness 命令都要先重新映射。当前文件优先于被复制文档里的旧目录说明。
 3. 2026-09-27 的有界 MVP completion audit 已完成，不因接手而重跑。按 STATUS 的下一步和已确认的分片范围推进；不新增需求、不补非阻塞测试、不做顺手重构，也不得自动把既定必需项移出 MVP。不把原语、受控模型 E2E 或某一子链等同完整产品验收。规格、规则和整套文档由 lead 负责并逐行审阅（决定 36、43、46；2026-10-13 做法）；用户做产品决定，并挑交互和行为验看。
 4. 五模块职责与已确认产品边界继续有效。Task Graph 保留无验收条件的未来意图；Run结束不等于Task/Goal完成；事实与当前动作授权分开；没有运行中 Role 热切换生命周期，不恢复篡改数据库才能触发的防御校验/测试。原历史默认折叠并能按需查看实际保存记录。
