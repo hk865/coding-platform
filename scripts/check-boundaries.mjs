@@ -11,7 +11,7 @@ const OUTER_LAYER_PREFIXES = ['src/contracts/', 'src/composition/', 'src/app/', 
 // Outer-layer owners have fixed rules in checkSpecifier; a JSON module may not borrow their names.
 const RESERVED_MODULE_IDS = new Set(['Contracts', 'Composition', 'Host', 'UI']);
 const sourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
-const APPROVED_NEXT_PACKAGES = new Set(['typescript', 'vitest', '@types/node', 'marked', 'esbuild']);
+const APPROVED_NEXT_PACKAGES = new Set(['typescript', 'vitest', '@vitest/coverage-v8', '@types/node', 'marked', 'esbuild']);
 const APPROVED_KERNEL_PACKAGES = new Set(['openai', 'zod']);
 // Spec §14.5: globals a pure submodule may not use (besides `Date.now`, `Math.random` and an argument-less `Date`).
 const PURE_FORBIDDEN_GLOBALS = new Set(['process', 'globalThis', 'fetch', 'setTimeout', 'setInterval', 'setImmediate',
