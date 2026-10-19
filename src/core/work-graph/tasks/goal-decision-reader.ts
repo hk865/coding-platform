@@ -27,6 +27,7 @@ import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
+import { atLeastCursorResult } from '../persistence/read-result-failures.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import type { GoalDecisionCauseReadV1 } from '../model/decision-contracts.js';
 import type { PlanTaskPort, TaskRow } from '../model/plan-contracts.js';
@@ -91,7 +92,9 @@ function unavailable(reason: string): Rej {
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-function isRej(value: GoalSnapshot | Rej): value is Rej {
+/** The Goal plus the watermark its own read observed. */
+type GoalRecordRead = { goal: GoalSnapshot; readThrough: CommitCursor | null };
+function isRej(value: GoalRecordRead | Rej): value is Rej {
   return (value as { status?: unknown }).status === 'rejected';
 }
 
@@ -115,7 +118,7 @@ export function createGoalDecisionCauseReader(
 ): GoalDecisionCauseReader {
   const { records, plans } = deps;
 
-  async function readGoalRecord(goalRef: GoalRef): Promise<GoalSnapshot | Rej> {
+  async function readGoalRecord(goalRef: GoalRef): Promise<GoalRecordRead | Rej> {
     const key = canonicalJson(goalRef as unknown as JsonValue);
     let read: Awaited<ReturnType<GoalDecisionCauseReaderRecords['readMany']>>;
     try {
@@ -128,7 +131,7 @@ export function createGoalDecisionCauseReader(
     if (record === undefined) return notFound(`goal ${goalRef.goalId} does not exist`);
     const decoded = decodeGoalSnapshot(record);
     if (decoded.status !== 'decoded') return unavailable(`goal ${goalRef.goalId} is corrupt: ${decoded.reason}`);
-    return decoded.value;
+    return { goal: decoded.value, readThrough: read.value.readThrough };
   }
 
   async function revisionPinOf(ref: unknown): Promise<{ ok: true; pin: VersionPin } | { ok: false; rejection: Rej }> {
@@ -424,9 +427,15 @@ export function createGoalDecisionCauseReader(
   return {
     async readGoalDecisionCauses(ctx: CoreCallContext, input: { goalRef: GoalRef; atLeastCursor?: CommitCursor }) {
       if (input.goalRef.projectId !== ctx.projectId) return forbidden('the Goal belongs to another project');
-      const goal = await readGoalRecord(input.goalRef);
-      if (isRej(goal)) return goal;
+      const goalRead = await readGoalRecord(input.goalRef);
+      if (isRej(goalRead)) return goalRead;
+      const { goal, readThrough } = goalRead;
       if (goal.workspaceRef.workspaceId !== ctx.workspaceId) return forbidden('the Goal belongs to another workspace');
+      // The Goal read is the first read; every later read happens after it, so
+      // a Goal read at or past the required position makes the whole result at
+      // least that new.
+      const readiness = atLeastCursorResult<GoalDecisionCauseReadV1[]>(readThrough, input.atLeastCursor);
+      if (readiness !== null) return readiness;
 
       const governance = await missingGovernanceCauses(goal);
       if (!governance.ok) return governance.rejection;

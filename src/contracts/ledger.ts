@@ -96,12 +96,13 @@ export type VersionedRef = {
 };
 /**
  * Cursor order semantics: sequential, monotonically increasing, zero-padded
- * decimal sequence. Cursors stay OPAQUE to all consumers: only ledger adapters
- * and the ReadModelIndex may call compareCommitCursor; everyone else must
- * treat them as opaque tokens.
+ * ten-digit decimal sequence; larger sequences are refused so every cursor
+ * made here reads back. Cursors stay OPAQUE to all consumers: only ledger
+ * adapters and the ReadModelIndex may call compareCommitCursor; everyone else
+ * must treat them as opaque tokens.
  */
 export function makeCommitCursor(sequence: number): CommitCursor {
-    if (!Number.isSafeInteger(sequence) || sequence < 1) {
+    if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > 9_999_999_999) {
         throw new Error("invalid cursor sequence: " + String(sequence));
     }
     return ("c" + String(sequence).padStart(10, "0")) as CommitCursor;
