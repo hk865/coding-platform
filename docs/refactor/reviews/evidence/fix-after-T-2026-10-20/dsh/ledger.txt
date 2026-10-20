@@ -1,0 +1,91 @@
+# D1 assertion ledger tf-base..HEAD (tests)
+
+## NEW timeout in an existing file: 1
+tests/runtime/A2-reconcile-runtime.test.ts:304: }, 90_000);
+
+## REMOVED assertion: 55
+tests/app/MVP-ui-entry.test.ts:203: expect(html).toContain('data-view="architecture-containment"');
+tests/app/MVP-ui-entry.test.ts:205: expect(html).toContain('class="q-graphnode');
+tests/app/MVP-ui-entry.test.ts:206: expect(html).toContain('data-node="module-alpha"');
+tests/app/MVP-ui-entry.test.ts:207: expect(html).toContain('data-node="module-beta"');
+tests/app/MVP-ui-entry.test.ts:209: expect(html).toContain('data-action="select-node"');
+tests/app/MVP-ui-entry.test.ts:210: expect(html).toContain('data-target-kind="module"');
+tests/app/MVP-ui-entry.test.ts:211: expect(html).toContain('data-module-id="module-alpha"');
+tests/app/MVP-ui-entry.test.ts:212: expect(html).toContain('role="button"');
+tests/app/MVP-ui-entry.test.ts:213: expect(html).toContain('tabindex="0"');
+tests/app/MVP-ui-entry.test.ts:216: expect(html).not.toContain('<path');
+tests/app/MVP-ui-entry.test.ts:247: expect(scopeKeys).toHaveLength(2);
+tests/app/MVP-ui-entry.test.ts:248: expect(new Set(scopeKeys).size).toBe(2);
+tests/app/MVP-ui-entry.test.ts:251: expect(sharedStorage.keys()).toHaveLength(3);
+tests/app/MVP-ui-entry.test.ts:252: expect(sharedStorage.keys()).toEqual(expect.arrayContaining(scopeKeys));
+tests/app/MVP-ui-entry.test.ts:253: expect(store.load(scopeA)).toEqual({ goalId: 'goal-a', sessionId: 'session-a', mainSessionId: 'main-a' });
+tests/app/MVP-ui-entry.test.ts:254: expect(store.load(scopeB)).toEqual({ goalId: 'goal-b', sessionId: 'session-b', mainSessionId: 'main-b' });
+tests/app/MVP-ui-entry.test.ts:257: expect(global).toEqual({ lastScopeKey: JSON.stringify([scopeB.projectId, scopeB.workspaceId]), theme: 'dark' });
+tests/app/MVP-ui-entry.test.ts:258: expect(JSON.stringify(global)).not.toContain('goal-a');
+tests/app/MVP-ui-entry.test.ts:281: expect(restored).toMatchObject({ goalId: 'goal-original', sessionId: 'session-original', mainSessionId: 'main-original' });
+tests/app/MVP-ui-entry.test.ts:282: expect(restored?.goalRead).toMatchObject({ value: { goal: { objective: 'restored objective fact' } } });
+tests/app/MVP-ui-entry.test.ts:283: expect(calls).toContain('goals/read:goal-original');
+tests/app/MVP-ui-entry.test.ts:284: expect(calls).toContain('sessions/read:session-original');
+tests/app/MVP-ui-entry.test.ts:285: expect(calls).toContain('sessions/read:main-original');
+tests/app/MVP-ui-entry.test.ts:288: expect(store.load(scopeA)).toEqual({ goalId: 'goal-original', sessionId: 'session-original', mainSessionId: 'main-original' });
+tests/app/MVP-ui-entry.test.ts:293: expect(missing).toBeNull();
+tests/app/MVP-ui-entry.test.ts:306: expect(await pending).toBeNull();
+tests/app/MVP-ui-entry.test.ts:307: expect(store.load(scopeA)).toEqual({ goalId: 'goal-newer', sessionId: 'session-newer', mainSessionId: null });
+tests/app/MVP-ui-entry.test.ts:331: expect(directories.get('src')?.loading).toBe(true);
+tests/app/MVP-ui-entry.test.ts:334: expect(first).toMatchObject({ scope: inventoryScope, prefix: 'src', partial: true, loading: false, stale: false });
+tests/app/MVP-ui-entry.test.ts:335: expect(first?.paths).toHaveLength(250);
+tests/app/MVP-ui-entry.test.ts:336: expect(first?.visibleCount).toBe(DIRECTORY_INVENTORY_PAGE_SIZE);
+tests/app/MVP-ui-entry.test.ts:340: expect(more.visibleCount).toBe(2 * DIRECTORY_INVENTORY_PAGE_SIZE);
+tests/app/MVP-ui-entry.test.ts:341: expect(more.paths.slice(0, DIRECTORY_INVENTORY_PAGE_SIZE)).toEqual(paths.slice(0, DIRECTORY_INVENTORY_PAGE_SIZE));
+tests/app/MVP-ui-entry.test.ts:342: expect(calls).toHaveLength(1);
+tests/app/MVP-ui-entry.test.ts:348: expect(docs?.paths).toEqual(['docs/readme.md']);
+tests/app/MVP-ui-entry.test.ts:349: expect(directories.get('src')?.paths).toHaveLength(250);
+tests/app/MVP-ui-entry.test.ts:355: expect(calls.filter(call => call.prefix === 'src').map(call => call.generation)).toEqual([1, 2, 3]);
+tests/app/MVP-ui-entry.test.ts:357: expect((await fast)?.paths).toEqual(['src/new.txt']);
+tests/app/MVP-ui-entry.test.ts:359: expect((await slow)?.paths).toEqual(['src/new.txt']);
+tests/app/MVP-ui-entry.test.ts:360: expect(directories.get('src')?.paths).toEqual(['src/new.txt']);
+tests/app/MVP-ui-entry.test.ts:366: expect(kept).toMatchObject({ prefix: 'src', error: 'boom', stale: true, loading: false });
+tests/app/MVP-ui-entry.test.ts:367: expect(kept?.paths).toEqual(['src/new.txt']);
+tests/app/MVP-ui-entry.test.ts:368: expect(directories.get('docs')?.paths).toEqual(['docs/readme.md']);
+tests/app/MVP-ui-entry.test.ts:375: expect(emptyPartial).toMatchObject({ prefix: 'empty-partial', paths: [], partial: true, loading: false, stale: false });
+tests/app/R6-host.test.ts:210: expect(html).toContain(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${started.token}">`);
+tests/app/S2C-line-routes.test.ts:124: expect(routeLabel(suffix).length).toBeGreaterThan(0);
+tests/app/S2C-line-routes.test.ts:126: expect(GRAPH_WRITE_ROUTES.has('lines/pin')).toBe(true);
+tests/app/S2C-line-routes.test.ts:128: if (suffix !== 'lines/pin') expect(GRAPH_WRITE_ROUTES.has(suffix)).toBe(false);
+tests/app/orchestration-mechanism.test.ts:327: expect(build.status, build.stderr).toBe(0);
+tests/app/orchestration-mechanism.test.ts:398: expect(build.status, build.stderr).toBe(0);
+tests/runtime/A2-reconcile-runtime.test.ts:685: expect(await createUnknownCallReviewService({ records: fx.claimFixture.records }).readReview(fx.ctx, { runRef: fx.claim.runRef }),
+tests/scenarios/S2C-K-archive-tags-checks.test.ts:72: expect(started, JSON.stringify(started)).toMatchObject({ status: 'ready' });
+tests/state/control-intent-machine.test.ts:906: expect(transitionControlIntent(STATES[label], event, ctxWith({ node: 'Absent', entry: null, history: 'malformed' },
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:170: expect(await createUnknownCallReviewService({ records: backend.records }).readReview(ctx, { ref }))
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:182: expect(await createUnknownCallReviewService({ records: wrapped }).readReview(ctx, { ref }))
+
+## REMOVED test or describe: 10
+tests/app/MVP-ui-entry.test.ts:168: describe('MVP UI containment without a declared tree', () => {
+tests/app/MVP-ui-entry.test.ts:201: it('keeps real root module nodes and click targets and fabricates no edges', () => {
+tests/app/MVP-ui-entry.test.ts:225: describe('MVP UI scope display preference', () => {
+tests/app/MVP-ui-entry.test.ts:238: it('keeps display ids per scope', () => {
+tests/app/MVP-ui-entry.test.ts:261: it('restores the original Goal/Session facts from formal reads and lets no slow read overwrite a later choice', async () => {
+tests/app/MVP-ui-entry.test.ts:317: describe('MVP UI directory inventory local projection', () => {
+tests/app/MVP-ui-entry.test.ts:318: it('appends locally, keeps scope+prefix attribution and lets only the newest refresh land', async () => {
+tests/app/R6-host.test.ts:201: it('serves the real built page and assets with a per-response temporary token', async () => {
+tests/app/S2C-line-routes.test.ts:122: it('2C-31 (b) every route has a label and only lines/pin is a graph_write', () => {
+tests/architecture/production-reach.test.ts:247: it('reads the CLI, the browser bundles and the dist imports of scripts as entry points', () => {
+
+## DELETED test files: 11
+tests/app/R6-workbench.test.ts: 11 tests, 107 expects
+tests/app/goal-conversation-start.test.ts: 7 tests, 46 expects
+tests/app/session-rendering.test.ts: 15 tests, 105 expects
+tests/app/settings-ui.test.ts: 5 tests, 27 expects
+tests/app/ui-actions.test.ts: 5 tests, 13 expects
+tests/app/ui-change-refetch.test.ts: 5 tests, 29 expects
+tests/app/ui-live-wiring.test.ts: 7 tests, 35 expects
+tests/app/ui-live.test.ts: 14 tests, 113 expects
+tests/app/ui-refresh.test.ts: 10 tests, 57 expects
+tests/app/ui-sse.test.ts: 11 tests, 15 expects
+tests/app/ui-store.test.ts: 15 tests, 50 expects
+
+# lines to justify (excluding MOVED): 66, plus 11 deleted files
+
+# D3 pure-file guard: 25 *-pure.test.ts files
+# D3 hits: 0

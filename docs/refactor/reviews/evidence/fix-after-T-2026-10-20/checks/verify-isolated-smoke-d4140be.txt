@@ -1,0 +1,23 @@
+verify-isolated smoke at d4140be TF5 unused names (steps: kernel patch check, build, compiled entry, Host page); 02:35
+24c24
+<     for (const script of ['check:architecture', 'typecheck', 'build', 'test']) {
+---
+>     for (const script of ['build']) {
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                ^
+
+Error: workbench page did not expose the token meta
+    at file:///tmp/coding-platform-next-r0udgN/next/[eval1]:1:849
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+Node.js v24.18.0
+file:///home/han001/dsh-work/slices/s9tfix/scripts/.verify-smoke-lead.mjs:60
+  if (workbenchSmoke.status !== 0) throw Error(`isolated workbench smoke failed (${workbenchSmoke.status ?? workbenchSmoke.signal})`);
+                                         ^
+
+Error: isolated workbench smoke failed (1)
+    at file:///home/han001/dsh-work/slices/s9tfix/scripts/.verify-smoke-lead.mjs:60:42
+
+Node.js v24.18.0
+exit 1
+ended 02:35
+copy clean

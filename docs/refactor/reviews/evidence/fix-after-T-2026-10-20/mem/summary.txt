@@ -1,0 +1,85 @@
+files 766; with heap line 766; wall 2857 s; sum of file durations 13520 s (= 4.73 files running on average)
+scope memory (MiB): peak 5884; current max 5880, p95 5024, median 2585; machine available min 6443 MB
+heap per file (MB, JS heap after the file): median 145.5, p90 199, p99 476, max 1155
+duration per file (s): median 3.9, p90 31.5, p99 180.7, max 1381
+  slowest 5 files: 4524 s = 33% of the summed time
+  slowest 10 files: 5582 s = 41% of the summed time
+  slowest 20 files: 6584 s = 49% of the summed time
+  slowest 50 files: 8154 s = 60% of the summed time
+
+slowest 30 files: seconds | heap MB | tests | scope MiB while it ran | file
+     1381 |   476 |    2 |   5880 | tests/work-graph/S2A-notices-overbound.test.ts
+     1101 |   613 |    4 |   5880 | tests/work-graph/S2A-queue-derived-cards.test.ts
+      961 |   666 |    8 |   5880 | tests/work-graph/S2C-lines-scale.test.ts
+      582 |   221 |    6 |   5098 | tests/work-graph/S2A-queue-bounds.test.ts
+      499 |   221 |    3 |   4652 | tests/runtime/B2-401-world.test.ts
+      337 |   704 |    4 |   5880 | tests/app/S2A-decision-routes.test.ts
+      226 |   630 |   11 |   5880 | tests/work-graph/unknown-call-review-list.test.ts
+      181 |   114 |    2 |   5512 | tests/work-graph/S2A-queue-request-candidates.test.ts
+      178 |   171 |    2 |   4885 | tests/work-graph/S2A-queue-goal-runs.test.ts
+      135 |   247 |   60 |   4801 | tests/business/K3-review-workflow-rows.test.ts
+      132 |   240 |   19 |   3673 | tests/work-graph/S5R2-queue-history.test.ts
+      113 |   314 |   13 |   3793 | tests/state/invariants-fuzz.test.ts
+      111 |   541 |   23 |   3778 | tests/work-graph/WP2-undelivered-notices.test.ts
+      106 |   245 |   24 |   3793 | tests/scenarios/A7-control.test.ts
+       97 |   212 |   40 |   3569 | tests/work-graph/B2-09-crr-owner.test.ts
+       96 |   242 |   36 |   3569 | tests/work-graph/UCR-settle-review.test.ts
+       96 |   239 |   60 |   3569 | tests/work-graph/S3-graph-context.test.ts
+       91 |   185 |    2 |   3778 | tests/work-graph/S2A-notices-attempt.test.ts
+       84 |   234 |   10 |   3553 | tests/work-graph/WP2-context-extensions.test.ts
+       76 |   219 |   38 |   3729 | tests/work-graph/K3-26-unknown-call-review-storage.test.ts
+       70 |   203 |   12 |   3778 | tests/scenarios/A8-host-restart.test.ts
+       69 |   250 |   10 |   3778 | tests/scenarios/A11-no-progress.test.ts
+       63 |   287 |    5 |   2653 | tests/scenarios/S2C-K-archive-tags-checks.test.ts
+       63 |   156 |   30 |   3227 | tests/runtime/A2-reconcile-runtime.test.ts
+       60 |   291 |    8 |   2529 | tests/scenarios/A8-host-restart-paused.test.ts
+       59 |   148 |   32 |   2653 | tests/work-graph/S5-goal-settings.test.ts
+       59 |   204 |   32 |   2392 | tests/work-graph/S3-context-inputs.test.ts
+       59 |   238 |   24 |   2653 | tests/runtime/B2-01-shell-hook.test.ts
+       58 |   194 |    6 |   2653 | tests/work-graph/S2C-node-detail-anomalies.test.ts
+       58 |    43 |   29 |   2080 | tests/architecture/boundaries.test.ts
+
+largest heap 20 files: heap MB | seconds | file
+   1155 |      17 | tests/architecture/production-reach.test.ts
+    796 |      10 | tests/architecture/state-writes.test.ts
+    704 |     337 | tests/app/S2A-decision-routes.test.ts
+    666 |     961 | tests/work-graph/S2C-lines-scale.test.ts
+    630 |     226 | tests/work-graph/unknown-call-review-list.test.ts
+    613 |    1101 | tests/work-graph/S2A-queue-derived-cards.test.ts
+    541 |     111 | tests/work-graph/WP2-undelivered-notices.test.ts
+    476 |    1381 | tests/work-graph/S2A-notices-overbound.test.ts
+    314 |     113 | tests/state/invariants-fuzz.test.ts
+    291 |      60 | tests/scenarios/A8-host-restart-paused.test.ts
+    287 |      63 | tests/scenarios/S2C-K-archive-tags-checks.test.ts
+    259 |      39 | tests/scenarios/K3-10-review-round-cells.test.ts
+    250 |      69 | tests/scenarios/A11-no-progress.test.ts
+    247 |     135 | tests/business/K3-review-workflow-rows.test.ts
+    245 |     106 | tests/scenarios/A7-control.test.ts
+    242 |      96 | tests/work-graph/UCR-settle-review.test.ts
+    240 |     132 | tests/work-graph/S5R2-queue-history.test.ts
+    239 |      96 | tests/work-graph/S3-graph-context.test.ts
+    238 |      59 | tests/runtime/B2-01-shell-hook.test.ts
+    234 |      84 | tests/work-graph/WP2-context-extensions.test.ts
+
+by folder: files | summed seconds | max heap MB
+   290 |    8580 |  666 | tests/work-graph
+    99 |    1816 |  291 | tests/scenarios
+   100 |    1444 |  238 | tests/runtime
+    75 |     614 |  704 | tests/app
+    22 |     368 |  247 | tests/business
+    45 |     233 |  231 | tests/composition
+    52 |     156 |  227 | tests/data
+    46 |     118 |  314 | tests/state
+     4 |      85 | 1155 | tests/architecture
+    14 |      67 |   52 | tests/kernel
+    13 |      39 |   68 | tests/record-store
+     1 |       0 |   11 | tests/context
+     1 |       0 |   92 | tests/core
+     4 |       0 |   81 | tests/contracts
+
+wall-time lower bound for W workers = max(longest file, summed time / W) (same machine, no other load):
+  W= 5:   2704 s
+  W= 8:   1690 s
+  W=10:   1381 s
+  W=12:   1381 s
+  W=16:   1381 s

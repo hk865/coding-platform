@@ -1,6 +1,6 @@
 # 编排分片与接线：规格和任务书
 
-**当前状态（2026-10-20）。** 第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）已合入；2A、2B、2C、资源上限片、4A、4B、注记查找提速两轮、4C-1、8A、4C-2 A、B 两段、8D 和 §10 段、L8、K3（`d3146d69`，补做 `5e83681b`）、C1（`35b5f5b1`）、决定 85-5 的两处小修（`c54d00e0`）、T 轮（`0e381ce4`）已合入。最后全量：T 合入时 766 个测试文件全过，9,774 项过、3 项跳过。最新状态见 [STATUS](../../../STATUS.md)，决定 1–85 见 [HANDOFF 顶部](../../../HANDOFF.md)，分片依赖见 [设计目录](../README.md)和 [DESIGN §8.2](../DESIGN.md#82-分片表)。下一步：先由用户定 T 留下的事（[T 验收](../../../reviews/evidence/orchestration-cleanup-T-2026-10-19/lead-acceptance.md)的“留给用户”），然后第 6、7 片的“提示词和上下文”一节（决定 83），冻结后先做 6A 之前的结构一轮（决定 85-1），再开 6A。新界面在后端之后做，基线是[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)。
+**当前状态（2026-10-21）。** 第 0、1、3、5 片、接线包 1、接线包 2（bb924854）、K 片 B（9881a2ae）、K 片 A（cfe35550）已合入；2A、2B、2C、资源上限片、4A、4B、注记查找提速两轮、4C-1、8A、4C-2 A、B 两段、8D 和 §10 段、L8、K3（`d3146d69`，补做 `5e83681b`）、C1（`35b5f5b1`）、决定 85-5 的两处小修（`c54d00e0`）、T 轮（`0e381ce4`）、T 后小修（`aab1a8fd`…`4a8a1400`，五组加一个返工提交，删除 `src/ui` 79 个文件，标签 `old-ui-last`）已合入。最后全量：T 后小修合入时 755 个测试文件全过，9,668 项过、3 项跳过（8 个并行）。最新状态见 [STATUS](../../../STATUS.md)，决定 1–86 见 [HANDOFF 顶部](../../../HANDOFF.md)，分片依赖见 [设计目录](../README.md)和 [DESIGN §8.2](../DESIGN.md#82-分片表)。下一步：先由用户定规模测试的拆分（决定 86-6，[T 验收](../../../reviews/evidence/orchestration-cleanup-T-2026-10-19/lead-acceptance.md)第 8 项和 86-6 的材料），然后第 6、7 片的“提示词和上下文”一节（决定 83），冻结后先做 6A 之前的结构一轮（决定 85-1），再开 6A。新界面在后端之后做，基线是[冻结原型](../../../../ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](../../../../UI-WORKBENCH.md#ui-decisions-2026-10)。
 
 ## 2026-10-13 起怎样做
 
@@ -9,6 +9,10 @@
 - 先和用户确认测试入口，再用 Matt Pocock 的 TDD skill（`mattpocock/skills` 的 `engineering/tdd`，MIT），一条一条先写失败测试、再写刚好通过的实现。通过公开接口测业务流程，不读数据库核对；期望值来自规格或手算例子。
 - 夹具由 Codex 写、lead 核对后冻结；DSH 按上下文分组，第二段和返工新开 Session，说明书写明子任务没回报完之前不要结束回合，只在 18:00 以后跑。记录用量，Codex 只读审查，lead 验收；合入前在有 bwrap 的环境跑全量。操作细节见 [DSH-WORKFLOW §6.10](../../../DSH-WORKFLOW.md#610-大片怎么交给-dsh决定-46)。
 - 验收后按决定 44 由 Codex 推成远端新分支，不强推、不动远端 `next-main`，随后快进本地主目录。文档草稿由 lead 逐行审阅。
+- **有能力、没入口（决定 86-5，2026-10-20）。** 分片先做后端、界面在 E3，能力常比它的入口（路由、工具、界面）早几片。入口出现之前，测这些能力只能手写状态或用替身。所以：
+  - 规格列出本片做了、但还没有公开入口的能力，以及暂时替它们站岗的测试（文件和用例）；
+  - 加入口的那一片，规格和任务书列出这些测试，改成走公开步骤；
+  - 已知的这类账：Agent 的重新入队和重新检查两个工具（GAP-46，T 的 TP-124）挂第 7 片；T 验收“留给用户”第 3 项的几处没有公开读口，记成已知限制，哪一片加了对应的读口就一起改。
 
 ## 接下来做什么
 
@@ -147,7 +151,7 @@ STATE-MACHINES-SPEC（新行和 §15 的行→文件→用例对照）、`module
 合入第 1、3 片后（e48218a5），类型检查、模块边界检查、构建通过，全量测试 250 个测试文件、5626 项全部通过，`verify:isolated` 通过。和 9b94fc55 的 215 个文件、5234 项比，只多了第 0 片 1 个文件 3 项、第 1 片 23 个文件 212 项（另有它改过的已有状态测试多 9 项）、第 3 片 11 个文件 168 项；原有的一个不少，没有新失败。没有调用真实模型。
 
 **写范围比规格 §6 多出来的**（lead 逐条定的，都不改用户看到的行为，除了第 5 片的 L1）：
-- 三片都多 `src/ui/api/routes.ts`：`ROUTE_LABELS` 按 `CoreRouteSuffix` 穷举，新后缀不加标签 `tsconfig.ui.json` 就不过；只加本片新后缀的标签。三份规格都漏了这个文件。
+- 三片都多 `src/ui/api/routes.ts`：`ROUTE_LABELS` 按 `CoreRouteSuffix` 穷举，新后缀不加标签 `tsconfig.ui.json` 就不过；只加本片新后缀的标签。三份规格都漏了这个文件。（2026-10-21 补注：新路由后缀不再需要在那里加标签；这个文件已删除（决定 86-2）。）
 - 第 1 片（最终 95 个路径，规格是 87 个）：`src/core/work-graph/queries/contracts.ts`（`QueryExecutionDependencies.sessionFacts?`，后来加 `legacyProvenance?`）；4 个新的测试辅助文件（Codex 写夹具时加的）；3 个已有测试按规格 §5.5 最后一段改期望（`A2-rework-contract-helpers`、`C1-session-mailbox`、`A2-step1-codecs`）；Workflow 的可选依赖 `records`、`now`、`responsibilityBasis`、`legacyProvenance`，`WorkflowAdvanceResult.value.maintenanceFailures?`，Host 用的 `readTaskRequeue`。`src/app/collaboration-driver.ts` 改过又改回，净不变。
 - 第 3 片（42 个路径）：允许清单没改（第 3 片的 `kept-for` 条目一个也没用到），所以规格的 42 个去掉它、加 `routes.ts`。合入时 `tests/work-graph/S3-graph-context.test.ts` 的夹具补注册第 1 片新读的记录（5 行）。
 - 第 5 片（副本里 93 个路径，没合入）：A1 接受 6 个类型逼出来的文件（`src/contracts/query-job.ts`、`queries/query-job-service.ts`、`src/ui/views/sessions/render.ts`、`routes.ts`、两个已有测试）；L1 让 `src/app/host.ts` 在已有的 `createTargetPlatform` 调用里加一行 `operatorActor: actor`（不加的话生产 Host 没有操作者，每个新的用户写入都是 `unsupported`）。

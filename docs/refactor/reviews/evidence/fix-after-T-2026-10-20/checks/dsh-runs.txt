@@ -1,0 +1,5 @@
+DSH runs of the fix round after T (run.json): run, startedAt, wallSeconds, tokens total, peakContext, stoppedBy, exitCode
+tb-TF-1020	2026-10-20T14:59:38.852Z	8416	44407120	305837	None	0
+tb-TFR1-1021	2026-10-20T17:46:02.461Z	2779	10734105	203338	None	0
+tb-TFR2-1021	2026-10-20T18:34:15.575Z	1418	5755710	109561	None	0
+tb-TFdocs-1021	2026-10-20T19:03:59.049Z	508	12334353	244041	None	0

@@ -1,0 +1,293 @@
+ ✓ tests/runtime/B2-401-world.test.ts (3 tests) 500721ms 221 MB heap used
+     ✓ B2-16 (iii): R = 401 reads exactly three pages and ONE closure read for the hook call  499032ms 266 MB heap used
+     ✓ rework 2 item 4 / B2-18 request reads: R = 401 reads exactly three task pages for one request call  1493ms 221 MB heap used
+
+ ✓ tests/work-graph/S2A-queue-bounds.test.ts (6 tests) 589445ms 221 MB heap used
+     ✓ QA-04 - 5001 member-to-member messages do not enter the queue; 3 waiting and 2 answered user cards remain  8403ms 203 MB heap used
+     ✓ QA-05 - 5001 waiting cards on one Goal page to the end with limit 50, no duplicates and count 5001  87882ms 207 MB heap used
+     ✓ QA-06 - an unfiltered queue over 201 Goals is read; the hand-computed reason cards are unchanged  649ms 209 MB heap used
+     ✓ QA-04 - 5001 member-to-member messages do not enter the queue; 3 waiting and 2 answered user cards remain  221309ms 241 MB heap used
+     ✓ QA-05 - 5001 waiting cards on one Goal page to the end with limit 50, no duplicates and count 5001  261500ms 222 MB heap used
+     ✓ QA-06 - an unfiltered queue over 201 Goals is read; the hand-computed reason cards are unchanged  9700ms 221 MB heap used
+
+ ✓ tests/work-graph/unknown-call-review-list.test.ts (11 tests) 228433ms 630 MB heap used
+     ✓ listReviews memory: by Goal+status pages with cursor and nextCursor  2015ms 203 MB heap used
+     ✓ listReviews sqlite: by Goal+status pages with cursor and nextCursor  6113ms 202 MB heap used
+     ✓ listReviews memory: by workspace+open returns only open records  1683ms 191 MB heap used
+     ✓ listReviews sqlite: by workspace+open returns only open records  5994ms 188 MB heap used
+     ✓ listReviews: a limit outside 1..200 is invalid  378ms 208 MB heap used
+     ✓ listReviews memory: a cursor outside the filter is a keyset bound, not invalid  1188ms 204 MB heap used
+     ✓ listReviews sqlite: a cursor outside the filter is a keyset bound, not invalid  4788ms 206 MB heap used
+     ✓ listReviews memory: more than a store page of records lists without a cap  64636ms 444 MB heap used
+     ✓ listReviews sqlite: more than a store page of records lists without a cap  139477ms 646 MB heap used
+     ✓ listReviews: an unstable per-tuple watermark retries to the stable watermark  1075ms 666 MB heap used
+     ✓ listReviews: a persistently mixed watermark is not_ready, never a stale page  1083ms 630 MB heap used
+
+ ✓ tests/app/S2A-decision-routes.test.ts (4 tests) 349782ms 704 MB heap used
+     ✓ QA-14 (a) - the route returns the first page and a cursor, then pages to all 5,001 cards  69206ms 233 MB heap used
+     ✓ QA-14 (a) - the route returns the first page and a cursor, then pages to all 5,001 cards  51927ms 704 MB heap used
+
+ ✓ tests/work-graph/S2A-queue-request-candidates.test.ts (2 tests) 180703ms 114 MB heap used
+     ✓ QA-09 (二) - 5001 candidates on one request resolve to the live head through card and queue  4322ms 265 MB heap used
+     ✓ QA-09 (二) - 5001 candidates on one request resolve to the live head through card and queue  176379ms 114 MB heap used
+
+ ✓ tests/work-graph/S2C-lines-scale.test.ts (8 tests) 1023355ms 666 MB heap used
+     ✓ 2C-25 (1) the four line buckets and the archived formula are the hand-computed counts  2816ms 267 MB heap used
+     ✓ 2C-25 (2) lines/archived pages all 2,750 rows by archive time descending, no gaps or dupes  95093ms 941 MB heap used
+     ✓ 2C-25 (3) at the default budget R reports two undelivered replies and W one pending anchor  2121ms 292 MB heap used
+     ✓ 2C-25 (4) a budget of 10 turns R and W partial, never 0, and leaves Z unchanged  4012ms 350 MB heap used
+     ✓ 2C-25 (1) the four line buckets and the archived formula are the hand-computed counts  1981ms 350 MB heap used
+     ✓ 2C-25 (2) lines/archived pages all 2,750 rows by archive time descending, no gaps or dupes  79826ms 386 MB heap used
+     ✓ 2C-25 (3) at the default budget R reports two undelivered replies and W one pending anchor  1895ms 519 MB heap used
+     ✓ 2C-25 (4) a budget of 10 turns R and W partial, never 0, and leaves Z unchanged  3596ms 725 MB heap used
+
+ ✓ tests/work-graph/S2A-queue-goal-runs.test.ts (2 tests) 178164ms 171 MB heap used
+     ✓ QA-17 - a Goal with 5001 Runs still yields its hand-computed reason card, no incomplete  3221ms 219 MB heap used
+     ✓ QA-17 - a Goal with 5001 Runs still yields its hand-computed reason card, no incomplete  174941ms 171 MB heap used
+
+ ✓ tests/business/K3-review-workflow-rows.test.ts (60 tests) 137166ms 247 MB heap used
+
+ ✓ tests/state/invariants-fuzz.test.ts (13 tests) 114747ms 314 MB heap used
+
+ ✓ tests/scenarios/A7-control.test.ts (24 tests) 107411ms 245 MB heap used
+
+ ✓ tests/work-graph/S2A-queue-derived-cards.test.ts (4 tests) 1144452ms 613 MB heap used
+     ✓ QA-07 - 5001 planning jobs on one Goal still yield the question cards, count literal, no incomplete  5244ms 502 MB heap used
+     ✓ QA-09 (一) - a derived planning card past the old 25x200 window is read by readDecisionCard  2618ms 532 MB heap used
+     ✓ QA-07 - 5001 planning jobs on one Goal still yield the question cards, count literal, no incomplete  5677ms 604 MB heap used
+     ✓ QA-09 (一) - a derived planning card past the old 25x200 window is read by readDecisionCard  2369ms 613 MB heap used
+
+ ✓ tests/work-graph/S3-graph-context.test.ts (60 tests) 96965ms 239 MB heap used
+     ✓ GR01 tB card carries oB/vB/Implement B and the p1@1 source  872ms 139 MB heap used
+     ✓ GR02 stage s children page tA then tB  676ms 149 MB heap used
+     ✓ GR03 task neighbours keep the tA dependency edge and not parent/child  638ms 142 MB heap used
+     ✓ GR04 tB executions are only runB and add no writes  648ms 137 MB heap used
+     ✓ GR05 a path owned by M1 and M2 returns both modules by key order  609ms 133 MB heap used
+     ✓ GR06 find B returns task:tB, module:M1, run:runB and never note-only M2  637ms 175 MB heap used
+     ✓ GR07 find b matches the same B/b nodes now that matching is NFC + ASCII-lowercased  640ms 170 MB heap used
+     ✓ RW-13 find a nested path returns only its deepest owner, not the ancestor module  639ms 163 MB heap used
+     ✓ RW-13 find under an equal-prefix tie returns both tied modules  668ms 158 MB heap used
+     ✓ RW-13 find keeps module identity when one module lists src and src/  684ms 153 MB heap used
+     ✓ RW-13 find on a real src/src tie returns both tied module hits  621ms 147 MB heap used
+     ✓ RW-13 find normalises a Src module path so src/a.ts still finds it  629ms 188 MB heap used
+     ✓ RW-13 find on two modules that both declare src/ returns both hits for src  679ms 182 MB heap used
+     ✓ RW-13 find returns both tied src modules and never the shorter lib module  639ms 176 MB heap used
+     ✓ RW-13 find still finds a module src/sub under the query src  649ms 169 MB heap used
+     ✓ S8A-16 find on a root-only `.` module returns it for any non-empty path  643ms 160 MB heap used
+     ✓ S8A-17 find on two root `.` modules returns both tied modules  623ms 201 MB heap used
+     ✓ GR08 find limit 0 is invalid before any record read  644ms 193 MB heap used
+     ✓ GR09 a cursor from another Goal is invalid  642ms 186 MB heap used
+     ✓ GR10 a page started on p1 is rejected after the Plan moved to p2  671ms 183 MB heap used
+     ✓ GR11 path ../x is invalid before any file or material read  627ms 175 MB heap used
+     ✓ GR12 a node outside p/w is forbidden  595ms 215 MB heap used
+     ✓ GR13 without extensions all five availabilities are not_implemented  647ms 208 MB heap used
+     ✓ GR14 a damaged catalog codec is unavailable and never a ready empty graph  651ms 201 MB heap used
+     ✓ GR15 find limit 101 is invalid before any record read  667ms 192 MB heap used
+     ✓ GR16 an empty find needle is invalid before any record read  637ms 181 MB heap used
+     ✓ GR17 a legal QueryRun reads session SB by its full real id with the original initiator  648ms 224 MB heap used
+     ✓ GR18 a QueryRun whose initiator differs from the submission is forbidden  618ms 216 MB heap used
+     ✓ GR19 a canonical Work runB executions read keeps the work_run Session context  640ms 209 MB heap used
+     ✓ S8A-18 find on `.` returns every module  612ms 202 MB heap used
+     ✓ GR01 tB card carries oB/vB/Implement B and the p1@1 source  2475ms 193 MB heap used
+     ✓ GR02 stage s children page tA then tB  2279ms 182 MB heap used
+     ✓ GR03 task neighbours keep the tA dependency edge and not parent/child  2295ms 189 MB heap used
+     ✓ GR04 tB executions are only runB and add no writes  2406ms 191 MB heap used
+     ✓ GR05 a path owned by M1 and M2 returns both modules by key order  2400ms 193 MB heap used
+     ✓ GR06 find B returns task:tB, module:M1, run:runB and never note-only M2  2786ms 187 MB heap used
+     ✓ GR07 find b matches the same B/b nodes now that matching is NFC + ASCII-lowercased  2505ms 189 MB heap used
+     ✓ RW-13 find a nested path returns only its deepest owner, not the ancestor module  2526ms 191 MB heap used
+     ✓ RW-13 find under an equal-prefix tie returns both tied modules  2625ms 192 MB heap used
+     ✓ RW-13 find keeps module identity when one module lists src and src/  2538ms 195 MB heap used
+     ✓ RW-13 find on a real src/src tie returns both tied module hits  2470ms 196 MB heap used
+     ✓ RW-13 find normalises a Src module path so src/a.ts still finds it  2476ms 204 MB heap used
+     ✓ RW-13 find on two modules that both declare src/ returns both hits for src  2603ms 208 MB heap used
+     ✓ RW-13 find returns both tied src modules and never the shorter lib module  2587ms 210 MB heap used
+     ✓ RW-13 find still finds a module src/sub under the query src  2595ms 212 MB heap used
+     ✓ S8A-16 find on a root-only `.` module returns it for any non-empty path  2610ms 214 MB heap used
+     ✓ S8A-17 find on two root `.` modules returns both tied modules  2520ms 212 MB heap used
+     ✓ GR08 find limit 0 is invalid before any record read  2546ms 226 MB heap used
+     ✓ GR09 a cursor from another Goal is invalid  2496ms 218 MB heap used
+     ✓ GR10 a page started on p1 is rejected after the Plan moved to p2  2730ms 234 MB heap used
+     ✓ GR11 path ../x is invalid before any file or material read  2672ms 225 MB heap used
+     ✓ GR12 a node outside p/w is forbidden  2544ms 215 MB heap used
+     ✓ GR13 without extensions all five availabilities are not_implemented  2715ms 230 MB heap used
+     ✓ GR14 a damaged catalog codec is unavailable and never a ready empty graph  2670ms 221 MB heap used
+     ✓ GR15 find limit 101 is invalid before any record read  2608ms 235 MB heap used
+     ✓ GR16 an empty find needle is invalid before any record read  2726ms 226 MB heap used
+     ✓ GR17 a legal QueryRun reads session SB by its full real id with the original initiator  2717ms 244 MB heap used
+     ✓ GR18 a QueryRun whose initiator differs from the submission is forbidden  2577ms 255 MB heap used
+     ✓ GR19 a canonical Work runB executions read keeps the work_run Session context  2907ms 244 MB heap used
+     ✓ S8A-18 find on `.` returns every module  2861ms 239 MB heap used
+
+ ✓ tests/work-graph/UCR-settle-review.test.ts (36 tests) 97153ms 242 MB heap used
+     ✓ UCR-07 memory: a normally ended round settles to needs_decision with pending items undetermined  1235ms 173 MB heap used
+     ✓ UCR-07 sqlite: a normally ended round settles to needs_decision with pending items undetermined  4466ms 189 MB heap used
+     ✓ UCR-07 memory: review_unavailable with no active round settles and names the reason  789ms 182 MB heap used
+     ✓ UCR-07 sqlite: review_unavailable with no active round settles and names the reason  3930ms 181 MB heap used
+     ✓ UCR-06 memory: an outcome_unknown round is busy and writes nothing  967ms 197 MB heap used
+     ✓ UCR-06 sqlite: an outcome_unknown round is busy and writes nothing  4382ms 211 MB heap used
+     ✓ UCR-08b memory: a held resolved record settles with the fixed no-conclusion evidence  940ms 181 MB heap used
+     ✓ UCR-08b sqlite: a held resolved record settles with the fixed no-conclusion evidence  4514ms 181 MB heap used
+     ✓ L16 D6 memory: a truncated command conclusion is re-judged undetermined with the model text kept  861ms 204 MB heap used
+     ✓ L16 D6 sqlite: a truncated command conclusion is re-judged undetermined with the model text kept  3921ms 174 MB heap used
+     ✓ L16 D6 memory: an unreadable manifest is unavailable and writes nothing  832ms 192 MB heap used
+     ✓ L16 D6 sqlite: an unreadable manifest is unavailable and writes nothing  4093ms 210 MB heap used
+     ✓ K3-10 memory 'done'+'unlikely'  926ms 227 MB heap used
+     ✓ K3-10 memory 'done'+'possible'  1174ms 194 MB heap used
+     ✓ K3-10 memory 'done'+'undetermined'  894ms 205 MB heap used
+     ✓ K3-10 memory 'not_done'+'unlikely'  887ms 223 MB heap used
+     ✓ K3-10 memory 'not_done'+'possible'  895ms 235 MB heap used
+     ✓ K3-10 memory 'not_done'+'undetermined'  929ms 205 MB heap used
+     ✓ K3-10 memory 'partial'+'unlikely'  889ms 223 MB heap used
+     ✓ K3-10 memory 'partial'+'possible'  899ms 239 MB heap used
+     ✓ K3-10 memory 'partial'+'undetermined'  909ms 246 MB heap used
+     ✓ K3-10 memory 'undetermined'+'unlikely'  931ms 209 MB heap used
+     ✓ K3-10 memory 'undetermined'+'possible'  897ms 223 MB heap used
+     ✓ K3-10 memory 'undetermined'+'undetermined'  920ms 241 MB heap used
+     ✓ K3-10 sqlite 'done'+'unlikely'  4367ms 254 MB heap used
+     ✓ K3-10 sqlite 'done'+'possible'  4433ms 210 MB heap used
+     ✓ K3-10 sqlite 'done'+'undetermined'  4466ms 213 MB heap used
+     ✓ K3-10 sqlite 'not_done'+'unlikely'  4583ms 218 MB heap used
+     ✓ K3-10 sqlite 'not_done'+'possible'  4404ms 216 MB heap used
+     ✓ K3-10 sqlite 'not_done'+'undetermined'  4471ms 216 MB heap used
+     ✓ K3-10 sqlite 'partial'+'unlikely'  4659ms 216 MB heap used
+     ✓ K3-10 sqlite 'partial'+'possible'  4618ms 227 MB heap used
+     ✓ K3-10 sqlite 'partial'+'undetermined'  4703ms 236 MB heap used
+     ✓ K3-10 sqlite 'undetermined'+'unlikely'  4769ms 242 MB heap used
+     ✓ K3-10 sqlite 'undetermined'+'possible'  4537ms 229 MB heap used
+     ✓ K3-10 sqlite 'undetermined'+'undetermined'  5058ms 242 MB heap used
+
+ ✓ tests/work-graph/B2-09-crr-owner.test.ts (40 tests) 98348ms 212 MB heap used
+     ✓ F-021 (memory): a script-form request expands through the real workspace reader  1121ms 153 MB heap used
+     ✓ F-021 (sqlite): a script-form request expands through the real workspace reader  4113ms 151 MB heap used
+     ✓ the same request identity and fingerprint replays the original write with its cursor (memory)  777ms 153 MB heap used
+     ✓ the same request identity and fingerprint replays the original write with its cursor (sqlite)  4092ms 204 MB heap used
+     ✓ the same identity with different content is idempotency_conflict (memory)  768ms 205 MB heap used
+     ✓ the same identity with different content is idempotency_conflict (sqlite)  4094ms 161 MB heap used
+     ✓ applying the same answer twice replays the first application once (memory)  768ms 165 MB heap used
+     ✓ applying the same answer twice replays the first application once (sqlite)  4212ms 169 MB heap used
+     ✓ a moved request answers revision_conflict with the current revision (memory)  726ms 166 MB heap used
+     ✓ a moved request answers revision_conflict with the current revision (sqlite)  3764ms 171 MB heap used
+     ✓ consumeAllowance records usedBy in the returned request state (memory)  674ms 172 MB heap used
+     ✓ consumeAllowance records usedBy in the returned request state (sqlite)  3875ms 180 MB heap used
+     ✓ a failed allowance commit leaves the allowance untouched and rejects the call (memory)  703ms 179 MB heap used
+     ✓ a failed allowance commit leaves the allowance untouched and rejects the call (sqlite)  4408ms 177 MB heap used
+     ✓ not_blocked, pending and allowed are not_written; only CRR-01 commits  698ms 189 MB heap used
+     ✓ CRR-07 forms_added on a denied_final request commits with its real cursor and refused outcome  727ms 187 MB heap used
+     ✓ a replayed pending forms_added reply carries the waiting record's command  709ms 185 MB heap used
+     ✓ not_blocked, pending and allowed are not_written; only CRR-01 commits  4213ms 186 MB heap used
+     ✓ CRR-07 forms_added on a denied_final request commits with its real cursor and refused outcome  4122ms 187 MB heap used
+     ✓ a replayed pending forms_added reply carries the waiting record's command  3993ms 185 MB heap used
+     ✓ readRequest derives closed without persisting while the Task is closed  728ms 187 MB heap used
+     ✓ a closure read failure is unavailable, never still valid  712ms 211 MB heap used
+     ✓ the next applyAnswer persists closed and returns busy  740ms 190 MB heap used
+     ✓ the next requestRerun persists closed and returns busy  716ms 192 MB heap used
+     ✓ consumeAllowance on a closed Task rejects and voids the allowance  734ms 198 MB heap used
+     ✓ listRequests task form returns pending items as closed  719ms 196 MB heap used
+     ✓ a closure read failure makes the task list unavailable, never open  723ms 221 MB heap used
+     ✓ readRequest derives closed without persisting while the Task is closed  4204ms 238 MB heap used
+     ✓ a closure read failure is unavailable, never still valid  4035ms 236 MB heap used
+     ✓ the next applyAnswer persists closed and returns busy  4300ms 230 MB heap used
+     ✓ the next requestRerun persists closed and returns busy  4290ms 227 MB heap used
+     ✓ consumeAllowance on a closed Task rejects and voids the allowance  4280ms 232 MB heap used
+     ✓ listRequests task form returns pending items as closed  4330ms 229 MB heap used
+     ✓ a closure read failure makes the task list unavailable, never open  4189ms 228 MB heap used
+     ✓ a not_ready read is unavailable and leaves no request  747ms 226 MB heap used
+     ✓ a cancelled read is propagated as cancelled and leaves no request  753ms 225 MB heap used
+     ✓ an unavailable read is propagated as unavailable and leaves no request  714ms 223 MB heap used
+     ✓ a not_ready read is unavailable and leaves no request  4152ms 220 MB heap used
+     ✓ a cancelled read is propagated as cancelled and leaves no request  4404ms 219 MB heap used
+     ✓ an unavailable read is propagated as unavailable and leaves no request  4318ms 212 MB heap used
+
+ ✓ tests/work-graph/S5R2-queue-history.test.ts (19 tests) 131711ms 240 MB heap used
+     ✓ R2A01 - the later abandoned chain supersedes the earlier accepted chain  596ms 121 MB heap used
+     ✓ R2A02 - the latest abandoned chain wins even when its refKey sorts first  487ms 151 MB heap used
+     ✓ R2A03 - the latest accepted chain supplies the closed request card  483ms 131 MB heap used
+     ✓ R2A04 - a replaced P1 never adds a second Q1 history card  443ms 163 MB heap used
+     ✓ R2A05 - a new live head owns Q1 and suppresses its accepted history  413ms 126 MB heap used
+     ✓ R2A06 - an independent accepted candidate keeps its own proposal identity  434ms 148 MB heap used
+     ✓ R2A07 / R2A08 - an unfiltered Workspace queue over 201 Goals is read, not refused  659ms 169 MB heap used
+     ✓ R2A10 - an ordinary Session message is not a direct decision card  436ms 127 MB heap used
+     ✓ R2A11 - a Goal A proposal cannot become a Goal B decision card  402ms 150 MB heap used
+     ✓ R2A01 - the later abandoned chain supersedes the earlier accepted chain  3382ms 127 MB heap used
+     ✓ R2A02 - the latest abandoned chain wins even when its refKey sorts first  3330ms 122 MB heap used
+     ✓ R2A03 - the latest accepted chain supplies the closed request card  3335ms 123 MB heap used
+     ✓ R2A04 - a replaced P1 never adds a second Q1 history card  3097ms 124 MB heap used
+     ✓ R2A05 - a new live head owns Q1 and suppresses its accepted history  2795ms 123 MB heap used
+     ✓ R2A06 - an independent accepted candidate keeps its own proposal identity  2866ms 125 MB heap used
+     ✓ R2A07 / R2A08 - an unfiltered Workspace queue over 201 Goals is read, not refused  10385ms 125 MB heap used
+     ✓ R2A10 - an ordinary Session message is not a direct decision card  3141ms 127 MB heap used
+     ✓ R2A11 - a Goal A proposal cannot become a Goal B decision card  3061ms 127 MB heap used
+     ✓ R2A09 - 5001 real pending user requests are all read by paging the queue  91961ms 240 MB heap used
+
+ ✓ tests/work-graph/K3-26-unknown-call-review-storage.test.ts (38 tests) 76355ms 219 MB heap used
+     ✓ K3-26 (七) memory: a complete draft with 33 items is over the 32-item limit and writes nothing  1196ms 182 MB heap used
+     ✓ K3-26 (七) sqlite: a complete draft with 33 items is over the 32-item limit and writes nothing  4320ms 194 MB heap used
+     ✓ K3-26 (八) memory: an undecodable_call draft is needs_decision  876ms 182 MB heap used
+     ✓ K3-26 (八) sqlite: an undecodable_call draft is needs_decision  3583ms 182 MB heap used
+     ✓ K3-26 (九) memory: the real draft of a 513-byte recorded callId is undecodable_call and the id is nowhere  737ms 186 MB heap used
+     ✓ K3-26 (九) sqlite: the real draft of a 513-byte recorded callId is undecodable_call and the id is nowhere  3014ms 188 MB heap used
+     ✓ K3-26 (八) memory: an item kind that disagrees with L3 is invalid and writes nothing  560ms 181 MB heap used
+     ✓ K3-26 (八) sqlite: an item kind that disagrees with L3 is invalid and writes nothing  2683ms 172 MB heap used
+     ✓ K3-26 (六) memory: a complete inventory when the Kernel was unreadable at stop is invalid  553ms 166 MB heap used
+     ✓ K3-26 (六) sqlite: a complete inventory when the Kernel was unreadable at stop is invalid  3578ms 172 MB heap used
+     ✓ K3-26 (六) memory: a complete inventory missing a recorded unresolved call is invalid  758ms 216 MB heap used
+     ✓ K3-26 (六) sqlite: a complete inventory missing a recorded unresolved call is invalid  3658ms 210 MB heap used
+     ✓ K3-26 (六) memory: a too_large inventory lists recorded calls and counts the rest in itemsOmitted  719ms 195 MB heap used
+     ✓ K3-26 (六) sqlite: a too_large inventory lists recorded calls and counts the rest in itemsOmitted  3716ms 191 MB heap used
+     ✓ K3-26 (九) memory: a draft item callId over 512 bytes is invalid and writes nothing  636ms 184 MB heap used
+     ✓ K3-26 (九) sqlite: a draft item callId over 512 bytes is invalid and writes nothing  3297ms 175 MB heap used
+     ✓ K3-26 (九) memory: a real 512-byte callId is listed by the Host draft  686ms 221 MB heap used
+     ✓ K3-26 (九) sqlite: a real 512-byte callId is listed by the Host draft  3462ms 218 MB heap used
+     ✓ K3-26: RUN-25 creates the review record in the same commit and reads back  704ms 206 MB heap used
+     ✓ K3-26: RUN-25 creates the review record in the same commit and reads back  3591ms 202 MB heap used
+     ✓ K3-26: one injected failure on RUN-25's single commit leaves no partial Run end or review record; the retry writes both together  826ms 203 MB heap used
+     ✓ K3-26: one injected failure on RUN-25's single commit leaves no partial Run end or review record; the retry writes both together  3684ms 225 MB heap used
+     ✓ K3-47 (一) memory: the same RUN-25 request replays the original receipt; a moved revision is revision_conflict  805ms 211 MB heap used
+     ✓ K3-47 (一) sqlite: the same RUN-25 request replays the original receipt; a moved revision is revision_conflict  3615ms 209 MB heap used
+     ✓ K3-47 (四) memory: a P6 review claim re-holds the lease, writes UCR-03 and creates the review Run  747ms 209 MB heap used
+     ✓ K3-47 (四) sqlite: a P6 review claim re-holds the lease, writes UCR-03 and creates the review Run  3513ms 207 MB heap used
+     ✓ K3-47 (四) memory: an ordinary review claim replays the same receipt without a second round  696ms 203 MB heap used
+     ✓ K3-47 (四) sqlite: an ordinary review claim replays the same receipt without a second round  3436ms 201 MB heap used
+     ✓ K3-47 (四) memory: a P4 review claim (a covering TaskRequeue after R) also re-holds the lease  748ms 197 MB heap used
+     ✓ K3-47 (四) sqlite: a P4 review claim (a covering TaskRequeue after R) also re-holds the lease  3946ms 196 MB heap used
+     ✓ K3-47 (三) memory: requeueTask (afterRun R) commits after a review round releases the lease  957ms 216 MB heap used
+     ✓ K3-47 (三) sqlite: requeueTask (afterRun R) commits after a review round releases the lease  4950ms 226 MB heap used
+     ✓ K3-47 (三) memory: the requeue claim carrying its requeueRef re-holds the lease  1058ms 245 MB heap used
+     ✓ K3-47 (三) sqlite: the requeue claim carrying its requeueRef re-holds the lease  4798ms 219 MB heap used
+
+ ✓ tests/work-graph/S2A-notices-attempt.test.ts (2 tests) 91121ms 185 MB heap used
+     ✓ L11 201 requeues cross the 200-item source page and the ordered window is read once per attempt  18596ms 157 MB heap used
+     ✓ L11 201 requeues cross the 200-item source page and the ordered window is read once per attempt  72523ms 185 MB heap used
+
+ ✓ tests/scenarios/A11-no-progress.test.ts (10 tests) 70381ms 250 MB heap used
+
+ ✓ tests/work-graph/WP2-undelivered-notices.test.ts (23 tests) 112657ms 541 MB heap used
+     ✓ F09 a reply saved after the Session became unavailable appears once  440ms 146 MB heap used
+     ✓ F09 a derived Query Answer on an already-unavailable Session still becomes a notice at its reply position  330ms 121 MB heap used
+     ✓ F10 a reply saved before the Session became unavailable becomes unseen when it later does  321ms 135 MB heap used
+     ✓ M04 the same message+reply pair is deduplicated when its metadata agrees and refused when it conflicts  314ms 127 MB heap used
+     ✓ M05 a zero or malformed platform cursor is never a stored position: the Session and SessionMessage records refuse it  2939ms 150 MB heap used
+     ✓ M08 a malformed continuation cursor is invalid, never an empty success, unavailable or a restart from page 1  489ms 147 MB heap used
+     ✓ M07 5000 real undelivered replies are all read and 5001 are all read too (no capacity bound)  104132ms 534 MB heap used
+
+ ✓ tests/work-graph/S2A-notices-overbound.test.ts (2 tests) 1384261ms 476 MB heap used
+     ✓ QA-10 (二) a 5,001-Session directory, 5,001 undelivered replies and 5,001 member notices page to the end without capacity  256348ms 322 MB heap used
+     ✓ QA-10 (二) a 5,001-Session directory, 5,001 undelivered replies and 5,001 member notices page to the end without capacity  1127910ms 476 MB heap used
+
+ ✓ tests/scenarios/A8-host-restart.test.ts (12 tests) 70904ms 203 MB heap used
+
+ ✓ tests/runtime/A2-reconcile-runtime.test.ts (30 tests) 63409ms 156 MB heap used
+
+ ✓ tests/work-graph/WP2-context-extensions.test.ts (10 tests) 84399ms 234 MB heap used
+     ✓ F05 the reader returns the real Goal autonomy saved by the owner  433ms 153 MB heap used
+     ✓ F06 a real waiting-answer card becomes its literal L5 row and absent sources get explicit hint lines  372ms 139 MB heap used
+     ✓ F06 answering the existing decision removes its row from the next real queue read  405ms 121 MB heap used
+     ✓ F07 memory follows the real page boundary and keeps the named tail Task card under focus  776ms 129 MB heap used
+     ✓ F07 sqlite follows the real page boundary and keeps the named tail Task card under focus  6171ms 131 MB heap used
+     ✓ F07 5,000 real waiting cards are all read and one more is read too (no capacity bound)  76236ms 233 MB heap used
+
+ ✓ tests/scenarios/S2C-K-archive-tags-checks.test.ts (5 tests) 63332ms 287 MB heap used
+
+ ✓ tests/scenarios/A8-host-restart-paused.test.ts (8 tests) 59903ms 291 MB heap used
+

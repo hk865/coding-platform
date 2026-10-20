@@ -1,5 +1,7 @@
 # 第 8 片规格：架构随工作演进
 
+**后注（决定 86-2，lead 2026-10-21）：** 旧浏览器工作台 `src/ui` 已删（代码在标签 `old-ui-last`）。本规格说的“设置页的手动按钮”（§0、§5 和 §13 几处）和 §6 8A 文件清单里的设置页文件（`src/ui/views/setup/actions.ts`、`src/ui/views/graphs/tabs.ts`）说的是删除之前的代码；§13 的 L8 限定“手动抓取照旧”现在只剩 `architecture/capture` 路由（`mappings` 可选，缺省由服务按活动目录生成）。手动抓取的按钮随新界面（E3）做；第 8 片剩下的部分不再改旧界面文件。
+
 **后注（4A 合入，lead 2026-10-16）：** 4A 的书记范围（`src/core/work-graph/notes/scribe-scope.ts` 的 `matchingPrefixLength`）把根目录前缀 `"."` 当作不匹配（-1）。8A 改根路径时一起改成长度 0，让负责根模块 R 的书记管 `src/loose.ts` 这类文件，并加一例：书记负责 R，`src/loose.ts` 上的注记被收下、归这个书记管。在那之前注记的范围和 `mapExecutedFilesToModules` 一致。正文原样保留。
 
 **后注（4B 合入，lead 2026-10-16）：** 8A 改目录修订时一起做两件事。① 把每次目录修订的提交和它的 `ArchitectureCatalogRevised` 事件连上（例如目录修订记录上一个提交时绑定的 `since` 游标），这样第 4 片的目录版本列表（`notes.listCatalogVersions`）才能显示每一版的原因和时间；今天它的 `at` 是 `null`，原因显示“原因记在目录修订里，第 8 片接上后显示”（第 4 片规格 §10）。② 目录修订能删模块以后，补测第 4 片里因为删不了模块而跳过的三处：M-15 的 `module_removed`、M-16 的“模块没了但还有头”、M-02 的删除一半（`catalog-service.ts:671–673` 今天拒绝删模块）。

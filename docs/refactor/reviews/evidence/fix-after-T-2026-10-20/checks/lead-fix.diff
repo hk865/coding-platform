@@ -1,0 +1,97 @@
+diff --git a/scripts/verify-isolated.mjs b/scripts/verify-isolated.mjs
+index 93cf932..73a0d48 100644
+--- a/scripts/verify-isolated.mjs
++++ b/scripts/verify-isolated.mjs
+@@ -47,8 +47,8 @@ try {
+     "const root = mkdtempSync(join(tmpdir(), 'next-workbench-smoke-')); " +
+     "const database = mkdtempSync(join(tmpdir(), 'next-workbench-db-')); " +
+     "const publicDir = mkdtempSync(join(tmpdir(), 'next-workbench-public-')); " +
+-    "writeFileSync(join(publicDir, 'index.html'), '<!doctype html><meta name=\"platform-token\" content=\"' + PLATFORM_TOKEN_PLACEHOLDER + '\">'); " +
+-    "try { const host = await createLocalWorkbenchHost({ storage: { kind: 'sqlite', directory: database }, " +
++    "try { writeFileSync(join(publicDir, 'index.html'), '<!doctype html><meta name=\"platform-token\" content=\"' + PLATFORM_TOKEN_PLACEHOLDER + '\">'); " +
++    "const host = await createLocalWorkbenchHost({ storage: { kind: 'sqlite', directory: database }, " +
+     "actor: { kind: 'system', id: 'smoke-host' }, publicDir, " +
+     "workspaces: [{ scope: { projectId: 'smoke', workspaceId: 'ws' }, name: 'smoke', root, workspaceRevision: 0, readPrefixes: [] }] }); " +
+     "try { const address = await host.listen(); " +
+diff --git a/src/core/work-graph/persistence/evidence-record-codecs.ts b/src/core/work-graph/persistence/evidence-record-codecs.ts
+index 487d31e..3abf022 100644
+--- a/src/core/work-graph/persistence/evidence-record-codecs.ts
++++ b/src/core/work-graph/persistence/evidence-record-codecs.ts
+@@ -182,7 +182,7 @@ function checkSnapshotProblem(value: unknown): string | null {
+     // VR-04/VR-13 with C5: the current writer always records why an executing
+     // check was interrupted, so an interrupted check without a cause is damaged
+     // (decision 79), not an old shape. Pending/executing and PASS/FAIL checks
+-    // keep the optional cause and its null (absent reads as null).
++    // keep the optional cause: it may be absent or null.
+     if (value['phase'] === 'interrupted' && (value['incompleteCause'] === undefined || value['incompleteCause'] === null)) {
+         return 'an interrupted round check requires its incompleteCause';
+     }
+diff --git a/src/core/work-graph/persistence/plan-record-codecs.ts b/src/core/work-graph/persistence/plan-record-codecs.ts
+index b6a09e5..41a96d7 100644
+--- a/src/core/work-graph/persistence/plan-record-codecs.ts
++++ b/src/core/work-graph/persistence/plan-record-codecs.ts
+@@ -988,11 +988,7 @@ export function decodePlanProposalOrigin(
+   if (typeof parsed['since'] !== 'string') {
+     return invalid('a PlanProposal origin must carry a commit cursor since');
+   }
+-  return { status: 'decoded', value: {
+-    since: parsed['since'] as CommitCursor,
+-    ...(parsed['noticeAutomationCap'] === undefined
+-      ? {} : { noticeAutomationCap: parsed['noticeAutomationCap'] as number }),
+-  } };
++  return { status: 'decoded', value: { since: parsed['since'] as CommitCursor } };
+ }
+ 
+ export function decodePlanRevisionSnapshot(record: EncodedRecord): DecodeResult<PlanRevisionSnapshot> {
+diff --git a/src/core/work-graph/sessions/session-record-codecs.ts b/src/core/work-graph/sessions/session-record-codecs.ts
+index 5992bdc..cb3ec7d 100644
+--- a/src/core/work-graph/sessions/session-record-codecs.ts
++++ b/src/core/work-graph/sessions/session-record-codecs.ts
+@@ -711,8 +711,8 @@ export function checkSessionBody(body: UnknownRecord, requireBoundUnavailableSin
+   if (!['available', 'recoverable', 'unavailable'].includes(String(body['health']))) {
+     return 'session health is not recognized';
+   }
+-  // SD-2: why `health` is unavailable. A current unavailable record always
+-  // carries one; only an available Session may keep the legal `null`.
++  // SD-2: why `health` is unavailable. An unavailable record must carry a
++  // recognized conclusion; any other health keeps the optional `null`.
+   const conclusion = body['healthConclusion'];
+   if (body['health'] === 'unavailable') {
+     if (!(SESSION_HEALTH_CONCLUSIONS as readonly unknown[]).includes(conclusion)) {
+diff --git a/tests/work-graph/A2-step1-codecs.test.ts b/tests/work-graph/A2-step1-codecs.test.ts
+index 1c62f03..81a6cbd 100644
+--- a/tests/work-graph/A2-step1-codecs.test.ts
++++ b/tests/work-graph/A2-step1-codecs.test.ts
+@@ -94,7 +94,6 @@ import {
+ import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
+ import { decodeRun } from '../../src/core/work-graph/materials/run-snapshot-decoder.js';
+ import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
+-import { chainEvidenceIds } from '../../src/core/work-graph/state/verification-machine.js';
+ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+ import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
+ import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
+@@ -477,9 +476,13 @@ describe('VerificationRound chain and incompleteCause (spec §9.1, C5)', () => {
+       phase: 'interrupted', outcome: null, incompleteCause: 'host_restart' });
+     expect(root.gaps).toContainEqual(expect.objectContaining({ code: 'interrupted_check',
+       message: `the required check ${fixture.interruptCheck.checkId} was interrupted (host_restart)` }));
+-    // The successor is the owner's public reverify of that real interruption.
++    // The successor is the owner's public reverify of that real interruption. VR-09: it supersedes the evidence
++    // of the chain so far. The root supersedes nothing (rootChain) and holds the evidence of its one executed
++    // check (the PASS); the interrupted check left none. So the successor supersedes exactly that one id.
++    expect(root.chain.supersededEvidenceIds).toEqual([]);
++    expect(root.evidenceRefs).toHaveLength(1);
+     expect(successor.chain).toMatchObject({ ordinal: 2, predecessorRoundRef: root.ref, predecessorRevision: root.revision,
+-      supersededEvidenceIds: chainEvidenceIds(root), autoCount: 0,
++      supersededEvidenceIds: [root.evidenceRefs[0]!.evidenceId], autoCount: 0,
+       reverify: { requestedBy: R3E_HOST, actorClass: 'human', failureClass: 'check_incomplete',
+         exemption: 'host_interruption', sourceChanged: false, newInputRefs: [], reason: null } });
+     expect(successor.checks.every(check => check.phase === 'pending')).toBe(true);
+@@ -528,7 +531,7 @@ describe('VerificationRound chain and incompleteCause (spec §9.1, C5)', () => {
+     expect(status({ ...successor, checks: [legacyCheck(unitCheck, 'interrupted', null)] })).toBe('invalid');
+     expect(status({ ...successor, checks: [{ ...legacyCheck(unitCheck, 'interrupted', null), incompleteCause: null }] }))
+       .toBe('invalid');
+-    // A non-interrupted check keeps the optional cause (absent reads as null).
++    // A non-interrupted check keeps the optional cause (it may be absent or null).
+     expect(status({ ...successor, checks: [legacyCheck(lintCheck, 'pending', null)] })).toBe('decoded');
+   });
+ });

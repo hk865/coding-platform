@@ -1,0 +1,10 @@
+full suite tfr2: copy /home/han001/dsh-work/slices/s9tfr1 at bd58f4a TF rework 2; bubblewrap, 8 workers, scope 12G; started 02:59 available 14215 MB
+build 0
+typecheck 0
+check:architecture 0
+vitest exit 0 wall 1689 s
+ Test Files  755 passed (755)
+      Tests  9668 passed | 3 skipped (9671)
+   Duration  1744.76s (transform 27.53s, setup 0ms, import 454.53s, tests 13429.47s, environment 57ms)
+failing files:
+ended 03:28

@@ -306,7 +306,7 @@ Kernel已有内部 `session-projection.ts` 不是public-api导出；本方案在
 
 **R4c.2b 已验收区间接线（[报告](../../reviews/next-r4c-history-and-source-2026-09-25.md)）：** `readTaskExecutionHistory(runRef)` 先复用 WG11 获取 `Run.executionHistory`，以其 Session/Kernel 身份及 `startPosition..(endPosition ?? observedThroughPosition)` 调用既有 RT7/RT1；不再扫描发现位置。Run 没有 locator 时明确 unsupported，不默默回退。Graph 只处理关联和外层游标，不重新解析原历史正文；RT7 保留一页过滤；RT1 与 Kernel 负责真实有界读取。同一次分页冻结上界，图水位增长不扩张正在进行的分页；源截短或关联变更明确失败。身份唯一只能定位 Session，实际性能还必须由持久区间和 Kernel 主键范围读取保证。这些起点/终点须来自实际执行证据；B2现已在正式Runtime进入/观察时维护区间，维护操作本身仍待后续接线。
 
-RT7 不传 range 时仍保留从 Session 开头分页的原语义；通过 `readTaskExecutionHistory` 则从已持久区间起点读取。续页只接受本操作返回的游标并固定来源范围。根据[用户原话 DLG-037](../../intent/ORIGINAL-DIALOGUE.md#dlg-037-用户)，两图及 Session/执行关联应降低查找成本：真实进入及观察回流时维护关联、结果和原历史位置，后续查询复用位置，不重复遍历发现。WorkGraph 的正式关系、结果摘要和索引不是另一份 Kernel transcript；Runtime 负责按可信映射和原历史读取协议取回正文，不让业务手工拼游标或另建一套图。
+RT7 不传 range 时仍保留从 Session 开头分页的原语义；通过 `readTaskExecutionHistory` 则从已持久区间起点读取。续页只接受本操作返回的游标并固定来源范围。（2026-10-20 补注，决定 86-4：另一个操作者拿别人的游标来读，由下层 Session 历史的游标校验拒绝（`session-operations.ts:426` 的 `cursorMatches`），`readTaskExecutionHistory` 自己不另查调用者身份；用例见 `tests/runtime/R4c-graph-history.test.ts:515`。）根据[用户原话 DLG-037](../../intent/ORIGINAL-DIALOGUE.md#dlg-037-用户)，两图及 Session/执行关联应降低查找成本：真实进入及观察回流时维护关联、结果和原历史位置，后续查询复用位置，不重复遍历发现。WorkGraph 的正式关系、结果摘要和索引不是另一份 Kernel transcript；Runtime 负责按可信映射和原历史读取协议取回正文，不让业务手工拼游标或另建一套图。
 
 Kernel 的 `SqliteStores.read` 已复用原主键范围读取，同一只读快照获取 header/tail/page；本批消除 read 的全 Session 物化。RT1 删除全量首读，非头页只额外核验位置 1；terminal cursor 可读空末页但仍核 source tail。图定位减少查找范围，Kernel 范围读保证实际 I/O 有界，两处已贯通。append/replay 未改，不能声称 Kernel 全部读写已优化。平台不复制 Kernel 私有 SQL/历史恢复代码。公共 `resumeCodingAgent` 默认选择最新 Turn，不能据它承诺精确恢复任意历史执行。
 

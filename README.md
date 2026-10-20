@@ -83,9 +83,9 @@ node dist/app/main.js /absolute/path/to/workbench-config.json
 | `runtime.bindings`、`runtime.queryProfiles` | 模型/职责/工具授权与可选调查配置；密钥只按 `secretEnvironmentVariable` 从本机环境读取 |
 | `checks`、`workflow` | 既有检查命令与工作推进配置；缺少配置时说明不支持，不能伪造检查通过 |
 
-首次接项目：打开统一工作台，选择已配置工作区，经现有初始化入口登记项目/Goal；按目标发起有界调查，保存真实回答和计划候选后，在授权内采用并执行。探索可以先于完整架构图；没有依据的模块或任务关系保留未知。冻结原型是 E3 的界面基线，后端与界面的交付范围见 STATUS。
+首次接项目：E3 之前没有浏览器界面（旧工作台已删，决定 86-2）；Host 照旧提供 HTTP 路由，页面请求在网页建好之前回 `unavailable`。接项目时选择已配置工作区，经现有初始化入口登记项目/Goal；按目标发起有界调查，保存真实回答和计划候选后，在授权内采用并执行。探索可以先于完整架构图；没有依据的模块或任务关系保留未知。冻结原型是 E3 的界面基线，后端与界面的交付范围见 STATUS。
 
-工作推进由 Host 持有。启动核对、Goal 级控制、自动返工和重新检查已有后端；旧界面尚未接上这些新增能力。已有界面的单 Run 控制与后端的 Goal 控制分别看待，入口和限制见 [STATUS](docs/refactor/STATUS.md)“缺口”和 [E3 界面待办](docs/refactor/design/orchestration-2026-10/E3-UI-ITEMS.md)。
+工作推进由 Host 持有。启动核对、Goal 级控制、自动返工和重新检查已有后端；E3 之前没有浏览器界面（决定 86-2），单 Run 控制和 Goal 控制现在都只有后端，入口随新界面做。入口和限制见 [STATUS](docs/refactor/STATUS.md)“缺口”和 [E3 界面待办](docs/refactor/design/orchestration-2026-10/E3-UI-ITEMS.md)。
 
 再次打开应用：使用原配置、平台库和 Kernel 库读取状态与历史；普通读取不启动模型。运行结果未知时按正式核对流程处理；收到停止请求不等于执行已停止。
 

@@ -36,7 +36,7 @@
 - 返工和重新检查的服务已经接受 agent 调用，只差给 agent 的工具 [src/core/work-graph/tasks/requeue-service.ts:15-17; evidence/evidence-service.ts:1652-1656]。
 - 规划器一次只返回一个计划或一组问题 [src/core/agent-runtime/query-preparation.ts:47-49]。
 - 存储上，同一个基础上可以有多个候选计划；但“等你采用”的读取只返回其中一个（编号最小的）[tasks/plan-readers.ts:511-523]。“未采用”这个状态没人写 [state/plan-machine.ts:8-11]。
-- 主对话由浏览器一步步驱动，只装了执行者的行为说明，查询里没有任何平台工具 [src/ui/views/execution/query-flow.ts:60-195; host.ts:517; src/core/agent-runtime/query-execution.ts:460]。
+- 主对话由浏览器一步步驱动，只装了执行者的行为说明，查询里没有任何平台工具 [src/ui/views/execution/query-flow.ts:60-195; host.ts:517; src/core/agent-runtime/query-execution.ts:460]。（2026-10-21 补注：这里引用的 `src/ui` 各行是已删除的代码（决定 86-2）；它们说的是 2026-10-21 之前的状态。）
 
 **缺：**
 - 按含义挑成员：今天普通界面所有 Session 都是同一个角色，“同角色”分不出谁 [src/app/runtime-configuration.ts:90-96]。

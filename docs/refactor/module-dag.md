@@ -91,7 +91,7 @@ flowchart LR
 
 模块可以声明 `submodules`：每项 `{ id, path, dependencies }`，`path` 相对模块目录，可以是以 `/` 结尾的目录或单个源码文件；声明后模块内每个源码文件必须恰好属于一个子模块，子模块之间（含 type-only import）只允许沿声明的 `dependencies` 方向依赖，且子模块依赖图必须无环；解析不到任何子模块的 import 按失败处理（fail closed）。WorkGraph 的具体子模块分层由任务 D 决定后写入同一 JSON。（2026-10-07：已写入，见 §6。）
 
-Contracts、Composition、Host（`src/app`）和 UI（`src/ui`）是外层，规则仍由脚本内的固定分支实现（UI 仅可 type-only 引用 Host DTO 等），不在 JSON 中重复声明。
+Contracts、Composition、Host（`src/app`）和 UI（`src/ui`）是外层，规则仍由脚本内的固定分支实现（UI 仅可 type-only 引用 Host DTO 等），不在 JSON 中重复声明。（2026-10-21 补注：UI 层和它的边界规则已随 `src/ui` 删除（决定 86-2）；其它外层规则仍有效。）
 
 ### 旧模块名去向（原 `legacyModules`，已从 JSON 移出）
 

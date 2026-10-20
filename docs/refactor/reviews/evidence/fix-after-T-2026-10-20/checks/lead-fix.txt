@@ -1,0 +1,22 @@
+lead fixes (Codex R-01, R-02, R-04, R-05, R-06) on bd58f4a TF rework 2; 03:28
+scripts/verify-isolated.mjs: replaced 1
+src/core/work-graph/persistence/plan-record-codecs.ts: replaced 1
+tests/work-graph/A2-step1-codecs.test.ts: replaced 1
+tests/work-graph/A2-step1-codecs.test.ts: replaced 1
+src/core/work-graph/sessions/session-record-codecs.ts: replaced 1
+src/core/work-graph/persistence/evidence-record-codecs.ts: replaced 1
+tests/work-graph/A2-step1-codecs.test.ts: replaced 1
+ scripts/verify-isolated.mjs                               |  4 ++--
+ src/core/work-graph/persistence/evidence-record-codecs.ts |  2 +-
+ src/core/work-graph/persistence/plan-record-codecs.ts     |  6 +-----
+ src/core/work-graph/sessions/session-record-codecs.ts     |  4 ++--
+ tests/work-graph/A2-step1-codecs.test.ts                  | 11 +++++++----
+ 5 files changed, 13 insertions(+), 14 deletions(-)
+typecheck 0
+unused names: 0
+check:architecture 0
+ Test Files  1 passed (1)
+      Tests  29 passed (29)
+20afbfa TF lead fixes after the rework audit
+left: 0
+ended 03:29

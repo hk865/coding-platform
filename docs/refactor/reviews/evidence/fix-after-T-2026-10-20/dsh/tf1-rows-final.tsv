@@ -1,0 +1,376 @@
+row	result	dsh_result	files	note	lead_note
+A1-002	simplified	simplified	src/core/work-graph/persistence/decision-record-codecs.ts	dropped the absent-since tolerance; decodeNoticeOrigin now refuses an old-format origin	
+A1-003	kept	kept		graph-repository.ts:335 corrupt->unavailable boundary mapping kept; no tamper test (rule 4)	
+A1-004	simplified	simplified	src/core/work-graph/persistence/graph-repository.ts	"deleted the dead `case ""unsupported""` label; it falls to the default unavailable arm"	
+A1-005	kept	kept		note-record-codecs.ts:197 platform-source note branch; slice-4-SPEC.md:344 reserves it for slice 8	
+A1-006	kept	kept		note-record-codecs.ts:197 same location/condition as A1-005; the slice-4-SPEC.md:344 reservation keeps the arm and the contract member	
+A1-007	simplified	kept		plan-record-codecs.ts:126 tolerance needs tests/helpers/S5-decision-fixture.ts changes (not in my row files); decoder stays lenient per proposal	TFR-02: decoder requires since; the S5 fixture seed writes the current shape
+A1-008	simplified	simplified	src/core/work-graph/persistence/plan-record-codecs.ts	candidateRequestRef is `requestRef ?? null`; stale legacy-v1 comment deleted	
+A1-009	kept	kept		plan-record-codecs.ts:740 unknown-kind rejection kept, untested (rule 4)	
+A1-010	simplified	simplified	src/core/work-graph/state/control-intent-machine.ts,src/core/work-graph/tasks/control-service.ts	deleted the malformed-locator guard row/type; compile-only touch control-service.ts:231 passes null	
+A1-011	simplified	simplified	src/core/work-graph/state/control-intent-machine.ts	ControlIntentState split Absent{kind:null}|non-Absent{kind:ControlIntentKindV1}; runtime null-kind guards dropped	
+A1-012	simplified	simplified	src/core/work-graph/state/control-intent-machine.ts	same union change as A1-011	
+A1-013	deleted	kept		line-status.ts:289/353/824 needs sessions/session-record-codecs.ts:714-720 (group C file) to require the conclusion; today the codec still decodes null, so dropping the fallback would emit an undefined reason	TFR-04 (rework 2): codec requires a conclusion for unavailable; fallbacks removed
+A1-015	simplified	simplified	src/core/work-graph/state/line-status.ts,src/core/work-graph/views/work-line-reader.ts	deleted marker computation + LineFactsV1 fields; list-level legacyUnchecked kept because contracts/work-line.ts:121 is frozen and I must not edit contracts	
+A1-016	deleted	kept		line-status.ts:824 depends on A1-013 codec tightening at sessions/session-record-codecs.ts:714-720	TFR-04 (rework 2): retired_unrecorded no longer produced (contract member kept, R-TF-5)
+A1-017	simplified	simplified	src/core/work-graph/state/plan-machine.ts	one-case outer kind switch dropped; inner status switch + exhaustiveness kept	
+A1-018	simplified	simplified	src/core/work-graph/state/run-machine.ts	stored-locator recheck at :1252 deleted; the :1242 input check kept	
+A1-019	simplified	simplified	src/core/work-graph/state/run-machine.ts	deleted the stored executionHistory shape failure (RunSnapshot codec already refuses it)	
+A1-020	kept	kept		run-machine.ts:1310 damaged phase/status combination rejection over the V2 union; no tamper test	
+A1-021	kept	kept		run-machine.ts:1311 same exhaustive V2 phase rejection; no tamper test	
+A1-022	kept	kept		run-machine.ts:1312 same exhaustive V2 phase rejection; no tamper test	
+A1-023	simplified	simplified	src/core/work-graph/state/session-availability.ts	sessionMachineStateOf no longer maps provenance to null; field is non-null (optional for narrow fixtures)	
+A1-024	simplified	simplified	src/core/work-graph/state/session-availability.ts	deleted the default arm; the SessionEvent switch covers every kind	TFR-06: exhaustiveness kept with unreachable()
+A1-025	kept	kept		task-failure.ts:1115 invalid-chain diagnostic kept; no tamper test; GAP-52 anchorRun note passed to lead	
+A1-026	simplified	BLOCKED		"tests/work-graph/A2-step1-codecs.test.ts:393: committing a ""current chain-root round"" whose interrupted check omits incompleteCause is rejected by the new codec rule (""a round check interrupted requires its incompleteCause""); row reverted, codec/machine unchanged"	TFR-05: test row converted to public steps; codec refuses an interrupted check without cause
+A1-027	simplified	BLOCKED		verification-machine.ts:823 reverted with A1-026; without the codec refusal the (${cause}) message would print undefined for a decodable interrupted check	TFR-05: the fold always appends the cause
+A1-028	kept	kept		integrity guard: the decoder stays total on a corrupt stored row (claim-record-codecs.ts:216)	
+A1-029	kept	kept		integrity guard: the decoder stays total on a corrupt outbox row (claim-record-codecs.ts:281)	
+A1-031	deleted	deleted	src/core/work-graph/tasks/context-input-service.ts	deleted the null-owner arm; MaterialOrigin narrowing is C2-090/A2-019	
+A1-033	deleted	deleted	src/core/work-graph/tasks/context-input-service.ts	deleted the null-provenance/owner checks with A1-031	
+A1-041	kept	kept		replay cross-check; only an edited event row disagrees (execution-history-service.ts:266)	
+A1-042	deleted	deleted	src/core/work-graph/tasks/plan-readers.ts,src/contracts/reduction.ts	completion now required in codec and contract	
+A1-043	deleted	deleted	src/core/work-graph/tasks/plan-readers.ts	positions CommitCursor; ?? null removed in plan-readers (strict decode/compare are B A1-007)	TFR-02: the ?? null fallbacks and null arms really removed
+A1-044	deleted	deleted	src/core/work-graph/tasks/plan-readers.ts	deleted duplicate parseRun failure path and 4 null arms	
+A1-045	deleted	deleted	src/core/work-graph/tasks/plan-readers.ts	deleted duplicate parseLease shape check and 2 null arms	
+A1-046	kept	kept		conservative missing-holder lease; only a hand-written Lease (plan-readers.ts:1201)	
+A1-047	kept	kept		range consistency guard against a corrupt index row (plan-readers.ts:1283)	
+A1-048	deleted	deleted	src/core/work-graph/tasks/plan-readers.ts	plan param now PlanRevisionSnapshot; null arms removed	
+A1-049	deleted	deleted	src/core/work-graph/tasks/plan-readers.ts	refKeys.length guard removed (plan always has tasks)	
+A1-050	kept	kept		phase filter guards the four-valued TaskReductionPhase contract (plan-readers.ts:1390)	
+A1-051	deleted	deleted	src/core/work-graph/tasks/plan-readers.ts	same narrowing as A1-048; doc already names the current plan	
+A1-052	deleted	deleted	src/core/work-graph/tasks/plan-readers.ts	caller Run null arm removed; missing-key rejection kept	
+A1-053	kept	kept		fail-closed unavailable mapping kept as the single return (plan-readers.ts:1526)	
+A1-054	deleted	deleted	src/core/work-graph/tasks/plan-readers.ts	deleted unsupported-to-none fallback and stale doc sentence	
+A1-055	kept	kept		hard-dependency missing-basis refusal; no tamper test (plan-readers.ts:1716)	
+A1-056	deleted	deleted	src/core/work-graph/tasks/plan-readers.ts	deleted duplicate review decode-failure branch	
+A1-057	kept	kept		basis consistency refusal; no tamper test (plan-readers.ts:1790)	
+A1-058	kept	kept		unresolvable-origin conservative trace (plan-readers.ts:1803)	
+A1-060	deleted	deleted	src/core/work-graph/tasks/plan-readers.ts	deleted duplicate lease null check in future-change facts	
+A1-062	kept	kept		untraced-reduction branch kept; foreign reduction still refused (plan-readers.ts:2081)	
+A1-063	kept	kept		fall-through of A1-062 kept (plan-readers.ts:2083)	
+A1-064	deleted	deleted	src/core/work-graph/tasks/plan-service.ts	deleted legacy authorization else-chain and the stale throw at :2850	
+A1-065	deleted	deleted	src/core/work-graph/tasks/plan-service.ts	deleted with A1-064	
+A1-066	deleted	deleted	src/core/work-graph/tasks/plan-service.ts	deleted with A1-064	
+A1-067	deleted	deleted	src/core/work-graph/tasks/plan-service.ts	deleted with A1-064	
+A1-068	deleted	deleted	src/core/work-graph/tasks/plan-service.ts	deleted with A1-064	
+A1-069	deleted	deleted	src/core/work-graph/tasks/plan-service.ts	deleted with A1-064	
+A1-075	kept	kept		basis range refusal on a rewritten Plan; no test (plan-task-basis.ts:282)	
+A1-076	kept	kept		proposal offers at most an assertion; nothing deleted (reconcile-intents.ts:139)	
+A1-078	deleted	deleted	src/core/work-graph/tasks/reconcile-intents.ts	resume arm replaced by unavailable; paused/cancelled kept	
+A1-080	kept	kept		optional assertion only; nothing to delete (run-reconcile-service.ts:592)	
+A1-081	kept	kept		cross-reference refusal kept; tamper-only (run-state-service.ts:233)	
+A1-082	kept	kept		cross-reference refusal kept; tamper-only (run-state-service.ts:242)	
+A1-083	kept	kept		broken Plan link refusal kept; tamper-only (run-state-service.ts:256)	
+A1-084	kept	kept		broken Session link refusal kept; tamper-only (run-state-service.ts:264)	
+A1-085	deleted	deleted	src/core/work-graph/tasks/run-state-service.ts	deleted duplicate Run decode branches in windows 1 and 3	
+A1-086	deleted	deleted	src/core/work-graph/tasks/run-state-service.ts	deleted duplicate outbox decode branches in windows 2 and 3	
+A1-087	deleted	deleted	src/core/work-graph/tasks/run-state-service.ts	deleted duplicate Attempt decode branch	
+A1-088	kept	kept		single return of the chain checks kept (run-state-service.ts:564)	
+A1-091	deleted	deleted	src/core/work-graph/tasks/session-facts.ts,src/core/work-graph/model/session-facts-contracts.ts,src/core/work-graph/sessions/session-directory.ts,src/core/work-graph/sessions/session-responsibility-service.ts	deleted legacy sweep and null-provenance arms; legacyPending removed from SessionFactsV1	
+A1-092	deleted	deleted	src/core/work-graph/tasks/session-facts.ts	deleted the null-provenance successor arm with the sweep	
+A1-093	deleted	deleted	src/core/work-graph/tasks/session-facts.ts	recorded = session.provenance; null test removed	
+A1-095	kept	kept		corrupt/unavailable mapping kept; tamper-only (task-service.ts:264)	
+A1-096	kept	kept		final unavailable mapping kept; tamper-only (task-service.ts:267)	
+A1-097	deleted	deleted	src/core/work-graph/tasks/unknown-call-review-service.ts	deleted per-round display cache; one read per process item	
+A1-098	kept	kept		not_found rejection kept; tamper-only (unknown-call-review-service.ts:805)	
+A1-099	deleted	deleted	src/core/work-graph/tasks/unknown-call-review-service.ts	deleted redundant ?? null on CommitCursor|null	
+A1-100	deleted	deleted	src/core/work-graph/tasks/unknown-call-review-service.ts	deleted redundant ?? null on CommitCursor|null	TFR-03: the ?? null really removed
+A2-001	kept	kept		catalog-record-codecs.ts:219-223 read-side digest integrity check; no tamper test (rule 4)	
+A2-002	kept	kept		catalog-service.ts:391-393 current-pointer read refuses corrupt baseline; integrity guard	
+A2-004	simplified	simplified	src/core/work-graph/communication/mailbox-service.ts	mailbox-service.ts:1332 removed duplicate holderRunId/attemptId identity arms; kept lease-null presence guard	
+A2-005	deleted	deleted	src/core/work-graph/communication/mailbox-service.ts	mailbox-service.ts:1332 released-lease rejection and comment removed (same-commit run end covers it)	
+A2-007	kept	kept		role-memory-service.ts:92 replay identity guard on corrupt event; no tamper test (rule 4)	
+A2-008	kept	kept		role-memory-service.ts:253 replay refusal, actor in identity key; no tamper test	
+A2-009	kept	kept		role-memory-service.ts:289 replay refusal, actor in identity key; no tamper test	
+A2-010	kept	kept		role-memory-service.ts:669 policy decoder refusal; no production policy writer (flagged, not this row)	
+A2-011	kept	kept		role-memory-service.ts:680 dangling revision refusal for unwritten policy pointer; rule 4	
+A2-012	kept	kept		role-record-codecs.ts:115 commit-time policy snapshot-ref validation; rule 4	
+A2-013	kept	kept		role-record-codecs.ts:261 commit-time activeRevision check; rule 4	
+A2-014	kept	kept		role-record-codecs.ts:286 decode-failure propagation for stored policy rows; rule 4	
+A2-016	deleted	deleted	src/core/work-graph/evidence/evidence-service.ts	evidence-service.ts:302-305 missing since is now damaged/unavailable per decision 79; comment updated	
+A2-017	kept	kept		evidence-service.ts:625 invalid-chain refusal; :1117 effectively dead but harmless, no tamper test	
+A2-018	kept	kept		evidence-service.ts:1200 invalid-chain arm of exhaustive switch; rule 4	
+A2-019	simplified	simplified	src/core/work-graph/materials/applicability.ts	applicability.ts:58 reads origin.owner directly, null-owner refusal removed; MaterialOrigin narrowing/body-codec helpers are group D rows C2-090/C2-091 (already applied)	
+A2-020	kept	kept		record-readers.ts:202 commit-time Run locator schema validation; no tamper test	
+A2-023	kept	kept		session-record-codecs.ts:785 registered schema boundary; no tamper test	
+A2-024	kept	kept		session-record-codecs.ts:1032 link decode failure propagation; no tamper test	
+A2-028	kept	kept		activity-read-model.ts:345 needs contracts/run-activity.ts, run-activity-codecs.ts and run-activity-service.ts (outside my rows) and L17 sign-off	
+A2-029	kept	kept		activity-read-model.ts:367 same prerequisite as A2-028; the null arm stays	
+A2-030	simplified	simplified	src/core/work-graph/views/activity-read-helpers.ts,src/core/work-graph/views/activity-read-model.ts,src/core/work-graph/views/track-read-model.ts	claimingSessionOf now returns SessionRef; the null arms at 402/432-433/510/566 removed, failure propagation kept	
+A2-031	kept	kept		activity-read-model.ts:486 R4 cross-workspace recheck kept; the lead's call and no tamper test (rule 4)	
+A2-032	kept	kept		goal-conflicts.ts:267 not_available kept: narrowing the slice-5 port DTO would break frozen 2C L15 and its tests	
+A2-033	deleted	deleted	src/core/work-graph/views/goal-conflicts.ts	architecture===null now maps [] instead of unowned executed files; the arrow is gone	
+A2-035	kept	kept		node-detail-reader.ts:1387 missing-Session guard kept untested; no forged-anchor test (rule 4)	
+A2-038	simplified	simplified	src/core/work-graph/views/task-state-timeline.ts	round origin since is CommitCursor; a missing cursor is unavailable	
+A2-049	simplified	simplified	src/core/work-graph/views/track-read-model.ts	readCheckStart returns since: CommitCursor and refuses a missing cursor; finalizedAt ?? null kept for open rounds	
+A2-050	kept	kept		track-read-model.ts:1078 workspace check kept (T3-089 R-3); the reachable project check is a separate public-input test	
+A2-064	kept	kept		work-line-reader.ts:621 damaged-link bridge kept (2C B4); no tamper test	
+A2-066	simplified	simplified	src/core/work-graph/views/work-line-reader.ts	readChain reads current.provenance directly; null branch deleted	
+A2-067	simplified	simplified	src/core/work-graph/views/work-line-reader.ts	chainEntry writes session.provenance; the chain null check and marker plumbing removed	
+A2-068	kept	kept		work-line-reader.ts:721 B4 problem marking kept; no tamper test	
+A2-069	simplified	simplified	src/core/work-graph/views/work-line-reader.ts	indexActiveCopies reads provenance.kind directly	
+A2-070	simplified	simplified	src/core/work-graph/views/work-line-reader.ts	cycle walk reads provenance.kind; the null disjunct removed, cycle detection kept	
+A2-071	simplified	simplified	src/core/work-graph/views/work-line-reader.ts	readActiveSessions filters on provenance.kind	
+A2-072	simplified	simplified	src/core/work-graph/views/work-line-reader.ts	listActiveHeads filters on provenance.kind	
+A2-073	simplified	simplified	src/core/work-graph/views/work-line-reader.ts	nonCopies filters on provenance.kind	
+A2-074	simplified	simplified	src/core/work-graph/views/work-line-reader.ts	readArchivedPage filters on provenance.kind	
+A2-075	simplified	simplified	src/core/work-graph/views/work-line-reader.ts	null-kind counts, u sum and partial return deleted; countArchived is exact only	
+A2-076	simplified	simplified	src/core/work-graph/views/work-line-reader.ts	resolveContinuationLine/readChain provenance fallbacks removed; the other files named by the row are outside my list	
+A3-001	simplified	simplified	src/app/attention-observer.ts,tests/helpers/orchestration-fixture.ts	details required; existence from nodes only; guard kept as TS narrowing; fixture carries details	
+A3-002	kept	kept		proposal keeps null-endedAt arm untested (optional 79 narrowing); src/contracts/continuation-brief.ts:604	
+A3-003	kept	kept		proposal keeps null-reason arm untested (optional 79 narrowing); src/contracts/continuation-brief.ts:687	
+A3-004	simplified	simplified	src/core/agent-runtime/check-execution.ts	copied real result.resourceCaps, dropped cast/conditional (check-execution.ts:240-248)	
+A3-012	simplified	simplified	src/core/agent-runtime/kernel-store-locator.ts	deleted unreachable unregistered-adapter throw (kernel-store-locator.ts:83-88)	
+A3-014	simplified	simplified	src/core/agent-runtime/run-reconcile.ts	every refusal maps to failed (run-reconcile.ts:547-548)	
+A3-015	kept	kept		rule 4: truncated Kernel log only; src/core/agent-runtime/session-operations.ts:470	
+A3-016	kept	kept		rule 4: damaged envelope leaves only; src/core/agent-runtime/source-capture-access.ts:71	
+A3-017	kept	kept		rule 4, one decision with A3-016; src/core/agent-runtime/source-capture-access.ts:94	
+A3-019	simplified	simplified	src/core/agent-runtime/source-capture-access.ts	deleted phase re-check (source-capture-access.ts:432-433)	
+A3-020	kept	kept		rule 4, one decision with A3-016; src/core/agent-runtime/source-capture-access.ts:440	
+A3-021	kept	kept		retained slice-9 Reviewer groundwork per proposal; src/core/agent-runtime/source-capture-access.ts:455-459	
+A3-022	kept	kept		two-way proposal (delete with A3-021 or keep); kept with A3-021; source-capture-access.ts:509	
+A3-024	simplified	simplified	src/core/agent-runtime/source-capture-access.ts	deleted request-equality check, kept missing-execution refusal (source-capture-access.ts:596)	
+A3-026	kept	kept		rule 4: terminal unknown-kind rejection; src/core/record-store/body-codec.ts:165	
+A3-027	kept	kept		rule 4: content-address integrity guard; src/core/record-store/body-codec.ts:254	
+A3-028	kept	kept		proposal leaves catch to lead ('low value either way'); src/core/record-store/body-store.ts:29-34	
+A3-029	kept	kept		rule 4: wrong-key row only; src/core/record-store/body-store.ts:43	
+A3-030	kept	kept		rule 4: key consistency; src/core/record-store/body-store.ts:55	
+A3-031	kept	kept		rule 4: damaged stored row; src/core/record-store/guarded-revision.ts:20	
+A3-032	kept	kept		rule 4: codec identity check; src/core/record-store/record-codec.ts:296	
+A3-033	kept	kept		rule 4: corrupt-not-conflict plumbing; src/core/record-store/sqlite-record-store.ts:333	
+A3-034	kept	kept		rule 4: damaged guard row; src/core/record-store/sqlite-record-store.ts:345	
+A3-035	kept	kept		rule 4: read corrupt diagnosis; src/core/record-store/sqlite-record-store.ts:381	
+A3-036	kept	kept		rule 4: corrupt propagation; src/core/record-store/sqlite-record-store.ts:413	
+A3-037	kept	kept		rule 4: lookup integrity; src/core/record-store/sqlite-record-store.ts:583	
+B-002	simplified	simplified	src/app/attention-observer.ts	cond-expr arm 0/2 deleted; details always copied	
+B-008	simplified	simplified	src/composition/create-platform.ts	auth arm deleted; invariant throw when absent; kernel read from auth (null-kernel branch kept)	
+B-013	simplified	simplified	src/core/agent-runtime/continuation-brief-assembly.ts	read executionAuthorization.kernel directly (continuation-brief-assembly.ts:590)	
+B-015	simplified	simplified	src/core/agent-runtime/execution-driver.ts	assign entered authorization revision directly (execution-driver.ts:1054)	
+B-017	simplified	simplified	src/core/agent-runtime/execution-driver.ts	deleted duplicate registered-store lookup (execution-driver.ts:1332)	
+B-018	simplified	simplified	src/core/agent-runtime/execution-observation.ts	folded missing auth into authUsable (execution-observation.ts:530)	
+B-020	simplified	simplified	src/core/agent-runtime/run-limits.ts	takes deadline string, returns number, dropped ! (run-limits.ts:31,46)	
+B-021	simplified	simplified	src/core/agent-runtime/run-reconcile.ts	reads executionAuthorization.kernel directly (run-reconcile.ts:100)	
+B-022	simplified	simplified	src/core/agent-runtime/run-reconcile.ts	deleted V1/none classifier branch (run-reconcile.ts:263)	
+B-023	kept	simplified	src/core/agent-runtime/runtime.ts	reads authorization.kernel directly (runtime.ts:327)	TFR-08: kept; executionAuthorization is optional at this call and the narrowing the proposal assumes is not established here (structure round 85-1); the rework reply's reason "RUN-23 has no authorization" was wrong (rework audit R-07)
+B-027	simplified	simplified	src/core/agent-runtime/source-capture-access.ts,src/core/work-graph/source-authority-ports.ts,tests/helpers/WP1-units-fixture.ts	readQuerySubmission now required, typeof guard deleted; compile-only touch tests/helpers/WP1-units-fixture.ts:562	
+B-029	simplified	simplified	src/core/agent-runtime/source-capture-access.ts	status-only detail, throw kept (source-capture-access.ts:636)	
+B-030	simplified	simplified	src/core/work-graph/source-authority-ports.ts,src/core/agent-runtime/source-capture-access.ts	deleted not_ready arm; return narrowed to QuerySubmissionRead (source-authority-ports.ts:20,31)	
+B-033	simplified	simplified	src/core/agent-runtime/source-capture-access.ts	compares submitted.runRef directly (source-capture-access.ts:646)	
+B-034	kept	kept		rule 4: hand-edited job/event only; proposal keeps untested; src/core/agent-runtime/source-capture-access.ts:650	
+B-035	kept	kept		two-way proposal (delete after codec narrowing, or keep); kept as type narrowing; source-capture-access.ts:651	
+B-037	simplified	simplified	src/core/record-store/body-codec.ts	normalizeOrigin rejects missing origin; decodeOrigin removed (body-codec.ts:188)	
+B-038	kept	kept		catalog-record-codecs.ts:402 registered validator; since is null or a real bound cursor	
+B-039	simplified	simplified	src/core/work-graph/architecture/catalog-record-codecs.ts	catalog-record-codecs.ts:458-460 dropped dead non-null cursor arm; embedded event record always writes since:null	
+B-040	kept	kept	src/core/work-graph/architecture/catalog-record-codecs.ts	catalog-record-codecs.ts:458-460 non-null embedded since reject retained (condition simplified with B-039); no tamper test	
+B-041	kept	kept		catalog-service.ts:394-397 missing catalog maps to explicit unavailable; rule 4	
+B-042	deleted	deleted	src/core/work-graph/architecture/catalog-service.ts	catalog-service.ts:399-402 duplicate baselineRef comparison removed; codecs tie baselineRef to ref canonically	
+B-043	kept	kept		catalog-service.ts:417 missing catalog beside baseline -> unavailable instead of TypeError; rule 4	
+B-044	kept	kept		mailbox-service.ts:198 missing creation position refused on update; old-format/damaged record only	
+B-045	simplified	simplified	src/core/work-graph/communication/mailbox-service.ts,src/core/work-graph/state/message-machine.ts,tests/state/message-machine.test.ts	mailbox-service.ts:614 arm folded into other_message; not_consultation verdict removed from message-machine.ts:363,693; forbidden test row removed	
+B-046	simplified	simplified	src/core/work-graph/communication/mailbox-service.ts	mailbox-service.ts:1295 duplicate authorization-undefined check removed; checked authorization passed into manifestAgainstRun	
+B-047	simplified	simplified	src/core/work-graph/communication/mailbox-service.ts	mailbox-service.ts:1348 folded undefined check into authorization?.phase !== 'entered'	
+B-050	simplified	simplified	src/core/work-graph/communication/mailbox-service.ts	mailbox-service.ts:2772 fallback replaced with authorization?.kernel (kernelMatches treats undefined as no match)	
+B-051	kept	kept		mailbox-service.ts:3300 missing retirement position -> unavailable; damaged record only	
+B-052	kept	kept		mailbox-service.ts:3303 missing reply position -> unavailable; damaged record only	
+B-053	kept	kept		evidence-record-codecs.ts:334 finalizedAt current-format check kept, untested (rule 4)	
+B-054	kept	kept		evidence-record-codecs.ts:436 index revision==count check kept, untested (rule 4)	
+B-055	kept	kept		note-record-codecs.ts:364 noticeClass key check kept, untested (rule 4)	
+B-056	kept	kept		note-record-codecs.ts:387 notice-class enum check kept, untested (rule 4)	
+B-057	kept	kept		note-record-codecs.ts:608 actor key check kept, untested (rule 4)	
+B-058	kept	kept		note-record-codecs.ts:609 proof key check kept, untested (rule 4)	
+B-059	kept	kept		query-execution.ts:1065 G-CTX re-check; slice-3-SPEC.md:271 still requires it, so kept untested (no forged-manifest test)	
+B-060	kept	kept		query-execution.ts:1068 G-CTX callKind re-check; same slice-3-SPEC.md:271 caveat, kept untested	
+B-063	deleted	deleted	src/core/work-graph/queries/query-job-service.ts	query-job-service.ts:289-291 duplicate execution-kind rejection removed; validQueryExecution and :280 cover it	
+B-065	kept	kept		query-record-codecs.ts:237 stored QueryJob execution format check; rule 4	
+B-066	kept	kept		query-record-codecs.ts:238 codec shape check, also run on write; rule 4	
+B-067	kept	kept		query-record-codecs.ts:446 submission locator required; old-format/tampered snapshot only	
+B-068	kept	kept		session-record-codecs.ts:661 operation provenance required; registered format check; rule 4	
+B-069	kept	kept		session-record-codecs.ts:664 stored-operation provenance decode boundary; rule 4	
+B-070	kept	kept		session-record-codecs.ts:736 Session provenance required; replaced the deleted backfill; rule 4	
+B-071	kept	kept		codec rejects illegal ended status/outcome; bad record only (claim-record-codecs.ts:245)	
+B-072	kept	kept		second operand only for a hand-edited active Attempt (claim-record-codecs.ts:247)	
+B-073	kept	kept		same check as B-071; concrete damage reason kept (claim-record-codecs.ts:248)	
+B-074	kept	kept		same check as B-071; concrete damage reason kept (claim-record-codecs.ts:248)	
+B-075	kept	kept		permit read boundary; old/tampered permit only (model-request-codecs.ts:92)	
+B-076	kept	kept		persisted digest format check; no tamper test (model-request-codecs.ts:93)	
+B-077	kept	kept		incomplete-permit refusal kept (model-request-codecs.ts:94)	
+B-078	kept	kept		incomplete-permit refusal kept (model-request-codecs.ts:95)	
+B-082	deleted	deleted	src/core/work-graph/tasks/requeue-service.ts	deleted duplicate epoch/state refusal; Goal revision pin stays	
+B-083	deleted	deleted	src/core/work-graph/tasks/run-reconcile-service.ts,src/app/startup-reconcile.ts	Claimed/Authorized/Revoked merged into the illegal-call group; starting Runs skipped	
+B-084	deleted	deleted	src/core/work-graph/tasks/run-reconcile-service.ts,src/app/startup-reconcile.ts	same deletion as B-083	
+B-085	deleted	deleted	src/core/work-graph/tasks/run-reconcile-service.ts,src/app/startup-reconcile.ts	same deletion as B-083	
+B-086	kept	kept		index/canonical recheck; corrupt index only (session-facts.ts:442)	
+B-087	kept	kept		activity-read-helpers.ts:187 missing dispatch -> unavailable with key; W2b-57 ruling, no tamper test	
+B-089	kept	kept		automatic-rework-notices.ts:194 incomplete automation cap kept untested (shared cap type)	
+B-090	kept	kept		automatic-rework-notices.ts:383 missing cap -> unavailable kept (TP-063), no tamper test	
+B-091	simplified	simplified	src/core/work-graph/views/decision-read-model.ts	dropped the dead `|| since === null` half; the undefined check stays (wire type still spells null, hence the cast)	
+B-092	simplified	simplified	src/core/work-graph/views/note-views.ts	NoteCheckDependencies.architecture required; null outcome/cache/`?? null` fallbacks deleted	
+B-093	simplified	simplified	src/core/work-graph/views/note-views.ts	modules is an array; `modules ?? null` and null checks gone	
+B-094	simplified	simplified	src/core/work-graph/views/note-views.ts	basisModules/currentModules are arrays; null checks gone	
+B-095	simplified	simplified	src/core/work-graph/views/note-views.ts	read.value null fallbacks gone; catalog===null kept only for the no-anchor case	
+C1-005	kept	kept		material-service.ts:300 exhaustive StoreFailure map; optional fromStoreFailure reuse not taken	
+C1-007	kept	kept		decision-record-codecs.ts:203 SessionWorkLink pin shape required by spec §3.3; no hand-written record test	
+C1-008	kept	kept		decision-record-codecs.ts:213 callback of C1-007; same keep reason	
+C1-009	kept	kept		execution-entry-codecs.ts:140 materialAccessRefs guard + declared field kept (rule 4)	
+C1-010	kept	kept		execution-entry-codecs.ts:148 deliveryRefs guard + declared field kept (rule 4)	
+C1-020	kept	kept		no-progress.ts:348 duplicate-checkId tie-break kept untested (proposal offers delete or keep)	
+C1-021	deleted	deleted	src/core/work-graph/state/plan-machine.ts	incompleteFacts deleted; the six UNREAD returns now throw via unreachable(), staged guard UNREAD kept	
+C1-022	simplified	simplified	src/core/work-graph/state/ref-equality.ts	deleted the array branch; arrays still compare through the record branch	
+C1-026	kept	kept		matrix phases reserved for the named CoordinationPolicy writer (claim-service.ts:684)	
+C1-027	deleted	deleted	src/core/work-graph/tasks/command-rerun-request-service.ts	now required; default arrow deleted	
+C1-028	deleted	deleted	src/core/work-graph/tasks/command-rerun-request-service.ts	eventId required; default arrow and eventSeq deleted	
+C1-030	deleted	deleted	src/core/work-graph/tasks/command-rerun-request-service.ts,src/core/work-graph/tasks/owner-record-read.ts	deleted per-owner decodeError; one fixed invalid fallback	
+C1-034	kept	kept		not_found refusals kept; tamper-only (completion.ts:98)	
+C1-043	kept	kept		not_found refusals kept; tamper-only (control-service.ts:112)	
+C1-045	kept	kept		missingDefinition fallback kept; tamper-only (evidence-coverage.ts:50)	
+C1-048	kept	kept		proposal offers two ways; kept the declared field and untested guard (execution-entry-service.ts:391)	
+C1-049	kept	kept		proposal offers two ways; kept the declared field and untested guard (execution-entry-service.ts:399)	
+C1-050	kept	kept		inadmissible arm reserved for the planned policy writer (execution-entry-service.ts:521)	
+C1-054	deleted	deleted	src/core/work-graph/tasks/execution-history-service.ts	deleted incomplete helper; not_ready folded to plain unavailable	
+C1-060	kept	kept		decoder narrowing keeps a corrupt record from reading as empty (goal-executed-files-reader.ts:48)	
+C1-067	kept	kept		lead decides on Delivery pins; member reserved (model-request-codecs.ts:73)	
+C1-081	deleted	deleted	src/core/work-graph/tasks/plan-write-admission.ts	deleted duplicate association/inputBinding checks and unavailable helper	
+C1-082	deleted	deleted	src/core/work-graph/tasks/plan-write-admission.ts	deleted incomplete helper; not_ready maps to unavailable	
+C1-086	deleted	deleted	src/core/work-graph/tasks/request-facts-reader.ts	deleted duplicate scope refusal and forbidden helper	
+C1-089	deleted	deleted	src/core/work-graph/tasks/requeue-service.ts	deleted try/catch wrappers and messageOf helper	
+C1-101	deleted	deleted	src/core/work-graph/tasks/session-anomaly-service.ts,src/core/work-graph/tasks/plan-readers.ts	deleted lookup/commit/eventAt forwards; reader port narrowed to readMany+lookup	
+C1-102	deleted	deleted	src/core/work-graph/tasks/session-anomaly-service.ts,src/core/work-graph/tasks/plan-readers.ts	same as C1-101	
+C1-103	deleted	deleted	src/core/work-graph/tasks/session-anomaly-service.ts,src/core/work-graph/tasks/plan-readers.ts	same as C1-101	
+C1-108	deleted	deleted	src/core/work-graph/tasks/unknown-call-review-service.ts,src/core/work-graph/tasks/run-reconcile-service.ts	now required; read-only instance passes deps.now	
+C1-109	deleted	deleted	src/core/work-graph/tasks/unknown-call-review-service.ts,src/core/work-graph/tasks/run-reconcile-service.ts	eventId required; eventSeq deleted; read-only instance passes deps.eventId	
+C1-111	deleted	deleted	src/core/work-graph/tasks/unknown-call-review-service.ts,src/core/work-graph/tasks/owner-record-read.ts	deleted per-owner decodeError; one fixed invalid fallback	
+C1-112	deleted	deleted	src/core/work-graph/tasks/unknown-call-review-service.ts	deleted approval proposal sort; writer order kept	
+C2-003	kept	kept		proposal offers delete or keep-untested; kept; src/contracts/core/prepared-execution.ts:149	
+C2-010	kept	kept		'Do not delete now', slice-6 decision; src/contracts/query-job.ts:262	
+C2-016	simplified	simplified	src/core/agent-runtime/context-assembler.ts	removed re-sort, copies list (context-assembler.ts:498)	
+C2-018	simplified	simplified	src/core/agent-runtime/context-assembler.ts	deleted inadmissible arm, narrowed role types (context-assembler.ts:660-662)	
+C2-019	simplified	simplified	src/core/agent-runtime/context-assembler.ts	footprint kept as declared empty section (context-assembler.ts:867)	
+C2-022	kept	kept		proposal keeps for now pending slice-3-SPEC.md:502; src/core/agent-runtime/context-assembler.ts:916	
+C2-023	kept	kept		with C2-022; src/core/agent-runtime/context-assembler.ts:917	
+C2-024	kept	kept		with C2-022; src/core/agent-runtime/context-assembler.ts:918	
+C2-027	simplified	simplified	src/core/agent-runtime/context-assembler.ts	deleted captureDigest .catch (context-assembler.ts:1000)	
+C2-028	simplified	simplified	src/core/agent-runtime/context-assembler.ts	deleted capture .catch and null arm (context-assembler.ts:1009)	
+C2-030	kept	kept		proposal leaves generic sort vs spec narrowing to lead; src/core/agent-runtime/context-assembler.ts:1429	
+C2-031	kept	kept		frozen K3-46 mixed card; keep projection untested; src/core/agent-runtime/context-assembler.ts:1439	
+C2-038	deleted	deleted	src/core/agent-runtime/execution-control.ts	deleted try/catch and messageOf (execution-control.ts:171-175)	
+C2-039	BLOCKED	BLOCKED		tests/runtime/S2B-36-observer-cancel-reread.test.ts:93 expects rejected/cancelled, got ready; tests/runtime/S2B-38-run08-unknown-activity.test.ts (b) same. Making controls required removes the controls-undefined/no-cleanProof-gate observer path; row reverted to e99b385 shape, both tests green. C2-078 separately simplified.	TFR-10: controls required would also break B2-runtime-execution :383/:483; kept, the four tests are T leftovers (86-3)
+C2-040	deleted	deleted	src/core/agent-runtime/execution-control.ts	deleted inspect, its member and RuntimeControlInspection (execution-control.ts:83-118,311)	
+C2-042	deleted	deleted	src/core/agent-runtime/execution-driver.ts	deleted mapWorkspace; fail-closed at both call sites (execution-driver.ts:376)	
+C2-050	kept	kept		proposal leaves zero-cost guard to lead; src/core/agent-runtime/exploration-tools.ts:239	
+C2-059	deleted	deleted	src/core/agent-runtime/query-execution.ts	deleted mapWorkspace + CORE_ERROR_CODES; fail-closed inline (query-execution.ts:47,81)	
+C2-061	simplified	simplified	src/core/agent-runtime/query-observation.ts	deleted two dead try wrappers; kept the U guard (query-observation.ts:253,456)	
+C2-066	simplified	simplified	src/core/agent-runtime/run-reconcile.ts	deleted dead read catch; kept the U guard (run-reconcile.ts:116,328)	
+C2-067	deleted	deleted	src/core/agent-runtime/runtime.ts,src/core/agent-runtime/ports.ts,src/composition/create-platform.ts	deleted base capabilities stub; AgentRuntimePort Omit added (runtime.ts:60); compile-forced create-platform.ts:21,1432	
+C2-068	deleted	deleted	src/core/agent-runtime/runtime.ts	deleted base createSession stub (runtime.ts:63)	
+C2-069	deleted	deleted	src/core/agent-runtime/runtime.ts	deleted base readSessionHistory stub (runtime.ts:66)	
+C2-070	deleted	deleted	src/core/agent-runtime/runtime.ts	deleted base readExecutionHistory stub (runtime.ts:69)	
+C2-071	deleted	deleted	src/core/agent-runtime/runtime.ts	deleted base readTaskExecutionHistory stub (runtime.ts:72)	
+C2-078	simplified	simplified	src/core/agent-runtime/runtime.ts,src/core/agent-runtime/execution-contracts.ts,tests/helpers/B2-runtime-fixture.ts	readTaskClosure fallback deleted; required in RuntimeExecutionDependencies; createExecutionPreparation(deps); fixtures wired to the real reader	
+C2-081	deleted	deleted	src/core/agent-runtime/session-discovery-tools.ts	deleted cancelled() and pre-read abort arm (session-discovery-tools.ts:59,133)	
+C2-083	deleted	deleted	src/core/agent-runtime/session-discovery-tools.ts	deleted cancelledResult and cancelled arm (session-discovery-tools.ts:69,78)	
+C2-085	simplified	simplified	src/core/agent-runtime/source-capture-access.ts	removed unreachable try/catch (source-capture-access.ts:329-347)	
+C2-086	simplified	simplified	src/core/agent-runtime/source-capture-access.ts	deleted ctx-identity checks and ctx param, kept execution comparison (source-capture-access.ts:667-685)	
+C2-090	deleted	deleted	src/core/record-store/body-codec.ts,src/core/record-store/body-ports.ts	removed TaskAttempt origin arm + isTaskAttemptRef; narrowed MaterialOrigin (body-codec.ts:160, body-ports.ts:8)	
+C2-091	deleted	deleted	src/core/record-store/body-codec.ts	deleted cloneTaskAttemptRef (body-codec.ts:117)	
+C2-092	deleted	deleted	src/core/record-store/commit-extensions.ts	deleted parse try/catch and messageOf (commit-extensions.ts:47-61)	
+C2-093	simplified	simplified	src/core/record-store/in-memory-record-store.ts	direct cursor index, removed linear find (in-memory-record-store.ts:456)	
+C2-094	kept	kept		proposal keeps rejection untested (optional sort drop); src/core/record-store/migrations.ts:113	
+C3-001	kept	kept		src/app/auto-capture-driver.ts:99 - proposal says keep untested; deletion only if the lead wants it gone; guards future throws	
+C3-004	kept	kept		src/app/collaboration-driver.ts:556 - proposal either delete or keep untested; kept	
+C3-005	deleted	deleted	src/app/collaboration-driver.ts	onLoopAbort, listener and 3 never-aborted checks deleted; stop/close use activePumpAbort	
+C3-006	kept	kept		src/app/collaboration-driver.ts:763 - either delete or keep untested; kept	
+C3-007	kept	kept		src/app/collaboration-driver.ts:880 - either delete or keep untested; kept	
+C3-008	kept	kept		src/app/collaboration-driver.ts:1007 - either delete or keep untested; kept	
+C3-009	kept	kept		src/app/collaboration-driver.ts:1114 - either delete or keep untested; kept	
+C3-010	deleted	deleted	src/app/core-routes.ts,src/app/server.ts	class, import and instanceof branch deleted	
+C3-011	kept	kept		src/app/core-routes.ts:627,728-730 - proposal offers a stub driver or a separate narrow builder; 33 calls in 12 test files; kept	
+C3-012	kept	kept		src/app/core-routes.ts:634 - kept as test-only scaffolding only if the lead accepts the churn; decision-79 drop is not an instruction	
+C3-014	simplified	simplified	src/app/core-routes.ts	.catch(null) and null branch deleted; rejected results flow	
+C3-016	kept	kept		src/app/goal-fan-out-driver.ts:218 - either delete or keep untested; kept	
+C3-017	kept	kept		src/app/goal-fan-out-driver.ts:514 - either delete or keep untested; kept	
+C3-018	kept	kept		src/app/goal-fan-out-driver.ts:525 - either delete or keep untested; kept	
+C3-024	deleted	deleted	src/app/host-settings.ts	currentVersion getter and interface member deleted	
+C3-026	kept	kept		src/app/host-settings.ts:523-526 - proposal recommends keeping it with no test	
+C3-033	deleted	deleted	src/app/host-settings.ts,src/app/host.ts,tests/app/A2-settings-automation.test.ts,tests/app/RL-34-wiring-resource-caps.test.ts,tests/app/RL-40-43-resource-cap-settings.test.ts,tests/work-graph/S5-notices.test.ts	interface member, host implementation and 4 test fakes deleted	
+C3-034	deleted	deleted		map body removed with listProjectIds (C3-033)	
+C3-036	deleted	deleted	src/app/host.ts	LocalWorkbenchHost.address member and getter deleted	
+C3-037	simplified	simplified	src/app/host.ts	await backfillDone; catch deleted	
+C3-048	kept	kept		src/app/main.ts:222 - proposal says replace or keep as cheap vendor guard, the lead decides; kept	
+C3-049	kept	kept		src/app/runtime-configuration.ts:361 - proposal says keep; R6 documented default	
+C3-057	kept	kept		two-way proposal (delete narrowly or keep untested); kept; src/business/workflow/decision-actions.ts:142	
+C3-058	deleted	deleted	src/business/workflow/decision-actions.ts	narrowed adapter return, deleted applicationRejection (decision-actions.ts:393)	
+C3-062	BLOCKED	BLOCKED		precondition not implemented: the slice-1 §2.2 readonly_copy creation check belongs in src/core/work-graph/sessions/session-directory.ts:710-712 (message exists + consultationDerivation child matches); without it the branch at src/business/workflow/session-maintenance.ts:356-360 is kept. Adding the check is a new production behaviour outside this row's files, so the deletion was not applied.	
+C3-063	BLOCKED	BLOCKED		precondition not implemented: the slice-1 §2.2 readonly_copy creation check belongs in src/core/work-graph/sessions/session-directory.ts:710-712 (message exists + consultationDerivation child matches); without it the branch at src/business/workflow/session-maintenance.ts:356-360 is kept. Adding the check is a new production behaviour outside this row's files, so the deletion was not applied.	
+C3-067	simplified	simplified	src/business/workflow/workflow.ts	deleted runRead .catch, simplified null check (workflow.ts:1392)	
+C3-069	deleted	deleted	src/business/workflow/workflow.ts	deleted maintenanceArchive wrapper, passes archiveService (workflow.ts:2843-2855)	
+C3-070	kept	kept		slice-1-SPEC.md:600 keeps the clock fallback; src/business/workflow/workflow.ts:2924	
+C3-072	simplified	simplified	src/composition/create-platform.ts,src/core/work-graph/communication/decision-source-facts.ts,src/core/work-graph/views/decision-read-model.ts	applyNoteDecision holder arm deleted; both consumer deps narrowed to read-only Pick	
+C3-073	kept	kept		src/composition/create-platform.ts:1142-1148 - proposal says keep both handlers; no test	
+C3-074	deleted	deleted	src/composition/create-platform.ts	finishSessionArchive wrapper off published sessions port; port type Omits it	
+C3-075	deleted	deleted		inner wrapper removed with C3-074	
+C3-078	deleted	deleted	src/composition/create-platform.ts	public claims.readTaskRequeue member and comment deleted; raw owner kept	
+C3-079	deleted	deleted		wrapper removed with C3-078	
+C3-080	kept	kept		src/composition/create-platform.ts:1276 - decision 6 / allowlist kept-for; fallback cannot go alone	
+C3-081	kept	kept		src/composition/create-platform.ts:1278 - same as C3-080 (decision 6 / allowlist kept-for)	
+C3-082	kept	kept		src/composition/create-platform.ts:1281 - decision 6 / allowlist kept-for; delete only if entry dropped	
+C3-083	kept	kept		src/composition/create-platform.ts:1281 inner callback - keep with C3-082	
+C3-088	deleted	deleted	src/composition/create-platform.ts	public messages.ackMessage wrapper deleted; messages type Omit; raw mailbox ack kept	
+C3-089	deleted	deleted		wrapper removed with C3-088	
+C3-090	deleted	deleted	src/composition/create-platform.ts,src/app/core-routes.ts	public goalSettings.resolveGoalConflict wrapper deleted; platform and route types Omit it; raw owner kept	
+C3-091	deleted	deleted		wrapper removed with C3-090	
+C3-094	deleted	deleted	src/composition/create-platform.ts	public readCompletedBoundary override deleted; runtime.port spread keeps the Runtime implementation	
+C3-095	deleted	deleted	src/composition/create-platform.ts,src/business/workflow/ports.ts	rawRuntime readSessionHistory adapter deleted; WorkflowDependencies.runtime narrowed to members the Workflow uses	
+C3-096	deleted	deleted	src/composition/create-platform.ts	rawRuntime readTaskExecutionHistory adapter deleted	
+C3-097	deleted	deleted	src/composition/create-platform.ts	rawRuntime readExecutionHistory adapter deleted	
+C3-098	simplified	simplified	src/composition/create-platform.ts	release() awaited without a swallowing catch	
+C3-099	kept	kept		src/composition/create-platform.ts:1999 - trackedCall requires the whenClosed arg; proposal says keep untested	
+C3-100	kept	kept		src/composition/create-platform.ts:2015 - trackedCall requires the whenClosed arg; proposal says keep untested	
+C3-101	kept	kept		src/composition/create-platform.ts:2025 - trackedCall requires the whenClosed arg; proposal says keep it	
+C3-102	kept	kept		src/composition/create-platform.ts:2031 - same as C3-101; keep it	
+C3-104	kept	kept		proposal leaves the catch to the lead; src/core/workspace/analysis-runner.ts:340	
+C3-105	kept	kept		slice-8-SPEC.md:316/323 keeps the frozen accessor; src/core/workspace/capture.ts:341	
+C3-107	kept	kept		proposal leaves the crash guard to the lead; src/core/workspace/capture.ts:590	
+C3-118	deleted	deleted	src/core/workspace/source-index.ts	deleted host readDirectory (source-index.ts:78)	
+C3-119	deleted	deleted	src/core/workspace/source-index.ts	deleted extra throwIfCancellationRequested (source-index.ts:79)	
+C3-123	deleted	deleted	src/core/workspace/typescript-source-query.ts	deleted matches + local readDirectory + host member (typescript-source-query.ts:282-305)	
+C3-124	deleted	deleted	src/core/workspace/typescript-source-query.ts	one change with C3-123 (local readDirectory)	
+C3-125	deleted	deleted	src/core/workspace/typescript-source-query.ts	one change with C3-123 (name filter callback)	
+C3-126	deleted	deleted	src/core/workspace/typescript-source-query.ts	one change with C3-123 (extensions.some callback)	
+C3-127	deleted	deleted	src/core/workspace/typescript-source-query.ts	one change with C3-123 (includes.some callback)	
+C3-128	deleted	deleted	src/core/workspace/typescript-source-query.ts	one change with C3-123 (excludes.some callback)	
+C3-129	deleted	deleted	src/core/workspace/typescript-source-query.ts	one change with C3-123 (host readDirectory member)	
+C4-022	kept	kept		decision-application.ts:96 explicit slice-6 placeholder; spec reserves it, no fabricated receipt	
+C4-023	kept	kept		decision-application.ts:98 slice-6 placeholder kept with C4-022; no public receipt path	
+C4-024	deleted	deleted	src/core/work-graph/communication/decision-service.ts	decision-service.ts:449-462 readQueryRunSession removed; query_run caller now gets no reader Session -> forbidden; imports/comment updated	
+C4-025	kept	kept		decision-source-facts.ts:201 damaged mapping for foreign source ref; no tamper test	
+C4-026	kept	kept		decision-source-facts.ts:209 damaged mapping for hand-edited saved-answer key; no tamper test	
+C4-034	deleted	deleted	src/core/work-graph/communication/mailbox-service.ts	mailbox-service.ts:3655 unused recheckPersist wrapper removed; recheckSessionMessageReceipt retained	
+C4-038	kept	deleted	src/core/work-graph/evidence/evidence-service.ts	evidence-service.ts:180 mapWorkspaceRejection removed; four sites return the already-rejected WorkspaceResult	TFR-07: proposal premise false (WorkspaceError has non-CoreError codes); base mapping restored
+C4-044	simplified	simplified	src/core/work-graph/evidence/evidence-service.ts	evidence-service.ts:950-951 adapter now maps every non-ready compile to invalid; non-invalid codes are never produced; compiler boundary kept	
+C4-045	simplified	simplified	src/core/work-graph/evidence/verification-plan.ts,src/core/work-graph/evidence/evidence-service.ts,tests/work-graph/R3e-evidence-coverage.test.ts	verification-plan.ts:40 risks input removed, content writes risks: []; callers updated; digest unchanged	
+C4-048	kept	kept		note-anchors.ts:677 one-line not_ready guard is behaviour-neutral; proposal offers keep or widen refactor with no pick	
+C4-049	deleted	deleted	src/core/work-graph/notes/note-read-model.ts	note-read-model.ts:2117-2121 missing head now unavailable 'the note head is missing'; dead checkNotes fallback in withCheck removed	
+C4-090	kept	kept		session-record-codecs.ts:332 stored-record failure guard kept untested; proposal offers keep or delete with no pick; operation-failure lifecycle may be reserved	
+C4-093	deleted	deleted	src/core/work-graph/views/activity-read-model.ts	ActivityReadModelDependencies.now required; the default clock arrow deleted	
+C4-094	deleted	deleted	src/core/work-graph/views/decision-read-model.ts	keyOf/closedReasonOf optional; note_review registration drops both callbacks	
+C4-098	kept	kept		decision-read-model.ts:1683 'rejected' is declared but un-writable (STATE-MACHINES-SPEC PLAN-07/D-17), so the fallback is kept	
+C4-113	simplified	simplified	src/core/work-graph/views/graph-context-reader.ts	Deleted the dead `!== undefined` branch and its fallback at :1307/:1327-1329; kept the listing loop; typed `executions` as `ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>>` (:76). No test edit: every construction passes a real `createRunStateReader` with `listExecutions`; S3-graph-context and S3-prepared-context-admission pass.	
+C4-122	deleted	deleted	src/core/work-graph/views/undelivered-reply-notices.ts	deleted the not_found branch; a non-ready message read propagates as the page result	
+C4-123	kept	kept		undelivered-reply-notices.ts:325 conflicting-Goal rejection kept; no record-doctoring test	
+C4-124	deleted	deleted	src/core/work-graph/views/undelivered-reply-notices.ts	deleted the DTO responseSince re-check; the entry-position check at :337 stays	
+C4-126	deleted	deleted	src/core/work-graph/views/undelivered-reply-notices.ts	compareText and the second-level sort tie-break deleted; shared position comparator used	
+C4-127	kept	kept		work-line-reader.ts:144 pass-through needs WorkLineStore port narrowing, a structural change the lead decides	
+C4-128	kept	kept		work-line-reader.ts:145 same as C4-127: commit forwarder kept until the port is narrowed	
+C4-130	simplified	simplified	src/core/work-graph/views/work-line-reader.ts	dropped `|| until === null` and targetTaskOf's non-task fallback; damaged-link unknownTask kept	
+C4-131	kept	kept		work-line-reader.ts:1542 N9 cycle repair; slice-2C-SPEC.md:1343 says defensive/no test	
+C4-132	kept	kept		work-line-reader.ts:1556 N9-only filter; deletion needs dropping N9, the lead's call	
+C4-135	kept	kept		work-line-reader.ts:2354 cycleRepresentativeOf; 2C N9 spec change required	
+C4-136	kept	kept		work-line-reader.ts:2355 callback inside C4-135; same N9 reason	
+NP-1	deleted	deleted	src/core/work-graph/tasks/session-facts.ts,src/core/work-graph/model/session-facts-contracts.ts,src/core/work-graph/sessions/session-directory.ts,src/core/work-graph/sessions/session-responsibility-service.ts	deleted legacyPending and every provenance===null branch	
+NP-2	deleted	deleted	src/business/workflow/session-maintenance.ts	deleted condition 4 (legacyPending/null provenance) (session-maintenance.ts:480)	TFR-09: the last provenance null checks removed
+NP-3	deleted	deleted	src/core/work-graph/tasks/run-reconcile-service.ts	deleted legacyPending reading	
+NP-4	deleted	deleted	src/core/work-graph/tasks/session-anomaly-service.ts	deleted legacyPending reading	
+NP-5	simplified	simplified	src/core/work-graph/state/line-status.ts	deleted the provenance_unchecked marker computation and its branch; contracts/work-line.ts:60 is group D's NP-6	TFR-01: the null-kind counts removed; legacyUnchecked is always exact 0
+NP-6	deleted	deleted	src/contracts/work-line.ts	deleted provenance_unchecked member (work-line.ts:60)	
+CP-1	simplified	simplified	src/composition/create-platform.ts	comment now states only the real executed-files reader	

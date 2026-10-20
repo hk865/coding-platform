@@ -1,5 +1,10 @@
 # 第 6 片规格：主对话上的秘书（服务端）
 
+**后注（决定 86-2，lead 2026-10-21）：** 旧浏览器工作台 `src/ui` 已删（代码在标签 `old-ui-last`）。本规格里点名它的地方说的是删除之前的代码：
+- F6 的浏览器查询流程（已在表里补注）。
+- “人工采用入口”（§0 的初始化分支、§3 的 L8、§4 第 13 条、§5 的 R-14）指旧界面 `ui/views/execution/planning.ts:274` 的 `adoptInitialPlanSetup`。它不是一条路由，而是浏览器把一串后端路由串起来：`workspaces/registration`、`architecture/read`、`architecture/adopt-initial`、`completion-policies/read`、`completion-policies/install`、`completion-policies/activate`、`checks/approve`、`workflow/goal-input`。这些路由都还在，串它们的代码随旧界面删了。“采用仍是你的动作”不变；由谁来串（新界面，还是服务端一个组合动作），lead 在 6A 冻结前和决定 83 那一节一起定（决定 86-5：有能力，也要有入口）。
+- §1“界面（E3）；旧界面的主对话照旧”：旧界面已没有；主对话的人用入口随 E3。
+
 **后注（决定 83，lead 2026-10-18 晚）：** 本片冻结后要补一节“提示词和上下文”：秘书、派活、等待、转交、干预的提示词做成可配置的模板，按提供方和型号选版本，不写死在代码里；超长时保住当前任务和角色说明；思考带不带回按模型定；记下每次实际发出的整套提示词。见 [HANDOFF 决定 83](../../../HANDOFF.md)。这一节在 K3、C1、T 之后由 lead 起草，冻结后再开 6A；在那之前不要按本稿施工提示词部分。
 
 **后注（决定 72 的复用盘点，lead 2026-10-16 夜）：** Codex 把第 6、7、8 片和 K3、4C 剩下的部分放在一起找共用机制，两个 Claude 子 agent 逐条核过引用和代码，lead 裁定。和正文冲突时以本后注为准；产品范围不变。和本片有关的：
@@ -70,7 +75,7 @@
 | F3 | “工作区 + 目标”的查询索引已有（`S5_QUERY_JOB_BY_GOAL`）；按 Session 找查询执行的索引已有；按根请求找的没有 | `queries/query-record-codecs.ts:63`、`:767`、`:773` |
 | F4 ✓ | 查询执行由 `createQueryExecutionDriver` 建可信的 `query_run` 上下文，注册图工具，`readOnly: true` 调模型；K 片 B 的只读命令已能注册给查询 | `agent-runtime/query-execution.ts:218-260`、`:361-369`、`:520-546` |
 | F5 | 查询的准备读不到目标就拒绝（`goalId: null` 进不了准备）；普通查询组装只认 `copy`（初始协调是 `planning`/`copy`） | `work-graph/queries/query-execution.ts` `readPreparationFacts:375-381`、`expectedQueryCallKinds:124` |
-| F6 ✓ | 浏览器里的查询流程今天由界面驱动（提交、领取、准备、开始、观察）；服务端驱动只有咨询（消息专用） | `src/ui/views/execution/query-flow.ts:114-167`；`business/workflow/consultation.ts:311-481` |
+| F6 ✓ | 浏览器里的查询流程今天由界面驱动（提交、领取、准备、开始、观察）；服务端驱动只有咨询（消息专用） | `src/ui/views/execution/query-flow.ts:114-167`；`business/workflow/consultation.ts:311-481`（2026-10-21 补注：浏览器查询流程已随旧界面删除。现在没有东西从浏览器驱动 Query。） |
 | F7 | 初始规划已有严格的回答格式和从规划回答到采用的 Workflow；候选的请求关联、替换位、过期、读和放弃的路由已有；保存的回答没有“思路”和“选择” | `agent-runtime/query-preparation.ts:50`；`business/workflow/workflow.ts:584-643`；`tasks/plan-service.ts:2278`；`query-job.ts` `QueryJobAnswerV1:407` |
 | F8 | 计划差异：`deriveFuturePlanDelta` 给结构上的比较 | `tasks/plan-validation.ts:328` |
 | F9 ✓ | 建目标只有编号、工作区、目标说明；`GoalSnapshot` 没有“接续自” | `model/task-contracts.ts:35`；`src/contracts/ledger.ts` `GoalSnapshot:53-75` |

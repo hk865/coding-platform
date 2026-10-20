@@ -1,0 +1,24 @@
+IN12 proof at d4140be TF5 unused names; bubblewrap; 01:50
+== break: the non-PASS head condition at src/core/work-graph/tasks/context-input-service.ts replaced by false
+ src/core/work-graph/tasks/context-input-service.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+-  if (head.status !== 'finalized' || head.outcome !== 'PASS' || head.gaps.length > 0
+-    || check === undefined || check.outcome !== 'PASS') {
++  if (false && (head.status !== 'finalized' || head.outcome !== 'PASS' || head.gaps.length > 0
++    || check === undefined || check.outcome !== 'PASS')) {
+     × IN12 a newer finalized FAIL gate head is missing with no applicable round 671ms
+     × IN12 a newer finalized FAIL gate head is missing with no applicable round 2165ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  tests/work-graph/S3-context-inputs.test.ts > S3 exact task inputs (memory backend) > IN12 a newer finalized FAIL gate head is missing with no applicable round
+AssertionError: expected { declaration: { …(6) }, …(6) } to match object { state: 'missing', …(2) }
+ FAIL  tests/work-graph/S3-context-inputs.test.ts > S3 exact task inputs (sqlite backend) > IN12 a newer finalized FAIL gate head is missing with no applicable round
+AssertionError: expected { declaration: { …(6) }, …(6) } to match object { state: 'missing', …(2) }
+ Test Files  1 failed (1)
+      Tests  2 failed | 34 skipped (36)
+== restored: 0 changed files
+ ✓ tests/work-graph/S3-context-inputs.test.ts (36 tests | 34 skipped) 2636ms
+     ✓ IN12 a newer finalized FAIL gate head is missing with no applicable round  676ms
+     ✓ IN12 a newer finalized FAIL gate head is missing with no applicable round  1959ms
+ Test Files  1 passed (1)
+      Tests  2 passed | 34 skipped (36)
+ended 01:50
