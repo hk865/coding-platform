@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { createLocalWorkbenchHost } from '../../src/app/host.js';
 import { SETTINGS_API_PREFIX } from '../../src/app/host-settings-types.js';
 import { CORE_API_PREFIX, PLATFORM_TOKEN_HEADER } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from '../helpers/host-page.js';
 import { defaultRLSandboxResult, rlSandbox } from '../helpers/RL-kernel-sandbox-double.js';
 
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
@@ -47,7 +47,7 @@ async function readToken(base: string): Promise<string> {
   const response = await fetch(base);
   expect(response.status).toBe(200);
   const html = await response.text();
-  const match = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
+  const match = new RegExp(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
   if (match?.[1] === undefined) throw new Error('the page did not expose the runtime token meta');
   return match[1];
 }
@@ -57,7 +57,7 @@ async function startHost(settingsDirectory: string, root: string): Promise<Start
   const database = await temp('rl-44-db-');
   await mkdir(publicDir, { recursive: true });
   await writeFile(join(publicDir, 'index.html'),
-    `<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="__PLATFORM_TOKEN__">`);
+    `<meta name="${PLATFORM_TOKEN_META_NAME}" content="__PLATFORM_TOKEN__">`);
   const host = await createLocalWorkbenchHost({
     storage: { kind: 'sqlite', directory: database },
     actor: { kind: 'human', id: 'rl-44-operator' },

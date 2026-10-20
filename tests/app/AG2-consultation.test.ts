@@ -23,10 +23,9 @@
  * real instruction digest. It never edits an internal record.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LocalWorkbenchHost } from '../../src/app/host.js';
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
@@ -57,8 +56,8 @@ import {
   type SessionRef,
 } from '../../src/app/core-http-types.js';
 import { cleanupAG2b, startCliHost } from '../helpers/AG2b-collaboration-fixture.js';
+import { writeHostPage } from '../helpers/host-page.js';
 
-const projectDir = resolve(fileURLToPath(new URL('../../', import.meta.url)));
 const at = '2026-09-28T00:00:00.000Z';
 const scope: CoreScope = { projectId: 'ag2-consultation-project', workspaceId: 'ag2-consultation-workspace' };
 const projectRef = { aggregateType: 'Project' as const, projectId: scope.projectId };
@@ -86,11 +85,8 @@ const temporary: string[] = [];
 beforeAll(async () => {
   publicDir = await mkdtemp(join(tmpdir(), 'ag2-consultation-public-'));
   temporary.push(publicDir);
-  const build = spawnSync(process.execPath, ['scripts/build-workbench.mjs'], {
-    cwd: projectDir, encoding: 'utf8', env: { ...process.env, WORKBENCH_OUT_DIR: publicDir },
-  });
-  if (build.status !== 0) throw new Error(`workbench build failed: ${build.stdout}\n${build.stderr}`);
-}, 60_000);
+  await writeHostPage(publicDir);
+});
 
 afterAll(async () => {
   for (const directory of temporary.splice(0)) await rm(directory, { recursive: true, force: true });

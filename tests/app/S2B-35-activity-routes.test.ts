@@ -40,7 +40,7 @@ import { CORE_API_PREFIX, PLATFORM_TOKEN_HEADER, PLATFORM_TOKEN_PLACEHOLDER } fr
 import { createWorkbenchServer, type WorkbenchServer } from '../../src/app/server.js';
 import { createLocalWorkbenchHost, type LocalWorkbenchHost } from '../../src/app/host.js';
 import { acquireHostInstanceLease } from '../../src/app/host-instance-lease.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from '../helpers/host-page.js';
 import { createActivityReadModel } from '../../src/core/work-graph/views/activity-read-model.js';
 import { createTrackReadModel } from '../../src/core/work-graph/views/track-read-model.js';
 import { createTaskStateTimeline } from '../../src/core/work-graph/views/task-state-timeline.js';
@@ -112,7 +112,7 @@ async function placeholderPublicDirectory(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 's2b-35-public-'));
   temporary.push(directory);
   await writeFile(join(directory, 'index.html'),
-    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   return directory;
 }
 

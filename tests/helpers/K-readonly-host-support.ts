@@ -22,7 +22,7 @@ import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { WorkbenchRuntimeConfiguration } from '../../src/app/runtime-configuration.js';
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import type { WorkbenchActor } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from './host-page.js';
 import { createScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
 import {
   AG2B_AT, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_BUDGET, AG2B_QUERY_INSTRUCTION, AG2B_QUERY_PROFILE_ID,
@@ -56,7 +56,7 @@ export async function startKReadonlyRealHost(options: KReadonlyRealHostOptions):
   await writeAG2bWorkspace(root);
   await mkdir(publicDir, { recursive: true });
   await writeFile(join(publicDir, 'index.html'),
-    `<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="__PLATFORM_TOKEN__">`);
+    `<meta name="${PLATFORM_TOKEN_META_NAME}" content="__PLATFORM_TOKEN__">`);
   const actor: WorkbenchActor = { kind: 'human', id: 'k-ro-real-operator' };
   const scripted = createScriptedModel(options.replies);
   const queryScripted = createScriptedModel([]);

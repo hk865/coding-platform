@@ -984,6 +984,294 @@
       "name": "impactPage",
       "reason": "kept-for",
       "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ProjectsCreateResponse",
+      "reason": "wire-format",
+      "note": "the projects/create route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkspacesRegisterResponse",
+      "reason": "wire-format",
+      "note": "the workspaces/register route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "CompletionPoliciesInstallResponse",
+      "reason": "wire-format",
+      "note": "the completion-policies/install route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "CompletionPoliciesActivateResponse",
+      "reason": "wire-format",
+      "note": "the completion-policies/activate route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsCreateResponse",
+      "reason": "wire-format",
+      "note": "the goals/create route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ArchitectureAdoptInitialResponse",
+      "reason": "wire-format",
+      "note": "the architecture/adopt-initial route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ArchitectureReadBody",
+      "reason": "wire-format",
+      "note": "the architecture/read route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PlansProposeResponse",
+      "reason": "wire-format",
+      "note": "the plans/propose route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "PlansApplyResponse",
+      "reason": "wire-format",
+      "note": "the plans/apply route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "FilesReadResponse",
+      "reason": "wire-format",
+      "note": "the files/read route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SourceCaptureResponse",
+      "reason": "wire-format",
+      "note": "the source/capture route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SourceQueryResponse",
+      "reason": "wire-format",
+      "note": "the source/query route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SessionsFindResponse",
+      "reason": "wire-format",
+      "note": "the sessions/find route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SessionsReadResponse",
+      "reason": "wire-format",
+      "note": "the sessions/read route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SessionsOperationResponse",
+      "reason": "wire-format",
+      "note": "the sessions/operation route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "RuntimeCapabilitiesResponse",
+      "reason": "wire-format",
+      "note": "the runtime/capabilities route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SessionsCreateResponse",
+      "reason": "wire-format",
+      "note": "the sessions/create route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "SessionsHistoryResponse",
+      "reason": "wire-format",
+      "note": "the sessions/history route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MessagesSendResponse",
+      "reason": "wire-format",
+      "note": "the messages/send route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MessagesInboxResponse",
+      "reason": "wire-format",
+      "note": "the messages/inbox route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MessagesReadResponse",
+      "reason": "wire-format",
+      "note": "the messages/read route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MessagesBodyResponse",
+      "reason": "wire-format",
+      "note": "the messages/body route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkspacesRegistrationResponse",
+      "reason": "wire-format",
+      "note": "the workspaces/registration route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesSubmitBody",
+      "reason": "wire-format",
+      "note": "the queries/submit route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesSubmitResponse",
+      "reason": "wire-format",
+      "note": "the queries/submit route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesReadResponse",
+      "reason": "wire-format",
+      "note": "the queries/read route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesPrepareResponse",
+      "reason": "wire-format",
+      "note": "the queries/prepare route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesStartResponse",
+      "reason": "wire-format",
+      "note": "the queries/start route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesAnswerBody",
+      "reason": "wire-format",
+      "note": "the queries/answer route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesAnswerResponse",
+      "reason": "wire-format",
+      "note": "the queries/answer route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "MaterialsOpenResponse",
+      "reason": "wire-format",
+      "note": "the materials/open route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkflowGoalInputBody",
+      "reason": "wire-format",
+      "note": "the workflow/goal-input route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkflowAdvanceBody",
+      "reason": "wire-format",
+      "note": "the workflow/advance route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkflowConsultationBody",
+      "reason": "wire-format",
+      "note": "the workflow/consultation route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkflowConsultationResponse",
+      "reason": "wire-format",
+      "note": "the workflow/consultation route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkflowDriverStartBody",
+      "reason": "wire-format",
+      "note": "the workflow/driver-start route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkflowDriverStartResponse",
+      "reason": "wire-format",
+      "note": "the workflow/driver-start route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkflowDriverReadResponse",
+      "reason": "wire-format",
+      "note": "the workflow/driver-read route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "WorkflowDriverStopResponse",
+      "reason": "wire-format",
+      "note": "the workflow/driver-stop route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ExecutionsReadResponse",
+      "reason": "wire-format",
+      "note": "the executions/read route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ExecutionsHistoryResponse",
+      "reason": "wire-format",
+      "note": "the executions/history route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ExecutionsListResponse",
+      "reason": "wire-format",
+      "note": "the executions/list route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ProjectsReadResponse",
+      "reason": "wire-format",
+      "note": "the projects/read route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "FilesSaveResponse",
+      "reason": "wire-format",
+      "note": "the files/save route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "FilesCompareResponse",
+      "reason": "wire-format",
+      "note": "the files/compare route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "CommandsStartResponse",
+      "reason": "wire-format",
+      "note": "the commands/start route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "CommandsReadResponse",
+      "reason": "wire-format",
+      "note": "the commands/read route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "CommandsStopResponse",
+      "reason": "wire-format",
+      "note": "the commands/stop route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
     }
   ]
 }

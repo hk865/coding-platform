@@ -8,10 +8,6 @@
  *   README and `WORKBENCH_CLI_USAGE`): only its top-level statements run;
  * - `package.json` `bin` (top-level statements) and `main`/`exports` (every
  *   export), mapped from `dist/<path>.js` to `src/<path>.ts` (none today);
- * - the browser bundles of `scripts/build-workbench.mjs` (`const entries`,
- *   `src/ui/<name>.ts`): only top-level statements run, because nothing
- *   imports a bundle's exports (`index.html` loads `main.js`; `views.js` is
- *   published but loaded by no page);
  * - every `src` module a `scripts/*.mjs` file loads from `dist/` (a static
  *   `import { … } from '../dist/<path>.js'` or a `{ … } = await
  *   import('./dist/<path>.js')` in a `node -e` string): the named exports.
@@ -30,9 +26,9 @@
  * the members of top-level classes, and the members of the operation
  * surfaces: every interface or type alias whose name ends in `Port`, and the
  * declared return type of every `create*Service` factory (for an alias, the
- * members of the type literals it is made of). `src/ui/` is analysed with
- * `tsconfig.ui.json`, the rest with `tsconfig.json`; a node is identified by
- * file and name (`Type.member` for a member), so both Programs agree on it.
+ * members of the type literals it is made of). Every file is analysed with
+ * `tsconfig.json`; a node is identified by file and name (`Type.member` for a
+ * member).
  *
  * Edges are identifier references resolved by the checker, through import
  * aliases and re-exports; a type-only reference is a reference, while an
@@ -108,7 +104,6 @@ export type ReachReport = {
 };
 
 const CLI_ENTRY = 'src/app/main.ts';
-const UI_DIRECTORY = 'src/ui/';
 const PORT_NAME = /Port$/;
 const SERVICE_FACTORY = /^create\w*Service$/;
 const IMPLICIT_MEMBERS = new Set(['constructor', 'toString', 'toJSON', 'valueOf', 'then']);
@@ -148,11 +143,6 @@ export function productionEntries(root: string): ProductionEntry[] {
     }
   }
   const scripts = join(root, 'scripts');
-  const build = readFileSync(join(scripts, 'build-workbench.mjs'), 'utf8');
-  const bundles = /const entries = \[([^\]]*)\]/.exec(build);
-  if (bundles === null) throw new Error('scripts/build-workbench.mjs no longer declares `const entries = [...]`; update the reach analysis');
-  for (const name of bundles[1]!.matchAll(/'([^']+)'/g))
-    entries.push({ file: `${UI_DIRECTORY}${name[1]}.ts`, exports: 'none', via: 'browser bundle of scripts/build-workbench.mjs' });
   for (const script of readdirSync(scripts).filter(name => name.endsWith('.mjs')).sort()) {
     const text = readFileSync(join(scripts, script), 'utf8');
     let covered = 0;
@@ -293,13 +283,11 @@ export function analyzeProductionReach(root: string): ReachReport {
   const projectRoot = resolve(root);
   const relativePath = (fileName: string) => relative(projectRoot, fileName).split(sep).join('/');
   const entries = productionEntries(projectRoot);
-  const mainProgram = createSourceProgram(projectRoot, 'tsconfig.json', file => file.startsWith('src/') && !file.startsWith(UI_DIRECTORY));
-  const uiProgram = createSourceProgram(projectRoot, 'tsconfig.ui.json', file => file.startsWith(UI_DIRECTORY));
+  const mainProgram = createSourceProgram(projectRoot, 'tsconfig.json', file => file.startsWith('src/'));
   const ownSourceFiles = (program: ts.Program, own: (file: string) => boolean) => program.getSourceFiles()
     .filter(sourceFile => !sourceFile.isDeclarationFile && own(relativePath(sourceFile.fileName)));
   const programs = [
-    { program: mainProgram, files: ownSourceFiles(mainProgram, file => file.startsWith('src/') && !file.startsWith(UI_DIRECTORY)) },
-    { program: uiProgram, files: ownSourceFiles(uiProgram, file => file.startsWith(UI_DIRECTORY)) },
+    { program: mainProgram, files: ownSourceFiles(mainProgram, file => file.startsWith('src/')) },
   ];
 
   // The operation surfaces: `*Port` types and the declared return types of `create*Service`.
@@ -710,8 +698,8 @@ export function analyzeProductionReach(root: string): ReachReport {
   for (const entry of entries) {
     reachFile(entry.file);
     if (entry.exports === 'none') continue;
-    const sourceFile = mainProgram.getSourceFile(join(projectRoot, entry.file)) ?? uiProgram.getSourceFile(join(projectRoot, entry.file));
-    const checker = entry.file.startsWith(UI_DIRECTORY) ? uiProgram.getTypeChecker() : mainProgram.getTypeChecker();
+    const sourceFile = mainProgram.getSourceFile(join(projectRoot, entry.file));
+    const checker = mainProgram.getTypeChecker();
     const moduleSymbol = sourceFile === undefined ? undefined : checker.getSymbolAtLocation(sourceFile);
     if (moduleSymbol === undefined) throw new Error(`production entry ${entry.file} (${entry.via}) is not a module of the Program`);
     const exported = new Map(checker.getExportsOfModule(moduleSymbol).map(symbol => [symbol.name, symbol]));

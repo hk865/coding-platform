@@ -7,9 +7,9 @@ import { createHash } from 'node:crypto';
 /** The single source of the module and submodule rules (task C, 2026-10-02). */
 export const MODULE_TARGET_PATH = 'docs/refactor/module-target.json';
 const MODULE_TARGET_SCHEMA = 2;
-const OUTER_LAYER_PREFIXES = ['src/contracts/', 'src/composition/', 'src/app/', 'src/ui/'];
+const OUTER_LAYER_PREFIXES = ['src/contracts/', 'src/composition/', 'src/app/'];
 // Outer-layer owners have fixed rules in checkSpecifier; a JSON module may not borrow their names.
-const RESERVED_MODULE_IDS = new Set(['Contracts', 'Composition', 'Host', 'UI']);
+const RESERVED_MODULE_IDS = new Set(['Contracts', 'Composition', 'Host']);
 const sourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 const APPROVED_NEXT_PACKAGES = new Set(['typescript', 'vitest', '@vitest/coverage-v8', '@types/node', 'marked', 'esbuild']);
 const APPROVED_KERNEL_PACKAGES = new Set(['openai', 'zod']);
@@ -223,7 +223,6 @@ export async function inspectSourceTree(projectDir) {
   const owner = rel => rel.startsWith('contracts/') ? 'Contracts'
     : rel.startsWith('composition/') ? 'Composition'
     : rel.startsWith('app/') ? 'Host'
-    : rel.startsWith('ui/') ? 'UI'
     : MODULES.find(({ prefix }) => rel === prefix || rel.startsWith(prefix + '/'))?.id ?? null;
   const moduleFileCounts = new Map(MODULES.map(({ id }) => [id, 0]));
   const submoduleFileCounts = new Map();
@@ -308,13 +307,7 @@ export async function inspectSourceTree(projectDir) {
       }
     }
   }
-  let uiDirectory = false;
-  try { uiDirectory = (await lstat(resolve(sourceRoot, 'ui'))).isDirectory(); } catch { uiDirectory = false; }
-  if (uiDirectory) {
-    try { await lstat(resolve(project, 'tsconfig.ui.json')); }
-    catch { issues.push('tsconfig.ui.json is required while src/ui exists'); }
-  }
-  for (const configName of ['tsconfig.json', 'tsconfig.build.json', 'tsconfig.ui.json']) {
+  for (const configName of ['tsconfig.json', 'tsconfig.build.json']) {
     try { await lstat(resolve(project, configName)); } catch { continue; }
     checkConfig(resolve(project, configName));
   }
@@ -408,8 +401,6 @@ export async function inspectSourceTree(projectDir) {
     const file = ts.createSourceFile(rel, content, ts.ScriptTarget.Latest, true);
     // Every import diagnostic names the file and the 1-based line of the import.
     const at = node => `${rel}:${file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1}`;
-    const uiDtoModules = new Set(['core-http-types', 'host-settings-types'].map(name => resolve(sourceRoot, 'app', name)));
-    const withoutJsExtension = candidate => candidate.replace(/\.(mjs|cjs|js|jsx)$/, '');
     // Spec §14.4: a pure submodule imports only src/contracts/, its own files and
     // its declared submodule dependencies (types or values). Checked BEFORE the
     // generic exemptions, so a `node:` builtin, a package, the Kernel entry or
@@ -441,28 +432,8 @@ export async function inspectSourceTree(projectDir) {
       if (ts.isTypeReferenceNode(parent) || ts.isTypeQueryNode(parent) || ts.isQualifiedName(parent)) return null;
       return node.text;
     }
-    // Browser rule, applied BEFORE the generic Node/Kernel/npm exemptions so a
-    // `node:` builtin, the frozen Kernel entry, a bare package, or an arbitrary
-    // Host/Contracts value import cannot be waived by an early return. The only
-    // Host import remains TYPE-ONLY. The existing Markdown adapter alone may
-    // consume its bundled browser parser; no other bare-package exemption.
-    function checkUiSpecifier(specifier, typeOnly, loc) {
-      if (typeof specifier !== 'string') { issues.push(`${loc}: computed import/require is forbidden`); return; }
-      if (specifier.startsWith('node:')) { issues.push(`${loc}: the browser UI may not import a Node builtin (${specifier})`); return; }
-      if (rel === 'ui/markdown.ts' && specifier === 'marked') return;
-      if (!specifier.startsWith('.')) { issues.push(`${loc}: the browser UI may not import a bare package (${specifier})`); return; }
-      const target = resolve(dirname(path), specifier);
-      if (!inside(sourceRoot, target)) { issues.push(`${loc}: the browser UI import escapes next/src: ${specifier}`); return; }
-      if (owner(relative(sourceRoot, target).split(sep).join('/')) === 'UI') return;
-      if (uiDtoModules.has(withoutJsExtension(target))) {
-        if (!typeOnly) issues.push(`${loc}: the browser UI may only type-only import app/core-http-types`);
-        return;
-      }
-      issues.push(`${loc}: the browser UI may only use local UI modules and the type-only HTTP DTO (${specifier})`);
-    }
-    function checkSpecifier(specifier, typeOnly, node) {
+    function checkSpecifier(specifier, node) {
       const loc = at(node);
-      if (from === 'UI') { checkUiSpecifier(specifier, typeOnly, loc); return; }
       if (typeof specifier !== 'string') { issues.push(`${loc}: computed import/require is forbidden`); return; }
       if (pure && !pureImportAllowed(specifier)) {
         issues.push(`${loc}: pure directory may not import ${specifier}`);
@@ -483,17 +454,11 @@ export async function inspectSourceTree(projectDir) {
       const targetRel = relative(sourceRoot, target).split(sep).join('/');
       const to = owner(targetRel);
       if (!to) { issues.push(`${loc}: import targets no target module: ${specifier}`); return; }
-      // Host and UI are outer layers: the Host may use composition plus the
-      // public module ports; the browser UI may only use local views and a
-      // TYPE-ONLY view of the Host HTTP DTO. Core modules never depend on them.
-      if (to === 'Host' || to === 'UI') {
-        if (from === to) return;
-        if (from === 'Host' && to === 'UI') { issues.push(`${loc}: Host may not depend on the browser UI`); return; }
-        if (from === 'UI' && to === 'Host') {
-          if (!typeOnly) issues.push(`${loc}: the browser UI may only type-only import the Host HTTP DTO`);
-          return;
-        }
-        issues.push(`${loc}: ${from} may not depend on the ${to} layer`);
+      // The Host is an outer layer: it may use composition plus the public
+      // module ports. Core modules never depend on it.
+      if (to === 'Host') {
+        if (from === 'Host') return;
+        issues.push(`${loc}: ${from} may not depend on the Host layer`);
         return;
       }
       if (from === 'Host') {
@@ -520,21 +485,17 @@ export async function inspectSourceTree(projectDir) {
       }
     }
     function walk(node) {
-      if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
-        const typeOnly = ts.isImportDeclaration(node)
-          ? node.importClause?.isTypeOnly === true
-          : node.isTypeOnly === true;
-        checkSpecifier(ts.isStringLiteral(node.moduleSpecifier) ? node.moduleSpecifier.text : null, typeOnly, node);
-      }
+      if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier)
+        checkSpecifier(ts.isStringLiteral(node.moduleSpecifier) ? node.moduleSpecifier.text : null, node);
       if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference))
-        checkSpecifier(ts.isStringLiteral(node.moduleReference.expression) ? node.moduleReference.expression.text : null, false, node);
+        checkSpecifier(ts.isStringLiteral(node.moduleReference.expression) ? node.moduleReference.expression.text : null, node);
       if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument))
-        checkSpecifier(ts.isStringLiteral(node.argument.literal) ? node.argument.literal.text : null, true, node);
+        checkSpecifier(ts.isStringLiteral(node.argument.literal) ? node.argument.literal.text : null, node);
       if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
         (ts.isIdentifier(node.expression) && node.expression.text === 'require') ||
         (ts.isPropertyAccessExpression(node.expression) && node.expression.getText(file) === 'require.resolve'))) {
         const arg = node.arguments[0];
-        checkSpecifier(arg && ts.isStringLiteral(arg) ? arg.text : null, false, node);
+        checkSpecifier(arg && ts.isStringLiteral(arg) ? arg.text : null, node);
       }
       if (pure) {
         const global = pureGlobalUse(node);
@@ -547,7 +508,7 @@ export async function inspectSourceTree(projectDir) {
   // A broken module target has no trustworthy ownership; do not report a flood
   // of derived "no owner" issues on top of the precise target issues.
   if (target.issues.length)
-    issues.push(`source files were not checked (ownership, imports, symlinks, UI rules) because ${MODULE_TARGET_PATH} is invalid`);
+    issues.push(`source files were not checked (ownership, imports, symlinks) because ${MODULE_TARGET_PATH} is invalid`);
   else await visit(sourceRoot);
   const modules = [];
   for (const { id, path } of MODULES)

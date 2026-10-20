@@ -10,16 +10,15 @@
  *     to be red until the phase-2 implementation lands. No test reaches a fake
  *     success and no assertion accepts an empty graph.
  *
- * The build artifacts come from the real `scripts/build-workbench.mjs`, run once
- * into a temporary public dir so the test never depends on a prior `next/dist`.
+ * The page and assets come from the test's own public dir; the browser
+ * workbench build was removed on 2026-10-20.
  *
  * Specification: docs/refactor/tasks/R6-host-workbench-skeleton.md §2-§5.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLocalWorkbenchHost, type LocalWorkbenchHost } from '../../src/app/host.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
@@ -62,12 +61,11 @@ import {
   type WorkflowAdvanceResult,
   type WorkflowStepReceipt,
 } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME, writeHostPage } from '../helpers/host-page.js';
 import { cleanupAG2b, readPageToken, startCliHost } from '../helpers/AG2b-collaboration-fixture.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { TargetPlatformOptions } from '../../src/composition/create-platform.js';
 
-const projectDir = resolve(fileURLToPath(new URL('../../', import.meta.url)));
 const scope: CoreScope = { projectId: 'r6-host-project', workspaceId: 'r6-host-workspace' };
 const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: 'r6-goal' };
 const projectRef = { aggregateType: 'Project' as const, projectId: scope.projectId };
@@ -80,11 +78,8 @@ const temporary: string[] = [];
 beforeAll(async () => {
   publicDir = await mkdtemp(join(tmpdir(), 'r6-workbench-public-'));
   temporary.push(publicDir);
-  const build = spawnSync(process.execPath, ['scripts/build-workbench.mjs'], {
-    cwd: projectDir, encoding: 'utf8', env: { ...process.env, WORKBENCH_OUT_DIR: publicDir },
-  });
-  if (build.status !== 0) throw new Error(`workbench build failed: ${build.stdout}\n${build.stderr}`);
-}, 60_000);
+  await writeHostPage(publicDir, true);
+});
 
 afterAll(async () => {
   for (const directory of temporary.splice(0)) await rm(directory, { recursive: true, force: true });
@@ -198,7 +193,7 @@ function planDraft(): unknown {
 }
 
 describe('R6.1a Host HTTP/static shell', () => {
-  it('serves the real built page and assets with a per-response temporary token', async () => {
+  it('serves the static page and assets with a per-response temporary token', async () => {
     const started = await startHost();
     try {
       const page = await fetch(started.base);
@@ -207,7 +202,7 @@ describe('R6.1a Host HTTP/static shell', () => {
       expect(page.headers.get('content-type')).toContain('text/html');
       expect(page.headers.get('cache-control')).toContain('no-store');
       expect(html).not.toContain(PLATFORM_TOKEN_PLACEHOLDER);
-      expect(html).toContain(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${started.token}">`);
+      expect(html).toContain(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="${started.token}">`);
       const script = await fetch(`${started.base}main.js`);
       expect(script.status).toBe(200);
       expect(script.headers.get('content-type')).toContain('javascript');

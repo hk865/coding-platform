@@ -23,6 +23,7 @@ import {
   graphStamp,
 } from '../helpers/orchestration-fixture.js';
 import { createC1Harness, type C1Harness } from '../helpers/C1-mailbox-fixture.js';
+import { writeHostPage } from '../helpers/host-page.js';
 
 describe('mechanical attention observer', () => {
   it('derives a real same-size replacement from the two texts', () => {
@@ -219,13 +220,9 @@ it('runs two explicitly selected same-Goal Tasks in independent Sessions with ov
   const { mkdtemp, readFile, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
-  const { spawnSync } = await import('node:child_process');
   const fx = await import('../helpers/AG2b-collaboration-fixture.js');
   const publicDir = await mkdtemp(join(tmpdir(), 'orchestration-parallel-public-'));
-  const build = spawnSync(process.execPath, ['scripts/build-workbench.mjs'], {
-    cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, WORKBENCH_OUT_DIR: publicDir },
-  });
-  if (build.status !== 0) throw new Error(`workbench build failed: ${build.stdout}\n${build.stderr}`);
+  await writeHostPage(publicDir);
   const replies: import('../helpers/B2-runtime-fixture.js').ScriptedReply[] = [];
   const entered = new Map<string, number>();
   const left = new Map<string, number>();
@@ -315,16 +312,10 @@ it('runs two explicitly selected same-Goal Tasks in independent Sessions with ov
 it('delivers a real Host attention change into the original idle Session once', async () => {
   const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
-  const { join, resolve } = await import('node:path');
-  const { fileURLToPath } = await import('node:url');
-  const { spawnSync } = await import('node:child_process');
+  const { join } = await import('node:path');
   const f = await import('../helpers/AG2b-collaboration-fixture.js');
   const publicDir = await mkdtemp(join(tmpdir(), 'attention-public-'));
-  const build = spawnSync(process.execPath, ['scripts/build-workbench.mjs'], {
-    cwd: resolve(fileURLToPath(new URL('../../', import.meta.url))), encoding: 'utf8',
-    env: { ...process.env, WORKBENCH_OUT_DIR: publicDir },
-  });
-  expect(build.status, build.stderr).toBe(0);
+  await writeHostPage(publicDir);
   let host: Awaited<ReturnType<typeof f.startAG2bHost>> | undefined;
   try {
     host = await f.startAG2bHost(publicDir);
@@ -386,16 +377,10 @@ it('delivers a real Host attention change into the original idle Session once', 
 it('automatically answers an inquiry without making its sender wait', async () => {
   const { mkdtemp, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
-  const { join, resolve } = await import('node:path');
-  const { fileURLToPath } = await import('node:url');
-  const { spawnSync } = await import('node:child_process');
+  const { join } = await import('node:path');
   const f = await import('../helpers/AG2b-collaboration-fixture.js');
   const publicDir = await mkdtemp(join(tmpdir(), 'inquiry-public-'));
-  const build = spawnSync(process.execPath, ['scripts/build-workbench.mjs'], {
-    cwd: resolve(fileURLToPath(new URL('../../', import.meta.url))), encoding: 'utf8',
-    env: { ...process.env, WORKBENCH_OUT_DIR: publicDir },
-  });
-  expect(build.status, build.stderr).toBe(0);
+  await writeHostPage(publicDir);
   let host: Awaited<ReturnType<typeof f.startAG2bHost>> | undefined;
   try {
     const replies: import('../helpers/B2-runtime-fixture.js').ScriptedReply[] = [

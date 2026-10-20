@@ -95,7 +95,7 @@ describe('production reach of src/', () => {
     expect(report.files).toBeGreaterThan(300);
     expect(report.surfaces.length).toBeGreaterThan(40);
     expect(report.entries.filter(entry => entry.exports === 'none').map(entry => entry.file))
-      .toEqual(['src/app/main.ts', 'src/ui/main.ts', 'src/ui/views.ts']);
+      .toEqual(['src/app/main.ts']);
     const { entries, problems } = readAllowlist();
     const allowed = new Set(entries.map(keyOf));
     const unreached = new Set(report.unreached.map(keyOf));
@@ -115,10 +115,7 @@ describe('production reach of src/', () => {
 const FIXTURE: Record<string, string> = {
   'package.json': '{ "name": "reach-fixture", "private": true, "type": "module" }\n',
   'tsconfig.json': JSON.stringify({ compilerOptions: { target: 'ES2024', module: 'NodeNext', moduleResolution: 'NodeNext',
-    lib: ['ES2024'], types: [], strict: true, noEmit: true, skipLibCheck: true }, include: ['src/**/*.ts'], exclude: ['src/ui'] }),
-  'tsconfig.ui.json': JSON.stringify({ compilerOptions: { target: 'ES2024', module: 'ESNext', moduleResolution: 'Bundler',
-    lib: ['ES2024', 'DOM'], types: [], strict: true, noEmit: true, skipLibCheck: true }, include: ['src/ui/**/*.ts'] }),
-  'scripts/build-workbench.mjs': "const entries = ['main', 'views'];\n",
+    lib: ['ES2024'], types: [], strict: true, noEmit: true, skipLibCheck: true }, include: ['src/**/*.ts'] }),
   'scripts/demo.mjs': "import { demoRoot } from '../dist/lib/demo.js';\nconsole.log(demoRoot());\n",
   'scripts/smoke.mjs': `spawn(['-e', "const { lateRoot } = await import('./dist/lib/demo.js'); lateRoot();"]);\n`,
   'src/app/main.ts': `import { used } from '../lib/barrel.js';
@@ -221,16 +218,6 @@ export class FileSink {
 export function readWith(reader: Reader): string { return reader.get('k') ?? ''; }
 export function closeWith(closer: Closer): void { closer.flush(); closer.dispose(); }
 `,
-  'src/ui/main.ts': `import { renderUsed } from './views.js';
-import type { Shape } from '../lib/types.js';
-const shape: Shape = { size: 1 };
-document.title = renderUsed(shape);
-`,
-  'src/ui/views.ts': "export { renderUsed, renderTestOnly } from './render.js';\n",
-  'src/ui/render.ts': `import type { Shape } from '../lib/types.js';
-export function renderUsed(shape: Shape): string { return String(shape.size); }
-export function renderTestOnly(): string { return ''; }
-`,
 };
 
 describe('production reach analysis', () => {
@@ -244,11 +231,9 @@ describe('production reach analysis', () => {
   });
   afterAll(async () => { await rm(fixture, { recursive: true, force: true }); });
 
-  it('reads the CLI, the browser bundles and the dist imports of scripts as entry points', () => {
+  it('reads the CLI and the dist imports of scripts as entry points', () => {
     expect(analyzeProductionReach(fixture).entries.map(entry => [entry.file, entry.exports, entry.via])).toEqual([
       ['src/app/main.ts', 'none', 'workbench CLI: node dist/app/main.js <config> (README, WORKBENCH_CLI_USAGE)'],
-      ['src/ui/main.ts', 'none', 'browser bundle of scripts/build-workbench.mjs'],
-      ['src/ui/views.ts', 'none', 'browser bundle of scripts/build-workbench.mjs'],
       ['src/lib/demo.ts', ['demoRoot'], 'scripts/demo.mjs'],
       ['src/lib/demo.ts', ['lateRoot'], 'scripts/smoke.mjs'],
     ]);
@@ -258,7 +243,7 @@ describe('production reach analysis', () => {
     const report = analyzeProductionReach(fixture);
     // `*Port` types and the declared return type of a `create*Service` factory.
     expect(report.surfaces).toEqual(['src/lib/ports.ts#CounterPort', 'src/lib/stats.ts#StatsApi', 'src/lib/store.ts#Port']);
-    // Not reached: an import that is never used, a bundle export nothing imports, members no
+    // Not reached: an import that is never used, members no
     // reached code calls (also through the interface), and everything only they reference.
     // Port members: implementing one (`return { bump }`) is not calling it, so the factory's inner
     // function and the helpers only it calls stay unreached; `CounterPort['bump']` names the
@@ -288,7 +273,6 @@ describe('production reach analysis', () => {
       'src/lib/store.ts#Store.dead',
       'src/lib/store.ts#Unused',
       'src/lib/types.ts#Orphan',
-      'src/ui/render.ts#renderTestOnly',
     ]);
   });
 

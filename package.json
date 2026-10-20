@@ -7,8 +7,8 @@
   },
   "scripts": {
     "check:architecture": "node scripts/check-boundaries.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.ui.json",
-    "build": "tsc -p tsconfig.build.json && node scripts/build-workbench.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "test": "vitest run --maxWorkers=1",
     "verify:isolated": "node scripts/verify-isolated.mjs"
   },

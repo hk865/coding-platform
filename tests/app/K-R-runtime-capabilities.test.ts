@@ -14,7 +14,7 @@ import { afterEach, expect, it } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PLATFORM_TOKEN_PLACEHOLDER, type CoreScope } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from '../helpers/host-page.js';
 import { createRuntimeCapabilitiesFixture } from '../helpers/runtime-capabilities-fixture.js';
 
 const at = '2026-10-14T00:00:00.000Z';
@@ -35,7 +35,7 @@ it('KA-17 reports that a Work line continues in the same Session after the platf
     database: await directory('ka17-db-'),
   };
   await writeFile(join(paths.publicDir, 'index.html'),
-    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   const host = await startHost(paths);
   const report = await readCapabilities(host.origin, host.token);
 

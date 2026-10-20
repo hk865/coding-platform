@@ -21,7 +21,7 @@ import {
   PLATFORM_TOKEN_HEADER,
   PLATFORM_TOKEN_PLACEHOLDER,
 } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from '../helpers/host-page.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { openChangeStream } from '../helpers/change-stream-reader.js';
@@ -154,7 +154,7 @@ describe('Host change stream over real commits', () => {
     const root = await mkdtemp(join(tmpdir(), 'change-observer-ws-'));
     temporary.push(publicDir, root);
     await writeFile(join(publicDir, 'index.html'),
-      `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+      `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
     const host = await createLocalWorkbenchHost({
       storage: { kind: 'memory' },
       actor,
@@ -165,7 +165,7 @@ describe('Host change stream over real commits', () => {
     try {
       const address = await host.listen(0);
       const page = await (await fetch(address.url)).text();
-      const token = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(page)?.[1];
+      const token = new RegExp(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(page)?.[1];
       if (token === undefined) throw new Error('the page did not carry the token');
       const origin = `http://${address.host}:${address.port}`;
       const stream = await openChangeStream(origin, token);

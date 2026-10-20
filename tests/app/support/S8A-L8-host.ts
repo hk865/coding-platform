@@ -19,7 +19,8 @@ import {
   CORE_API_PREFIX, PLATFORM_TOKEN_HEADER, PLATFORM_TOKEN_PLACEHOLDER,
   type CoreScope,
 } from '../../../src/app/core-http-types.js';
-import { SETTINGS_API_PREFIX, UI_PLATFORM_TOKEN_META_NAME } from '../../../src/ui/api/protocol.js';
+import { SETTINGS_API_PREFIX } from '../../../src/app/host-settings-types.js';
+import { PLATFORM_TOKEN_META_NAME } from '../../helpers/host-page.js';
 import type { ArchitectureObservationStateV1 } from '../../../src/contracts/architecture-observation.js';
 import type { CoreCallContext } from '../../../src/contracts/core/call-context.js';
 import type { WorkspaceHostBindings } from '../../../src/core/workspace/access.js';
@@ -39,7 +40,7 @@ export async function setupPublicDir(): Promise<string> {
   publicDirectoryPath = await mkdtemp(join(tmpdir(), 's8a-l8-public-'));
   temporary.push(publicDirectoryPath);
   await writeFile(join(publicDirectoryPath, 'index.html'),
-    `<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   return publicDirectoryPath;
 }
 
@@ -147,7 +148,7 @@ export async function startHost(input: {
   const address = await host.listen();
   const response = await fetch(address.url);
   const html = await response.text();
-  const match = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
+  const match = new RegExp(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
   if (match?.[1] === undefined) throw new Error('the page did not expose the runtime token meta');
   return { host, base: address.url, token: match[1], database };
 }

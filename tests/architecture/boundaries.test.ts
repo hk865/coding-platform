@@ -219,7 +219,7 @@ describe('submodule rules', () => {
       `${MODULE_TARGET_PATH}: submodule WorkGraph/nested path src/core/work-graph/tasks/inner/ does not exist`,
       `${MODULE_TARGET_PATH}: submodule WorkGraph/nested depends on unknown ghost`,
       `${MODULE_TARGET_PATH}: submodule WorkGraph/nested path tasks/inner/ overlaps WorkGraph/tasks path tasks/`,
-      'source files were not checked (ownership, imports, symlinks, UI rules) because docs/refactor/module-target.json is invalid',
+      'source files were not checked (ownership, imports, symlinks) because docs/refactor/module-target.json is invalid',
     ]));
   });
 });
@@ -341,7 +341,7 @@ describe('pure submodules (spec §14.4)', () => {
       `${MODULE_TARGET_PATH}: "pureDirectories" is no longer read; declare "pure": true on the submodule instead`,
       `${MODULE_TARGET_PATH}: submodule WorkGraph/state "pure" must be true or false`,
       `${MODULE_TARGET_PATH}: submodule WorkGraph/ports is pure, so its path must be a directory ending in /`,
-      'source files were not checked (ownership, imports, symlinks, UI rules) because docs/refactor/module-target.json is invalid',
+      'source files were not checked (ownership, imports, symlinks) because docs/refactor/module-target.json is invalid',
     ]);
   });
 });

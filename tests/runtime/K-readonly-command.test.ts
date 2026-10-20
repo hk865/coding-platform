@@ -33,7 +33,7 @@ import { ProcessSandboxError, ProviderRegistry, sessionRecordSchema, type ToolRe
 import { READONLY_COMMAND_TOOL_NAME } from '../../src/core/agent-runtime/readonly-command-tool.js';
 import { createLocalWorkbenchHost, readonlyCommandsDisabledScopes, type LocalWorkbenchHostOptions, type WorkbenchWorkspaceConfig } from '../../src/app/host.js';
 import { CORE_API_PREFIX, PLATFORM_TOKEN_HEADER, PLATFORM_TOKEN_PLACEHOLDER } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from '../helpers/host-page.js';
 import { createWorkbenchRuntimeHostBindings, type WorkbenchRuntimeConfiguration } from '../../src/app/runtime-configuration.js';
 
 const AT = '2026-09-26T00:00:00.000Z';
@@ -372,7 +372,7 @@ async function readRealHostToken(base: string): Promise<string> {
   const response = await fetch(base);
   expect(response.status).toBe(200);
   const html = await response.text();
-  const match = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
+  const match = new RegExp(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
   if (match?.[1] === undefined) throw new Error('the page did not expose the runtime token meta');
   return match[1];
 }
@@ -398,7 +398,7 @@ async function startRealReadonlyHost(input: {
   await mkdir(join(root, 'src'), { recursive: true });
   await writeFile(join(root, 'src', 'module.ts'), 'export const kRealHostMarker = "K_REAL_HOST";\n');
   await writeFile(join(publicDir, 'index.html'),
-    `<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   const scripted = createScriptedModel(input.replies);
   const registry = new ProviderRegistry().register({
     id: 'deepseek', secretEnvironmentVariable: REAL_HOST_SECRET_VAR, defaultBaseUrl: 'http://127.0.0.1:9',

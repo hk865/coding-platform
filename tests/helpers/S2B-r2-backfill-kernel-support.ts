@@ -23,7 +23,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PLATFORM_TOKEN_PLACEHOLDER } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from './host-page.js';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
@@ -131,7 +131,7 @@ export async function startKernelBackfillHost(
   // test learn it through the real page and then call the real route.
   await mkdir(HOST_PUBLIC_DIR, { recursive: true });
   await writeFile(join(HOST_PUBLIC_DIR, 'index.html'),
-    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   return await hostModule.createLocalWorkbenchHost({
     storage: { kind: 'sqlite', directory: fixture.directory },
     actor: { kind: 'human', id: actorId },

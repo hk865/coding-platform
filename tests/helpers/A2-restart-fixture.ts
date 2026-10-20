@@ -23,7 +23,7 @@ import { join } from 'node:path';
 import {
   PLATFORM_TOKEN_PLACEHOLDER, type QueryJobRef, type QueryRunRef, type TaskExecutionRecord,
 } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from './host-page.js';
 import { HOST_INSTANCE_LOCK_FILE } from '../../src/app/host-instance-lease.js';
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { ControlIntentSnapshotV1, SubmittedControl } from '../../src/contracts/control-intent.js';
@@ -55,7 +55,7 @@ export async function tempDir(prefix: string): Promise<string> {
 export async function publicDirectory(): Promise<string> {
   const publicDir = await tempDir('a2-restart-public-');
   await writeFile(join(publicDir, 'index.html'),
-    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   return publicDir;
 }
 

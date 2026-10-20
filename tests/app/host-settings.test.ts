@@ -16,11 +16,9 @@
  * seam. No real model, real credential or candidate project is used.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createLocalWorkbenchHost, type LocalWorkbenchHost, type LocalWorkbenchHostOptions } from '../../src/app/host.js';
 import {
   createHostRuntimeResolverRegistry,
@@ -47,7 +45,7 @@ import {
   type CoreScope,
   type SessionRef,
 } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME, writeHostPage } from '../helpers/host-page.js';
 import { DEFAULT_RUNTIME_BUDGET } from '../../src/core/agent-runtime/model-budget.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -62,7 +60,6 @@ import type {
 } from '../../src/core/agent-runtime/execution-contracts.js';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 
-const projectDir = resolve(fileURLToPath(new URL('../../', import.meta.url)));
 const at = '2026-09-29T00:00:00.000Z';
 const STARTUP_SCOPE: CoreScope = { projectId: 'host-settings-startup', workspaceId: 'host-settings-startup-ws' };
 const STARTUP_MODELS: HostSettingsModelDefinition[] = [{
@@ -76,11 +73,8 @@ const temporary: string[] = [];
 beforeAll(async () => {
   publicDir = await mkdtemp(join(tmpdir(), 'host-settings-public-'));
   temporary.push(publicDir);
-  const build = spawnSync(process.execPath, ['scripts/build-workbench.mjs'], {
-    cwd: projectDir, encoding: 'utf8', env: { ...process.env, WORKBENCH_OUT_DIR: publicDir },
-  });
-  if (build.status !== 0) throw new Error(`workbench build failed: ${build.stdout}\n${build.stderr}`);
-}, 120_000);
+  await writeHostPage(publicDir);
+});
 
 afterAll(async () => {
   for (const directory of temporary.splice(0)) await rm(directory, { recursive: true, force: true });
@@ -136,7 +130,7 @@ async function readPageToken(base: string): Promise<string> {
   const response = await fetch(base);
   expect(response.status).toBe(200);
   const html = await response.text();
-  const match = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
+  const match = new RegExp(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
   if (match?.[1] === undefined) throw new Error('the page did not expose the runtime token meta');
   return match[1];
 }

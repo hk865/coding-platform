@@ -53,7 +53,7 @@ import {
   type SessionRef,
   type WorkbenchActor,
 } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from './host-page.js';
 
 export const AG2B_AT = '2026-09-28T00:00:00.000Z';
 export const AG2B_SCOPE: CoreScope = { projectId: 'ag2b-collab-project', workspaceId: 'ag2b-collab-workspace' };
@@ -340,7 +340,7 @@ export async function readPageToken(base: string): Promise<string> {
   const response = await fetch(base);
   if (response.status !== 200) throw new Error(`the workbench page did not load: ${response.status}`);
   const html = await response.text();
-  const match = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
+  const match = new RegExp(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
   if (match?.[1] === undefined) throw new Error('the page did not expose the runtime token meta');
   return match[1];
 }

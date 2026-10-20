@@ -35,7 +35,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PLATFORM_TOKEN_HEADER, PLATFORM_TOKEN_PLACEHOLDER, type CoreScope } from '../../src/app/core-http-types.js';
 import { SETTINGS_API_PREFIX } from '../../src/app/host-settings-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from '../helpers/host-page.js';
 import { createRuntimeCapabilitiesFixture } from '../helpers/runtime-capabilities-fixture.js';
 
 const at = '2026-10-05T00:00:00.000Z';
@@ -111,7 +111,7 @@ it('reports continuation, safe-point pause, cancel and start-up reconciliation a
     database: await directory('a2-capabilities-db-'),
   };
   await writeFile(join(paths.publicDir, 'index.html'),
-    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   const first = await startHost(paths);
   const report = await readCapabilities(first.origin, first.token);
 
@@ -202,7 +202,7 @@ it('says in the recoverRun reason that this Host has the setting automation.resu
     database: await directory('a2-capabilities-db-'),
   };
   await writeFile(join(paths.publicDir, 'index.html'),
-    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   // The Host installs `automation` from its private settings at start (C8 wiring, 5.6).
   // Reach the stored setting the way a person does: save it through the published
   // Host settings route, close that Host, then start the Host under test.

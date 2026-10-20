@@ -24,7 +24,7 @@ import {
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
 import type { WorkbenchActor, NotesListResponse } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from '../helpers/host-page.js';
 import { ProviderRegistry } from '../../vendor/coding-agent/dist/public-api.js';
 import { createScriptedModel, type ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import {
@@ -67,7 +67,7 @@ async function startRW1RealHost(replies: readonly ScriptedReply[]): Promise<AG2b
   await writeAG2bWorkspace(root);
   await mkdir(publicDir, { recursive: true });
   await writeFile(join(publicDir, 'index.html'),
-    `<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="__PLATFORM_TOKEN__">`);
+    `<meta name="${PLATFORM_TOKEN_META_NAME}" content="__PLATFORM_TOKEN__">`);
   const actor: WorkbenchActor = { kind: 'human', id: 's4c-rw1-operator' };
   const scripted = createScriptedModel(replies);
   const queryScripted = createScriptedModel([]);

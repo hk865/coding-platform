@@ -30,7 +30,6 @@ import {
   parseCoreRouteRequest, type CoreRouteBindings,
 } from '../../src/app/core-routes.js';
 import type { CoreRouteSuffix } from '../../src/app/core-http-types.js';
-import { GRAPH_WRITE_ROUTES, routeLabel } from '../../src/ui/api/routes.js';
 import { createLineSettingsService } from '../../src/core/work-graph/configuration/line-settings-service.js';
 import type { WorkLineStore } from '../../src/core/work-graph/views/work-line-reader.js';
 import {
@@ -116,16 +115,6 @@ describe('2C-31 route table and envelopes', () => {
   it('2C-31 (a) the seven routes are in CORE_ROUTE_SPECS with the exact kind, binding and owner', () => {
     for (const [suffix, expected] of Object.entries(EXPECTED_ROUTES)) {
       expect(CORE_ROUTE_SPECS[suffix as CoreRouteSuffix]).toEqual(expected);
-    }
-  });
-
-  it('2C-31 (b) every route has a label and only lines/pin is a graph_write', () => {
-    for (const suffix of Object.keys(EXPECTED_ROUTES) as CoreRouteSuffix[]) {
-      expect(routeLabel(suffix).length).toBeGreaterThan(0);
-    }
-    expect(GRAPH_WRITE_ROUTES.has('lines/pin')).toBe(true);
-    for (const suffix of Object.keys(EXPECTED_ROUTES) as CoreRouteSuffix[]) {
-      if (suffix !== 'lines/pin') expect(GRAPH_WRITE_ROUTES.has(suffix)).toBe(false);
     }
   });
 

@@ -21,7 +21,7 @@ import {
   type RuntimeCapabilities,
   type RuntimeCapabilitiesResponse,
 } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from './host-page.js';
 
 export type RuntimeCapabilitiesHostPaths = { publicDir: string; root: string; database: string };
 export type StartedRuntimeCapabilitiesHost = { host: LocalWorkbenchHost; origin: string; token: string };
@@ -66,7 +66,7 @@ export function createRuntimeCapabilitiesFixture(options: RuntimeCapabilitiesFix
     hosts.push(host);
     const address = await host.listen(0);
     const page = await (await fetch(address.url)).text();
-    const token = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(page)?.[1];
+    const token = new RegExp(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(page)?.[1];
     if (token === undefined) throw new Error('the page did not carry the token');
     return { host, origin: `http://${address.host}:${address.port}`, token };
   }

@@ -26,7 +26,7 @@ import { join } from 'node:path';
 import {
   PLATFORM_TOKEN_PLACEHOLDER, type SessionRef,
 } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { PLATFORM_TOKEN_META_NAME } from '../helpers/host-page.js';
 import type { ControlIntentKindV1, SubmittedControl } from '../../src/contracts/control-intent.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
@@ -64,7 +64,7 @@ it('TD-5: a paused yielded wait is blocked, a resumed one ready, a cancelled one
   const publicDir = await mkdtemp(join(tmpdir(), 'a2-td5-public-'));
   temporary.push(publicDir);
   await writeFile(join(publicDir, 'index.html'),
-    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+    `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   let recipient: SessionRef | undefined;
   const send = { callId: 'a2-td5-send', name: 'send_session_message',
     args: { recipient: {}, text: 'A2 TD-5 question that nobody answers', intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };

@@ -34,8 +34,7 @@
  * (`const gaps = round.gaps; gaps.push(g)`); and a literal built without a
  * protected contextual type that reaches a record only later, e.g. through an
  * encoder whose parameter is an untyped object (so every §14.2 private encoder
- * takes the record type itself). `src/ui` is outside the `tsconfig.json`
- * Program.
+ * takes the record type itself).
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
