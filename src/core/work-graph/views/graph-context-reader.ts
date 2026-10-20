@@ -73,7 +73,7 @@ export type GraphContextReaderDependencies = {
   plans: Pick<PlanTaskPort, 'queryTaskGraph'>;
   architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession'>;
-  executions: ExecutionReadPort;
+  executions: ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>>;
   inputs: TaskContextInputPort;
   hostActor: Extract<ActorRef, { kind: 'human' | 'system' }>;
   extensions?: (ctx: CoreCallContext, request: ContextReadRequestV1) => Promise<ReadResult<ContextExtensionsV1>>;
@@ -1004,13 +1004,20 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     }
   }
 
-  /** The records `readContextFacts` is built from: Goal, Plan, architecture baseline and the
-   * focus Tasks' selected Runs. Runs/Rounds/Sessions of other Tasks are not this context's
-   * sources (they would make a Work binding depend on, and its entry guard on, sibling Tasks). */
+  /** The records `readContextFacts` is built from: Goal, Workspace, Plan, architecture
+   * baseline and the focus Tasks' selected Runs. The Workspace revision is consumed by the
+   * assembly, so it is a source too (§3.6): the Work entry guard and the same-commit guards
+   * then compare it. Runs/Rounds/Sessions of other Tasks are not this context's sources
+   * (they would make a Work binding depend on, and its entry guard on, sibling Tasks). */
   function baseSources(universe: Universe, executions: readonly TaskExecutionRecord[]): ContextSourceV1[] {
     const sources: ContextSourceV1[] = [
       { kind: 'record', ref: universe.goal.ref, revision: universe.goal.revision, digest: null },
     ];
+    if (universe.workspace !== null) {
+      sources.push({
+        kind: 'record', ref: universe.workspace.ref, revision: universe.workspace.revision, digest: null,
+      });
+    }
     if (universe.plan !== null) {
       sources.push({ kind: 'record', ref: universe.plan.ref, revision: universe.plan.revision, digest: null });
     }
@@ -1304,29 +1311,25 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     universe: Universe,
     executionCtx: CoreCallContext,
   ): Promise<ReadResult<RunRef[]>> {
-    if (deps.executions.listExecutions !== undefined) {
-      const refs: RunRef[] = [];
-      let afterCursor: string | null = null;
-      let pages = 0;
-      while (true) {
-        const listed = await deps.executions.listExecutions(executionCtx, {
-          goalRef: universe.goal.ref,
-          taskId: node.ref.taskId,
-          page: { afterCursor, limit: EXECUTION_PAGE_LIMIT },
-        });
-        if (listed.status !== 'ready') return propagate(listed);
-        refs.push(...listed.value.items.map(item => item.run.ref));
-        if (listed.value.nextCursor === null) break;
-        pages += 1;
-        if (pages >= GRAPH_PAGE_BUDGET) {
-          return rejected('incomplete', 'the execution listing exceeds the read budget');
-        }
-        afterCursor = listed.value.nextCursor;
+    const refs: RunRef[] = [];
+    let afterCursor: string | null = null;
+    let pages = 0;
+    while (true) {
+      const listed = await deps.executions.listExecutions(executionCtx, {
+        goalRef: universe.goal.ref,
+        taskId: node.ref.taskId,
+        page: { afterCursor, limit: EXECUTION_PAGE_LIMIT },
+      });
+      if (listed.status !== 'ready') return propagate(listed);
+      refs.push(...listed.value.items.map(item => item.run.ref));
+      if (listed.value.nextCursor === null) break;
+      pages += 1;
+      if (pages >= GRAPH_PAGE_BUDGET) {
+        return rejected('incomplete', 'the execution listing exceeds the read budget');
       }
-      return { status: 'ready', value: refs };
+      afterCursor = listed.value.nextCursor;
     }
-    const row = universe.graph?.tasks.find(candidate => candidate.ref.taskId === node.ref.taskId);
-    return { status: 'ready', value: row?.execution === null || row?.execution === undefined ? [] : [row.execution] };
+    return { status: 'ready', value: refs };
   }
 
   // ---------------------------------------------------------------------- //

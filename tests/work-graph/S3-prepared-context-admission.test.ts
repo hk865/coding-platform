@@ -166,7 +166,7 @@ export type AdmissionFixture = {
   prepareSecond(): Promise<PreparedTaskExecution>;
   /** The pin of that real second claim. */
   secondPin(): Promise<VersionPin>;
-  /** The base hand-built preparation: AD08's BLOCKED base path and AD06's one refused input. */
+  /** The base hand-built preparation: AD06's one refused input only. */
   basePrepare(options: { input: string; workspaceRevision?: number; claim?: TaskClaimLike }): Promise<PreparedTaskExecution>;
   /** A real public Session-pin change at the expected Workspace revision. */
   changePins(add: SessionRef[], remove: SessionRef[], expected: number, requestId: string): Promise<void>;
@@ -502,9 +502,10 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
     return read.value.run;
   }
 
-  // AD08 (Workspace source) stays BLOCKED: the real preparation carries no
-  // Workspace source, so that row keeps the base hand-built preparation path,
-  // as `t-base` had it (`:383`). AD06 only builds its one refused input here.
+  // AD06 only builds its one refused input here. AD08 uses the real
+  // `prepare()` path: the assembler now names the Workspace source, so a
+  // revision moved between assembly and entry is a conflict without a
+  // hand-built binding.
   const rolesForManifest = createRoleConfigurationService({ records, now, eventId });
   async function basePrepare(options: { input: string; workspaceRevision?: number; claim?: TaskClaimLike }):
   Promise<PreparedTaskExecution> {
@@ -723,7 +724,9 @@ describe.each(['memory', 'sqlite'] as const)('S3 prepared context admission (%s)
 
   it('AD08: a Workspace moved from @7 to @8 after assembly is a revision conflict while the write guard still pins @7', async () => {
     const fixture = await open(kind);
-    const prepared = await fixture.basePrepare({ input: workInput('R', 'G', 'T'), workspaceRevision: 7 });
+    // The real preparation path: `prepare()` runs the real assembler, whose
+    // binding must name the Workspace record it read (spec §3.6/§4.3 line 515).
+    const prepared = await fixture.prepare();
     const runBefore = await fixture.readRun();
     const sessionBefore = await fixture.base.sessionsPort.readSession(fixture.ctx, fixture.sessionRef);
     if (sessionBefore.status !== 'ready') throw new Error('AD08 Session read failed');
