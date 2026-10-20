@@ -12,7 +12,7 @@ import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import type { SessionDutyReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
 import { createNodeDetailReader } from '../../src/core/work-graph/views/node-detail-reader.js';
 import type { WorkLineReaderDeps } from '../../src/core/work-graph/views/work-line-reader.js';
-import { createS4CNodeNotesFixture, type S4CNodeNotesFixture } from '../helpers/S4C-node-notes-fixture.js';
+import { createS4CNodeNotesFixture } from '../helpers/S4C-node-notes-fixture.js';
 import { nodeReaderOf, openNodeFixture, scriptedExecutedFiles } from '../helpers/S2C-D-node-support.js';
 
 const opened: { close(): Promise<void> }[] = [];

@@ -43,7 +43,7 @@ import type {
 } from '../../../contracts/core/identity.js';
 import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
 import type {
-  ArchiveExecutionV1, ArchiveTaskChoiceV1, ArchiveStepRefV1, ArchiveWaitChoiceV1,
+  ArchiveExecutionV1, ArchiveStepRefV1, ArchiveWaitChoiceV1,
   RequestSessionArchiveInput, SessionArchiveRequestV1,
 } from '../../../contracts/core/session-archive.js';
 import { deriveArchiveStepCommitIdentityV1 } from '../../../contracts/core/session-archive.js';
@@ -59,7 +59,7 @@ import type {
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import type { GraphWrite } from '../model/session-contracts.js';
 import type {
-  ArchiveSessionInput, LinkSessionWorkInput, ReactivateSessionInput, SessionLifecyclePort,
+  ArchiveSessionInput, LinkSessionWorkInput, SessionLifecyclePort,
   SessionLifecycleStores,
 } from './lifecycle-contracts.js';
 import {

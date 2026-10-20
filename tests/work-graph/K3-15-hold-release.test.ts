@@ -27,7 +27,7 @@ import {
   readCanonicalTaskFacts, readGoalPlanWindow,
 } from '../../src/core/work-graph/tasks/plan-readers.js';
 import {
-  createK3PendingReview, openK3ReviewCardWorld, readK3Review,
+  createK3PendingReview, openK3ReviewCardWorld,
   type K3ReviewCardWorld,
 } from '../helpers/K3-proposal-round.js';
 import { GOAL_B, PLAN_B2, WORKSPACE } from '../helpers/S5-decision-fixture.js';

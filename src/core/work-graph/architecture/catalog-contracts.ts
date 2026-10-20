@@ -16,7 +16,6 @@ import type { ArchitectureSourceSnapshotV1 } from '../../../contracts/architectu
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { ModuleRef } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RecordGuard } from '../../record-store/ports.js';
 import type { GraphWrite } from './contracts.js';

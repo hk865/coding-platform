@@ -6,7 +6,6 @@
  * `readActivityCalendar`; every expected number is a hand-computed literal.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import type { RunActivityFactsV1 } from '../../src/contracts/run-activity.js';
 import {
   countedFacts, openS2BActivityFixture, type S2BActivityFixture,
 } from '../helpers/S2B-activity-fixture.js';

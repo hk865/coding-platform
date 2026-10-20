@@ -17,7 +17,6 @@ import {
   type PreparedTaskExecution, type PreparedTaskManifestV1, type UnknownCallReviewInputV1,
 } from '../../contracts/core/prepared-execution.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
-import type { GoalRef } from '../../contracts/ledger.js';
 import type { SourceRefV1, RuntimeInputBindingV1 } from '../../contracts/dispatch.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { SessionAnomalyAnchorRef } from '../../contracts/session-anomaly.js';

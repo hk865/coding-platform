@@ -15,7 +15,6 @@ import type { SessionRecord as KernelSessionRecord } from '../../../vendor/codin
 import type { SessionHistoryEntry, SessionHistoryRange } from './session-operations.js';
 import type {
   ExecutionHistoryDependencies,
-  ExecutionHistoryPage,
   ExecutionHistoryPort,
   ExecutionHistoryRequest,
   KernelExecutionIdentity,

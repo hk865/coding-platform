@@ -17,8 +17,8 @@
  *    `executions.readExecution/listExecutions` only.
  */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
-import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
-import type { ModuleRef, SessionRef, VersionPin } from '../../../contracts/core/identity.js';
+import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
+import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';

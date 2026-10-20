@@ -35,7 +35,6 @@ import type {
   QueryExecutionStateV1,
   QueryJobAnswerRef,
   QueryJobAnswerSnapshot,
-  QueryJobAnswerV1,
   QueryJobIntentV1,
   QueryJobRef,
   QueryJobSnapshot,

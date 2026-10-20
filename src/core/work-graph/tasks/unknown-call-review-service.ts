@@ -19,7 +19,7 @@ import type {
 } from '../../../contracts/unknown-call-review.js';
 import { UNKNOWN_CALL_REVIEW_T02_REASON } from '../../../contracts/unknown-call-review.js';
 import type { WorkspaceScope } from '../../../contracts/core/identity.js';
-import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { DecisionChangeProofV1, DecisionSelectionV1, DecisionSourceV1 } from '../../../contracts/goal-decisions.js';

@@ -1,7 +1,7 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
-import type { SessionProvenanceV1, SessionRecord } from '../../contracts/core/session.js';
+import type { SessionProvenanceV1 } from '../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot, WorkspaceRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask, TaskScope } from '../../contracts/plan.js';

@@ -4,7 +4,7 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import type { WorkspaceToolsPort } from '../../src/core/workspace/ports.js';
 import { createObservedArchitecture } from '../../src/core/work-graph/architecture/architecture-service.js';
-import { actor, capture, context, fixture, projectId, workspace, mappings } from './R3d-fixture.js';
+import { actor, capture, context, fixture, projectId, workspace } from './R3d-fixture.js';
 
 describe.each(['memory', 'sqlite'] as const)('R3d observed architecture %s', kind => {
   it('persists a source graph and reads its cycle and unresolved edges after capture expiry or restart', async () => {

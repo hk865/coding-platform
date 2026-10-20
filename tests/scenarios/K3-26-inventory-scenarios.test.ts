@@ -178,10 +178,6 @@ async function cancelRun(root: Platform, runRef: RunRef, requestId: string): Pro
   expect(delivered).toMatchObject({ status: 'ready' });
 }
 
-async function closeRoot(root: Platform | undefined): Promise<void> {
-  if (root !== undefined) await root.close();
-}
-
 describe('K3-26 the attestation inventory through the Host entry', () => {
   it('K3-26 (一): Kernel readable with a command in the Turn -> pending_review, then a real review round settles it', async () => {
     // A non-git workspace blocks RUN-25 (`workspace_not_git`), so this Run is the
@@ -274,9 +270,8 @@ describe('K3-26 the attestation inventory through the Host entry', () => {
     const lock = lockLedgerAfter(h.database, 'SessionMessageSent');
     const model = createScriptedModel([{ kind: 'calls', calls: [send] }]);
     const root = await openWorkRoot(h, model, lock.observer);
-    let started: unknown;
     try {
-      started = await root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID,
+      await root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID,
         requestId: 'k3-26-two-start' });
     } finally {
       lock.release();

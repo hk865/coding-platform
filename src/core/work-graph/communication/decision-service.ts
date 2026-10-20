@@ -32,7 +32,7 @@ import type { SessionMessageEventV1 } from '../model/communication-contracts.js'
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
 import {
-  bindMessageResponseCursor, createSessionMessageRecord, createSyntheticDecisionAnswerRecord, messageMachineStateOf,
+  bindMessageResponseCursor, createSyntheticDecisionAnswerRecord, messageMachineStateOf,
   nextSessionMessageRecord, transitionMessage, type MessageEvent, type MessageGuardContext,
   type MessageTransition, type SessionMessageEventType, type SessionMessageRecord,
 } from '../state/message-machine.js';

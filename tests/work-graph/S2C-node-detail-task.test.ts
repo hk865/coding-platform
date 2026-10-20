@@ -15,7 +15,6 @@ afterEach(async () => { for (const fixture of opened.splice(0)) await fixture.cl
 
 const page = { afterCursor: null, limit: 20 };
 const M = (fixture: NodeFixture) => fixture.moduleRef('M');
-const N = (fixture: NodeFixture) => fixture.moduleRef('N');
 
 describe.each(['memory', 'sqlite'] as const)('2C-27 task detail (%s)', (kind) => {
   it('2C-27 planned modules, owners/participants split, same-module risks and the three executed-files answers', async () => {

@@ -12,7 +12,7 @@
  */
 import { afterEach, expect, it } from 'vitest';
 import { cleanupScenarios, openHostScenario, performs, type HostScenario } from './harness.js';
-import { AG2B_SCOPE, graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_SCOPE, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { readExecution } from '../helpers/A2-restart-fixture.js';
 import { lineArchived, lineList, ready, requireLine, runMaintenance } from '../helpers/S2C-K-scenario-support.js';
 import { hoverGoal, taskHoverOf } from '../helpers/S2C-K2-scenario-support.js';

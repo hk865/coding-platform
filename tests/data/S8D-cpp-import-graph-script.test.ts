@@ -14,7 +14,6 @@ const LIB = '/usr/lib/llvm-18/lib/libclang.so.1';
 const ROOT = '/tmp/s8d-cpp-import-graph-workspace';
 const CPP = /\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx|inc|ipp|inl|tcc)$/i;
 
-type DbEntry = { directory: string; file: string; arguments?: string[]; command?: string };
 type FileResult = { path: string; status: 'parsed' | 'failed'; reason?: string };
 type Done = { t: 'done'; i: number; files: FileResult[]; edges: Array<[string, string, string]>; unresolved: Array<{ from: string; specifier: string; reason: string | null }> };
 type Line = { t: string } & Record<string, unknown>;

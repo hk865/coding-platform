@@ -21,7 +21,7 @@
  * reads "中断，待核对 · 等你点继续".
  */
 import { afterEach, expect, it } from 'vitest';
-import { cleanupScenarios, openHostScenario, performs, type HostScenario } from './harness.js';
+import { cleanupScenarios, openHostScenario, type HostScenario } from './harness.js';
 import { AG2B_SCOPE } from '../helpers/AG2b-collaboration-fixture.js';
 import { readExecution, submitControl } from '../helpers/A2-restart-fixture.js';
 import {

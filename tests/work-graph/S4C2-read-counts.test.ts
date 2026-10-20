@@ -17,7 +17,6 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import { createS4ANoteFixture, type S4ANoteFixtureKind } from '../helpers/S4A-note-fixture.js';
 import * as readModelModule from '../../src/core/work-graph/notes/note-read-model.js';
-import * as noteServiceModule from '../../src/core/work-graph/notes/note-service.js';
 import * as decisionReadModelModule from '../../src/core/work-graph/views/decision-read-model.js';
 import { S4_NOTE_BY_ANCHOR_LOOKUPS,
   S4_NOTE_BY_REVIEW_STATUS_LOOKUP as NOTE_REVIEW_INDEX } from '../../src/core/work-graph/persistence/note-record-codecs.js';
@@ -567,7 +566,7 @@ it.each(KINDS)('rework 2/3 item 1 %s: one plan window and exactly one catalog pe
     const moduleB = await hostWrite(f, generalOnAnchor(moduleBAnchor, 'module B note'), GOAL);
     const interfaceNote = await hostWrite(f, generalOnAnchor(interfaceAnchor, 'interface A/I1 note'), GOAL);
     const run1 = await f.claimRun('queue-count-g1');
-    const pending1 = await runWrite(f, f.workCtx(run1),
+    await runWrite(f, f.workCtx(run1),
       generalOnAnchor({ kind: 'goal', goalId: GOAL }, 'pending g1',
         [stageNote, moduleA1, moduleB, interfaceNote],
         [stageAnchor, moduleA1Anchor, moduleBAnchor, interfaceAnchor]), GOAL);
@@ -577,7 +576,7 @@ it.each(KINDS)('rework 2/3 item 1 %s: one plan window and exactly one catalog pe
     // the old per-NoteCall cache).
     const run2 = await claimOnSecondGoal(f, second.goalRef, second.plan, 'queue-count-g2');
     const moduleB2 = await hostWrite(f, generalOnAnchor(moduleBAnchor, 'g2 module B note'), GOAL2);
-    const pending2 = await runWrite(f, f.workCtx(run2),
+    await runWrite(f, f.workCtx(run2),
       generalOnAnchor({ kind: 'goal', goalId: GOAL2 }, 'pending g2', [moduleB2], [moduleBAnchor]), GOAL2);
 
     state.targetIds = new Set([stageNote, moduleA1, moduleB, interfaceNote, moduleB2]);

@@ -50,7 +50,7 @@ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-
 import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import {
   commandRerunRequestRefKey,
-  COMMAND_RERUN_REQUEST_CHANGED_EVENT_TYPE, COMMAND_RERUN_REQUEST_SCHEMA_ID, K3_CRR_BY_TASK_LOOKUP,
+  COMMAND_RERUN_REQUEST_CHANGED_EVENT_TYPE, COMMAND_RERUN_REQUEST_SCHEMA_ID,
 } from '../../src/core/work-graph/tasks/command-rerun-request-codecs.js';
 import { bindingOf, type B2TaskClosureReader } from './B2-blocked-runtime.js';
 import { openK3BlockedCommandWorld, sha256Of } from './K3-blocked-command-fixture.js';

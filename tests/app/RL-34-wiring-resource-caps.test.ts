@@ -19,8 +19,8 @@ import type { BootstrapResponse } from '../../src/app/core-http-types.js';
 import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-execution.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { createS2BBe1Platform, type S2BBe1PlatformFixture, type Be1Reply } from '../helpers/S2B-be1-platform-fixture.js';
-import { createRLQueryFixture, rlQueryHostCtx, type RLQueryFixture } from '../helpers/RL-query-fixture.js';
-import { createR3eEvidenceFixture, type R3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
+import { createRLQueryFixture } from '../helpers/RL-query-fixture.js';
+import { createR3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
 import { B2_AT } from '../helpers/B2-execution-fixture.js';
 import { defaultRLSandboxResult, rlSandbox } from '../helpers/RL-kernel-sandbox-double.js';
 

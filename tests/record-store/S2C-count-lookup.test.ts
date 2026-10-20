@@ -20,7 +20,7 @@ import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-re
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { RecordCountRequest } from '../../src/core/record-store/lookup-ports.js';
 import {
-  change, keyOf, open as openStore, seed, widget, widgetSchemas as baseWidgetSchemas, type TextBackend,
+  open as openStore, seed, widget, widgetSchemas as baseWidgetSchemas, type TextBackend,
 } from '../helpers/S4B-text-search-support.js';
 
 const plainIndex = { name: 's2c-count-by-group', aggregateType: 'Widget', paths: ['group'] };

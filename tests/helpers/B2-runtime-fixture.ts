@@ -28,12 +28,11 @@ import {coordinationPolicyContentDigest,type CoordinationPolicyContentV1} from '
 import {createRoleConfigurationService} from '../../src/core/work-graph/configuration/role-memory-service.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
-import type { ModelClientPort, ModelEvent, ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
+import type { ModelClientPort, ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import type { AuthorizeConfiguration, HostInstanceFacts } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
 import type { ExecutionEntryPort } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import type { ModelRequestPort } from '../../src/core/work-graph/tasks/model-call-contracts.js';
-import type { RoleBindingFactsPort } from '../../src/core/work-graph/model/configuration-contracts.js';
 import type { RuntimeExecutionDependencies, RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { AgentRuntimeService } from '../../src/core/agent-runtime/ports.js';
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';

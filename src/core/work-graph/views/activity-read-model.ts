@@ -15,7 +15,7 @@ import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
-import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
   ActivityRecordingSnapshot, ActivityTotalsV1, RunActivitySnapshot,

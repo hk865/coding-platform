@@ -68,7 +68,6 @@ vi.mock('../../vendor/coding-agent/dist/tools/builtin/shell/shell-tool.js', asyn
 });
 seams.shellSeam = shellSeam;
 
-const AT = '2026-10-16T00:00:00.000Z';
 /** The row's worst-case changed-path sample: exactly 200 paths of 512 bytes. */
 const LONG_PATH_COUNT = 200;
 

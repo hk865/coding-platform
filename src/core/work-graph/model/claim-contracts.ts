@@ -8,7 +8,7 @@ import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import type { WriteResult, ReadResult } from '../../../contracts/core/results.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type {
-  ConsumedWaitV1, RoleBindingRefV1, RunRef, TaskAttemptRef, TaskBudgetV1, TaskTriple,
+  ConsumedWaitV1, RoleBindingRefV1, RunRef, TaskBudgetV1, TaskTriple,
 } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NewBasisInputRefV1 } from '../../../contracts/no-progress.js';

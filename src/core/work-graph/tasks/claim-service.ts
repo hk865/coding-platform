@@ -92,7 +92,6 @@ import {
 import { goalStartPolicy } from '../state/goal-settings-machine.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
-import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
 import { pinsFromStoreCurrent } from '../persistence/read-result-failures.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';

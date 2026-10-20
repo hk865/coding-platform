@@ -13,8 +13,8 @@
  * re-exports this file for the task/views importers.
  */
 import type {
-  ActivityRecordingRef, ActivityRecordingSnapshot, ActivityTotalsV1, RunActivityBound,
-  RunActivityFactsV1, RunActivityRef, RunActivitySnapshot, RunActivityUnknownReason,
+  ActivityRecordingRef, ActivityRecordingSnapshot, RunActivityBound,
+  RunActivityRef, RunActivitySnapshot, RunActivityUnknownReason,
 } from '../../../contracts/run-activity.js';
 import { ACTIVITY_QUARTER_CAP, RUN_CHANGED_FILES_CAP, RUN_USAGE_REQUESTS_CAP } from '../../../contracts/run-activity.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -22,8 +22,6 @@ import {
   hasOnlyKeys, invalid, isNonNeg as isNonNegativeSafeInteger, isPos as isPositiveSafeInteger,
   isRecord as isObject, nonEmpty, parseObject,
 } from '../../../contracts/validation/common.js';
-import type { SessionRef } from '../../../contracts/core/identity.js';
-import type { RunRef } from '../../../contracts/dispatch.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';

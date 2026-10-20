@@ -52,8 +52,6 @@ export type S4BMultiScope = {
 
 export async function createS4BMultiScope(f: S4BNoteCheckFixture): Promise<S4BMultiScope> {
   const platform = f.inner.platform;
-  let clock = 1000;
-  const now = () => new Date(Date.parse(S4A_AT) + (++clock) * 1000).toISOString();
   const committed = (label: string, result: { status: string }): Record<string, unknown> => {
     if (result.status !== 'committed') throw new Error(`S4B multi-scope ${label} failed: ${JSON.stringify(result)}`);
     return (result as unknown as { value: Record<string, unknown> }).value;

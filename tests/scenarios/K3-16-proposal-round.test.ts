@@ -28,7 +28,6 @@ import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { cleanupRestart } from '../helpers/A2-restart-fixture.js';
 import { AG2B_CONSUMER_ID, AG2B_WORK_TASK_ID } from '../helpers/AG2b-collaboration-fixture.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
-import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { DecisionAnnotationV1 } from '../../src/contracts/goal-decisions.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
@@ -167,7 +166,7 @@ describe('K3-16 the real proposal round', () => {
 
   it('K3-16: a proposal round that writes no proposal settles needs_decision with proposal_missing and the four-option card', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const { originalRunRef, record, card } = await needsDecisionCard(h, 'k3-16-case2');
+    const { originalRunRef, card } = await needsDecisionCard(h, 'k3-16-case2');
     await answerSafer(h, card, 'k3-16-case2');
 
     const model = createScriptedModel([{ kind: 'text', text: 'k3-16 no proposal this round' }]);

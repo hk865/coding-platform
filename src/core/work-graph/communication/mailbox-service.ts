@@ -95,7 +95,7 @@ import {
   SESSION_MESSAGE_BY_RECIPIENT_LOOKUP, SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP,
   SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP, SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP,
   SESSION_MESSAGE_CONTENT_TYPE, SESSION_MESSAGE_MAX_TEXT_BYTES,
-  archiveWaitDisposedEventFromEvent, checkMessageSender, checkSessionMessageRef, decodeSessionMessageRecord,
+  archiveWaitDisposedEventFromEvent, checkSessionMessageRef, decodeSessionMessageRecord,
   encodeArchiveWaitDisposedEvent, encodeSessionMessageReadEvent, encodeSessionMessageRecord, encodeSessionMessageRespondedEvent,
   encodeSessionMessageSentEvent, sessionMessageFromEvent, sessionMessageRefKey,
   encodeSessionMessageConsultationDerivedEvent, encodeSessionMessageInputAcceptedEvent,

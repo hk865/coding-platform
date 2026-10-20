@@ -39,8 +39,6 @@ import {
   AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import { readReviewTargetDigests } from '../../src/core/work-graph/tasks/unknown-call-review-target-digests.js';
 import type { DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';

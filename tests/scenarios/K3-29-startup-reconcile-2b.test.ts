@@ -30,7 +30,7 @@ import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.j
 import { runStartupReconcile, type StartupReconcilePlatform } from '../../src/app/startup-reconcile.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { GoalSnapshot } from '../../src/contracts/ledger.js';
-import type { UnknownCallReviewDraftV1, UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
+import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { readCanonicalTaskFacts, readGoalPhase, readGoalPlanWindow } from '../../src/core/work-graph/tasks/plan-readers.js';
 import {
@@ -60,9 +60,6 @@ vi.mock('../../vendor/coding-agent/dist/tools/builtin/shell/shell-tool.js', asyn
 seams.shellSeam = shellSeam;
 
 const HOST = 'k3-29-host';
-const UNAVAILABLE_WORKSPACE: UnknownCallReviewDraftV1['workspace'] = {
-  status: 'unavailable', runBaselineKnown: false, reason: 'not_configured', detail: 'k3-29',
-};
 
 type World = K3ReviewCardWorld;
 

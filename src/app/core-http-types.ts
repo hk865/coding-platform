@@ -12,13 +12,10 @@
  *   - `AbortSignal` and every internal handle stay out of the JSON DTO.
  */
 import type { ActorRef } from '../contracts/command-event.js';
-import type { CommitCursor } from '../contracts/command-event.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
-import type { RoleConfigurationRef, SessionRef } from '../contracts/core/identity.js';
+import type { RoleConfigurationRef } from '../contracts/core/identity.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
-import type { ExecutionHistoryPage } from '../core/agent-runtime/execution-history-contracts.js';
-import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
-import type { RunRef } from '../contracts/dispatch.js';
+import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
 import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 // Slice 1 (spec §4.4, §0.2 L5): the owner ports of the eleven new suffixes.
@@ -54,14 +51,13 @@ import type { RoleBindingRefV1 } from '../contracts/dispatch.js';
 import type { ActivityReadPort } from '../core/work-graph/views/activity-read-model.js';
 import type { TrackReadPort } from '../core/work-graph/views/track-read-model.js';
 import type { TaskTimelineReadPort } from '../core/work-graph/views/task-state-timeline.js';
-import type { QueryJobAnswerSnapshot, QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../contracts/query-job.js';
+import type { QueryJobIntentV1 } from '../contracts/query-job.js';
 import type { RuntimeBudget } from '../contracts/runtime-budget.js';
-import type { QueryJobPort, QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
+import type { QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import type { MaterialPort } from '../core/work-graph/model/material-contracts.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
 import type { WorkbenchCommandState, WorkbenchToolsPort } from './workbench-tools.js';
-import type { InitialPlanningGoalInputResult, WorkflowAdvanceResult, WorkflowStepReceipt } from '../business/workflow/contracts.js';
 // Slice 2C (spec §2): the line/node-detail owner ports and the Host-assembled
 // conversation page. The page DTO is defined HERE (the fixed HTTP JSON contract)
 // and the composition module imports it, so the browser and tests read one type.
@@ -69,8 +65,6 @@ import type { WorkLineConversationPort } from '../composition/work-line-conversa
 import type {
   NodeDetailReadPort, WorkLineReadPort, WorkLineSettingsPort,
 } from '../core/work-graph/model/work-line-contracts.js';
-import type { LineSegmentV1 } from '../contracts/work-line.js';
-import type { SessionHistoryEntry } from '../core/agent-runtime/session-operations.js';
 // Slice 4C C1.4 (spec §2/L15/L19): the notes and version-list route contracts.
 import type { ReadResult, WriteResult } from '../contracts/core/results.js';
 import type {

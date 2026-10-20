@@ -39,13 +39,13 @@ import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
-import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+import type { RunRef } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { isPos as isPositiveRevision, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
-  EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
+  GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
   StoreFailure,
 } from '../../record-store/ports.js';
 import {

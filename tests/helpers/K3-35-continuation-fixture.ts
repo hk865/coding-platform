@@ -96,7 +96,7 @@ import { createCommandRecognizer } from '../../src/core/work-graph/tasks/command
 import type { WorkspaceFileReader } from '../../src/core/work-graph/model/kernel-command-read-contracts.js';
 import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { openRealWorkspace, type RealWorkspace } from './K3-real-workspace.js';
-import { GOAL_B, PLAN_B2, T } from './S5-decision-fixture.js';
+import { GOAL_B, PLAN_B2 } from './S5-decision-fixture.js';
 import {
   drivePublicArchive, failingChangedFilesReader, registerPublicArchive, WORST_ANOMALY_REASON,
   type PublicArchiveRequest,
@@ -343,7 +343,6 @@ export type K3_35RealRunHarness = {
 const ROLE_BINDING: RoleBindingRefV1 = { schemaVersion: 1, bindingId: 's5-binding', templateId: 'builder',
   templateRevision: '1', bindingVersion: 1, policyRevision: 'legacy-template' };
 const BUDGET = { tokenBudget: 100_000, deadline: null };
-const SESSION_ROLE = { kind: 'legacy_template' as const, templateId: 'builder', templateRevision: '1' };
 /**
  * One real continuation Run, entered by the production Runtime: the prepared
  * value comes from `runtime.port.prepareExecution`; the Kernel run/turn

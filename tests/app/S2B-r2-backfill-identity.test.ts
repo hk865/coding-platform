@@ -18,7 +18,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { RuntimeExecutionPort } from '../../src/core/agent-runtime/ports.js';
-import type { RunActivityRead } from '../../src/core/agent-runtime/run-activity-reader.js';
 import { unknownFacts } from '../../src/core/agent-runtime/run-activity-reader.js';
 import { createActivityBackfill } from '../../src/business/workflow/activity-backfill.js';
 import {
@@ -29,8 +28,6 @@ import { viewOf } from '../helpers/S2B-activity-fixture.js';
 const DAY = 86_400_000;
 const T0 = Date.parse('2026-10-20T00:00:00.000Z');
 const at = (offsetDays: number): string => new Date(T0 + offsetDays * DAY).toISOString();
-
-type CountOutcome = RunActivityRead | { kind: 'not_entered' };
 
 /** A scripted Runtime `countRunActivity`: the first answer is `unknown`, then `counted`. */
 function scriptedCounter(): { countRunActivity: NonNullable<RuntimeExecutionPort['countRunActivity']> } {

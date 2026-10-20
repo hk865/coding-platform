@@ -16,7 +16,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ModelRequestPermitRef } from '../../../contracts/dispatch.js';
 import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { EncodedRecord, PreparedCommit, RecordGuard } from '../../record-store/ports.js';
+import type { PreparedCommit, RecordGuard } from '../../record-store/ports.js';
 import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import { dispatchOutboxRefKey, taskAttemptRefKey } from './claim-record-codecs.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
@@ -221,7 +221,7 @@ export function createModelCallService(deps: ModelCallServiceDependencies): Mode
 
       const admitted = await admitEnteredRun(deps, scopeCtx, actual.permit, runPin);
       if (!admitted.ok) return admitted.rejection;
-      const { facts, manifest, inputBinding } = admitted.value;
+      const { facts, inputBinding } = admitted.value;
       if (actual.contextInputDigest !== inputBinding.inputDigest || actual.manifestDigest !== inputBinding.manifestDigest) {
         return { status: 'rejected', code: 'forbidden', reason: 'the actual request digests are not the entered input binding' };
       }

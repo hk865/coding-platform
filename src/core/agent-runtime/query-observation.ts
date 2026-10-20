@@ -13,7 +13,7 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { SourceRefV1 } from '../../contracts/dispatch.js';
-import type { QueryJobAnswerV1, QueryJobRef, QueryRunRef } from '../../contracts/query-job.js';
+import type { QueryJobAnswerV1, QueryRunRef } from '../../contracts/query-job.js';
 import type { PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
@@ -26,7 +26,7 @@ import { createSessionHistoryCursorOwner, type SessionHistoryEntry } from './ses
 import { confirmMailboxInputs } from './execution-inputs.js';
 import type { RuntimeExecutionDependencies } from './execution-contracts.js';
 import type {
-  QueryEntryIdentity, QueryExecutionRecord, QueryPreparationFacts,
+  QueryEntryIdentity, QueryExecutionRecord,
 } from '../work-graph/queries/contracts.js';
 
 export type QueryObservationPort = {
@@ -371,7 +371,7 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     }
     const record = await deps.queryExecution.readQueryExecution(owned, queryRunRef);
     if (record.status !== 'ready') return record;
-    const { job, run, session } = record.value;
+    const { run, session } = record.value;
     const state = run.run.executionState;
     if (state === undefined || state.entry === null) return { status: 'ready', value: record.value };
     if (state.phase === 'settled' || run.run.status === 'answered' || run.run.status === 'closed') {

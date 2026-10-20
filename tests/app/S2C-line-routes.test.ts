@@ -138,13 +138,12 @@ describe('2C-31 route table and envelopes', () => {
 describe.each(['memory', 'sqlite'] as const)('2C-31 line reads through the routes (%s)', (kind) => {
   let fixture: LineFixture;
   let composed: Awaited<ReturnType<typeof createTargetPlatform>>;
-  let bindings: CoreRouteBindings;
 
   beforeAll(async () => {
     fixture = await openLineFixture(kind);
     await fixture.createSession('s-2c31-head');
     composed = await createTargetPlatform({ storage: { kind: 'memory' }, workspace: noWorkspace });
-    bindings = createPlatformCoreRouteBindings({ ...composed, workLines: fixture.reader });
+    createPlatformCoreRouteBindings({ ...composed, workLines: fixture.reader });
   });
 
   afterAll(async () => {

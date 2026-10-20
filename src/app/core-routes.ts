@@ -16,7 +16,7 @@ import type { CoreRejection, ReadResult, WriteResult } from '../contracts/core/r
 import type { RunRef, RunSnapshot, TaskTriple } from '../contracts/dispatch.js';
 import type { ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
 import { canonicalJson, sha256Hex } from '../contracts/fingerprint.js';
-import type { UnknownCallReviewRef, UnknownCallReviewV1 } from '../contracts/unknown-call-review.js';
+import type { UnknownCallReviewV1 } from '../contracts/unknown-call-review.js';
 import { reworkFenceOf } from '../core/work-graph/state/task-failure.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
 import type { CommitCursor } from '../contracts/command-event.js';
@@ -76,13 +76,9 @@ import {
   type CoreRouteKind,
   type CoreRouteSuffix,
   type CoreScope,
-  // Slice 1 (spec §4.4, "typed assembly"): the compile-time DTO pairing of the
-  // eleven new suffixes with their body/result aliases.
-  type Slice1CoreRouteDto,
-  // Slice 2C (spec §2): the same typed assembly for the seven line/detail routes.
-  type Slice2CCoreRouteDto,
-  // K3 (§2 L7): the read-only review lookup's body/result pairing.
   type K3CoreRouteDto,
+  type Slice1CoreRouteDto,
+  type Slice2CCoreRouteDto,
   type UnknownCallReviewReleaseHoldValue,
 } from './core-http-types.js';
 
@@ -363,8 +359,16 @@ export type CoreRouteSpec = {
   owner: string;
 };
 
-/** The frozen R6.1a route table. Adding a suffix is a deliberate contract edit. */
-export const CORE_ROUTE_SPECS: Record<CoreRouteSuffix, CoreRouteSpec> = {
+/**
+ * The frozen R6.1a route table. Adding a suffix is a deliberate contract edit.
+ * Every suffix of the typed DTO assemblies (slice 1, slice 2C, K3) must name a
+ * real row here; naming them in the annotation is also the production-reach
+ * anchor for those type-only assemblies and every body/result alias in them.
+ */
+export const CORE_ROUTE_SPECS: Record<
+  CoreRouteSuffix | keyof Slice1CoreRouteDto | keyof Slice2CCoreRouteDto | keyof K3CoreRouteDto,
+  CoreRouteSpec
+> = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
   'controls/read': { kind: 'plain', binding: 'readControl', owner: 'controls.readControl' },
   'controls/deliver': { kind: 'plain', binding: 'deliverControl', owner: 'runtime.deliverControl' },
@@ -1005,16 +1009,6 @@ export async function dispatchCoreRoute(
 ): Promise<unknown> {
   if (!parsed.ok) throw new CoreRouteRejectionError(parsed.rejection);
   const spec = CORE_ROUTE_SPECS[suffix];
-  // Type-only anchor for the slice-1 DTO assembly: this dispatcher is reached
-  // from the Host server, so naming the table here keeps every new body/result
-  // alias reachable from production (spec §4.4 "typed assembly", K6). Nothing
-  // at runtime reads this alias.
-  type Slice1Dto = Slice1CoreRouteDto;
-  // Slice 2C (spec §2): the same reachability anchor for the seven line/detail
-  // DTO aliases; nothing at runtime reads this alias.
-  type Slice2CDto = Slice2CCoreRouteDto;
-  // K3 (§2 L7): the reachability anchor for the review-read DTO alias.
-  type K3Dto = K3CoreRouteDto;
   if (parsed.kind !== spec.kind) {
     throw new CoreRouteRejectionError({
       status: 'rejected', code: 'invalid',

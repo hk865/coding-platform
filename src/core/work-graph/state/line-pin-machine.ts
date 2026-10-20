@@ -18,7 +18,7 @@
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { WorkspaceLineSettingsV1, WorkspaceSnapshot } from '../../../contracts/ledger.js';
-import { accept, reject, type Rejected, type Transition } from './transition.js';
+import { accept, reject, type Transition } from './transition.js';
 
 // --------------------------------------------------------------------------
 // Machine event, guard context, effects (spec §2)

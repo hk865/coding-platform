@@ -23,7 +23,6 @@ import {
 import {
   bindMessageResponseCursor, createSessionMessageRecord, nextSessionMessageRecord,
   type MessageQueryAnswerSenderRecord, type MessageResponseRecord, type MessageWorkRunSenderRecord,
-  type SessionMessageRecord,
 } from '../../src/core/work-graph/state/message-machine.js';
 
 const PROJECT = 'p-pos';

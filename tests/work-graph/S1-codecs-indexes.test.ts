@@ -16,27 +16,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EncodedRecord, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { LookupValue } from '../../src/core/record-store/lookup-ports.js';
-import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { SessionProvenanceV1, SessionRecord } from '../../src/contracts/core/session.js';
-import type { QueryRunSnapshot } from '../../src/contracts/query-job.js';
 import type { SessionAnomalyAnchorV1 } from '../../src/contracts/session-anomaly.js';
-import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import {
   SESSION_RECORD_SCHEMAS, decodeSessionRecord,
-  encodeSessionRecord, sessionAggregateRefKey,
+  sessionAggregateRefKey,
 } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import {
-  SESSION_MESSAGE_RECORD_SCHEMAS, encodeSessionMessageRecord,
+  SESSION_MESSAGE_RECORD_SCHEMAS,
   sessionMessageRefKey,
 } from '../../src/core/work-graph/sessions/message-record-codecs.js';
-import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import {
   SESSION_ANOMALY_RECORD_SCHEMAS, SESSION_ANOMALY_SCHEMA_ID, decodeSessionAnomalyAnchor,
-  encodeSessionAnomalyAnchor,
 } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import {
-  QUERY_JOB_RECORD_SCHEMAS, encodeQueryRunSnapshotRecord,
+  QUERY_JOB_RECORD_SCHEMAS,
 } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import {
   TASK_CLAIM_RECORD_SCHEMAS, dispatchOutboxRefKey,
@@ -46,11 +41,10 @@ import {
   SESSION_BY_PROVENANCE_LOOKUP, SESSION_REPLY_BY_HANDLER_LOOKUP, SLICE1_LOOKUP_INDEXES,
   WORK_EXECUTION_BY_SESSION_LOOKUP, type Slice1LookupIndexV1,
 } from '../../src/core/work-graph/model/session-facts-contracts.js';
-import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
 import type { ClaimFixtureKind } from '../helpers/task-claim-fixture.js';
 
-import { t0, key, ready, committed, s1Schemas, observeStore, sessionOwners,
+import { t0, key, committed, s1Schemas, observeStore, sessionOwners,
   createSession, plannedSession, workHistory, pendingQuery, archiveWait, archiveControlRequest } from '../helpers/S1-session-facts-fixture.js';
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
@@ -157,7 +151,6 @@ describe.each(['memory', 'sqlite'] as const)('S1 codecs and indexes (%s)', (kind
 
     const b2 = await open(kind);
     const base = b2.base;
-    const scope = base.scope;
     const audit = await observeStore(base);
     const owners = sessionOwners(base);
     const history = workHistory(b2);

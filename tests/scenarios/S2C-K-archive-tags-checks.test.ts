@@ -65,14 +65,6 @@ function dropBody(session: SessionRef & { revision: number }, taskId: string, re
   };
 }
 
-/** Archives a Session's Task through the real `sessions/archive-line` route and drives it home. */
-async function archiveLine(h: HostScenario, session: SessionRef & { revision: number }, taskId: string, requestId: string): Promise<void> {
-  const started = await h.post<ReadResult<ArchiveLineResultV1>>('sessions/archive-line', { scope: AG2B_SCOPE,
-    request: dropBody(session, taskId, requestId) });
-  expect(started, JSON.stringify(started)).toMatchObject({ status: 'ready' });
-  await h.advance(h.select(`${requestId}-advance`), { maxSteps: 16 }).catch(() => undefined);
-}
-
 /** The Session card of a Run, with its current revision (for archive pins). */
 async function sessionOf(h: HostScenario, runRef: RunRef): Promise<SessionRef & { revision: number }> {
   const session = (await readExecution(h.host, runRef)).session;

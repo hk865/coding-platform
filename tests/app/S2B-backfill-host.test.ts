@@ -19,9 +19,7 @@
  * nothing without the instance lease.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { createActivityReadModel } from '../../src/core/work-graph/views/activity-read-model.js';

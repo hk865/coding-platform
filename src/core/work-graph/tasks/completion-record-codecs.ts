@@ -24,7 +24,6 @@ import { canonicalOf } from '../../../contracts/fingerprint.js';
 import type { GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
 import { hasOnlyKeys, invalid, isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
-import type { VerificationRoundRef } from '../../../contracts/verification.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 
 // -------------------------------------------------------------------------- //

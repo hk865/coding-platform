@@ -38,14 +38,14 @@ import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskRequeueSnapshotV1 } from '../.
 import type { RoundSnapshot, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
-import type { EncodedRecord, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import type { RecordLookupPort, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { ClaimTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
-import { createRunActivityService, type RunActivityPort } from '../../src/core/work-graph/tasks/run-activity-service.js';
+import { createRunActivityService } from '../../src/core/work-graph/tasks/run-activity-service.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';

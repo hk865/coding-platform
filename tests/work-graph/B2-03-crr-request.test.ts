@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import { crrCardOf } from '../helpers/B2-crr-world.js';
 import { openCrrWorld, type CrrWorld } from '../helpers/K3-crr-fixture.js';
 

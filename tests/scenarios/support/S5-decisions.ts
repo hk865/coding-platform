@@ -19,14 +19,13 @@
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { artifactBodyDigest } from '../../../src/contracts/artifact.js';
-import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../../src/contracts/core/prepared-execution.js';
 import type { RunRef } from '../../../src/contracts/dispatch.js';
 import type { TaskEnvelopeV1 } from '../../../src/contracts/task-envelope.js';
 import { createSqliteRecordBackend } from '../../../src/core/record-store/sqlite-record-store.js';
 import { createSqliteRawArtifactStore } from '../../../src/core/record-store/sqlite-body-store.js';
 import { createRoleConfigurationService } from '../../../src/core/work-graph/configuration/role-memory-service.js';
 import type { AuthorizeConfiguration, KernelExecutionBinding } from '../../../src/core/work-graph/model/execution-entry-contracts.js';
-import { createExecutionEntryService, MANIFEST_CONTENT_TYPE } from '../../../src/core/work-graph/tasks/execution-entry-service.js';
+import { createExecutionEntryService } from '../../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRunStateReader } from '../../../src/core/work-graph/tasks/run-state-service.js';
 import { createTaskRequeueService } from '../../../src/core/work-graph/tasks/requeue-service.js';
 import { plainSessionRefToAggregate } from '../../../src/core/work-graph/sessions/session-record-codecs.js';

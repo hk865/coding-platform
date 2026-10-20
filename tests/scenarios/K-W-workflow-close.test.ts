@@ -13,7 +13,7 @@
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { SqliteStores } from '../../vendor/coding-agent/dist/public-api.js';
-import type { ControlIntentSnapshotV1, SubmittedControl } from '../../src/contracts/control-intent.js';
+import type { SubmittedControl } from '../../src/contracts/control-intent.js';
 import { continuationBriefMarker } from '../../src/contracts/continuation-brief.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';

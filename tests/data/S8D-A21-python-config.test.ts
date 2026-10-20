@@ -22,7 +22,6 @@ function byKey<T>(items: T[], key: (item: T) => string): T[] {
   });
 }
 const edgePairs = (graph: GraphShape) => byKey(graph.edges.map(edge => [edge.from, edge.to] as [string, string]), pair => pair.join('\0'));
-const unresolvedPairs = (graph: GraphShape) => byKey(graph.unresolved.map(item => [item.from, item.specifier] as [string, string]), pair => pair.join('\0'));
 
 const ANALYZERS = fileURLToPath(new URL('../../.local/source-analyzers', import.meta.url));
 

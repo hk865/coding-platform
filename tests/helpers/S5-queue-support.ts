@@ -45,7 +45,7 @@ import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architec
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createB2ExecutionFixture } from './B2-execution-fixture.js';
-import { GOAL_B, OPERATOR, PROJECT, T, WORKSPACE, WORKSPACE_SCOPE,
+import { OPERATOR, PROJECT, T, WORKSPACE, WORKSPACE_SCOPE,
   type S5DecisionFixture, type S5FixtureKind } from './S5-decision-fixture.js';
 import { preparationHost, prepareQueryForReal, prepareTaskForReal } from './task-claim-fixture.js';
 

@@ -55,7 +55,6 @@ import {
   UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS,
 } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
-import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import { decisionSourceKey, type DecisionOptionV1 } from '../../src/contracts/goal-decisions.js';
 import {
   createDecisionReadModel, createUnknownCallReviewCardSource,

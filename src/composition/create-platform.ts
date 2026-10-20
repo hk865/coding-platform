@@ -78,7 +78,7 @@ import { createNoteMemoryMaterial } from '../core/work-graph/notes/note-memory-m
 import { createNoteScribeTodos } from '../core/work-graph/notes/note-scribe-todos.js';
 import { createNoteDecisionSource } from '../core/work-graph/notes/note-decision-source.js';
 import type { ContextExtensionsDependencies } from '../core/work-graph/views/context-extensions.js';
-import type { NoteCheckPort, NoteDecisionApplyPort, NoteHeadCheckPort, NoteMemoryReadPort, NoteReadPort,
+import type { NoteCheckPort, NoteHeadCheckPort, NoteMemoryReadPort, NoteReadPort,
   NoteScopeReadPort, NoteScribeTodoPort, NoteWritePort } from '../core/work-graph/model/note-contracts.js';
 import type { SourceProvider } from '../core/workspace/ports.js';
 import { decodeRun } from '../core/work-graph/materials/run-snapshot-decoder.js';
@@ -133,7 +133,7 @@ import { readWorkspaceBaselineFromBundle } from '../core/workspace/workspace-bas
 import { WORKSPACE_DENIED_PREFIXES } from '../core/workspace/denied-prefixes.js';
 import { createToolCommitLookup } from './tool-commit-lookup.js';
 import type {
-  UnknownCallReviewV1, WorkspaceBaselineV1, WorkspaceCaptureV1,
+  WorkspaceBaselineV1, WorkspaceCaptureV1,
 } from '../contracts/unknown-call-review.js';
 import { SLICE1_LOOKUP_INDEXES } from '../core/work-graph/model/session-facts-contracts.js';
 import { createKernelStoreRegistry } from '../core/agent-runtime/kernel-store-locator.js';

@@ -29,7 +29,7 @@ import {
 import type { TaskReworkRefusalCode } from '../../../contracts/task-requeue.js';
 import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type {
-  EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard,
+  GoalRecordTransactionPort, PreparedCommit, RecordGuard,
 } from '../../record-store/ports.js';
 import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import {

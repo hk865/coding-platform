@@ -11,7 +11,7 @@
  * `lines/page` (`executions`). Expected values are §0.2 and L12.
  */
 import { afterEach, expect, it } from 'vitest';
-import { cleanupScenarios, openHostScenario, performs, type HostScenario } from './harness.js';
+import { cleanupScenarios, openHostScenario, performs } from './harness.js';
 import {
   AG2B_CONSUMER_ID, AG2B_SCOPE, claimBusyQuery, createAG2bSession, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';

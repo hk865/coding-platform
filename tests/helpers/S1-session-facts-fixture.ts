@@ -28,7 +28,7 @@ import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/mo
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-history-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
-import { SESSION_RECORD_SCHEMAS, plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
+import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';

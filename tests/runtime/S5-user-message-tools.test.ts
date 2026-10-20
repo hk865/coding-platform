@@ -14,7 +14,7 @@ import { createCollaborationDriver, type CollaborationDriver,
   type CollaborationStartInput, type CollaborationState } from '../../src/app/collaboration-driver.js';
 import type { WorkbenchQueryProfile } from '../../src/app/runtime-configuration.js';
 import { WorkspaceSandbox, type ToolCall, type ToolResult } from '../../vendor/coding-agent/dist/public-api.js';
-import { T, openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
+import { openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
 import { committed, ready, realOwners, workContext, refKey, sendDecision, answerPins,
   decisionInput, modelRequests, type RealOwners } from '../helpers/S5-user-message-support.js';
 import { createWP2Platform, decisionRequestArgs, type WP2PlatformFixture } from '../helpers/WP2-platform-support.js';

@@ -14,7 +14,7 @@ import { mapArchitectureSource, type ArchitectureSourceMaterial } from '../../sr
 import { buildObservedNeighborhood } from '../../src/core/work-graph/architecture/graph-index.js';
 import type { ObservedArchitectureSelection } from '../../src/core/work-graph/architecture/contracts.js';
 import { createObservedArchitecture } from '../../src/core/work-graph/architecture/architecture-service.js';
-import { capture, context, fixture, workspace } from './R3d-fixture.js';
+import { capture, context, fixture } from './R3d-fixture.js';
 
 const hex = (c: string): string => c.repeat(64);
 

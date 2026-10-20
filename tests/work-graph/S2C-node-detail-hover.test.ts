@@ -8,7 +8,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionDutyReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
-import { failingIndexRead, lineReaderOf, nodeReaderOf, openNodeFixture, scriptedExecutedFiles, type NodeFixture } from '../helpers/S2C-D-node-support.js';
+import { failingIndexRead, nodeReaderOf, openNodeFixture, scriptedExecutedFiles, type NodeFixture } from '../helpers/S2C-D-node-support.js';
 
 const opened: NodeFixture[] = [];
 afterEach(async () => { for (const fixture of opened.splice(0)) await fixture.close(); });

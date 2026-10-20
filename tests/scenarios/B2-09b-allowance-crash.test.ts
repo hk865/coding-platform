@@ -32,7 +32,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
-import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
+import { cleanupScenarios, HostScenario, hostCtx } from './harness.js';
 import { answerCard, needsDecisionCard, queueOf, reviewOf } from './support/review-card-round.js';
 import { preparedOf, redrivePolicy } from './support/common.js';
 import { preparedManifestOf } from './support/brief.js';
@@ -42,7 +42,7 @@ import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { cleanupRestart, readExecution } from '../helpers/A2-restart-fixture.js';
 import { listCommandRerunRequests } from '../helpers/B2-09b-crash.js';
 import {
-  AG2B_CONSUMER_ID, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite, plain,
+  AG2B_CONSUMER_ID, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite,
 } from '../helpers/AG2b-collaboration-fixture.js';
 
 // The KE6 stand-in: `reviewCapability` and the read-only command probe with the

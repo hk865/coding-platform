@@ -28,15 +28,15 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
-import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreError, CoreRejection } from '../../../contracts/core/results.js';
 import type {
-  EffectivityAnchorV1, EvidenceBindingV1, EvidenceRef, EvidenceSnapshot, TaskEvidenceIndexSnapshot,
+  EffectivityAnchorV1, EvidenceBindingV1, EvidenceRef, EvidenceSnapshot,
 } from '../../../contracts/evidence.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
 import type { TaskReductionRef, TaskReductionSnapshot } from '../../../contracts/reduction.js';
-import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
+import type { RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
 import type { VerificationRoundRef, RoundSnapshot } from '../../../contracts/verification.js';
 import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';

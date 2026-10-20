@@ -12,7 +12,7 @@
  */
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { CommandRerunRequestV1 } from '../../../contracts/command-rerun-request.js';
-import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
+import type { TaskTriple } from '../../../contracts/dispatch.js';
 import type { UnknownCallReviewRef } from '../../../contracts/unknown-call-review.js';
 import { accept, reject, type Transition } from './transition.js';
 

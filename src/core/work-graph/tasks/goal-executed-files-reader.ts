@@ -12,7 +12,6 @@
  * failure, never as an empty/complete answer.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';

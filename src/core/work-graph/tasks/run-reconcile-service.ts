@@ -50,7 +50,7 @@ import { createSessionFactsService } from './session-facts.js';
 import { createUnknownCallReviewService } from './unknown-call-review-service.js';
 import { previousChainRefOf, streakOf } from '../state/task-failure.js';
 import type {
-  UnknownCallInventoryProblemV1, UnknownCallReviewDraftV1, UnknownCallReviewItemV1, UnknownCallReviewRef,
+  UnknownCallInventoryProblemV1, UnknownCallReviewItemV1, UnknownCallReviewRef,
   UnknownCallReviewV1,
 } from '../../../contracts/unknown-call-review.js';
 import type { SessionGuardContext, SessionRelease, SessionReleaseCause } from '../state/session-availability.js';

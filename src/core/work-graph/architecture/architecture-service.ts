@@ -902,7 +902,7 @@ async function restoreAutoCapture(records: GoalRecordTransactionPort,
 // --------------------------------------------------------------------------
 
 export function createObservedArchitecture(deps: ObservedArchitectureDependencies): ObservedArchitecturePort {
-  const { workspace, access, bodies, records, source } = deps;
+  const { workspace, bodies, records, source } = deps;
 
   /** The one file-page sequence. It loads the frozen graph,
    * runs the caller's paging function, attaches the whole-capture language

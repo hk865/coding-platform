@@ -54,7 +54,6 @@ import {
 } from '../../../contracts/role-spec.js';
 import { validateActivateRoleSpecRevisionCommand, validateInstallRoleSpecRevisionCommand } from '../../../contracts/validation/role.js';
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
-import { canonicalJson } from '../../../contracts/fingerprint.js';
 import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBatchRead, RecordGuard, StoreCommitReceipt,
   StoreFailure,
@@ -64,7 +63,7 @@ import {
   canonicalRefKey, decodeCoordinationPolicyRevisionSnapshot, decodeProjectCoordinationPolicyActiveSnapshot,
   decodeProjectRoleSpecActiveSnapshot, decodeRoleSpecActivatedEvent, decodeRoleSpecInstalledEvent,
   decodeRoleSpecRevisionSnapshot, encodeProjectRoleSpecActiveSnapshot, encodeRoleSpecActivatedEvent,
-  encodeRoleSpecInstalledEvent, encodeRoleSpecRevisionSnapshot, projectRoleSpecActiveRefFromValue,
+  encodeRoleSpecInstalledEvent, encodeRoleSpecRevisionSnapshot,
   roleSpecRevisionRefFromValue,
 } from './role-record-codecs.js';
 

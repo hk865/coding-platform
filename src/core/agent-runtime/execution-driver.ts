@@ -13,7 +13,6 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { RunRef, RunSnapshot, RuntimeInputBindingV1 } from '../../contracts/dispatch.js';
-import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { GoalRef, WorkspaceRef } from '../../contracts/ledger.js';
 import type { UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
@@ -64,7 +63,7 @@ import { toolCommitRequestId } from '../work-graph/model/tool-commit-arguments.j
 import type { ExecutionObservationService } from './execution-observation.js';
 import type { RuntimeControlCoordinator, RuntimeControlHandle } from './execution-control.js';
 import type {
-  ExecutionEntryPort, KernelExecutionBinding, KernelObservationSource, ObservedExecutionHistory, TaskEntryPermit,
+  KernelExecutionBinding, KernelObservationSource, ObservedExecutionHistory, TaskEntryPermit,
 } from '../work-graph/model/execution-entry-contracts.js';
 import type {
   StartTaskExecutionRequest, RuntimeExecutionDependencies, TaskExecutionRecord,

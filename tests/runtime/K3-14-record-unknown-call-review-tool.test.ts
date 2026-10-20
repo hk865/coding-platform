@@ -13,7 +13,7 @@
  * read-back) runs through the real prepare/start seam in
  * tests/scenarios/K3-12-14-review-round.test.ts (R2/R5).
  */
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { UnknownCallReviewRef } from '../../src/contracts/unknown-call-review.js';

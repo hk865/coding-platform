@@ -19,7 +19,6 @@
  */
 import { afterEach, expect, it } from 'vitest';
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
-import type { RuntimeExecutionDependencies } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { ToolCall, ToolResult } from '../../vendor/coding-agent/dist/public-api.js';
 import { createS2BRuntimeStoreFixture, type S2BRuntimeStoreFixture } from '../helpers/S2B-runtime-store-fixture.js';
 import { deferred } from '../helpers/A2-restart-fixture.js';

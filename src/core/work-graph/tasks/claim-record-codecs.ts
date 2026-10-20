@@ -589,7 +589,6 @@ export function taskReworkRefusalSnapshotProblem(value: unknown): string | null 
   if (taskProblem !== null) return taskProblem;
   const task = value['task'] as Record<string, unknown>;
   if (!sameTask(task, ref)) return 'TaskReworkRefusal task disagrees with its ref';
-  const projectId = task['projectId'] as string;
   const operation = ref['operation'];
   const afterRunProblem = runRefProblem(value['afterRunRef'], 'TaskReworkRefusal afterRunRef');
   if (afterRunProblem !== null) return afterRunProblem;

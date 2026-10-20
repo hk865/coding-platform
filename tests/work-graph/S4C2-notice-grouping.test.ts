@@ -93,7 +93,6 @@ describe('S4C2-N2 groupNotices user_affected_per_goal', () => {
 describe('S4C2-N3 seenThroughOfNotices over shown members', () => {
   const g1 = goal('g1');
   const p1 = pos(1, 'a1');
-  const p2 = pos(2, 'a2');
   const p3 = pos(3, 'a3');
   const all: NoticeItemV1[] = [
     item({ itemKey: 'a1', category: 'note_review', goalRef: g1, n: 1, noteClass: 'scribe_result' }),

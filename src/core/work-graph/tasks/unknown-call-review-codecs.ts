@@ -16,13 +16,10 @@
  * event as their single replay event.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
-import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import type {
-  KernelCallRefV1, SaferMethodProposalV1, UnknownCallBlockedCommandV1, UnknownCallDispositionV1,
-  UnknownCallDecisionReasonV1, UnknownCallInventoryProblemV1, UnknownCallObservationV1,
-  UnknownCallReviewItemV1, UnknownCallReviewRef, UnknownCallReviewStatusV1, UnknownCallReviewV1,
-  WorkspaceCaptureV1,
+  UnknownCallDecisionReasonV1, UnknownCallInventoryProblemV1,
+  UnknownCallReviewRef, UnknownCallReviewStatusV1, UnknownCallReviewV1,
 } from '../../../contracts/unknown-call-review.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
@@ -32,7 +29,7 @@ import type { UnknownCallReviewChangeV1 } from '../state/unknown-call-review.js'
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { sessionRefProblem } from '../persistence/rework-codecs.js';
 import {
-  canonicalOf, hasOnlyKeys, inList, invalid, isInt, isNonNeg, isObject, isPos, isSha256Hex,
+  canonicalOf, hasOnlyKeys, inList, invalid, isNonNeg, isObject, isPos, isSha256Hex,
   nonEmpty, parseObject, utf8Bytes, type UnknownRecord,
 } from './codec-fields.js';
 import { runRefProblem, sessionMessageRefProblem, taskTripleProblem } from './codec-shape-checks.js';

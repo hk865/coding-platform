@@ -64,7 +64,7 @@ import type {
 } from '../../src/contracts/plan.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type {
-  CrashSuspicionV1, SaferMethodProposalV1, UnknownCallObservationV1,
+  CrashSuspicionV1, SaferMethodProposalV1,
   UnknownCallReviewItemV1, UnknownCallReviewRef, UnknownCallReviewV1,
 } from '../../src/contracts/unknown-call-review.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';

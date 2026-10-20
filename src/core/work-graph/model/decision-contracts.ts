@@ -31,7 +31,6 @@ import type {
   NoticeCategoryV1,
   NoticePositionV1,
   UserDecisionBodyV1,
-  WorkspaceDecisionSettingsV1,
 } from '../../../contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import type { NoteKind } from '../../../contracts/note.js';

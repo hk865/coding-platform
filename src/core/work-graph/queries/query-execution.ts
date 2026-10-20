@@ -34,13 +34,12 @@ import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
 import type {
   QueryExecutionStateV1, QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef,
-  QueryJobSnapshot, QueryModelRequestV1, QueryModelUsageV1, QueryRunRef, QueryRunSnapshot, QueryRunV1,
+  QueryJobSnapshot, QueryModelRequestV1, QueryModelUsageV1, QueryRunRef, QueryRunSnapshot,
 } from '../../../contracts/query-job.js';
 import type { RawArtifactRecord } from '../../record-store/body-ports.js';
 import type {
-  EncodedRecord, CommitCursorBinding, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
+  EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreCommitReceipt,
 } from '../../record-store/ports.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import {
@@ -1188,7 +1187,6 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       return rejectedWithNonEmptyCurrent('busy', 'the target Session is no longer occupied by this QueryRun generation');
     }
     if (job.job.status !== 'pending' && job.job.status !== 'running') return rejectedWithNonEmptyCurrent('busy', 'the QueryJob is not awaiting a fresh entry');
-    const execution = job.job.intent.execution;
     const loaded = await loadQueryManifest(deps.bodies, prepared as unknown as PreparedQueryExecution);
     if (loaded.status !== 'ready') return toRejection(loaded);
     const manifest = loaded.value.manifest;
@@ -1293,7 +1291,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
 
     const read = await readCore(deps, queryRunRef, null);
     if (read.status !== 'ready') return toRejection(read);
-    const { job, run, session } = read.value;
+    const { job, run } = read.value;
     const state = run.run.executionState;
     if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state');
     if (expected.run !== run.revision) {

@@ -27,7 +27,7 @@ import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
-import { cleanupRestart, readExecution } from '../helpers/A2-restart-fixture.js';
+import { cleanupRestart } from '../helpers/A2-restart-fixture.js';
 import { createScriptedModel, type ScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { mailboxSeam, type MailboxSeam } from '../helpers/K3-mailbox-seam.js';
 import { mixedEditSeam, releaseMixedSeams, type MixedSeam } from '../helpers/K3-mixed-seams.js';
@@ -37,7 +37,6 @@ import {
 } from '../helpers/AG2b-collaboration-fixture.js';
 import { cleanupScenarios, HostScenario, hostCtx, performs, type Platform } from './harness.js';
 import { openWorkRoot, preparedOf, redrivePolicy, WORK_TARGET } from './support/common.js';
-import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
 import { prepareOn } from './support/shell-work-root.js';
 
 // The KE6 stand-in (as K3-05): `reviewCapability` reads the read-only probe with

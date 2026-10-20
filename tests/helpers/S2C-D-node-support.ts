@@ -32,8 +32,7 @@ import type { GoalRef, ProjectSnapshot, WorkspaceSnapshot } from '../../src/cont
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
-import type { EncodedRecord, GoalRecordTransactionPort, RecordBackendSchemas, RecordGuard, StoreCommitReceipt } from '../../src/core/record-store/ports.js';
-import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
+import type { EncodedRecord, RecordBackendSchemas, StoreCommitReceipt } from '../../src/core/record-store/ports.js';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
@@ -41,9 +40,9 @@ import { createProjectBootstrapServices } from '../../src/core/work-graph/config
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import {
-  PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS, createSessionResponsibilityBasisReader, readGoal,
+  PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS, createSessionResponsibilityBasisReader,
 } from '../../src/core/work-graph/tasks/plan-readers.js';
-import { SESSION_RECORD_SCHEMAS, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
+import { SESSION_RECORD_SCHEMAS, plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
@@ -63,7 +62,7 @@ import { createMaterialService } from '../../src/core/work-graph/materials/mater
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { WORKFLOW_AUTOMATION_ACTOR, type TaskRequeueOutcomeV1, type TaskRequeueRef } from '../../src/contracts/task-requeue.js';
-import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
+import type { WriteResult } from '../../src/contracts/core/results.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';

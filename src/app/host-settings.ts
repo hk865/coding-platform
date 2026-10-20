@@ -32,10 +32,8 @@ import { RESOURCE_CAP_NONE_TEXT } from '../../vendor/coding-agent/dist/public-ap
 import type { ResourceCapCapability } from '../../vendor/coding-agent/dist/public-api.js';
 import type { BootstrapResponse, CoreScope } from './core-http-types.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
-import type { ReadResult } from '../contracts/core/results.js';
 import type {
   QueryRuntimeConfigurationInput,
-  ResolvedRuntimeConfiguration,
   RuntimeConfigurationInput,
   RuntimeHostBindings,
 } from '../core/agent-runtime/execution-contracts.js';

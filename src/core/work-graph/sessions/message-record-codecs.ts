@@ -17,11 +17,8 @@
  *   - the two recipient lookup indexes are registered with the record codec;
  *     no hand-written SQL table or second index exists.
  */
-import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { RoleBindingRefV1, RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
-import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
 import { MAX_AUTO_REWORK_LIMIT } from '../../../contracts/task-requeue.js';
 import {
   hasOnlyKeys, invalid, isPos, isRecord, nonEmpty, type UnknownRecord,
@@ -30,13 +27,13 @@ import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
-import { isJsonObject, isNonEmptyString, parseJsonObject } from '../../record-store/record-codec.js';
+import { parseJsonObject } from '../../record-store/record-codec.js';
 import { checkArtifactRef, checkPlainSessionRef, checkSessionBody, isNonZeroPlatformCursor, isPlatformCursor } from './session-record-codecs.js';
 import type { Slice1EventHeaderV1 } from './lifecycle-record-codecs.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
 import { SESSION_REPLY_BY_HANDLER_LOOKUP } from '../model/session-facts-contracts.js';
-import type { MessageQueryAnswerSender, MessageSender, SessionMessage } from '../model/communication-contracts.js';
+import type { SessionMessage } from '../model/communication-contracts.js';
 import type { NoticeOriginWireV1 } from '../persistence/decision-record-codecs.js';
 import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';

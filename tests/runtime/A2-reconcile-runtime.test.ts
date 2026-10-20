@@ -22,7 +22,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ControlIntentRef } from '../../src/contracts/control-intent.js';
 import type { HostTakeoverProofV1, WorkspaceCaptureV1 } from '../../src/contracts/unknown-call-review.js';
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { RuntimeExecutionDependencies } from '../../src/core/agent-runtime/execution-contracts.js';
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';

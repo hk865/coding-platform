@@ -12,7 +12,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { UnknownCallReviewRef, UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
+import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import type {
   WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult,
 } from '../../src/business/workflow/contracts.js';
@@ -136,7 +136,6 @@ function assemble(world: K3ReviewCardWorld, options: {
   reviews?: WorkflowDependencies['unknownCallReviews'];
 } = {}) {
   const f = world.fixture;
-  const records = options.records ?? f.records;
   const reviews = options.reviews ?? world.reviews;
   const { authority } = createMaterialRecordReaders(f.records);
   const runtime: RuntimeExecutionPort = {

@@ -15,7 +15,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+import type { RunSnapshot } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { AggregateRef, GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { EvidenceOutcome } from '../../../contracts/evidence.js';

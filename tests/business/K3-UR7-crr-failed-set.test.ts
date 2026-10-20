@@ -189,7 +189,6 @@ function assemble(world: K3ReviewCardWorld, options: {
   countCrrApply?: () => void;
 } = {}): { workflow: WorkflowPort; crrApplies: () => number } {
   const f = world.fixture;
-  const records = options.records ?? f.records;
   const reviews = options.reviews ?? world.reviews;
   const commandRerun = options.commandRerun ?? world.commandRerun;
   let crrApplies = 0;

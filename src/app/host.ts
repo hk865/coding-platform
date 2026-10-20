@@ -36,7 +36,7 @@ import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { SessionRef } from '../contracts/core/identity.js';
 import type { NoteScribeTodoPort } from '../core/work-graph/model/note-contracts.js';
-import type { SessionMailboxPort, SessionMessage } from '../core/work-graph/model/communication-contracts.js';
+import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
 import type { WorkspaceRef } from '../contracts/ledger.js';
 import type { WorkspaceResult } from '../core/workspace/ports.js';

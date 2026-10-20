@@ -31,7 +31,6 @@ import type {
 } from '../../../contracts/work-line.js';
 import { controlSubmissionProblem, type ControlPointerIntent } from './control-intent-machine.js';
 import { isPausedInterrupted, runControlNodeOf } from './run-machine.js';
-import { stopRequesterOf } from './task-failure.js';
 import { taskRequeueStateProblem, type TaskReworkFacts, type TaskState } from './task-machine.js';
 
 // -------------------------------------------------------------------------- //

@@ -40,8 +40,6 @@ import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import { attentionConfig } from '../helpers/orchestration-fixture.js';
 
-const scope = { projectId: 's4c2-scribe-project', workspaceId: 's4c2-scribe-workspace' };
-
 function goalAnchor(goalId: string): NoteDraftV1['anchor'] { return { kind: 'goal', goalId }; }
 
 function general(goalId: string, topic: string): NoteDraftV1 {

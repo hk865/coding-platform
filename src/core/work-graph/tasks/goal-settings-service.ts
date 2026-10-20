@@ -53,7 +53,6 @@ import {
   mapStoreFailure,
   mergeGuards,
   nonEmpty,
-  sameRef,
 } from './execution-entry-service.js';
 import {
   GOAL_BY_WORKSPACE_INDEX,

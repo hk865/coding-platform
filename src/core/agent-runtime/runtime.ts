@@ -12,8 +12,6 @@
  * implementations.
  */
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
-import type { WorkspaceScope } from '../../contracts/core/identity.js';
-import type { SessionRef } from '../../contracts/core/identity.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
 import type { RunRef } from '../../contracts/dispatch.js';
 import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';

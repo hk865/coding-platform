@@ -16,7 +16,7 @@ import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { SessionRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { ReviewWorkRef } from '../../src/contracts/reviewer-work.js';
-import type { EncodedRecord, RecordBatchRead, StoreResult } from '../../src/core/record-store/ports.js';
+import type { RecordBatchRead, StoreResult } from '../../src/core/record-store/ports.js';
 import type { MaterialAuthorityReads, MaterialCanonicalRef } from '../../src/core/work-graph/materials/record-ports.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import type { SourceCanonicalRef } from '../../src/core/work-graph/source-authority-ports.js';

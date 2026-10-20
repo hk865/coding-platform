@@ -4,7 +4,7 @@
  * source + reason.
  */
 import { afterEach, expect, it } from 'vitest';
-import { BACKENDS, fixture, type Backend, type PlatformFixture } from '../helpers/S8D-platform-fixture.js';
+import { BACKENDS, fixture, type PlatformFixture } from '../helpers/S8D-platform-fixture.js';
 
 const fixtures: PlatformFixture[] = [];
 afterEach(async () => {

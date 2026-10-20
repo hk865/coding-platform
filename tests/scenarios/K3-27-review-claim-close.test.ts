@@ -20,7 +20,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
-import { operatorRequeue, preparedOf, readCall, redrivePolicy } from './support/common.js';
+import { preparedOf, readCall, redrivePolicy } from './support/common.js';
 import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
 import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
 import { expectQuietHarnessRestart } from './support/restart.js';

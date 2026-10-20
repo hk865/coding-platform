@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { execFileSync, fork, type ChildProcess } from 'node:child_process';
+import { execFileSync, fork } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';

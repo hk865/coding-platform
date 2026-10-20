@@ -9,7 +9,7 @@ import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
-import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
+import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-execution.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { RunSnapshot } from '../../src/contracts/dispatch.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
@@ -18,8 +18,6 @@ import type {
 } from '../../src/contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, RuntimeTask } from '../../src/contracts/plan.js';
-import type { RoleSpecResolutionV1 } from '../../src/contracts/role-spec-materials.js';
-import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
@@ -35,7 +33,7 @@ import { createSessionDirectory } from '../../src/core/work-graph/sessions/sessi
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { decodeSessionMessageRecord } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
-import { createExecutionEntryService, MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/tasks/execution-entry-service.js';
+import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';

@@ -40,7 +40,7 @@ import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/ta
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import { B2_AT } from './B2-runtime-fixture.js';
-import { createS2BRuntimeStoreFixture, type S2BRuntimeStoreFixture } from './S2B-runtime-store-fixture.js';
+import { type S2BRuntimeStoreFixture } from './S2B-runtime-store-fixture.js';
 import { restartedHost } from './S2B-runtime-tools-support.js';
 
 export const BE2_HOST_1: HostInstanceFacts = { hostInstanceId: 's2b-be2-host-1', lease: 'owned' };

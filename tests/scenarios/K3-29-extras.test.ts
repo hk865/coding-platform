@@ -28,10 +28,6 @@ import { expectQuietRestart } from './support/restart.js';
 
 afterEach(cleanupScenarios);
 
-function refOf(runRef: TaskExecutionRecord['run']['ref']): UnknownCallReviewV1['ref'] {
-  return { aggregateType: 'UnknownCallReview', projectId: runRef.projectId, goalId: runRef.goalId, runId: runRef.runId };
-}
-
 async function readReview(host: AG2bHost, runRef: TaskExecutionRecord['run']['ref']): Promise<UnknownCallReviewV1> {
   const read = await post<ReadResult<UnknownCallReviewV1>>(host, 'unknown-call-reviews/read', plain(AG2B_SCOPE, { runRef }));
   if (read.status !== 'ready') throw new Error(`the review record must read: ${JSON.stringify(read)}`);

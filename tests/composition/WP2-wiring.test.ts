@@ -765,14 +765,14 @@ it.each(['memory', 'sqlite'] as const)('F11 [%s] marking one displayed notice le
   await f.platform.runtime.startRun(f.ctx, { prepared: preparedS.value, consumerId: `f11-${kind}-s`, requestId: `f11-${kind}-start-s` });
   expect(sent).toHaveLength(3);
 
-  let rep1!: CommittedReply; let rep2!: CommittedReply; let rep3!: CommittedReply;
+  let rep3!: CommittedReply;
   const preparedD = await observeStage(f, () => f.platform.runtime.prepareExecution(f.ctx, { runRef: f.secondRunRef!, requestId: `f11-${kind}-prepare-d` }));
   if (preparedD.status !== 'ready') throw new Error(`F11 prepare D: ${JSON.stringify(preparedD)}`);
   action = async () => {
     // §5.2 F11 handwritten history: reply m1 and m2 first, then the ONE health
     // commit makes S unavailable (shared position R), then reply m3 (position P3).
-    rep1 = await reply(sent[0]!, 'm1');
-    rep2 = await reply(sent[1]!, 'm2');
+    await reply(sent[0]!, 'm1');
+    await reply(sent[1]!, 'm2');
     const before = f.commits().length;
     // F11's shared position R: the real health observation of an unreadable
     // Kernel. The mapped database is moved aside, probed, observed, and restored

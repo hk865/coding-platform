@@ -43,7 +43,7 @@ import type { NodeDetailReadPort } from '../model/work-line-contracts.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { SessionAnomalyPort } from '../tasks/session-anomaly-service.js';
 import {
-  decodeSessionRecord, decodeSessionWorkLink, S2C_SESSION_BY_KIND_FROM_LOOKUP, SESSION_LINKS_BY_TASK_LOOKUP,
+  decodeSessionRecord, decodeSessionWorkLink, SESSION_LINKS_BY_TASK_LOOKUP,
   SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
 } from '../sessions/session-record-codecs.js';
 import { laterCursor, readCanonicalTaskFacts, RUN_BY_TASK_INDEX } from '../tasks/plan-readers.js';

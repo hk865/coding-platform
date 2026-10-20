@@ -96,7 +96,7 @@ it.each(['memory', 'sqlite'] as const)(
   async (kind) => {
     const { backend } = await open(kind);
     try {
-      const unsafe = widget('p', 'unsafe', { group: 'text', label: 'x' });
+      widget('p', 'unsafe', { group: 'text', label: 'x' });
       const rows = [
         widget('p', 's1', { group: 'text', label: 'same' }),
         widget('p', 's2', { group: 'text', label: 'same' }),

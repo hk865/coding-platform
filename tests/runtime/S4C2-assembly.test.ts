@@ -26,7 +26,6 @@ import type {
 } from '../../src/contracts/graph-context.js';
 import type { WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { NoteDraftV1, NoteSectionsV1 } from '../../src/contracts/note.js';
-import type { RoleSpecResolutionV1 } from '../../src/contracts/role-spec-materials.js';
 import { CONTEXT_SECTION_HEADERS, createContextAssembler } from '../../src/core/agent-runtime/context-assembler.js';
 import type { ExecutionPreparationDependencies } from '../../src/core/agent-runtime/execution-preparation.js';
 import { createExecutionPreparation } from '../../src/core/agent-runtime/execution-preparation.js';
@@ -329,8 +328,8 @@ describe('S4C2 real-chain assembly', () => {
     const f = await createS4ANoteFixture(kind);
     try {
       const projectNote = await write(f, understandingDraft({ kind: 'project' }, 'PROJECT conclusion', 'PROJECT-BODY'), null);
-      const goalNote = await write(f, understandingDraft({ kind: 'goal', goalId: GOAL }, 'PROJECT-GOAL'), GOAL);
-      const stageNote = await write(f, understandingDraft({ kind: 'stage', goalId: GOAL, stageId: STAGE }, 'PROJECT-STAGE'), GOAL);
+      await write(f, understandingDraft({ kind: 'goal', goalId: GOAL }, 'PROJECT-GOAL'), GOAL);
+      await write(f, understandingDraft({ kind: 'stage', goalId: GOAL, stageId: STAGE }, 'PROJECT-STAGE'), GOAL);
       const normIds: string[] = [];
       for (let index = 1; index <= 7; index += 1) {
         normIds.push(await write(f, normDraft(`n${String(index)}`, `NORM-${String(index)}`), null));
@@ -373,7 +372,7 @@ describe('S4C2 real-chain assembly', () => {
     try {
       const goalNote = await write(f, understandingDraft({ kind: 'goal', goalId: GOAL }, 'query understanding'), GOAL);
       const normNote = await write(f, normDraft('path', 'QUERY-NORM'), null);
-      const generalNote = await write(f, generalDraft({ kind: 'task', goalId: GOAL, taskId: TASK }, 'ignored', 'QUERY-GENERAL'), GOAL);
+      await write(f, generalDraft({ kind: 'task', goalId: GOAL, taskId: TASK }, 'ignored', 'QUERY-GENERAL'), GOAL);
       const goal = await f.platform.plans.queryGoal(f.ctx(), f.goalRef);
       expect(goal.status).toBe('ready');
       if (goal.status !== 'ready') return;

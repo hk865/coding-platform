@@ -21,7 +21,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { GoalRef, ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
@@ -289,7 +288,7 @@ it('scenario 3: with a commit barrier, a future edit of B and claim(B) are mutua
     try {
       const candidate = await changeB(f);
       const request = await f.buildRequest({ input: { taskId: f.tasks.second.taskId } });
-      const claimService = f.makeService(f.records);
+      f.makeService(f.records);
       // Barrier: gate both writers at commit until both have finished reading.
       let editArrived = false;
       let claimArrived = false;

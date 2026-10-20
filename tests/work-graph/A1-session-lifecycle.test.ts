@@ -8,15 +8,13 @@
  * that reason until the implementation phase begins.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { SessionRef, WorkLinkRelation, WorkLinkTarget } from '../../src/contracts/core/identity.js';
+import type { WorkLinkTarget } from '../../src/contracts/core/identity.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
-import { canonicalJson } from '../../src/contracts/fingerprint.js';
 import { randomUUID } from 'node:crypto';
 import {
   createGraphSessionFixture, GRAPH_MODULE_ONE, GRAPH_MODULE_TWO, linkRequest, lifecycleRequest, commitBarrier,

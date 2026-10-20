@@ -25,7 +25,7 @@ import type { WorkbenchActor } from '../../src/app/core-http-types.js';
 import { PLATFORM_TOKEN_META_NAME } from './host-page.js';
 import { createScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
 import {
-  AG2B_AT, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_BUDGET, AG2B_QUERY_INSTRUCTION, AG2B_QUERY_PROFILE_ID,
+  AG2B_AT, AG2B_CONSUMER_ID, AG2B_QUERY_BUDGET, AG2B_QUERY_INSTRUCTION, AG2B_QUERY_PROFILE_ID,
   AG2B_QUERY_ROLE, AG2B_QUERY_ROLE_BINDING, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_SECRET_VALUE, AG2B_SECRET_VAR,
   AG2B_WORK_INSTRUCTION, AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, ag2bChecksConfiguration, readPageToken,
   writeAG2bWorkspace, type AG2bHost,

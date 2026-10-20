@@ -36,7 +36,7 @@ import type { GraphWrite } from '../model/task-contracts.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP } from './plan-readers.js';
 import {
-  S2B_RUN_ACTIVITY_BY_GOAL_LAST_LOOKUP, RUN_ACTIVITY_RECORDED_EVENT_TYPE, RUN_ACTIVITY_EVENT_SCHEMA_VERSION,
+  RUN_ACTIVITY_RECORDED_EVENT_TYPE, RUN_ACTIVITY_EVENT_SCHEMA_VERSION,
   ACTIVITY_RECORDING_STARTED_EVENT_TYPE, activityRecordingRefKey, activityRecordingStartedEventFromEvent,
   decodeActivityRecordingSnapshot, decodeRunActivitySnapshot, encodeActivityRecordingSnapshot,
   encodeActivityRecordingStartedEvent, encodeRunActivityRecordedEvent, encodeRunActivitySnapshot,

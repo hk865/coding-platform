@@ -40,7 +40,7 @@ import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { cleanupRestart } from '../helpers/A2-restart-fixture.js';
 import {
-  AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite, plain,
+  AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
 
 // A7 pass-through sandbox: the real shell handler is never reached in this row

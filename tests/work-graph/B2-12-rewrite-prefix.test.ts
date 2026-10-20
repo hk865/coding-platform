@@ -104,7 +104,7 @@ describe.each(['memory', 'sqlite'] as const)('B2-12 rewriteOf prefix (L19a, Code
   it('an 8-character prefix shared by two records of the Task is invalid and lists both full runIds', async () => {
     const world = await openK3ReviewCardWorld(kind);
     worlds.push(world);
-    const { first, second } = await twoRecords(world);
+    const { first } = await twoRecords(world);
     expect(await listAll(world)).toHaveLength(0);
 
     // The ambiguity: the shared 8-character prefix cannot select a record.
@@ -134,7 +134,7 @@ describe.each(['memory', 'sqlite'] as const)('B2-12 rewriteOf prefix (L19a, Code
   it('a prefix of another Task runId is invalid for this Task', async () => {
     const world = await openK3ReviewCardWorld(kind);
     worlds.push(world);
-    const { first, second } = await twoRecords(world);
+    const { first } = await twoRecords(world);
     // A real third record on ANOTHER Task (k3-20-b), with its own real Run id.
     const foreign = await createBlockedRecord(world, {
       taskId: 'k3-20-b', runId: FOREIGN_RUN, label: 'foreign', command: 'cargo build', callId: 'prefix-c3',

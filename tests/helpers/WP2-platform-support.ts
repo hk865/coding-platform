@@ -21,7 +21,6 @@ import type { RoleBindingRefV1, RunRef } from '../../src/contracts/dispatch.js';
 import type { TaskRequeueRef } from '../../src/contracts/task-requeue.js';
 import type { PlatformDutyV1 } from '../../src/contracts/platform-duty.js';
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
-import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
 import type {

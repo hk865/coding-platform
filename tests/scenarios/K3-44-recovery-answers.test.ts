@@ -28,7 +28,6 @@ import {
   AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
-import type { DecisionSelectionV1 } from '../../src/contracts/goal-decisions.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type {

@@ -22,7 +22,7 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import type { ScenarioCommit } from './harness.js';
-import { cleanupScenarios, HostScenario, hostCtx, performs, SCENARIO_OPERATOR } from './harness.js';
+import { cleanupScenarios, HostScenario, hostCtx, SCENARIO_OPERATOR } from './harness.js';
 import { cleanupRestart, moveKernelAside, readExecution, restoreKernel } from '../helpers/A2-restart-fixture.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
@@ -71,8 +71,6 @@ it('K3-25: attestation creates the record in the same commit, replays the origin
   const root = await openShellWorkRoot(h, model);
   let running: Promise<unknown> | null = null;
   let runRef: RunRef;
-  let published: WriteResult<unknown> | null = null;
-  let created: ReadResult<UnknownCallReviewV1> | null = null;
   try {
     const prepared = preparedOf(await prepareOn(root, h.select('k3-25', AG2B_WORK_TASK_ID)));
     runRef = prepared.claim.runRef;

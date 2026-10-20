@@ -4,7 +4,7 @@
 import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js';
 import type {
   AcceptanceObligation, PlanRevisionDraft, PlanRevisionSnapshot, PlanValidationError,
-  PlanTaskAssignment, RuntimeTask, TaskInputRequirementV2,
+  RuntimeTask, TaskInputRequirementV2,
 } from '../../../contracts/plan.js';
 import { planValidationError, revisionAssignments } from '../../../contracts/plan.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -538,7 +538,6 @@ export function validateFutureObligationCoverage(input: {
   // C7: a superseded Task names its replacement correctly; no other disposition names one.
   issues.push(...replacementIssues(source, target));
 
-  const addedTaskIds = new Set(delta.addedTaskIds);
   const sourceObligationIds = new Set(source.obligations.map((obligation) => obligation.obligationId));
   const addedObligationIds = new Set(target.obligations
     .filter((obligation) => !sourceObligationIds.has(obligation.obligationId))

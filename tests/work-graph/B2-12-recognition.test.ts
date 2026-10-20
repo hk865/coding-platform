@@ -21,7 +21,7 @@ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-
 import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { failWorkspaceReads, openRealWorkspace, type RealWorkspace } from '../helpers/K3-real-workspace.js';
-import { GOAL_B, T, WORKSPACE_SCOPE } from '../helpers/S5-decision-fixture.js';
+import { T, WORKSPACE_SCOPE } from '../helpers/S5-decision-fixture.js';
 import { ctx, keyOf, record, request } from '../helpers/B2-12-recognition-fixture.js';
 
 // §5.1's stand-in `shell`, hoisted per test file (the fixture's real Run uses it).

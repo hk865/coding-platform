@@ -6,7 +6,7 @@
  * `archiveLine` action; the due decision only reads durable facts.
  */
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
-import type { SessionRef, VersionPin, WorkLinkTarget, WorkspaceScope } from '../../contracts/core/identity.js';
+import type { SessionRef, WorkLinkTarget, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRecord, SessionWorkLink } from '../../contracts/core/session.js';
 import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';

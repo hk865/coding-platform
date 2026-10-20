@@ -13,7 +13,7 @@
  */
 import type { ActorRef, CommitCursor } from '../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
+import type { VersionPin } from '../../src/contracts/core/identity.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { GoalSettingsV1 } from '../../src/contracts/goal-decisions.js';
 import type { ContextExtensionsV1 } from '../../src/contracts/graph-context.js';
@@ -47,7 +47,7 @@ import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goa
 import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice-display-token.js';
 import { createNoticePositionComparator } from '../../src/core/work-graph/views/notice-position.js';
 import { GOAL_A, GOAL_B, OPERATOR, PLAN_A1, PLAN_B1, PROJECT, WORKSPACE, WORKSPACE_SCOPE, openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
-import { committed, mailboxDependencies, materialsFor, pin, ready, workContext } from '../helpers/S5-queue-support.js';
+import { committed, mailboxDependencies, materialsFor, pin, workContext } from '../helpers/S5-queue-support.js';
 import { afterEach, describe, expect, it } from 'vitest';
 
 /** Real-store fixtures opened by a test; every one is closed after it. */

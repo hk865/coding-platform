@@ -19,8 +19,6 @@ function ready<T>(result: ReadResult<T>): T {
   return result.value;
 }
 
-const CANCELLED_POINTER = 'cancelled';
-
 describe.each(['memory', 'sqlite'] as const)('2C-03 six attention tiers (%s)', (kind) => {
   const open: LineFixture[] = [];
   afterEach(async () => { for (const fixture of open.splice(0)) await fixture.close(); });

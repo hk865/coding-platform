@@ -4,14 +4,7 @@
  * `memoryLookup`.
  */
 import { describe, expect, it } from 'vitest';
-import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import { createS4BNoteCheckFixture } from '../helpers/S4B-note-check-fixture.js';
-
-function draft(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
-  return { kind: 'pitfall', topic: 'm16', conclusion: 'a conclusion', body: 'body',
-    anchor: { kind: 'project' }, extraAnchors: [], facts: [], basisFiles: [], structural: false,
-    replaces: [], contradicts: [], coexistWith: [], ...overrides } as NoteDraftV1;
-}
 
 describe('S4B M-16 not_found vs empty', () => {
   it.each(['memory', 'sqlite'] as const)('M-16 %s: a missing module anchor with no head is not_found anchor_not_found', async kind => {

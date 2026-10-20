@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { createCommandRerunTools } from '../../src/core/agent-runtime/command-rerun-tools.js';
-import { nextCall, openB2BlockedWorld, runTool, type B2BlockedWorld } from '../helpers/B2-blocked-runtime.js';
+import { openB2BlockedWorld, runTool, type B2BlockedWorld } from '../helpers/B2-blocked-runtime.js';
 
 
 // §5.1's stand-in `shell`, hoisted per test file (the fixture's real Run uses it).

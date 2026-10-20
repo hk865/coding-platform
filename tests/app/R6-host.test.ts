@@ -43,7 +43,6 @@ import {
   type PreparedQueryExecution,
   type QueryExecutionRecord,
   type QueryJobAnswerSnapshot,
-  type MessageBody,
   type OperationReceipt,
   type Page,
   type ReadResult,
@@ -260,11 +259,11 @@ describe('R6.1a Host HTTP/static shell', () => {
   it('keeps source/capture and architecture/capture as distinct request shapes', async () => {
     const started = await startHost();
     try {
-      const source = await corePost(started.base, 'source/capture', started.token,
+      await corePost(started.base, 'source/capture', started.token,
         plain({ workspace: workspaceRef, workspaceRevision: 1, provider: 'text' }));
       // The GraphWrite envelope must NOT be accepted by source/capture.
       expect((await corePost(started.base, 'source/capture', started.token, graphWrite({ workspace: workspaceRef }, 'r6-source-wrong-shape'))).status).toBe(400);
-      const architecture = await corePost(started.base, 'architecture/capture', started.token,
+      await corePost(started.base, 'architecture/capture', started.token,
         graphWrite({ workspace: scope, mappings: [], previous: null }, 'r6-architecture-capture'));
       // The plain envelope must NOT be accepted by architecture/capture.
       expect((await corePost(started.base, 'architecture/capture', started.token, plain({ workspace: scope }))).status).toBe(400);

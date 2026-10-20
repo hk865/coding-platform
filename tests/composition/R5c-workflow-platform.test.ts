@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { PlanRevisionDraft, RuntimeTask } from '../../src/contracts/plan.js';
-import type { TrustedCheckConfiguration, VerificationRoundRef } from '../../src/contracts/verification.js';
+import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';

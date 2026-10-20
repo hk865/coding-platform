@@ -28,7 +28,6 @@ import {
   appConfigSchema, ProviderRegistry, runCodingAgent,
   type HookPort, type RunState, type ToolDefinition, type ToolResult, type WorkspaceSandbox,
 } from '../../vendor/coding-agent/dist/public-api.js';
-import type { ToolCall } from '../../vendor/coding-agent/dist/public-api.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import { openB2BlockedWorld, type B2BlockedWorld } from '../helpers/B2-blocked-runtime.js';

@@ -30,7 +30,7 @@ import { decodeRefKey } from '../../record-store/record-codec.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { AdoptedArchitecture, ArchitectureCatalogPort, ArchitectureRevision, ModuleDefinition } from '../architecture/catalog-contracts.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
-import type { NoteCheckPort, NoteCheckV1, NoteFileObservationV1, NoteHeadCheckItemV1, NoteHeadCheckPort, NoteHintV1, NoteSimilarV1,
+import type { NoteCheckV1, NoteFileObservationV1, NoteHeadCheckItemV1, NoteHeadCheckPort, NoteHintV1, NoteSimilarV1,
   NoteUpdateDueTriggerV1, UnderstandingStatusV1 } from '../model/note-contracts.js';
 import { NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILE_MAX_BYTES, NOTE_GOAL_QUOTA, NOTE_READ_FACTS_MAX, NOTE_READ_FILES_MAX,
   NOTE_SIMILAR_MAX, NOTE_SIMILAR_MIN, NOTE_SYMBOL_HITS_MAX, NOTE_SYMBOL_RECHECK_MAX } from '../model/note-contracts.js';

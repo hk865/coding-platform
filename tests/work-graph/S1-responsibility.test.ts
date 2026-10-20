@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AggregateRef } from '../../src/contracts/ledger.js';
 import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
 import type {
-  SessionRef, SessionWorkLinkRef, VersionPin, WorkLinkRelation, WorkLinkTarget,
+  SessionRef, SessionWorkLinkRef, VersionPin, WorkLinkTarget,
 } from '../../src/contracts/core/identity.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { SessionWorkLink } from '../../src/contracts/core/session.js';
@@ -27,7 +27,6 @@ import {
 } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { createSessionResponsibilityBasisReader } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
-import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { commitBarrier } from '../helpers/graph-session-fixture.js';
@@ -40,8 +39,6 @@ import {
 } from '../helpers/R3e-evidence-fixture.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { CheckProcessObservation, RoundSnapshot } from '../../src/contracts/verification.js';
-import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
-import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import {
   checkAllInvariants, invariantStoreOf, readInvariantWorld,
 } from '../state/invariants.js';

@@ -351,7 +351,6 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
   }] });
 
   let seedSeq = 0;
-  let requestSeq = 0;
 
   async function commitRaw(recordsToWrite: readonly EncodedRecord[],
     guards: readonly RecordGuard[] = []): Promise<StoreCommitReceipt> {

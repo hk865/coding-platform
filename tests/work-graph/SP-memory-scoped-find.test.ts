@@ -12,8 +12,6 @@ import { describe, expect, it } from 'vitest';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import { createS4BNoteCheckFixture, type S4BNoteCheckFixture } from '../helpers/S4B-note-check-fixture.js';
 
-const PARTIAL_WARNING = '匹配集合超过候选上限；请按锚点、路径前缀、种类或加词缩小范围';
-
 function draft(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
   return { kind: 'pitfall', topic: 'sp-find', conclusion: 'a conclusion', body: 'body',
     anchor: { kind: 'project' }, extraAnchors: [], facts: [], basisFiles: [], structural: false,

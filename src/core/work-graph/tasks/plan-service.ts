@@ -29,9 +29,8 @@ import type {
   DecisionChangeProofV1,
   DecisionSourceV1,
   GoalControlRebaseV1,
-  GoalDecisionBasisV1,
 } from '../../../contracts/goal-decisions.js';
-import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey } from '../../../contracts/goal-decisions.js';
+import { DEFAULT_GOAL_SETTINGS_V1 } from '../../../contracts/goal-decisions.js';
 import { rejected as sharedRejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
 import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
@@ -94,7 +93,6 @@ import type {
   PlanProposal,
   PlanProposalRef,
   PlanServicePort,
-  PlanTaskPort,
   ProposedPlanRequestV1,
   ReadyTask,
   TaskGraph,

@@ -8,7 +8,6 @@
  * with `includeInputs: true`, the flag only the assembly path sets (§11.7).
  */
 import { expect, it } from 'vitest';
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import { createS4ANoteFixture, type S4ANoteFixture } from '../helpers/S4A-note-fixture.js';
 

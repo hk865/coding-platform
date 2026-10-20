@@ -71,7 +71,7 @@ import { createRoleConfigurationService } from '../../src/core/work-graph/config
 import { SESSION_MAILBOX_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { sessionAnomalyRefKey } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import {
-  createWorkLineReader, LINE_HISTORY_READ_BUDGET,
+  createWorkLineReader,
 } from '../../src/core/work-graph/views/work-line-reader.js';
 import { completedEvent, crashedEvent, L_HOST } from './S2C-L-runs-support.js';
 import { decisionReadsOver, openLineFixture, type LineFixture } from './S2C-L-line-support.js';
@@ -227,9 +227,6 @@ export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFi
   const continuation = (from: SessionRef): { schemaVersion: 1; kind: 'continuation'; from: SessionRef;
     reason: 'interrupted'; task: TaskTriple } =>
     ({ schemaVersion: 1, kind: 'continuation', from, reason: 'interrupted', task: provTask });
-  const copyProvenance = (from: SessionRef, suffix: string) => ({ schemaVersion: 1 as const, kind: 'readonly_copy' as const,
-    from, messageRef: { aggregateType: 'SessionMessage' as const, projectId: scope.projectId,
-      workspaceId: scope.workspaceId, messageId: `s2c-x-copy-msg-${suffix}` } });
 
   // --- active heads ----------------------------------------------------------
   // 100 starting-Run lines: a real claim, no entry.

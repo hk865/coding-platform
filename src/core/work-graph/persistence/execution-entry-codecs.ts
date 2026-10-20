@@ -19,7 +19,6 @@ import type { ActorRef } from '../../../contracts/command-event.js';
 import {
   TERMINAL_PAYLOAD_TEXT_MAX_CHARS, TERMINAL_PAYLOAD_TRUNCATION_SUFFIX,
   type ExecutionAuthorizationV2, type RunOutcome, type RunSnapshot, type TaskDispatchStateV2, type TaskLeaseReleaseV1,
-  type TaskLeaseSnapshot,
 } from '../../../contracts/dispatch.js';
 import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-history.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';

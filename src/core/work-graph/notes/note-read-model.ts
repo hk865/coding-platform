@@ -27,10 +27,10 @@ import { decodeTextSearchAfter, normalizeSearchText, searchTextFrom } from '../.
 import { compareRefKeysFast, decodeTextTerms, textMatches } from '../../record-store/text-scan.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type {
-  MemoryConflictsRequest, MemoryFindRelatedRequestV1, MemoryFindRequest, MemoryHistoryRequest, MemoryHistoryResultV1,
+  MemoryFindRelatedRequestV1, MemoryFindRequest, MemoryHistoryResultV1,
   MemoryLookupRequest,
-  MemoryLookupResultV1, MemoryNeighborsRequest, MemoryProjectHeaderV1, MemoryReadBasis,
-  MemoryResultV1, MemoryStaleRequest, NoteHeadCheckItemV1,
+  MemoryLookupResultV1, MemoryProjectHeaderV1, MemoryReadBasis,
+  MemoryResultV1, NoteHeadCheckItemV1,
   NoteHeadCheckPort, NoteRunTaskResolver,
   NoteHistoryItemV1, NoteItemV1, NoteListRequestV1, NoteListResultV1, NoteMemoryReadPort, NoteMemoryReadResult,
   NoteMemoryMaterialInputV1, NoteMemoryMaterialV1, NoteCheckV1,
@@ -41,8 +41,8 @@ import type {
 } from '../model/note-contracts.js';
 import { FIND_RELATED_FILES_MAX, MEMORY_PAGE_MAX, MEMORY_PAGE_DEFAULT, MEMORY_RESULT_MAX_BYTES, MEMORY_TOPICS_MAX,
   NOTE_ANCHOR_QUOTA, NOTE_BODY_PAGE_BYTES, NOTE_GOAL_QUOTA, NOTE_RANK_WEIGHT_BODY,
-  NOTE_RANK_WEIGHT_CONCLUSION, NOTE_RANK_WEIGHT_TOPIC, NOTE_SIMILAR_MAX,
-  NOTE_SIMILAR_MIN, PROJECT_NORMS_CHECK_MAX, PROJECT_NORMS_MAX, TEXT_SEARCH_CANDIDATE_MAX,
+  NOTE_RANK_WEIGHT_CONCLUSION, NOTE_RANK_WEIGHT_TOPIC,
+  PROJECT_NORMS_CHECK_MAX, PROJECT_NORMS_MAX, TEXT_SEARCH_CANDIDATE_MAX,
   TEXT_SEARCH_MAX_TERMS } from '../model/note-contracts.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { NoteAnchorWorkspace } from './note-anchors.js';

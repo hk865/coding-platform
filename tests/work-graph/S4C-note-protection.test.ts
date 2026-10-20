@@ -14,7 +14,6 @@ const KINDS: readonly S4ANoteFixtureKind[] = ['memory', 'sqlite'];
 const FILE_A = { kind: 'file', path: 'src/a/x.ts' } as const;
 const FILE_B = { kind: 'file', path: 'src/b/y.ts' } as const;
 const GOAL = { kind: 'goal', goalId: 's4a-goal' } as const;
-const PROJECT = { kind: 'project' } as const;
 
 function general(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
   return {

@@ -34,7 +34,7 @@ import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import type {
-  RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope, WorkLinkRelation, WorkLinkTarget,
+  RoleConfigurationRef, SessionRef, WorkspaceScope, WorkLinkRelation, WorkLinkTarget,
 } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
@@ -49,7 +49,7 @@ import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/l
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { readSessionWorkLinks } from './session-links.js';
 import {
-  actorIdentity, fingerprintOf, identityKeyOf, trustedContext,
+  actorIdentity, trustedContext,
   type HostActor, type TrustedContext,
 } from './trusted-context.js';
 import type {
@@ -72,7 +72,7 @@ import {
 import { validateWorkLinkTarget } from './session-targets.js';
 import {
   createSessionRecord, deriveAvailability, sessionMachineStateOf, transitionSession,
-  type SessionGuardContext, type SessionTransition,
+  type SessionTransition,
 } from '../state/session-availability.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 

@@ -14,10 +14,7 @@ import { EXPLORATION_TOOL_NAMES } from '../../src/core/agent-runtime/observed-mo
 import {
   BUILTIN_TOOL_NAMES, RESERVED_TOOL_NAMES,
 } from '../../src/core/agent-runtime/execution-driver.js';
-import { SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { WHITEBOARD_TOOL_NAMES } from '../../src/core/agent-runtime/whiteboard-tools.js';
-import { SESSION_DISCOVERY_TOOL_NAMES } from '../../src/core/agent-runtime/session-discovery-tools.js';
-import { GRAPH_TOOL_NAMES } from '../../src/core/agent-runtime/graph-tools.js';
 import { NOTE_TOOL_NAMES } from '../../src/core/agent-runtime/note-tool.js';
 import { containedByHostStop, kernelToolNameOf, unknownCallKindOf } from '../../src/core/work-graph/state/unknown-call-kinds.js';
 

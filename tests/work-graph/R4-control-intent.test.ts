@@ -14,7 +14,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type {
-  ControlIntentKindV1, ControlObservationV1, SubmitControlInput, SubmittedControl,
+  ControlIntentKindV1, ControlObservationV1, SubmitControlInput,
 } from '../../src/contracts/control-intent.js';
 import type { VersionPin } from '../../src/contracts/core/identity.js';
 import type { RunControlPort } from '../../src/core/work-graph/tasks/control-contracts.js';

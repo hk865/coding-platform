@@ -12,10 +12,6 @@ import type {
 } from '../../src/contracts/graph-context.js';
 import { contextAssemblyProblem } from '../../src/core/work-graph/state/context-input.js';
 
-const P = 'p';
-const W = 'w';
-const G = 'g';
-
 const B = (text: string): number => Buffer.byteLength(text, 'utf8');
 
 const NO_EXTENSIONS: ContextAssemblyBindingV1['extensions'] = {

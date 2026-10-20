@@ -24,7 +24,6 @@ import type { TaskTriple, RunRef } from '../../src/contracts/dispatch.js';
 import type { ArchiveStepRefV1 } from '../../src/contracts/core/session-archive.js';
 import type { GoalRef, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { Disposition, Phase, PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
-import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { LookupValue } from '../../src/core/record-store/lookup-ports.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
@@ -56,11 +55,10 @@ import { createRoleConfigurationService } from '../../src/core/work-graph/config
 import { createLineSettingsService } from '../../src/core/work-graph/configuration/line-settings-service.js';
 import { canonicalRefKey, decodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import {
-  decodeSessionWorkLink, plainSessionRefToAggregate, sessionAggregateRefKey,
+  decodeSessionWorkLink, plainSessionRefToAggregate,
 } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import type { SessionDutyReadPort, WorkLineReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
 import type { DecisionReadPort, DecisionCardSourcePort } from '../../src/core/work-graph/model/decision-contracts.js';
-import type { SessionAnomalyPort } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import type { TaskClaimFixture } from './task-claim-fixture.js';
 import { createTaskClaimFixture, type ClaimFixtureKind } from './task-claim-fixture.js';
 import {
@@ -122,11 +120,6 @@ export type LineFixture = {
   taskOf(session: SessionRef, relation: 'responsible'): Promise<TaskTriple[]>;
   close(): Promise<void>;
 };
-
-function ready<T>(result: ReadResult<T>): T {
-  if (result.status !== 'ready') throw new Error(`expected ready, got ${JSON.stringify(result)}`);
-  return result.value;
-}
 
 const defaultRole = { kind: 'legacy_template' as const, templateId: 'builder', templateRevision: '1' };
 const KERNEL_ADAPTER = 'r4c-claim-kernel';

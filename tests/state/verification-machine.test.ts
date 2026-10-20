@@ -191,7 +191,6 @@ const IB = no('illegal', 'busy');
 const SB = no('stale', 'busy');
 const DB = no('duplicate', 'busy');
 const GI = no('guard_failed', 'incomplete');
-const GF = no('guard_failed', 'forbidden');
 const GB = no('guard_failed', 'busy');
 
 function check(actual: Transition<RoundSnapshot, unknown, VerificationEffect>, expected: Expect, state: RoundSnapshot | null): void {

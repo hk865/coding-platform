@@ -51,7 +51,7 @@ import {
   parseObject as parseJsonObject,
 } from '../../../contracts/validation/common.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
-import { sameArtifactRef, validMaterialSourcePin, type MaterialBasisV1 } from '../../../contracts/material-access.js';
+import { sameArtifactRef, validMaterialSourcePin } from '../../../contracts/material-access.js';
 import { MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
@@ -77,7 +77,7 @@ import {
   encodeExecutionEntryEnteredEvent, encodeExecutionRunResultRecordedEvent,
   executionEntryAuthorizedEventFromEvent, executionEntryBegunEventFromEvent,
   executionEntryEnteredEventFromEvent, executionRunResultRecordedEventFromEvent,
-  inputBindingProblem, taskDispatchStateV1Problem,
+  inputBindingProblem,
 } from '../persistence/execution-entry-codecs.js';
 import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import { decodeUnknownCallReview, unknownCallReviewRefKey } from './unknown-call-review-codecs.js';

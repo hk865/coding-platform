@@ -9,7 +9,7 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type {
-  CurrentPointerRef, CurrentPointerSnapshot, NoteAnchorV1, NoteDraftAnchorV1, NoteDraftV1, NoteHeadSnapshot,
+  CurrentPointerRef, CurrentPointerSnapshot, NoteAnchorV1, NoteHeadSnapshot,
   NoteReviewReason, NoteSourceV1, NoteState, NoteVersionSnapshot, PendingNoteHeadSnapshot,
 } from '../../../contracts/note.js';
 import { NOTE_GENERAL_KINDS } from '../../../contracts/note.js';
@@ -50,7 +50,7 @@ import {
 import type { GoalRecordTransactionPort, EncodedRecord, EncodedDomainEvent, PreparedCommit, RecordGuard, StoreCommitReceipt } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import {
-  CURRENT_POINTER_MOVED_EVENT_TYPE, CURRENT_POINTER_SCHEMA_ID, NOTE_DISPOSITION_CHANGED_EVENT_TYPE,
+  CURRENT_POINTER_MOVED_EVENT_TYPE, NOTE_DISPOSITION_CHANGED_EVENT_TYPE,
   NOTE_EVENT_SCHEMA_VERSION, NOTE_WRITTEN_EVENT_TYPE, S4_NOTE_BY_ANCHOR_LOOKUPS,
   S4_NOTE_BY_REVIEW_STATUS_LOOKUP, currentPointerRefKey, decodeCurrentPointerSnapshot, decodeNoteHeadSnapshot,
   encodeCurrentPointerMovedEvent, encodeCurrentPointerSnapshot,
@@ -65,7 +65,7 @@ import {
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
 import type {
-  ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult,
+  ToolCommitLookupInput, ToolCommitLookupResult,
 } from '../../../contracts/unknown-call-review.js';
 import {
   recordNoteRequestOf, type RecordNoteArgs, type RecordNoteRequestV1,

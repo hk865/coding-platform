@@ -19,7 +19,7 @@ import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contract
 import * as decisionReadModelModule from '../../src/core/work-graph/views/decision-read-model.js';
 import { createS4ANoteFixture, type S4ANoteFixture, type S4ANoteFixtureKind } from '../helpers/S4A-note-fixture.js';
 import {
-  createS4C2NoteCardFixture, currentPlanOf, generalNote, noteCardKey, noteCardSource,
+  createS4C2NoteCardFixture, generalNote, noteCardKey, noteCardSource,
   type S4C2NoteCardFixture, type S4C2NoteCardFixtureKind,
 } from '../helpers/S4C2-note-card-fixture.js';
 

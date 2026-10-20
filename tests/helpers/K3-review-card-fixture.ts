@@ -24,7 +24,6 @@ import type { KernelCommandReader, WorkspaceFileReader } from '../../src/core/wo
 import type { PlanRevisionDraft, PlanRevisionRef, RuntimeTask } from '../../src/contracts/plan.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
-import type { CommandRerunRequestV1 } from '../../src/contracts/command-rerun-request.js';
 import type { CommandRecognizer } from '../../src/core/work-graph/model/command-recognition-contracts.js';
 import type { KernelCommandFactV1 } from '../../src/core/work-graph/model/kernel-command-read-contracts.js';
 import type { DecisionActionsPort } from '../../src/business/workflow/decision-actions.js';
@@ -340,7 +339,7 @@ export async function openK3ReviewCardWorld(
     conflicts: createGoalConflictAssembler({ records,
       catalog: createArchitectureCatalogService({ records }), executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)) });
-  const reconcile = createRunReconcileService({ records, reads,
+  createRunReconcileService({ records, reads,
     hostInstance: { hostInstanceId: 'k3-review-card-host', lease: 'owned', takeover: { kind: 'hl01_no_lock' } },
     now: () => T, eventId: () => `k3-review-card-event-${String(nextSequence())}` });
 

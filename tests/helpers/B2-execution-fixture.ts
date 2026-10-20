@@ -183,7 +183,7 @@ export async function createB2ExecutionFixture<Base extends TaskClaimFixture = T
   let seq = 0;
   const now = options.clock ?? (() => B2_AT);
   const eventId = () => `b2-event-${++seq}`;
-  const roles = createRoleConfigurationService({ records: base.records, now, eventId });
+  createRoleConfigurationService({ records: base.records, now, eventId });
   const bodies = new RawArtifactBodyStore();
   const host = { enabled: true, calls: 0 };
   const authorizeConfiguration: AuthorizeConfiguration = async (ctx, input) => {

@@ -14,7 +14,7 @@ import {
   type ReviewClaimFacts,
 } from '../../src/core/work-graph/state/run-machine.js';
 import {
-  transitionTask, type TaskClaimFacts, type TaskGuardContext, type TaskState,
+  transitionTask, type TaskClaimFacts, type TaskState,
 } from '../../src/core/work-graph/state/task-machine.js';
 
 const P = 'p', G = 'g', T = 't';

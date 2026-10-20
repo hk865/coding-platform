@@ -382,7 +382,7 @@ describe("K Kernel closeOpenTurn (KE1)", () => {
   });
 
   it("D3 reconciles a same-closure append collision - two callers close one open Turn, the second commits first - as already_closed at the closure position with the revision read after the bounds, never unreadable", async () => {
-    const signal = new AbortController().signal;
+    new AbortController().signal;
     const temp = await openTempKernelStore("k-d3-close-");
     opened.push(temp);
     const store = temp.store;

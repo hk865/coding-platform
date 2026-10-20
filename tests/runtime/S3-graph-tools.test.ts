@@ -23,7 +23,7 @@ import type {
   TaskInputPageRequestV1, TaskInputPageV1,
 } from '../../src/contracts/graph-context.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
-import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
+import type { PlanRevisionRef } from '../../src/contracts/plan.js';
 import type {
   GraphContextReadPort, GraphFindRequestV1, GraphLookRequestV1, GraphReadPageV1, NodeCardV1,
 } from '../../src/core/work-graph/model/graph-context-contracts.js';
@@ -62,7 +62,7 @@ import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../
 import {
   AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_PROJECT_REF, AG2B_QUERY_ROLE, AG2B_QUERY_ROLE_BINDING,
   AG2B_SCOPE, AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, AG2B_WORKSPACE_REF, AG2B_WORK_TASK_ID, AG2B_RUNTIME_BUDGET,
-  ag2bChecksConfiguration, permissionRevision, plain, writeAG2bWorkspace,
+  ag2bChecksConfiguration, permissionRevision, writeAG2bWorkspace,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import {
   AG2B_WORK_TOOLS, ag2bWorkRuntime, ag2bWorkspaceBindings, hostCtx, performs, seedThroughOwners,
@@ -128,19 +128,6 @@ function workContext(signalValue: AbortSignal): CoreCallContext {
       roleBinding: { schemaVersion: 1, bindingId: 'b', templateId: 'executor', templateRevision: '1', bindingVersion: 1, policyRevision: '1' },
     },
     materialReader: { kind: 'run', requester: { ...RUN_B } },
-    signal: signalValue,
-  };
-}
-
-function queryContext(signalValue: AbortSignal, initiator = HUMAN): CoreCallContext {
-  return {
-    projectId: P, workspaceId: W,
-    principal: {
-      kind: 'query_run',
-      queryRunRef: { aggregateType: 'QueryRun', projectId: P, workspaceId: W, queryJobId: 'qj', runId: 'qr' },
-      initiator,
-    },
-    materialReader: { kind: 'run', requester: { ...RUN_A } },
     signal: signalValue,
   };
 }

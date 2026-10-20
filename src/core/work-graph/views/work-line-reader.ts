@@ -21,7 +21,7 @@ import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.
 import type { RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
-import type { SessionProvenanceV1, SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
+import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';

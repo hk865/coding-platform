@@ -8,7 +8,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { NoteDraftV1, NoteFactV1 } from '../../src/contracts/note.js';
-import { createS4BNoteCheckFixture, currentVersion } from '../helpers/S4B-note-check-fixture.js';
+import { createS4BNoteCheckFixture } from '../helpers/S4B-note-check-fixture.js';
 
 function draft(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
   return { kind: 'pitfall', topic: 'budget', conclusion: 'a conclusion', body: 'body',

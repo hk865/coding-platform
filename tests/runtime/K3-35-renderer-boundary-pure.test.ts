@@ -44,7 +44,6 @@ const TAIL = [
 /** 249 + T first anchor line, 238 changed-files line, 118 mixed-ownership line, 16 title, 87 last. */
 const MANDATORY_512 = 15_692;
 const MANDATORY_600 = 16_396;
-const OVERFLOW = 12;
 
 /** The constructed base brief: input, not a platform record. */
 const BASE_BRIEF: ContinuationBriefV1 = {

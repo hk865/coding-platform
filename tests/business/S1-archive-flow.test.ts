@@ -65,7 +65,6 @@ import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import type { AgentRuntimeService } from '../../src/core/agent-runtime/ports.js';
 import type { RuntimeExecutionDependencies } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { WorkflowPort } from '../../src/business/workflow/ports.js';
-import { type SessionDutyResolver } from '../../src/business/workflow/ports.js';
 import { createSessionArchiveService, type ArchiveLineInput, type SessionArchiveDependencies } from '../../src/business/workflow/session-archive.js';
 import { beginConsultation, unknownWork, retireSession, workflowForFixture } from '../helpers/S1-workflow-archive-fixture.js';
 import { loadPreparedManifest } from '../../src/core/agent-runtime/execution-preparation.js';
@@ -212,7 +211,7 @@ async function open(kind: 'memory' | 'sqlite', options: OpenOptions = {}): Promi
   const reads = createRunStateReader({ records });
   const sessionFacts = createSessionFactsService({ records });
   // The trusted basis is the REAL reader, never a fake.
-  const responsibilities = createSessionResponsibilityService({
+  createSessionResponsibilityService({
     records, lookups: records, basis: createSessionResponsibilityBasisReader(records), now,
   });
   const sessionAnomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
@@ -230,13 +229,6 @@ async function open(kind: 'memory' | 'sqlite', options: OpenOptions = {}): Promi
   const goalRef = base.goalRef;
   const taskA = base.tasks.first;
   const run = b2.claim.runRef;
-
-  const executorDuty: SessionDutyResolver = async (role: RoleConfigurationRef) => ({
-    status: 'ready',
-    value: role.kind === 'legacy_template' && role.templateId === 'builder' ? 'executor' : 'unknown',
-  });
-  const rejectAttestation = async () => ({ status: 'rejected' as const, code: 'unsupported' as const,
-    reason: 'the fixed IT Host does not confirm this unknown execution in this row' });
 
   const allowedRuns = new Set<string>();
   const preparedRuns = new Map<string, PreparedTaskExecution>();

@@ -1,8 +1,8 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { DecisionApplicationReceiptV1 } from '../../contracts/core/session-message.js';
-import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
-import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
+import type { RoleConfigurationRef, WorkspaceScope } from '../../contracts/core/identity.js';
+import type { ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1 } from '../../contracts/dispatch.js';
 import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';

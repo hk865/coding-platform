@@ -35,7 +35,7 @@ import {
   type K3ReviewCardWorld,
 } from '../helpers/K3-proposal-round.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
-import { GOAL_B, WORKSPACE_SCOPE } from '../helpers/S5-decision-fixture.js';
+import { WORKSPACE_SCOPE } from '../helpers/S5-decision-fixture.js';
 
 // §5.1's stand-in `shell`, hoisted per test file (the real Run's one call uses it).
 const seams = vi.hoisted(() => ({ shellSeam: undefined as unknown }));

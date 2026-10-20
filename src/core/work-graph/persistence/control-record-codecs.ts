@@ -21,7 +21,7 @@
  * `ControlIntentSubmitted` may carry a not-entered `applied@2` intent (CD-3).
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
-import type { ControlIntentSnapshotV1, ControlObservationV1, SubmittedControl } from '../../../contracts/control-intent.js';
+import type { ControlIntentSnapshotV1, SubmittedControl } from '../../../contracts/control-intent.js';
 import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-history.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
 import {

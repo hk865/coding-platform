@@ -6,7 +6,6 @@
  * went through §5.1's stand-in), and answers through the real `resolveDecision`
  * with the production Kernel-command reader over the same Kernel store.
  */
-import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
@@ -18,7 +17,6 @@ import {
   openK3BlockedCommandWorld, sha256Of, type K3BlockedCommandWorld,
 } from '../helpers/K3-blocked-command-fixture.js';
 import { mailboxToolSeam, shellSeam } from '../helpers/K3-tool-seams.js';
-import { T } from '../helpers/S5-decision-fixture.js';
 
 // §5.1's stand-in `shell`, hoisted per test file (the fixture's real Run uses it).
 const seams = vi.hoisted(() => ({ shellSeam: undefined as unknown }));
