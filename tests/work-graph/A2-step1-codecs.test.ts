@@ -12,8 +12,12 @@
  * - TaskRequeue@1 with non-empty and empty `supersededEvidenceIds` (L-3) and its
  *   `TaskRequeued` replay event; TaskReworkRefusal@1 at two consecutive revisions.
  * - Rounds with `chain` (ordinal 2, `reverify.requestedBy` an Agent) and
- *   `incompleteCause`; legacy rounds without them; an ordinal-1 chain with a
+ *   `incompleteCause`; a pending/finished check without the optional cause; an
+ *   interrupted check without a cause is rejected; an ordinal-1 chain with a
  *   predecessor is rejected (§9.1, C5).
+ * - The chain row's root, real host_restart interruption and successor are
+ *   produced by the public evidence owner on the real store (memory and SQLite),
+ *   then read back through the round codec and the chain lookups.
  * - Runs with and without `terminalPayload` (C1); `interrupted_clean` without
  *   `kernelPaused` or `pausedIntentRef` is rejected (C4); a non-sha256
  *   `continuationBriefDigest` is rejected (C3).
@@ -48,8 +52,8 @@ import type {
 } from '../../src/contracts/task-requeue.js';
 import { GOAL_FAN_OUT_ACTOR, WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import {
-  ROUND_CHAIN_MAX, type ReverifyBasisV1, type RoundChainV1, type RoundCheckIncompleteCause, type RoundCheckSnapshot,
-  type RoundSnapshot, type VerificationRoundRef,
+  ROUND_CHAIN_MAX, type CheckProcessObservation, type ReverifyBasisV1, type RoundChainV1,
+  type RoundCheckIncompleteCause, type RoundCheckSnapshot, type RoundSnapshot, type VerificationRoundRef,
 } from '../../src/contracts/verification.js';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
@@ -89,6 +93,12 @@ import {
 } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { decodeRun } from '../../src/core/work-graph/materials/run-snapshot-decoder.js';
+import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
+import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
+import { B2_AT } from '../helpers/B2-execution-fixture.js';
+import { createR3eEvidenceFixture, R3E_HOST, type R3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
 
 // ------------------------------------------------------------------------ //
 // Shared vocabulary                                                         //
@@ -132,7 +142,10 @@ const SCHEMAS: RecordBackendSchemas = {
 };
 const dirs: string[] = [];
 const stores: Store[] = [];
+/** The R3e fixture owns a real B2 store/workspace; its close removes the temporary root. */
+const fixtures: R3eEvidenceFixture[] = [];
 afterEach(async () => {
+  for (const fixture of fixtures.splice(0)) await fixture.close();
   for (const store of stores.splice(0)) await store.close();
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
@@ -166,7 +179,7 @@ async function create(store: Store, identityKey: string, records: EncodedRecord[
     guards: records.map(record => ({ refKey: record.refKey, expectedRevision: null })) });
   expect(receipt, identityKey).toMatchObject({ status: 'committed', replayed: false });
 }
-async function readBack(store: Store, refKey: string): Promise<EncodedRecord> {
+async function readBack(store: { records: GoalRecordTransactionPort & RecordLookupPort }, refKey: string): Promise<EncodedRecord> {
   const batch = await store.records.readMany([refKey]);
   if (batch.status !== 'ready') throw new Error(`readMany failed: ${batch.reason}`);
   const found = batch.value.records.find(record => record.refKey === refKey);
@@ -334,15 +347,14 @@ const pins = {
   completionPolicyPin: { ref: { aggregateType: 'CompletionPolicyRevision' as const, projectId: P, policyId: 'policy-1', revision: 1 }, digest: sha('e') },
   architectureBaselinePin: { ref: { aggregateType: 'ArchitectureBaselineRevision' as const, projectId: P, baselineId: 'baseline-1', revision: 1 }, digest: sha('f') },
 };
-/** Legacy checks carry no `incompleteCause`. */
+/** Checks that do not carry an `incompleteCause` (pending/finished may omit it; interrupted may not). */
 function legacyCheck(definition: typeof lintCheck | typeof unitCheck, phase: RoundCheckSnapshot['phase'],
   outcome: RoundCheckSnapshot['outcome']): RoundCheckSnapshot {
   return { checkId: definition.checkId, definition, coverage: [], phase, invocationId: phase === 'pending' ? null : `inv-${definition.checkId}`,
     outcome, reportRef: null, sourceStatus: phase === 'finished' ? 'matched' : null };
 }
-function round(ref: VerificationRoundRef, checks: RoundCheckSnapshot[], status: RoundSnapshot['status'],
-  chain: RoundChainV1): RoundSnapshot {
-  return { ref, revision: status === 'finalized' ? 3 : 1, schemaVersion: 1, subject: task,
+function openRound(ref: VerificationRoundRef, checks: RoundCheckSnapshot[], chain: RoundChainV1): RoundSnapshot {
+  return { ref, revision: 1, schemaVersion: 1, subject: task,
     subjectRunRef: runRef(ref.runId), adoptedPlanRef: planRef, taskBasisRef: planRef, executor: operator,
     configuration: { configurationRevision: 'checks-config-1', workspace: { aggregateType: 'Workspace', projectId: P, workspaceId: W },
       executor: operator, permissionRevision: 'perm-1', sourceAccess: 'verification_workspace', processAccess: 'all_except_denied',
@@ -352,14 +364,8 @@ function round(ref: VerificationRoundRef, checks: RoundCheckSnapshot[], status: 
     identity: { schemaVersion: 1, sourceDigest: sha('5') } as unknown as RoundSnapshot['identity'],
     sourceProof: { kind: 'current-workspace-only', runBaselineKnown: false },
     verificationPlan: { schemaVersion: 1, planId: sha('8') } as unknown as RoundSnapshot['verificationPlan'],
-    checks, status, outcome: status === 'finalized' ? 'INCONCLUSIVE' : null,
-    gaps: status === 'finalized' ? [{ code: 'interrupted_check', message: 'unit was interrupted by a Host restart' }] : [],
-    evidenceRefs: status === 'finalized' ? [{ aggregateType: 'Evidence', projectId: P, evidenceId: 'evidence-1' }] : [],
-    chain };
+    checks, status: 'open', outcome: null, gaps: [], evidenceRefs: [], chain };
 }
-/** A current chain-root round: it carries `rootChain` and omits the optional `incompleteCause`. */
-const currentRootRound = (): RoundSnapshot => round(roundRef('run-1', 'round-1'),
-  [legacyCheck(lintCheck, 'finished', 'PASS'), legacyCheck(unitCheck, 'interrupted', null)], 'finalized', rootChain);
 const reverifyBasis: ReverifyBasisV1 = { subject: task, subjectRunId: 'run-1', actionKind: 'reverify',
   failure: { checks: [{ checkId: 'unit', phase: 'interrupted', outcome: null, cause: null }], gapCodes: ['interrupted_check'] },
   source: { workspaceRevision: 4, sourceDigest: sha('5') },
@@ -370,46 +376,139 @@ const successorChain = (): RoundChainV1 => ({ schemaVersion: 1, ordinal: 2, pred
   predecessorRevision: 3, supersededEvidenceIds: ['evidence-1'], basisDigests: [sha('9')], autoCount: 1,
   reverify: { requestedBy: agentOf('run-1'), actorClass: 'agent', failureClass: 'check_incomplete', requestedAt: at,
     basis: reverifyBasis, exemption: 'host_interruption', sourceChanged: false, newInputRefs: [], reason: null } });
-const successorRound = (): RoundSnapshot => round(roundRef('run-1', 'round-2'), [
+const successorRound = (): RoundSnapshot => openRound(roundRef('run-1', 'round-2'), [
   { ...legacyCheck(lintCheck, 'finished', 'INCONCLUSIVE'), incompleteCause: 'process_timed_out' },
   { ...legacyCheck(unitCheck, 'interrupted', null), incompleteCause: 'host_restart' },
-], 'open', successorChain());
+], successorChain());
 const rootChain: RoundChainV1 = { schemaVersion: 1, ordinal: 1, predecessorRoundRef: null, predecessorRevision: null,
   supersededEvidenceIds: [], basisDigests: [], autoCount: 0, reverify: null };
+
+// ------------------------------------------------------------------------ //
+// The row's root, interruption and successor through the public owner       //
+// ------------------------------------------------------------------------ //
+type EvidenceOwner = ReturnType<typeof createEvidenceService>;
+
+/** The real evidence owner over the fixture ledger, with this Host's owned instance lease (VR-04). */
+function evidenceWithRestart(fixture: R3eEvidenceFixture): EvidenceOwner {
+  let sequence = 0;
+  return createEvidenceService({
+    records: fixture.records, materials: fixture.materials,
+    executions: createRunStateReader({ records: fixture.records }),
+    workspaceHost: fixture.workspaceHost, source: new VerificationWorkspaceReader(),
+    configuration: fixture.configuration,
+    hostInstance: { hostInstanceId: 'a2-step1-reconciler', lease: 'owned' },
+    now: () => B2_AT, newId: () => `a2-step1-${String(++sequence)}`,
+  });
+}
+
+/** The runner's observation input (no process runs: this row is about the stored round). */
+function executedCheck(): CheckProcessObservation {
+  const text = 'A2_STEP1_OK\n';
+  return { kind: 'executed', startedAt: at, finishedAt: at, exitCode: 0, signal: null, timedOut: false, cancelled: false,
+    stdout: { text, totalBytes: Buffer.byteLength(text), truncated: false }, stderr: { text: '', totalBytes: 0, truncated: false },
+    effects: { workspaceRevision: '1', changedPaths: [] }, sandboxProfileVersion: 'bwrap-m3-v4' };
+}
+
+async function latestRound(evidence: EvidenceOwner, fixture: R3eEvidenceFixture, ref: VerificationRoundRef): Promise<RoundSnapshot> {
+  const read = await evidence.readVerification(fixture.ctx, ref);
+  if (read.status !== 'ready') throw new Error(`the round must be readable: ${JSON.stringify(read)}`);
+  return read.value;
+}
+
+/**
+ * The row's three states through the real owner, never a record built by the
+ * test: `openVerification` → a real PASS check recorded through
+ * `beginCheck`/`recordCheckResult` → a real `host_restart` interruption of the
+ * other check under the owned instance lease → `finalizeChecks` (a PASS beside
+ * an interrupted check) → the public `reverifyRound` (operator) successor.
+ */
+async function publicInterruptedChain(fixture: R3eEvidenceFixture): Promise<{ root: RoundSnapshot; successor: RoundSnapshot }> {
+  const evidence = evidenceWithRestart(fixture);
+  const opened = await evidence.openVerification(fixture.ctx, fixture.openRequest());
+  if (opened.status !== 'committed') throw new Error(`the root round must open: ${JSON.stringify(opened)}`);
+  let round = opened.value;
+  const passBegin = await evidence.beginCheck(fixture.ctx, fixture.beginRequest(round, fixture.passCheck.checkId));
+  if (passBegin.status !== 'committed') throw new Error(`the pass check must begin: ${JSON.stringify(passBegin)}`);
+  round = await latestRound(evidence, fixture, round.ref);
+  const recorded = await evidence.recordCheckResult(fixture.ctx,
+    fixture.recordRequest(round, fixture.passCheck.checkId, passBegin.value.invocationId, executedCheck()));
+  if (recorded.status !== 'committed') throw new Error(`the pass check must record: ${JSON.stringify(recorded)}`);
+  round = recorded.value;
+  const interruptBegin = await evidence.beginCheck(fixture.ctx, fixture.beginRequest(round, fixture.interruptCheck.checkId));
+  if (interruptBegin.status !== 'committed') throw new Error(`the interrupted check must begin: ${JSON.stringify(interruptBegin)}`);
+  round = await latestRound(evidence, fixture, round.ref);
+  const interrupted = await evidence.interruptCheck!(fixture.ctx, {
+    input: { roundRef: round.ref, checkId: fixture.interruptCheck.checkId,
+      invocationId: interruptBegin.value.invocationId, cause: 'host_restart', hostInstanceId: 'a2-step1-reconciler' },
+    meta: { requestId: 'a2-step1-interrupt', expected: [{ ref: round.ref, revision: round.revision }] },
+  });
+  if (interrupted.status !== 'committed') throw new Error(`the check must interrupt: ${JSON.stringify(interrupted)}`);
+  round = interrupted.value;
+  const finalized = await evidence.finalizeChecks(fixture.ctx, fixture.finalizeRequest(round));
+  if (finalized.status !== 'committed') throw new Error(`the root must finalize: ${JSON.stringify(finalized)}`);
+  const root = finalized.value.snapshot;
+  const reverified = await evidence.reverifyRound!(fixture.ctx, {
+    input: { predecessorRoundRef: root.ref },
+    meta: { requestId: 'a2-step1-reverify', expected: [{ ref: root.ref, revision: root.revision }] },
+  });
+  if (reverified.status !== 'committed' || reverified.value.kind !== 'reverified') {
+    throw new Error(`the successor must open: ${JSON.stringify(reverified)}`);
+  }
+  return { root, successor: reverified.value.round };
+}
 
 describe('VerificationRound chain and incompleteCause (spec §9.1, C5)', () => {
   it('a successor round (ordinal 2, Agent reverify) with incompleteCause and a chain root round-trip', () => {
     const successor = successorRound();
     expect(successor.chain.reverify?.requestedBy.kind).toBe('agent');
     expect(decodeVerificationRoundSnapshot(encodeVerificationRoundSnapshot(successor))).toEqual({ status: 'decoded', value: successor });
-    const root = round(roundRef('run-1', 'round-1'), [{ ...legacyCheck(lintCheck, 'pending', null), incompleteCause: null }], 'open', rootChain);
+    const root = openRound(roundRef('run-1', 'round-1'), [{ ...legacyCheck(lintCheck, 'pending', null), incompleteCause: null }], rootChain);
     expect(decodeVerificationRoundSnapshot(encodeVerificationRoundSnapshot(root))).toEqual({ status: 'decoded', value: root });
   });
 
-  it.each(KINDS)('%s: current root and successor rounds persist and are found by the chain lookups', async kind => {
-    const store = await openStore(kind);
-    const legacy = currentRootRound();
-    const successor = successorRound();
-    await create(store, 'round-1', [encodeVerificationRoundSnapshot(legacy, { finalizedAt: at })]);
-    await create(store, 'round-2', [encodeVerificationRoundSnapshot(successor)]);
-    expect(decodeVerificationRoundSnapshot(await readBack(store, key(legacy.ref)))).toEqual({ status: 'decoded', value: legacy });
-    expect(decodeVerificationRoundSnapshot(await readBack(store, key(successor.ref)))).toEqual({ status: 'decoded', value: successor });
+  it.each(KINDS)('%s: the public root interruption and its successor survive the store and the chain lookups', async kind => {
+    const fixture = await createR3eEvidenceFixture(kind, COMPLETION_RECORD_SCHEMAS);
+    fixtures.push(fixture);
+    const { root, successor } = await publicInterruptedChain(fixture);
+    // The root's real interruption carries its cause, and the fold appends it.
+    expect(root.chain).toEqual(rootChain);
+    expect(root.checks.find(check => check.checkId === fixture.interruptCheck.checkId)).toMatchObject({
+      phase: 'interrupted', outcome: null, incompleteCause: 'host_restart' });
+    expect(root.gaps).toContainEqual(expect.objectContaining({ code: 'interrupted_check',
+      message: `the required check ${fixture.interruptCheck.checkId} was interrupted (host_restart)` }));
+    // The successor is the owner's public reverify of that real interruption. VR-09: it supersedes the evidence
+    // of the chain so far. The root supersedes nothing (rootChain) and holds the evidence of its one executed
+    // check (the PASS); the interrupted check left none. So the successor supersedes exactly that one id.
+    expect(root.chain.supersededEvidenceIds).toEqual([]);
+    expect(root.evidenceRefs).toHaveLength(1);
+    expect(successor.chain).toMatchObject({ ordinal: 2, predecessorRoundRef: root.ref, predecessorRevision: root.revision,
+      supersededEvidenceIds: [root.evidenceRefs[0]!.evidenceId], autoCount: 0,
+      reverify: { requestedBy: R3E_HOST, actorClass: 'human', failureClass: 'check_incomplete',
+        exemption: 'host_interruption', sourceChanged: false, newInputRefs: [], reason: null } });
+    expect(successor.checks.every(check => check.phase === 'pending')).toBe(true);
+    // The codec round trip over the records the owner wrote.
+    expect(decodeVerificationRoundSnapshot(await readBack(fixture, key(root.ref)))).toEqual({ status: 'decoded', value: root });
+    expect(decodeVerificationRoundSnapshot(await readBack(fixture, key(successor.ref)))).toEqual({ status: 'decoded', value: successor });
     expect(VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT).toBe(ROUND_CHAIN_MAX + 1);
     const lookup = async (index: string, values: (string | number)[]) => {
-      const page = await store.records.lookup({ index, values, limit: VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT });
+      const page = await fixture.records.lookup({ index, values, limit: VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT });
       if (page.status !== 'ready') throw new Error(page.reason);
       return page.value.records.map(record => decoded(decodeVerificationRoundSnapshot(record)).ref.roundId).sort();
     };
-    expect(await lookup(VERIFICATION_ROUND_ORIGINAL_LOOKUP, [P, W, G, T, 'run-1'])).toEqual(['round-1', 'round-2']);
-    expect(await lookup(VERIFICATION_ROUND_BY_TASK_LOOKUP, [P, W, G, T])).toEqual(['round-1', 'round-2']);
-    expect(await lookup(VERIFICATION_ROUND_BY_TASK_LOOKUP, [P, W, G, 'other-task'])).toEqual([]);
-    expect(await lookup(VERIFICATION_ROUND_BY_STATUS_LOOKUP, [P, W, 'open'])).toEqual(['round-2']);
-    expect(await lookup(VERIFICATION_ROUND_BY_STATUS_LOOKUP, [P, W, 'finalized'])).toEqual(['round-1']);
+    const scope = [fixture.scope.projectId, fixture.scope.workspaceId, fixture.goalRef.goalId, fixture.subject.taskId];
+    const chainIds = [root.ref.roundId, successor.ref.roundId].sort();
+    expect(await lookup(VERIFICATION_ROUND_ORIGINAL_LOOKUP, [...scope, fixture.subjectRunRef.runId])).toEqual(chainIds);
+    expect(await lookup(VERIFICATION_ROUND_BY_TASK_LOOKUP, scope)).toEqual(chainIds);
+    expect(await lookup(VERIFICATION_ROUND_BY_TASK_LOOKUP, [...scope.slice(0, 3), 'other-task'])).toEqual([]);
+    expect(await lookup(VERIFICATION_ROUND_BY_STATUS_LOOKUP, [fixture.scope.projectId, fixture.scope.workspaceId, 'open']))
+      .toEqual([successor.ref.roundId]);
+    expect(await lookup(VERIFICATION_ROUND_BY_STATUS_LOOKUP, [fixture.scope.projectId, fixture.scope.workspaceId, 'finalized']))
+      .toEqual([root.ref.roundId]);
   });
 
   it.each(KINDS)('%s: an ordinal-1 chain with a predecessor is rejected by the codec and the store', async kind => {
     const store = await openStore(kind);
-    const malformed = round(roundRef('run-1', 'round-2'), [legacyCheck(lintCheck, 'pending', null)], 'open',
+    const malformed = openRound(roundRef('run-1', 'round-2'), [legacyCheck(lintCheck, 'pending', null)],
       { ...rootChain, predecessorRoundRef: roundRef('run-1', 'round-1') });
     expect(decodeVerificationRoundSnapshot(encodeVerificationRoundSnapshot(malformed)))
       .toMatchObject({ status: 'invalid', reason: expect.stringMatching(/chain root \(ordinal 1\) has no predecessor/) });
@@ -417,7 +516,7 @@ describe('VerificationRound chain and incompleteCause (spec §9.1, C5)', () => {
       guards: [{ refKey: key(malformed.ref), expectedRevision: null }] })).toMatchObject({ status: 'rejected', code: 'invalid' });
   });
 
-  it('rejects other malformed chains and an unknown incompleteCause', () => {
+  it('rejects other malformed chains and an interrupted check without a cause', () => {
     const status = (value: RoundSnapshot) => decodeVerificationRoundSnapshot(encodeVerificationRoundSnapshot(value)).status;
     const successor = successorRound();
     const withChain = (patch: Partial<RoundChainV1>) => ({ ...successor, chain: { ...successorChain(), ...patch } });
@@ -428,6 +527,12 @@ describe('VerificationRound chain and incompleteCause (spec §9.1, C5)', () => {
     expect(status(withChain({ ordinal: ROUND_CHAIN_MAX + 1 }))).toBe('invalid');
     expect(status({ ...successor, checks: [{ ...legacyCheck(unitCheck, 'interrupted', null),
       incompleteCause: 'power_cut' as unknown as RoundCheckIncompleteCause }] })).toBe('invalid');
+    // VR-04/VR-13: every interrupted check the writer stores names its cause.
+    expect(status({ ...successor, checks: [legacyCheck(unitCheck, 'interrupted', null)] })).toBe('invalid');
+    expect(status({ ...successor, checks: [{ ...legacyCheck(unitCheck, 'interrupted', null), incompleteCause: null }] }))
+      .toBe('invalid');
+    // A non-interrupted check keeps the optional cause (it may be absent or null).
+    expect(status({ ...successor, checks: [legacyCheck(lintCheck, 'pending', null)] })).toBe('decoded');
   });
 });
 

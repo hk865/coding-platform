@@ -40,7 +40,6 @@ import type { KernelCommandFactV1 } from '../../src/core/work-graph/model/kernel
 import type { SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
-import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import {
   readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure,
 } from '../../src/core/work-graph/tasks/plan-readers.js';
@@ -281,7 +280,6 @@ async function seedBlockedRun(
   const graphHistory = createGraphExecutionHistoryReader({ executions, history: activity });
   const eventId = (): string => `k3-blocked-runtime-event-${String(next())}`;
   const newId = (): string => `k3-blocked-runtime-id-${String(next())}`;
-  const controls = createRunControlService({ records, authority: materialReaders.authority, reads: executions, now, eventId });
   const entryDeps = { records, reads: executions, roles, bodies: fixture.bodies,
     authorizeConfiguration: (async (ctx, input) => {
       const configured = await host.resolveConfiguration(ctx, { runRef: input.run.ref,
@@ -322,7 +320,7 @@ async function seedBlockedRun(
     modelRequests, roles, plans: fixture.b2.base.plans, sessions, materials, bodies: fixture.bodies,
     activity, graphHistory, sessionOperations, kernelStores, workspaceHost,
     sourceAuthority: () => createSourceAuthorityReader({ authority: materialReaders.authority }),
-    host, kernel, now, newId, controls,
+    host, kernel, now, newId,
     commandRecognizer: createCommandRecognizer({}),
     // F-071: prepare REQUIRES the Task review reader; it is the SAME real
     // UnknownCallReview owner this world's reads/answers use, never an empty

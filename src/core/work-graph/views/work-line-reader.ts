@@ -37,7 +37,7 @@ import type { TaskRow } from '../model/plan-contracts.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type {
   LineBriefV1, LineChainEntryV1, LineConversationSourceV1, LineCountV1, LineExecutionItemV1,
-  LineGateCheckV1, LineMessageStateV1, LineNameV1, LineParticipationV1, LineReasonV1,
+  LineGateCheckV1, LineMessageStateV1, LineNameV1, LineParticipationV1,
   LineRowV1, LineSegmentV1, NotYetV1, WorkLineDetailV1, WorkLineListV1, WorkLineSectionPageV1,
 } from '../../../contracts/work-line.js';
 import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/query-job.js';
@@ -279,9 +279,6 @@ async function assembleLineRows(
   const budgetValue = deps.historyReadBudget ?? LINE_HISTORY_READ_BUDGET;
   const shared: SharedReads = { goals: new Map(), workspace: null };
   const queue = await readDecisionQueue(deps, ctx, workspace);
-  // L6: one workspace-wide legacy count (active + archived), read once per list
-  // and shared by every line's M7 marker. Not part of any line's L1b budget.
-  const legacyUnchecked = await readLegacyUnchecked(deps.records, workspace);
   // L1/N1 (review item 4a): read the active copies once per list (the active list
   // already enumerated them and passes the index in). Bounded by current work.
   let copiesIndex: ActiveCopies;
@@ -303,17 +300,9 @@ async function assembleLineRows(
     }
   }
   if (order === 'sort-key') rows.sort(compareRows);
-  return { status: 'ready', value: { rows, facts, attentionProblem: queue.problem, legacyUnchecked } };
-}
-
-/** L6: the workspace Sessions without provenance, active and archived counted once each. */
-async function readLegacyUnchecked(records: WorkLineStore, workspace: WorkspaceScope): Promise<LineCountV1> {
-  const active = await countKinds(records, workspace, 'active', [null]);
-  const archived = await countKinds(records, workspace, 'archived', [null]);
-  if (active.failed || archived.failed) return { status: 'unavailable', reason: 'count_failed' };
-  const a = active.count.status === 'exact' ? active.count.value : 0;
-  const b = archived.count.status === 'exact' ? archived.count.value : 0;
-  return { status: 'exact', value: a + b };
+  // R-TF-5: the frozen `legacyUnchecked` response field stays; the codec refuses
+  // a Session without provenance, so the null-kind count is always zero.
+  return { status: 'ready', value: { rows, facts, attentionProblem: queue.problem, legacyUnchecked: { status: 'exact', value: 0 } } };
 }
 
 function compareRows(left: LineRowV1, right: LineRowV1): number {
@@ -1791,8 +1780,7 @@ function deriveName(
       const goal = latestQuery.goalId;
       return { source: 'secretary_interim', primary: secretaryGoalTitle ?? goal, extraCount: 0, tasks: [], goalRef: { aggregateType: 'Goal', projectId: head.ref.projectId, goalId: goal }, complete: true };
     }
-    const complete = !(head.provenance === null || head.provenance === undefined);
-    return { source: 'secretary_interim', primary: '秘书 · 未定话题', extraCount: 0, tasks: [], goalRef: null, complete };
+    return { source: 'secretary_interim', primary: '秘书 · 未定话题', extraCount: 0, tasks: [], goalRef: null, complete: true };
   }
   if (holder !== null && holder.kind === 'run') {
     const task = holder.run.run.task;
@@ -2281,15 +2269,15 @@ function isHistoryNotReadable(session: SessionRecord): boolean {
 function toSegment(session: SessionRecord): LineSegmentV1 {
   const conclusion = session.healthConclusion ?? null;
   const notReadable = isHistoryNotReadable(session);
-  const code: LineReasonV1['code'] = conclusion === 'missing' ? 'retired_missing'
-    : conclusion === 'damaged' ? 'retired_damaged' : 'retired_unrecorded';
   return {
     session: sessionRefOf(session),
     kernel: { adapterId: session.kernel.adapterId, kernelSessionId: session.kernel.kernelSessionId },
     from: session.createdAt,
     to: session.archivedAt ?? null,
     history: notReadable ? 'not_readable' : 'readable',
-    reason: notReadable ? { code, params: {}, refs: [] } : null,
+    reason: notReadable ? {
+      code: conclusion === 'missing' ? 'retired_missing' : 'retired_damaged', params: {}, refs: [],
+    } : null,
   };
 }
 

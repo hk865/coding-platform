@@ -284,7 +284,7 @@ function activeOwn(facts: LineFactsV1, done: DoneVerdict): { own: LineOwnStateV1
   if (head.health === 'unavailable') {
     const t0 = pausedInterruptedT0(facts);
     if (t0 !== null) return { own: 'paused', ownReason: t0 };
-    return { own: 'retired', ownReason: retiredReason(head.healthConclusion ?? null) };
+    return { own: 'retired', ownReason: retiredReason(head.healthConclusion!) };
   }
   // T2
   if (holder !== null && holder.kind === 'run' && holder.run.run.status === 'ended'
@@ -348,7 +348,7 @@ function activeOwn(facts: LineFactsV1, done: DoneVerdict): { own: LineOwnStateV1
 
 function archivedOwn(facts: LineFactsV1, done: DoneVerdict): { own: LineOwnStateV1; ownReason: LineReasonV1 } {
   if (facts.head.health === 'unavailable') {
-    return { own: 'retired', ownReason: retiredReason(facts.head.healthConclusion ?? null) };
+    return { own: 'retired', ownReason: retiredReason(facts.head.healthConclusion!) };
   }
   if (done.done) return { own: 'done', ownReason: reason('done_tasks', { count: facts.doneEvidence.status === 'read' ? facts.doneEvidence.recent.length : 0 }) };
   // L1a DE5 / §3.6 A3: an archived line whose closed links were not read in full says so.
@@ -598,7 +598,7 @@ function reactivateControl(facts: LineFactsV1): LineControlV1 {
   const target = { sessionRef: headRef(facts) };
   if (facts.head.health === 'unavailable') {
     return refused('reactivate', ROUTE_REACTIVATE, target, [], {
-      code: 'reactivate_refused_retired', reason: `the line is retired (${facts.head.healthConclusion ?? 'unrecorded'})` });
+      code: 'reactivate_refused_retired', reason: `the line is retired (${facts.head.healthConclusion!})` });
   }
   return available('reactivate', ROUTE_REACTIVATE, target, []);
 }
@@ -809,12 +809,11 @@ function attention(code: LineAttentionCodeV1, reasonValue: LineReasonV1): LineAt
   return { code, reason: reasonValue };
 }
 
-function retiredReason(conclusion: SessionHealthConclusion | null): LineReasonV1 {
+function retiredReason(conclusion: SessionHealthConclusion): LineReasonV1 {
   switch (conclusion) {
     case 'kernel_turn_open': return reason('retired_turn_open');
     case 'missing': return reason('retired_missing');
     case 'damaged': return reason('retired_damaged');
-    default: return reason('retired_unrecorded');
   }
 }
 

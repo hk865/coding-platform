@@ -1493,7 +1493,7 @@ export function createUnknownCallReviewService(
         const watermarks = read.map(page => page.readThrough);
         if (watermarks.every(watermark => watermark === watermarks[0])) {
           pages = read;
-          readThrough = watermarks[0] ?? null;
+          readThrough = watermarks[0]!;
           break;
         }
         unstable = maxCommitCursor(watermarks);

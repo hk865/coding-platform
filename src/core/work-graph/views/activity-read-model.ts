@@ -394,9 +394,9 @@ async function readCalendarWindow(
     classified.add(run.ref.runId);
     const existing = await readOneKeyed(records, runActivityRefKey(runActivityRefOf(run.ref)), budget);
     if (existing === undefined) {
-      // L9 input + L17: with `sessionRefs`, a missing-record Run is placed by
-      // its claiming Session. A Run on another line is skipped entirely and a
-      // Run whose Session cannot be resolved is only counted as unknown.
+      // L9 input + L17: Run placement filters by the claiming Session, and a
+      // Session-resolution failure propagates as a read failure (see
+      // activity-read-helpers.ts:180/:187).
       if (bySession !== null) {
         const session = await claimingSessionOf(records, run, budget);
         if (!bySession.has(sessionKey(session))) continue;

@@ -179,8 +179,13 @@ function checkSnapshotProblem(value: unknown): string | null {
     if (value['sourceStatus'] !== null && !SOURCE_STATUSES.includes(value['sourceStatus'] as typeof SOURCE_STATUSES[number])) {
         return 'a round check sourceStatus is not recognized';
     }
-    // C5: absent on legacy checks (read as null); only the enumeration is a
-    // codec rule, the phase/outcome pairing is the `withCheckPhase` constructor's.
+    // VR-04/VR-13 with C5: the current writer always records why an executing
+    // check was interrupted, so an interrupted check without a cause is damaged
+    // (decision 79), not an old shape. Pending/executing and PASS/FAIL checks
+    // keep the optional cause: it may be absent or null.
+    if (value['phase'] === 'interrupted' && (value['incompleteCause'] === undefined || value['incompleteCause'] === null)) {
+        return 'an interrupted round check requires its incompleteCause';
+    }
     if (value['incompleteCause'] !== undefined) {
         const cause = incompleteCauseProblem(value['incompleteCause'], 'a round check incompleteCause');
         if (cause !== null) return cause;

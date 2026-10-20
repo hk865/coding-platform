@@ -403,9 +403,8 @@ type AutoCleanupFacts = {
 
 /**
  * Q5 (G7): the Session is active, has no archive request, has no recorded
- * continuation and no unchecked legacy predecessor, and the latest Work claim
- * is this Run at the same claim generation. A read failure is `unavailable`
- * (the caller writes nothing).
+ * continuation, and the latest Work claim is this Run at the same claim
+ * generation. A read failure is `unavailable` (the caller writes nothing).
  */
 async function readSessionClosable(
   records: RunReconcileDependencies['records'], ctx: CoreCallContext, facts: TaskExecutionRecord,

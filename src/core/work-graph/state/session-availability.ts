@@ -598,6 +598,9 @@ export function transitionSession(state: SessionMachineState, event: SessionEven
     case 'archive_request_released':
       return archiveRequestReleased(state, event.archiveRequestId, ctx);
   }
+  // Compile-time exhaustiveness (book §3): a new SessionEvent without a case is
+  // not a `never`, so the call stops compiling; at runtime it throws.
+  return unreachable(event, 'Session event');
 }
 
 /** SES-01 (the checks formerly inline in `session-directory.ts` `recordSessionCreated`, which now calls this). */

@@ -151,9 +151,9 @@ function validateTaskLeaseSnapshot(record: EncodedRecord): DecodeResult<EncodedR
 const REDUCTION_PHASES: readonly string[] = ['verifying', 'blocked', 'failed', 'satisfied'];
 
 /**
- * Validates the OPTIONAL R3e.3 completion audit carried by a new formal
- * reduction. Historical rows omit it and stay readable; a present value must be
- * structurally complete so a corrupt audit is never accepted as satisfied.
+ * Validates the REQUIRED R3e.3 completion audit carried by a formal reduction.
+ * Every current TaskReduction writes it, so a missing or structurally incomplete
+ * audit is rejected: a corrupt audit is never accepted as satisfied.
  */
 function validateTaskCompletionAudit(value: unknown): string | null {
   if (!isRecord(value)) return 'TaskReduction completion audit must be an object';
@@ -460,8 +460,9 @@ export async function readProposal(
 /**
  * Slice 5 §2.5/T-R2-2: the wire-only creation origin of one stored proposal,
  * read separately from the public DTO so a replace/accept/abandon rewrites the
- * record with the SAME `since` (never rebinds). A record without `since` keeps
- * the absent origin; a damaged origin is `unavailable`, never silently absent.
+ * record with the SAME `since` (never rebinds). A record without `since` is
+ * invalid (the creating commit binds it), and a damaged origin is `unavailable`,
+ * never silently absent.
  */
 export async function readProposalOrigin(
   records: GoalRecordTransactionPort,
@@ -697,7 +698,7 @@ export async function enumerateClosedGoalCandidates(
       if (origin.status !== 'decoded') {
         return unavailable(`plan proposal ${record.refKey} origin: ${origin.reason}`);
       }
-      positions.set(planProposalRefKey(proposal.ref), origin.value.since!);
+      positions.set(planProposalRefKey(proposal.ref), origin.value.since);
       const requestRef = candidateRequestRef(proposal);
       if (requestRef === null) {
         // §4.2 source 3 / §3.3 line 629: an independent candidate is keyed by its
@@ -753,7 +754,7 @@ export async function enumerateClosedGoalCandidates(
  */
 export function terminalProposalOf(
   heads: readonly PlanProposal[],
-  positions: ReadonlyMap<string, CommitCursor | null>,
+  positions: ReadonlyMap<string, CommitCursor>,
 ): PlanProposal | null {
   let terminal: PlanProposal | null = null;
   for (const proposal of heads) {
@@ -764,8 +765,8 @@ export function terminalProposalOf(
       continue;
     }
     const position = compareProposalChainPositions(
-      { refKey: planProposalRefKey(proposal.ref), since: positions.get(planProposalRefKey(proposal.ref)) ?? null },
-      { refKey: planProposalRefKey(terminal.ref), since: positions.get(planProposalRefKey(terminal.ref)) ?? null });
+      { refKey: planProposalRefKey(proposal.ref), since: positions.get(planProposalRefKey(proposal.ref))! },
+      { refKey: planProposalRefKey(terminal.ref), since: positions.get(planProposalRefKey(terminal.ref))! });
     if (position > 0) terminal = proposal;
   }
   return terminal;
@@ -1314,7 +1315,7 @@ export async function readGoalRunsForCount(
  * `readMany` of the plan's TaskReductions, the ended Runs' TaskRequeues and the
  * T2 source Plans. A missing record is a confirmed absence, but a damaged one,
  * or ANY store failure (including `unsupported`), is `unavailable` — never an
- * empty trigger set (unlike `readReworkRecords`). `claimedArchiveKeys` names the
+ * empty trigger set. `claimedArchiveKeys` names the
  * archive triggers some Run of the Goal has already claimed (`Run.requeueRef`).
  */
 export async function readGoalTriggerRecords(

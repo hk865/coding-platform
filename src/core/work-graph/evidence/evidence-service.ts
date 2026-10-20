@@ -63,7 +63,6 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { WorkspaceHostBindings } from '../../workspace/access.js';
-import type { WorkspaceResult } from '../../workspace/ports.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
 import type { MaterialPort } from '../model/material-contracts.js';
 import { architectureBaselineDigest, readArchitectureBaselineSnapshot } from '../architecture/catalog-record-codecs.js';
@@ -178,24 +177,15 @@ function isRunRef(value: unknown): value is RunRef {
 function mapRejected(result: ReadRejected): CoreRejection {
     return { status: 'rejected', code: result.code, reason: result.reason };
 }
+function mapWorkspaceRejection(result: { status: 'rejected'; code: string; reason: string }): CoreRejection {
+    const code: CoreError = result.code === 'cancelled' || result.code === 'forbidden' || result.code === 'invalid'
+        || result.code === 'unavailable' || result.code === 'not_found' ? result.code : 'unavailable';
+    return { status: 'rejected', code, reason: result.reason };
+}
 function mapRead<T>(result: Exclude<ReadResult<T>, { status: 'ready' }>): CoreRejection {
     if (result.status === 'not_found') return notFound('the requested record does not exist');
     if (result.status === 'not_ready') return incomplete('the read is not ready at the required watermark');
     return result;
-}
-function mapWorkspaceFailure(failure: Extract<WorkspaceResult<never>, { status: 'rejected' }>): CoreRejection {
-    switch (failure.code) {
-        case 'invalid': return invalid(failure.reason);
-        case 'forbidden': return forbidden(failure.reason);
-        case 'not_found': return notFound(failure.reason);
-        case 'source_stale': return rejectedWithCurrent('source_stale', failure.reason);
-        case 'capacity': return rejected('capacity', failure.reason);
-        case 'unsupported': return unsupported(failure.reason);
-        case 'cancelled': return cancelled(failure.reason);
-        case 'capture_expired':
-        case 'cursor_mismatch':
-        case 'unavailable': return unavailable(failure.reason);
-    }
 }
 function mapSourceFailure(capture: Exclude<VerificationRoundSourceResult, { status: 'ready' }>): CoreRejection {
     if (capture.status === 'incomplete') return incomplete(capture.missing.join('; ') || 'the workspace source is unavailable');
@@ -931,9 +921,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const baseline = await readPinnedBaseline(records, plan.effectiveArchitectureBaseline);
         if (!baseline.ok) return baseline;
         const resolvedRoot = await deps.workspaceHost.resolveRoot(configuration.workspace);
-        if (resolvedRoot.status !== 'ready') return failure(mapWorkspaceFailure(resolvedRoot));
+        if (resolvedRoot.status !== 'ready') return failure(mapWorkspaceRejection(resolvedRoot));
         const authorization = await deps.workspaceHost.authorize(input.hostCtx, configuration.workspace);
-        if (authorization.status !== 'ready') return failure(mapWorkspaceFailure(authorization));
+        if (authorization.status !== 'ready') return failure(mapWorkspaceRejection(authorization));
         if (authorization.value.permissionRevision !== configuration.permissionRevision) {
             return failure(forbidden('the current Host permission revision is not the trusted configuration binding'));
         }
@@ -1286,9 +1276,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         // permission and root are compared before the capture, the source
         // before the invocation id is minted.
         const resolved = await deps.workspaceHost.resolveRoot(configuration.workspace);
-        if (resolved.status !== 'ready') return mapWorkspaceFailure(resolved);
+        if (resolved.status !== 'ready') return mapWorkspaceRejection(resolved);
         const authorized = await deps.workspaceHost.authorize(ownedCtx.ctx, configuration.workspace);
-        if (authorized.status !== 'ready') return mapWorkspaceFailure(authorized);
+        if (authorized.status !== 'ready') return mapWorkspaceRejection(authorized);
         const grant = { permissionRevision: authorized.value.permissionRevision, workspaceRoot: resolved.value.root };
         const grantProblem = refusalOf(frozenBindingProblem(round, grant));
         if (grantProblem !== null) return grantProblem;

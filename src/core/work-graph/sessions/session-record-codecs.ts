@@ -711,10 +711,14 @@ export function checkSessionBody(body: UnknownRecord, requireBoundUnavailableSin
   if (!['available', 'recoverable', 'unavailable'].includes(String(body['health']))) {
     return 'session health is not recognized';
   }
-  // SD-2: why `health` is unavailable. Absent before A.2 and read as null; only
-  // the enumeration is checked here, cross-field rules belong to the writers.
+  // SD-2: why `health` is unavailable. An unavailable record must carry a
+  // recognized conclusion; any other health keeps the optional `null`.
   const conclusion = body['healthConclusion'];
-  if (conclusion !== undefined && conclusion !== null
+  if (body['health'] === 'unavailable') {
+    if (!(SESSION_HEALTH_CONCLUSIONS as readonly unknown[]).includes(conclusion)) {
+      return 'session healthConclusion is required when health is unavailable';
+    }
+  } else if (conclusion !== undefined && conclusion !== null
     && !(SESSION_HEALTH_CONCLUSIONS as readonly unknown[]).includes(conclusion)) {
     return 'session healthConclusion is not recognized';
   }

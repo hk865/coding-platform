@@ -33,18 +33,23 @@ try {
     { cwd: isolated, stdio: 'inherit', env: process.env });
   if (smoke.status !== 0) throw Error(`isolated compiled entry failed (${smoke.status ?? smoke.signal})`);
 
-  // The workbench smoke uses only the real built artifacts: the static page
-  // (whose meta token the server substitutes), the token-protected bootstrap
-  // and the loopback Host lifecycle. It never reads a private Host field.
+  // The build emits no static page, so the smoke writes a temporary public
+  // directory holding an `index.html` with the token placeholder (the same page
+  // tests/helpers/host-page.ts writes). The Host substitutes the per-instance
+  // token into it; the smoke then checks the token-protected bootstrap and the
+  // loopback Host lifecycle. It never reads a private Host field.
   const workbenchSmoke = spawnSync(process.execPath, ['--input-type=module', '-e',
-    "const { mkdtempSync } = await import('node:fs'); " +
+    "const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs'); " +
     "const { tmpdir } = await import('node:os'); " +
     "const { join } = await import('node:path'); " +
     "const { createLocalWorkbenchHost } = await import('./dist/app/host.js'); " +
+    "const { PLATFORM_TOKEN_PLACEHOLDER } = await import('./dist/app/core-http-types.js'); " +
     "const root = mkdtempSync(join(tmpdir(), 'next-workbench-smoke-')); " +
     "const database = mkdtempSync(join(tmpdir(), 'next-workbench-db-')); " +
+    "const publicDir = mkdtempSync(join(tmpdir(), 'next-workbench-public-')); " +
+    "try { writeFileSync(join(publicDir, 'index.html'), '<!doctype html><meta name=\"platform-token\" content=\"' + PLATFORM_TOKEN_PLACEHOLDER + '\">'); " +
     "const host = await createLocalWorkbenchHost({ storage: { kind: 'sqlite', directory: database }, " +
-    "actor: { kind: 'system', id: 'smoke-host' }, " +
+    "actor: { kind: 'system', id: 'smoke-host' }, publicDir, " +
     "workspaces: [{ scope: { projectId: 'smoke', workspaceId: 'ws' }, name: 'smoke', root, workspaceRevision: 0, readPrefixes: [] }] }); " +
     "try { const address = await host.listen(); " +
     "const page = await fetch(address.url); const html = await page.text(); " +
@@ -55,7 +60,8 @@ try {
     "if (authorized.status !== 200) throw new Error('protected bootstrap failed: ' + authorized.status); " +
     "const anonymous = await fetch(coreUrl); " +
     "if (anonymous.status !== 403) throw new Error('bootstrap was readable without a token: ' + anonymous.status); " +
-    "} finally { await host.close(); } console.log('workbench smoke ok');"],
+    "} finally { await host.close(); } " +
+    "} finally { rmSync(publicDir, { recursive: true, force: true }); } console.log('workbench smoke ok');"],
     { cwd: isolated, stdio: 'inherit', env: process.env });
   if (workbenchSmoke.status !== 0) throw Error(`isolated workbench smoke failed (${workbenchSmoke.status ?? workbenchSmoke.signal})`);
   process.stdout.write('next isolated copy: typecheck, build and tests passed\n');

@@ -4,10 +4,10 @@
  * `CommandRerunRequest` and `UnknownCallReview` each read exactly one record by
  * refKey: ONE `readMany([refKey])`, the owner read-failure map for a non-ready
  * batch, `{ notFound: true }` when the batch holds no matching record, and
- * `invalid` when the stored record does not decode. Each owner keeps its own
- * complete error texts, so the store-read and decode-failure rejections are
- * parameters, not one shared message. A missing record is not a rejection: the
- * caller decides (`not_found` or a derived read).
+ * `invalid` when the stored record does not decode. A thrown read error is
+ * customized by `readError`, non-ready results are mapped uniformly, and a
+ * decode failure always uses the fixed invalid message. A missing record is not
+ * a rejection: the caller decides (`not_found` or a derived read).
  */
 import type { CoreRejection } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';

@@ -370,10 +370,9 @@ function sameDetail(left: GraphAttentionDetailV1 | undefined, right: GraphAttent
     && left.version === right.version && left.contentDigest === right.contentDigest;
 }
 function sameDetails(
-  left: Record<string, GraphAttentionDetailV1> | undefined,
-  right: Record<string, GraphAttentionDetailV1> | undefined,
+  left: Record<string, GraphAttentionDetailV1>,
+  right: Record<string, GraphAttentionDetailV1>,
 ): boolean {
-  if (left === undefined || right === undefined) return left === right;
   const leftKeys = Object.keys(left);
   const rightKeys = Object.keys(right);
   if (leftKeys.length !== rightKeys.length) return false;

@@ -273,22 +273,3 @@ function retiredUnknownCase(name: string, kernel: 'missing' | 'damaged'): void {
 
 retiredUnknownCase('missing', 'missing');
 retiredUnknownCase('damaged', 'damaged');
-
-// ---------------------------------------------------------------------------
-// 2C-21 (4): the legacy-pending variant is not built here.
-//
-// The row wants a pre-slice-1 archived provenance-null Session in the workspace
-// (`legacyPending` always true) next to a RUN-19 Work line: KA1 does not close
-// it (the provenance is unresolved), the maintenance reports `incomplete` and
-// leaves the line retired + provenance-unchecked.
-//
-// Today's writers always write `provenance`, so such a Session can only be
-// injected at the storage boundary. The LE4 Host scenario has no public or
-// documented-boundary way to submit a valid old Session record over the live
-// ledger: the existing legacy fixture (`tests/scenarios/S2C-K-legacy-provenance.test.ts`)
-// opens its own non-Host `TaskClaimFixture` with `commitRaw`/`overwriteSession`,
-// and no `tests/scenarios/*` Host test injects a provenance-null Session. It is
-// therefore reported, not faked here. The K-time behavior it would pin is
-// already covered through the maintenance unit
-// (`session-maintenance.ts:620` `facts.legacyPending` → `incomplete`).
-// ---------------------------------------------------------------------------

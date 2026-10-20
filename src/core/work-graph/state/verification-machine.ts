@@ -818,9 +818,9 @@ export function finalizeRoundOutcome(input: RoundFoldInputV1): RoundFoldResultV1
         gaps.push({ code: 'pending_check', message: `the required check ${step.check.checkId} never ran`, ...firstCoverage });
         continue;
       case 'interrupted': {
-        const cause = step.check.incompleteCause ?? null;
-        gaps.push({ code: INTERRUPTED_CHECK_GAP_CODE, message: `the required check ${step.check.checkId} was interrupted`
-          + (cause === null ? '' : ` (${cause})`), ...firstCoverage });
+        const cause = step.check.incompleteCause;
+        gaps.push({ code: INTERRUPTED_CHECK_GAP_CODE, message: `the required check ${step.check.checkId} was interrupted (${cause})`,
+          ...firstCoverage });
         continue;
       }
       case 'verdict':

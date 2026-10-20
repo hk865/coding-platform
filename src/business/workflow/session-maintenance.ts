@@ -335,7 +335,7 @@ export function createSessionMaintenanceService(
       return { kind: 'unsupported', reason: 'the mailbox reader is not installed, so the copy answer cannot be confirmed' };
     }
     const provenance = record.provenance;
-    if (provenance === null || provenance === undefined || provenance.kind !== 'readonly_copy') {
+    if (provenance.kind !== 'readonly_copy') {
       return { kind: 'unsupported', reason: 'the copy provenance is not readable' };
     }
     const read = await reader(ctx, provenance.messageRef);
@@ -587,7 +587,7 @@ export function createSessionMaintenanceService(
           }
 
           const retired = record.health === 'unavailable';
-          const copy = record.provenance?.kind === 'readonly_copy';
+          const copy = record.provenance.kind === 'readonly_copy';
 
           // §0.1 U1: a retired line whose unknown Run still occupies it is
           // skipped with zero commits (no request, no anchor, no drop).

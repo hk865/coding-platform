@@ -1641,7 +1641,7 @@ async function findCandidateProposal(
   const candidates: PlanProposal[] = [];
   // §2.5/T-R2-2: each chain's creation position is its first candidate's
   // wire-only `since`, read beside the public DTO.
-  const positions = new Map<string, CommitCursor | null>();
+  const positions = new Map<string, CommitCursor>();
   for (const record of batch.items) {
     const decoded = decodePlanProposalRecord(record);
     if (decoded.status !== 'decoded') {
@@ -1659,7 +1659,7 @@ async function findCandidateProposal(
       throw { status: 'rejected', code: 'unavailable',
         reason: `plan proposal ${record.refKey} origin: ${origin.reason}` } as CoreRejection;
     }
-    positions.set(canonicalJson(candidate.ref as unknown as JsonValue), origin.value.since ?? null);
+    positions.set(canonicalJson(candidate.ref as unknown as JsonValue), origin.value.since);
     candidates.push(candidate);
   }
   // 2A L6/L10: the request candidate index is read to its end, so the head

@@ -112,23 +112,18 @@ export type { NoticeOriginWireV1 } from './rework-codecs.js';
 
 /**
  * §2.4 closed-request order. A proposal chain's position is its
- * first candidate's creation commit (`since`); a chain with no `since` sorts
- * before every chain with one, and equal (or both absent) origins fall back to
- * the canonical refKey. Both the queue history and the direct read use exactly
+ * first candidate's creation commit (`since`); equal positions fall back to the
+ * canonical refKey. Both the queue history and the direct read use exactly
  * this comparison; position is never inferred from `notAdopted.at` or refKey
  * order alone.
  */
 export function compareProposalChainPositions(
-  left: { refKey: string; since: CommitCursor | null },
-  right: { refKey: string; since: CommitCursor | null },
+  left: { refKey: string; since: CommitCursor },
+  right: { refKey: string; since: CommitCursor },
 ): number {
-  if (left.since === null && right.since !== null) return -1;
-  if (left.since !== null && right.since === null) return 1;
-  if (left.since !== null && right.since !== null) {
-    const leftSeq = seqOfCommitCursor(left.since);
-    const rightSeq = seqOfCommitCursor(right.since);
-    if (leftSeq !== rightSeq) return leftSeq < rightSeq ? -1 : 1;
-  }
+  const leftSeq = seqOfCommitCursor(left.since);
+  const rightSeq = seqOfCommitCursor(right.since);
+  if (leftSeq !== rightSeq) return leftSeq < rightSeq ? -1 : 1;
   return left.refKey < right.refKey ? -1 : left.refKey > right.refKey ? 1 : 0;
 }
 
@@ -976,10 +971,13 @@ export function decodePlanProposalRecord(record: EncodedRecord): DecodeResult<Pl
 /**
  * §2.5: the wire-only creation origin of a stored PlanProposal,
  * read beside `decodePlanProposalRecord` and never merged into its public DTO.
- * A record without `since` reads as `{}` (the legacy position); a persisted
- * `null` is the PreparedCommit placeholder and reads as unavailable.
+ * Every current candidate carries `since` because the creating commit binds it;
+ * a record without `since`, or with a persisted `null` (the PreparedCommit
+ * placeholder), is invalid, never a legacy position.
  */
-export function decodePlanProposalOrigin(record: EncodedRecord): DecodeResult<NoticeOriginWireV1> {
+export function decodePlanProposalOrigin(
+  record: EncodedRecord,
+): DecodeResult<NoticeOriginWireV1 & { since: CommitCursor }> {
   const parsed = parseTaggedObject(record.json, 'PlanProposal origin');
   if (typeof parsed === 'string') return invalid(parsed);
   const problem = noticeOriginFieldsProblem(parsed, 'PlanProposal origin');
@@ -987,11 +985,10 @@ export function decodePlanProposalOrigin(record: EncodedRecord): DecodeResult<No
   if (parsed['since'] === null) {
     return invalid('a persisted PlanProposal origin since must be a commit cursor');
   }
-  const origin: NoticeOriginWireV1 = {};
-  if (parsed['since'] !== undefined) {
-    origin.since = parsed['since'] as NonNullable<NoticeOriginWireV1['since']>;
+  if (typeof parsed['since'] !== 'string') {
+    return invalid('a PlanProposal origin must carry a commit cursor since');
   }
-  return { status: 'decoded', value: origin };
+  return { status: 'decoded', value: { since: parsed['since'] as CommitCursor } };
 }
 
 export function decodePlanRevisionSnapshot(record: EncodedRecord): DecodeResult<PlanRevisionSnapshot> {

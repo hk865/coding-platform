@@ -93,7 +93,7 @@ it('replays before deadline/current Session checks and never calls the clock on 
   const accepted = await service.claimTask(f.ctx, request);
   expect(accepted.status).toBe('committed'); if (accepted.status !== 'committed') return;
   clock = '2026-09-25T00:00:00.000Z'; const count = clockCalls;
-  await f.overwriteSession(f.sessions.first, record => ({ ...record, health: 'unavailable' }));
+  await f.overwriteSession(f.sessions.first, record => ({ ...record, health: 'unavailable', healthConclusion: 'missing' }));
   expect(await service.claimTask(f.ctx, request)).toEqual({ ...accepted, replayed: true });
   expect(clockCalls).toBe(count);
 });

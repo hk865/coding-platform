@@ -92,7 +92,7 @@ function runAdmission(
 /** The single provenance rule: a raw origin names a Run/QueryRun owner or nothing. */
 export function materialOwnerFromOrigin(origin: MaterialOrigin): MaterialOwner {
   if (origin.kind === 'run') {
-    return origin.owner.aggregateType === 'Run' || origin.owner.aggregateType === 'QueryRun' ? origin.owner : null;
+    return origin.owner;
   }
   return null;
 }

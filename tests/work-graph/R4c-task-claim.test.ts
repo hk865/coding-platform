@@ -246,7 +246,7 @@ describe.each(KINDS)('R4c.1 real %s atomic claim', kind => {
     const fixture = await open(kind);
     const mutations: { name: string; mutate: (record: SessionRecord) => SessionRecord }[] = [
       { name: 'archived', mutate: record => ({ ...record, lifecycle: 'archived' }) },
-      { name: 'unavailable', mutate: record => ({ ...record, health: 'unavailable' }) },
+      { name: 'unavailable', mutate: record => ({ ...record, health: 'unavailable', healthConclusion: 'missing' }) },
       { name: 'recoverable', mutate: record => ({ ...record, health: 'recoverable' }) },
       { name: 'run-busy', mutate: record => ({ ...record, occupancy: { kind: 'execution', generation: 1,
         executionRef: { aggregateType: 'Run', projectId: fixture.scope.projectId,

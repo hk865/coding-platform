@@ -325,9 +325,9 @@ async function projectReply(
     || goalRef.projectId !== input.goalRef.projectId || goalRef.goalId !== input.goalRef.goalId)) {
     return { status: 'ready', value: null };
   }
-  // Spec §2.3/L7/§4.4.4: the DTO is the projection contract. Compare exactly,
-  // counting absence as a value, so a DTO that omits a position the original
-  // record/message still carries is stable damage, not a silent record fallback.
+  // Spec §2.3/L7/§4.4.4: the DTO is the projection contract. Compare the
+  // Session's `unavailableSince` with the entry position (absence counts);
+  // the message's `responseSince` is taken from the DTO (:331, :335).
   if (reply.unavailableSince !== card.record.unavailableSince) {
     return stableDamage(deps, window, () => mismatch(reply.messageRef.messageId, 'disagrees with its stored entry position'));
   }

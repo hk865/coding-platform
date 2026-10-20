@@ -68,13 +68,13 @@ import type { PlatformDutyV1 } from '../../src/contracts/platform-duty.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import { SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
-import type { EncodedDomainEvent, EncodedRecord, RecordBackendSchemas, RecordGuard, StoreCommitReceipt, UniqueClaimChange } from '../../src/core/record-store/ports.js';
+import type { EncodedDomainEvent, EncodedRecord, RecordBackendSchemas, RecordGuard, StoreCommitReceipt, UniqueClaimChange, CommitCursorBinding } from '../../src/core/record-store/ports.js';
 import type { OrderedLookupRequest, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { createSqliteRawArtifactStore } from '../../src/core/record-store/sqlite-body-store.js';
 import { encodeGoalSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { PLAN_RECORD_SCHEMAS, encodePlanProposal, encodePlanRevisionSnapshot } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
+import { PLAN_RECORD_SCHEMAS, encodePlanProposal, encodePlanRevisionSnapshot, planProposalRefKey } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
@@ -369,7 +369,8 @@ export type S5DecisionFixture = {
 
   // Seed helpers (all write through real codecs/commits, never raw SQL).
   seedCommit(recordsToWrite: readonly EncodedRecord[],
-    options?: { guards?: readonly RecordGuard[]; events?: readonly EncodedDomainEvent[]; claims?: readonly UniqueClaimChange[] }): Promise<StoreCommitReceipt>;
+    options?: { guards?: readonly RecordGuard[]; events?: readonly EncodedDomainEvent[]; claims?: readonly UniqueClaimChange[];
+      commitCursorBindings?: readonly CommitCursorBinding[] }): Promise<StoreCommitReceipt>;
   seedGoalSnapshot(snapshot: GoalSnapshot): Promise<StoreCommitReceipt>;
   seedPlanRevisionSnapshot(snapshot: PlanRevisionSnapshot): Promise<StoreCommitReceipt>;
   seedCandidateProposal(proposal: PlanProposal): Promise<StoreCommitReceipt>;
@@ -567,7 +568,8 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const eventId = () => `s5-event-${++eventSeq}`;
 
   async function seedCommit(recordsToWrite: readonly EncodedRecord[],
-    options: { guards?: readonly RecordGuard[]; events?: readonly EncodedDomainEvent[]; claims?: readonly UniqueClaimChange[] } = {}): Promise<StoreCommitReceipt> {
+    options: { guards?: readonly RecordGuard[]; events?: readonly EncodedDomainEvent[]; claims?: readonly UniqueClaimChange[];
+      commitCursorBindings?: readonly CommitCursorBinding[] } = {}): Promise<StoreCommitReceipt> {
     const sequence = ++seedSeq;
     const explicit = new Set((options.guards ?? []).map(guard => guard.refKey));
     const guards: RecordGuard[] = [...(options.guards ?? []),
@@ -582,6 +584,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
     const result = await records.commit({
       identityKey: `s5-seed-${sequence}`, fingerprint: `s5-seed-fingerprint-${sequence}`,
       guards, records: [...recordsToWrite], claims: [...(options.claims ?? [])],
+      ...(options.commitCursorBindings === undefined ? {} : { commitCursorBindings: options.commitCursorBindings }),
       indexGuards: [], indexChanges: [], events,
     });
     if (result.status !== 'committed') throw new Error(`S5 fixture seed commit failed: ${JSON.stringify(result)}`);
@@ -1230,7 +1233,8 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
     requests: { Q1, Q2 }, candidates: { U1, U2 }, messages: { decision: decisionMessage, answered: answeredMessage },
     seedCommit, seedGoalSnapshot: snapshot => seedCommit([encodeGoalSnapshot(snapshot)]),
     seedPlanRevisionSnapshot: snapshot => seedCommit([encodePlanRevisionSnapshot(snapshot)]),
-    seedCandidateProposal: proposal => seedCommit([encodePlanProposal(proposal)]),
+    seedCandidateProposal: proposal => seedCommit([encodePlanProposal(proposal, { since: null })],
+      { commitCursorBindings: [{ refKey: planProposalRefKey(proposal.ref), field: 'since' }] }),
     claimRun, enterClaim: realRuntime ? enterThroughRuntime : enterClaim, createS5Session, createRealS5Session,
     settleRun: realRuntime ? settleThroughRuntime : settleRun,
     settleRunRA: () => (realRuntime ? settleThroughRuntime : settleRun)(claimRA), seedQueryJob, lookupRefs,
