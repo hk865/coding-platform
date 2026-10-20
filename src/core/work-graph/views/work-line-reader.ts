@@ -295,7 +295,7 @@ async function assembleLineRows(
   const facts = new Map<string, LineFactsV1>();
   for (const head of heads) {
     const state = readBudgetState(deps, budgetValue);
-    const row = await assembleOneLine(deps, ctx, workspace, head, state, shared, queue, legacyUnchecked, copiesIndex);
+    const row = await assembleOneLine(deps, ctx, workspace, head, state, shared, queue, copiesIndex);
     if (row.status === 'rejected') return row;
     if (row.status === 'ready') {
       rows.push(row.value.row);
@@ -335,7 +335,6 @@ async function assembleOneLine(
   state: { records: WorkLineStore; budget: Budget },
   shared: SharedReads,
   queue: QueueRead,
-  legacyUnchecked: LineCountV1,
   activeCopies: ActiveCopies,
   /** T5x: true on the single consistency reread, so an occupied ended execution is not retried forever. */
   reread = false,
@@ -366,7 +365,7 @@ async function assembleOneLine(
     || (holder.kind === 'query' && holder.query.run.executionState?.phase === 'settled'));
   if (inconsistentOccupancy && !reread) {
     const fresh = readBudgetState(deps, deps.historyReadBudget ?? LINE_HISTORY_READ_BUDGET);
-    return assembleOneLine(deps, ctx, workspace, headRef, fresh, shared, queue, legacyUnchecked, activeCopies, true);
+    return assembleOneLine(deps, ctx, workspace, headRef, fresh, shared, queue, activeCopies, true);
   }
   const latestWork = earlyProblem === null && holder === null
     ? await readLatestWork(deps.records, workspace, headRecord, lineState) : null;
@@ -512,8 +511,6 @@ async function assembleOneLine(
     handoffFrom,
     handoffFromLine,
     handedTo,
-    provenanceUnchecked: chain.some((entry) => entry.provenance === null),
-    legacyUncheckedInWorkspace: legacyUnchecked,
     unknownCallReviewsPending: 0,
     queueComplete: queue.complete,
     pinned: pinnedBy.length > 0,
@@ -521,7 +518,7 @@ async function assembleOneLine(
     problem,
   };
   const status = deriveLineStatus(facts);
-  const name = deriveName(duty, holder, latestWork, latestQuery, responsibleOpen, taskFacts, headRecord, legacyUnchecked, secretaryGoalTitle);
+  const name = deriveName(duty, holder, latestWork, latestQuery, responsibleOpen, taskFacts, headRecord, secretaryGoalTitle);
   const sessionCount: LineCountV1 = omitted.status === 'exact'
     ? { status: 'exact', value: chain.length }
     : { status: 'partial', atLeast: chain.length + 1, reason: 'the chain exceeds 32 predecessors (L2)' };
@@ -646,8 +643,8 @@ async function readChain(records: WorkLineStore, workspace: WorkspaceScope, head
   // L11: the real watermark of the chain reads (never a fabricated zero).
   let readThrough: CommitCursor | null = null;
   for (let step = 0; step < 32; step += 1) {
-    const provenance = current.provenance ?? null;
-    if (provenance === null || provenance.kind !== 'continuation') break;
+    const provenance = current.provenance;
+    if (provenance.kind !== 'continuation') break;
     const key = sessionAggregateRefKey(plainSessionRefToAggregate(provenance.from));
     const read = await records.readMany([key]);
     if (read.status !== 'ready') { noteProblem(state, rejectionOf(read)); break; }
@@ -667,8 +664,7 @@ async function readChain(records: WorkLineStore, workspace: WorkspaceScope, head
     chain.push(chainEntry(predecessor));
     current = predecessor;
     if (step === 31) {
-      const rest = current.provenance ?? null;
-      truncated = rest !== null && rest.kind === 'continuation';
+      truncated = current.provenance.kind === 'continuation';
     }
   }
   const omitted: LineCountV1 = truncated
@@ -680,7 +676,7 @@ async function readChain(records: WorkLineStore, workspace: WorkspaceScope, head
 function chainEntry(session: SessionRecord): LineChainEntryV1 {
   return {
     session: { projectId: session.ref.projectId, sessionId: session.ref.sessionId },
-    provenance: session.provenance ?? null,
+    provenance: session.provenance,
     lifecycle: session.lifecycle,
     health: session.health,
     healthConclusion: session.healthConclusion ?? null,
@@ -1002,7 +998,7 @@ async function readDoneEvidence(
   if (page.status === 'ready') {
     for (const record of page.value.records) {
       const link = decodeLink(record);
-      if (link === null || link.until === null) {
+      if (link === null) {
         recent.push({ task: unknownTask(workspace), title: '', closure: 'unknown', archiveStep: false });
         continue;
       }
@@ -1035,8 +1031,8 @@ function unknownTask(workspace: WorkspaceScope): TaskTriple {
 }
 
 function targetTaskOf(link: SessionWorkLink): TaskTriple {
-  const target = link.ref.target as { kind: string; ref: TaskTriple };
-  return target.kind === 'task' ? target.ref : unknownTask({ projectId: link.ref.projectId, workspaceId: '' });
+  // The ordered index fixes `ref.target.kind = 'task'` (session-record-codecs.ts:951).
+  return (link.ref.target as { ref: TaskTriple }).ref;
 }
 
 async function readClosure(
@@ -1296,8 +1292,8 @@ type ActiveCopies = Map<string, SessionRecord[]>;
 function indexActiveCopies(sessions: readonly SessionRecord[]): ActiveCopies {
   const bySource: ActiveCopies = new Map();
   for (const session of sessions) {
-    const provenance = session.provenance ?? null;
-    if (provenance?.kind !== 'readonly_copy') continue;
+    const provenance = session.provenance;
+    if (provenance.kind !== 'readonly_copy') continue;
     if (session.lifecycle !== 'active') continue;
     const source = provenance.from.sessionId;
     const list = bySource.get(source);
@@ -1514,8 +1510,8 @@ async function cycleRepresentativesByWalk(
     const needed = new Map<string, SessionRef>();
     for (const walk of walks) {
       if (walk.done) continue;
-      const provenance = walk.current.provenance ?? null;
-      if (provenance === null || provenance.kind !== 'continuation') { walk.done = true; continue; }
+      const provenance = walk.current.provenance;
+      if (provenance.kind !== 'continuation') { walk.done = true; continue; }
       if (!cache.has(provenance.from.sessionId)) needed.set(provenance.from.sessionId, provenance.from);
     }
     if (needed.size > 0) {
@@ -1532,8 +1528,8 @@ async function cycleRepresentativesByWalk(
     }
     for (const walk of walks) {
       if (walk.done) continue;
-      const provenance = walk.current.provenance ?? null;
-      if (provenance === null || provenance.kind !== 'continuation') { walk.done = true; continue; }
+      const provenance = walk.current.provenance;
+      if (provenance.kind !== 'continuation') { walk.done = true; continue; }
       const predecessor = cache.get(provenance.from.sessionId);
       if (predecessor === undefined) { walk.done = true; continue; }
       const onPathIndex = walk.onPath.get(predecessor.ref.sessionId);
@@ -1598,7 +1594,7 @@ async function readActiveSessions(records: WorkLineStore, workspace: WorkspaceSc
   }
   let withSuccessor = 0;
   for (const session of active) {
-    if ((session.provenance ?? null)?.kind === 'readonly_copy') continue;
+    if (session.provenance.kind === 'readonly_copy') continue;
     const successor = await hasContinuationSuccessor(records, workspace, session.ref.sessionId);
     if (successor.status !== 'ready') return successor;
     if (successor.value) withSuccessor += 1;
@@ -1613,7 +1609,7 @@ async function listActiveHeads(records: WorkLineStore, workspace: WorkspaceScope
   const heads: SessionRecord[] = [];
   const added = new Set<string>();
   for (const session of window.sessions) {
-    if ((session.provenance ?? null)?.kind === 'readonly_copy') continue;
+    if (session.provenance.kind === 'readonly_copy') continue;
     const successor = await hasContinuationSuccessor(records, workspace, session.ref.sessionId);
     if (successor.status !== 'ready') return successor;
     if (successor.value) continue;
@@ -1624,7 +1620,7 @@ async function listActiveHeads(records: WorkLineStore, workspace: WorkspaceScope
   // removed them all. Walk `from` backwards (batched, reading records outside the
   // window) and add the cycle's min-refKey representative back as a head
   // (problem `invalid`). All active candidates are present, so no filter is needed.
-  const nonCopies = window.sessions.filter((session) => (session.provenance ?? null)?.kind !== 'readonly_copy');
+  const nonCopies = window.sessions.filter((session) => session.provenance.kind !== 'readonly_copy');
   const cycleHeads = await cycleRepresentativesByWalk(records, workspace, nonCopies, false);
   if (cycleHeads.status !== 'ready') return cycleHeads;
   for (const representative of cycleHeads.value) {
@@ -1660,7 +1656,7 @@ async function readArchivedPage(records: WorkLineStore, workspace: WorkspaceScop
     const decoded = decodeSessionRecord(record);
     if (decoded.status !== 'decoded') continue;
     const session = decoded.value;
-    if ((session.provenance ?? null)?.kind === 'readonly_copy') continue;
+    if (session.provenance.kind === 'readonly_copy') continue;
     nonCopies.push(session);
     const successor = await hasContinuationSuccessor(records, workspace, session.ref.sessionId);
     if (successor.status !== 'ready') return successor;
@@ -1748,16 +1744,14 @@ async function countArchived(
   activeFrom: CommitCursor | null,
   activeWithSuccessor: number,
 ): Promise<ArchivedCountResult> {
-  const S = await countKinds(records, workspace, 'archived', ['new', 'continuation', 'handoff', null]);
-  const UArchived = await countKinds(records, workspace, 'archived', [null]);
-  const UActive = await countKinds(records, workspace, 'active', [null]);
+  const S = await countKinds(records, workspace, 'archived', ['new', 'continuation', 'handoff']);
   const F = await records.countLookup({ index: S2C_SESSION_BY_KIND_FROM_LOOKUP,
     values: [workspace.projectId, workspace.workspaceId, 'continuation'],
     distinctPath: 'provenance.from.sessionId' });
-  const allCursors = [...S.cursors, ...UArchived.cursors, ...UActive.cursors,
+  const allCursors = [...S.cursors,
     F.status === 'ready' ? F.value.readThrough : null];
   const sameInstant = activeFrom !== null && allCursors.every((cursor) => cursor !== null && String(cursor) === String(activeFrom));
-  if (S.failed || UArchived.failed || UActive.failed || F.status !== 'ready') {
+  if (S.failed || F.status !== 'ready') {
     return { archived: { status: 'unavailable', reason: 'count_failed', asOf: null } };
   }
   if (!sameInstant) {
@@ -1765,15 +1759,11 @@ async function countArchived(
   }
   const s = S.count.status === 'exact' ? S.count.value : 0;
   const f = F.value.count;
-  const u = (UArchived.count.status === 'exact' ? UArchived.count.value : 0)
-    + (UActive.count.status === 'exact' ? UActive.count.value : 0);
   const c = s - (f - activeWithSuccessor);
   if (c < 0 || c > s) {
     return { archived: { status: 'unavailable', reason: `source_moving: archived count ${String(c)} is outside 0..${String(s)}`, asOf: F.value.readThrough } };
   }
-  if (u === 0) return { archived: { status: 'exact', value: c, asOf: F.value.readThrough } };
-  return { archived: { status: 'partial', atLeast: Math.max(0, c - u), atMost: c,
-    reason: `${String(u)} legacy Session(s) without provenance`, asOf: F.value.readThrough } };
+  return { archived: { status: 'exact', value: c, asOf: F.value.readThrough } };
 }
 
 function describeMoving(activeFrom: CommitCursor | null, cursors: (CommitCursor | null)[]): string {
@@ -1793,10 +1783,8 @@ function deriveName(
   responsibleOpen: readonly LineTaskFactV1[],
   taskFacts: Map<string, LineTaskFactV1>,
   head: SessionRecord,
-  legacyUnchecked: LineCountV1,
   secretaryGoalTitle: string | null,
 ): LineNameV1 {
-  void legacyUnchecked;
   const titleOf = (task: TaskTriple): string => taskFacts.get(taskCanonicalKey(task))?.title ?? task.taskId;
   if (duty === 'secretary') {
     if (latestQuery !== null && latestQuery.goalId !== null) {
@@ -2319,8 +2307,8 @@ async function readLineChainSessions(
   // same-instant check covers each chain read (review item 8).
   const cursors: (CommitCursor | null)[] = [];
   for (let step = 0; step < 32; step += 1) {
-    const provenance = current.provenance ?? null;
-    if (provenance === null || provenance.kind !== 'continuation') break;
+    const provenance = current.provenance;
+    if (provenance.kind !== 'continuation') break;
     const key = sessionAggregateRefKey(plainSessionRefToAggregate(provenance.from));
     const read = await records.readMany([key]);
     if (read.status !== 'ready') return rejectionOf(read);
@@ -2335,8 +2323,7 @@ async function readLineChainSessions(
     sessions.push(predecessor);
     current = predecessor;
     if (step === 31) {
-      const rest = current.provenance ?? null;
-      truncated = rest !== null && rest.kind === 'continuation';
+      truncated = current.provenance.kind === 'continuation';
     }
   }
   const omitted: LineCountV1 = truncated
@@ -2973,8 +2960,8 @@ async function readCopiesSection(
       const decoded = decodeSessionRecord(record);
       if (decoded.status !== 'decoded') continue;
       const copy = decoded.value;
-      const provenance = copy.provenance ?? null;
-      if (provenance === null || provenance.kind !== 'readonly_copy') continue;
+      const provenance = copy.provenance;
+      if (provenance.kind !== 'readonly_copy') continue;
       items.push({ copy: sessionRefOf(copy), messageRef: provenance.messageRef, lifecycle: copy.lifecycle,
         phase: (await copyPhase(records, workspace, copy, state)).phase });
     }

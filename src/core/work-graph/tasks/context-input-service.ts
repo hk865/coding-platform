@@ -420,7 +420,7 @@ async function readRawBody(
   return outcome;
 }
 
-function provenanceOf(origin: MaterialOrigin): InputArtifactProvenanceV1 | null {
+function provenanceOf(origin: MaterialOrigin): InputArtifactProvenanceV1 {
   if (origin.kind === 'platform_operation') {
     return {
       kind: 'platform_operation', projectId: origin.projectId,
@@ -428,8 +428,10 @@ function provenanceOf(origin: MaterialOrigin): InputArtifactProvenanceV1 | null 
       requestId: origin.requestId, actor: { ...origin.actor },
     };
   }
-  const owner = materialOwnerFromOrigin(origin);
-  return owner === null ? null : { kind: 'run', owner: structuredClone(owner) };
+  // A run origin always names a Run/QueryRun owner; MaterialOrigin no longer
+  // admits a TaskAttemptRef owner.
+  const owner = materialOwnerFromOrigin(origin)!;
+  return { kind: 'run', owner: structuredClone(owner) };
 }
 
 function platformOriginInScope(origin: Extract<MaterialOrigin, { kind: 'platform_operation' }>, ctx: CoreCallContext): boolean {
@@ -494,17 +496,13 @@ async function resolveLegacy(
     return { status: 'ready', value: unavailableSelection(declaration, raw.errorCode, raw.reason) };
   }
   const provenance = provenanceOf(raw.origin);
-  if (provenance === null) {
-    return rejection('forbidden', 'the legacy material has no canonical owner or trusted origin');
-  }
   let upstream: TaskTriple | null = null;
   if (raw.origin.kind === 'platform_operation') {
     if (!platformOriginInScope(raw.origin, ctx)) {
       return rejection('forbidden', 'the platform material belongs to another project/workspace');
     }
   } else {
-    const owner = materialOwnerFromOrigin(raw.origin);
-    if (owner === null) return rejection('forbidden', 'the legacy material has no canonical owner');
+    const owner = materialOwnerFromOrigin(raw.origin)!;
     const scope = await canonicalOwnerScope(authority, ctx, owner);
     if (scope.status !== 'ready') return scope;
     upstream = scope.upstream;

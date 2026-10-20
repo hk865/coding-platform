@@ -60,7 +60,7 @@ import type { PreparedTaskManifestV1 } from '../../../contracts/core/prepared-ex
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { isNonNeg as isNonNegativeInt, isPos as isPositiveInt, isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
-import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+import type { ExecutionAuthorizationV2, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
 import {
   ackSessionMessageRequest, respondSessionMessageRequest, sendSessionMessageRequest, sendUserMessageRequest,
@@ -612,7 +612,7 @@ function consultationBindingOf(job: QueryJobSnapshot, run: QueryRunSnapshot, mes
   const execution = job.job.intent.execution;
   const consultation = execution.consultation;
   if (execution.kind !== 'semantic_query' || consultation === undefined) {
-    return { binding: 'not_consultation', answererSession: null };
+    return { binding: 'other_message', answererSession: null };
   }
   if (canonicalOf(consultation.messageRef) !== canonicalOf(messageRef)) return { binding: 'other_message', answererSession: null };
   if (canonicalOf(consultation.recipient) !== canonicalOf(recipient)) return { binding: 'other_recipient', answererSession: null };
@@ -1278,7 +1278,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   type AuthOutcome = { ok: true; guards: RecordGuard[] } | { ok: false; rejection: CoreRejection };
 
   /** The saved manifest must describe exactly the same formal claim/envelope/Session. */
-  function manifestAgainstRun(manifest: PreparedTaskManifestV1, record: TaskExecutionRecord, bodyDigest: string): CoreRejection | null {
+  function manifestAgainstRun(manifest: PreparedTaskManifestV1, record: TaskExecutionRecord, bodyDigest: string,
+    authorization: ExecutionAuthorizationV2): CoreRejection | null {
     const { run, outbox, session } = record;
     if (canonicalOf(manifest.claim) !== canonicalOf(outbox.claim)) return reject('forbidden', 'the saved manifest claim disagrees with the persisted claim');
     if (canonicalOf(manifest.roleBinding) !== canonicalOf(run.roleBinding)) return reject('forbidden', 'the saved manifest role binding disagrees with the Run');
@@ -1294,10 +1295,6 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       return reject('forbidden', 'the saved manifest body digest disagrees with the Run input binding');
     }
     if (manifest.inputDigest !== inputBinding.inputDigest) return reject('forbidden', 'the saved manifest input digest disagrees with the Run input binding');
-    const authorization = run.executionAuthorization;
-    if (authorization === undefined) {
-      return reject('forbidden', 'a new mailbox action requires a B2 V2 execution authorization');
-    }
     if (manifest.inputDigest !== authorization.inputDigest) return reject('forbidden', 'the saved manifest input digest disagrees with the Run entry binding');
     return null;
   }
@@ -1335,14 +1332,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       || occupancy.generation !== claim.generation) {
       return { ok: false, rejection: reject('forbidden', 'the sender Session is not occupied by this exact Run generation') };
     }
-    if (lease === null || lease.holderRunId !== run.ref.runId || lease.attemptId !== run.attemptId) {
+    if (lease === null) {
       return { ok: false, rejection: reject('forbidden', 'the TaskLease is not held by this exact Run and attempt') };
-    }
-    // A released lease keeps its historical holder/attempt IDs; it is not a live
-    // owner and can never authorize fresh mail (the original exact receipt still
-    // replays because replay returns before this admission check).
-    if (lease.release !== undefined) {
-      return { ok: false, rejection: reject('forbidden', 'the TaskLease has been released') };
     }
     if (canonicalOf(claim.runRef) !== canonicalOf(run.ref)
       || canonicalOf(claim.attemptRef) !== canonicalOf({
@@ -1355,10 +1346,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       return { ok: false, rejection: reject('forbidden', 'the claim does not match the Run, attempt and Session') };
     }
     const authorization = run.executionAuthorization;
-    if (authorization === undefined) {
-      return { ok: false, rejection: reject('forbidden', 'a new mailbox action requires a B2 V2 execution authorization') };
-    }
-    if (authorization.phase !== 'entered' || authorization.sessionGeneration !== claim.generation) {
+    if (authorization?.phase !== 'entered' || authorization.sessionGeneration !== claim.generation) {
       return { ok: false, rejection: reject('forbidden', 'the Run has not entered with this Session generation') };
     }
     if (authorization.kernel === null
@@ -1394,7 +1382,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     }
     if (!stored.ok) return { ok: false, rejection: stored.rejection };
     const manifest = stored.value.manifest;
-    const manifestProblem = manifestAgainstRun(manifest, record, stored.value.bodyDigest);
+    const manifestProblem = manifestAgainstRun(manifest, record, stored.value.bodyDigest, authorization);
     if (manifestProblem !== null) return { ok: false, rejection: manifestProblem };
     if (!manifest.permissions.tools.includes(operationToolName)) {
       return { ok: false, rejection: reject('forbidden', `the current Host/Role grant does not include ${operationToolName}`) };
@@ -2782,8 +2770,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         if (!runFacts.ok) return runFacts.rejection;
         actualSession = { projectId: runFacts.record.outbox.claim.sessionRef.projectId, sessionId: runFacts.record.outbox.claim.sessionRef.sessionId };
         const authorization = runFacts.record.run.executionAuthorization;
-        actualKernel = runFacts.record.run.executionHistory?.kernel
-          ?? (authorization !== undefined ? authorization.kernel : null);
+        actualKernel = runFacts.record.run.executionHistory?.kernel ?? authorization?.kernel;
       } else {
         if (executionRef['workspaceId'] !== owned.workspaceId) return reject('forbidden', 'Query execution is outside the workspace');
         const queryFacts = await loadQueryRun(owned, executionRef as unknown as QueryRunRef);
@@ -3656,10 +3643,6 @@ export function createMessageWriteOwner(deps: SessionMailboxDependencies): Messa
 
   async function replayReceipt(receipt: WriteReceipt): Promise<WriteResult<SessionMessage>> {
     return replaySessionMessageReceipt(records, receipt);
-  }
-
-  async function recheckPersist(identityKey: string, fingerprint: string): Promise<WriteResult<SessionMessage> | null> {
-    return recheckSessionMessageReceipt(records, identityKey, fingerprint);
   }
 
   return {

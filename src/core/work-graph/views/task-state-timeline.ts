@@ -319,15 +319,18 @@ async function readTaskPoints(
   // Verification rounds by task.
   const roundRecords = await readEqualityAll(records, VERIFICATION_ROUND_BY_TASK_LOOKUP,
     [projectId, workspaceId, goalId, task.taskId], budget);
-  const rounds: { record: EncodedRecord; round: RoundSnapshot; since: CommitCursor | null; finalizedAt: string | null }[] = [];
+  const rounds: { record: EncodedRecord; round: RoundSnapshot; since: CommitCursor; finalizedAt: string | null }[] = [];
   for (const record of roundRecords) {
     const decoded = decodeVerificationRoundSnapshot(record);
     if (decoded.status !== 'decoded') throw rejected('unavailable', `round ${record.refKey}: ${decoded.reason}`);
     const origin = decodeNoticeOrigin(record);
     if (origin.status !== 'decoded') throw rejected('unavailable', `round origin ${record.refKey}: ${origin.reason}`);
+    const since = origin.value.since;
+    if (since === undefined || since === null) {
+      throw rejected('unavailable', `round ${record.refKey} is missing its since cursor`);
+    }
     rounds.push({
-      record, round: decoded.value,
-      since: origin.value.since === undefined ? null : origin.value.since,
+      record, round: decoded.value, since,
       finalizedAt: origin.value.finalizedAt === undefined ? null : origin.value.finalizedAt,
     });
   }

@@ -1,11 +1,11 @@
 import type { ArtifactOwnerRunRef, ArtifactRef } from '../../contracts/artifact.js';
-import type { TaskAttemptRef, SourceRefV1 } from '../../contracts/dispatch.js';
+import type { SourceRefV1 } from '../../contracts/dispatch.js';
 import type { PlatformMaterialOrigin } from '../../contracts/core/call-context.js';
 import type { StoreResult } from './ports.js';
 
 /** The physical store records provenance but never interprets material grants. */
 export type MaterialOrigin =
-  | { kind: 'run'; owner: ArtifactOwnerRunRef | TaskAttemptRef }
+  | { kind: 'run'; owner: ArtifactOwnerRunRef }
   | PlatformMaterialOrigin;
 export type RawArtifactPut = {
   body: string;

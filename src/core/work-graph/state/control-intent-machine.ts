@@ -29,8 +29,7 @@
  * CTL-03/05/06/09 for `recordControlObservation`). It asks
  * `submissionReadsPointerIntent` and `submissionReadsGoal` before it reads the
  * intent the pointer names and the Goal, and `observedIntentAnswer` before it
- * reads the Run; a stored locator that fails the locator codec reaches the
- * guards as `'malformed'`. Which older intents a submission supersedes is the
+ * reads the Run. Which older intents a submission supersedes is the
  * Run machine's effect list (`intent:control_superseded_by_newer`, §6
  * RUN-09..15), which names their refs.
  */
@@ -53,15 +52,22 @@ export type ControlNode = 'Absent' | 'Queued' | 'Applied' | 'Superseded' | 'Outc
 /** Every observation kind an intent can carry: Kernel (`ControlObservationV1`) or platform (CD-1). */
 export type ControlObservationKind = ControlObservationV1['kind'] | ControlPlatformObservationV1['kind'];
 
-export type ControlIntentState = {
-  node: ControlNode;
-  /** `null` only while `Absent`. */
-  kind: ControlIntentKindV1 | null;
-  /** 0 while `Absent`, 1 while `Queued`, ≥ 2 once observed (`control-record-codecs.ts:365-377`). */
-  revision: number;
-  /** `null` while `Absent` or `Queued`. */
-  observation: ControlObservationV1 | ControlPlatformObservationV1 | null;
-};
+export type ControlIntentState =
+  | {
+    node: 'Absent';
+    kind: null;
+    /** 0 while `Absent`. */
+    revision: number;
+    observation: null;
+  }
+  | {
+    node: Exclude<ControlNode, 'Absent'>;
+    kind: ControlIntentKindV1;
+    /** 1 while `Queued`, ≥ 2 once observed (`control-record-codecs.ts:365-377`). */
+    revision: number;
+    /** `null` while `Queued`. */
+    observation: ControlObservationV1 | ControlPlatformObservationV1 | null;
+  };
 
 /**
  * The Run machine node (§6.1 `RunNode`, owned by `run-machine.ts`; §7.1 types
@@ -106,11 +112,8 @@ export type ControlGuardContext = {
      * names only its window `{start, through}`; the machine derives that window
      * here (`endPosition ?? observedThroughPosition`) and also compares the
      * observation's history identity with it (`control-service.ts:549-560`).
-     * `'malformed'`: a stored locator that fails `isRunExecutionHistoryV1`, a
-     * damaged read answered `unavailable` right after the missing-locator row
-     * (`control-service.ts:551`).
      */
-    history: RunExecutionHistoryV1 | 'malformed' | null;
+    history: RunExecutionHistoryV1 | null;
   };
   /** D-9: the resume guard (§2). */
   goal: { desiredState: 'active' | 'paused' | 'cancelled' };
@@ -577,24 +580,22 @@ const OBSERVED_RUN_GUARDS: readonly GuardRow<ObservedEvent>[] = [
   } },
   { row: '7.4 no locator', check: (_event, ctx) => ctx.run.history === null
     ? reject('guard_failed', 'forbidden', 'the observed Run has no execution-history locator') : null },
-  { row: 'malformed locator', check: (_event, ctx) => ctx.run.history === 'malformed'
-    ? reject('guard_failed', 'unavailable', 'the stored execution-history locator is malformed') : null },
   { row: '7.4 locator identity', check: ({ observation }, ctx) => {
     const locator = ctx.run.history;
-    if (locator === null || locator === 'malformed') return null;
+    if (locator === null) return null;
     return !sameHistoryIdentity(observation.history, locator)
       ? reject('guard_failed', 'forbidden', 'the observation history disagrees with the Run locator') : null;
   } },
   { row: '7.4 source window', check: ({ observation }, ctx) => {
     const locator = ctx.run.history;
-    if (locator === null || locator === 'malformed') return null;
+    if (locator === null) return null;
     const through = locator.endPosition ?? locator.observedThroughPosition;
     return observation.source.position < locator.startPosition || observation.source.position > through
       ? reject('guard_failed', 'unavailable', 'the observation source is outside the persisted Run history window') : null;
   } },
   { row: '7.4 observation window', check: ({ observation }, ctx) => {
     const locator = ctx.run.history;
-    if (locator === null || locator === 'malformed') return null;
+    if (locator === null) return null;
     const through = locator.endPosition ?? locator.observedThroughPosition;
     return observation.history.observedThroughPosition > through
       ? reject('guard_failed', 'unavailable', 'the observation window exceeds the persisted Run history window') : null;
@@ -654,7 +655,7 @@ export function observedIntentAnswer(
     case 'OutcomeUnknown':
       return reject('stale', 'revision_conflict',
         'the control intent is outcome_unknown; only the start-up reconcile settles it');
-    default: return unreachable(state.node, 'control node');
+    default: return unreachable(state, 'control node');
   }
 }
 
@@ -698,7 +699,7 @@ function onSubmission(state: ControlIntentState, event: ControlSubmissionEvent, 
     case 'Superseded':
     case 'OutcomeUnknown':
       return existingIdentity();
-    default: return unreachable(state.node, 'control node');
+    default: return unreachable(state, 'control node');
   }
 }
 
@@ -720,7 +721,6 @@ function onObserved(state: ControlIntentState, event: ObservedEvent, ctx: Contro
     case 'Superseded':
     case 'OutcomeUnknown': {
       const kind = state.kind;
-      if (kind === null) return reject('illegal', 'invalid', 'a recorded control intent must have a kind');
       const answered = observedIntentAnswer(state, event, ctx);
       if (answered !== null) return answered;
       const failed = firstFailing(OBSERVED_RUN_GUARDS, event, ctx);
@@ -738,7 +738,7 @@ function onObserved(state: ControlIntentState, event: ObservedEvent, ctx: Contro
         [{ kind: 'guard_run' }],
       );
     }
-    default: return unreachable(state.node, 'control node');
+    default: return unreachable(state, 'control node');
   }
 }
 
@@ -753,7 +753,6 @@ function onSupersededByNewer(state: ControlIntentState, event: SupersededEvent, 
   switch (state.node) {
     case 'Queued': {
       const kind = state.kind;
-      if (kind === null) return reject('illegal', 'invalid', 'a recorded control intent must have a kind');
       if (!(kind === 'steer' ? ctx.run.inControlInputs : ctx.run.pointsHere)) {
         return reject('illegal', 'invalid', 'only the intent the newer commit moves off the Run pointer, or a queued steer of the Run, is superseded');
       }
@@ -772,7 +771,7 @@ function onSupersededByNewer(state: ControlIntentState, event: SupersededEvent, 
     case 'Superseded':
     case 'OutcomeUnknown':
       return reject('illegal', 'invalid', 'only a queued control intent can be superseded');
-    default: return unreachable(state.node, 'control node');
+    default: return unreachable(state, 'control node');
   }
 }
 
@@ -794,7 +793,7 @@ function onAppliedPausedStop(
     case 'Superseded':
     case 'OutcomeUnknown':
       return reject('illegal', 'invalid', 'only a queued cancel can be applied by a paused stop');
-    default: return unreachable(state.node, 'control node');
+    default: return unreachable(state, 'control node');
   }
   if (ctx.exitProof === null || ctx.exitProof !== event.basis) {
     return reject('guard_failed', 'incomplete', 'the paused stop is not proven; the cancel stays queued');
@@ -838,10 +837,9 @@ function onReconciled(
       return reject('illegal', 'invalid', 'the control intent is already terminal; reconcile skips it');
     case 'Absent':
       return reject('illegal', 'invalid', 'reconcile only settles a recorded control intent');
-    default: return unreachable(state.node, 'control node');
+    default: return unreachable(state, 'control node');
   }
   const kind = state.kind;
-  if (kind === null) return reject('illegal', 'invalid', 'a recorded control intent must have a kind');
   const observation = event.observation;
   const platformPause = isPlatformObservation(observation) && observation.origin === 'platform_reconcile'
     && observation.kind === 'paused';

@@ -586,10 +586,10 @@ export async function readPreviousTurn(
   return readPlatformTurnWindow(owner, record, kernel, locator, undefined, signal);
 }
 
-/** The begin authorization's fixed Kernel identity, or null for an unknown Run. */
+/** The begin authorization's fixed Kernel identity, or null for an unknown Run.
+ * Every caller passes a Run the platform authorized (the attested-or-located path). */
 function kernelBindingOf(run: TaskExecutionRecord['run']): NonNullable<TaskExecutionRecord['run']['executionHistory']>['kernel'] | null {
-  const auth = run.executionAuthorization;
-  return auth !== undefined ? auth.kernel : null;
+  return run.executionAuthorization!.kernel;
 }
 
 /** The Kernel event types that end a Turn; `run.interrupted` is one (L1/L9). */

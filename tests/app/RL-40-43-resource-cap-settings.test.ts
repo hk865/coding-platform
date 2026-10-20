@@ -27,7 +27,6 @@ const LEGACY_FILE = { schemaVersion: 1, models: [], selection: {}, workspaces: [
 function assemblyWith(status?: () => unknown): HostSettingsAssembly {
   return {
     listWorkspaces: () => [],
-    listProjectIds: () => [],
     secretConfigured: () => false,
     bootstrap: () => ({}) as BootstrapResponse,
     async openWorkspace() { return { status: 'rejected', code: 'unsupported', reason: 'not used by RL-40..43' }; },

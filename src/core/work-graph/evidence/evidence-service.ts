@@ -63,6 +63,7 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { WorkspaceHostBindings } from '../../workspace/access.js';
+import type { WorkspaceResult } from '../../workspace/ports.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
 import type { MaterialPort } from '../model/material-contracts.js';
 import { architectureBaselineDigest, readArchitectureBaselineSnapshot } from '../architecture/catalog-record-codecs.js';
@@ -177,15 +178,24 @@ function isRunRef(value: unknown): value is RunRef {
 function mapRejected(result: ReadRejected): CoreRejection {
     return { status: 'rejected', code: result.code, reason: result.reason };
 }
-function mapWorkspaceRejection(result: { status: 'rejected'; code: string; reason: string }): CoreRejection {
-    const code: CoreError = result.code === 'cancelled' || result.code === 'forbidden' || result.code === 'invalid'
-        || result.code === 'unavailable' || result.code === 'not_found' ? result.code : 'unavailable';
-    return { status: 'rejected', code, reason: result.reason };
-}
 function mapRead<T>(result: Exclude<ReadResult<T>, { status: 'ready' }>): CoreRejection {
     if (result.status === 'not_found') return notFound('the requested record does not exist');
     if (result.status === 'not_ready') return incomplete('the read is not ready at the required watermark');
     return result;
+}
+function mapWorkspaceFailure(failure: Extract<WorkspaceResult<never>, { status: 'rejected' }>): CoreRejection {
+    switch (failure.code) {
+        case 'invalid': return invalid(failure.reason);
+        case 'forbidden': return forbidden(failure.reason);
+        case 'not_found': return notFound(failure.reason);
+        case 'source_stale': return rejectedWithCurrent('source_stale', failure.reason);
+        case 'capacity': return rejected('capacity', failure.reason);
+        case 'unsupported': return unsupported(failure.reason);
+        case 'cancelled': return cancelled(failure.reason);
+        case 'capture_expired':
+        case 'cursor_mismatch':
+        case 'unavailable': return unavailable(failure.reason);
+    }
 }
 function mapSourceFailure(capture: Exclude<VerificationRoundSourceResult, { status: 'ready' }>): CoreRejection {
     if (capture.status === 'incomplete') return incomplete(capture.missing.join('; ') || 'the workspace source is unavailable');
@@ -286,8 +296,9 @@ type RoundWrite<T> = {
 /**
  * SPEC §2.5: a later update of an existing round copies its creation wire origin
  * (`since`, and the automatic `noticeAutomationCap`) verbatim and never re-binds
- * it. An old record without an origin stays without one (no backfill). This is
- * the exact analogue of the mailbox's `preservedNoticeOrigin`.
+ * it. A stored round without a `since` is damaged (decision 79), not a legacy
+ * origin, so the update is refused. This is the exact analogue of the mailbox's
+ * `preservedNoticeOrigin`.
  */
 async function preservedRoundNoticeOrigin(records: Records, ref: VerificationRoundRef): Promise<
     { ok: true; value: NoticeOriginWireV1 } | { ok: false; rejection: CoreRejection }> {
@@ -306,8 +317,10 @@ async function preservedRoundNoticeOrigin(records: Records, ref: VerificationRou
     if (decoded.status !== 'decoded') {
         return { ok: false, rejection: unavailable(`the round notice origin is damaged: ${decoded.reason}`) };
     }
-    const origin: NoticeOriginWireV1 = {};
-    if (decoded.value.since !== undefined) origin.since = decoded.value.since;
+    if (decoded.value.since === undefined) {
+        return { ok: false, rejection: unavailable('the round notice origin has no stored creation position') };
+    }
+    const origin: NoticeOriginWireV1 = { since: decoded.value.since };
     if (decoded.value.noticeAutomationCap !== undefined) origin.noticeAutomationCap = decoded.value.noticeAutomationCap;
     // L14 end: a later rewrite of a finalized round keeps its VR-07
     // `finalizedAt` exactly like `since` (never re-binds it).
@@ -918,9 +931,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const baseline = await readPinnedBaseline(records, plan.effectiveArchitectureBaseline);
         if (!baseline.ok) return baseline;
         const resolvedRoot = await deps.workspaceHost.resolveRoot(configuration.workspace);
-        if (resolvedRoot.status !== 'ready') return failure(mapWorkspaceRejection(resolvedRoot));
+        if (resolvedRoot.status !== 'ready') return failure(mapWorkspaceFailure(resolvedRoot));
         const authorization = await deps.workspaceHost.authorize(input.hostCtx, configuration.workspace);
-        if (authorization.status !== 'ready') return failure(mapWorkspaceRejection(authorization));
+        if (authorization.status !== 'ready') return failure(mapWorkspaceFailure(authorization));
         if (authorization.value.permissionRevision !== configuration.permissionRevision) {
             return failure(forbidden('the current Host permission revision is not the trusted configuration binding'));
         }
@@ -941,16 +954,14 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const compiled = compileVerificationPlan({
             schemaVersion: 1, taskRef: input.subject, planRef: input.planRef, planSnapshot: plan,
             workspaceRevision: resolvedRoot.value.workspaceRevision, changeScope: captured.changeScope,
-            semanticChange: 'semantic', risks: [], checkCapabilities: capabilities,
+            semanticChange: 'semantic', checkCapabilities: capabilities,
             policy: { requirementKinds: [...policyRead.policyContent.requirementKinds],
                 ...(policyRead.policyContent.fastPathDiffClasses === undefined
                     ? {} : { fastPathDiffClasses: [...policyRead.policyContent.fastPathDiffClasses] }) },
             configurationDigest,
         });
         if (compiled.status !== 'ready') {
-            return failure(compiled.code === 'invalid'
-                ? invalid(compiled.issues.map(issue => issue.message).join('; '))
-                : incomplete(`the VerificationPlan could not be compiled (${compiled.code}): ${compiled.issues.map(issue => issue.message).join('; ')}`));
+            return failure(invalid(compiled.issues.map(issue => issue.message).join('; ')));
         }
         const verificationPlan = compiled.plan;
         const checksProblem = refusalOf(roundOpenChecksProblem(verificationPlan, configuration));
@@ -1275,9 +1286,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         // permission and root are compared before the capture, the source
         // before the invocation id is minted.
         const resolved = await deps.workspaceHost.resolveRoot(configuration.workspace);
-        if (resolved.status !== 'ready') return mapWorkspaceRejection(resolved);
+        if (resolved.status !== 'ready') return mapWorkspaceFailure(resolved);
         const authorized = await deps.workspaceHost.authorize(ownedCtx.ctx, configuration.workspace);
-        if (authorized.status !== 'ready') return mapWorkspaceRejection(authorized);
+        if (authorized.status !== 'ready') return mapWorkspaceFailure(authorized);
         const grant = { permissionRevision: authorized.value.permissionRevision, workspaceRoot: resolved.value.root };
         const grantProblem = refusalOf(frozenBindingProblem(round, grant));
         if (grantProblem !== null) return grantProblem;

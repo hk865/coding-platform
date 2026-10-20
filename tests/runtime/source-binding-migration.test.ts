@@ -82,6 +82,10 @@ function facts(initial: SourceCanonicalSnapshot[]) {
       const snapshot = records.get(JSON.stringify(ref));
       return snapshot ? { status: 'found', snapshot: structuredClone(snapshot) } : { status: 'not_found', ref };
     },
+    async readQuerySubmission() {
+      return { status: 'rejected' as const, code: 'unsupported' as const,
+        reason: 'the binding migration reads no Query submission' };
+    },
     async events({ afterCursor, limit }) {
       scans++;
       const start = afterCursor ? history.findIndex(row => row.cursor === afterCursor) + 1 : 0;

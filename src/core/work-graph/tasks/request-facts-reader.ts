@@ -23,9 +23,6 @@ import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-function forbidden(reason: string): { status: 'rejected'; code: 'forbidden'; reason: string } {
-  return { status: 'rejected', code: 'forbidden', reason };
-}
 function notFound(reason: string): { status: 'rejected'; code: 'not_found'; reason: string } {
   return { status: 'rejected', code: 'not_found', reason };
 }
@@ -76,9 +73,8 @@ export function createCandidateRequestFactsReader(
 
   return {
     async readCandidateRequestFacts(ctx: CoreCallContext, input: { requestRef: QueryJobRef; goalRef: GoalRef }) {
-      if (input.requestRef.projectId !== ctx.projectId || input.requestRef.workspaceId !== ctx.workspaceId) {
-        return forbidden('the request belongs to another project or workspace');
-      }
+      // The public callers already bind requestRef to the Goal/workspace scope
+      // before any foreign read (plan-service.ts:1479-1487, :2318-2321).
       const key = canonicalJson(input.requestRef as unknown as JsonValue);
       let read: Awaited<ReturnType<GoalRecordTransactionPort['readMany']>>;
       try {

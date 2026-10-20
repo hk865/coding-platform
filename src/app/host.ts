@@ -175,7 +175,6 @@ export type LocalWorkbenchHost = {
   listen(port?: number): Promise<WorkbenchAddress>;
   /** Idempotent: reject new requests, drain accepted ones, then close the platform. */
   close(): Promise<void>;
-  readonly address: WorkbenchAddress | null;
   /** A.2 step 5.6 (§12.8, §12.1 step 7): the instance lease and the start-up reconcile report (null without the lease). */
   readonly reconcile: HostReconcileReportV1;
 };
@@ -975,7 +974,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       writeAllowed: (workspace.writePrefixes?.length ?? 0) > 0,
       commandsAllowed: workspace.allowCommands === true,
     })),
-    listProjectIds: () => [...new Set(workspaces.map(workspace => workspace.scope.projectId))],
     readCheckProposal: async (scope, answerRef) => {
       if (answerRef.projectId !== scope.projectId || answerRef.workspaceId !== scope.workspaceId) {
         return { status: 'rejected', code: 'not_found', reason: 'the saved Answer is outside this workspace scope' };
@@ -1600,7 +1598,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   let closePromise: Promise<void> | undefined;
 
   return {
-    get address(): WorkbenchAddress | null { return server.address; },
     get reconcile(): HostReconcileReportV1 { return structuredClone(hostReconcile); },
     listen(port?: number): Promise<WorkbenchAddress> {
       if (closePromise !== undefined) return Promise.reject(new Error('the workbench Host is closed'));
@@ -1618,7 +1615,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         const workbenchToolsClosed = workbenchTools.close();
         attentionAbort.abort('host_closing');
         backfillAbort.abort('host_closing');
-        await backfillDone.catch(() => { /* the loop records its own state */ });
+        await backfillDone;
         await attentionDone.catch(() => { /* the loop records its own state */ });
         await Promise.all([...inputJobs.values()]);
         await collaborationDriver.close();

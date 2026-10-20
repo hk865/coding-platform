@@ -24,6 +24,7 @@ import {
   type ToolResult,
 } from '../../vendor/coding-agent/dist/public-api.js';
 import type { FileAttentionStamp, GraphAttentionStamp, AttentionConfigV1 } from '../../src/app/attention-observer.js';
+import type { GraphAttentionDetailV1 } from '../../src/contracts/graph-context.js';
 
 export const ORCHESTRATION_AT = '2026-09-28T00:00:00.000Z';
 
@@ -190,6 +191,7 @@ export function graphStamp(
   nodes: readonly string[],
   edges: readonly string[],
   statuses: Readonly<Record<string, string>> = {},
+  details: Record<string, GraphAttentionDetailV1> = {},
 ): GraphAttentionStamp {
-  return { nodes: [...nodes], edges: [...edges], statuses: { ...statuses } };
+  return { nodes: [...nodes], edges: [...edges], statuses: { ...statuses }, details: { ...details } };
 }

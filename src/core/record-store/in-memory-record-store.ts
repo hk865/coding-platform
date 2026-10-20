@@ -454,8 +454,9 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
       return invalidFailure(`not a ledger cursor: ${messageOf(error)}`);
     }
     const direct = state.eventLog[seq - 1];
-    const positioned =
-      direct !== undefined && direct.cursor === cursor ? direct : state.eventLog.find((entry) => entry.cursor === cursor);
+    // appendEvents stores each entry at index seq-1 under makeCommitCursor(seq) and
+    // a failed commit restores the log, so a canonical cursor can only point here.
+    const positioned = direct !== undefined && direct.cursor === cursor ? direct : undefined;
     if (positioned === undefined) return notFoundFailure(`no event at cursor ${String(cursor)}`);
     let json: string;
     try {

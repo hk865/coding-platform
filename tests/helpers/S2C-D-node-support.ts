@@ -612,7 +612,8 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
         basis: createSessionResponsibilityBasisReader(backend.records), now }),
       sessionAnomalies: anomalies, controls: steps.controls, plans, executions, sessions, messages: mailbox,
       claims: { ...claims, requeueTask: requeues.requeueTask, readTaskRequeue: requeues.readTaskRequeue },
-      runtime: steps.runtime.port, now,
+      runtime: { ...steps.runtime.port,
+        createSession: sessionOperations.createSession.bind(sessionOperations) }, now,
     });
 
     async function createLineSession(requestId: string): Promise<SessionRef> {

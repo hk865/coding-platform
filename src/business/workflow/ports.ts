@@ -95,7 +95,10 @@ export type WorkflowDependencies = {
   sessions: SessionDirectoryPort;
   claims: TaskClaimPort;
   executions: ExecutionReadPort;
-  runtime: RuntimeExecutionPort;
+  runtime: Pick<RuntimeExecutionPort,
+    'createSession' | 'readCompletedBoundary' | 'prepareExecution' | 'startRun' | 'observeRun'
+    | 'prepareQuery' | 'startQuery' | 'observeQuery' | 'closeOpenTurn' | 'countRunActivity'
+    | 'reviewCapability' | 'deliverControl' | 'readArchiveChangedFiles'>;
   evidence: EvidencePort;
   checks: RegisteredCheckRunner;
   sourceAuthority: SourceSnapshotReads;

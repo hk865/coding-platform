@@ -122,7 +122,6 @@ function facts(over: Partial<LineFactsV1> = {}): LineFactsV1 {
     doneEvidence: { status: 'not_applicable' }, pausedTasks: [], lineCards: [],
     writtenAnchorsPending: { status: 'exact', value: 0 }, copies: [], undelivered: { status: 'not_applicable' },
     partialParts: [], handoffFrom: null, handoffFromLine: null, handedTo: null,
-    provenanceUnchecked: false, legacyUncheckedInWorkspace: { status: 'exact', value: 0 },
     unknownCallReviewsPending: 0, queueComplete: true, pinned: false, lastActivityAt: T0,
     ...over,
   };

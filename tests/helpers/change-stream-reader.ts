@@ -52,9 +52,10 @@ export function readFrames(response: Response, controller: AbortController): Ope
   const body = response.body;
   if (body === null) throw new Error('the change stream has no body');
   const reader = body.getReader();
+  type StreamChunk = Awaited<ReturnType<typeof reader.read>>;
   const decoder = new TextDecoder();
   let buffer = '';
-  let pending: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
+  let pending: Promise<StreamChunk> | null = null;
   let done = false;
 
   async function next(timeoutMs = 3_000): Promise<StreamFrame | null> {
@@ -71,7 +72,7 @@ export function readFrames(response: Response, controller: AbortController): Ope
       const remaining = deadline - Date.now();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timedOut = new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), Math.max(0, remaining)); });
-      let chunk: ReadableStreamReadResult<Uint8Array> | 'timeout';
+      let chunk: StreamChunk | 'timeout';
       try { chunk = await Promise.race([pending, timedOut]); }
       catch { done = true; pending = null; return null; }
       finally { clearTimeout(timer); }

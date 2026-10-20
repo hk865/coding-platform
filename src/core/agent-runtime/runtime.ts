@@ -14,7 +14,6 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../contracts/core/identity.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
-import type { OperationReceipt, Page, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
 import type { RunRef } from '../../contracts/dispatch.js';
 import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
@@ -39,39 +38,17 @@ import type { RuntimeExecutionDependencies, TurnClosureDependencies, ReadonlyCom
 import { readonlyCommandSandboxOptions } from './readonly-command-tool.js';
 import { WORKSPACE_DENIED_PREFIXES } from '../workspace/denied-prefixes.js';
 import type { WorkspaceRef } from '../../contracts/ledger.js';
-import type { AgentRuntimeService, RuntimeExecutionPort } from './ports.js';
-import type { RuntimeCapabilities } from './contracts.js';
-import type { CreateSessionRequest, SessionHistoryEntry, SessionHistoryRequest } from './session-operations.js';
+import type { AgentRuntimePort, AgentRuntimeService, RuntimeExecutionPort } from './ports.js';
 import { readRunActivityFacts, unknownFacts } from './run-activity-reader.js';
 import { provenNotEnteredKernel } from '../../contracts/run-activity.js';
 import { isRunExecutionHistoryV1 } from '../work-graph/persistence/execution-history-codecs.js';
-import type {
-  ExecutionHistoryPage, ExecutionHistoryRequest, TaskExecutionHistoryRequest,
-} from './execution-history-contracts.js';
 
 const unsupported = (reason: string) => ({
   status: 'rejected' as const, code: 'unsupported' as const, reason,
 });
 
-const ABSENT = 'B2 AgentRuntime requires the trusted dependency bundle before it can do any execution work';
-
-function basePort(): RuntimeExecutionPort {
+function basePort(): AgentRuntimePort {
   return {
-    async capabilities(_ctx: CoreCallContext, _workspace: WorkspaceScope): Promise<ReadResult<RuntimeCapabilities>> {
-      return unsupported('B2 AgentRuntime execution capabilities are not wired');
-    },
-    async createSession(_ctx: CoreCallContext, _request: CreateSessionRequest): Promise<OperationReceipt<SessionRecord>> {
-      return unsupported(ABSENT);
-    },
-    async readSessionHistory(_ctx: CoreCallContext, _request: SessionHistoryRequest): Promise<ReadResult<Page<SessionHistoryEntry>>> {
-      return unsupported(ABSENT);
-    },
-    async readExecutionHistory(_ctx: CoreCallContext, _request: ExecutionHistoryRequest): Promise<ReadResult<ExecutionHistoryPage>> {
-      return unsupported(ABSENT);
-    },
-    async readTaskExecutionHistory(_ctx: CoreCallContext, _request: TaskExecutionHistoryRequest): Promise<ReadResult<ExecutionHistoryPage>> {
-      return unsupported(ABSENT);
-    },
     async prepareExecution() {
       return unsupported('B2 skeleton: prepareExecution is not implemented');
     },
@@ -489,14 +466,7 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
   if (deps === undefined) return { port: basePort() };
 
   const contextAssembler = createContextAssembler(deps);
-  // Rework 2 item 2: the Task-closure reader is REQUIRED by `prepare`. An old
-  // direct caller that does not wire the optional shell dependency gets a
-  // FAIL-CLOSED reader (rejected `unavailable`), never "absent means open";
-  // the composition root always wires the real reader.
-  const readTaskClosure: NonNullable<RuntimeExecutionDependencies['readTaskClosure']> =
-    deps.readTaskClosure ?? (async () => ({ status: 'rejected' as const, code: 'unavailable' as const,
-      reason: 'this Runtime construction did not wire the Task-closure reader' }));
-  const preparation = createExecutionPreparation({ ...deps, readTaskClosure }, contextAssembler);
+  const preparation = createExecutionPreparation(deps, contextAssembler);
   // R4.3a: the ONE internal control coordinator is assembled before the observer
   // and driver so both share the exact same instance and its private
   // exit/cleanup proof seam. The raw `controls` dependency is optional; without
@@ -721,7 +691,7 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
   const queryDriver = createQueryExecutionDriver(deps);
   const queryObservation = createQueryObservation(deps);
   const base = basePort();
-  const port: RuntimeExecutionPort = {
+  const port: AgentRuntimePort = {
     ...base,
     readCompletedBoundary,
     readContinuationBrief,

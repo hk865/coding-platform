@@ -289,7 +289,7 @@ type Handle = {
   stopReason: string | null;
   /** True while the handle is genuinely parked on a yielded continuation wait. */
   wakeWaiting: boolean;
-  /** The driver's own lifetime signal; aborted only by `close`. */
+  /** The driver's own lifetime signal; never aborted (stop aborts `activePumpAbort`). */
   abort: AbortController;
   /** The live consultation pump signal; aborted on stop/close/run end. */
   activePumpAbort: AbortController | null;
@@ -515,7 +515,7 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
    * was stopped/aborted before admission.
    */
   async function awaitAdvanceAdmission(handle: Handle, advance: WorkflowAdvanceInput): Promise<AdvanceAdmission | null> {
-    if (handle.abort.signal.aborted || handle.stopRequested) return null;
+    if (handle.stopRequested) return null;
     if (dependencies.workflow.orderGoalAdvances === undefined) {
       // An absent seam is refused/unsupported ordering: keep the caller's
       // (arrival) order with no waiting at all and no extra microtask hop.
@@ -559,7 +559,7 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
     admissionWaits.set(handle, entry.release);
     try {
       await released;
-      if (handle.abort.signal.aborted || handle.stopRequested) return null;
+      if (handle.stopRequested) return null;
       handedOff = true;
       return { proceed: entry.proceed };
     } finally {
@@ -701,7 +701,7 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
   /** Poll ONLY the exact saved wait message; zero model calls while absent. */
   async function awaitWake(handle: Handle, continuation: RunContinuationV1, signal: AbortSignal): Promise<boolean> {
     try {
-      while (!handle.stopRequested && !handle.abort.signal.aborted && !signal.aborted) {
+      while (!handle.stopRequested && !signal.aborted) {
         // A reply does not revoke a human pause/cancel. Keep this same waiter
         // dormant while paused; explicit resume changes the original Run fact.
         const runRef = handle.currentRun;
@@ -744,11 +744,8 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
     handle.currentRun = structuredClone(runRef);
     const fresh = await freshStart(handle, runRef);
     const pumpAbort = new AbortController();
-    // A stop or driver close must cancel the consultation too; link both into the
-    // pump signal that every consultation call receives.
-    const onLoopAbort = (): void => { try { pumpAbort.abort('driver_stopped'); } catch { /* already aborted */ } };
-    handle.abort.signal.addEventListener('abort', onLoopAbort, { once: true });
-    if (handle.abort.signal.aborted) onLoopAbort();
+    // Stop/close abort `activePumpAbort`, the pump signal every consultation
+    // call receives.
     handle.activePumpAbort = pumpAbort;
     let drain = false;
     const pumpDone = fresh ? pump(handle, runRef, pumpAbort.signal, true, () => drain) : null;
@@ -764,7 +761,6 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
       // Explicit stop/close still abort this signal and we await the same promise.
       drain = true;
       if (pumpDone !== null) await pumpDone.catch(() => { /* the pump recorded its own reason */ });
-      handle.abort.signal.removeEventListener('abort', onLoopAbort);
       if (handle.activePumpAbort === pumpAbort) handle.activePumpAbort = null;
     }
   }

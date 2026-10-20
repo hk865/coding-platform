@@ -29,6 +29,7 @@ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
+import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createModelCallService } from '../../src/core/work-graph/tasks/model-call-service.js';
@@ -173,6 +174,7 @@ export function createK3_35Runtime(world: K3ReviewCardWorld, options: K3_35Runti
   const executions = createRunStateReader({ records });
   const roles = createRoleConfigurationService({ records, now, eventId });
   const materialReads = createMaterialRecordReaders(records);
+  const controls = createRunControlService({ records, authority: materialReads.authority, reads: executions, now, eventId });
   const materials = createMaterialService({ bodies, authority: materialReads.authority, now });
   const sessions = world.fixture.b2.base.sessionsPort;
   const sessionOperations = createSessionOperations({ sessions, kernelStores: options.kernelStores });
@@ -226,6 +228,7 @@ export function createK3_35Runtime(world: K3ReviewCardWorld, options: K3_35Runti
     bodies,
     activity,
     graphHistory,
+    controls,
     sessionOperations,
     kernelStores: options.kernelStores,
     workspaceHost,

@@ -113,7 +113,7 @@ async function makeWorld(kind: 'memory' | 'sqlite'): Promise<Fixture> {
   // The scripted model is an injected dependency; the stale start is refused
   // before any model request, so its call count must stay zero.
   const model = createScriptedModel([{ kind: 'text', text: 'the review round must never reach the model' }]);
-  const { runtime: runtimeService } = createK3_35Runtime(world, {
+  const { runtime: runtimeService, deps: runtimeDeps } = createK3_35Runtime(world, {
     model, tools: ['read', 'run_readonly_command'], writeScope: [], now: () => world.fixture.now(),
     eventId: () => `k3-15-ur3h-runtime-event-${String(++seq)}`, newId: () => world.fixture.newId(),
     kernelStores: await kernelStoresOf(world), workspaceRevision: () => workspaceRevision(world),
@@ -139,7 +139,8 @@ async function makeWorld(kind: 'memory' | 'sqlite'): Promise<Fixture> {
   const dependencies: WorkflowDependencies = {
     tasks: world.fixture.b2.base.goals, plans: world.fixture.b2.base.plans, sessions: world.fixture.b2.base.sessionsPort,
     claims: { ...world.fixture.b2.base.service, requeueTask: requeues.requeueTask }, executions: reads,
-    runtime: runtimeService.port, evidence, checks,
+    runtime: { ...runtimeService.port,
+      createSession: runtimeDeps.sessionOperations.createSession.bind(runtimeDeps.sessionOperations) }, evidence, checks,
     configuration: configurationOf(world),
     sourceAuthority: createSourceAuthorityReader({ authority }),
     controls,

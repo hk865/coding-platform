@@ -44,18 +44,10 @@ function isNonEmptyText(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function parseRecordObject(json: unknown): DecodeResult<Record<string, unknown>> {
   if (typeof json !== "string") return { status: "invalid", reason: "record json must be a string" };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch (error) {
-    return { status: "invalid", reason: `record json is not parseable: ${messageOf(error)}` };
-  }
+  // The plan is decoded before bindPreparedRecords runs, so this parse cannot fail.
+  const parsed: unknown = JSON.parse(json);
   if (!isObject(parsed)) return { status: "invalid", reason: "record json body is not a JSON object" };
   return { status: "decoded", value: parsed };
 }

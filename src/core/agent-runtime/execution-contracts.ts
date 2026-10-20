@@ -329,13 +329,11 @@ export type RuntimeExecutionDependencies = {
   /**
    * Rework 2 item 2: the ONE canonical Task-closure reader (`satisfied`,
    * `cancelled`, `superseded`), the same `plan-readers.readTaskClosure` the
-   * work graph uses. OPTIONAL only on this Runtime shell so unrelated
-   * `createAgentRuntime` callers keep compiling; `createAgentRuntime` installs
-   * a fail-closed reader (rejected `unavailable`) when it is absent — never an
-   * "absent means open" default. The composition root always wires the real
+   * work graph uses. Required: `createAgentRuntime` passes it straight to the
+   * execution preparation, and the composition root always wires the real
    * reader to the same records.
    */
-  readTaskClosure?: (
+  readTaskClosure: (
     ctx: CoreCallContext,
     task: { projectId: string; goalId: string; taskId: string },
   ) => Promise<ReadResult<{ closed: boolean; cause: 'satisfied' | 'cancelled' | 'superseded' | null }>>;

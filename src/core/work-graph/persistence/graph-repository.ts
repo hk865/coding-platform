@@ -333,7 +333,6 @@ export function createGoalGraphRepository(records: GoalRecordTransactionPort): G
       case "invalid":
         return { status: "invalid", reason: receipt.reason };
       case "corrupt":
-      case "unsupported":
         return { status: "corrupt", reason: `${receipt.code}: ${receipt.reason}` };
       default:
         return { status: "unavailable", reason: `${receipt.code}: ${receipt.reason}` };

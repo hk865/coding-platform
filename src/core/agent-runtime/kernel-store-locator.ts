@@ -81,8 +81,10 @@ export async function createKernelStoreRegistry(input: {
     },
     byAdapterId(adapterId: string) { return current.get(adapterId) ?? null; },
     async withStore<T>(adapterId: string, use: (store: SqliteStores) => Promise<T>): Promise<T> {
-      const location = current.get(adapterId);
-      if (!location) throw new Error(`unregistered Kernel adapterId ${adapterId}`);
+      // Every caller resolves the adapter through byAdapterId first and only rereads
+      // the same id here; the registry never removes an entry, so this lookup cannot
+      // miss a location that the caller's check just proved present.
+      const location = current.get(adapterId)!;
       const store = await SqliteStores.open(location.databasePath);
       try { return await use(store); } finally { await store.close(); }
     },

@@ -527,16 +527,12 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
         return rejected('unavailable', 'the persisted locator disagrees with the claim Session mapping');
       }
       const auth = record.run.executionAuthorization;
-      if (auth === undefined) {
-        // No V2 binding yet: there is no Kernel run to reconcile.
-        return { status: 'ready', value: record };
-      }
-      const v2Auth: ExecutionAuthorizationV2 = auth;
-      const authUsable = v2Auth.phase === 'entered' || (alreadyEnded && v2Auth.phase === 'settled');
-      if (!authUsable) {
-        // An entering/unknown binding has no reconciled Kernel history yet.
-        return { status: 'ready', value: record };
-      }
+      // No V2 binding yet, or an entering/unknown binding: there is no reconciled
+      // Kernel history to read.
+      const authUsable = auth !== undefined
+        && (auth.phase === 'entered' || (alreadyEnded && auth.phase === 'settled'));
+      if (!authUsable) return { status: 'ready', value: record };
+      const v2Auth: ExecutionAuthorizationV2 = auth!;
       if (signal.aborted) return rejected('cancelled', 'the observation was cancelled before reading the history window');
 
       const cached = cache.get(cacheKey);

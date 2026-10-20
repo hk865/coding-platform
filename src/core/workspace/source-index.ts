@@ -75,8 +75,8 @@ export class SourceIndex {
         getScriptSnapshot: name => { const f = memory.get(name); return f ? ts.ScriptSnapshot.fromString(f.content) : undefined; },
         fileExists: name => memory.has(name), readFile: name => memory.get(name)?.content,
         directoryExists: name => [...memory.keys()].some(p => p.startsWith(name.replace(/\/$/, '') + '/')),
-        readDirectory: () => [], useCaseSensitiveFileNames: () => true,
-        getCancellationToken: () => ({ isCancellationRequested: () => signal.aborted, throwIfCancellationRequested: () => signal.throwIfAborted() }),
+        useCaseSensitiveFileNames: () => true,
+        getCancellationToken: () => ({ isCancellationRequested: () => signal.aborted }),
       };
       service = ts.createLanguageService(host);
       const program = service.getProgram()!;

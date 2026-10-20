@@ -138,8 +138,14 @@ export interface RuntimeExecutionPort {
     Promise<ReadResult<RunActivityRead | { kind: 'not_entered' }>>;
 }
 
+/** What the agent factory itself publishes. The five Session/capability members
+ * are the composition root's: it spreads this port and supplies the real
+ * implementations, so the factory never publishes an unsupported stub of them. */
+export type AgentRuntimePort = Omit<RuntimeExecutionPort,
+  'capabilities' | 'createSession' | 'readSessionHistory' | 'readExecutionHistory' | 'readTaskExecutionHistory'>;
+
 export type AgentRuntimeService = {
-  port: RuntimeExecutionPort;
+  port: AgentRuntimePort;
   initialize?(): Promise<void>;
   close?(): Promise<void>;
 };

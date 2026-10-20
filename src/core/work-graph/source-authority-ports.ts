@@ -16,19 +16,21 @@ export type SourceSnapshotResult =
   | { status: 'unavailable'; reason: string }
   | { status: 'unsupported'; reason: string };
 
+/** The exact submission read never consumes the projection `not_ready` state. */
+export type QuerySubmissionRead = Exclude<ReadResult<QueryJobSubmittedEvent>, { status: 'not_ready' }>;
+
 /** Exact accepted facts only. Missing facts, unreadable facts, and fact kinds
  * without a provider stay distinct. A found Run is not an execution/read grant:
  * current lifecycle, identity and permissions remain the consumer's checks. */
 export type SourceSnapshotReads = {
   load(ref: SourceCanonicalRef): Promise<SourceSnapshotResult>;
   /**
-   * R5b.2 exact submission locator. Optional so a snapshot-only Work caller
-   * keeps its existing `load` behavior. When present, the formal Query source
-   * path resolves the original initiator from the Job's own locator instead of
-   * scanning events; absence stays explicitly unsupported and is never faked as
-   * an empty page.
+   * R5b.2 exact submission locator. Required: the Query source path resolves the
+   * original initiator from the Job's own locator instead of scanning events. A
+   * snapshot-only Work caller supplies the same reader and never calls it; its
+   * `unsupported` answer is explicit and is never faked as an empty page.
    */
-  readQuerySubmission?(ref: QueryJobRef): Promise<ReadResult<QueryJobSubmittedEvent>>;
+  readQuerySubmission(ref: QueryJobRef): Promise<QuerySubmissionRead>;
 };
 
 /** Reuse the already assembled material canonical reader; no second Store

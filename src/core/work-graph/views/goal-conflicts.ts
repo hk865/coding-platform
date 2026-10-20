@@ -409,8 +409,10 @@ export async function readGoalFootprint(
   const executed = await deps.executedFiles.readGoalExecutedFiles(ctx, { goalRef: input.goalRef,
     ...(input.atLeastCursor === undefined ? {} : { atLeastCursor: input.atLeastCursor }) });
   if (executed.status !== 'ready') return executed;
+  // Without an adopted catalog no "executed file" can be in a module: the
+  // footprint reports none, exactly as the plan reader does.
   const mapped = architecture === null
-    ? executed.value.files.map((file) => ({ path: file.path, moduleRef: null, certainty: file.certainty }))
+    ? []
     : mapExecutedFilesToModules(architecture, executed.value.files);
   return { status: 'ready', value: {
     goalRef: { ...goal.ref },

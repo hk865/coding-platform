@@ -123,7 +123,7 @@ function resolvedRole(): Extract<RoleSpecResolutionV1, { status: 'resolved' }> {
   return { status: 'resolved', roleId: 'builder', revision: ROLE_SPEC_REF, spec: roleSpec() };
 }
 
-function roleResolution(): RoleSpecResolutionV1 {
+function roleResolution(): Extract<RoleSpecResolutionV1, { status: 'resolved' }> {
   return resolvedRole();
 }
 

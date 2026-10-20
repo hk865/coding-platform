@@ -104,7 +104,8 @@ function isolateInput(input: unknown): IsolatedInput {
 export function createConsultationConsumer(deps: {
   sessions: SessionDirectoryPort;
   plans: PlanTaskPort;
-  runtime: RuntimeExecutionPort;
+  runtime: Pick<RuntimeExecutionPort,
+    'createSession' | 'readCompletedBoundary' | 'prepareQuery' | 'startQuery' | 'observeQuery'>;
   consultations: ConsultationConsumerDependencies;
   /**
    * Slice 1 §4.2/E9: when present, a copy whose formal Answer has been

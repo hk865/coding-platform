@@ -83,7 +83,6 @@ export type LineFactsV1 = {
   partialParts: { part: LineHistoryPartV1; reason: string }[];   // L1b：原样进 LineStatusV1
   handoffFrom: SessionRef | null; handoffFromLine: SessionRef | null;
   handedTo: SessionRef | null;                        // 已归档线：它的换手接任者
-  provenanceUnchecked: boolean; legacyUncheckedInWorkspace: LineCountV1;
   unknownCallReviewsPending: number;                  // K3 合入前恒为 0
   queueComplete: boolean;
   pinned: boolean;
@@ -262,7 +261,7 @@ export function deriveLineStatus(facts: LineFactsV1): LineStatusV1 {
   const archived = facts.head.lifecycle === 'archived';
   const done = evaluateDoneEvidence(facts, archived);
   const ownState = archived ? archivedOwn(facts, done) : activeOwn(facts, done);
-  const markers = deriveMarkers(facts, ownState.own);
+  const markers = deriveMarkers(facts);
   const attentionState = deriveAttention(facts);
   const status: LineStatusV1 = {
     own: ownState.own,
@@ -413,7 +412,7 @@ function standbyReason(facts: LineFactsV1, done: DoneVerdict, waiting: boolean):
 // Markers (§3.3)                                                             //
 // -------------------------------------------------------------------------- //
 
-function deriveMarkers(facts: LineFactsV1, own: LineOwnStateV1): LineMarkerV1[] {
+function deriveMarkers(facts: LineFactsV1): LineMarkerV1[] {
   const markers: LineMarkerV1[] = [];
   const head = facts.head;
   if (facts.holder !== null && facts.holder.kind === 'run') {
@@ -440,11 +439,6 @@ function deriveMarkers(facts: LineFactsV1, own: LineOwnStateV1): LineMarkerV1[] 
     .filter((copy) => copy.phase === 'claimed' || copy.phase === 'prepared' || copy.phase === 'entering' || copy.phase === 'entered')
     .map((copy) => copy.session);
   if (answeringCopies.length > 0) markers.push({ kind: 'copy_answering', copies: answeringCopies });
-  const legacyInChain = facts.chain.some((entry) => entry.provenance === null);
-  const legacyUnchecked = facts.legacyUncheckedInWorkspace;
-  const retiredUnchecked = own === 'retired'
-    && (legacyUnchecked.status !== 'exact' || legacyUnchecked.value > 0);
-  if (legacyInChain || retiredUnchecked) markers.push({ kind: 'provenance_unchecked' });
   return markers;
 }
 

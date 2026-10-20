@@ -141,7 +141,7 @@ export const REVIEW_COMMAND_MAX_BYTES = 4 * 1024;
 
 export interface ContextAssembler {
   assembleTask(ctx: CoreCallContext, input: {
-    execution: TaskExecutionRecord; role: RoleSpecResolutionV1;
+    execution: TaskExecutionRecord; role: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>;
     configuration: ResolvedRuntimeConfiguration;
     permissions: TaskEnvelopeV1['permissions'];
   }): Promise<ReadResult<AssembledContextV1>>;
@@ -495,7 +495,7 @@ export function buildUnknownCallReviewInputV1(input: {
     reviewRef: { ...input.reviewRef }, revision: review.revision, phase: input.phase, round: input.round,
     items, targets: input.targets ?? null, personText: input.personText ?? null,
     annotations: (input.annotations ?? []).map(annotation => ({ ...annotation })),
-    platformTargets: [...(input.platformTargets ?? [])].sort((left, right) => left - right),
+    platformTargets: [...(input.platformTargets ?? [])],
     workspace,
   };
 }
@@ -606,7 +606,7 @@ function templateDutyOf(sessionRole: RoleConfigurationRef | undefined): Platform
 
 /** The Role's explicit duty, else the Host's, else the duty the Session's versioned legacy template fixes, else executor. */
 function effectiveDuty(
-  role: RoleSpecResolutionV1, configuration: ResolvedRuntimeConfiguration, sessionRole: RoleConfigurationRef | undefined,
+  role: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>, configuration: ResolvedRuntimeConfiguration, sessionRole: RoleConfigurationRef | undefined,
 ): { duty: PlatformDutyV1 } | { rejection: CoreRejection } {
   const roleDuty = role.status === 'resolved' ? role.spec.platformDuty : undefined;
   const hostDuty = configuration?.platformDuty;
@@ -621,7 +621,7 @@ function effectiveDuty(
 }
 
 function rolePayload(
-  role: RoleSpecResolutionV1,
+  role: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>,
   permissions: TaskEnvelopeV1['permissions'],
   duty: PlatformDutyV1,
   residentBudgetBytes: number,
@@ -655,11 +655,7 @@ function rolePayload(
       `purpose: ${profile.purpose}`,
       `responsibility: ${profile.responsibility.join(', ')}`,
     ];
-    if (role.status === 'absent') {
-      specification = ['## Role specification', `role: ${role.roleId} (${role.status})`, role.reason, ...detail].join('\n');
-    } else {
-      specification = ['## Role specification', `role: ${role.roleId} (${role.status})`, role.reasons.map((reason) => JSON.stringify(reason)).join('; '), ...detail].join('\n');
-    }
+    specification = ['## Role specification', `role: ${role.roleId} (${role.status})`, role.reason, ...detail].join('\n');
   }
   return [binding, specification, `duty: ${duty}`, `contextResidentBytes: ${String(residentBudgetBytes)}`].join('\n\n');
 }
@@ -864,7 +860,9 @@ function optionalRowsFromExtensions(extensions: ContextExtensionsV1): {
     text: withNoteVersion(row.label, row.noteId, row.version),
   }));
   return {
-    footprint: extensions.footprint.rows.map((row) => ({ key: row.key, text: indexRowText(row) })),
+    // The footprint section is a declared future section; its producer only ever
+    // writes not_implemented with no rows, so the projection stays empty.
+    footprint: [],
     notes,
     reminders: [
       ...extensions.anomalies.rows.map((row) => ({
@@ -999,19 +997,18 @@ export async function briefWorkspaceFactsFor(
   if (resolved.status === 'rejected' && resolved.code === 'cancelled') return cancelled();
   if (signal.aborted) return cancelled();
   if (resolved.status !== 'ready') return unavailable(`the workspace root could not be resolved: ${resolved.reason}`);
-  const digest = await source.captureDigest(resolved.value.root).catch((error: unknown) =>
-    ({ status: 'unavailable' as const, reason: messageOf(error) }));
+  const digest = await source.captureDigest(resolved.value.root);
   // `captureDigest` has no cancelled result of its own: judge it by the signal.
   if (signal.aborted) return cancelled();
   const briefCheckpoint: ContinuationSourceCheckpointV1 = digest.status === 'ready'
     ? { kind: 'brief', at, workspaceRevision: resolved.value.workspaceRevision, sourceDigest: digest.sourceDigest, unavailableReason: null }
     : { kind: 'brief', at, workspaceRevision: resolved.value.workspaceRevision, sourceDigest: null, unavailableReason: digest.reason };
-  const captured = await source.capture(resolved.value.root).catch(() => null);
+  const captured = await source.capture(resolved.value.root);
   if (signal.aborted) return cancelled();
   let uncommitted: BriefWorkspaceFacts['uncommitted'];
-  if (captured === null || captured.status !== 'ready') {
+  if (captured.status !== 'ready') {
     uncommitted = { status: 'unavailable', baseCommit: null, paths: [], omitted: 0,
-      reason: captured === null ? 'the workspace capture failed' : `the workspace capture is ${captured.status}` };
+      reason: `the workspace capture is ${captured.status}` };
   } else if (captured.sourceProof.kind === 'git-head-worktree') {
     // K3-04/L5: a Host-denied path is never named anywhere in the brief, so the
     // older whole-workspace reader's changed list is filtered here too.
@@ -1673,7 +1670,7 @@ export function createContextAssembler(deps: ContextAssemblerDependencies): Cont
   const clock = (deps as ContextAssemblerDependencies & ContextClock).now;
 
   async function assembleTask(ctx: CoreCallContext, input: {
-    execution: TaskExecutionRecord; role: RoleSpecResolutionV1;
+    execution: TaskExecutionRecord; role: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>;
     configuration: ResolvedRuntimeConfiguration;
     permissions: TaskEnvelopeV1['permissions'];
     /** Rework 1 item 1: the ONE Task review-record read `prepare` made. */

@@ -279,14 +279,6 @@ export class TypeScriptSourceAnalyzer {
   private configure(configPath?: string): string | null {
     const { options, rootNames: roots, resolvedConfigPath } = configureTypeScriptProject(this.installed, configPath);
     const readFile = (name: string) => this.installed.get(posix.normalize(name))?.content;
-    const matches = (name: string, base: string, pattern: string) => {
-      const full = posix.resolve(base, pattern);
-      return posix.matchesGlob(name, full) || (!/[?*]/.test(pattern) && name.startsWith(full.replace(/\/$/, '') + '/'));
-    };
-    const readDirectory: ts.ParseConfigHost['readDirectory'] = (base, extensions, excludes, includes, depth) => [...this.installed.keys()].filter(name =>
-      name.startsWith(base.replace(/\/$/, '') + '/') && (!extensions || extensions.some(extension => name.endsWith(extension))) &&
-      (!depth || posix.relative(base, name).split('/').length <= depth + 1) &&
-      (includes ?? ['**/*']).some(pattern => matches(name, base, pattern)) && !(excludes ?? []).some(pattern => matches(name, base, pattern)));
     const key = JSON.stringify({ options, roots });
     this.options = options; this.rootNames = roots;
     if (!this.service || key !== this.configKey) {
@@ -302,7 +294,6 @@ export class TypeScriptSourceAnalyzer {
         hasInvalidatedResolutions: () => this.resolutionsInvalidated,
         fileExists: name => this.installed.has(posix.normalize(name)), readFile,
         directoryExists: name => [...this.installed.keys()].some(candidate => candidate.startsWith(name.replace(/\/$/, '') + '/')),
-        readDirectory: (path, extensions, excludes, includes, depth) => [...readDirectory(path, extensions ?? [], excludes, includes ?? ['**/*'], depth)],
       };
       this.service = ts.createLanguageService(host);
       this.configKey = key;

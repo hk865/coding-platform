@@ -45,8 +45,8 @@ export type SessionMachineState = 'absent' | {
   healthConclusion: SessionHealthConclusion | null;
   occupancy: SessionMachineOccupancy | null;
   revision: number;
-  /** Slice 1 §3.5: filled by `sessionMachineStateOf`; a narrow fixture without it reads as null. */
-  provenance?: SessionProvenanceV1 | null;
+  /** Slice 1 §3.5: filled by `sessionMachineStateOf`; every stored Session has one. A narrow fixture may omit it. */
+  provenance?: SessionProvenanceV1;
   /** Slice 1 §3.5: filled by `sessionMachineStateOf`; a narrow fixture without it reads as null. */
   archiveRequest?: SessionArchiveRequestV1 | null;
 };
@@ -298,7 +298,7 @@ export function sessionMachineStateOf(record: SessionRecord | null): SessionMach
         ? { kind: 'execution', holder: occupancy.executionRef, generation: occupancy.generation }
         : { kind: 'maintenance', holder: occupancy.operationRef, generation: occupancy.generation },
     revision: record.revision,
-    provenance: record.provenance ?? null,
+    provenance: record.provenance,
     archiveRequest: record.archiveRequest ?? null,
   };
 }
@@ -597,8 +597,6 @@ export function transitionSession(state: SessionMachineState, event: SessionEven
       return archiveRequested(state, event.archive, ctx);
     case 'archive_request_released':
       return archiveRequestReleased(state, event.archiveRequestId, ctx);
-    default:
-      return unreachable(event, 'Session event');
   }
 }
 

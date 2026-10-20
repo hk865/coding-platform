@@ -18,6 +18,7 @@ import type { MaterialPort } from '../core/work-graph/model/material-contracts.j
 import { createWorkspaceAccessFactory, type WorkspaceHostBindings } from '../core/workspace/access.js';
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../core/workspace/workspace-tools.js';
 import { createAgentRuntime } from '../core/agent-runtime/runtime.js';
+import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import { createExecutionEntryService, readManifestFromEnvelope } from '../core/work-graph/tasks/execution-entry-service.js';
 import { createModelCallService } from '../core/work-graph/tasks/model-call-service.js';
 import { createSessionMailbox, createMessageWriteOwner } from '../core/work-graph/communication/mailbox-service.js';
@@ -886,7 +887,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // later-bound implementation, so the message service needs no second
     // source-facts owner and the file order is unchanged.
     let boundNoteDecisionSource: NoteDecisionSourcePort | null = null;
-    const noteDecisionSourcePort: NoteDecisionSourcePort = {
+    const noteDecisionSourcePort: Pick<NoteDecisionSourcePort, 'readNoteDecisions' | 'readNoteDecision'> = {
       readNoteDecisions: (ctx, input) => boundNoteDecisionSource === null
         ? Promise.resolve({ status: 'rejected' as const, code: 'unavailable' as const,
           reason: 'the note-decision source is not bound yet' })
@@ -895,10 +896,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         ? Promise.resolve({ status: 'rejected' as const, code: 'unavailable' as const,
           reason: 'the note-decision source is not bound yet' })
         : boundNoteDecisionSource.readNoteDecision(ctx, input),
-      applyNoteDecision: (ctx, input) => boundNoteDecisionSource === null
-        ? Promise.resolve({ status: 'rejected' as const, code: 'unsupported' as const,
-          reason: 'the note-decision source is not bound yet', noteId: input.pin.noteId })
-        : boundNoteDecisionSource.applyNoteDecision(ctx, input),
     };
     const decisionSources = createDecisionSourceFacts({ records: backend.records, plans: planService,
       noteDecisions: noteDecisionSourcePort, unknownCallReviews, workspace: { readWorkspace: workspace.tools.readWorkspace },
@@ -939,8 +936,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const rawWorkspaceDecisionSettings = createDecisionSettingsService({ records: backend.records, now, newId: randomUUID,
       displayTokens, positions: noticePositions, ...(operatorActor === undefined ? {} : { operatorActor }) });
     // Slice 2B L13: the production composition uses the REAL executed-files
-    // reader (the same `backend.records` the rest of the platform owns); the
-    // moved test-only stub is injected only by the slice-5 tests.
+    // reader, the same `backend.records` the rest of the platform owns.
     const goalExecutedFiles = createGoalExecutedFilesReader({ records: backend.records });
     const goalConflicts = createGoalConflictAssembler({ records: backend.records, catalog, executedFiles: goalExecutedFiles });
     // §4.2: the card sources available in this slice. Both readers are built
@@ -1244,7 +1240,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     function sessionCall<T>(call: () => Promise<T>): Promise<T | CoreRejection> {
       return trackedCall<T | CoreRejection>(call, unavailable);
     }
-    const sessions: SessionDirectoryPort & SessionLifecyclePort = {
+    const sessions: SessionDirectoryPort & Omit<SessionLifecyclePort, 'finishSessionArchive'> = {
       admitSessionCreation: (...args) => trackedCall(() => sessionDirectory.admitSessionCreation(...args), unavailable),
       recordSessionCreated: (...args) => trackedCall(() => sessionDirectory.recordSessionCreated(...args), unavailable),
       getSessionOperation: (...args) => trackedCall(() => sessionDirectory.getSessionOperation(...args), unavailable),
@@ -1257,7 +1253,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // low-level public `sessions/archive` signature/return is unchanged.
       requestSessionArchive: (...args) => trackedCall(() => sessionLifecycle.requestSessionArchive(...args), unavailable),
       readSessionArchiveRequestReceipt: (...args) => trackedCall(() => sessionLifecycle.readSessionArchiveRequestReceipt(...args), unavailable),
-      finishSessionArchive: (...args) => trackedCall(() => sessionLifecycle.finishSessionArchive(...args), unavailable),
       releaseSessionArchiveRequest: (...args) => trackedCall(() => sessionLifecycle.releaseSessionArchiveRequest(...args), unavailable),
     };
     const executions: ExecutionReadPort & ExecutionHistoryWritePort
@@ -1272,10 +1267,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const claims: TaskClaimPort = {
       claimTask: (...args) => trackedCall(() => claimService.claimTask(...args), unavailable),
       requeueTask: (...args) => trackedCall(() => requeueService.requeueTask(...args), unavailable),
-      // Slice 1 E5/K6 (§3.3): the requeue read the Session-archive path uses to
-      // reuse an existing TaskRequeue instead of rewriting it. The same owner
-      // instance as `requeueTask`, never a second service.
-      readTaskRequeue: (...args) => trackedCall(() => requeueService.readTaskRequeue(...args), unavailable),
       // K3 L21 D9 (ruling 4): the record-keyed replay read of the derived
       // release-hold requeue, from the same owner instance and never a write.
       readTaskRequeueByIdentity: (...args) => trackedCall(
@@ -1372,13 +1363,12 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       storeArtifact: (...args) => trackedCall(() => rawMaterials.storeArtifact(...args), unavailable),
       openArtifact: (...args) => trackedCall(() => rawMaterials.openArtifact(...args), unavailable),
     };
-    const messages: SessionMailboxPort & Required<Pick<SessionMailboxPort, 'readOutbox'>> = {
+    const messages: Omit<SessionMailboxPort, 'ackMessage'> & Required<Pick<SessionMailboxPort, 'readOutbox'>> = {
       sendMessage: (...args) => trackedCall(() => mailbox.sendMessage(...args), unavailable),
       readMessage: (...args) => trackedCall(() => mailbox.readMessage(...args), unavailable),
       readMessageBody: (...args) => trackedCall(() => mailbox.readMessageBody(...args), unavailable),
       readInbox: (...args) => trackedCall(() => mailbox.readInbox(...args), unavailable),
       readOutbox: (...args) => trackedCall(() => mailbox.readOutbox(...args), unavailable),
-      ackMessage: (...args) => trackedCall(() => mailbox.ackMessage(...args), unavailable),
       respondMessage: (...args) => trackedCall(() => mailbox.respondMessage(...args), unavailable),
       // Slice 1 (spec §4.4): the read-only undelivered-reply source page.
       readUndeliveredReplies: (...args) => trackedCall(() => mailbox.readUndeliveredReplies!(...args), unavailable),
@@ -1389,11 +1379,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     // Slice 5 §4.5 platform ports: the same trackedCall drain convention as every
     // other owner, so an in-flight decision write is accounted for before close.
-    const goalSettings: GoalSettingsPort = {
+    const goalSettings: Omit<GoalSettingsPort, 'resolveGoalConflict'> = {
       readGoalSettings: (...args) => trackedCall(() => rawGoalSettings.readGoalSettings(...args), unavailable),
       setGoalSettings: (...args) => trackedCall(() => rawGoalSettings.setGoalSettings(...args), unavailable),
       reorderGoals: (...args) => trackedCall(() => rawGoalSettings.reorderGoals(...args), unavailable),
-      resolveGoalConflict: (...args) => trackedCall(() => rawGoalSettings.resolveGoalConflict(...args), unavailable),
     };
     const workspaceDecisionSettings: WorkspaceDecisionSettingsPort = {
       markNoticesSeen: (...args) => trackedCall(() => rawWorkspaceDecisionSettings.markNoticesSeen(...args), unavailable),
@@ -1440,7 +1429,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     const runtimePort = {
       ...runtime.port,
-      async capabilities(...args: Parameters<typeof runtime.port.capabilities>): Promise<ReadResult<RuntimeCapabilities>> {
+      async capabilities(...args: Parameters<RuntimeExecutionPort['capabilities']>): Promise<ReadResult<RuntimeCapabilities>> {
         const [ctx, scope] = args;
         if (isClosing) return { status: 'rejected', code: 'unavailable', reason: 'platform is closing' };
         if (ctx.signal.aborted) return { status: 'rejected', code: 'cancelled', reason: 'capability read cancelled' };
@@ -1462,19 +1451,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       },
       readSessionHistory(...args: Parameters<typeof sessionOperations.readSessionHistory>) {
         return sessionCall(() => sessionOperations.readSessionHistory(...args));
-      },
-      async readCompletedBoundary(ctx: CoreCallContext, request: { sessionRef: SessionRef }): Promise<ReadResult<{ cursor: string | null; position: number }>> {
-        if (isClosing) return { status: 'rejected', code: 'unavailable', reason: 'platform is closing' };
-        if (ctx.principal.kind !== 'host') return { status: 'rejected', code: 'forbidden', reason: 'the completed boundary read requires the Host principal' };
-        if (request.sessionRef.projectId !== ctx.projectId) return { status: 'rejected', code: 'forbidden', reason: 'the Session belongs to another project' };
-        const read = await sessionDirectory.readSession(ctx, request.sessionRef);
-        if (read.status !== 'ready') return read;
-        const owner = createSessionHistoryCursorOwner({ kernelStores });
-        const boundary = await owner.completedBoundary({ session: read.value.record, signal: ctx.signal });
-        if (boundary.status !== 'resolved') {
-          return { status: 'rejected', code: boundary.code, reason: boundary.reason };
-        }
-        return { status: 'ready', value: { cursor: boundary.cursor, position: boundary.position } };
       },
       prepareExecution(...args: Parameters<typeof runtime.port.prepareExecution>) {
         return sessionCall(() => runtime.port.prepareExecution(...args));
@@ -1527,12 +1503,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...runtime.port,
       createSession: (...args: Parameters<typeof sessionOperations.createSession>) =>
         sessionOperations.createSession(...args),
-      readSessionHistory: (...args: Parameters<typeof sessionOperations.readSessionHistory>) =>
-        sessionOperations.readSessionHistory(...args),
-      readTaskExecutionHistory: (...args: Parameters<typeof graphHistory.readTaskExecutionHistory>) =>
-        graphHistory.readTaskExecutionHistory(...args),
-      readExecutionHistory: (...args: Parameters<typeof executionHistory.readExecutionHistory>) =>
-        executionHistory.readExecutionHistory(...args),
     };
     const workflowConfiguration = options.workflow === undefined
       ? undefined : structuredClone(options.workflow);
@@ -1601,7 +1571,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         const opened = await access.open(callCtx, workspaceRef);
         if (opened.status !== 'ready') return opened;
         const revision = opened.value.workspaceRevision;
-        await opened.value.release().catch(() => undefined);
+        await opened.value.release();
         return workspace.tools.captureSourceChanges(callCtx, { workspace: workspaceRef,
           workspaceRevision: revision, provider: request.provider });
       },
@@ -2121,7 +2091,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         record.run.status === 'ended' && record.run.outcome === 'outcome_unknown', 'Run');
       if (admitted !== null) return admitted;
       const auth = record.run.executionAuthorization;
-      const kernel = auth !== undefined ? auth.kernel : null;
+      if (auth === undefined) throw new Error('an unknown-outcome Run has no execution authorization');
+      const kernel = auth.kernel;
       const facts = kernel === null
         ? { ok: true as const, kernelTurnOpen: false, inputsConfirmed: null,
             draft: await readUnknownCallReviewDraft({ lookupToolCommit: toolCommitLookup, captureWorkspace }, ctx, { record,

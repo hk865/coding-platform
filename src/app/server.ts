@@ -34,7 +34,6 @@ import { createHostCoreCallContext } from './core-call-context.js';
 import {
   CORE_ROUTE_SPECS,
   CoreRouteRejectionError,
-  CoreUnsupportedError,
   dispatchCoreRoute,
   parseChangeStreamResume,
   parseCoreRouteRequest,
@@ -248,8 +247,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
       const result = await dispatchCoreRoute(options.bindings, suffix as CoreRouteSuffix, ctx, parsed);
       sendJson(response, 200, result);
     } catch (error) {
-      if (error instanceof CoreUnsupportedError) sendJson(response, statusForCode('unsupported'), error.rejection);
-      else if (error instanceof CoreRouteRejectionError) sendJson(response, statusForCode(error.rejection.code), error.rejection);
+      if (error instanceof CoreRouteRejectionError) sendJson(response, statusForCode(error.rejection.code), error.rejection);
       else sendJson(response, 500, { status: 'rejected', code: 'unavailable', reason: 'the Host failed to execute the route' });
     }
     return true;

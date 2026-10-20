@@ -27,7 +27,7 @@ import type { RecordLookupPort, LookupValue } from '../../record-store/lookup-po
 import { validateQueryRunSnapshot } from '../materials/record-readers.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import {
-  SESSION_BY_WORKSPACE_LOOKUP, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
+  decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
 import { runControlNodeOf } from '../state/run-machine.js';
 import {
@@ -261,7 +261,6 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
 
     // Successors (direct line heads): Sessions whose recorded provenance points
     // at this Session. A page-budget hit cannot be reported as "no successor".
-    let legacyPending = false;
     const continuations: SessionRef[] = [];
     const successors = await readLookupWindow(records, SESSION_BY_PROVENANCE_LOOKUP,
       [scope.projectId, scope.workspaceId, scope.sessionId]);
@@ -275,44 +274,19 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
       if (decoded.status !== 'decoded') return unavailable(`the successor Session ${record.refKey} is damaged: ${decoded.reason}`);
       const successor = decoded.value;
       if (successor.workspaceId !== scope.workspaceId) continue;
-      const provenance = successor.provenance ?? null;
-      // §2.2 S:190: a Session whose provenance is still unchecked is an
-      // unresolved legacy candidate. It is not a definite "no successor".
-      if (provenance === null) { legacyPending = true; continue; }
+      const provenance = successor.provenance;
       // Only a real continuation is a successor line head: a handoff stops the
       // trace and a readonly copy attaches to its `from`.
       if (provenance.kind !== 'continuation') continue;
       if (provenance.from.projectId !== scope.projectId || provenance.from.sessionId !== scope.sessionId) continue;
       continuations.push(successor.ref);
     }
-    // §2.2/§3.4 S:628: a still-unchecked legacy Session has no provenance index
-    // entry, so the successor sweep above can never see it. Sweep the workspace
-    // Session lookup (the same one the provenance reader uses) and mark the
-    // successor proof unresolved while any OTHER Session of the workspace still
-    // has no recorded provenance. The target itself cannot be its own successor.
-    if (!legacyPending) {
-      const workspace = await readLookupWindow(records, SESSION_BY_WORKSPACE_LOOKUP,
-        [scope.projectId, scope.workspaceId]);
-      if (workspace.status !== 'ready') return workspace.rejection;
-      // An unfinished workspace window cannot prove "no unresolved candidate",
-      // so keep the conservative pending marker.
-      if (workspace.budgetHit) legacyPending = true;
-      watermark = laterCursor(watermark, workspace.readThrough);
-      for (const record of workspace.records) {
-        const decoded = decodeSessionRecord(record);
-        if (decoded.status !== 'decoded') return unavailable(`a workspace Session is damaged: ${decoded.reason}`);
-        const candidate = decoded.value;
-        if (candidate.workspaceId !== scope.workspaceId) continue;
-        if (candidate.ref.sessionId === scope.sessionId) continue;
-        if ((candidate.provenance ?? null) === null) { legacyPending = true; break; }
-      }
-    }
-    const recorded = session.provenance ?? null;
-    const predecessor = recorded !== null && recorded.kind !== 'new' ? recorded : null;
+    const recorded = session.provenance;
+    const predecessor = recorded.kind !== 'new' ? recorded : null;
     return {
       status: 'ready',
       value: {
-        session, latestWork, wait, predecessor, continuations, legacyPending,
+        session, latestWork, wait, predecessor, continuations,
         sourceCursor: watermark ?? makeCommitCursor(1),
       },
     };
@@ -498,8 +472,8 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
       if (decoded.status !== 'decoded') return unavailable(`the successor Session ${key} is damaged: ${decoded.reason}`);
       const successor = decoded.value;
       if (successor.workspaceId !== scope.workspaceId) continue;
-      const provenance = successor.provenance ?? null;
-      if (provenance === null || provenance.kind === 'new') continue;
+      const provenance = successor.provenance;
+      if (provenance.kind === 'new') continue;
       if (provenance.from.projectId !== scope.projectId || provenance.from.sessionId !== scope.sessionId) continue;
       items.push(successor);
     }

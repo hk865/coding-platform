@@ -49,6 +49,7 @@ import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-s
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
+import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { createTaskClaimFixture, type ClaimFixtureKind, type TaskClaimFixture } from './task-claim-fixture.js';
@@ -290,6 +291,8 @@ export async function createB2RuntimeFixture(options: {
     return {claims:claimFixture.makeService(records),executions,entry:overrides.entry??entry,modelRequests:overrides.modelRequests??modelRequests,
       roles,plans,sessions,materials,bodies,historyWriter:createExecutionHistoryService({records,now,eventId}),activity,graphHistory:createGraphExecutionHistoryReader({executions,history:activity}),sessionOperations,kernelStores:selectedKernelStores,
       unknownCallReviews,
+      readTaskClosure: async (_ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) =>
+        readTaskClosure(records, { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
       workspaceHost:overrides.workspaceHost??{
         async resolveRoot(scope){return scope.projectId===claimFixture.scope.projectId&&scope.workspaceId===claimFixture.scope.workspaceId?{status:'ready',value:{root:claimFixture.directory,workspaceRevision:1}}:{status:'rejected',code:'forbidden',reason:'Unknown scope'};},
         async authorize(ctx,scope){

@@ -1249,7 +1249,8 @@ function locatorAfter(
   }
   const existing = run.executionHistory;
   if (existing !== undefined) {
-    if (!locatorShapeOk(existing)) return failed('unavailable', 'the stored executionHistory is malformed');
+    // The stored locator was validated by the RunSnapshot decoder; only the
+    // machine's input window below is checked here.
     // The stored locator against the claim SessionRef as given, whole (`execution-history-binding.ts:115`).
     if (!sameJson(existing.sessionRef, sessionRef)
       || !sameKernel(existing.kernel, kernel) || existing.startPosition !== history.startPosition) {

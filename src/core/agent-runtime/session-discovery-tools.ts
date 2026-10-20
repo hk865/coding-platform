@@ -56,9 +56,6 @@ function failure(callId: string, code: 'invalid_arguments' | 'execution_failed',
   return { schemaVersion: 1, callId, status: 'error',
     error: { code, message, retryable: false }, output: [], effects: noneEffects() };
 }
-function cancelled(callId: string, reason: string): ToolResult {
-  return { schemaVersion: 1, callId, status: 'cancelled', reason, output: [], effects: noneEffects() };
-}
 /** A real domain `not_ready`/`not_found`/rejection keeps its typed JSON so the
  * model sees the actual status/code/reason; success is never claimed. */
 function rejectedResult(callId: string, result: unknown, message: string): ToolResult {
@@ -66,16 +63,11 @@ function rejectedResult(callId: string, result: unknown, message: string): ToolR
     error: { code: 'execution_failed', message, retryable: false },
     output: [{ kind: 'json', value: result as never }], effects: noneEffects() };
 }
-function cancelledResult(callId: string, reason: string, result: unknown): ToolResult {
-  return { schemaVersion: 1, callId, status: 'cancelled', reason,
-    output: [{ kind: 'json', value: result as never }], effects: noneEffects() };
-}
 
 function mapRead(callId: string, result: ReadResult<unknown>): ToolResult {
   if (result.status === 'ready') return success(callId, result);
   if (result.status === 'not_ready') return rejectedResult(callId, result, 'the requested Session fact is not ready');
   if (result.status === 'not_found') return rejectedResult(callId, result, 'the requested Session record does not exist');
-  if (result.code === 'cancelled') return cancelledResult(callId, result.reason, result);
   return rejectedResult(callId, result, result.reason);
 }
 
@@ -130,7 +122,6 @@ export function createSessionDiscoveryTools(config: SessionDiscoveryToolsConfig)
       return failure(call.callId, 'invalid_arguments', 'the tool arguments cannot be isolated');
     }
     const context = snapshotContext(signal);
-    if (context.signal.aborted) return cancelled(call.callId, 'the tool call was cancelled before the directory read');
     try {
       return await run(accepted, context);
     } catch {

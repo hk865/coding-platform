@@ -746,7 +746,8 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   };
   const executionsReal = createRunStateReader({ records: readerRecords });
   const executionSpy: ExecutionSpy = { readExecutionCalls: 0, listExecutionsCalls: 0, contexts: [] };
-  const executions: ExecutionReadPort = {
+  // The reader now requires `listExecutions` (C4-113): the spy always has the real one.
+  const executions: ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> = {
     async readExecution(callCtx, ref, readOptions) {
       executionSpy.readExecutionCalls += 1;
       executionSpy.contexts.push(callCtx);
@@ -755,9 +756,7 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
     async listExecutions(callCtx, request) {
       executionSpy.listExecutionsCalls += 1;
       executionSpy.contexts.push(callCtx);
-      const list = executionsReal.listExecutions;
-      if (list === undefined) return { status: 'rejected', code: 'unsupported', reason: 'no list reader' };
-      return list(callCtx, request);
+      return executionsReal.listExecutions(callCtx, request);
     },
   };
   const materialSpy: MaterialSpy = { openArtifactCalls: 0, storeArtifactCalls: 0 };

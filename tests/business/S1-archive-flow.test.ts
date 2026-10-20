@@ -40,7 +40,7 @@ import { SESSION_LIFECYCLE_RECORD_SCHEMAS, SESSION_ARCHIVED_EVENT } from '../../
 import { decodeSessionWorkLink, sessionWorkLinkRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
-import { createSessionResponsibilityBasisReader } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { createSessionResponsibilityBasisReader, readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { taskRequeueRefKey } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
@@ -287,6 +287,8 @@ async function open(kind: 'memory' | 'sqlite', options: OpenOptions = {}): Promi
         },
       },
       sourceAuthority: () => createSourceAuthorityReader({ authority: materialReads.authority }),
+      readTaskClosure: async (_ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) =>
+        readTaskClosure(records, { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
       host,
       kernel,
       now,

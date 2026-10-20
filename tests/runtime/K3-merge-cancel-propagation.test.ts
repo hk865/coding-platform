@@ -75,12 +75,10 @@ function preparationFor(world: World, harness: Harness, claim: TaskClaim, writeS
       return read.value.run.workspaceSnapshot.revision;
     },
   });
-  const readTaskClosure = real.readTaskClosure;
-  if (readTaskClosure === undefined) throw new Error('the real closure reader is missing');
   const source = new VerificationWorkspaceReader();
   const puts = { manifest: 0, baseline: 0 };
   const deps = {
-    ...real, readTaskClosure,
+    ...real,
     bodies: {
       read: real.bodies.read.bind(real.bodies),
       async put(input: Parameters<typeof real.bodies.put>[0]) {

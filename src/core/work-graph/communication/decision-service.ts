@@ -24,14 +24,12 @@ import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import { isNonNeg, isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { GoalSnapshot } from '../../../contracts/ledger.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
-import type { QueryRunRef } from '../../../contracts/query-job.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type { RecordGuard, UniqueClaimChange } from '../../record-store/ports.js';
 import type { DecisionMessagePort, DecisionMessageServiceDependencies, S5RecordPort } from '../model/decision-contracts.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import type { SessionMessageEventV1 } from '../model/communication-contracts.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
-import { decodeQueryRunSnapshotRecord } from '../queries/query-record-codecs.js';
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
 import {
   bindMessageResponseCursor, createSessionMessageRecord, createSyntheticDecisionAnswerRecord, messageMachineStateOf,
@@ -448,24 +446,8 @@ export function createDecisionMessageService(
     return { ok: true, value: linked.value.claim.sessionRef };
   }
 
-  /** A query_run's Session is the settled/claimed QueryRun's Session. */
-  async function readQueryRunSession(ref: QueryRunRef): Promise<SessionOutcome> {
-    const key = canonicalOf(ref);
-    if (key === null) return { ok: false, rejection: rejectedWithCurrent('invalid', 'the caller QueryRun ref is not canonicalizable JSON') };
-    const read = await readOne(key);
-    if (!read.ok) return read;
-    if (read.record === null) return { ok: true, value: null };
-    const decoded = decodeQueryRunSnapshotRecord(read.record);
-    if (decoded.status !== 'decoded') {
-      return { ok: false, rejection: rejectedWithCurrent('unavailable', `the caller QueryRun is damaged: ${decoded.reason}`) };
-    }
-    const sessionRef = decoded.value.run.executionState?.sessionRef;
-    return { ok: true, value: sessionRef === undefined ? null : sessionRef };
-  }
-
   async function callerReaderSession(owned: Owned): Promise<SessionOutcome> {
     if (owned.principal.kind === 'work_run') return readRunSession(owned, owned.principal.runRef);
-    if (owned.principal.kind === 'query_run') return readQueryRunSession(owned.principal.queryRunRef);
     return { ok: true, value: null };
   }
 
@@ -905,7 +887,7 @@ export function createDecisionMessageService(
     const identity = messageIdentityOf(source);
     // §4.6 line 915: the bound scope and the formal allowed reader are checked
     // BEFORE any saved answer is returned. A Host user reader is always allowed;
-    // an agent caller (work_run/query_run) is allowed only when the canonical
+    // an agent caller (work_run) is allowed only when the canonical
     // source names a formal reader Session. §4.6/N6: when an answer was already
     // saved, the reader is proven from the historical facts saved with it (the
     // captured source and its formal proposer/request Session facts), not from

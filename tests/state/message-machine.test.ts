@@ -140,7 +140,6 @@ const ANSWER_FACTS: NonNullable<MessageGuardContext['queryAnswer']> = {
 
 /** Each failing MSG-06 fact in `respondFromQueryAnswer` order, with today's code and reason. */
 const ANSWER_REFUSALS: ReadonlyArray<{ facts: Partial<NonNullable<MessageGuardContext['queryAnswer']>>; code: CoreError; detail: string }> = [
-  { facts: { binding: 'not_consultation' }, code: 'forbidden', detail: 'the Query answer is not an explicit consultation answer' },
   { facts: { binding: 'other_message' }, code: 'forbidden', detail: 'the consultation answer belongs to another message' },
   { facts: { binding: 'other_recipient' }, code: 'forbidden', detail: 'the consultation answer recipient is not the original message recipient' },
   { facts: { binding: 'other_derivation_source' }, code: 'forbidden', detail: 'the derived answer source is not the original message recipient' },

@@ -5,8 +5,9 @@
  * The stored row carries its required canonical provenance:
  *   { ref, body, sourceRefs, origin }
  *
- * `origin` names a Run/TaskAttempt or a platform operation; a null owner is
- * never guessed into a principal, and a row without an origin is corrupt.
+ * `origin` names a Run/QueryRun or a platform operation; a null owner is
+ * never guessed into a principal, and a row without an origin (or with an
+ * unknown kind) is corrupt.
  *
  * All physical validation lives here so the memory Map seam and the SQLite table
  * differ only in how a row is persisted:
@@ -22,7 +23,7 @@
  */
 import { ARTIFACT_MAX_SIZE_BYTES, artifactBodyDigest, artifactBodySize } from "../../contracts/artifact.js";
 import type { ArtifactOwnerRunRef, ArtifactRef } from "../../contracts/artifact.js";
-import type { SourceRefV1, TaskAttemptRef } from "../../contracts/dispatch.js";
+import type { SourceRefV1 } from "../../contracts/dispatch.js";
 import type { MaterialOrigin, RawArtifactPut, RawArtifactRecord } from "./body-ports.js";
 import { isJsonObject, isNonEmptyString, parseJsonObject } from "./record-codec.js";
 
@@ -82,15 +83,6 @@ function isOwnerRunRef(value: unknown): value is ArtifactOwnerRunRef {
   return false;
 }
 
-function isTaskAttemptRef(value: unknown): value is TaskAttemptRef {
-  if (!isJsonObject(value)) return false;
-  return value["aggregateType"] === "TaskAttempt" &&
-    isNonEmptyString(value["projectId"]) &&
-    isNonEmptyString(value["goalId"]) &&
-    isNonEmptyString(value["taskId"]) &&
-    isNonEmptyString(value["attemptId"]);
-}
-
 function isActorRef(value: unknown): value is { kind: "human" | "system"; id: string } {
   if (!isJsonObject(value)) return false;
   return (value["kind"] === "human" || value["kind"] === "system") && isNonEmptyString(value["id"]);
@@ -112,16 +104,6 @@ function cloneOwnerRunRef(owner: ArtifactOwnerRunRef): ArtifactOwnerRunRef {
         queryJobId: owner.queryJobId,
         runId: owner.runId,
       };
-}
-
-function cloneTaskAttemptRef(attempt: TaskAttemptRef): TaskAttemptRef {
-  return {
-    aggregateType: "TaskAttempt",
-    projectId: attempt.projectId,
-    goalId: attempt.goalId,
-    taskId: attempt.taskId,
-    attemptId: attempt.attemptId,
-  };
 }
 
 function cloneArtifactRef(ref: ArtifactRef): ArtifactRef {
@@ -157,10 +139,7 @@ function normalizeOrigin(value: unknown): MaterialOrigin {
     if (isOwnerRunRef(owner)) {
       return { kind: "run", owner: cloneOwnerRunRef(owner) };
     }
-    if (isTaskAttemptRef(owner)) {
-      return { kind: "run", owner: cloneTaskAttemptRef(owner) };
-    }
-    reject("run origin must carry a complete Run/QueryRun/TaskAttempt ref");
+    reject("run origin must carry a complete Run/QueryRun ref");
   }
   if (kind === "platform_operation") {
     const projectId = value["projectId"];
@@ -182,11 +161,6 @@ function normalizeOrigin(value: unknown): MaterialOrigin {
     };
   }
   reject(`origin kind ${String(kind)} is not supported`);
-}
-
-function decodeOrigin(value: unknown): MaterialOrigin {
-  if (value === undefined) reject("stored origin is required");
-  return normalizeOrigin(value);
 }
 
 /** New-write boundary: a complete input encodes a row; a legacy origin is refused. */
@@ -254,5 +228,5 @@ export function decodeArtifactBodyRow(json: string): RawArtifactRecord {
   if (artifactBodyDigest(body) !== ref.digest || artifactBodySize(body) !== ref.sizeBytes) {
     reject("stored body does not match its recorded digest/size");
   }
-  return { ref: cloneArtifactRef(ref), body, sourceRefs, origin: decodeOrigin(row["origin"]) };
+  return { ref: cloneArtifactRef(ref), body, sourceRefs, origin: normalizeOrigin(row["origin"]) };
 }

@@ -113,7 +113,9 @@ async function archiveWithHeldReader(held: HeldRead) {
     messages: f.messages,
     archivePolicy: DEFAULT_SESSION_ARCHIVE_POLICY,
     now: () => t0,
-    runtime: { ...f.runtime.port, readArchiveChangedFiles: observer },
+    runtime: { ...f.runtime.port,
+      createSession: f.deps.sessionOperations.createSession.bind(f.deps.sessionOperations),
+      readArchiveChangedFiles: observer },
   });
 
   const controller = new AbortController();

@@ -44,7 +44,6 @@ export type QueryExecutionDriverPort = {
 };
 
 const BUILTIN_TOOL_NAMES = new Set<string>(['read', 'write', 'shell']);
-const CORE_ERROR_CODES = new Set<string>(['invalid', 'forbidden', 'not_found', 'source_stale', 'capacity', 'unsupported', 'unavailable', 'cancelled']);
 
 function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
@@ -77,9 +76,6 @@ function mapRead(result: ReadResult<unknown>): CoreRejection {
   if (result.status === 'not_found') return rejected('not_found', 'the required Query fact was not found');
   if (result.status === 'not_ready') return rejected('incomplete', 'the required Query fact is not readable at the required watermark');
   return { status: 'rejected', code: result.code, reason: result.reason, ...(result.current === undefined ? {} : { current: result.current }) };
-}
-function mapWorkspace(result: { status: 'rejected'; code: string; reason: string }): CoreRejection {
-  return rejected((CORE_ERROR_CODES.has(result.code) ? result.code : 'unavailable') as CoreRejection['code'], result.reason);
 }
 
 async function loadManifest(
@@ -304,7 +300,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       } catch (error) {
         return rejected('unavailable', `resolving the Query workspace root failed: ${messageOf(error)}`);
       }
-      if (rootResolved.status !== 'ready') return mapWorkspace(rootResolved);
+      // The QueryRun's binding always resolves; a non-ready result is fail-closed.
+      if (rootResolved.status !== 'ready') return rejected('unavailable', rootResolved.reason);
       if (rootResolved.value.workspaceRevision !== manifest.workspace.revision) {
         return rejected('source_stale', 'the workspace revision moved since the QueryRun was prepared');
       }
@@ -322,7 +319,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         } catch (error) {
           return rejected('unavailable', `the Host read policy could not be resolved: ${messageOf(error)}`);
         }
-        if (currentAuthorization.status !== 'ready') return mapWorkspace(currentAuthorization);
+        if (currentAuthorization.status !== 'ready') return rejected('unavailable', currentAuthorization.reason);
       }
       if (hasFileRead && currentAuthorization !== undefined && currentAuthorization.status === 'ready') {
         const permissionRevision = currentAuthorization.value.permissionRevision;

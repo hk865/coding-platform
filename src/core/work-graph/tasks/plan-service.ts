@@ -1872,16 +1872,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     if (authority.status !== 'ok') return authority;
     const read = await readProposal(records, validated);
     if (read.status !== 'ready') return asReadResult(read);
-    if (read.proposal.kind === 'candidate_v2') {
-      const scopeError = authorizeProposal(authority.principal, read.proposal);
-      if (scopeError !== null) return scopeError;
-    } else if (authority.principal.kind === 'work_run') {
-      if (read.proposal.goalRef.goalId !== authority.principal.runRef.goalId) return forbidden('the work run is not scoped to this proposal goal');
-    } else if (authority.principal.kind === 'query_run') {
-      if (read.proposal.ref.workspaceId !== authority.principal.queryRunRef.workspaceId) return forbidden('the query run is not scoped to this proposal workspace');
-    } else if (authority.principal.workspaceId !== null && authority.principal.workspaceId !== read.proposal.ref.workspaceId) {
-      return forbidden('the host context is scoped to another workspace');
-    }
+    const scopeError = authorizeProposal(authority.principal, read.proposal);
+    if (scopeError !== null) return scopeError;
     return { status: 'ready', value: read.proposal };
   }
 
@@ -2846,8 +2838,6 @@ async function readAdoption(
   if (refused?.ok === false) {
     return refusalOf(refused, refused.reason === 'stale' ? [{ ref: proposalRef, revision: proposal.revision }] : undefined);
   }
-  // PLAN-04/05 refused a legacy proposal above.
-  if (proposal.kind !== 'candidate_v2') throw new Error('PLAN-04/05 admitted a legacy proposal');
   // Slice 5 §2.5/T-R2-2: the accepted write copies this preserved origin.
   const originRead = await readProposalOrigin(records, proposalRef);
   if (originRead.status !== 'ready') return originRead;

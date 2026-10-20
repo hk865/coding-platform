@@ -90,6 +90,10 @@ function fakeFacts(entries: [SourceCanonicalRef, FactEntry][]) {
         case 'unsupported': return { status: 'unsupported', reason: 'injected unsupported' };
       }
     },
+    async readQuerySubmission() {
+      return { status: 'rejected' as const, code: 'unsupported' as const,
+        reason: 'the Work source guard never reads a Query submission' };
+    },
     async events() { events += 1; throw Error('Work source reads must not read Query event pages'); },
   };
   return { authority, eventsCalls: () => events };

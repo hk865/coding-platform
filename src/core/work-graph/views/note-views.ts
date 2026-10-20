@@ -69,7 +69,7 @@ export type NoteCheckDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   /** The plan readers (`queryGoal`/`queryTaskGraph`) or a narrower double. */
   plans?: Pick<PlanTaskPort, 'queryGoal' | 'queryTaskGraph'>;
-  architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
+  architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   workspace?: NoteAnchorWorkspace;
   /** R1: the raw artifact store; an artifact fact is an existence check only. */
   artifacts?: Pick<RawArtifactStorePort, 'read'>;
@@ -162,8 +162,8 @@ type CheckCaches = {
   understandingSeed: Map<string, { pointer: { noteId: string | null; revision: number | null };
     head: NoteHeadSnapshot | null }>;
   architecture: {
-    current?: Outcome<ArchitectureRevision | null>;
-    byRevision: Map<number, Outcome<ArchitectureRevision | null>>;
+    current?: Outcome<ArchitectureRevision>;
+    byRevision: Map<number, Outcome<ArchitectureRevision>>;
   };
   heads: HeadCache;
   /** S2.6 (b4): `conflicting`/`overQuota` per `noteId@head.version`. */
@@ -521,17 +521,12 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
 
   /** §9: a failed catalog read is `unavailable`, never an empty module list. */
   async function currentArchitecture(ctx: CoreCallContext, caches: CheckCaches):
-  Promise<Outcome<ArchitectureRevision | null>> {
+  Promise<Outcome<ArchitectureRevision>> {
     const hit = caches.architecture.current;
     if (hit !== undefined) return hit;
-    let outcome: Outcome<ArchitectureRevision | null>;
-    if (deps.architecture === undefined) {
-      outcome = { ok: true, value: null };
-    } else {
-      const read = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
-      outcome = read.status === 'ready' ? { ok: true, value: read.value }
-        : okFalse('unavailable', readFailureReason(read, 'the architecture catalog cannot be read'));
-    }
+    const read = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
+    const outcome: Outcome<ArchitectureRevision> = read.status === 'ready' ? { ok: true, value: read.value }
+      : okFalse('unavailable', readFailureReason(read, 'the architecture catalog cannot be read'));
     caches.architecture.current = outcome;
     return outcome;
   }
@@ -541,15 +536,14 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
    * for the whole check call.
    */
   async function architectureRevision(ctx: CoreCallContext, revision: number, caches: CheckCaches):
-  Promise<Outcome<ArchitectureRevision | null>> {
+  Promise<Outcome<ArchitectureRevision>> {
     const hit = caches.architecture.byRevision.get(revision);
     if (hit !== undefined) return hit;
     const current = await currentArchitecture(ctx, caches);
     if (!current.ok) return current;
-    if (current.value === null || deps.architecture === undefined) return { ok: true, value: null };
     const read = await deps.architecture.readArchitectureRevision(ctx,
       { selection: { kind: 'revision', ref: { ...current.value.baseline.ref, revision } } });
-    const outcome: Outcome<ArchitectureRevision | null> = read.status === 'ready'
+    const outcome: Outcome<ArchitectureRevision> = read.status === 'ready'
       ? { ok: true, value: read.value }
       : okFalse('unavailable', readFailureReason(read, 'the basis catalog revision cannot be read'));
     caches.architecture.byRevision.set(revision, outcome);
@@ -647,20 +641,19 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       if (!read.ok) return read;
       plans.set(goalId, read.value);
     }
-    let modules: readonly ModuleDefinition[] | null = null;
+    let modules: readonly ModuleDefinition[] = [];
     if (needsCatalog) {
       const read = await currentArchitecture(ctx, caches);
       if (!read.ok) return read;
-      modules = read.value?.catalog.catalog.modules ?? null;
+      modules = read.value.catalog.catalog.modules;
     }
 
     const retirementOf = async (anchor: NoteAnchorV1): Promise<Outcome<StaleReason[]>> => {
       switch (anchor.kind) {
         case 'module':
-          if (modules !== null && moduleIn(modules, anchor.moduleId) === undefined) return { ok: true, value: ['module_removed'] };
+          if (moduleIn(modules, anchor.moduleId) === undefined) return { ok: true, value: ['module_removed'] };
           return { ok: true, value: [] };
         case 'interface': {
-          if (modules === null) return { ok: true, value: [] };
           const module = moduleIn(modules, anchor.moduleId);
           if (module === undefined || !module.interfaces.some(item => item.id === anchor.interfaceId)) {
             return { ok: true, value: ['interface_removed'] };
@@ -770,26 +763,24 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     }
 
     const hasModuleAnchor = anchors.some(anchor => anchor.kind === 'module' || anchor.kind === 'interface');
-    if (hasModuleAnchor && body.basis.catalogRevision !== null && deps.architecture !== undefined) {
+    if (hasModuleAnchor && body.basis.catalogRevision !== null) {
       const current = await currentArchitecture(ctx, caches);
       if (!current.ok) return current;
-      if (current.value === null) return { ok: true, value: { staleReasons, unchecked: true } };
-      const currentModules = current.value.catalog.catalog.modules ?? null;
+      const currentModules = current.value.catalog.catalog.modules;
       const basis = await architectureRevision(ctx, body.basis.catalogRevision, caches);
       if (!basis.ok) return basis;
-      if (basis.value === null) return { ok: true, value: { staleReasons, unchecked: true } };
-      const basisModules = basis.value.catalog.catalog.modules ?? null;
+      const basisModules = basis.value.catalog.catalog.modules;
       for (const anchor of anchors) {
         if (anchor.kind === 'module') {
-          const before = basisModules === null ? undefined : moduleIn(basisModules, anchor.moduleId);
-          const after = currentModules === null ? undefined : moduleIn(currentModules, anchor.moduleId);
+          const before = moduleIn(basisModules, anchor.moduleId);
+          const after = moduleIn(currentModules, anchor.moduleId);
           if (before === undefined || after === undefined
             || canonicalJson(before as unknown as JsonValue) !== canonicalJson(after as unknown as JsonValue)) {
             staleReasons.push('module_definition_changed');
           }
         } else if (anchor.kind === 'interface') {
-          const beforeModule = basisModules === null ? undefined : moduleIn(basisModules, anchor.moduleId);
-          const afterModule = currentModules === null ? undefined : moduleIn(currentModules, anchor.moduleId);
+          const beforeModule = moduleIn(basisModules, anchor.moduleId);
+          const afterModule = moduleIn(currentModules, anchor.moduleId);
           const before = beforeModule?.interfaces.find(item => item.id === anchor.interfaceId);
           const after = afterModule?.interfaces.find(item => item.id === anchor.interfaceId);
           if (before === undefined || after === undefined
@@ -865,7 +856,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     if (moduleAnchors.length > 0 || fileAnchors.length > 0) {
       const read = await currentArchitecture(ctx, caches);
       if (!read.ok) return read;
-      catalog = read.value?.catalog.catalog ?? null;
+      catalog = read.value.catalog.catalog;
     }
     const attributedModuleOf = (path: string): string | null => catalog === null ? null
       : mapExecutedFilesToModules(catalog, [{ path, certainty: 'definite' as const }])[0]?.moduleRef?.moduleId ?? null;

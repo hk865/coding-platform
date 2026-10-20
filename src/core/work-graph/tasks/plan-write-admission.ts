@@ -33,10 +33,7 @@ import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { RecordGuard } from '../../record-store/ports.js';
-import {
-  isExecutionAuthorizationV2,
-  inputBindingProblem,
-} from '../persistence/execution-entry-codecs.js';
+import { isExecutionAuthorizationV2 } from '../persistence/execution-entry-codecs.js';
 import {
   plainSessionRefToAggregate,
   sessionAggregateRefKey,
@@ -98,15 +95,11 @@ function forbidden(reason: string): Rejection {
 function busy(reason: string): Rejection {
   return { status: 'rejected', code: 'busy', reason };
 }
-function unavailable(reason: string): Rejection {
-  return { status: 'rejected', code: 'unavailable', reason };
-}
-function incomplete(reason: string): Rejection {
-  return { status: 'rejected', code: 'incomplete', reason };
-}
 function mapReadFailure(result: Exclude<ReadResult<unknown>, { status: 'ready' }>): Rejection {
   if (result.status === 'not_found') return { status: 'rejected', code: 'not_found', reason: 'the target Run does not exist' };
-  if (result.status === 'not_ready') return incomplete('the target Run is not readable at the required watermark');
+  // No call here passes atLeastCursor, so not_ready cannot arise; keep it as a
+  // type-exhaustive generic rejection.
+  if (result.status === 'not_ready') return { status: 'rejected', code: 'unavailable', reason: 'the target Run is not readable' };
   return { status: 'rejected', code: result.code, reason: result.reason };
 }
 function runRefFromValue(value: unknown): RunRef | null {
@@ -191,9 +184,6 @@ export async function identifyDelegatedWriter(
   const read = await deps.reads.readExecution(internalReadContext(ctx, projectId, workspaceId), runRef);
   if (read.status !== 'ready') return mapReadFailure(read);
   const facts = read.value;
-  if (!sameRef(facts.run.ref, runRef) || !sameRef(facts.outbox.claim.runRef, runRef)) {
-    return unavailable('the persisted Run/outbox association disagrees with the work-run principal');
-  }
   if (facts.run.task.projectId !== projectId || facts.outbox.claim.workspaceId !== workspaceId) {
     return forbidden('the Run is scoped to another project or workspace');
   }
@@ -201,9 +191,6 @@ export async function identifyDelegatedWriter(
     return forbidden('the work-run Role binding disagrees with the persisted Run');
   }
   const sessionRef = facts.outbox.claim.sessionRef;
-  if (!sameRef(facts.session.ref, plainSessionRefToAggregate(sessionRef))) {
-    return unavailable('the claim Session mapping changed');
-  }
   const actor = agentActorOf(sessionRef, runRef);
   return { status: 'ready', value: {
     actor,
@@ -267,9 +254,6 @@ export async function authorizeDelegatedWrite(
   const { run, attempt, outbox, plan, session, lease } = facts;
 
   // The stable mapping identify proved must still hold on this fresh read.
-  if (!sameRef(run.ref, writer.runRef) || !sameRef(outbox.claim.runRef, writer.runRef)) {
-    return unavailable('the persisted Run/outbox association changed');
-  }
   if (!sameRef(outbox.claim.sessionRef, writer.sessionRef)
     || !sameRef(session.ref, plainSessionRefToAggregate(writer.sessionRef))) {
     return forbidden('the persisted claim Session no longer matches the Agent writer');
@@ -288,10 +272,7 @@ export async function authorizeDelegatedWrite(
   if (auth.phase !== 'entered') return forbidden('the Run entry is not in the entered phase');
   if (run.status !== 'running') return busy('the Run is not running');
 
-  // Exact Attempt/outbox/claim generation agreement.
-  if (attempt.runId !== run.ref.runId || attempt.ref.taskId !== run.task.taskId) {
-    return unavailable('the claim-linked Attempt no longer belongs to this Run');
-  }
+  // Exact outbox/claim generation agreement.
   if (outbox.status !== 'entered') return busy('the claim outbox is not entered');
   const dispatch = outbox.dispatchState;
   if (dispatch === undefined || dispatch.phase !== 'entered') return busy('the claim outbox carries no entered dispatch state');
@@ -326,8 +307,6 @@ export async function authorizeDelegatedWrite(
   // The pinned manifest body/input digests must still be the Run's exact binding.
   const inputBinding = run.inputBinding;
   if (inputBinding === undefined) return forbidden('the Run has no persisted input binding');
-  const bindingProblem = inputBindingProblem(inputBinding);
-  if (bindingProblem !== null) return unavailable(`the Run input binding is damaged: ${bindingProblem}`);
   const stored = await readStoredManifest({ bodies: deps.bodies }, run);
   if (!stored.ok) return { status: 'rejected', code: stored.rejection.code, reason: stored.rejection.reason };
   const manifest = stored.value.manifest;

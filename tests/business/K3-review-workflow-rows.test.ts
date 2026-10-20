@@ -157,7 +157,10 @@ async function makeWorld(kind: 'memory' | 'sqlite'): Promise<NoRecordWorld> {
   const b2 = await createB2ExecutionFixture(kind);
   fixtures.push(b2);
   const reads = createRunStateReader({ records: b2.base.records });
-  const reviews = createUnknownCallReviewService({ records: b2.base.records, reads });
+  let reviewEvents = 0;
+  const reviews = createUnknownCallReviewService({ records: b2.base.records, reads,
+    now: () => '2026-10-04T01:00:00.000Z',
+    eventId: () => `k3-review-workflow-row-${String(++reviewEvents)}` });
   const runtime: RuntimeExecutionPort = {
     capabilities: async () => unsupported('the review-row test never reads capabilities'),
     createSession: async () => unsupported('the review-row test stops before create_session'),

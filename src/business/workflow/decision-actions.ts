@@ -63,7 +63,7 @@ export type DecisionApplicationAdapter = {
   apply(ctx: CoreCallContext, input: {
     answer: SessionMessage; answerRef: SessionMessageRef;
     source: DecisionSourceV1; selection: DecisionSelectionV1; requestId: string; expected: VersionPin[];
-  }): Promise<ReadResult<DecisionApplicationOutcome>>;
+  }): Promise<{ status: 'ready'; value: DecisionApplicationOutcome }>;
 };
 
 /**
@@ -344,7 +344,7 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
     ctx: CoreCallContext, answer: SessionMessage, answerRef: SessionMessageRef,
     selection: DecisionSelectionV1, requestId: string,
     goalSettings: GoalSettingsPort,
-  ): Promise<ReadResult<DecisionApplicationOutcome>> {
+  ): Promise<{ status: 'ready'; value: DecisionApplicationOutcome }> {
     // Free text / option / non-conflict answers only answer the card in this
     // slice; adopting a candidate still goes through the original plans/apply.
     if (!isConflictSelection(selection)) {
@@ -387,15 +387,6 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
       }, receipt: null, state: 'application_not_recorded' } };
     }
     return { status: 'ready', value: { action, receipt: null } };
-  }
-
-  /** A dispatched adapter's non-ready ReadResult, kept visible as the action. */
-  function applicationRejection(read: ReadResult<unknown>): CoreRejection {
-    if (read.status === 'rejected') return read;
-    if (read.status === 'not_found') {
-      return { status: 'rejected', code: 'not_found', reason: 'the decision application action was not found' };
-    }
-    return { status: 'rejected', code: 'incomplete', reason: 'the decision application action is not ready' };
   }
 
   /**
@@ -485,11 +476,8 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
       answer: input.answer, answerRef: input.answerRef, source: input.source,
       selection: input.selection, requestId: input.requestId, expected: input.expected,
     });
-    const outcome: DecisionApplicationOutcome = applied.status === 'ready'
-      ? applied.value
-      : { action: applicationRejection(applied), receipt: null };
     return recordApplicationOutcome(ctx, applicationCtx, decisionMessages,
-      input.answerRef, input.answerRevision, input.requestId, outcome);
+      input.answerRef, input.answerRevision, input.requestId, applied.value);
   }
 
   async function resolveDecision(

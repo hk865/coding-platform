@@ -117,22 +117,25 @@ function ctxWith(
 // States                                                                     //
 // -------------------------------------------------------------------------- //
 
-const ABSENT: ControlIntentState = { node: 'Absent', kind: null, revision: 0, observation: null };
-function queued(kind: ControlIntentKindV1): ControlIntentState {
+type AbsentIntentState = Extract<ControlIntentState, { node: 'Absent' }>;
+type PresentIntentState = Exclude<ControlIntentState, AbsentIntentState>;
+
+const ABSENT: AbsentIntentState = { node: 'Absent', kind: null, revision: 0, observation: null };
+function queued(kind: ControlIntentKindV1): PresentIntentState {
   return { node: 'Queued', kind, revision: 1, observation: null };
 }
 const APPLIED_OBSERVATION: Record<ControlIntentKindV1, ControlObservationV1> = {
   pause: kernelObservation('paused'), cancel: kernelObservation('cancelled'),
   resume: kernelObservation('resumed'), steer: kernelObservation('steered'),
 };
-function applied(kind: ControlIntentKindV1): ControlIntentState {
+function applied(kind: ControlIntentKindV1): PresentIntentState {
   return { node: 'Applied', kind, revision: 2, observation: APPLIED_OBSERVATION[kind] };
 }
-function superseded(kind: ControlIntentKindV1): ControlIntentState {
+function superseded(kind: ControlIntentKindV1): PresentIntentState {
   return { node: 'Superseded', kind, revision: 2,
     observation: kind === 'cancel' ? kernelObservation('terminal_without_cancel') : platformObservation('superseded_by_newer') };
 }
-function outcomeUnknown(kind: ControlIntentKindV1): ControlIntentState {
+function outcomeUnknown(kind: ControlIntentKindV1): PresentIntentState {
   return { node: 'OutcomeUnknown', kind, revision: 2,
     observation: kind === 'cancel' ? kernelObservation('outcome_unknown') : platformObservation('outcome_unknown') };
 }
@@ -186,16 +189,16 @@ function appliedNotEntered(kind: 'pause' | 'cancel' | 'resume', entryPhase: NotE
     effects: [{ kind: 'run_pointer', change: pointerAfterSubmit(kind, SELF) }] };
 }
 /** CTL-04: `Superseded` at revision + 1 with the platform's `platform_superseded` observation, no effect (D-8). */
-function supersededBy(state: ControlIntentState, by: ControlIntentRef = OTHER): Expected {
+function supersededBy(state: PresentIntentState, by: ControlIntentRef = OTHER): Expected {
   return { ok: true, next: { node: 'Superseded', kind: state.kind, revision: state.revision + 1,
     observation: { schemaVersion: 1, origin: 'platform_superseded', kind: 'superseded_by_newer', runRevision: 4,
       detail: { supersededBy: by }, observedAt: AT } }, effects: [] };
 }
-function observedTo(state: ControlIntentState, node: Exclude<ControlNode, 'Absent' | 'Queued'>, observation: ControlObservationV1): Expected {
+function observedTo(state: PresentIntentState, node: Exclude<ControlNode, 'Absent' | 'Queued'>, observation: ControlObservationV1): Expected {
   return { ok: true, next: { node, kind: state.kind, revision: state.revision + 1, observation }, effects: [{ kind: 'guard_run' }] };
 }
 /** CTL-07 / CTL-08 (step 5.6): settled at revision + 1 with the reconcile's observation; the Run is the CAS guard. */
-function reconciledTo(state: ControlIntentState, node: Exclude<ControlNode, 'Absent' | 'Queued'>,
+function reconciledTo(state: PresentIntentState, node: Exclude<ControlNode, 'Absent' | 'Queued'>,
   observation: ControlObservationV1 | ControlPlatformObservationV1 = platformObservation('terminal_without_cancel')): Expected {
   return { ok: true, next: { node, kind: state.kind, revision: state.revision + 1, observation }, effects: [{ kind: 'guard_run' }] };
 }
@@ -641,7 +644,7 @@ describe('control_observed: recorded node × intent kind × Kernel observation k
         }
         // CD-2: a Kernel outcome_unknown (CTL-03) and terminal_without_cancel (CTL-06) close any kind.
         if (!KERNEL_PAIRS[observed].includes(kind)) return check(result, ILLEGAL);
-        check(result, observedTo(state, MAPPED_NODE[observed], observation));
+        check(result, observedTo(state as PresentIntentState, MAPPED_NODE[observed], observation));
       });
     }
   }
@@ -903,7 +906,7 @@ describe('submissionReadsPointerIntent, submissionReadsGoal and observedIntentAn
     expect(observedIntentAnswer(applied('pause'), event, { pinsMatch: { intent: true, run: true } })).toEqual(unchanged(applied('pause')));
     expect(observedIntentAnswer(applied('cancel'), event, { pinsMatch: { intent: true, run: true } })).toMatchObject(STALE);
     for (const label of STATE_LABELS.filter(candidate => candidate !== 'Absent')) {
-      expect(transitionControlIntent(STATES[label], event, ctxWith({ node: 'Absent', entry: null, history: 'malformed' },
+      expect(transitionControlIntent(STATES[label], event, ctxWith({ node: 'Absent', entry: null, history: null },
         { pinsMatch: { intent: false, run: false } })), label).toEqual(stale);
     }
   });

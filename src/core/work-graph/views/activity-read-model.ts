@@ -115,8 +115,8 @@ export type ActivityReadModelDependencies = {
   records: Pick<GoalRecordTransactionPort, 'readMany' | 'eventAt'> & RecordLookupPort & RecordOrderedLookupPort;
   /** P4: tests inject a smaller cap; production never passes another value. */
   readRecordCap?: number;
-  /** Test-only clock seam; production reads `new Date()`. */
-  now?: () => string;
+  /** Test-only clock seam; the composition always supplies one. */
+  now: () => string;
 };
 
 const WINDOW_MAX_ATTEMPTS = 4;
@@ -399,7 +399,6 @@ async function readCalendarWindow(
       // Run whose Session cannot be resolved is only counted as unknown.
       if (bySession !== null) {
         const session = await claimingSessionOf(records, run, budget);
-        if (session === null) { runsSessionUnknown += 1; continue; }
         if (!bySession.has(sessionKey(session))) continue;
       }
       classifyMissingRun(run, since, {
@@ -429,8 +428,7 @@ async function readCalendarWindow(
   for (const run of openRuns) {
     if (classified.has(run.ref.runId)) continue;
     const session = await claimingSessionOf(records, run, budget);
-    if (bySession !== null && (session === null || !bySession.has(sessionKey(session)))) {
-      if (session === null) runsSessionUnknown += 1;
+    if (bySession !== null && !bySession.has(sessionKey(session))) {
       continue;
     }
     runsInProgress += 1;
@@ -760,7 +758,7 @@ export function createActivityReadModel(
   deps: ActivityReadModelDependencies,
 ): Pick<ActivityReadPort, 'readActivityCalendar' | 'readRunActivities'> {
   const cap = deps.readRecordCap ?? ACTIVITY_READ_RECORD_CAP;
-  const now = deps.now ?? ((): string => new Date().toISOString());
+  const now = deps.now;
 
   return {
     async readActivityCalendar(ctx, input): Promise<ReadResult<ActivityCalendarV1>> {

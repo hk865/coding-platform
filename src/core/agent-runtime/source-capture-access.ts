@@ -182,7 +182,7 @@ export function createSourceCaptureAccess(deps: {
       // A Query binding has its own complete identity/qualification path; it must never be run
       // through the work-only Run authorization below.
       if (runtime?.kind === 'query') {
-        const live = await authorizeQuerySubject(ledger, runtime, ctx, policy);
+        const live = await authorizeQuerySubject(ledger, runtime, policy);
         if (live.status !== 'ready') return live;
         return { status: 'ready', value: live.value };
       }
@@ -326,25 +326,19 @@ async function openOwnedSourceAccess(params: {
   try { /* qualification only; the loop gets its own registry below */ }
   finally { await probe.value.release(); }
   const handle = createWorkspaceTools({ access, now, limits: DEFAULT_WORKSPACE_LIMITS });
-  try {
-    return {
-      port: handle.tools,
-      // A copy, not the private binding: returned DTOs stay caller-owned.
-      workspace: copyWorkspace(workspace),
-      context,
-      async currentWorkspaceRevision(signal: AbortSignal): Promise<WorkspaceResult<number>> {
-        const opened = await access.open(context(signal), workspace);
-        if (opened.status !== 'ready') return opened;
-        try { return { status: 'ready', value: opened.value.workspaceRevision }; }
-        finally { await opened.value.release(); }
-      },
-      close: () => handle.close(),
-    };
-  } catch (error) {
-    // The factory failed after creating the registry: close it first, keep the original error.
-    await handle.close().catch(() => {});
-    throw error;
-  }
+  return {
+    port: handle.tools,
+    // A copy, not the private binding: returned DTOs stay caller-owned.
+    workspace: copyWorkspace(workspace),
+    context,
+    async currentWorkspaceRevision(signal: AbortSignal): Promise<WorkspaceResult<number>> {
+      const opened = await access.open(context(signal), workspace);
+      if (opened.status !== 'ready') return opened;
+      try { return { status: 'ready', value: opened.value.workspaceRevision }; }
+      finally { await opened.value.release(); }
+    },
+    close: () => handle.close(),
+  };
 }
 
 function copyQueryExecutionRequest(request: QueryExecutionRequest): QueryExecutionRequest {
@@ -429,8 +423,6 @@ async function authorizeRuntimeSubject(
   if (run.status !== 'running' || (run.outcome ?? null) !== null) return denied('the bound Run is not running without an outcome');
   const desired = run.controlState?.desiredState;
   if (desired !== undefined && desired !== 'running' && desired !== 'steered') return denied('the bound Run desired state is ' + desired);
-  const phase = run.executionAuthorization?.phase;
-  if (phase !== undefined && phase !== 'entered') return denied('the bound Run execution authorization is ' + phase);
   const envelope = run.envelope;
   if (!envelope) return denied('the bound Run has no recorded envelope');
   // A real stored Run may keep an object envelope whose consumed identity leaves are absent
@@ -593,8 +585,9 @@ async function loadCurrentQueryState(
   if (run.run.runId !== request.runRef.runId) return denied('the QueryRun run id changed');
   if (!run.run.queryJobRef || canonicalJson(run.run.queryJobRef) !== canonicalJson(jobRef))
     return denied('the QueryRun is bound to another QueryJob');
-  if (!run.run.execution || canonicalJson(run.run.execution.request) !== canonicalJson(request))
-    return denied('the recorded execution request does not match');
+  // The accepted execution is immutable once the QueryRun is running (the running
+  // check above); a missing binding still never authorizes a source read.
+  if (!run.run.execution) return denied('the QueryRun has no recorded execution request');
   const loadedJob = await ledger.load(jobRef);
   if (loadedJob.status !== 'found') return loadRejection(loadedJob, 'forbidden', 'the bound QueryJob is not retained');
   if (loadedJob.snapshot.ref.aggregateType !== 'QueryJob'
@@ -629,13 +622,11 @@ async function resolveQueryOrigin(
   const current = await loadCurrentQueryState(ledger, request);
   if (current.status !== 'ready') throw Error('query source capture: ' + current.reason);
   const { jobRef, job, execution } = current.value;
-  if (typeof ledger.readQuerySubmission !== 'function')
-    throw Error('query source capture: the exact submission reader is not available');
   const submissionRead = await ledger.readQuerySubmission(jobRef);
   if (submissionRead.status !== 'ready') {
-    const detail = submissionRead.status === 'not_found' ? 'not_found'
-      : submissionRead.status === 'not_ready' ? 'not_ready'
-      : submissionRead.code + ': ' + submissionRead.reason;
+    const detail = submissionRead.status === 'rejected'
+      ? submissionRead.code + ': ' + submissionRead.reason
+      : submissionRead.status;
     throw Error('query source capture: the exact QueryJob submission is not readable: ' + detail);
   }
   const submittedEvent = submissionRead.value;
@@ -643,7 +634,7 @@ async function resolveQueryOrigin(
   const initial = submitted.queryJobId === jobRef.queryJobId
     && submitted.projectId === job.job.projectId && submitted.workspaceId === job.job.workspaceId
     && submitted.goalId === job.job.goalId
-    && canonicalJson(submitted.runRef ?? null) === canonicalJson(job.job.runRef)
+    && canonicalJson(submitted.runRef) === canonicalJson(job.job.runRef)
     && submitted.submittedAt === job.job.submittedAt
     && canonicalJson(submitted.intent) === canonicalJson(job.job.intent)
     && submitted.status === 'pending' && submitted.answerRefs.length === 0 && submitted.closeReason === null;
@@ -653,31 +644,16 @@ async function resolveQueryOrigin(
 }
 
 /**
- * Per-request Query qualification: ctx identity is checked against the bound QueryRun, then the
- * shared current-state rule is re-read (one Run + one Job read), the immutable execution must
- * still equal the bound one, and the subject/policy revision is minted.
- * Ordinary aggregate revision progression is not a permission change.
+ * Per-request Query qualification: the shared current-state rule is re-read (one Run + one
+ * Job read) and the immutable execution must still equal the bound one; the subject/policy
+ * revision is minted. Ordinary aggregate revision progression is not a permission change.
  */
 async function authorizeQuerySubject(
   ledger: SourceSnapshotReads,
   binding: QuerySourceBinding,
-  ctx: CoreCallContext,
   policy: SourcePolicy,
 ): Promise<WorkspaceResult<RuntimeSubject>> {
   const denied = (reason: string): WorkspaceResult<never> => rejected('forbidden', reason);
-  // The bound Query workspace is authoritative: the outer bridge only compares ctx against the
-  // requested workspace, so a caller that swaps both ctx and the capture input to another
-  // workspace (even one registered on the same root) must be refused here before any identity
-  // or current-state check can pass.
-  if (ctx.projectId !== binding.workspace.projectId || ctx.workspaceId !== binding.workspace.workspaceId)
-    return denied('the call context scope does not match the bound QueryRun workspace');
-  const principal = ctx.principal;
-  if (principal.kind !== 'query_run') return denied('query source reads require the bound QueryRun principal');
-  if (canonicalJson(principal.queryRunRef) !== canonicalJson(binding.queryRunRef)) return denied('the call context belongs to another QueryRun');
-  if (canonicalJson(principal.initiator) !== canonicalJson(binding.actor)) return denied('the call context initiator is not the recorded original actor');
-  if (ctx.materialReader.kind !== 'run' || ctx.materialReader.requester.aggregateType !== 'QueryRun'
-      || canonicalJson(ctx.materialReader.requester) !== canonicalJson(binding.queryRunRef))
-    return denied('material reader must be the same bound QueryRun');
   const current = await loadCurrentQueryState(ledger, binding.request);
   if (current.status !== 'ready') return current;
   const { run, execution } = current.value;

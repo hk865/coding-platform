@@ -161,6 +161,12 @@ describe('S5R2 driver ordering safe point (memory)', () => {
             pinnedArchitectureBaseline: f.plans.A1.effectiveArchitectureBaseline },
           effectiveEvidenceIds: [], blockingEvidenceIds: [], staleEvidenceIds: [], outOfScopeEvidenceIds: [],
           satisfiedObligationIds: ['PA1-obligation'], causes: [], reducedAt: T,
+          completion: { schemaVersion: 1,
+            roundRef: { aggregateType: 'VerificationRound', projectId: 'P', workspaceId: 'W', goalId: 'A',
+              taskId: 'a-work', runId: 'r-a', roundId: 'round-a' },
+            roundRevision: 1, taskBasisRef: f.plans.A1.ref,
+            verificationPlanRef: { planId: 'vplan-a', planDigest: 'a'.repeat(64) },
+            configurationDigest: 'b'.repeat(64), evidenceRefs: [] },
         } } },
     } };
     const h = await harness(f, (_call, index) => index === 0 ? completedTask : completedAdvance());

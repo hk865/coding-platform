@@ -67,8 +67,6 @@ import {
   sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
 import {
-  decodeDispatchOutboxEntry,
-  decodeTaskAttemptSnapshot,
   decodeTaskRequeueSnapshot,
   dispatchOutboxRefKey,
   taskAttemptRefKey,
@@ -415,7 +413,8 @@ async function readTaskPendingAnchors(
 // The factory
 // --------------------------------------------------------------------------
 
-export function createRunStateReader(deps: ExecutionReadDependencies): ExecutionReadPort {
+export function createRunStateReader(deps: ExecutionReadDependencies):
+ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> {
   const records = deps.records;
   const readExecution = async (ctx: CoreCallContext, ref: RunRef,
     options?: { atLeastCursor?: CommitCursor }): Promise<ReadResult<TaskExecutionRecord>> => {
@@ -458,9 +457,9 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
           }
           return { status: 'not_found' };
         }
-        const runDecoded = decodeRun(runRead.batch.present.get(runKey) as EncodedRecord);
-        if (!runDecoded.ok) return unavailable(`the Run is damaged: ${runDecoded.reason}`);
-        const discovered = runDecoded.value;
+        // readBatch already applied the registered RunSnapshot@1 codec; a
+        // ready record is a complete Run, so only its body is re-read here.
+        const discovered = parseBody((runRead.batch.present.get(runKey) as EncodedRecord).json) as unknown as RunSnapshot;
         const task = discovered.task;
         const attemptKey = attemptKeyOf(task, discovered.attemptId);
         const outboxKey = outboxKeyOf(task, discovered.attemptId);
@@ -477,9 +476,8 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
         }
         let sessionKey: string | undefined;
         if (outboxPresence === 'present') {
-          const linked = decodeDispatchOutboxEntry(outboxRead.batch.present.get(outboxKey) as EncodedRecord);
-          if (linked.status !== 'decoded') return unavailable(`the dispatch outbox is damaged: ${linked.reason}`);
-          sessionKey = sessionKeyOf(linked.value.claim.sessionRef);
+          const linked = parseBody((outboxRead.batch.present.get(outboxKey) as EncodedRecord).json) as unknown as TaskClaimOutbox;
+          sessionKey = sessionKeyOf(linked.claim.sessionRef);
         }
 
         // ---- window 3: the single authoritative re-read ------------------
@@ -502,9 +500,7 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
         if (presenceOf(batch, runKey) === 'missing') {
           return { status: 'not_found' };
         }
-        const finalRunDecoded = decodeRun(batch.present.get(runKey) as EncodedRecord);
-        if (!finalRunDecoded.ok) return unavailable(`the Run is damaged: ${finalRunDecoded.reason}`);
-        const finalRun = finalRunDecoded.value;
+        const finalRun = parseBody((batch.present.get(runKey) as EncodedRecord).json) as unknown as RunSnapshot;
 
         // Only a real reference change seen in the FINAL window forces a retry.
         // The Run-derived references are provable without the outbox.
@@ -516,9 +512,7 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
 
         let finalOutbox: TaskClaimOutbox | undefined;
         if (presenceOf(batch, outboxKey) === 'present') {
-          const decoded = decodeDispatchOutboxEntry(batch.present.get(outboxKey) as EncodedRecord);
-          if (decoded.status !== 'decoded') return unavailable(`the dispatch outbox is damaged: ${decoded.reason}`);
-          finalOutbox = decoded.value;
+          finalOutbox = parseBody((batch.present.get(outboxKey) as EncodedRecord).json) as unknown as TaskClaimOutbox;
         }
         // A required outbox that is explicitly missing is incomplete, not a
         // reference change; an outbox that newly appears or names another
@@ -539,8 +533,8 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
         }
 
         const attemptRecord = batch.present.get(attemptKey) as EncodedRecord;
-        const attempt = decodeTaskAttemptSnapshot(attemptRecord);
-        if (attempt.status !== 'decoded') return unavailable(`the TaskAttempt is damaged: ${attempt.reason}`);
+        // readBatch already applied the registered TaskAttempt codec.
+        const attempt = parseBody(attemptRecord.json) as unknown as TaskAttemptSnapshot;
         const planRecord = batch.present.get(planKey) as EncodedRecord;
         const plan = decodePlanRevisionSnapshot(planRecord);
         if (plan.status !== 'decoded') return unavailable(`the Plan is damaged: ${plan.reason}`);
@@ -558,14 +552,14 @@ export function createRunStateReader(deps: ExecutionReadDependencies): Execution
           lease = decodedLease.value;
         }
 
-        const broken = verifyChain(finalRun, attempt.value, finalOutbox, plan.value, session, lease, {
+        const broken = verifyChain(finalRun, attempt, finalOutbox, plan.value, session, lease, {
           runKey, attemptKey, outboxKey, leaseKey, planKey, sessionKey, projectId: scope.projectId,
         });
         if (broken !== null) return broken;
         if (session === undefined) return unavailable('the claim-linked Session is unavailable');
         return {
           status: 'ready',
-          value: { run: finalRun, attempt: attempt.value, outbox: finalOutbox,
+          value: { run: finalRun, attempt, outbox: finalOutbox,
             plan: plan.value, session, lease, readThrough: batch.readThrough },
         };
       }

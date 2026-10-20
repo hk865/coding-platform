@@ -396,7 +396,8 @@ describe('listReviews', () => {
         return result;
       },
     };
-    const reviews = createUnknownCallReviewService({ records: real, lookups });
+    const reviews = createUnknownCallReviewService({ records: real, lookups,
+      now: () => world.fixture.now(), eventId: () => world.fixture.newId() });
 
     const listing = reviews.listReviews(world.fixture.ctx, {
       workspace: scope, filter: { goalRef: GOAL_B, status: ['pending_review', 'needs_decision'] },
@@ -435,7 +436,8 @@ describe('listReviews', () => {
         return result;
       },
     };
-    const reviews = createUnknownCallReviewService({ records: real, lookups });
+    const reviews = createUnknownCallReviewService({ records: real, lookups,
+      now: () => world.fixture.now(), eventId: () => world.fixture.newId() });
 
     const page = await reviews.listReviews(world.fixture.ctx, {
       workspace: scope, filter: { goalRef: GOAL_B, status: ['pending_review', 'needs_decision'] },

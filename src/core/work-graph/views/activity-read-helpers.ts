@@ -177,7 +177,7 @@ export async function claimingSessionOf(
   records: ReadRecords,
   run: RunSnapshot,
   budget: Budget,
-): Promise<SessionRef | null> {
+): Promise<SessionRef> {
   const history = run.executionHistory;
   if (history !== undefined && history !== null) return history.sessionRef;
   const ref: DispatchOutboxRef = { aggregateType: 'DispatchOutboxEntry', projectId: run.ref.projectId,

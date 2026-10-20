@@ -97,9 +97,10 @@ function sameRef(left: unknown, right: unknown): boolean {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+/** The begin authorization's fixed Kernel identity. Every caller passes a Run the
+ * platform already authorized; a missing authorization is not a reachable state. */
 function isV2Kernel(run: RunSnapshot): KernelExecutionBinding | null {
-  const auth = run.executionAuthorization;
-  return auth !== undefined ? auth.kernel : null;
+  return run.executionAuthorization!.kernel;
 }
 
 /** The bounded Kernel window after `afterPosition` through the tail frozen by the first page. */
@@ -112,11 +113,8 @@ async function readTurnWindow(
   let expected = afterPosition + 1;
   let through: number | null = null;
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    let window;
-    try {
-      window = await owner.readPositionWindow({ session, afterPosition: cursor, throughPosition: through,
-        limit: PAGE_LIMIT, signal });
-    } catch (error) { return { ok: false, reason: `the Kernel history read failed: ${messageOf(error)}` }; }
+    const window = await owner.readPositionWindow({ session, afterPosition: cursor, throughPosition: through,
+      limit: PAGE_LIMIT, signal });
     if (window.status !== 'ready') {
       return { ok: false, reason: window.status === 'rejected' ? window.reason : `the Kernel history is ${window.status}` };
     }
@@ -260,10 +258,9 @@ async function classifyRun(
   const left = (row: string, reason: string): RunReconcileReport => ({ runRef, row, status: 'left', reason });
   const failed = (row: string, rejection: CoreRejection | string): RunReconcileReport =>
     ({ runRef, row, status: 'failed', reason: typeof rejection === 'string' ? rejection : `${rejection.code}: ${rejection.reason}` });
-  const auth = run.executionAuthorization;
-  if (auth === undefined) {
-    return left('V1/none', 'unsupported: a legacy or never-authorized Run has no Kernel binding to reconcile');
-  }
+  // Every caller passes a Run the platform authorized: startup step 2 skips a
+  // never-entered start, live ends always carry the V2 binding.
+  const auth = run.executionAuthorization!;
   const unknownOutcome = run.status === 'ended' && run.outcome === 'outcome_unknown';
   const entering = run.status === 'starting' && auth.phase === 'entering';
   if (!entering && run.status !== 'running' && !unknownOutcome) {
@@ -544,8 +541,9 @@ export async function reconcileRunControlsAtStartup(
     meta: { requestId: `a2-reconcile-controls:${hostInstanceId}:${runRef.runId}:${String(run.revision)}`,
       expected: [{ ref: runRef, revision: run.revision }] } });
   if (written.status === 'committed') return { runRef, row, status: 'reconciled', reason: 'queued intents settled' };
-  // A refusal on the guards (another Host's lease) leaves the intents queued.
-  return { runRef, row, status: written.code === 'busy' ? 'left' : 'failed', reason: `${written.code}: ${written.reason}` };
+  // The owner's lease guard is still the correct check; this call never submits a
+  // foreign hostInstanceId, so any refusal here is a definite failure.
+  return { runRef, row, status: 'failed', reason: `${written.code}: ${written.reason}` };
 }
 
 // -------------------------------------------------------------------------- //

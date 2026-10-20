@@ -10,6 +10,7 @@
  * caller decides (`not_found` or a derived read).
  */
 import type { CoreRejection } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { DecodeResult, EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import { ownerReadStoreFailureToRejection } from '../persistence/read-result-failures.js';
 
@@ -23,7 +24,6 @@ export async function readOwnerRecord<T>(input: {
   refKey: string;
   decode(record: EncodedRecord): DecodeResult<T>;
   readError(message: string): CoreRejection;
-  decodeError(reason: string): CoreRejection;
 }): Promise<OwnerRecordRead<T>> {
   let batch;
   try {
@@ -34,7 +34,9 @@ export async function readOwnerRecord<T>(input: {
   if (batch.status !== 'ready') return { ok: false, rejection: ownerReadStoreFailureToRejection(batch) };
   const encoded = batch.value.records.find(record => record.refKey === input.refKey);
   if (encoded === undefined) return { ok: false, notFound: true };
+  // The store already applied the registered schema (the same decoder), so a
+  // ready record cannot fail to decode; keep ONE fixed fail-closed rejection.
   const decoded = input.decode(encoded);
-  if (decoded.status !== 'decoded') return { ok: false, rejection: input.decodeError(decoded.reason) };
+  if (decoded.status !== 'decoded') return { ok: false, rejection: rejected('invalid', 'the stored record is not decodable') };
   return { ok: true, value: decoded.value };
 }

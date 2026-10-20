@@ -61,7 +61,7 @@ import type { VerifiedGovernance } from './plan-commit-compiler.js';
 import type { PlanProposal, PlanProposalRef, TaskUnknownCallReview } from '../model/plan-contracts.js';
 import type { NoteRunTaskResolver, NoteUpdateDueTriggerV1 } from '../model/note-contracts.js';
 import type { SessionResponsibilityBasisPort } from '../model/session-facts-contracts.js';
-import { decodeUnknownCallReview, unknownCallReviewRefKey } from './unknown-call-review-codecs.js';
+import { unknownCallReviewRefKey } from './unknown-call-review-codecs.js';
 import {
   isBasisUnsupported, planTaskFacts, taskOriginVerdict, verifyBasisDelegation,
   type FrozenTaskDefinition, type PlanTaskFacts,
@@ -112,6 +112,10 @@ const LOOKUP_PAGE_LIMIT = 200;
 const WINDOW_MAX_ATTEMPTS = 4;
 
 export type Rejected = { status: 'rejected'; code: CoreError; reason: string };
+
+/** The record access every reader in this module uses: one batch read, no writes. */
+export type TaskFactRecordPort = Pick<GoalRecordTransactionPort, 'readMany'> & RecordLookupPort;
+type RecordReadPort = Pick<GoalRecordTransactionPort, 'readMany'>;
 
 function incomplete(reason: string): Rejected {
   return { status: 'rejected', code: 'incomplete', reason };
@@ -216,10 +220,8 @@ function validateTaskReductionSnapshot(record: EncodedRecord): DecodeResult<Enco
     if (!Array.isArray(parsed[field])) return invalidRecord(`TaskReduction ${field} must be an array`);
   }
   if (!nonEmpty(parsed['reducedAt'])) return invalidRecord('TaskReduction reducedAt must be a non-empty string');
-  if (parsed['completion'] !== undefined) {
-    const completionProblem = validateTaskCompletionAudit(parsed['completion']);
-    if (completionProblem !== null) return invalidRecord(completionProblem);
-  }
+  const completionProblem = validateTaskCompletionAudit(parsed['completion']);
+  if (completionProblem !== null) return invalidRecord(completionProblem);
   return { status: 'decoded', value: copyRecord(record) };
 }
 
@@ -355,7 +357,7 @@ export function laterCursor(left: CommitCursor | null, right: CommitCursor | nul
 }
 
 export async function readBatch(
-  records: GoalRecordTransactionPort,
+  records: RecordReadPort,
   refKeys: readonly string[],
 ): Promise<{ status: 'ready'; batch: ReadBatch } | Rejected> {
   const read = await records.readMany(refKeys);
@@ -377,7 +379,7 @@ export function readRevisionNumber(batch: ReadBatch, key: string): number | null
 }
 
 export async function readGoal(
-  records: GoalRecordTransactionPort,
+  records: RecordReadPort,
   goalRef: GoalRef,
 ): Promise<{ status: 'ready'; goal: GoalSnapshot; readThrough: CommitCursor | null } | Rejected> {
   const key = canonicalJson(goalRef as unknown as JsonValue);
@@ -478,7 +480,7 @@ export async function readProposalOrigin(
 }
 
 async function readLookupKeys(
-  records: GoalRecordTransactionPort & RecordLookupPort,
+  records: RecordReadPort & RecordLookupPort,
   index: string,
   values: readonly (string | number | boolean | null)[],
 ): Promise<{ status: 'ready'; refKeys: string[]; readThrough: CommitCursor | null; stable: boolean } | Rejected> {
@@ -675,8 +677,9 @@ export async function enumerateClosedGoalCandidates(
     const byRequest = new Map<string, PlanProposal[]>();
     const independent: PlanProposal[] = [];
     // Slice 5 §2.5/T-R2-2: each chain's creation position is its first
-    // candidate's wire-only `since`, read beside the public DTO.
-    const positions = new Map<string, CommitCursor | null>();
+    // candidate's wire-only `since`, read beside the public DTO. The codec
+    // requires it for a candidate_v2 record.
+    const positions = new Map<string, CommitCursor>();
     for (const key of found.refKeys) {
       const record = canonical.batch.present.get(key);
       if (record === undefined) continue;
@@ -694,7 +697,7 @@ export async function enumerateClosedGoalCandidates(
       if (origin.status !== 'decoded') {
         return unavailable(`plan proposal ${record.refKey} origin: ${origin.reason}`);
       }
-      positions.set(planProposalRefKey(proposal.ref), origin.value.since ?? null);
+      positions.set(planProposalRefKey(proposal.ref), origin.value.since!);
       const requestRef = candidateRequestRef(proposal);
       if (requestRef === null) {
         // §4.2 source 3 / §3.3 line 629: an independent candidate is keyed by its
@@ -1126,24 +1129,16 @@ export async function readUnknownCallReviewOutcome(
   return { status: 'ready', records: result.value.records, readThrough: result.value.readThrough };
 }
 
-function parseRun(json: string): RunSnapshot | null {
-  const parsed = parseJsonObject(json);
-  if (parsed === null) return null;
-  const ref = parsed['ref'];
-  const task = parsed['task'];
-  const planRef = parsed['planRef'];
-  if (!isRecord(ref) || ref['aggregateType'] !== 'Run' || !nonEmpty(ref['projectId']) || !nonEmpty(ref['goalId']) || !nonEmpty(ref['runId'])) return null;
-  if (!isRecord(task) || !nonEmpty(task['taskId']) || !nonEmpty(task['projectId']) || !nonEmpty(task['goalId'])) return null;
-  if (!isRecord(planRef) || planRef['aggregateType'] !== 'PlanRevision' || !nonEmpty(planRef['planId']) || !nonEmpty(planRef['projectId'])) return null;
-  if (parsed['status'] !== 'starting' && parsed['status'] !== 'running' && parsed['status'] !== 'ended') return null;
-  if (!nonEmpty(parsed['attemptId'])) return null;
-  return parsed as unknown as RunSnapshot;
+/** The registered RunSnapshot@1 validator already ran in `readMany` for every
+ * ready record, so the stored body is a complete Run here; only its JSON
+ * syntax is re-read. */
+function parseRun(json: string): RunSnapshot {
+  return parseJsonObject(json) as unknown as RunSnapshot;
 }
-function parseLease(json: string): TaskLeaseSnapshot | null {
-  const parsed = parseJsonObject(json);
-  if (parsed === null) return null;
-  if (parsed['schemaVersion'] !== 1 || !nonEmpty(parsed['holderRunId']) || !nonEmpty(parsed['attemptId'])) return null;
-  return parsed as unknown as TaskLeaseSnapshot;
+/** Same guarantee as `parseRun`: `validateTaskLeaseSnapshot` (the store's
+ * registered schema) is strictly stronger than this read. */
+function parseLease(json: string): TaskLeaseSnapshot {
+  return parseJsonObject(json) as unknown as TaskLeaseSnapshot;
 }
 function parseReduction(json: string): TaskReductionSnapshot | null {
   const parsed = parseJsonObject(json);
@@ -1306,7 +1301,6 @@ export async function readGoalRunsForCount(
   const runs: RunSnapshot[] = [];
   for (const record of read.value.records) {
     const run = parseRun(record.json);
-    if (run === null) return unavailable(`Run record ${record.refKey} is not decodable`);
     if (run.ref.projectId === goalRef.projectId && run.ref.goalId === goalRef.goalId) runs.push(run);
   }
   return { status: 'ready', runs };
@@ -1326,33 +1320,31 @@ export async function readGoalRunsForCount(
 export async function readGoalTriggerRecords(
   records: GoalRecordTransactionPort & RecordLookupPort,
   goalRef: GoalRef,
-  plan: PlanRevisionSnapshot | null,
+  plan: PlanRevisionSnapshot,
 ): Promise<{ status: 'ready'; triggers: NoteUpdateDueTriggerV1[]; claimedArchiveKeys: ReadonlySet<string> } | Rejected> {
   const runsRead = await readGoalRunsForCount(records, goalRef);
   // `readGoalRunsForCount` maps an unsupported index to `incomplete`; §11.5
   // requires ANY store failure here to be `unavailable`.
   if (runsRead.status !== 'ready') return unavailable(runsRead.reason);
   const runs = runsRead.runs;
-  const tasks = plan?.tasks ?? [];
+  const tasks = plan.tasks;
   const endedRuns = runs.filter((run) => run.status === 'ended');
 
   // T2 needs the FIRST terminal disposition Plan of each cancelled/superseded
   // Task; the active M may only inherit the change (`dispositionRecord.setIn`).
   const sourcePlanRefs = new Map<string, PlanRevisionRef>();
   const terminalSourceKeys = new Map<string, string>();
-  if (plan !== null) {
-    const activeKey = planRevisionRefKey(plan.ref);
-    for (const task of tasks) {
-      if (task.disposition !== 'cancelled' && task.disposition !== 'superseded') continue;
-      const change = plan.dispositionRecord?.entries.find((entry) => entry.taskId === task.taskId
-        && (entry.to === 'cancelled' || entry.to === 'superseded'));
-      if (change !== undefined && !samePlanRevisionPointer(change.setIn, plan.ref)) {
-        const key = planRevisionRefKey(change.setIn);
-        sourcePlanRefs.set(key, change.setIn);
-        terminalSourceKeys.set(task.taskId, key);
-      } else {
-        terminalSourceKeys.set(task.taskId, activeKey);
-      }
+  const activeKey = planRevisionRefKey(plan.ref);
+  for (const task of tasks) {
+    if (task.disposition !== 'cancelled' && task.disposition !== 'superseded') continue;
+    const change = plan.dispositionRecord?.entries.find((entry) => entry.taskId === task.taskId
+      && (entry.to === 'cancelled' || entry.to === 'superseded'));
+    if (change !== undefined && !samePlanRevisionPointer(change.setIn, plan.ref)) {
+      const key = planRevisionRefKey(change.setIn);
+      sourcePlanRefs.set(key, change.setIn);
+      terminalSourceKeys.set(task.taskId, key);
+    } else {
+      terminalSourceKeys.set(task.taskId, activeKey);
     }
   }
 
@@ -1362,13 +1354,11 @@ export async function readGoalTriggerRecords(
   const requeueKeys = endedRuns.map((run) => taskRequeueRefKey(requeueRefOf(run)));
   const refKeys = uniqueKeys([...reductionKeys, ...requeueKeys, ...sourcePlanRefs.keys()]);
   const present = new Map<string, EncodedRecord>();
-  if (refKeys.length > 0) {
-    const read = await records.readMany(refKeys);
-    if (read.status !== 'ready') {
-      return unavailable(`the update-due records are not readable: ${read.code}: ${read.reason}`);
-    }
-    for (const record of read.value.records) present.set(record.refKey, record);
+  const read = await records.readMany(refKeys);
+  if (read.status !== 'ready') {
+    return unavailable(`the update-due records are not readable: ${read.code}: ${read.reason}`);
   }
+  for (const record of read.value.records) present.set(record.refKey, record);
 
   const sourcePlans = new Map<string, PlanRevisionSnapshot>();
   for (const key of sourcePlanRefs.keys()) {
@@ -1391,20 +1381,18 @@ export async function readGoalTriggerRecords(
     triggers.push({ key: `task_end:${task.taskId}#r${reduction.revision}`, at: reduction.reducedAt,
       kind: 'task_end', taskId: task.taskId });
   }
-  if (plan !== null) {
-    // T2: the cancellation/supersession instant of the FIRST terminal Plan.
-    for (const task of tasks) {
-      if (task.disposition !== 'cancelled' && task.disposition !== 'superseded') continue;
-      const sourceKey = terminalSourceKeys.get(task.taskId);
-      if (sourceKey === undefined) return unavailable(`the terminal source plan of ${task.taskId} was not resolved`);
-      const source = sourceKey === planRevisionRefKey(plan.ref) ? plan : sourcePlans.get(sourceKey);
-      if (source === undefined) return unavailable(`the terminal source plan ${sourceKey} is not readable`);
-      triggers.push({ key: `task_end:${task.taskId}@p${source.planRevision}`, at: source.acceptedAt,
-        kind: 'task_end', taskId: task.taskId });
-    }
-    // T4: adopting the active plan, goal anchor only.
-    triggers.push({ key: `plan:p${plan.planRevision}`, at: plan.acceptedAt, kind: 'plan', taskId: null });
+  // T2: the cancellation/supersession instant of the FIRST terminal Plan.
+  for (const task of tasks) {
+    if (task.disposition !== 'cancelled' && task.disposition !== 'superseded') continue;
+    const sourceKey = terminalSourceKeys.get(task.taskId);
+    if (sourceKey === undefined) return unavailable(`the terminal source plan of ${task.taskId} was not resolved`);
+    const source = sourceKey === planRevisionRefKey(plan.ref) ? plan : sourcePlans.get(sourceKey);
+    if (source === undefined) return unavailable(`the terminal source plan ${sourceKey} is not readable`);
+    triggers.push({ key: `task_end:${task.taskId}@p${source.planRevision}`, at: source.acceptedAt,
+      kind: 'task_end', taskId: task.taskId });
   }
+  // T4: adopting the active plan, goal anchor only.
+  triggers.push({ key: `plan:p${plan.planRevision}`, at: plan.acceptedAt, kind: 'plan', taskId: null });
   // T3: one trigger per ended Run's TaskRequeue; archiveOrigin replaces rework.
   for (const run of endedRuns) {
     const key = taskRequeueRefKey(requeueRefOf(run));
@@ -1454,9 +1442,6 @@ export function createNoteRunTaskResolver(records: GoalRecordTransactionPort): N
       return { status: 'rejected', code: 'unavailable', reason: 'the caller Run is missing' };
     }
     const run = parseRun(record.json);
-    if (run === null) {
-      return { status: 'rejected', code: 'unavailable', reason: 'the caller Run is not decodable' };
-    }
     return { status: 'ready', value: { goalId: run.task.goalId, taskId: run.task.taskId, planRef: run.planRef } };
   };
 }
@@ -1507,12 +1492,10 @@ type ReworkRecordsRead = {
  * I-12): per Run its TaskRequeue (`afterRunId` = the Run) and its requeue
  * refusal (`operation:'requeue'`, `subjectId` = the Run), in one `readMany`.
  * Every key read is guarded: a present record at its revision, a missing one
- * at `null`. A backend without the claim schemas cannot hold either record
- * (the store refuses an unregistered record), so `unsupported` is a confirmed
- * absence with no watermark and no guard, as in `readRunRoundChain`. A damaged
- * or foreign record is never guessed: the whole read refuses.
+ * at `null`. A damaged or foreign record is never guessed: the whole read
+ * refuses.
  */
-async function readReworkRecords(records: GoalRecordTransactionPort, runs: readonly RunSnapshot[]): Promise<ReworkRecordsRead | Rejected> {
+async function readReworkRecords(records: RecordReadPort, runs: readonly RunSnapshot[]): Promise<ReworkRecordsRead | Rejected> {
   const none: ReworkRecordsRead = { status: 'ready', requeues: [], refusals: [], guards: [], readThrough: undefined };
   if (runs.length === 0) return none;
   const keyed = runs.map((run) => {
@@ -1524,7 +1507,6 @@ async function readReworkRecords(records: GoalRecordTransactionPort, runs: reado
   });
   const read = await records.readMany(uniqueKeys(keyed.flatMap((entry) => [entry.requeueKey, entry.refusalKey])));
   if (read.status !== 'ready') {
-    if (read.code === 'unsupported') return none;
     return unavailable(`the rework records are not readable: ${read.code}: ${read.reason}`);
   }
   const present = new Map(read.value.records.map((record) => [record.refKey, record]));
@@ -1561,7 +1543,7 @@ async function readReworkRecords(records: GoalRecordTransactionPort, runs: reado
  * claim schemas cannot hold one, so `unsupported` is a confirmed absence with
  * no watermark. A damaged or foreign record is never guessed.
  */
-async function readReverifyRefusals(records: GoalRecordTransactionPort, heads: readonly RoundSnapshot[]): Promise<{
+async function readReverifyRefusals(records: RecordReadPort, heads: readonly RoundSnapshot[]): Promise<{
   status: 'ready'; refusals: ReadonlyMap<string, TaskReworkRefusalSnapshotV1>; readThrough: CommitCursor | null | undefined;
 } | Rejected> {
   const refusals = new Map<string, TaskReworkRefusalSnapshotV1>();
@@ -1608,7 +1590,7 @@ async function readReverifyRefusals(records: GoalRecordTransactionPort, heads: r
  * `taskHasRun`, accumulated BEFORE the basis/plan filter so a Run on an older
  * Plan still blocks a first claim. */
 export async function readCanonicalTaskFacts(
-  records: GoalRecordTransactionPort & RecordLookupPort,
+  records: TaskFactRecordPort,
   goalRef: GoalRef,
   plan: PlanRevisionSnapshot,
   taskId?: string,
@@ -1665,7 +1647,6 @@ export async function readCanonicalTaskFacts(
       if (record === undefined) return unavailable(`Run candidate ${key} has no canonical record`);
       guards.push({ refKey: key, expectedRevision: record.revision });
       const run = parseRun(record.json);
-      if (run === null) return unavailable(`Run record ${key} is not decodable`);
       if (run.ref.projectId !== goalRef.projectId || run.ref.goalId !== goalRef.goalId) continue;
       if (run.task.projectId !== goalRef.projectId || run.task.goalId !== goalRef.goalId) continue;
       goalRuns.push(run);
@@ -1688,7 +1669,6 @@ export async function readCanonicalTaskFacts(
       guards.push({ refKey: reductionKey, expectedRevision: reductionRecord === undefined ? null : reductionRecord.revision });
       if (leaseRecord !== undefined) {
         const lease = parseLease(leaseRecord.json);
-        if (lease === null) return unavailable(`TaskLease ${leaseKey} is not decodable`);
         leaseByTask.set(task.taskId, lease);
       }
       if (reductionRecord !== undefined) {
@@ -1750,13 +1730,12 @@ export async function readCanonicalTaskFacts(
         for (const run of [...runByTask.values()].flat()) {
           const record = present.get(reviewKeyOfRun(run));
           if (record === undefined) { reviewByRunId.set(run.ref.runId, null); continue; }
-          const decoded = decodeUnknownCallReview(record);
-          if (decoded.status !== 'decoded') {
-            reviewByRunId.set(run.ref.runId, { status: 'unreadable' });
-            continue;
-          }
-          reviewByRunId.set(run.ref.runId, projectTaskReview(decoded.value));
-          reviewsByRunId.set(run.ref.runId, decoded.value);
+          // `readMany` already applied the registered UnknownCallReview codec
+          // (`decodeUnknownCallReview`) to this ready record; re-running it can
+          // never fail, so the body is used directly.
+          const review = parseJsonObject(record.json) as unknown as UnknownCallReviewV1;
+          reviewByRunId.set(run.ref.runId, projectTaskReview(review));
+          reviewsByRunId.set(run.ref.runId, review);
         }
       } else {
         for (const run of [...runByTask.values()].flat()) reviewByRunId.set(run.ref.runId, { status: 'unreadable' });
@@ -2058,7 +2037,6 @@ export async function readFutureChangeTaskFacts(
     const record = present.get(key);
     if (record === undefined) return unavailable(`Run candidate ${key} has no canonical record`);
     const run = parseRun(record.json);
-    if (run === null) return unavailable(`Run record ${key} is not decodable`);
     if (run.ref.projectId !== goalRef.projectId || run.ref.goalId !== goalRef.goalId) continue;
     const entry = facts.get(run.task.taskId);
     if (entry === undefined) continue;
@@ -2073,7 +2051,6 @@ export async function readFutureChangeTaskFacts(
     const leaseRecord = present.get(leaseKey);
     if (leaseRecord !== undefined) {
       const lease = parseLease(leaseRecord.json);
-      if (lease === null) return unavailable(`TaskLease ${leaseKey} is not decodable`);
       entry.lease = lease;
       return ready();
     }
@@ -2168,7 +2145,7 @@ export type OriginPlanRead = {
  * Task and never scans Sessions/events.
  */
 export async function readOriginPlans(
-  records: GoalRecordTransactionPort,
+  records: RecordReadPort,
   refs: readonly PlanRevisionRef[],
 ): Promise<{ status: 'ready'; value: OriginPlanRead } | Rejected> {
   const byKey = new Map<string, PlanRevisionRef>();

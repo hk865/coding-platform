@@ -62,7 +62,7 @@ import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeu
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
-import { createSessionResponsibilityBasisReader, readCanonicalTaskFacts, readGoalPlanWindow } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { createSessionResponsibilityBasisReader, readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
@@ -180,6 +180,8 @@ async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverW
     host: createRuntimeHostDouble({ runRefs: new Set<string>(), scripted,
       root: base.directory, skillRoot: join(base.directory, 'skills'), scope: base.scope, role: ROLE_Y }),
     kernel: kernelApi, controls, now, newId: eventId,
+    readTaskClosure: async (_ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) =>
+      readTaskClosure(records, { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
   });
   const sessionFacts = createSessionFactsService({ records });
   const responsibilities = createSessionResponsibilityService({ records, lookups: records,
@@ -189,8 +191,7 @@ async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverW
   const forbiddenCheck = async () => { throw new Error('WP1 given must not start a check'); };
   const deps: WorkflowDependencies = {
     tasks: base.goals, plans: base.plans, sessions: base.sessionsPort, claims, executions: reads,
-    runtime: { ...runtime.port, createSession: sessionOperations.createSession,
-      readSessionHistory: sessionOperations.readSessionHistory },
+    runtime: { ...runtime.port, createSession: sessionOperations.createSession },
     evidence: { openVerification: forbiddenCheck, readVerification: forbiddenCheck, beginCheck: forbiddenCheck,
       recordCheckResult: forbiddenCheck, finalizeChecks: forbiddenCheck },
     checks: { runRegisteredCheck: forbiddenCheck }, sourceAuthority: createSourceAuthorityReader({ authority }),

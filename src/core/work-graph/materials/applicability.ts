@@ -45,7 +45,7 @@ async function hostAdmission(
   // A platform operation records its own trusted scope at write time; a Host may
   // read it back directly without inventing a Run. A workspace-restricted Host
   // never crosses workspace, and material with no trusted workspace association
-  // is unreadable for it. Legacy owner-less records still establish no scope.
+  // is unreadable for it.
   if (origin.kind === 'platform_operation') {
     if (origin.projectId !== reader.projectId) {
       return rejected('forbidden', 'the platform material belongs to another project');
@@ -55,10 +55,7 @@ async function hostAdmission(
     }
     return { status: 'allowed', applicability: 'historical_explanation' };
   }
-  const owner = materialOwnerFromOrigin(input.origin);
-  if (owner === null) {
-    return rejected('forbidden', 'the material has no canonical Run/QueryRun owner to scope a Host read');
-  }
+  const owner = origin.owner;
   const canonical = await authority.load(owner);
   if (canonical.status !== 'found') {
     return rejected('forbidden', 'the canonical material owner could not be loaded');

@@ -362,7 +362,6 @@ export type MessageGuardContext = {
 /** MSG-06 consultation binding verdict, in today's check order. */
 export type QueryAnswerBinding =
   | 'matches'
-  | 'not_consultation'
   | 'other_message'
   | 'other_recipient'
   | 'other_derivation_source'
@@ -693,8 +692,6 @@ function queryAnswerProblem(answer: MessageGuardContext['queryAnswer']): Message
   switch (answer.binding) {
     case 'matches':
       break;
-    case 'not_consultation':
-      return reject('guard_failed', 'forbidden', 'the Query answer is not an explicit consultation answer');
     case 'other_message':
       return reject('guard_failed', 'forbidden', 'the consultation answer belongs to another message');
     case 'other_recipient':

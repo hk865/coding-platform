@@ -722,9 +722,7 @@ function decisionChangeProofIssues(value: unknown, label: string): string[] {
  * owned by the tasks-side proposePlan service.
  */
 export function candidateRequestRef(proposal: PlanProposal): QueryJobRef | null {
-  // Only a v2 candidate can belong to a request; a legacy v1 candidate and an
-  // absent raw field both read as the explicit null "independent candidate".
-  return proposal.kind === 'candidate_v2' ? proposal.requestRef ?? null : null;
+  return proposal.requestRef ?? null;
 }
 
 function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null): string[] {

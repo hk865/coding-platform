@@ -390,8 +390,10 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
       }
     }
 
-    // Step 5: the Runs a queued intent names, settled without another end: never entered (CTL-08(a)),
-    // an unknown end (CTL-08(d)) or an ended Run whose acks a crash lost (CTL-08(e)).
+    // Step 5: the Runs a queued intent names, settled without another end: an
+    // unknown end (CTL-08(d)) or an ended Run whose acks a crash lost (CTL-08(e)).
+    // A starting Run never enters this step: it applies its control in the
+    // submitting commit.
     const queuedRuns = await platform.reconcile.candidates.listQueuedControlRuns(scope, ctx.signal);
     if (queuedRuns.status !== 'ready') {
       out.problems.push(`${scope.workspaceId}: the queued control intents are not readable (${rejectionText(queuedRuns)})`);
@@ -411,11 +413,9 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
           continue;
         }
         // Step 2 settles the intents of a Run it ends, or leaves an open Run (W-07) with them.
-        if (run.status === 'running' || (run.status === 'starting' && startingEntryOf(run) !== 'not_entered')) continue;
+        if (run.status === 'starting' || run.status === 'running') continue;
         const pointer = await queuedIntent(ctx, run.controlState === undefined ? [] : [run.controlState.intentRef]);
         const steers = await queuedIntent(ctx, run.controlInputs ?? []);
-        // A not-entered Run settles only its queued pointer intent; a queued steer is delivered when it enters.
-        if (run.status === 'starting' && !pointer) continue;
         if (!pointer && !steers) continue;
         const result = await platform.reconcile.reconcileControls(ctx, { record: read.value, hostInstanceId, queuedSteers: steers });
         out.controls.push({ ref: refText(result.runRef), row: result.row, status: result.status, reason: result.reason });

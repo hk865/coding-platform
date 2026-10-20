@@ -62,7 +62,7 @@ export type SessionWorkWaitV1 = { runRef: RunRef; messageRef: SessionMessageRef;
 export type SessionFactsV1 = {
   session: SessionRecord; latestWork: TaskClaim | null; wait: SessionWorkWaitV1 | null;
   predecessor: SessionProvenanceV1 | null; continuations: SessionRef[];
-  legacyPending: boolean; sourceCursor: CommitCursor;
+  sourceCursor: CommitCursor;
 };
 export interface SessionFactsPort {
   readSessionFacts(ctx: CoreCallContext, sessionRef: SessionRef): Promise<ReadResult<SessionFactsV1>>;

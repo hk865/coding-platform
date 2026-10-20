@@ -24,7 +24,6 @@ import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskAutomationPolicyV1 } from '../
 
 const assembly: HostSettingsAssembly = {
   listWorkspaces: () => [],
-  listProjectIds: () => [],
   secretConfigured: () => false,
   bootstrap: () => ({}) as BootstrapResponse, // not consumed by these settings assertions
   async openWorkspace() { return { status: 'rejected', code: 'unsupported', reason: 'not used by these tests' }; },

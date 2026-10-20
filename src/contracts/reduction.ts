@@ -33,12 +33,11 @@ export type TaskReductionCause = {
 // Snapshot / command                                                         //
 // ------------------------------------------------------------------------ //
 /**
- * R3e.3 versioned completion audit, added by the formal completion writer.
+ * R3e.3 versioned completion audit, written by the formal completion writer.
  *
- * It is OPTIONAL so every historical `TaskReductionSnapshot@1` row produced
- * before this batch keeps decoding through the original reader. A new writer
- * in this batch MUST fill it; the round ref/revision address the exact adopted
- * check definition and `evidenceRefs` are the actual adopted evidence.
+ * Required: every `TaskReductionSnapshot@1` row the platform writes carries it.
+ * The round ref/revision address the exact adopted check definition and
+ * `evidenceRefs` are the actual adopted evidence.
  */
 export type TaskCompletionAuditV1 = {
     schemaVersion: 1;
@@ -69,6 +68,6 @@ export type TaskReductionSnapshot = {
     satisfiedObligationIds: string[];
     causes: TaskReductionCause[];
     reducedAt: string;
-    /** Present only on a formal completion write; absent on historical rows. */
-    completion?: TaskCompletionAuditV1;
+    /** The formal completion audit; every current-format record carries it. */
+    completion: TaskCompletionAuditV1;
 };

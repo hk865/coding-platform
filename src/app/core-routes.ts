@@ -294,7 +294,7 @@ export type CoreRoutePlatform = {
   /** Slice 5 §4.5 decision owners: Goal settings/order, the workspace notice
    * cursor, the user-facing decision messages, the read-only decision queue and
    * the per-request candidate head. The composition root always publishes them. */
-  goalSettings: GoalSettingsPort;
+  goalSettings: Omit<GoalSettingsPort, 'resolveGoalConflict'>;
   workspaceDecisionSettings: WorkspaceDecisionSettingsPort;
   decisionMessages: DecisionMessagePort;
   decisions: DecisionReadPort;
@@ -520,15 +520,6 @@ export class CoreRouteRejectionError extends Error {
     super(rejection.reason);
     this.name = 'CoreRouteRejectionError';
     this.rejection = rejection;
-  }
-}
-
-/** A named capability that has not been wired yet. This is an explicit gap,
- * never a silently empty success. */
-export class CoreUnsupportedError extends CoreRouteRejectionError {
-  constructor(reason: string) {
-    super({ status: 'rejected', code: 'unsupported', reason });
-    this.name = 'CoreUnsupportedError';
   }
 }
 
@@ -958,10 +949,7 @@ async function releaseHoldRequeue(
   let pointer: ControlIntentSnapshotV1 | null = null;
   const intentRef = run.controlState?.intentRef;
   if (intentRef !== undefined) {
-    const intentRead = await platform.controls.readControl(ctx, intentRef).catch(() => null);
-    if (intentRead === null) {
-      return { status: 'rejected', code: 'unavailable', reason: 'the original Run control intent could not be read' };
-    }
+    const intentRead = await platform.controls.readControl(ctx, intentRef);
     if (intentRead.status !== 'ready') {
       return intentRead.status === 'rejected'
         ? { status: 'rejected', code: intentRead.code, reason: intentRead.reason }

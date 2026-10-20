@@ -291,10 +291,7 @@ async function assembleAttempt(
   if (trailingRead.status !== 'ready') return { status: 'result', result: trailingRead };
   if (!sameWindow(window, trailingRead.value)) return { status: 'window_changed' };
 
-  items.sort((left, right) => {
-    const byPosition = compareNoticePositions(left.position, right.position);
-    return byPosition !== 0 ? byPosition : compareText(left.itemKey, right.itemKey);
-  });
+  items.sort((left, right) => compareNoticePositions(left.position, right.position));
   const after = input.after;
   const remaining = after === undefined ? items : items.filter((item) => compareNoticePositions(item.position, after) > 0);
   return { status: 'value', value: { watermark: window, items: remaining } };
@@ -311,9 +308,6 @@ async function projectReply(
 ): Promise<{ status: 'ready'; value: { item: NoticeItemV1; signature: string } | null } | { status: 'window_changed' }
   | { status: 'result'; result: PageResult }> {
   const read = await deps.messages.readMessage(ctx, reply.messageRef);
-  if (read.status === 'not_found') {
-    return stableDamage(deps, window, () => mismatch(reply.messageRef.messageId, 'does not exist'));
-  }
   if (read.status !== 'ready') return { status: 'result', result: read };
   const message = read.value;
   const mismatchMessage = sourceMismatchReason(message, input, source, reply);
@@ -336,9 +330,6 @@ async function projectReply(
   // record/message still carries is stable damage, not a silent record fallback.
   if (reply.unavailableSince !== card.record.unavailableSince) {
     return stableDamage(deps, window, () => mismatch(reply.messageRef.messageId, 'disagrees with its stored entry position'));
-  }
-  if (reply.responseSince !== message.responseSince) {
-    return stableDamage(deps, window, () => mismatch(reply.messageRef.messageId, 'disagrees with its stored reply position'));
   }
   const unavailableSince = reply.unavailableSince;
   const responseSince = reply.responseSince;
@@ -481,10 +472,6 @@ function isNoticePosition(value: unknown): value is NoticePositionV1 {
   const position = value as { kind?: unknown; itemKey?: unknown; cursor?: unknown };
   if (typeof position.itemKey !== 'string') return false;
   return position.kind === 'commit' && typeof position.cursor === 'string';
-}
-
-function compareText(left: string, right: string): -1 | 0 | 1 {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function sameRef(left: { projectId: string; sessionId: string }, right: { projectId: string; sessionId: string }): boolean {

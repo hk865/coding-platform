@@ -80,7 +80,6 @@ const HISTORY_IDENTITY_PREFIX = 'execution-history:';
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
-function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -322,7 +321,9 @@ export function createExecutionHistoryService(
         // 4. Verify the Run/Attempt/outbox/Plan/Session chain and scope.
         const read = await createRunStateReader({ records }).readExecution(scopeCtx, runRef);
         if (read.status === 'not_found') return reject('not_found', 'the target Run does not exist');
-        if (read.status === 'not_ready') return incomplete('the target Run is not readable at the required watermark');
+        // This call passes no atLeastCursor, so not_ready cannot arise; it stays
+        // a type-exhaustive mapping to the generic unavailable rejection.
+        if (read.status === 'not_ready') return unavailable('the target Run is not readable at the required watermark');
         if (read.status !== 'ready') return reject(read.code, read.reason, read.current);
         if (scopeCtx.signal.aborted) return reject('cancelled', 'the execution-history write was cancelled during the execution read');
         const { run, attempt, outbox, plan, session } = read.value;

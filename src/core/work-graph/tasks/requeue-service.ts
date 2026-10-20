@@ -193,9 +193,6 @@ function refusalOf(refused: MachineRefusal | null): Rejection | null {
 function refKeyOf(value: unknown): string {
   return canonicalJson(value as JsonValue);
 }
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 // --------------------------------------------------------------------------
 // Caller and request isolation
@@ -664,13 +661,12 @@ export function createTaskRequeueService(
 
   /** Step 9 (LA-5): the whole workspace's digest, without the change scope. */
   async function captureSource(goal: GoalSnapshot): Promise<{ ok: true; stamp: SourceStampV1 } | Rejected> {
-    let resolved;
-    try { resolved = await deps.workspaceHost.resolveRoot(goal.workspaceRef); }
-    catch (error) { return { ok: false, rejection: reject('unavailable', `the workspace root could not be resolved: ${messageOf(error)}`) }; }
+    // Both seams report their own failures as a result (the Host root lookup and
+    // the one VerificationWorkspaceReader convert every error), so neither call
+    // throws and the status checks below report every real failure.
+    const resolved = await deps.workspaceHost.resolveRoot(goal.workspaceRef);
     if (resolved.status !== 'ready') return { ok: false, rejection: reject('unavailable', `the workspace source is not readable: ${resolved.reason}`) };
-    let captured: SourceDigestResult;
-    try { captured = await deps.source.captureDigest(resolved.value.root); }
-    catch (error) { return { ok: false, rejection: reject('unavailable', `the workspace source capture failed: ${messageOf(error)}`) }; }
+    const captured = await deps.source.captureDigest(resolved.value.root);
     if (captured.status !== 'ready') return { ok: false, rejection: reject('unavailable', `the workspace source is not readable: ${captured.reason}`) };
     return { ok: true, stamp: { workspaceRevision: resolved.value.workspaceRevision, sourceDigest: captured.sourceDigest } };
   }
@@ -944,14 +940,10 @@ export function createTaskRequeueService(
     if (permission !== null) return permission;
     // TASK-27 / GOAL-29 (A.2 step 5.6), after the actor × class matrix (which refuses a trigger from any actor but
     // the Goal fan-out, §4.4): a goal_resume trigger names this Goal's current resume epoch and the earlier
-    // fan-out pause that the afterRun's pointer still is; a moved epoch is stale, anything else invalid.
+    // fan-out pause that the afterRun's pointer still is. A moved Goal revision is already refused above.
     if (input.trigger !== undefined) {
       const trigger = input.trigger;
       if (!sameRef(trigger.goalRef, goalRef)) return reject('invalid', 'the goal_resume trigger names another Goal');
-      if (goal.desiredState !== 'active' || goal.desiredStateRevision !== trigger.resumedEpoch) {
-        return reject('revision_conflict', 'the Goal is no longer at the resume epoch the trigger names',
-          [{ ref: goalRef, revision: goal.revision }]);
-      }
       if (trigger.pausedEpoch < 1 || trigger.pausedEpoch >= trigger.resumedEpoch) {
         return reject('invalid', 'the goal_resume trigger pause epoch must precede its resume epoch');
       }

@@ -397,9 +397,6 @@ export async function readCurrentCatalogWindow(records: GoalRecordTransactionPor
   }
   const decoded = decodeArchitectureCatalogRecord(catalogRecord);
   if (decoded.status !== 'decoded') return unavailable('the architecture catalog record is damaged: ' + decoded.reason);
-  if (canonicalJson(decoded.value.baselineRef as unknown as JsonValue) !== canonicalJson(baselineRef as unknown as JsonValue)) {
-    return unavailable('the architecture catalog does not name the active baseline revision');
-  }
   const catalog = decoded.value;
   const guards: RecordGuard[] = [
     { refKey: baselineKey, expectedRevision: baselineRecord.revision },

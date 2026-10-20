@@ -228,11 +228,11 @@ export type CardCollectionSourceSpec<T> = {
   needsGoal: boolean;
   readCollection(ctx: CoreCallContext, input: { workspace: WorkspaceScope; goalRef: GoalRef;
     attempt?: DecisionSourceAttempt }): Promise<ReadResult<readonly T[]>>;
-  /** The item's canonical `decisionSourceKey(identity)`. */
-  keyOf(item: T): string;
+  /** The item's canonical `decisionSourceKey(identity)`; needed only for closed cards. */
+  keyOf?(item: T): string;
   project(item: T, goalRef: GoalRef, goal: GoalSnapshot | null): DecisionCardV1;
-  /** `null` = the item is still open; a reason closes it. */
-  closedReasonOf(item: T): DecisionCardV1['closedReason'];
+  /** `null` = the item is still open; a reason closes it. A missing reader means always open. */
+  closedReasonOf?(item: T): DecisionCardV1['closedReason'];
   readByKey(ctx: CoreCallContext, input: { workspace: WorkspaceScope; source: DecisionSourceV1 }):
     Promise<ReadResult<{ item: T } | { closed: DecisionCardV1['closedReason'] } | null>>;
   /** The maximum items one OFFSET page serves (1..200, default SOURCE_PAGE_LIMIT). */
@@ -279,8 +279,8 @@ export function createCollectionCardSource<T>(
         if (listed.status !== 'ready') return listed;
         const goal = await readGoal(goalRef);
         assembled = listed.value.map((item) => {
-          const closedReason = spec.closedReasonOf(item);
-          if (closedReason === null) return spec.project(item, goalRef, goal);
+          const closedReason = spec.closedReasonOf === undefined ? null : spec.closedReasonOf(item);
+          if (closedReason === null || spec.keyOf === undefined) return spec.project(item, goalRef, goal);
           const card = spec.project(item, goalRef, goal);
           return closedCollectionCard({ ...card.source, key: spec.keyOf(item) }, closedReason);
         });
@@ -318,7 +318,7 @@ export function createCollectionCardSource<T>(
  */
 export type NoteReviewCardSourceDependencies = {
   records: DecisionReadRecordsPort;
-  noteDecisions: NoteDecisionSourcePort;
+  noteDecisions: Pick<NoteDecisionSourcePort, 'readNoteDecisions' | 'readNoteDecision'>;
 };
 
 export function createNoteReviewCardSource(deps: NoteReviewCardSourceDependencies): DecisionCardSourcePort {
@@ -327,9 +327,7 @@ export function createNoteReviewCardSource(deps: NoteReviewCardSourceDependencie
     needsGoal: true,
     readCollection: (ctx, { goalRef, attempt }) => deps.noteDecisions.readNoteDecisions(ctx, { goalRef,
       ...(attempt === undefined ? {} : { attempt }) }),
-    keyOf: (card) => card.cardId,
     project: noteReviewCard,
-    closedReasonOf: () => null,
     async readByKey(ctx, { source }) {
       const identity = parseIdentity(source.key);
       if (identity === null || identity.kind !== 'note_review') {
@@ -1561,14 +1559,17 @@ function builtInMemberNoticeSource(records: DecisionReadRecordsPort, messages: r
           const since = origin.value.since;
           // §2.5 line 291: a notice is positioned only by its bound commit
           // cursor; an absent position is unavailable, never a legacy fallback.
-          if (since === undefined || since === null) {
+          // `decodeNoticeOrigin` refuses a persisted `null` too; the wire type
+          // still spells that case, so the cast states what the decoder ensures.
+          if (since === undefined) {
             return { status: 'rejected', code: 'unavailable', reason: 'member notice origin has no commit position' };
           }
+          const cursor = since as CommitCursor;
           const itemKey = `member_notice:${sessionMessageRefKey(message.ref)}`;
           items.push({
             itemKey, category: 'member_notice',
             goalRef: message.goalRef ?? { aggregateType: 'Goal', projectId: message.ref.projectId, goalId: '' },
-            position: { kind: 'commit', cursor: since, itemKey },
+            position: { kind: 'commit', cursor, itemKey },
             summary: '你有一条新通知', objects: [], rework: null,
           });
         }

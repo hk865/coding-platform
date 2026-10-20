@@ -80,14 +80,6 @@ export type RuntimeControlProof = {
 
 export type RuntimeControlDecision = { kind: 'continue' } | { kind: 'pause' };
 
-/**
- * The read-only verdict a narrow long-running tool (the wait after send) may
- * observe. It NEVER consumes the intent, associates a handle or aborts a
- * controller; it only lets the tool yield to the original tool-group barrier,
- * which performs the real consuming decision.
- */
-export type RuntimeControlInspection = { kind: 'continue' } | { kind: 'pause' } | { kind: 'cancel' };
-
 export type RuntimeControlCoordinator = {
   /** Read the accepted intent and consume it only at a real local safe point. */
   deliver(ctx: CoreCallContext, request: DeliverControlRequest): Promise<ReadResult<ControlIntentSnapshotV1>>;
@@ -109,13 +101,6 @@ export type RuntimeControlCoordinator = {
    * controller and lets the Kernel's own signal check win.
    */
   decide(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlDecision>;
-  /**
-   * Read the CURRENT canonical Run control pointer WITHOUT any side effect. A
-   * pause/cancel is reported so a narrow tool can yield; the intent is left for
-   * the existing barrier. Missing/unavailable facts keep the historical
-   * 'continue' (the barrier still fails closed at its own real safe point).
-   */
-  inspect(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlInspection>;
   /** Drain the coordinator without starting any background recovery. */
   close(): Promise<void>;
 };
@@ -136,9 +121,6 @@ function isRunRef(value: unknown): value is RunRef {
 }
 function sameRef(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as never) === canonicalJson(right as never); } catch { return false; }
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export function createRuntimeControlCoordinator(
@@ -167,12 +149,7 @@ export function createRuntimeControlCoordinator(
       if (!isControlIntentRef(ref)) {
         return { status: 'rejected', code: 'invalid', reason: 'deliverControl requires a complete ControlIntentRef' };
       }
-      let read: ReadResult<ControlIntentSnapshotV1>;
-      try {
-        read = await controls.readControl(ctx, ref);
-      } catch (error) {
-        return { status: 'rejected', code: 'unavailable', reason: `the control intent read failed: ${messageOf(error)}` };
-      }
+      const read: ReadResult<ControlIntentSnapshotV1> = await controls.readControl(ctx, ref);
       if (read.status !== 'ready') return read;
       const intent = read.value;
       // An already-observed intent is returned as-is: no second delivery, no
@@ -307,37 +284,6 @@ export function createRuntimeControlCoordinator(
         return { kind: 'continue' };
       }
       return { kind: 'pause' };
-    },
-    async inspect(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlInspection> {
-      const controls = deps.controls;
-      const sourceAuthority = deps.sourceAuthority;
-      // No trusted control facts: nothing to yield to; the historical path runs.
-      if (controls === undefined || sourceAuthority === undefined) return { kind: 'continue' };
-      if (!isRunRef(runRef)) return { kind: 'continue' };
-      let loaded;
-      try {
-        loaded = await sourceAuthority().load(runRef);
-      } catch {
-        return { kind: 'continue' };
-      }
-      if (loaded.status !== 'found' || !isRunRef(loaded.snapshot.ref) || !sameRef(loaded.snapshot.ref, runRef)) {
-        return { kind: 'continue' };
-      }
-      const run = loaded.snapshot as RunSnapshot;
-      const control = run.controlState;
-      if (control === undefined) return { kind: 'continue' };
-      let read: ReadResult<ControlIntentSnapshotV1>;
-      try {
-        read = await controls.readControl(ctx, control.intentRef);
-      } catch {
-        return { kind: 'continue' };
-      }
-      if (read.status !== 'ready') return { kind: 'continue' };
-      const intent = read.value;
-      if (!sameRef(intent.ref, control.intentRef) || !sameRef(intent.runRef, runRef)) return { kind: 'continue' };
-      if (control.desiredState === 'paused') return { kind: 'pause' };
-      if (control.desiredState === 'cancelled') return { kind: 'cancel' };
-      return { kind: 'continue' };
     },
     async close(): Promise<void> {
       handles.clear();

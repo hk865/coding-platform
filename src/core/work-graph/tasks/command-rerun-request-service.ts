@@ -80,8 +80,8 @@ export type CommandRerunRequestServiceDependencies = {
     Promise<ReadResult<{ closed: boolean; cause: 'satisfied' | 'cancelled' | 'superseded' | null }>>;
   /** The ONE recognizer (N's command-recognition.ts); absent -> requestRerun is unavailable. */
   recognize?: CommandRecognizer;
-  now?: () => string;
-  eventId?: () => string;
+  now: () => string;
+  eventId: () => string;
 };
 
 export type CommandRerunRequestService = CommandRerunRequestReadPort & CommandRerunRequestPort & {
@@ -175,9 +175,8 @@ export function createCommandRerunRequestService(
   const store = deps.records;
   const lookups: RecordLookupPort | null = deps.lookups
     ?? (typeof (store as Partial<RecordLookupPort>).lookup === 'function' ? store as RecordLookupPort : null);
-  const now = deps.now ?? (() => new Date().toISOString());
-  let eventSeq = 0;
-  const newEventId = deps.eventId ?? (() => `crr-event-${String(++eventSeq)}`);
+  const now = deps.now;
+  const newEventId = deps.eventId;
 
   // ---- reads --------------------------------------------------------------
 
@@ -185,7 +184,6 @@ export function createCommandRerunRequestService(
     return readOwnerRecord({
       store, refKey, decode: decodeCommandRerunRequest,
       readError: message => rejected('unavailable', `the request could not be read: ${message}`),
-      decodeError: reason => rejected('invalid', `the stored request is not decodable: ${reason}`),
     });
   }
 

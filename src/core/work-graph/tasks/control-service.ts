@@ -205,8 +205,7 @@ function encodeRun(run: RunSnapshot): EncodedRecord {
  * the machines' Run read row refuses), for the intent `intentRef`: the node as
  * a control reads it (`runControlNodeOf`), the canonical pointer and steer
  * list, whether a successor Run consumed a yielded wait's continuation (RD-8),
- * the formal V2 entry identity and the persisted history locator
- * (`'malformed'` when it fails the locator codec). The intent the pointer
+ * the formal V2 entry identity and the persisted history locator. The intent the pointer
  * names and the Goal (D-9) are added only for the submissions that read them;
  * the Kernel pause and the exit proof belong to other events.
  */
@@ -228,7 +227,7 @@ function controlContext(
       entry: isExecutionAuthorizationV2(auth)
         ? { consumerId: auth.consumerId, entryGeneration: auth.generation, sessionGeneration: auth.sessionGeneration }
         : null,
-      history: locator === undefined ? null : isRunExecutionHistoryV1(locator) ? locator : 'malformed',
+      history: locator === undefined ? null : isRunExecutionHistoryV1(locator) ? locator : null,
     },
     goal: { desiredState: 'active' },
     pointerIntent: null,

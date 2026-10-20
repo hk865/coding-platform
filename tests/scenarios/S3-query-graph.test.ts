@@ -72,7 +72,7 @@ function attentionDetail(key: string, state: string, version: string, digest: st
 
 /** The large graph change: the baseline plus 2000 added task nodes. */
 function largeChange(baseline: AttentionSnapshot): AttentionSnapshot {
-  const graph = baseline.graph ?? { nodes: [], edges: [], statuses: {} };
+  const graph = baseline.graph ?? { nodes: [], edges: [], statuses: {}, details: {} };
   const added = Array.from({ length: 2_000 }, (_v, index) => `task:n${String(index).padStart(4, '0')}`);
   const statuses: Record<string, string> = { ...graph.statuses };
   const details: Record<string, GraphAttentionDetailV1> = { ...(graph.details ?? {}) };

@@ -375,8 +375,8 @@ export function workspaceNoticeSeenChangedEventProblem(value: unknown): string |
 /**
  * Reads the wire origin (`since`/`noticeAutomationCap`) of a SessionMessage,
  * TaskRequeue or VerificationRound record. It never changes that record's public
- * DTO: the old decoder still returns the old value, and an old record without a
- * `since` reads as the legacy `(occurredAt, itemKey)` position in the reader.
+ * DTO: the old decoder still returns the old value. A record without a `since`
+ * is an old format and is refused (decision 79).
  */
 export function decodeNoticeOrigin(record: EncodedRecord): DecodeResult<NoticeOriginWireV1> {
   const parsed = parseTaggedObject(record.json, 'notice origin record');
@@ -392,8 +392,11 @@ export function decodeNoticeOrigin(record: EncodedRecord): DecodeResult<NoticeOr
   // PreparedCommit placeholder the Store fills with the commit cursor. A
   // record that still carries it reads as unavailable, never as legacy.
   if (parsed['since'] === null) return invalid('a persisted notice origin since must be a commit cursor');
+  // Decision 79: every current writer writes `since` (the Store binds the
+  // placeholder); a record that still lacks it is an old format and is refused.
+  if (parsed['since'] === undefined) return invalid('a notice origin requires since');
   const origin: NoticeOriginWireV1 = {};
-  if (parsed['since'] !== undefined) origin.since = parsed['since'] as NonNullable<NoticeOriginWireV1['since']>;
+  origin.since = parsed['since'] as NonNullable<NoticeOriginWireV1['since']>;
   if (parsed['noticeAutomationCap'] !== undefined) {
     origin.noticeAutomationCap = parsed['noticeAutomationCap'] as number;
   }

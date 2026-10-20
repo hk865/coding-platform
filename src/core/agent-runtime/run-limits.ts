@@ -25,13 +25,12 @@ export type KernelRunLimits = {
   deadlineMs: number | null;
 };
 
-/** Shared deadline evaluation: the remaining milliseconds until the persistent
- * task deadline, or null when no absolute deadline is pinned. A passed deadline
- * yields 0 (never a negative Kernel limit). */
-export function remainingTaskDeadlineMs(taskBudget: ModelTokenBudget, now: () => string): number | null {
-  if (taskBudget.deadline === null) return null;
+/** Shared deadline evaluation: the remaining milliseconds until a pinned
+ * persistent task deadline. A passed deadline yields 0 (never a negative Kernel
+ * limit); the caller has already proven the deadline is pinned. */
+export function remainingTaskDeadlineMs(deadline: string, now: () => string): number {
   const currentMs = Date.parse(now());
-  const deadlineMs = Date.parse(taskBudget.deadline);
+  const deadlineMs = Date.parse(deadline);
   if (!Number.isFinite(currentMs) || !Number.isFinite(deadlineMs)) {
     throw new Error('the persistent task deadline is not an ISO instant and cannot be evaluated');
   }
@@ -43,7 +42,7 @@ export function kernelRunLimits(budget: RuntimeBudget, taskBudget: ModelTokenBud
   let deadlineMs = budget.timeoutMs;
   if (taskBudget.deadline !== null) {
     if (now === undefined) throw new Error('unsupported: evaluating a persistent task deadline requires the trusted now() clock');
-    const remaining = remainingTaskDeadlineMs(taskBudget, now)!;
+    const remaining = remainingTaskDeadlineMs(taskBudget.deadline, now);
     deadlineMs = deadlineMs === null ? remaining : Math.min(deadlineMs, remaining);
   }
   return {

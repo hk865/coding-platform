@@ -67,7 +67,7 @@ export type DecisionSourceFactsDependencies = {
    * 4C-2 U6: the notes owner's note-review decision port. Optional; without it a
    * `note_review` source is explicitly `unavailable`, never an empty source.
    */
-  noteDecisions?: NoteDecisionSourcePort;
+  noteDecisions?: Pick<NoteDecisionSourcePort, 'readNoteDecision'>;
   /**
    * K3 L18: the UnknownCallReview owner's direct read. Optional; without it a
    * `unknown_call_review` source is explicitly `unavailable`, never an empty

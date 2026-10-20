@@ -96,8 +96,8 @@ export type UnknownCallReviewServiceDependencies = {
   readKernelCommandFacts?: KernelCommandReader;
   /** L19a: the platform's workspace read port for `package.json` expansion. */
   readWorkspace?: WorkspaceFileReader;
-  now?: () => string;
-  eventId?: () => string;
+  now: () => string;
+  eventId: () => string;
 };
 
 export type UnknownCallReviewAnswerTextReader = (
@@ -415,15 +415,13 @@ export function createUnknownCallReviewService(
   const records = deps.records;
   const lookups: RecordLookupPort | null = deps.lookups
     ?? (typeof (records as Partial<RecordLookupPort>).lookup === 'function' ? records as RecordLookupPort : null);
-  const now = deps.now ?? (() => new Date().toISOString());
-  let eventSeq = 0;
-  const newEventId = deps.eventId ?? (() => `ucr-event-${String(++eventSeq)}`);
+  const now = deps.now;
+  const newEventId = deps.eventId;
 
   async function loadReview(refKey: string): Promise<OwnerRecordRead<UnknownCallReviewV1>> {
     return readOwnerRecord({
       store: records, refKey, decode: decodeUnknownCallReview,
       readError: message => rejected('unavailable', `the review could not be read: ${message}`),
-      decodeError: reason => rejected('invalid', `the stored review is not decodable: ${reason}`),
     });
   }
 
@@ -788,20 +786,14 @@ export function createUnknownCallReviewService(
   ): Promise<{ ok: true; value: number[] } | { ok: false; rejection: CoreRejection }> {
     const aliases: number[] = [];
     const readCtx = internalReadContext(ctx, current.ref.projectId, current.workspaceId);
-    // Decision 75: one manifest read per round, reused by every item of that round.
-    const displaysByRound = new Map<string, ReadResult<Map<number, 'full' | 'truncated' | 'unexpanded'>>>();
     for (const item of current.items) {
       const observed = item.observed;
       if (item.kind !== 'process' || observed.by !== 'review_round' || observed.roundRunRef === null) continue;
       if (deps.readReviewDisplays === undefined) {
         return { ok: false, rejection: rejected('unavailable', 'the review display reader is not wired') };
       }
-      const roundKey = refKeyOf(observed.roundRunRef);
-      let read = displaysByRound.get(roundKey);
-      if (read === undefined) {
-        read = await deps.readReviewDisplays(readCtx, { roundRunRef: observed.roundRunRef });
-        displaysByRound.set(roundKey, read);
-      }
+      // A real review round holds at most one process item, so one read serves it.
+      const read = await deps.readReviewDisplays(readCtx, { roundRunRef: observed.roundRunRef });
       if (read.status === 'not_found') {
         return { ok: false, rejection: rejected('unavailable',
           `the preparing manifest of round ${observed.roundRunRef.runId} is not readable`) };
@@ -1317,10 +1309,10 @@ export function createUnknownCallReviewService(
     const approvalEvent = (): Extract<Parameters<typeof transitionUnknownCallReview>[1],
       { kind: 'approval_applied' }> => {
       const decision = optionId as 'approve' | 'decline';
+      // The only writer (`proposalRecorded`) keeps proposals alias-ascending.
       const approvedMethods = decision === 'approve'
-        ? [...current.proposals].sort((left, right) => left.alias - right.alias)
-          .map(proposal => ({ proposalId: proposal.proposalId, callId: proposal.callId,
-            alias: proposal.alias, command: proposal.command, cwd: proposal.cwd }))
+        ? current.proposals.map(proposal => ({ proposalId: proposal.proposalId, callId: proposal.callId,
+          alias: proposal.alias, command: proposal.command, cwd: proposal.cwd }))
         : null;
       return { kind: 'approval_applied', decision, answerMessageRef: answerRef,
         answeredRevision: identity.revision, text: null, approvedMethods };
@@ -1498,7 +1490,7 @@ export function createUnknownCallReviewService(
           }
           read.push(result.value);
         }
-        const watermarks = read.map(page => page.readThrough ?? null);
+        const watermarks = read.map(page => page.readThrough);
         if (watermarks.every(watermark => watermark === watermarks[0])) {
           pages = read;
           readThrough = watermarks[0] ?? null;

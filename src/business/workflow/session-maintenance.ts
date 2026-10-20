@@ -477,7 +477,6 @@ export function createSessionMaintenanceService(
     const close = turnClosureOf(runtime);
     if (runtime === undefined || close === undefined) return false; // M1: no closure installed
     if (facts.latestWork === null) return false; // condition 2: the latest Work execution is a Run
-    if (facts.legacyPending || (record.provenance ?? null) === null) return false; // condition 4
     const closable = await closableWorkRun(ctx, facts.latestWork); // condition 3
     if (closable === null) return true; // unreadable Goal: no close and no write this pass
     if (!closable) return false;

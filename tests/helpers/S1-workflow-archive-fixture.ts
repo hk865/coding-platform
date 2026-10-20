@@ -22,7 +22,7 @@ export type { ClaimFixtureKind };
 
 import { decodeGoalCreatedEvent, decodeGoalDesiredStateChangedEvent, decodeGoalSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { decodePlanRevisionSnapshot } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
-import { readCanonicalTaskFacts } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { readCanonicalTaskFacts, readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { decodeSessionRecord } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 
 import { decodeDispatchOutboxEntry, decodeTaskAttemptSnapshot, decodeTaskRequeueSnapshot, decodeTaskReworkRefusalSnapshot, taskClaimedEventFromEvent, taskRequeuedEventFromEvent, taskReworkRefusedEventFromEvent } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
@@ -608,14 +608,15 @@ export async function workflowForFixture(b2: B2ExecutionFixture, options: {
       root: base.directory, skillRoot: join(base.directory, 'skills'), scope: base.scope,
       role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' } }),
     kernel: kernelApi, controls, now, newId: eventId,
+    readTaskClosure: async (_ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) =>
+      readTaskClosure(records, { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
     ...(options.turnClosure === undefined ? {} : { turnClosure: options.turnClosure }),
   });
   const sessionFacts = createSessionFactsService({ records });
   const forbiddenCheck = async () => { throw new Error('archive/maintenance must not start a check'); };
   const deps: WorkflowDependencies = {
     tasks: base.goals, plans: options.plans ?? base.plans, sessions: base.sessionsPort, claims, executions: reads,
-    runtime: { ...runtime.port, createSession: sessionOperations.createSession,
-      readSessionHistory: sessionOperations.readSessionHistory },
+    runtime: { ...runtime.port, createSession: sessionOperations.createSession },
     evidence: { openVerification: forbiddenCheck, readVerification: forbiddenCheck, beginCheck: forbiddenCheck,
       recordCheckResult: forbiddenCheck, finalizeChecks: forbiddenCheck },
     checks: { runRegisteredCheck: forbiddenCheck }, sourceAuthority: createSourceAuthorityReader({ authority }),

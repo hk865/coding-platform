@@ -493,7 +493,8 @@ async function createRun25ReviewState(f: Opened): Promise<UnknownCallReviewRef> 
     healthConclusion: 'kernel_turn_open' });
   const reviewRef: UnknownCallReviewRef = { aggregateType: 'UnknownCallReview',
     projectId: f.b2.claim.runRef.projectId, goalId: f.b2.claim.runRef.goalId, runId: f.b2.claim.runRef.runId };
-  const reviews = createUnknownCallReviewService({ records: f.records });
+  const reviews = createUnknownCallReviewService({ records: f.records,
+    now: () => T0, eventId: () => 's1-maintenance-review-state' });
   const review = await reviews.readReview(f.ctx, { ref: reviewRef });
   expect(review).toMatchObject({ status: 'ready', value: { status: 'pending_review', activeRound: null } });
   return reviewRef;
@@ -503,7 +504,8 @@ describe.each(['memory', 'sqlite'] as const)('S1 Session maintenance goal-read f
   it('IT35 an unreadable Goal read closes nothing; an active Goal defers; a paused Goal closes the dangling Turn', async () => {
     const f = await open(kind);
     const reviewRef = await createRun25ReviewState(f);
-    const reviews = createUnknownCallReviewService({ records: f.records });
+    const reviews = createUnknownCallReviewService({ records: f.records,
+      now: () => T0, eventId: () => 's1-maintenance-review-before' });
     const beforeSession = await f.record();
     const beforeRunRevision = (await f.b2.read()).run.revision;
     const beforeReview = await reviews.readReview(f.ctx, { ref: reviewRef });

@@ -456,7 +456,7 @@ function readArchitectureCatalogRecordValue(value: unknown, baselineRef: Archite
     return { status: 'rejected', reason: 'ArchitectureCatalog record has unknown or missing keys' };
   }
   const since = value['since'];
-  if (since !== null && !isCommitCursor(since)) {
+  if (since !== null) {
     return { status: 'rejected', reason: 'ArchitectureCatalog since must be a ledger commit cursor' };
   }
   const ref = readArchitectureCatalogRef(value['ref']);

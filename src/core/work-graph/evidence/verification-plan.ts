@@ -18,7 +18,7 @@ import type { TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { EvidenceCoverageV1 } from '../../../contracts/evidence.js';
 import type {
-    ChangeScopeV1, CheckCapabilityV1, RiskV1, SemanticChangeClassification,
+    ChangeScopeV1, CheckCapabilityV1, SemanticChangeClassification,
     VerificationCheckKind, VerificationCheckPlan, VerificationIssue, VerificationPlanV1,
 } from '../../../contracts/verification.js';
 
@@ -37,7 +37,6 @@ export type VerificationPlanCompileInput = {
     workspaceRevision: number;
     changeScope: ChangeScopeV1;
     semanticChange: SemanticChangeClassification;
-    risks: RiskV1[];
     /** Registered capabilities of the frozen trusted configuration only. */
     checkCapabilities: CheckCapabilityV1[];
     selection?: 'all-applicable';
@@ -115,7 +114,7 @@ export function compileVerificationPlan(input: VerificationPlanCompileInput): Ve
         changeScope: { diffClass: input.changeScope.diffClass,
             changedFiles: [...input.changeScope.changedFiles], writeSummary: input.changeScope.writeSummary },
         semanticChange: input.semanticChange,
-        risks: input.risks.map(risk => ({ ...risk })),
+        risks: [],
         checks: [...checks.values()],
         ...(uncovered.length > 0 ? { uncovered } : {}),
         ...(input.configurationDigest === undefined ? {} : { configurationDigest: input.configurationDigest }),

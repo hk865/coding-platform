@@ -43,7 +43,6 @@ import type { SessionMessage } from '../../core/work-graph/model/communication-c
 import { createConsultationConsumer } from './consultation.js';
 import { orderTasksByDependency } from './task-order.js';
 import { createSessionArchiveService } from './session-archive.js';
-import type { InternalSessionArchivePort, SessionArchivePort } from './session-archive.js';
 import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
 import { createSessionMaintenanceService } from './session-maintenance.js';
 import { createDecisionActions, type DecisionActionsPort } from './decision-actions.js';
@@ -1389,8 +1388,8 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     }
     const active = review.activeRound;
     if (active !== null) {
-      const runRead = await deps.sourceAuthority.load(active.runRef).catch(() => null);
-      const run = runRead !== null && runRead.status === 'found' && isRecord(runRead.snapshot)
+      const runRead = await deps.sourceAuthority.load(active.runRef);
+      const run = runRead.status === 'found' && isRecord(runRead.snapshot)
         && 'status' in runRead.snapshot ? runRead.snapshot as unknown as RunSnapshot : null;
       if (run === null) return { kind: 'skip', source: 'review_round_unknown' };
       const held = review.disposition?.hold === 'held';
@@ -2835,23 +2834,8 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     ...deps,
     ...(archiveMessages === undefined ? {} : { messages: archiveMessages }),
   });
-  // E9/E17: the maintenance composer selects a non-operator `mode`, which only
-  // the internal archive entry accepts. The public `archiveLine` refuses a
-  // present `mode`, so route the composer's `archiveLine` to the internal entry
-  // (the same composition) and keep `archiveLineInternal` available for a
-  // composer that calls it directly.
-  const maintenanceArchive: SessionArchivePort & Partial<InternalSessionArchivePort> = {
-    archiveLine: (maintenanceCtx, request) => {
-      const internal = archiveService.archiveLineInternal;
-      if (internal === undefined) return archiveService.archiveLine(maintenanceCtx, request);
-      return internal(maintenanceCtx, request as unknown as GraphWrite<RequestSessionArchiveInput>);
-    },
-    continueArchiveLine: archiveService.continueArchiveLine,
-    ...(archiveService.archiveLineInternal === undefined
-      ? {} : { archiveLineInternal: archiveService.archiveLineInternal }),
-  };
   const maintenanceService = createSessionMaintenanceService({
-    ...deps, archive: maintenanceArchive,
+    ...deps, archive: archiveService,
   });
 
   // AG2a: the explicit-consultation consumer is published on the SAME Workflow

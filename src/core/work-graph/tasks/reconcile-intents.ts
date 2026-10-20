@@ -162,8 +162,11 @@ function reconciledObservation(
   }
   const entryPhase = notEnteredEntryPhase(facts.nodeBefore);
   if (entryPhase !== null && intent.kind !== 'steer') {
+    // A resume on a Run that never entered is applied in its submitting commit
+    // (control-service.ts), so it never reaches a reconciling commit.
+    if (intent.kind === 'resume') return unavailable('a resume cannot be reconciled on a Run that never entered');
     return { schemaVersion: 1, origin: 'platform_not_entered',
-      kind: intent.kind === 'pause' ? 'paused' : intent.kind === 'cancel' ? 'cancelled' : 'resumed',
+      kind: intent.kind === 'pause' ? 'paused' : 'cancelled',
       runRevision: after.revision, detail: { entryPhase }, observedAt: facts.observedAt };
   }
   const hostInstanceId = facts.hostInstanceId;

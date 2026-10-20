@@ -428,7 +428,6 @@ async function readSessionClosable(
   return { ok: true, value: value.session.lifecycle === 'active'
     && (value.session.archiveRequest ?? null) === null
     && value.continuations.length === 0
-    && value.legacyPending === false
     && occupiedByRun
     && latest !== null && sameJson(latest.runRef, facts.run.ref)
     && latest.generation === facts.outbox.claim.generation };
@@ -470,7 +469,7 @@ async function readStreakFacts(
     cursor = record.run;
   }
   const reviews: UnknownCallReviewV1[] = [];
-  const reviewService = createUnknownCallReviewService({ records: deps.records });
+  const reviewService = createUnknownCallReviewService({ records: deps.records, now: deps.now, eventId: deps.eventId });
   for (const run of runs.slice(1)) {
     let review;
     try {
@@ -1032,10 +1031,11 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
             ({ kind: 'intent', event: 'control_reconciled', intentRef })) };
           break;
         }
+        // A Claimed/Authorized/Revoked Run applies its control in the
+        // submitting commit, never here, so it joins the illegal-call group.
         case 'Claimed':
         case 'Authorized':
         case 'Revoked':
-          return invalid(`a ${state.node} Run applies its control in the submitting commit, not the startup reconcile`);
         case 'Absent':
         case 'Entering':
         case 'Running':

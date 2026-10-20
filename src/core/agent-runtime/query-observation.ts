@@ -249,12 +249,7 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     let cursor = from;
     let frozenThrough: number | null = null;
     for (let page = 0; page < MAX_OBSERVATION_PAGES; page += 1) {
-      let window;
-      try {
-        window = await owner.readPositionWindow({ session, afterPosition: cursor, throughPosition: frozenThrough, limit: 200, signal });
-      } catch (error) {
-        return rejected('unavailable', `the bounded Query history window read failed: ${messageOf(error)}`);
-      }
+      const window = await owner.readPositionWindow({ session, afterPosition: cursor, throughPosition: frozenThrough, limit: 200, signal });
       if (window.status !== 'ready') return mapRead(window);
       frozenThrough = window.value.throughPosition;
       for (const entry of window.value.entries) {
@@ -452,15 +447,10 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
         if (manifest.focusPlan !== null) {
           storeSources.push({ kind: 'plan-revision', refId: manifest.focusPlan.ref.planId, revision: String(manifest.focusPlan.revision) });
         }
-        let stored;
-        try {
-          stored = await deps.materials.storeArtifact(materialCtx, {
-            contentType: 'text/plain; charset=utf-8', body: text, sources: storeSources,
-            origin: { kind: 'execution', ref: structuredClone(queryRunRef) },
-          });
-        } catch (error) {
-          return rejected('unavailable', `storing the Query answer body failed: ${messageOf(error)}`);
-        }
+        const stored = await deps.materials.storeArtifact(materialCtx, {
+          contentType: 'text/plain; charset=utf-8', body: text, sources: storeSources,
+          origin: { kind: 'execution', ref: structuredClone(queryRunRef) },
+        });
         if (stored.status !== 'stored') return rejected(stored.code === 'size_exceeded' ? 'capacity' : 'unavailable', stored.reason);
         // The original pins decide the source list; a current move only marks the
         // recorded answer stale and never erases the already-occurred result.

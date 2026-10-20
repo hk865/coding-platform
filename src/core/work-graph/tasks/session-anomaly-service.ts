@@ -48,7 +48,8 @@ import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import { evaluateEligibility } from './eligibility.js';
 import { mapStoreFailure } from './execution-entry-service.js';
 import {
-  readCanonicalTaskFacts, readGoal, readPlan, laterCursor, RUN_BY_TASK_INDEX, type CanonicalTaskFacts, type Rejected,
+  readCanonicalTaskFacts, readGoal, readPlan, laterCursor, RUN_BY_TASK_INDEX,
+  type CanonicalTaskFacts, type Rejected, type TaskFactRecordPort,
 } from './plan-readers.js';
 import {
   SESSION_ANOMALY_EVENT_SCHEMA_VERSION, SESSION_ANOMALY_RECORDED_EVENT_TYPE, archiveChangedFilesProblem,
@@ -355,12 +356,10 @@ export function createSessionAnomalyService(stores: SessionAnomalyStores): Sessi
   const records = stores.records;
   const lookups = stores.lookups;
   const sessionFacts = stores.sessionFacts;
-  /** The canonical task reader needs the SAME backend's candidate index. */
-  const recordsWithLookups: GoalRecordTransactionPort & RecordLookupPort = {
+  /** The canonical task reader needs the SAME backend's candidate index; it
+   * reads records and lookups only and must not be handed write operations. */
+  const taskFactRecords: TaskFactRecordPort = {
     readMany: (keys) => records.readMany(keys),
-    lookupCommit: (input) => records.lookupCommit(input),
-    commit: (input) => records.commit(input),
-    eventAt: (cursor) => records.eventAt(cursor),
     lookup: (input) => lookups.lookup(input),
   };
 
@@ -498,7 +497,7 @@ export function createSessionAnomalyService(stores: SessionAnomalyStores): Sessi
     const taskId = run.task.taskId;
     const definitionTask = plan.tasks.find((task) => task.taskId === taskId);
     if (definitionTask === undefined) return reject('not_found', 'the anchor Task is not part of the active Plan');
-    const factsRead = await readCanonicalTaskFacts(recordsWithLookups, goalRef, plan, taskId);
+    const factsRead = await readCanonicalTaskFacts(taskFactRecords, goalRef, plan, taskId);
     if (factsRead.status !== 'ready') return mapReader(factsRead);
     const facts: CanonicalTaskFacts = factsRead.value;
     const canonical = facts.byTaskId.get(taskId);
@@ -522,8 +521,7 @@ export function createSessionAnomalyService(stores: SessionAnomalyStores): Sessi
     // invalid request; a non-retired request takes S1-ANCHOR-01.
     // C1: a NEW anchor commit always requires the Session's CURRENT durable R to
     // be exactly this step's request (the receipt replay above is already
-    // allowed without it). An unresolved successor proof (`legacyPending`)
-    // cannot prove "no continuation" for the retired row.
+    // allowed without it).
     const currentRequestMatches = session.archiveRequest !== null && session.archiveRequest !== undefined
       && session.archiveRequest.requestId === request.requestId
       && sameRef(session.archiveRequest.receipt, request.receipt);
@@ -535,7 +533,6 @@ export function createSessionAnomalyService(stores: SessionAnomalyStores): Sessi
         return incomplete(`session_facts_page_limit: the Session facts of ${stepSession.sessionId} were not read`);
       }
       retiredFacts = session.health === 'unavailable'
-        && !sessionFactsRead.value.legacyPending
         && sessionFactsRead.value.continuations.length === 0
         && session.occupancy === null
         && currentRequestMatches;
@@ -696,7 +693,7 @@ export function createSessionAnomalyService(stores: SessionAnomalyStores): Sessi
     const plan = planRead.plan;
     const definition = plan.tasks.find((candidate) => candidate.taskId === task.taskId);
     if (definition === undefined) return reject('not_found', 'the Task is not part of the active Plan');
-    const factsRead = await readCanonicalTaskFacts(recordsWithLookups, goalRef, plan, task.taskId);
+    const factsRead = await readCanonicalTaskFacts(taskFactRecords, goalRef, plan, task.taskId);
     if (factsRead.status !== 'ready') return mapReader(factsRead);
     const facts = factsRead.value;
     const canonical = facts.byTaskId.get(task.taskId);

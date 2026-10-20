@@ -167,7 +167,8 @@ describe('K3-26 record codec', () => {
     try {
       const ctx = {} as CoreCallContext;
       const ref = { aggregateType: 'UnknownCallReview' as const, projectId: 'p', goalId: 'g', runId: 'r' };
-      expect(await createUnknownCallReviewService({ records: backend.records }).readReview(ctx, { ref }))
+      expect(await createUnknownCallReviewService({ records: backend.records,
+        now: () => AT, eventId: () => 'k3-26-read-absent' }).readReview(ctx, { ref }))
         .toEqual({ status: 'not_found' });
       // A store that hands back a tampered body is fail-closed: the reader
       // decodes strictly and never trusts the key.
@@ -179,7 +180,8 @@ describe('K3-26 record codec', () => {
           return { status: 'ready' as const, value: { records: [tampered], missing: [], readThrough: null } };
         },
       };
-      expect(await createUnknownCallReviewService({ records: wrapped }).readReview(ctx, { ref }))
+      expect(await createUnknownCallReviewService({ records: wrapped,
+        now: () => AT, eventId: () => 'k3-26-read-tampered' }).readReview(ctx, { ref }))
         .toMatchObject({ status: 'rejected', code: 'invalid' });
     } finally {
       await backend.close();

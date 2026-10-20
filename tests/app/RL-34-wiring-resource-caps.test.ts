@@ -46,7 +46,6 @@ const EXPECTED_SECOND = { memoryMaxBytes: 400 * 1_048_576, tasksMax: 200 };
 
 const assembly: HostSettingsAssembly = {
   listWorkspaces: () => [],
-  listProjectIds: () => [],
   secretConfigured: () => false,
   bootstrap: () => ({}) as BootstrapResponse,
   async openWorkspace() { return { status: 'rejected', code: 'unsupported', reason: 'not used by RL-34' }; },

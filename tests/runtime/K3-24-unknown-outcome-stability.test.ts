@@ -91,7 +91,8 @@ function controlsOn(fx: B2RuntimeFixture): Controls {
 }
 
 function reviewsOn(fx: B2RuntimeFixture) {
-  return createUnknownCallReviewService({ records: fx.claimFixture.records });
+  return createUnknownCallReviewService({ records: fx.claimFixture.records,
+    now: () => B2_AT, eventId: () => 'k3-24-review-read' });
 }
 
 /** A restarted Host: fresh owners over the same stores under `host`, and the start-up classifier's dependencies. */

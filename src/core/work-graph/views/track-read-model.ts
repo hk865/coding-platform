@@ -507,7 +507,7 @@ async function scanRunsEnded(
       let emitted = false;
       if (run.startedAt !== null && run.startedAt < to) {
         const sessionRef = await claimingSessionOf(records, run, budget);
-        if (ctx.bySession !== null && (sessionRef === null || !ctx.bySession.has(sessionKey(sessionRef)))) continue;
+        if (ctx.bySession !== null && !ctx.bySession.has(sessionKey(sessionRef))) continue;
         out.bars.push(await runBarWith(records, ctx, run, sessionRef, cache, budget));
         emitted = true;
       } else if (run.startedAt === null && run.endedAt !== null && run.endedAt < to) {
@@ -563,7 +563,7 @@ async function scanRunsOpenStatus(
       // An open Run keeps its overlap; the track draws it to `now` (no end).
       if (run.startedAt !== null && run.startedAt < ctx.to) {
         const sessionRef = await claimingSessionOf(records, run, budget);
-        if (ctx.bySession !== null && (sessionRef === null || !ctx.bySession.has(sessionKey(sessionRef)))) continue;
+        if (ctx.bySession !== null && !ctx.bySession.has(sessionKey(sessionRef))) continue;
         out.bars.push(await runBarWith(records, ctx, run, sessionRef, cache, budget));
         emitted = true;
       } else if (run.startedAt === null) {
@@ -639,12 +639,16 @@ function checkBarOf(
 async function readCheckStart(
   ctx: SegmentContext,
   record: EncodedRecord,
-): Promise<{ since: CommitCursor | null; finalizedAt: string | null; round: RoundSnapshot }> {
+): Promise<{ since: CommitCursor; finalizedAt: string | null; round: RoundSnapshot }> {
   const origin = decodeNoticeOrigin(record);
   if (origin.status !== 'decoded') throw rejected('unavailable', `round origin ${record.refKey}: ${origin.reason}`);
+  const since = origin.value.since;
+  if (since === undefined || since === null) {
+    throw rejected('unavailable', `round ${record.refKey} is missing its since cursor`);
+  }
   const decoded = decodeVerificationRoundSnapshot(record);
   if (decoded.status !== 'decoded') throw rejected('unavailable', `round ${record.refKey}: ${decoded.reason}`);
-  return { since: origin.value.since ?? null, finalizedAt: origin.value.finalizedAt ?? null, round: decoded.value };
+  return { since, finalizedAt: origin.value.finalizedAt ?? null, round: decoded.value };
 }
 
 async function checkAttribution(

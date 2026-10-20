@@ -433,36 +433,29 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     if (items.length === 0 && !wantsUnderstanding) return { ok: true, value: { items, understanding: [] } };
     let checked: NoteCheckV1[];
     let understanding: UnderstandingStatusV1[] = [];
-    if (headSnapshots === undefined) {
-      const result = await deps.check.checkNotes(ctx,
-        { items: items.map(item => ({ noteId: item.noteId, version: item.version })) });
-      if (result.status !== 'ready') return checkFailure(result);
-      checked = result.value;
-    } else {
-      const result = await deps.check.checkHeads(ctx, {
-        // F4: the heads (and non-head version snapshots) already
-        // read in this call go straight to the check; it never reads them again.
-        // §11.3 (b11): a derivation the read model already made (conflicts) is
-        // handed over so the check does not recompute it. U-3: understanding
-        // anchors ride the same call/caches.
-        items: items.map(item => {
-          const snapshot = versionSnapshots?.get(item.version);
-          const conflicting = conflictingByNote?.get(item.noteId);
-          const checkItem: NoteHeadCheckItemV1 & { conflicting?: boolean } = {
-            head: headSnapshots.get(item.noteId)!, version: item.version,
-            ...(snapshot === undefined ? {} : { snapshot }),
-            ...(conflicting === undefined ? {} : { conflicting }) };
-          return checkItem;
-        }),
-        ...(anchorSets === undefined ? {} : { anchorSets }),
-        ...(planWindows === undefined ? {} : { planWindows }),
-        ...(understandingAnchors === undefined ? {} : { understandingAnchors }),
-        ...(understandingPointers === undefined ? {} : { understandingPointers }),
-      });
-      if (result.status !== 'ready') return checkFailure(result);
-      checked = result.value.items;
-      understanding = result.value.understanding;
-    }
+    const result = await deps.check.checkHeads(ctx, {
+      // F4: the heads (and non-head version snapshots) already
+      // read in this call go straight to the check; it never reads them again.
+      // §11.3 (b11): a derivation the read model already made (conflicts) is
+      // handed over so the check does not recompute it. U-3: understanding
+      // anchors ride the same call/caches.
+      items: items.map(item => {
+        const snapshot = versionSnapshots?.get(item.version);
+        const conflicting = conflictingByNote?.get(item.noteId);
+        const checkItem: NoteHeadCheckItemV1 & { conflicting?: boolean } = {
+          head: headSnapshots!.get(item.noteId)!, version: item.version,
+          ...(snapshot === undefined ? {} : { snapshot }),
+          ...(conflicting === undefined ? {} : { conflicting }) };
+        return checkItem;
+      }),
+      ...(anchorSets === undefined ? {} : { anchorSets }),
+      ...(planWindows === undefined ? {} : { planWindows }),
+      ...(understandingAnchors === undefined ? {} : { understandingAnchors }),
+      ...(understandingPointers === undefined ? {} : { understandingPointers }),
+    });
+    if (result.status !== 'ready') return checkFailure(result);
+    checked = result.value.items;
+    understanding = result.value.understanding;
     const out = items.map((item, index) => {
       const check = checked[index]!;
       const headVersion = headVersions?.get(item.noteId);
@@ -2120,14 +2113,14 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
           headRead.value);
         if (!confirmed.ok) return rejected(confirmed.code, confirmed.reason);
         // R11: only the note's head version can be a current conclusion.
-        // F4: when the head exists, hand it and the version snapshot over; the
-        // check re-reads neither. Without a head, keep the checkNotes fallback.
+        // F4: the head and the version snapshot go to the check, which re-reads
+        // neither. A version without its head is a hand-edited or damaged store,
+        // not a readable note (decision 79).
+        if (headRead.value === null) return rejected('unavailable', 'the note head is missing');
         const item = itemOfVersion(version.value, confirmed.value);
-        const headVersion = headRead.value === null ? -1 : headRead.value.version;
-        const checked = headRead.value === null
-          ? await withCheck(ctx, [item], new Map([[input.noteId, headVersion]]))
-          : await withCheck(ctx, [item], new Map([[input.noteId, headVersion]]),
-            new Map([[input.noteId, headRead.value]]), undefined, new Map([[input.version, version.value]]));
+        const headVersion = headRead.value.version;
+        const checked = await withCheck(ctx, [item], new Map([[input.noteId, headVersion]]),
+          new Map([[input.noteId, headRead.value]]), undefined, new Map([[input.version, version.value]]));
         if (!checked.ok) return rejected(checked.code, checked.reason);
         return { status: 'ready', value: checked.value.items[0]! };
       }

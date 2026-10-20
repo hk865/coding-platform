@@ -42,7 +42,7 @@ import { createSessionMailbox } from '../../src/core/work-graph/communication/ma
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
-import { createSessionResponsibilityBasisReader } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { createSessionResponsibilityBasisReader, readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createSessionHealthService } from '../../src/core/work-graph/sessions/session-health.js';
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
@@ -238,6 +238,8 @@ export async function openS1RuntimeFixture(options: {
   const deps: RuntimeExecutionDependencies = { claims, executions: reads, entry, modelRequests, roles, plans: base.plans,
     sessions, messages, materials, bodies, controls, kernelStores, workspaceHost, host, kernel, now, newId,
     unknownCallReviews,
+    readTaskClosure: async (_ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) =>
+      readTaskClosure(records, { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
     runReconcile: createRunReconcileService({ records, reads, hostInstance, now, eventId: newId }),
     historyWriter: createExecutionHistoryService({ records, now, eventId: newId }), activity,
     graphHistory: createGraphExecutionHistoryReader({ executions: reads, history: activity }), sessionOperations,

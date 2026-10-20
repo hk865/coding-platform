@@ -54,10 +54,10 @@ export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies
   & {
     /**
      * Rework 1 item 4 / rework 2 item 2: the ONE canonical Task-closure read
-     * (`readTaskClosure`). REQUIRED: `createAgentRuntime` installs a
-     * fail-closed reader (`unavailable`) when the shell dependency is absent,
-     * so there is no "absent means open" behaviour. The composition root wires
-     * the real `plan-readers.readTaskClosure` to the same records.
+     * (`readTaskClosure`). REQUIRED: `createAgentRuntime` passes the trusted
+     * dependency straight through, so the composition root wires the real
+     * `plan-readers.readTaskClosure` to the same records and an absent reader
+     * can never mean "open".
      */
     readTaskClosure: (
       ctx: CoreCallContext,

@@ -171,7 +171,6 @@ export interface HostSettingsAssembly {
   readCheckProposal?(scope: CoreScope, answerRef: QueryJobAnswerRef): Promise<SettingsResponse<{
     answerRef: QueryJobAnswerRef; answerDigest: string; checks: RegisteredCommandCheck[];
   }>>;
-  listProjectIds(): readonly string[];
   openWorkspace(request: OpenSettingsWorkspace & { workspaceId?: string }): Promise<SettingsResponse<HostSettingsOpenedHost>>;
   bootstrap(): BootstrapResponse;
   /** Boolean-only probe: whether the trusted Host can resolve the named secret.
@@ -220,7 +219,6 @@ export type HostSettingsOptions = HostSettingsConfig & { assembly: HostSettingsA
  * version for new refs but never revokes or re-keys the pinned execution.
  */
 export interface HostRuntimeResolverRegistry extends RuntimeHostBindings {
-  readonly currentVersion: number;
   install(bindings: RuntimeHostBindings): number;
 }
 
@@ -231,7 +229,6 @@ export function createHostRuntimeResolverRegistry(initial: RuntimeHostBindings):
   const queryPins = new Map<string, RuntimeHostBindings>();
   const refKey = (ref: unknown): string => canonicalJson(ref as JsonValue);
   return {
-    get currentVersion(): number { return version; },
     install(bindings: RuntimeHostBindings): number { current = bindings; version += 1; return version; },
     async resolveConfiguration(ctx: CoreCallContext, input: RuntimeConfigurationInput) {
       const key = refKey(input.runRef);

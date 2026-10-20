@@ -646,8 +646,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         return { ok: false, rejection: reject('forbidden', 'the provenance predecessor belongs to another workspace') };
       }
       guards.push({ refKey: key, expectedRevision: predecessor.revision });
-      const recorded = predecessor.provenance ?? null;
-      current = recorded !== null && recorded.kind !== 'new' ? (recorded as { from: SessionRef }).from : null;
+      const recorded = predecessor.provenance;
+      current = recorded.kind !== 'new' ? recorded.from : null;
     }
     // A1/S1-SES-01: the walk is bounded. A chain that is still not resolved after
     // the hop budget cannot be proven acyclic, so it is refused `incomplete`

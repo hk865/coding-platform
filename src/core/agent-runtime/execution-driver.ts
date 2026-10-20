@@ -372,10 +372,6 @@ function mapRead(result: ReadResult<unknown>): CoreRejection {
   if (result.status === 'not_ready') return rejected('incomplete', 'the required execution fact is not readable at the required watermark');
   return { status: 'rejected', code: result.code, reason: result.reason, ...(result.current === undefined ? {} : { current: result.current }) };
 }
-const CORE_ERROR_CODES = new Set<string>(['invalid','forbidden','not_found','source_stale','capacity','unsupported','unavailable','cancelled']);
-function mapWorkspace(result: { status: 'rejected'; code: string; reason: string }): CoreRejection {
-  return rejected((CORE_ERROR_CODES.has(result.code) ? result.code : 'unavailable') as CoreRejection['code'], result.reason);
-}
 function mapWrite(result: WriteResult<unknown>): CoreRejection {
   return result.status === 'rejected' ? result : rejected('unavailable', 'the write unexpectedly committed');
 }
@@ -863,7 +859,9 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       } catch (error) {
         return rejected('unavailable', `resolving the workspace root failed: ${messageOf(error)}`);
       }
-      if (rootResolved.status !== 'ready') return mapWorkspace(rootResolved);
+      // The workspace binding this Run was prepared with always resolves; a
+      // non-ready result is a fail-closed refusal, never a re-mapped error code.
+      if (rootResolved.status !== 'ready') return rejected('unavailable', rootResolved.reason);
       if (rootResolved.value.workspaceRevision !== record.run.workspaceSnapshot.revision) {
         return rejected('source_stale', 'the workspace revision moved since the Run was prepared');
       }
@@ -1051,10 +1049,8 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             }
             enteredDone = true;
             currentRevision = entered.value.revision;
-            const enteredAuth = entered.value.executionAuthorization;
-            if (enteredAuth !== undefined) {
-              refreshedPermit.authorizationRevision = enteredAuth.revision;
-            }
+            // The entered fact always writes the V2 authorization (run-machine).
+            refreshedPermit.authorizationRevision = entered.value.executionAuthorization!.revision;
           }
           // The awaited entered commit may itself have crossed the deadline.
           if (record.run.budget.deadline !== null) {
@@ -1129,7 +1125,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         } catch (error) {
           return rejected('unavailable', `the Host read policy could not be resolved: ${messageOf(error)}`);
         }
-        if (currentAuthorization.status !== 'ready') return mapWorkspace(currentAuthorization);
+        if (currentAuthorization.status !== 'ready') return rejected('unavailable', currentAuthorization.reason);
       }
       if (hasFileRead && currentAuthorization !== undefined && currentAuthorization.status === 'ready') {
         const granted = currentAuthorization;
@@ -1329,8 +1325,6 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
   async function readTurnTail(
     adapterId: string, kernelSessionId: string, kernel: KernelExecutionBinding, afterPosition: number, signal: AbortSignal,
   ): Promise<{ startPosition: number; position: number }> {
-    const location = deps.kernelStores.byAdapterId(adapterId);
-    if (!location) throw new Error('the Kernel adapter is not a current registered store');
     const use = async (reader: KernelSessionReader) => {
       const head = await reader.read(kernelSessionId, 0, 1, { signal });
       if (head.records.length === 0) throw new Error('the Kernel Session has no position-1 history');

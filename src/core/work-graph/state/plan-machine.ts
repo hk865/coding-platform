@@ -873,11 +873,6 @@ export function planProposalProblem(
   }
 }
 
-/** `transitionPlanProposal` always has every fact; an unread one is a broken caller. */
-function incompleteFacts(): Rejected {
-  return reject('illegal', 'invalid', 'the plan proposal guard context is incomplete');
-}
-
 // --------------------------------------------------------------------------
 // Shared guards (each returns today's rejection, null, or UNREAD)
 // --------------------------------------------------------------------------
@@ -1080,7 +1075,7 @@ function onProposalRecorded(
   ctx: PlanProposalGuardContext,
 ): PlanProposalTransition {
   const problem = recordedStep(state, event, ctx);
-  if (problem === UNREAD) return incompleteFacts();
+  if (problem === UNREAD) return unreachable(problem as never, 'unread plan proposal guard fact');
   if (problem !== null) return problem;
   const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
     draft: event.draft, reason: event.reason, issues: event.issues, submittedBy: event.submittedBy }), event.requestRef);
@@ -1235,23 +1230,18 @@ function acceptedStep(
   }
   if (state === undefined) return UNREAD;
   if (state === null) return reject('illegal', 'not_found', `proposal ${event.proposalRef.proposalId} does not exist`);
-  switch (state.kind) {
-    case 'candidate_v2':
-      switch (state.status) {
-        case 'accepted':
-        case 'rejected':
-          // :1145, :2070
-          return reject('illegal', 'invalid', `proposal ${event.proposalRef.proposalId} is not a pending candidate`);
-        case 'candidate':
-          return candidateStep(state, event, facts);
-        // S5-PLAN-04: `not_adopted` is final; it is not a pending candidate.
-        case 'not_adopted':
-          return reject('illegal', 'invalid', `proposal ${event.proposalRef.proposalId} is not a pending candidate`);
-        default:
-          return unreachable(state.status, 'plan proposal status');
-      }
+  switch (state.status) {
+    case 'accepted':
+    case 'rejected':
+      // :1145, :2070
+      return reject('illegal', 'invalid', `proposal ${event.proposalRef.proposalId} is not a pending candidate`);
+    case 'candidate':
+      return candidateStep(state, event, facts);
+    // S5-PLAN-04: `not_adopted` is final; it is not a pending candidate.
+    case 'not_adopted':
+      return reject('illegal', 'invalid', `proposal ${event.proposalRef.proposalId} is not a pending candidate`);
     default:
-      return unreachable(state.kind, 'plan proposal kind');
+      return unreachable(state.status, 'plan proposal status');
   }
 }
 
@@ -1261,7 +1251,7 @@ function onProposalAccepted(
   ctx: PlanProposalGuardContext,
 ): PlanProposalTransition {
   const step = acceptedStep(state, event, ctx);
-  if (step === UNREAD) return incompleteFacts();
+  if (step === UNREAD) return unreachable(step as never, 'unread plan proposal guard fact');
   if (!isAdmitted(step)) return step;
   return accept<PlanProposalMachineState, PlanProposalEffect>(acceptProposalRecord(step.proposal),
     adoptionEffects(step, event.adopter));
@@ -1587,13 +1577,13 @@ function onProposalReplaced(
   ctx: PlanProposalGuardContext,
 ): PlanProposalTransition {
   const writer = recordedWriterStep(event, ctx);
-  if (writer !== null) return writer === UNREAD ? incompleteFacts() : writer;
+  if (writer !== null) return writer === UNREAD ? unreachable(writer as never, 'unread plan proposal writer fact') : writer;
   if (state === null) return reject('illegal', 'not_found', `proposal ${event.head.proposalRef.proposalId} does not exist`);
   if (state.status !== 'candidate') {
     return reject('illegal', 'invalid', `proposal ${event.ref.proposalId} is not a pending candidate`);
   }
   const request = ctx.requestCandidate;
-  if (request === undefined || request === null) return incompleteFacts();
+  if (request === undefined || request === null) return unreachable(request as never, 'unread plan proposal request fact');
   if (!request.headMatches) return reject('guard_failed', 'invalid', 'the replaced head is not the current candidate');
   if (!request.headRevisionMatches || state.revision !== event.head.revision) {
     return reject('stale', 'revision_conflict', 'the replaced head revision changed');
@@ -1636,7 +1626,7 @@ function onProposalAdopted(
     proposalRef: event.proposalRef, expectedProposalRevision: event.expectedProposalRevision,
     decisionRefs: event.decisionRefs, agentWriter: event.agentWriter };
   const step = acceptedStep(state, accepted, ctx);
-  if (step === UNREAD) return incompleteFacts();
+  if (step === UNREAD) return unreachable(step as never, 'unread plan proposal guard fact');
   if (!isAdmitted(step)) return step;
   const request = ctx.requestCandidate;
   if (request !== undefined && request !== null) {
@@ -1676,7 +1666,7 @@ function onProposalAbandoned(
     return reject('illegal', 'invalid', `proposal ${event.proposalRef.proposalId} is not a pending candidate`);
   }
   const request = ctx.requestCandidate;
-  if (request === undefined || request === null) return incompleteFacts();
+  if (request === undefined || request === null) return unreachable(request as never, 'unread plan proposal request fact');
   if (!request.operatorMatches) return reject('guard_failed', 'forbidden', 'only the configured operator may abandon a proposal');
   if (!request.headPinMatches || state.revision !== event.expectedProposalRevision) {
     return reject('stale', 'revision_conflict', 'the proposal revision changed');

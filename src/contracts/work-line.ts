@@ -56,8 +56,7 @@ export type LineMarkerV1 =
   | { kind: 'undelivered'; count: LineCountV1 }
   | { kind: 'handoff_from'; from: SessionRef; fromLine: SessionRef | null }
   | { kind: 'omitted'; count: LineCountV1 }                               // 前任超过 32 个（链超过 33 个 Session）：partial atLeast 1
-  | { kind: 'copy_answering'; copies: SessionRef[] }
-  | { kind: 'provenance_unchecked' };
+  | { kind: 'copy_answering'; copies: SessionRef[] };
 
 export type LineAttentionV1 = { code: LineAttentionCodeV1; reason: LineReasonV1 };
 export type LineHistoryPartV1 = 'written_anchors' | 'undelivered' | 'done_evidence';

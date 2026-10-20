@@ -99,8 +99,7 @@ function destinationEligible(session: SessionRecord): boolean {
   if (session.lifecycle !== 'active') return false;
   if (session.health !== 'available') return false;
   if (session.archiveRequest !== undefined && session.archiveRequest !== null) return false;
-  const provenance = session.provenance ?? null;
-  return !(provenance !== null && provenance.kind === 'readonly_copy');
+  return session.provenance.kind !== 'readonly_copy';
 }
 
 export function createSessionResponsibilityService(stores: SessionResponsibilityStores): SessionResponsibilityPort {

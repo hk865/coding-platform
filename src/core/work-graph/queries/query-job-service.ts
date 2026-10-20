@@ -286,9 +286,6 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
   if (!validQueryExecution(execution as unknown as QueryJobIntentV1['execution'])) {
     return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.execution is not a valid execution binding shape') };
   }
-  if (execution['kind'] !== 'initial_coordination' && execution['kind'] !== 'semantic_query') {
-    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'this execution kind is not delivered in this batch') };
-  }
   let consultation: ConsultationBinding | null = null;
   if (execution['consultation'] !== undefined) {
     // `validQueryExecution` already proved the exact binding shape; the only

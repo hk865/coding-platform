@@ -51,11 +51,8 @@ export type GraphAttentionStamp = {
   statuses: Readonly<Record<string, string>>;
   /** Formal source revision (Plan revision / Architecture catalog digest). */
   revision?: string;
-  /**
-   * Slice 3 per-node details. Only a real new snapshot carries them; an old
-   * no-details caller keeps the old `graphChangedElements` behavior.
-   */
-  details?: Record<string, GraphAttentionDetailV1>;
+  /** Slice 3 per-node details: every real snapshot has one detail per node. */
+  details: Record<string, GraphAttentionDetailV1>;
 };
 
 export type AttentionMemberFeedback = { id: string; source: string };
@@ -262,8 +259,8 @@ export function graphChanges(
   for (const key of keys) {
     const before = previousDetails[key];
     const after = currentDetails[key];
-    const beforeExists = previousNodes.has(key) || before !== undefined;
-    const afterExists = currentNodes.has(key) || after !== undefined;
+    const beforeExists = previousNodes.has(key);
+    const afterExists = currentNodes.has(key);
     if (beforeExists && !afterExists) {
       if (before !== undefined) changes.set(key, { key, change: 'removed', beforeVersion: before.version, afterVersion: null, detail: before });
       continue;
@@ -426,7 +423,7 @@ function cloneDetails(details: Record<string, GraphAttentionDetailV1>): Record<s
 function cloneGraph(graph: GraphAttentionStamp): GraphAttentionStamp {
   return { nodes: [...graph.nodes], edges: [...graph.edges], statuses: { ...graph.statuses },
     ...(graph.revision === undefined ? {} : { revision: graph.revision }),
-    ...(graph.details === undefined ? {} : { details: cloneDetails(graph.details) }) };
+    details: cloneDetails(graph.details) };
 }
 
 export function createAttentionObserver(configInput: AttentionConfigV1): AttentionObserver {
@@ -652,7 +649,7 @@ export function createAttentionScanner(deps: AttentionScannerDependencies): Atte
             edges: [...read.value.edges],
             statuses: { ...read.value.statuses },
             ...(read.value.revision === undefined ? {} : { revision: read.value.revision }),
-            ...(read.value.details === undefined ? {} : { details: read.value.details }),
+            details: read.value.details,
           };
         } else if (read.status !== 'not_found') {
           graphUnreadable = true;

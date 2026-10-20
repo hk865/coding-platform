@@ -93,7 +93,7 @@ it('an empty required-obligation set is rejected by the compiler and a no-target
     schemaVersion: 1, taskRef: f.subject, planRef: emptyPlan.ref, planSnapshot: emptyPlan,
     workspaceRevision: 1,
     changeScope: { diffClass: 'code-change', changedFiles: [], writeSummary: 'R3e coverage empty-obligation case' },
-    semanticChange: 'semantic', risks: [],
+    semanticChange: 'semantic',
     checkCapabilities: [{ checkId: f.passCheck.checkId, kind: 'static', coversKinds: ['static'], replayable: false }],
     policy: { requirementKinds: ['static'] },
   };
