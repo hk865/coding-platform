@@ -767,6 +767,53 @@ it('scenario 9: a changed Task with a Run is no longer future (zero writes)', as
   expect(after.run.status).toBe('ended');
 });
 
+it('scenario 9: a claim landing between the Run index page and the Lease batch is refused as a held Lease (zero writes)', async () => {
+  const f = await setup();
+  const proposed = await f.proposeChange(editBDraft(), 'w1-s9-changed-lease-race');
+  expect(proposed).toMatchObject({ status: 'committed', value: { status: 'candidate', issues: [] } });
+  if (proposed.status !== 'committed') throw new Error('W1 lease-race candidate failed to persist');
+
+  // The real claim lands after the future-change reader took its stale
+  // run-by-task page but before its Lease/Reduction batch is read: the Run is
+  // therefore outside runKeys while the claim's TaskLease is in the batch.
+  const held: { handle: S2BRunHandle | null } = { handle: null };
+  let commits = 0;
+  const raced: Records = {
+    ...f.records,
+    async lookup(request) {
+      const page = await f.records.lookup(request);
+      if (held.handle === null && request.index === 'r4c-run-by-task' && request.values.includes('B')) {
+        held.handle = (await f.startHeld('B')).handle;
+      }
+      return page;
+    },
+    async commit(prepared) {
+      commits += 1;
+      return f.records.commit(prepared);
+    },
+  };
+  let applied;
+  try {
+    applied = await planServiceOver(raced, 's9-lease-race').applyPlanChange(ctx, {
+      meta: { requestId: 'w1-s9-changed-lease-race-apply', expected: [] },
+      input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] },
+    });
+  } finally {
+    if (held.handle !== null) await f.steps.finish(held.handle, AT, 'completed');
+  }
+  expect(held.handle).not.toBeNull();
+  // plan-machine.ts:600/:606: the untraced rule refuses a changed Task that
+  // holds a TaskLease; editBDraft keeps B in both obligations (no hint).
+  expect(applied).toEqual({ status: 'rejected', code: 'revision_conflict',
+    reason: 'task B already holds a TaskLease and is no longer a future task' });
+  expect(commits).toBe(0);
+  expect((await f.currentGoal()).activePlanRevision).toEqual(f.planRef);
+  expect(await f.plans.readPlanProposal(ctx, proposed.value.ref))
+    .toMatchObject({ status: 'ready', value: { status: 'candidate', revision: proposed.value.revision } });
+  expect(await f.plans.queryTaskGraph(ctx, { goalRef: f.goalRef,
+    planRef: { aggregateType: 'PlanRevision', projectId, planId: 'w1-plan-2' } })).toMatchObject({ status: 'not_found' });
+});
+
 it('scenario 6 (memory): explicit old Plan excludes later Run + global Lease; active reads stay authoritative', async () => {
   const f = await setup();
   const plan1 = f.plan;

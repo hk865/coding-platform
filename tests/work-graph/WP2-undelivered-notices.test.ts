@@ -238,6 +238,29 @@ describe('WP2 undelivered-reply notices', () => {
     expect(String(damaged.reason)).toContain('undelivered_reply_source_mismatch:');
   });
 
+  it('M05 a Goal-filtered read excludes another Goal reply before requiring its positions', async () => {
+    const f = await open();
+    // Real current positions on both sides: enter/send/yield/retire/respond.
+    await unavailableWithReply(f);
+    const src = f.notices().source;
+    // B2's fixture creates a real second Goal in the same workspace
+    // (tests/helpers/B2-execution-fixture.ts:144-149).
+    const other = await src.readPage(f.ctx, { workspace: f.scope,
+      goalRef: { aggregateType: 'Goal', projectId: f.f.base.goalRef.projectId, goalId: 'b2-second-goal' },
+      page: { limit: 100 } });
+    expect(other.status).toBe('ready');
+    if (other.status !== 'ready') throw new Error(JSON.stringify(other));
+    expect(other.value.availability).toBe('available');
+    // The reply is attributed to the base Goal, so the Goal filter returns
+    // ready/null before the R/P checks run (spec L11-3).
+    expect(other.value.items).toEqual([]);
+    const own = await src.readPage(f.ctx, { workspace: f.scope, goalRef: f.f.base.goalRef, page: { limit: 100 } });
+    expect(own.status).toBe('ready');
+    if (own.status !== 'ready') throw new Error(JSON.stringify(own));
+    expect(own.value.items).toHaveLength(1);
+    expect(own.value.items[0]!.category).toBe('undelivered_reply');
+  });
+
   it('M05 the source checks Host identity, cancellation and the explicit Goal before reading', async () => {
     const f = await open();
     const source = f.notices().source;

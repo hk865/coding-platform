@@ -265,6 +265,45 @@ it('W-05 at a restart with CTL-08(a): an Entering Run without a Turn is revoked,
   }
 }, 90_000);
 
+it('W-05 with a queued pause at a restart: the not-entered reconcile applies it as paused, keeps the claim and replays as no new evidence', async () => {
+  const fx = await makeFixture({ scriptedReplies: [{ kind: 'text', text: 'A2: never reached for the paused entry' }] });
+  const controls = controlsOn(fx);
+  const deps = fx.rebuildDeps({ hostInstance: HOST_1, runReconcile: true });
+  // The crash point A8-2: begin committed, the Kernel call never returned (no turn.started).
+  const stuck = createAgentRuntime({ ...deps, controls, kernel: { ...deps.kernel, runCodingAgent: () => new Promise(() => undefined) } });
+  const prepared = await prepare(fx, stuck, 'a2-w05-pause-prepare');
+  void stuck.port.startRun(fx.ctx, { prepared, consumerId: 'a2-w05-pause-consumer', requestId: 'a2-w05-pause-start' });
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const auth = (await read(fx)).run.executionAuthorization;
+    if (auth !== undefined && 'phase' in auth && auth.phase === 'entering') break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  expect((await read(fx)).run.executionAuthorization).toMatchObject({ phase: 'entering' });
+  const pauseRef = await submit(fx, controls, 'pause', 'pause the entering Run', 'a2-w05-pause');
+
+  const restarted = restartedHost(fx, HOST_2, controls);
+  expect(await restarted.reconcile()).toMatchObject({ row: 'W-05', status: 'reconciled', reason: 'not_entered' });
+  const after = await read(fx, restarted.deps);
+  // RUN-16 + CTL-08(a): the revoked Run keeps the claim and the pointer's pause;
+  // reconcile-intents.ts:163-167 writes the not-entered paused observation.
+  expect(after.run).toMatchObject({ status: 'starting',
+    executionAuthorization: { phase: 'revoked', generation: 1 },
+    reconciliation: { basis: { kind: 'host_instance_takeover' } },
+    controlState: { intentRef: pauseRef, desiredState: 'paused' } });
+  expect(after.attempt).toMatchObject({ status: 'claimed' });
+  expect(after.outbox).toMatchObject({ status: 'pending' });
+  expect(after.session.occupancy).toMatchObject({ kind: 'execution' });
+  expect(after.lease?.release).toBeUndefined();
+  const applied = await controls.readControl(fx.ctx, pauseRef);
+  expect(applied).toMatchObject({ status: 'ready', value: { status: 'applied',
+    observation: { origin: 'platform_not_entered', kind: 'paused', detail: { entryPhase: 'revoked' } } } });
+  expect(fx.scripted.calls()).toBe(0);
+
+  // A second restart reads the same facts: no new evidence, the intent stays applied.
+  expect(await restartedHost(fx, HOST_3, controls).reconcile()).toMatchObject({ status: 'left' });
+  expect(await controls.readControl(fx.ctx, pauseRef)).toEqual(applied);
+}, 90_000);
+
 it('W-13 then W-15 (RUN-20(i), CTL-08(d), RUN-21 at a restart): a tool still in flight ends the Run unknown; its late result is booked by the next start', async () => {
   const toolName = 'a2-runtime-in-flight';
   const entered = deferred();
@@ -682,7 +721,8 @@ async function assertK3_23Quiet(fx: B2RuntimeFixture, before: K3QuietBefore, res
   expect(fx.scripted.calls(), 'K3-23: no model call').toBe(before.calls);
   const after = await read(fx);
   expect(await k3TurnBounds(fx, after), 'K3-23: no Kernel close').toEqual(before.turnBounds);
-  expect(await createUnknownCallReviewService({ records: fx.claimFixture.records }).readReview(fx.ctx, { runRef: fx.claim.runRef }),
+  expect(await createUnknownCallReviewService({ records: fx.claimFixture.records,
+    now: () => B2_AT, eventId: () => 'k3-23-review-read' }).readReview(fx.ctx, { runRef: fx.claim.runRef }),
     'K3-23: no review round and no UnknownCallReview record').toEqual({ status: 'not_found' });
   expect(after.session.occupancy, 'K3-23: the Session stays occupied by the Run').toMatchObject({ kind: 'execution',
     executionRef: { runId: fx.claim.runRef.runId } });
@@ -924,7 +964,8 @@ it('K3-21 review_round wins over every other guard', async () => {
         unresolvedToolCallIds: ['k3-review-origin'] } } });
 
     // RUN-22 through the owner: a complete draft listing the one recorded process call.
-    const reviews = createUnknownCallReviewService({ records: fx.claimFixture.records });
+    const reviews = createUnknownCallReviewService({ records: fx.claimFixture.records,
+      now: () => B2_AT, eventId: () => 'k3-review-attest-read' });
     let attestSeq = 0;
     const reconcile = createRunReconcileService({ records: fx.claimFixture.records,
       reads: createRunStateReader({ records: fx.claimFixture.records }),
@@ -1258,7 +1299,8 @@ it('K3-48 (一) through the classifier: an over-budget creation still goes RUN-2
     // draft is truncated to `incomplete`/`too_large` (K3-48 (一)'s owner half). The
     // creation truncation itself is the owner test's assertion; here it only proves
     // the classifier admitted an over-budget creation.
-    const review = await createUnknownCallReviewService({ records: fx.claimFixture.records })
+    const review = await createUnknownCallReviewService({ records: fx.claimFixture.records,
+      now: () => B2_AT, eventId: () => 'k3-review-budget-read' })
       .readReview(fx.ctx, { runRef: fx.claim.runRef });
     expect(review).toMatchObject({ status: 'ready', value: { inventory: 'incomplete', inventoryProblem: 'too_large' } });
   } finally { release.resolve(); await running.catch(() => undefined); }

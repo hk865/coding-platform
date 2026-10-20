@@ -203,3 +203,29 @@ it('reports incremental changes for a repeat read, an addition, a rename and an 
   expect(subject.analyze(editedCapture, { operation: 'symbols' }, signal()).changes)
     .toMatchObject({ modified: ['src/a.ts'], total: 1 });
 });
+
+it('honors a non-wildcard tsconfig include without indexing sibling files', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'typescript-source-query-include-'));
+  roots.push(root);
+  await mkdir(join(root, 'src'));
+  await mkdir(join(root, 'lib'));
+  await writeFile(join(root, 'src/a.ts'), 'export function chosen() { return 1; }\n');
+  await writeFile(join(root, 'src/b.ts'), 'export const sibling = 2;\n');
+  await writeFile(join(root, 'lib/c.ts'), 'export const library = 3;\n');
+  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: { target: 'esnext', module: 'esnext', moduleResolution: 'bundler' },
+    include: ['src/a.ts'] }));
+  const ws = await WorkspaceSandbox.create(root, { deniedPrefixes: ['private'] });
+  const access: ProjectSourceAccess = { read: (path, bytes) => ws.read(path, bytes),
+    allowed: path => !path.startsWith('private'), inventory: sig => ws.listFiles(10000, { signal: sig }),
+    sourceIdentity: async () => ({ workspace: ws.identity, commit: 'a'.repeat(40) }) };
+  const captured = await captureProjectSource(access, signal());
+  const result = analyzer().analyze(captured, { operation: 'symbols' }, signal());
+  // The literal include names exactly one root. Only src/a.ts matches, so the
+  // non-wildcard startsWith arm must not pull in its siblings.
+  expect(result.results.every(r => r['path'] === 'src/a.ts')).toBe(true);
+  expect(result.indexedSources.map(source => source.path)).toEqual(['src/a.ts']);
+  expect(result.coverage.projectConfiguration).toBe('tsconfig.json');
+  expect(result.coverage.indexedSourceCount).toBe(1);
+  expect(result.results.some(r => r['path'] === 'src/b.ts' || r['path'] === 'lib/c.ts')).toBe(false);
+});

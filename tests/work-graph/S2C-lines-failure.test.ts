@@ -13,7 +13,7 @@ import type { JsonValue } from '../../src/contracts/fingerprint.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
 import { createWorkLineReader } from '../../src/core/work-graph/views/work-line-reader.js';
 import { failingLookup, failingLookupOrdered, failingReadMany, openLineFixture, rowOf, type LineFixture } from '../helpers/S2C-L-line-support.js';
-import { L_HOST } from '../helpers/S2C-L-runs-support.js';
+import { completedEvent, L_HOST } from '../helpers/S2C-L-runs-support.js';
 import { createS2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
 
 function ready<T>(result: ReadResult<T>): T {
@@ -225,5 +225,67 @@ describe.each(['memory', 'sqlite'] as const)('2C-14 failed reads propagate (%s)'
         expect(control?.reasonCode).toBe('busy');
       }
     } finally { await steps.close(); }
+  });
+
+  it('2C-14/T5x a real Run end between the head and occupancy reads rereads once and heals', async () => {
+    for (const budget of [undefined, 100] as const) {
+      const f = await lineFixture();
+      const goal = await f.addGoal('g14-t5x-reread', [{ taskId: 'w', title: 'W task' }]);
+      const head = (await f.createSession('s14-t5x-reread')).ref;
+      const claim = await f.claim('w', head, goal);
+      await f.runs.enter(claim.claim);
+      const headKey = canonicalJson({ aggregateType: 'Session', projectId: head.projectId,
+        sessionId: head.sessionId } as unknown as JsonValue);
+      let headReads = 0;
+      // A real end committed in ONE commit (the ended Run and the Session
+      // occupancy release) between the head read and the later occupancy read.
+      const gated = { ...f.records, async readMany(keys: readonly string[]) {
+        const read = await f.records.readMany(keys);
+        if (keys.length === 1 && keys[0] === headKey) {
+          headReads += 1;
+          if (headReads === 1) await f.runs.recordResult(claim.claim, completedEvent(claim.claim, 't5x-reread'));
+        }
+        return read;
+      } };
+      const list = ready(await f.readerWith(gated, budget).listWorkLines(f.ctx, { workspace: f.base.scope }));
+      const row = rowOf(list.rows, head);
+      // The first pass saw the stale occupied head; the single reread healed it.
+      expect(headReads).toBe(2);
+      expect(row).toBeDefined();
+      expect(row?.problem).toBeNull();
+    }
+  });
+
+  it('2C-14/T5x a second real Run end on the reread leaves the row source_moving with no bucket', async () => {
+    const f = await lineFixture();
+    const goal = await f.addGoal('g14-t5x-two', [{ taskId: 'w', title: 'W task' },
+      { taskId: 'w2', title: 'W2 task' }]);
+    const head = (await f.createSession('s14-t5x-two')).ref;
+    const a = await f.claim('w', head, goal);
+    await f.runs.enter(a.claim);
+    const headKey = canonicalJson({ aggregateType: 'Session', projectId: head.projectId,
+      sessionId: head.sessionId } as unknown as JsonValue);
+    let headReads = 0;
+    let b: Awaited<ReturnType<typeof f.claim>> | undefined;
+    const gated = { ...f.records, async readMany(keys: readonly string[]) {
+      const read = await f.records.readMany(keys);
+      if (keys.length === 1 && keys[0] === headKey) {
+        headReads += 1;
+        if (headReads === 1) {
+          await f.runs.recordResult(a.claim, completedEvent(a.claim, 't5x-a'));
+          b = await f.claim('w2', head, goal);
+          await f.runs.enter(b.claim);
+        } else if (headReads === 2) {
+          await f.runs.recordResult(b!.claim, completedEvent(b!.claim, 't5x-b'));
+        }
+      }
+      return read;
+    } };
+    const list = ready(await f.readerWith(gated).listWorkLines(f.ctx, { workspace: f.base.scope }));
+    const row = rowOf(list.rows, head);
+    // The reread itself raced a second real end: the inconsistency persists.
+    expect(headReads).toBe(2);
+    expect(row?.problem).toMatchObject({ code: 'source_moving' });
+    expect(row?.status.bucket).toBeNull();
   });
 });

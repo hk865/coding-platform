@@ -41,7 +41,12 @@ const entries: [string, string][] = [
 async function assertGitInventory(backend: Backend, projectId: string, repo: 'workspace' | 'parent') {
   const f = await fixture(backend, projectId, entries, { git: { repo } });
   fixtures.push(f);
-  // A tracked symlink: created, then committed with a real `git add`/commit.
+  // Grant the tracked symlink's path to the Host before creating it: write()
+  // adds the path to the fixture's allow set, remove() keeps that grant, then a
+  // real symlink replaces the file, so the path reaches the lstat/isFile skip
+  // instead of being refused one step earlier by authorize/deny.
+  await f.write('tracked-link.ts', '');
+  await f.remove('tracked-link.ts');
   await symlink(join(f.root, 'src/tracked.ts'), join(f.root, 'tracked-link.ts'));
   await git(f.root, 'add', 'tracked-link.ts');
   await git(f.root, 'commit', '-qm', 'tracked symlink');

@@ -15,7 +15,7 @@
  * QueryRun) are produced by the REAL owners: claim/entry/Runtime for the Runs,
  * the evidence service for the round and the mailbox for the Message.
  * In part 1 every method throws `not implemented: …`, so the cases are RED by
- * design; this file must still compile and run all 32 cases.
+ * design; this file must still compile and run all 36 cases (18 cases × M/S).
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -29,7 +29,8 @@ import type {
 } from '../../src/contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { GoalRef, WorkspaceRef } from '../../src/contracts/ledger.js';
-import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
+import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
+import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { RuntimeBudget } from '../../src/contracts/runtime-budget.js';
 import type {
@@ -185,8 +186,13 @@ type S3InputFixtureOptions = {
    * `new` = r1 old-A, r2 new-A (IN10).
    */
   r2?: 'none' | 'old' | 'new';
-  /** Seed the real finalized VerificationRound chain for the gate (IN11). */
-  seedRounds?: 'pass';
+  /** Seed the real finalized VerificationRound chain for the gate: PASS (IN11) or FAIL (IN12). */
+  seedRounds?: 'pass' | 'fail';
+  /**
+   * IN04: store the legacy r1 body under a real Run claimed in w2, so its
+   * canonical owner is outside the consumer's w scope.
+   */
+  ownerRunInOtherWorkspace?: boolean;
   /** Provide the `decisionApplications` dependency answering "not applied" (IN14). */
   decisionApplications?: boolean;
   /** Create the canonical QueryJob/QueryRun through the real query owner (IN19). */
@@ -417,11 +423,35 @@ async function createInputFixture(
   };
   const plans = createPlanService({ records: backend.records, materials: planMaterials, now: () => AT, eventId });
 
-  const createdGoal = await goalsService.tasks.createGoal(ctx, { meta: {
-    requestId: 's3-create-goal',
-    expected: [{ ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: WORKSPACE_REVISION }] },
-    input: { goalId: GOAL_ID, workspace: scope, objective: 'Ship platform' } });
-  if (createdGoal.status !== 'committed') throw new Error(`S3 fixture Goal creation failed: ${JSON.stringify(createdGoal)}`);
+  /**
+   * One real Goal + one accepted Plan through the public owners. It is the same
+   * block for goal g in w and, for IN04, a second goal g2 in w2: the caller
+   * names the call context, scope, workspace pin and draft.
+   */
+  async function createGoalAndAdoptPlan(params: {
+    callCtx: CoreCallContext; goalRef: GoalRef; workspace: WorkspaceScope;
+    workspaceRef: WorkspaceRef; draft: PlanRevisionDraft; requestPrefix: string;
+  }): Promise<PlanRevisionSnapshot> {
+    const createdGoal = await goalsService.tasks.createGoal(params.callCtx, { meta: {
+      requestId: `${params.requestPrefix}-goal`,
+      expected: [{ ref: projectRef, revision: 1 }, { ref: params.workspaceRef, revision: WORKSPACE_REVISION }] },
+      input: { goalId: params.goalRef.goalId, workspace: params.workspace,
+        objective: `S3 fixture goal ${params.goalRef.goalId}` } });
+    if (createdGoal.status !== 'committed') throw new Error(`S3 fixture Goal creation failed: ${JSON.stringify(createdGoal)}`);
+    const goalRevision = createdGoal.value.revision;
+    const proposed = await plans.proposePlan(params.callCtx, { meta: { requestId: `${params.requestPrefix}-propose`,
+      expected: [{ ref: params.goalRef, revision: goalRevision }] },
+      input: { goalRef: params.goalRef, basedOn: null, draft: params.draft,
+        reason: { text: 'Initial S3 input fixture plan', sources: [] } } });
+    if (proposed.status !== 'committed' || proposed.value.issues.length > 0) {
+      throw new Error(`S3 fixture Plan proposal failed: ${JSON.stringify(proposed)}`);
+    }
+    const applied = await plans.applyPlanChange(params.callCtx, { meta: { requestId: `${params.requestPrefix}-apply`,
+      expected: [{ ref: params.goalRef, revision: goalRevision }] },
+      input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
+    if (applied.status !== 'committed') throw new Error(`S3 fixture Plan adoption failed: ${JSON.stringify(applied)}`);
+    return applied.value;
+  }
 
   const secondRef = options.r2 === 'new' ? newRef : oldRef;
   const inputRequirements = options.r2 === 'none'
@@ -456,17 +486,8 @@ async function createInputFixture(
       { taskId: TASK_B, dependsOnId: TASK_A, requires: { kind: 'decision', label: DECISION_MESSAGE_ID } },
     ] },
     inputRequirements };
-  const proposed = await plans.proposePlan(ctx, { meta: { requestId: 's3-propose-plan',
-    expected: [{ ref: goalRef, revision: 1 }] },
-    input: { goalRef, basedOn: null, draft, reason: { text: 'Initial S3 input fixture plan', sources: [] } } });
-  if (proposed.status !== 'committed' || proposed.value.issues.length > 0) {
-    throw new Error(`S3 fixture Plan proposal failed: ${JSON.stringify(proposed)}`);
-  }
-  const applied = await plans.applyPlanChange(ctx, { meta: { requestId: 's3-apply-plan',
-    expected: [{ ref: goalRef, revision: 1 }] },
-    input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
-  if (applied.status !== 'committed') throw new Error(`S3 fixture Plan adoption failed: ${JSON.stringify(applied)}`);
-  const plan = applied.value;
+  const plan = await createGoalAndAdoptPlan({ callCtx: ctx, goalRef, workspace: scope, workspaceRef,
+    draft, requestPrefix: 's3' });
 
   // ---- real claims (public TaskClaimPort), deterministic real Run ids ------
   const claimIds = ['runA', 'attempt-a', 'event-a', 'runB', 'attempt-b', 'event-b',
@@ -475,23 +496,29 @@ async function createInputFixture(
   const claimRoles = createRoleConfigurationService({ records: backend.records, now: () => AT, eventId });
   const claimService = createTaskClaimService({ records: backend.records, roles: claimRoles, now: () => AT,
     newId: () => claimIds.shift() ?? `s3-claim-id-${++claimExtra}` });
-  const goalAtClaim = await plans.queryGoal(ctx, goalRef);
-  if (goalAtClaim.status !== 'ready') throw new Error(`S3 fixture Goal read failed: ${JSON.stringify(goalAtClaim)}`);
-  const goalRevision = goalAtClaim.value.goal.revision;
-  async function claim(task: TaskTriple, sessionRef: SessionRef, sessionRevision: number, requestId: string) {
-    const claimed = await claimService.claimTask(ctx, {
-      input: { goalRef, planRef: plan.ref, taskId: task.taskId, sessionRef, roleBinding, budget },
-      meta: { requestId, expected: [
-        { ref: goalRef, revision: goalRevision },
-        { ref: workspaceRef, revision: WORKSPACE_REVISION },
-        { ref: plainSessionRefToAggregate(sessionRef), revision: sessionRevision },
+  /** One real claim through the public TaskClaimPort for the named goal/plan/task/session. */
+  async function claimOn(params: {
+    callCtx: CoreCallContext; goalRef: GoalRef; planRef: PlanRevisionRef; taskId: string;
+    sessionRef: SessionRef; sessionRevision: number; workspaceRef: WorkspaceRef; requestId: string;
+  }): Promise<TaskClaim> {
+    const goalAtClaim = await plans.queryGoal(params.callCtx, params.goalRef);
+    if (goalAtClaim.status !== 'ready') throw new Error(`S3 fixture Goal read failed: ${JSON.stringify(goalAtClaim)}`);
+    const claimed = await claimService.claimTask(params.callCtx, {
+      input: { goalRef: params.goalRef, planRef: params.planRef, taskId: params.taskId,
+        sessionRef: params.sessionRef, roleBinding, budget },
+      meta: { requestId: params.requestId, expected: [
+        { ref: params.goalRef, revision: goalAtClaim.value.goal.revision },
+        { ref: params.workspaceRef, revision: WORKSPACE_REVISION },
+        { ref: plainSessionRefToAggregate(params.sessionRef), revision: params.sessionRevision },
       ] },
     });
-    if (claimed.status !== 'committed') throw new Error(`S3 fixture claim ${task.taskId} failed: ${JSON.stringify(claimed)}`);
+    if (claimed.status !== 'committed') throw new Error(`S3 fixture claim ${params.taskId} failed: ${JSON.stringify(claimed)}`);
     return claimed.value;
   }
-  const claimA = await claim(tA, sessionA.ref, sessionA.revision, 's3-claim-a');
-  const claimB = await claim(tB, sessionB.ref, sessionB.revision, 's3-claim-b');
+  const claimA = await claimOn({ callCtx: ctx, goalRef, planRef: plan.ref, taskId: TASK_A,
+    sessionRef: sessionA.ref, sessionRevision: sessionA.revision, workspaceRef, requestId: 's3-claim-a' });
+  const claimB = await claimOn({ callCtx: ctx, goalRef, planRef: plan.ref, taskId: TASK_B,
+    sessionRef: sessionB.ref, sessionRevision: sessionB.revision, workspaceRef, requestId: 's3-claim-b' });
   const runA = claimA.runRef;
   const runB = claimB.runRef;
   if (runA.runId !== 'runA' || runB.runId !== 'runB' || claimA.generation !== DECISION_SENDER_GENERATION) {
@@ -669,14 +696,49 @@ async function createInputFixture(
   }
   const bodyOwner: RunRef = runA2 ?? runA;
 
+  // ---- IN04: a second Goal in w2 with its own accepted Plan and claim ------
+  // claim-service.ts:920 only compares the Goal's own workspace with the claim
+  // scope, so a Goal that lives in w2 is claimable from a w2 context. The
+  // public claim is the owner of the cross-workspace body below.
+  let otherRun: RunRef | null = null;
+  if (options.ownerRunInOtherWorkspace === true) {
+    const otherGoalRef: GoalRef = { aggregateType: 'Goal', projectId: PROJECT_ID, goalId: 'g2' };
+    const otherDraft: PlanRevisionDraft = { schemaVersion: 2, planId: 'p2', planRevision: 1, goalId: 'g2',
+      stages: [{ stageId: 's2', title: 'Second workspace' }],
+      tasks: [
+        { taskId: 't2', stageId: 's2', title: 'Second work task', requirementLevel: 'required', taskKind: 'work',
+          disposition: 'active', phase: 'pending', scope: { kind: 'stage', stageId: 's2' } },
+        { taskId: 'gate2', title: 'Second goal gate', requirementLevel: 'required', taskKind: 'gate',
+          disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
+      ],
+      assignments: [{ taskId: 't2', role: 'builder', instruction: 'Implement in w2' }],
+      obligations: [{ obligationId: 'o2', title: 'Deliver in w2', requirementLevel: 'required',
+        taskIds: ['t2', 'gate2'], verificationRequirements: [{ requirementId: 'v2', requirementLevel: 'required',
+          kind: 'static', description: 'node check-b.js' }] }],
+      taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, inputRequirements: [] };
+    const otherPlan = await createGoalAndAdoptPlan({ callCtx: otherCtx, goalRef: otherGoalRef,
+      workspace: otherScope, workspaceRef: otherWorkspaceRef, draft: otherDraft, requestPrefix: 's3-g2' });
+    const otherClaim = await claimOn({ callCtx: otherCtx, goalRef: otherGoalRef, planRef: otherPlan.ref,
+      taskId: 't2', sessionRef: otherSession.ref, sessionRevision: otherSession.revision,
+      workspaceRef: otherWorkspaceRef, requestId: 's3-claim-t2' });
+    otherRun = otherClaim.runRef;
+  }
+  // The w2 claim's own workspace context writes old-A under that Run; no entry
+  // is needed for the write (material-service.ts:270-294 compares refs only).
+  const legacyOwner: RunRef = otherRun ?? bodyOwner;
+  const legacyCtx: CoreCallContext = otherRun === null ? workRunCtx(bodyOwner)
+    : { projectId: PROJECT_ID, workspaceId: OTHER_WORKSPACE_ID,
+        principal: { kind: 'work_run', runRef: otherRun, roleBinding },
+        materialReader: { kind: 'run', requester: otherRun }, signal: ctx.signal };
+
   // ---- old-A/new-A through the real storeArtifact (W3-03) ------------------
   if (options.storeLegacyBody !== false) {
     const stored = options.legacyOrigin === 'platform_operation'
       ? await writeMaterials.storeArtifact(ctx, { contentType: 'text/plain', body: LEGACY_BODY,
           sources: [artifactSource], origin: { kind: 'platform_operation', projectId: PROJECT_ID,
             workspaceId: WORKSPACE_ID, requestId: 's3-material-request', actor } })
-      : await writeMaterials.storeArtifact(workRunCtx(bodyOwner), { contentType: 'text/plain', body: LEGACY_BODY,
-          sources: [artifactSource], origin: { kind: 'execution', ref: bodyOwner } });
+      : await writeMaterials.storeArtifact(legacyCtx, { contentType: 'text/plain', body: LEGACY_BODY,
+          sources: [artifactSource], origin: { kind: 'execution', ref: legacyOwner } });
     if (stored.status !== 'stored') throw new Error(`S3 fixture legacy body store failed: ${JSON.stringify(stored)}`);
   }
   const storedNew = await writeMaterials.storeArtifact(workRunCtx(bodyOwner), { contentType: 'text/plain',
@@ -758,12 +820,16 @@ async function createInputFixture(
     },
   };
 
-  // ---- real registered-check PASS chain for the gate (IN11, W3-05) ---------
+  // ---- real registered-check chain for the gate: PASS (IN11) or FAIL (IN12) -
+  // The round is produced by the real evidence owner and the registered check
+  // runner over a real script; no round, check result or outcome is written by
+  // the test. A first finalized FAIL is reachable exactly like a first PASS.
   let gateRoundPassRef: VerificationRoundRef | null = null;
   let gateReportRef: ArtifactRef | null = null;
-  if (options.seedRounds === 'pass') {
-    const world = await createCheckWorld('verification-root',
-      'process.stdout.write("S3_CHECK_OK\\n");\n');
+  if (options.seedRounds === 'pass' || options.seedRounds === 'fail') {
+    const failing = options.seedRounds === 'fail';
+    const world = await createCheckWorld(failing ? 'verification-gate-fail-root' : 'verification-root',
+      failing ? 'process.exit(1);\n' : 'process.stdout.write("S3_CHECK_OK\\n");\n');
     const opened = await world.evidence.openVerification(world.checkCtx, { input: {
       subjectRunRef: runA, subject: gateTask, planRef: plan.ref, gateSubject: 'goal' },
       meta: { requestId: 's3-open-gate', expected: [] } });
@@ -783,11 +849,14 @@ async function createInputFixture(
     const finalized = await world.evidence.finalizeChecks(world.checkCtx, { input: { roundRef },
       meta: { requestId: 's3-finalize-gate', expected: [{ ref: roundRef, revision: ran.value.revision }] } });
     if (finalized.status !== 'committed') throw new Error(`S3 fixture gate finalize failed: ${JSON.stringify(finalized)}`);
-    if (finalized.value.outcome !== 'PASS') {
-      throw new Error(`S3 fixture gate round did not finalize PASS: ${finalized.value.outcome}`);
+    const expectedOutcome = failing ? 'FAIL' : 'PASS';
+    if (finalized.value.outcome !== expectedOutcome) {
+      throw new Error(`S3 fixture gate round did not finalize ${expectedOutcome}: ${finalized.value.outcome}`);
     }
-    gateRoundPassRef = finalized.value.snapshot.ref;
-    gateReportRef = finishedCheck.reportRef;
+    if (!failing) {
+      gateRoundPassRef = finalized.value.snapshot.ref;
+      gateReportRef = finishedCheck.reportRef;
+    }
   }
 
   const decisionApplications: TaskContextInputDependencies['decisionApplications'] =
@@ -916,6 +985,17 @@ describe.each(KINDS)('S3 exact task inputs (%s backend)', kind => {
     expect(f.materialsSpy.openArtifactCalls).toBe(0);
   });
 
+  it('IN04 a canonical owner in another workspace is forbidden and returns no body', async () => {
+    // The stored old-A body is owned by a real Run claimed in w2 (the Goal g2
+    // itself lives in w2, so the public claim accepts it). Reading tB's r1
+    // declaration from w must reject the w2 owner before opening the body.
+    const f = await openFixture(kind, { ownerRunInOtherWorkspace: true });
+    const result = await readInputs(f, f.legacyDeclarationId);
+    expect(result).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    expect(result).not.toHaveProperty('value');
+    expect(f.materialsSpy.openArtifactCalls).toBe(0);
+  });
+
   it('IN05 an owner ref that resolves to a different Run is forbidden', async () => {
     // The stored body's canonical owner is tA's real second Run, runA2; loading
     // that owner answers the runA snapshot, a DIFFERENT Run (same Task), so the
@@ -1008,6 +1088,19 @@ describe.each(KINDS)('S3 exact task inputs (%s backend)', kind => {
     // storeReport); the literal is hand-written, never imported from src.
     expect(report.contentType)
       .toBe('application/vnd.coding-platform.verification-check-report+json;version=1');
+  });
+
+  it('IN12 a newer finalized FAIL gate head is missing with no applicable round', async () => {
+    // A first finalized FAIL is produced by the same real owner path as IN11's
+    // PASS: open, run registered check-b.js exiting 1, finalize FAIL. The old
+    // PASS cannot stand in for it (slice-3 SPEC :348); no earlier PASS exists
+    // here, and the FAIL head is not selectable.
+    const f = await openFixture(kind, { seedRounds: 'fail' });
+    const result = await readInputs(f, f.edgeGateDeclarationId);
+    expect(result).toMatchObject({ status: 'ready' });
+    if (result.status !== 'ready') return;
+    expect(result.value).toHaveLength(1);
+    expect(result.value[0]).toMatchObject({ state: 'missing', reason: 'no_applicable_round', source: null });
   });
 
   it('IN13 an environment declaration selects the workspace revision without a current assertion', async () => {
