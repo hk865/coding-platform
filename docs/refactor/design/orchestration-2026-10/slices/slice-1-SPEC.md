@@ -953,7 +953,7 @@ codec坏shape案例只直接给纯decoder输入坏编码，或从公开写入口
 | --- | --- | --- | --- |
 | SV01 | tests/work-graph/S1-codecs-indexes.test.ts | 旧Session/Operation/Message/brief解码 | provenance=null/R=null/handler=null/disposition=null；旧briefdigest逐字节原值 |
 | SV02 | 同上 | 六lookup注册，两Session/两个Work/一Query/一anchor/一handler消息 | 每个索引仅返回对应完整ref；w2全空；无duplicate schema registration |
-| SV03 | 同上 | 相同旧格式Outbox：memory在新schema下seed；SQLite先旧schema写再以新schema重开 | IDX-S2直接返回原claim.runRef；lookup前后records/events数量不增；不伪造memory持久重开 |
+| SV03 | 同上 | 相同旧格式Outbox：memory在新schema下seed；SQLite先旧schema写再以新schema重开 | IDX-S2直接返回原claim.runRef；lookup前后records/events数量不增；不伪造memory持久重开（2026-10-20 后注：按决定 79 不再读旧格式，这一行的旧格式场景已由 T 删除；“lookup 和重建索引不写东西”现在由 `tests/record-store/lookup.test.ts` 覆盖，W2b-18） |
 | SV04 | 同上 | copy消息/continuation创建，读取provenance索引 | copy不当continuation；两successor事实保留；不锁第二continuation |
 | SV05 | 同上 | decoder输入provenance.kind='bogus'；创建入口同坏字段 | decoder invalid；入口invalid；0写；不吞成null |
 | SV06 | tests/work-graph/S1-session-facts.test.ts | 最新Query覆盖lastExecutionRef，旧Work已yield | latestWork=Work claim；wait=m；不被Query盖掉 |

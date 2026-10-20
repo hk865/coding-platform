@@ -1,0 +1,322 @@
+# D1 assertion ledger w2-base..HEAD (tests)
+
+## MOVED: 37
+
+## REMOVED assertion: 233
+tests/app/A2-host-instance-lease.test.ts:115: expect(taken.takeover).toEqual({ kind: 'hl03_stale_lock', previousInstanceId: 'k3-crashed', previousPid: 5000 });
+tests/app/A2-settings-automation.test.ts:99: expect(pushed.at(-1)?.automation).toEqual(automation);
+tests/app/A2-settings-automation.test.ts:101: expect((await storedFile(dir))['automation']).toEqual(automation);
+tests/app/A2-settings-automation.test.ts:103: expect(reopened.pushed.at(-1)?.automation).toEqual(automation);
+tests/app/A2-settings-automation.test.ts:138: expect((await settings.call('models/save', saveModel)).status).toBe('ready');
+tests/app/R6-workbench.test.ts:354: expect(historyHtml).toContain('请修复构建'); // turn.started user input
+tests/app/R6-workbench.test.ts:355: expect(historyHtml).toContain('已修复'); // assistant text
+tests/app/R6-workbench.test.ts:359: expect(savedRaw).toContain('检查了测试失败的原因');
+tests/app/R6-workbench.test.ts:360: expect(savedRaw).toContain('reasoningContent');
+tests/app/R6-workbench.test.ts:362: expect(historyHtml).toContain('exit 0'); // tool result
+tests/app/R6-workbench.test.ts:363: expect(historyHtml).toContain('future.unknown'); // unknown original record stays identifiable and available on demand
+tests/app/R6-workbench.test.ts:364: expect(historyHtml).toContain('data-history="turn:turn-1"'); // recordId preserved
+tests/app/R6-workbench.test.ts:365: expect(historyHtml).toContain('kernhist1.1'); // cursor preserved
+tests/app/R6-workbench.test.ts:366: expect(historyHtml).toContain('position 1'); // source.position preserved
+tests/app/R6-workbench.test.ts:367: expect(historyHtml.indexOf('请修复构建')).toBeLessThan(historyHtml.indexOf('已修复')); // original order
+tests/app/R6-workbench.test.ts:368: expect(historyHtml).toContain('data-history-body="artifact"'); // ArtifactRef is not read as text
+tests/app/R6-workbench.test.ts:369: expect(historyHtml).toContain('正文未读取');
+tests/app/RL-34-wiring-resource-caps.test.ts:111: expect(rlSandbox.currentReads.at(-1)).toEqual(EXPECTED_SAVED);
+tests/app/RL-34-wiring-resource-caps.test.ts:174: expect(rlSandbox.currentReads.at(-1)).toEqual(EXPECTED_SAVED);
+tests/app/S2B-41-decision54-backfill-bound.test.ts:219: expect(closed).toMatchObject({ status: 'closed' });
+tests/app/S2B-41-decision54-backfill-bound.test.ts:228: expect(health).toMatchObject({ status: 'observed' });
+tests/app/S4C2-scribe-reminders.test.ts:726: expect(resolved.status).toBe('ready');
+tests/app/S4C2-scribe-reminders.test.ts:728: expect(resolved.value?.sessionId).toBe(ids[0]);
+tests/app/S8A-L8-auto-capture-gate.test.ts:511: expect(aDone.autoCapture).toMatchObject({ requestSeq: 2, trigger: 'startup_retry', pending: false });
+tests/app/S8A-L8-auto-capture-gate.test.ts:512: expect(bDone.autoCapture).toMatchObject({ requestSeq: 2, trigger: 'startup_retry', pending: false });
+tests/app/S8A-L8-auto-capture-gate.test.ts:513: expect(aDone.current).not.toBeNull();
+tests/app/S8A-L8-auto-capture-gate.test.ts:514: expect(bDone.current).not.toBeNull();
+tests/app/S8A-L8-auto-capture-gate.test.ts:516: expect(gates.a.entered).toBeGreaterThan(0);
+tests/app/S8A-L8-auto-capture-gate.test.ts:517: expect(gates.b.entered).toBeGreaterThan(0);
+tests/app/S8A-L8-capture-start.test.ts:225: expect(failed.autoCapture).toMatchObject({
+tests/app/S8A-L8-capture-start.test.ts:229: expect(failed.current).toBeNull();
+tests/app/S8A-L8-capture-start.test.ts:263: expect(failed.autoCapture).toMatchObject({
+tests/app/S8A-L8-capture-start.test.ts:267: expect(failed.current).toBeNull();
+tests/app/S8A-L8-capture-start.test.ts:348: expect(after.status).toBe('ready');
+tests/app/S8A-L8-capture-start.test.ts:350: expect(after.value.autoCapture).toMatchObject({ requestSeq: 1, status: 'requested', pending: true });
+tests/app/S8A-L8-capture-start.test.ts:351: expect(after.value.current).toBeNull();
+tests/app/S8A-L8-http-watermark.test.ts:68: expect(baselineCapture).toBeTruthy();
+tests/app/S8A-L8-http-watermark.test.ts:69: expect(baselineSeq).toBe(1);
+tests/app/S8A-L8-http-watermark.test.ts:74: expect(await committed.json()).toMatchObject({ status: 'committed' });
+tests/app/S8A-L8-http-watermark.test.ts:78: expect(after.current?.captureRef.captureId).toBeTruthy();
+tests/app/S8A-L8-http-watermark.test.ts:80: expect(after.autoCapture).toMatchObject({ requestSeq: baselineSeq, pending: false });
+tests/app/host-settings.test.ts:883: expect(reads).toContainEqual({ scope: a.scope, answerRef: inputA.answerRef });
+tests/app/host-settings.test.ts:884: expect(first.workspaces.find(item => item.scope.workspaceId === a.scope.workspaceId)?.checks).toEqual(inputA.checks);
+tests/app/host-settings.test.ts:886: expect(second.workspaces.find(item => item.scope.workspaceId === a.scope.workspaceId)?.checks).toEqual(inputA.checks);
+tests/app/host-settings.test.ts:887: expect(second.workspaces.find(item => item.scope.workspaceId === b.scope.workspaceId)?.checks).toEqual(inputB.checks);
+tests/app/host-settings.test.ts:888: expect(await settings.call('checks/approve', { ...inputA, answerRef: answerRefForScope(a.scope, 'missing') })).toMatchObject({ status: 'rejected', code: 'not_found' });
+tests/app/host-settings.test.ts:889: expect(await settings.call('checks/approve', save(locked.scope, 'locked'))).toMatchObject({ status: 'rejected' });
+tests/app/host-settings.test.ts:892: expect(restored.workspaces.find(item => item.scope.workspaceId === a.scope.workspaceId)?.checks).toEqual(inputA.checks);
+tests/app/host-settings.test.ts:893: expect(restored.workspaces.find(item => item.scope.workspaceId === b.scope.workspaceId)?.checks).toEqual(inputB.checks);
+tests/app/orchestration-mechanism.test.ts:31: expect(observer.observe(snapshot, 0)).toBeNull();
+tests/app/orchestration-mechanism.test.ts:32: expect(observer.observe(snapshot, 10_000)).toBeNull();
+tests/app/orchestration-mechanism.test.ts:33: expect(observer.processed).toBeNull();
+tests/app/ui-live.test.ts:375: expect(loop.counts()[0]).toBeGreaterThan(afterReady[0]!);
+tests/app/ui-refresh.test.ts:194: expect([driver.mock.calls.length, command.mock.calls.length, refetch.mock.calls.length]).toEqual([1, 1, 0]);
+tests/app/ui-refresh.test.ts:197: expect([driver.mock.calls.length, command.mock.calls.length, refetch.mock.calls.length]).toEqual([2, 2, 1]);
+tests/app/ui-store.test.ts:220: expect(store.get('selectedKey')).toBe('');
+tests/app/ui-store.test.ts:221: expect(() => state()).toThrow('the workbench has no selected scope');
+tests/business/A2-workflow-auto-rework.test.ts:248: expect(await opened.workflow.advanceWork(ctx, selectWork('work-1'))).toEqual({ status: 'ready', value: { state: 'advance',
+tests/business/A2-workflow-auto-rework.test.ts:257: expect(await passed.workflow.advanceWork(ctx, selectWork('work-1'))).toMatchObject({ status: 'ready', value: {
+tests/business/A2-workflow-auto-rework.test.ts:260: expect([...opened.calls, ...passed.calls]).toHaveLength(0);
+tests/business/K3-41-release-hold.test.ts:336: expect(replay, JSON.stringify(replay)).toMatchObject({ status: 'committed', value: {
+tests/business/K3-41-release-hold.test.ts:341: expect(continuation.next?.kind === 'perform' ? continuation.next.operation.kind : null,
+tests/business/K3-41-release-hold.test.ts:349: expect((await readExecution(host, runRef)).run.status).toBe('ended');
+tests/composition/A1-graph-session-platform.test.ts:54: try { expect(await backend.records.commit(seed)).toMatchObject({ status: 'committed' }); }
+tests/composition/K-R-previous-turn-bounds.test.ts:90: expect(seam.calls, 'a recorded end never consults the identity seam').toBe(0);
+tests/composition/R3c-R4b-platform.test.ts:93: try { expect(await seedBackend.records.commit(seed)).toMatchObject({ status: 'committed' }); }
+tests/composition/R3d-R3g-platform.test.ts:87: expect(await seedBackend.records.commit({ identityKey: 'composed-scope-seed', fingerprint: 'composed-scope-seed-v1',
+tests/composition/S8A-L8-adoption-capture.test.ts:178: expect(replayedCapture).toMatchObject({ status: 'committed', replayed: true });
+tests/composition/S8A-L8-pass-capture.test.ts:399: expect(finalized).toMatchObject({ status: 'committed', replayed: false,
+tests/composition/S8A-L8-pass-capture.test.ts:402: await assertPassCapture(fixture, oldCurrent, 2);
+tests/composition/W1-future-plan-platform.test.ts:135: try { expect(await seedBackend.records.commit(seed)).toMatchObject({ status: 'committed' }); }
+tests/composition/W1-future-plan-platform.test.ts:196: expect(committed).toMatchObject({ status: 'committed' });
+tests/composition/W2-future-intent-platform.test.ts:126: expect(seed).toMatchObject({ status: 'committed' });
+tests/contracts/review-admission.test.ts:170: expect(reviewRoundAdmissionProblem({ ...admissible(), purpose: { ...reviewPurpose, phase: 'review' } })).toBeNull();
+tests/data/S8A-file-graph.test.ts:20: expect(result.status).toBe('ready');
+tests/data/S8D-A21-python-config.test.ts:122: expect(unresolvedPairs(graph)).toEqual([['d.py', 'c']]);
+tests/data/S8D-cpp-import-graph-script.test.ts:125: expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:126: expect(result.done(0)?.edges).toEqual([]);
+tests/data/S8D-cpp-import-graph-script.test.ts:127: expect(result.done(0)?.unresolved).toEqual([]);
+tests/data/S8D-cpp-import-graph-script.test.ts:209: expect(result.ready?.notes).toEqual([]);
+tests/data/S8D-cpp-import-graph-script.test.ts:210: expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:238: expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:239: expect(result.done(0)?.unresolved).toEqual([{ from: 'main.cpp', specifier: '"missing.h"', reason: null }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:312: expect(result.ready?.notes).toEqual(['忽略了 1 个工作区外的查找目录']);
+tests/data/S8D-cpp-import-graph-script.test.ts:313: expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:314: expect(result.done(0)?.edges).toEqual([]);
+tests/data/S8D-cpp-import-graph-script.test.ts:315: expect(result.done(0)?.unresolved).toEqual([{ from: 'main.cpp', specifier: '"o.h"', reason: null }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:373: expect(result.ready?.notes).toEqual(['1 个编译单元的主文件不在观测的文件里']);
+tests/data/S8D-cpp-import-graph-script.test.ts:374: expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:413: expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'failed', reason: '不认识的编译参数：-Xclang' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:414: expect(result.done(1)?.files).toEqual([{ path: 'b.cpp', status: 'parsed' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:422: expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'failed', reason: '不认识的编译参数：-load' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:430: expect(result.ready?.notes).toEqual(['忽略的编译参数：-march=native']);
+tests/data/S8D-cpp-import-graph-script.test.ts:431: expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:439: expect(result.ready?.notes).toEqual(['忽略了 1 个读不到的强制包含文件']);
+tests/data/S8D-cpp-import-graph-script.test.ts:440: expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:448: expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'failed', reason: '不认识的编译器：ccache' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:456: expect(split.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:461: expect(broken.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'failed', reason: '编译命令拆不开' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:469: expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'failed', reason: '不认识的编译参数：多出的位置参数' }]);
+tests/data/S8D-cpp-import-graph-script.test.ts:507: expect(result.failed?.reason).toBe('compile_commands.json 读不了：binary source');
+tests/data/S8D-cpp-import-graph-script.test.ts:518: expect(result.failed?.reason).toBe('compile_commands.json 读不了：binary source');
+tests/data/S8D-language-providers.test.ts:20: expect(result.status).toBe('ready');
+tests/data/S8D-observation-inventory.test.ts:121: expect(observed.inventory).toEqual({ source: 'git', reason: null });
+tests/data/S8D-observation-inventory.test.ts:122: expect([...observed.files.values()].map(file => file.path)).toEqual(['.gitignore', 'src/tracked.ts', 'src/untracked.ts']);
+tests/data/S8D-observation-inventory.test.ts:123: expect(observed.skipped).toEqual([]);
+tests/data/S8D-observation-inventory.test.ts:124: expect([...observed.configOnly.keys()]).toEqual([]);
+tests/data/S8D-observation-inventory.test.ts:125: expect(observed.configSkipped).toEqual([]);
+tests/data/S8D-observation-inventory.test.ts:129: expect((await observe(root)).snapshot).not.toBe(before);
+tests/data/S8D-observation-inventory.test.ts:146: expect(observed.inventory).toEqual({ source: 'git', reason: null });
+tests/data/S8D-observation-inventory.test.ts:147: expect([...observed.files.values()].map(file => file.path)).toEqual(['a.ts', 'b.ts']);
+tests/data/S8D-observation-inventory.test.ts:148: expect([...observed.files.keys()].every(path => path.startsWith('/workspace/'))).toBe(true);
+tests/data/S8D-observation-inventory.test.ts:161: expect(observed.inventory).toEqual({ source: 'skip_list', reason: '不是 git 仓库' });
+tests/data/S8D-observation-inventory.test.ts:162: expect([...observed.files.values()].map(file => file.path))
+tests/data/S8D-observation-inventory.test.ts:164: expect(observed.skipped).toEqual([]);
+tests/data/S8D-observation-inventory.test.ts:165: expect([...observed.configOnly.keys()]).toEqual([]);
+tests/data/S8D-observation-inventory.test.ts:186: expect(observed.inventory).toEqual({ source: 'git', reason: null });
+tests/data/S8D-observation-inventory.test.ts:187: expect([...observed.files.values()].map(file => file.path)).toEqual(['.gitignore', 'README.md', 'a.cpp']);
+tests/data/S8D-observation-inventory.test.ts:188: expect(observed.skipped).toEqual([]);
+tests/data/S8D-observation-inventory.test.ts:189: expect([...observed.configOnly.keys()]).toEqual(['build/compile_commands.json', 'build/p1/compile_commands.json']);
+tests/data/S8D-observation-inventory.test.ts:190: expect(observed.configOnly.get('build/compile_commands.json')).toEqual({
+tests/data/S8D-observation-inventory.test.ts:193: expect(observed.configOnly.get('build/p1/compile_commands.json')).toEqual({
+tests/data/S8D-observation-inventory.test.ts:196: expect(observed.configSkipped).toEqual([{ path: 'build/bin/compile_commands.json', reason: 'binary source' }]);
+tests/data/S8D-observation-inventory.test.ts:200: expect((await observe(root)).snapshot).not.toBe(baseline);
+tests/data/S8D-observation-inventory.test.ts:203: expect((await observe(root)).snapshot).not.toBe(baseline);
+tests/data/S8D-observation-inventory.test.ts:279: await expect(captureObservationSource(projectAccessOf(access), signal())).rejects.toMatchObject({
+tests/data/S8D-observed-v2-codecs.test.ts:192: expect(decodeObservedFileGraphChunk(
+tests/data/S8D-observed-v2-codecs.test.ts:275: expect('indexedSources' in compact).toBe(false);
+tests/data/S8D-observed-v2-codecs.test.ts:276: expect(compact.unresolved).toEqual(linesOf(paths));
+tests/data/S8D-observed-v2-codecs.test.ts:283: expect(compact.unresolved).toHaveLength(501);
+tests/data/S8D-observed-v2-codecs.test.ts:284: expect(compact.unresolved.slice(0, 500)).toEqual(lines.slice(0, 500));
+tests/data/S8D-observed-v2-codecs.test.ts:285: expect(compact.unresolved[500]).toBe('另有 2 条没列出，逐条见文件层');
+tests/data/S8D-observed-v2-codecs.test.ts:294: expect(new Set(lines.map(line => line.length))).toEqual(new Set([200]));
+tests/data/S8D-observed-v2-codecs.test.ts:296: expect(compact.unresolved).toHaveLength(327); // 326 kept lines plus the one summary line
+tests/data/S8D-observed-v2-codecs.test.ts:297: expect(compact.unresolved.slice(0, 326)).toEqual(lines.slice(0, 326));
+tests/data/S8D-observed-v2-codecs.test.ts:298: expect(Buffer.byteLength(compact.unresolved.slice(0, 326).join('\n'), 'utf8')).toBe(65_525);
+tests/data/S8D-observed-v2-codecs.test.ts:299: expect(compact.unresolved[326]).toBe('另有 74 条没列出，逐条见文件层');
+tests/data/S8D-python-import-graph-script.test.ts:132: expect(edges.filter(([from, to]) => from === 'pkg/__init__.py' && to === 'pkg/__init__.py')).toEqual([]);
+tests/data/S8D-python-import-graph-script.test.ts:133: expect(unresolved.filter(item => item.from === 'pkg/__init__.py' && item.specifier === '.')).toEqual([]);
+tests/data/S8D-python-import-graph-script.test.ts:143: expect(failed).toBeUndefined();
+tests/data/S8D-python-import-graph-script.test.ts:144: expect(ready?.notes).toEqual([]);
+tests/data/S8D-python-import-graph-script.test.ts:145: expect(sorted(pairs(edges))).toEqual([['a.py', 'b.py'], ['d.py', 'lib/c.py']]);
+tests/data/S8D-python-import-graph-script.test.ts:146: expect(statuses.find(status => status.path === 'bad.py')).toEqual({ path: 'bad.py', status: 'failed', reason: 'SyntaxError: invalid syntax' });
+tests/data/S8D-python-import-graph-script.test.ts:152: expect(ready?.notes).toEqual(['pyproject.toml 里观测不用的字段：pythonVersion']);
+tests/data/S8D-python-import-graph-script.test.ts:153: expect(sorted(pairs(edges))).toEqual([['a.py', 'b.py'], ['d.py', 'lib/c.py']]);
+tests/data/S8D-python-import-graph-script.test.ts:154: expect(statuses.find(status => status.path === 'bad.py')).toEqual({ path: 'bad.py', status: 'failed', reason: 'SyntaxError: invalid syntax' });
+tests/data/S8D-python-import-graph-script.test.ts:169: expect(ready?.notes).toEqual(['pyproject.toml 里用不了的查找根：vendor']);
+tests/data/S8D-python-import-graph-script.test.ts:170: expect(sorted(pairs(edges))).toEqual([['a.py', 'b.py']]);
+tests/data/S8D-python-import-graph-script.test.ts:171: expect(unresolved).toEqual([{ from: 'd.py', specifier: 'c', reason: null }]);
+tests/data/S8D-python-import-graph-script.test.ts:177: expect(ready).toBeUndefined();
+tests/data/S8D-python-import-graph-script.test.ts:178: expect(failed).toEqual({ t: 'failed', reason: '配置错误：pyrightconfig.json 的 extends 观测还不跟进' });
+tests/data/S8D-python-import-graph-script.test.ts:179: expect(edges).toEqual([]);
+tests/data/S8D-python-import-graph-script.test.ts:188: expect(sorted(pairs(edges))).toEqual([['x.py', 'a/m.py']]);
+tests/data/S8D-python-import-graph-script.test.ts:223: expect(archive).toHaveLength(22);
+tests/data/S8D-python-import-graph-script.test.ts:228: expect(result.code, result.stderr).toBe(0);
+tests/data/S8D-python-import-graph-script.test.ts:229: expect(JSON.parse(result.stdout)).toEqual({
+tests/data/S8E-A08-skip-list.test.ts:26: expect(page.nodes).toEqual([{ path: 'dist/z.ts', nonBlankLines: 1, language: 'typescript' }]);
+tests/data/S8E-A25-strict-capture.test.ts:27: expect(result.status).toBe('ready');
+tests/kernel/R4a-frozen-public.test.ts:163: expect(a.state.status).toBe("completed");
+tests/kernel/R4a-frozen-public.test.ts:169: expect(b.state.status).toBe("completed");
+tests/kernel/R4a-frozen-public.test.ts:172: expect(replay.state.runId).toBe("run-A");
+tests/kernel/R4a-frozen-public.test.ts:173: expect(replay.state.turn.turnId).toBe("turn-A");
+tests/kernel/R4a-frozen-public.test.ts:174: expect(replay.state.transcript).toEqual(a.state.transcript);
+tests/kernel/R4a-frozen-public.test.ts:175: expect(h.model.requests).toHaveLength(2);
+tests/kernel/R4a-frozen-public.test.ts:393: expect(await readRecords(h.databasePath, h.common.sessionId)).toEqual(before);
+tests/kernel/R4a-frozen-public.test.ts:399: expect(paused.state.status).toBe("paused");
+tests/kernel/R4a-frozen-public.test.ts:401: await expect(resumeCodingAgent({ ...h.common, limits: limits(4) })).rejects.toMatchObject({ code: "conflict" });
+tests/kernel/R4a-frozen-public.test.ts:402: expect(h.model.requests).toHaveLength(0);
+tests/kernel/R4a-frozen-public.test.ts:403: expect(await readRecords(h.databasePath, h.common.sessionId)).toEqual(before);
+tests/kernel/R4a-frozen-public.test.ts:413: expect(deniedRead?.kind === "tool_result" ? deniedRead.result.status : null).toBe("error");
+tests/kernel/R4a-frozen-public.test.ts:415: expect(JSON.stringify(h.model.requests)).not.toContain("R4A_CONTRACT_PRIVATE_SENTINEL");
+tests/kernel/R4a-frozen-public.test.ts:417: expect(outcome.error).toMatchObject({ code: "conflict" });
+tests/kernel/R4a-frozen-public.test.ts:418: expect(h.model.requests).toHaveLength(0);
+tests/kernel/R4a-frozen-public.test.ts:419: expect(await readRecords(h.databasePath, h.common.sessionId)).toEqual(before);
+tests/kernel/R4a-frozen-public.test.ts:431: expect(before.find((record) => record.recordType === "turn.started")?.payload).not.toHaveProperty("contextBasis");
+tests/kernel/R4a-frozen-public.test.ts:433: expect(result.action).toBe("terminal");
+tests/kernel/R4a-frozen-public.test.ts:434: expect(result.state.runId).toBe("old-run");
+tests/kernel/R4a-frozen-public.test.ts:435: expect(await readRecords(h.databasePath, h.common.sessionId)).toEqual(before);
+tests/kernel/R4a-frozen-public.test.ts:603: expect(latest).toBeDefined();
+tests/kernel/R4a-frozen-public.test.ts:620: expect(recovered.checkpointId).not.toBe(latest!.checkpointId);
+tests/kernel/R4a-frozen-public.test.ts:621: expect(recovered.action).toBe("paused");
+tests/kernel/R4a-frozen-public.test.ts:622: expect(recovered.state).toEqual(fromEvents.state);
+tests/kernel/R4a-frozen-public.test.ts:623: expect(await records(h.databasePath, h.common.sessionId)).toEqual(before);
+tests/kernel/R4a-frozen-public.test.ts:633: expect(latest).toBeDefined();
+tests/kernel/R4a-frozen-public.test.ts:645: expect(recovered.checkpointId).toBe(latest!.checkpointId);
+tests/kernel/R4a-frozen-public.test.ts:646: expect(recovered.action).toBe("paused");
+tests/kernel/R4a-frozen-public.test.ts:647: expect(await records(h.databasePath, h.common.sessionId)).toEqual(before);
+tests/runtime/R4b-session-input-boundaries.test.ts:111: expect(created.status).toBe('completed');
+tests/runtime/R4b-session-input-boundaries.test.ts:114: expect(await runtime.readSessionHistory(ctx, { sessionRef: created.value.ref,
+tests/runtime/R4b-session-input-boundaries.test.ts:129: expect(await runtime.readSessionHistory(other, { sessionRef: created.value.ref,
+tests/runtime/R4b-session-recovery.test.ts:179: expect(a.status).toBe('completed');
+tests/runtime/R4b-session-recovery.test.ts:180: expect(b.status).toBe('completed');
+tests/runtime/R4b-session-recovery.test.ts:197: if (continued.status === 'ready') expect(continued.value.items.every(item => item.source.position <= 6)).toBe(true);
+tests/runtime/R4b-session-recovery.test.ts:209: expect(created.status).toBe('completed');
+tests/runtime/R4b-session-recovery.test.ts:218: expect(missing.status).not.toBe('ready');
+tests/runtime/R4c-execution-history.test.ts:178: expect(await reader.readExecutionHistory(ctx, { sessionRef: created.ref,
+tests/runtime/R4c-execution-history.test.ts:182: expect(page.value.basis).toMatchObject({ kind: 'session', ref: { projectId, sessionId: created.ref.sessionId } });
+tests/runtime/R4c-execution-history.test.ts:264: expect(await reader.readExecutionHistory(otherHost, { sessionRef: a.ref, executionIdentity: first,
+tests/runtime/R4c-execution-history.test.ts:270: expect(await reader.readExecutionHistory(ctx, { sessionRef: a.ref,
+tests/runtime/R4c-execution-history.test.ts:273: expect(await reader.readExecutionHistory(ctx, { sessionRef: a.ref,
+tests/runtime/R4c-execution-history.test.ts:276: expect(await reader.readExecutionHistory(ctx, { sessionRef: b.ref, executionIdentity: first,
+tests/runtime/R4c-execution-history.test.ts:278: expect(await reader.readExecutionHistory(ctx, { sessionRef: a.ref, executionIdentity: first,
+tests/runtime/R4c-execution-history.test.ts:285: expect(await reader.readExecutionHistory(ctx, { sessionRef: a.ref, executionIdentity: first,
+tests/runtime/R4c-execution-history.test.ts:289: expect(await reader.readExecutionHistory(ctx, { sessionRef: a.ref, executionIdentity: first,
+tests/runtime/R4c-execution-history.test.ts:320: expect(await reader.readExecutionHistory(otherCtx, { sessionRef: created.ref, executionIdentity: identity,
+tests/runtime/R4c-execution-history.test.ts:328: expect(await reader.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: identity,
+tests/runtime/R4c-execution-history.test.ts:332: expect(await reader.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: identity,
+tests/runtime/R4c-execution-history.test.ts:341: expect(await notReady.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: identity,
+tests/runtime/R4c-execution-history.test.ts:357: expect(await reader.readExecutionHistory({ ...ctx, signal: before.signal },
+tests/runtime/R4c-execution-history.test.ts:405: expect(context.principal).toEqual(ctx.principal);
+tests/runtime/R4c-execution-history.test.ts:406: expect(context.materialReader).toEqual(ctx.materialReader);
+tests/runtime/R4c-execution-history.test.ts:407: expect(context.signal).toBe(ctx.signal);
+tests/runtime/R4c-execution-history.test.ts:431: expect(seen[0]?.sessionRef.sessionId).toBe(a.ref.sessionId);
+tests/runtime/R4c-execution-history.test.ts:466: expect(await reader.readExecutionHistory(ctx, request)).toMatchObject({ status: 'rejected', code });
+tests/runtime/R4c-kernel-history-range.test.ts:431: expect(positionsOf(page)).toEqual([total - 2, total - 1, total]);
+tests/runtime/R4c-kernel-history-range.test.ts:432: expect(page.lastPosition).toBe(total);
+tests/runtime/R4c-kernel-history-range.test.ts:433: expect(page.nextPosition).toBeNull();
+tests/runtime/R4c-kernel-history-range.test.ts:447: expect(positionsOf(page)).toEqual([1, 2, 3]);
+tests/runtime/R4c-kernel-history-range.test.ts:448: expect(page.lastPosition).toBe(total);
+tests/runtime/R4c-kernel-history-range.test.ts:449: expect(page.nextPosition).toBe(3);
+tests/runtime/R4c-kernel-history-range.test.ts:479: expect(restored.revision).toBe(1);
+tests/runtime/R4c-kernel-history-range.test.ts:480: expect(positionsOf(restored)).toEqual([1]);
+tests/runtime/R4c-kernel-history-range.test.ts:481: expect(restored.lastPosition).toBe(1);
+tests/runtime/R4c-kernel-history-range.test.ts:482: expect(restored.nextPosition).toBeNull();
+tests/runtime/R4c-kernel-history-range.test.ts:483: expect(failure).toMatchObject({ code: 'corrupt' });
+tests/runtime/R4c-kernel-history-range.test.ts:515: await expect(store.read('session-inpage', 0, 3, options()), name).rejects.toMatchObject({ code: 'corrupt' });
+tests/runtime/R4c-kernel-history-range.test.ts:528: await expect(store.read('session-gap', 0, 5, options())).rejects.toMatchObject({ code: 'corrupt' });
+tests/runtime/R4c-kernel-history-range.test.ts:545: await expect(store.read('session-position', 0, 4, options())).rejects.toMatchObject({ code: 'corrupt' });
+tests/runtime/R4c-kernel-history-range.test.ts:565: await expect(store.read('session-key-a', 0, 4, options())).rejects.toMatchObject({ code: 'corrupt' });
+tests/runtime/R4c-kernel-history-range.test.ts:568: expect(positionsOf(healthy)).toEqual([1, 2, 3, 4]);
+tests/runtime/R4c-kernel-history-range.test.ts:584: await expect(reopened.append('session-append', header.revision, turnDrafts(99, 'append-retry'), options()))
+tests/runtime/R4c-kernel-history-range.test.ts:585: .rejects.toMatchObject({ code: 'corrupt' });
+tests/scenarios/C8-human-stop-respected.test.ts:457: expect(steps[0]).toMatchObject({ state: 'advance', receipt: null, next: { kind: 'perform', operation: { kind: 'open_checks' } } });
+
+## REMOVED test or describe: 69
+tests/app/A2-settings-automation.test.ts:95: it('a stored policy is read as stored and survives the next save', async () => {
+tests/app/A2-settings-automation.test.ts:125: it('stores the whole policy, pushes it to the Host and publishes it; a reopened Host reads it back', async () => {
+tests/app/RL-34-wiring-resource-caps.test.ts:101: it('RL-34 a saved setting reaches the Work shell and is read as bytes at execute', async () => {
+tests/app/RL-34-wiring-resource-caps.test.ts:155: it('RL-34 a saved setting reaches the workbench command page', async () => {
+tests/app/RL-44-host-restart-resource-caps.test.ts:132: it('RL-44 a live save reaches the next command through the production holder without a restart', async () => {
+tests/app/S4C2-scribe-reminders.test.ts:719: it('S4C2 real recipient resolver: two scribes, the smallest session id wins', async () => {
+tests/app/S8A-L8-auto-capture-gate.test.ts:501: describe('L8 automatic capture gate — close then restart (sqlite)', () => {
+tests/app/S8A-L8-auto-capture-gate.test.ts:502: it('retries the pending requests of the bound workspaces (sqlite)', async () => {
+tests/app/S8A-L8-capture-start.test.ts:215: it('a rejected start state read goes to the failure exit with its code and reason', async () => {
+tests/app/S8A-L8-capture-start.test.ts:255: it('a start state read that throws maps to unavailable while the signal is not aborted', async () => {
+tests/app/S8A-L8-capture-start.test.ts:310: describe.each(['memory', 'sqlite'] as const)('L8 capture start cancellation [%s]', backend => {
+tests/app/S8A-L8-capture-start.test.ts:312: it(`writes nothing when the start state read is cancelled while it ${kind}`, async () => {
+tests/app/S8A-L8-http-watermark.test.ts:60: it('the same capture body without requestSeq still commits a real observation', async () => {
+tests/app/orchestration-mechanism.test.ts:28: it('produces no delivery and no model work when nothing changed', () => {
+tests/app/ui-refresh.test.ts:183: it('catches up every loop once, and the watches only when asked', async () => {
+tests/app/ui-store.test.ts:219: it('throws from state() while no scope is selected', () => {
+tests/business/A2-workflow-auto-rework.test.ts:243: it('AV-4 (STEP5-FLIPS §14): a fenced Task whose Run completed has its round opened by the selection, and its PASS head completed', async () => {
+tests/business/K3-41-release-hold.test.ts:306: it('K3-41 (三) memory/sqlite Host: a crash between the two steps leaves `released` and no requeue; the re-click replays and requeues exactly once', async () => {
+tests/business/K3-41-release-hold.test.ts:364: it('K3-41 (三) SQLite Host: a real crash after the releaseHold commit and before the requeue replays the same request and claims exactly one continuation', async () => {
+tests/composition/K-R-previous-turn-bounds.test.ts:84: it('KA-09 (Runtime, L9/D8): a live readTurnBounds that must not be consulted is never called for a recorded end, and the continuation brief is still built', async () => {
+tests/composition/S8A-L8-pass-capture.test.ts:380: it('row 2: the public finalizeChecks PASS starts one automatic capture', async () => {
+tests/composition/S8A-L8-pass-capture.test.ts:405: it('row 3: the same finalize request replays and changes no capture state', async () => {
+tests/contracts/review-admission.test.ts:169: it('still admits a review-phase review purpose with the fixed set', () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:120: it('A-22 (h) records no edge for an include in an inactive branch', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:204: it('A-23 maps absolute in-workspace files while the database directory stays outside', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:233: it('A-22 block comment before an include specifier keeps the written delimiters', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:307: it('A-22 (g) drops an include directory outside the workspace and records it once', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:368: it('A-22 (j) counts a database entry whose main file is not observed', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:405: it('A-23 fails a unit on -Xclang and keeps the other unit parsed', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:417: it('A-23 fails a unit on -load and reports the spelling without its value', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:425: it('A-23 notes -march=native and ignores -o with its value', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:434: it('A-23 notes an unreadable forced include but still parses the unit', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:443: it('A-23 rejects compiler wrappers by their file name', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:451: it('A-23 splits a command and fails one it cannot split', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:464: it('A-23 fails an extra positional argument', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:502: it('A-23 reports a binary database with the read failure', async () => {
+tests/data/S8D-cpp-import-graph-script.test.ts:510: it('A-23 reports the unreadable root database instead of switching to another one', async () => {
+tests/data/S8D-observation-inventory.test.ts:104: it('A-07 inventories git non-ignored files only: no ignored, deleted or symlink paths', async () => {
+tests/data/S8D-observation-inventory.test.ts:132: it('A-07 keeps paths relative to a workspace root that is a subdirectory of the repository', async () => {
+tests/data/S8D-observation-inventory.test.ts:151: it('A-08 falls back to the fixed skip list outside git: node_modules and nested .venv are pruned, dist stays', async () => {
+tests/data/S8D-observation-inventory.test.ts:168: it('§11.4 freezes ignored compile databases as config only and keeps their bytes in the digest', async () => {
+tests/data/S8D-observed-v2-codecs.test.ts:188: it('rejects an old unscoped chunk instead of filling its scope in', () => {
+tests/data/S8D-observed-v2-codecs.test.ts:261: describe('S8D compact module snapshot (§11.2)', () => {
+tests/data/S8D-observed-v2-codecs.test.ts:272: it('drops indexedSources and keeps everything under 500 lines / 64 KiB', () => {
+tests/data/S8D-observed-v2-codecs.test.ts:279: it('cuts at 500 lines and appends exactly one line with the removed count', () => {
+tests/data/S8D-observed-v2-codecs.test.ts:288: it('cuts at 64 KiB of the kept lines joined by a newline and reports the exact remainder', () => {
+tests/data/S8D-python-import-graph-script.test.ts:130: it('A-20 does not record the pkg/__init__.py self edge or an unresolved for that pair', async () => {
+tests/data/S8D-python-import-graph-script.test.ts:140: it('A-21 reads JSONC pyrightconfig.json and keeps lib as a root after trailing slashes', async () => {
+tests/data/S8D-python-import-graph-script.test.ts:149: it('A-21 records unused pyright fields in notes and the bad.py SyntaxError reason', async () => {
+tests/data/S8D-python-import-graph-script.test.ts:166: it('A-21 notes a vendor root with no claimed Python files and leaves d.py c unresolved', async () => {
+tests/data/S8D-python-import-graph-script.test.ts:174: it('A-21 fails on extends with the frozen configuration literal', async () => {
+tests/data/S8D-python-import-graph-script.test.ts:182: it('A-21 keeps the configuration root order: packages.find where before pyright extraPaths', async () => {
+tests/data/S8D-python-import-graph-script.test.ts:219: it('python_index takes the analyzers directory from argv[1] and names <dir>/analyzers.zip when Jedi is missing', async () => {
+tests/kernel/R4a-frozen-public.test.ts:321: describe("frozen public: R4a-recovery-contract.test.ts", () => {
+tests/kernel/R4a-frozen-public.test.ts:381: describe("R4a recovery contract", () => {
+tests/kernel/R4a-frozen-public.test.ts:382: it("stable identity replay selects the middle completed Run, with no model or SQLite writes", async () => {
+tests/kernel/R4a-frozen-public.test.ts:396: it("a paused Turn cannot resume with a larger model budget after restart", async () => {
+tests/kernel/R4a-frozen-public.test.ts:406: it("a paused Turn does not lose an explicit denied prefix when the resume call omits it", async () => {
+tests/kernel/R4a-frozen-public.test.ts:423: it("reads a legacy schemaVersion=1 Turn without new constraint fields or rewriting its checksum", async () => {
+tests/kernel/R4a-frozen-public.test.ts:596: it("ignores a checksum-valid checkpoint with unsupported recovery constraint version and replays Session events", async () => {
+tests/kernel/R4a-frozen-public.test.ts:627: it("still accepts a legacy checkpoint without recovery constraints", async () => {
+tests/runtime/R4b-session-recovery.test.ts:204: it('rejects missing original Kernel history without returning an empty success page', async () => {
+tests/runtime/R4c-kernel-history-range.test.ts:420: it('reads a back page even when a front record payload is damaged outside the range', async () => {
+tests/runtime/R4c-kernel-history-range.test.ts:436: it('still reports the tail position when the tail payload is damaged outside the range', async () => {
+tests/runtime/R4c-kernel-history-range.test.ts:486: it('rejects damaged, schema-invalid and checksum-invalid records inside the requested page', async () => {
+tests/runtime/R4c-kernel-history-range.test.ts:520: it('rejects a gap in the middle of the requested range', async () => {
+tests/runtime/R4c-kernel-history-range.test.ts:531: it('rejects a database position that contradicts the record payload position', async () => {
+tests/runtime/R4c-kernel-history-range.test.ts:548: it('rejects a database Session key that contradicts the record payload Session', async () => {
+tests/runtime/R4c-kernel-history-range.test.ts:571: it('keeps append/replay full-history validation after a reopen even though read is ranged', async () => {
+
+## DELETED test files: 6
+tests/data/S8D-formal-unresolved-reason.test.ts: 1 tests, 1 expects
+tests/data/S8D-platform-fixture.test.ts: 1 tests, 8 expects
+tests/helpers/K3-35-required-review-block.ts: 0 tests, 0 expects
+tests/helpers/S2B-r3-r4-support.ts: 0 tests, 0 expects
+tests/runtime/K3-19-review-admission-pure.test.ts: 13 tests, 13 expects
+tests/work-graph/S2B-r4-session-workspace.test.ts: 2 tests, 2 expects
+
+# lines to justify (excluding MOVED): 302, plus 6 deleted files
+
+# D3 pure-file guard: 24 *-pure.test.ts files
+# D3 hits: 0

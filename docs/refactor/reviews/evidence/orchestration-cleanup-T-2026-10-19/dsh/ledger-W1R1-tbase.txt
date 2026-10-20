@@ -1,0 +1,723 @@
+# D1 assertion ledger t-base..HEAD (tests)
+
+## ADDED expected value from a constant: 1
+tests/app/S0-attention-edge-label.test.ts:216: expect(snapshot.graph?.revision).toBe(REVISION);
+
+## LOOSENED (strict to loose on one subject): 1
+tests/work-graph/S2C-lines-d1.test.ts:37: expect(list.counts.archived).toEqual({ status: 'exact', value: 2, asOf: expect.any(String) });   <- was :38 expect(list.counts.archived).toEqual({ status: 'partial', atLeast: 1, atMost: 2,
+
+## MOVED: 20
+
+## REMOVED assertion: 578
+tests/app/A2-continuation-projection.test.ts:49: expect(response.status).toBe(200);
+tests/app/A2-continuation-projection.test.ts:111: expect(await advance(host, select('a2-td5-ready-1'))).toMatchObject({ state: 'waiting', next: null,
+tests/app/A2-continuation-projection.test.ts:116: expect((await readRun(host, runRef)).controlState).toMatchObject({ desiredState: 'paused' });
+tests/app/A2-continuation-projection.test.ts:118: expect(await advance(host, select('a2-td5-paused'))).toMatchObject({ state: 'waiting', next: null,
+tests/app/A2-continuation-projection.test.ts:124: expect(await advance(host, select('a2-td5-ready-2'))).toMatchObject({ state: 'waiting', next: null,
+tests/app/A2-continuation-projection.test.ts:129: expect(await readRun(host, runRef)).toMatchObject({ status: 'ended', outcome: 'yielded',
+tests/app/A2-continuation-projection.test.ts:132: expect(await advance(host, select('a2-td5-cancelled'))).toMatchObject({ state: 'waiting', next: null,
+tests/app/A2-requeue-route.test.ts:47: expect(response.status, suffix).toBe(200);
+tests/app/A2-requeue-route.test.ts:123: expect(second).toMatchObject({ state: 'completed' });
+tests/app/A2-reverify-route.test.ts:47: expect(response.status, suffix).toBe(200);
+tests/app/AG2-consultation.test.ts:183: expect(response.status).toBe(200);
+tests/app/MVP-ui-entry.test.ts:269: expect(migrated.load(scopeA)).toEqual({ goalId: 'legacy-goal', sessionId: 'legacy-session', mainSessionId: 'legacy-main' });
+tests/app/MVP-ui-entry.test.ts:270: expect(migrated.load(scopeB)).toEqual({ goalId: null, sessionId: null, mainSessionId: null });
+tests/app/MVP-ui-entry.test.ts:272: expect(legacy.keys().filter(key => key !== DISPLAY_PREFERENCE_V1_KEY)).toHaveLength(1);
+tests/app/MVP-ui-entry.test.ts:273: expect(migrated.readGlobal()).toEqual({ lastScopeKey: JSON.stringify([scopeA.projectId, scopeA.workspaceId]), theme: 'dark' });
+tests/app/R6-host.test.ts:139: expect(response.status).toBe(200);
+tests/app/S0-attention-edge-label.test.ts:71: expect(snapshot.graph?.revision).toBe('plan:p1');
+tests/app/S2C-line-routes.test.ts:169: expect(routed).toEqual(direct);
+tests/app/S3-attention-context.test.ts:473: expect(legacyCalls).toEqual([]);
+tests/app/orchestration-mechanism.test.ts:184: expect(result.status).toBe('success');
+tests/app/orchestration-mechanism.test.ts:185: expect(captured[0]?.input['replyMode']).toBe('wait');
+tests/app/orchestration-mechanism.test.ts:186: expect(waits).toHaveLength(1);
+tests/app/orchestration-mechanism.test.ts:469: expect(message?.replyMode).not.toBe('wait');
+tests/app/project-source-tool.test.ts:270: expect(names(frozen)).toContain('project_source'); expect(names(frozen)).not.toContain('project_index');
+tests/app/project-source-tool.test.ts:271: expect(names(legacy)).toContain('project_index'); expect(names(legacy)).not.toContain('project_source');
+tests/app/project-source-tool.test.ts:272: expect(names(implicit)).toEqual(names(legacy));
+tests/app/project-source-tool.test.ts:274: expect(definition).toMatchObject({ effectClass: 'read_only', requiredCapabilities: ['workspace_read'], defaultTimeoutMs: 60000, outputLimitBytes: 64 * 1024 });
+tests/app/project-source-tool.test.ts:277: expect(first).toEqual(await oracle.query(query));
+tests/app/project-source-tool.test.ts:279: expect(json(await legacy.run('project_index', next))).toEqual(await oracle.query(next));
+tests/app/project-source-tool.test.ts:282: expect(stale).toMatchObject({ status: 'stale' });
+tests/app/project-source-tool.test.ts:283: expect(stale).toEqual(await oracle.query(next));
+tests/app/project-source-tool.test.ts:284: expect(f.count.opens).toBe(0); // legacy is genuinely separate, not silently reinterpreted capture paging
+tests/business/K3-46-review-advance-failures.test.ts:736: expect(afterB.failedReviewRefs).toBeUndefined();
+tests/business/K3-UR7-crr-failed-set.test.ts:388: expect(advanced.value.failedReviewRefs).toBeUndefined();
+tests/business/K3-UR7-crr-failed-set.test.ts:445: expect(advanced.value.failedReviewRefs).toBeUndefined();
+tests/composition/K-R-close-open-turn.test.ts:147: expect(await close(ctx, { sessionRef, afterRunRef: runRef('run-A'), requeueRef: null })).toMatchObject({ status: 'unsupported' });
+tests/composition/K-R-close-open-turn.test.ts:196: expect(await close(ctx, { sessionRef, afterRunRef: runRef('run-A'), requeueRef: null })).toMatchObject({ status: 'unreadable' });
+tests/composition/K-R-close-open-turn.test.ts:224: expect(await close(ctx, { sessionRef, afterRunRef: runRef('run-A'), requeueRef: null }))
+tests/composition/platform.test.ts:79: expect(await platform.workflow.handleGoalInput(ctx, {
+tests/data/R3b-body-boundaries.test.ts:50: expect(await correctlyKeyed.read(refFor('different valid content')))
+tests/data/R3b-body-boundaries.test.ts:54: expect(key).toBe(keyFor(requested));
+tests/data/R3b-body-boundaries.test.ts:58: expect(key).toBe(keyFor(requested));
+tests/data/R3b-body-boundaries.test.ts:63: expect(await store.read(requested)).toMatchObject({ status: 'rejected', code: 'corrupt' });
+tests/data/R3b-body-boundaries.test.ts:64: expect(await store.put(put('requested content'))).toMatchObject({ status: 'rejected', code: 'corrupt' });
+tests/data/R3b-body-boundaries.test.ts:72: get: key => { expect(key).toBe(keyFor(ref)); return conflicting; },
+tests/data/R3b-body-boundaries.test.ts:76: expect(await store.read(ref)).toMatchObject({ status: 'rejected', code: 'corrupt' });
+tests/data/R3b-body-boundaries.test.ts:87: expect(() => createSqliteRawArtifactStore(path)).toThrow();
+tests/data/R3b-body-boundaries.test.ts:88: expect(close).toHaveBeenCalledTimes(1);
+tests/data/R3b-body-boundaries.test.ts:93: expect(unchanged.prepare("SELECT name FROM pragma_table_info('artifacts')").all().map(row => row['name']))
+tests/data/R3b-materials-contract.test.ts:77: expect(await store.read(ref)).toMatchObject({ status: 'ready', value: {
+tests/data/R3b-materials-contract.test.ts:81: expect(replay).toMatchObject({ status: 'ready', value: { ref, replayed: true } });
+tests/data/R3b-materials-contract.test.ts:84: try { expect(await reopened.read(ref)).toMatchObject({ status: 'ready', value: { body, origin: { kind: 'legacy' } } }); }
+tests/data/R3b-materials-contract.test.ts:90: expect(await store.put({ ...ownerInput(), origin: { kind: 'legacy', ownerRunRef: runA } } as unknown as RawArtifactPut))
+tests/data/R3b-materials-contract.test.ts:97: expect(stored.status).toBe('ready');
+tests/data/R3b-materials-contract.test.ts:104: try { expect(await reopened.read(stored.value.ref)).toMatchObject({ status: 'rejected', code: 'corrupt' }); }
+tests/data/R3b-materials-contract.test.ts:154: expect(await service.openArtifact(hostContext(), { ref, usage: 'historical_explanation' }))
+tests/data/workspace-path-boundary.test.ts:69: expect(result).toMatchObject({ status: 'forbidden' });
+tests/data/workspace-path-boundary.test.ts:70: expect(JSON.stringify(result)).not.toContain('hello.ts');
+tests/data/workspace-path-boundary.test.ts:77: expect(result.status).toBe('sourced');
+tests/data/workspace-path-boundary.test.ts:80: expect(paths).toContain('src/hello.ts');
+tests/data/workspace-path-boundary.test.ts:81: expect(paths).toContain('README.md');
+tests/data/workspace-path-boundary.test.ts:83: expect(paths, denied).not.toContain(denied);
+tests/data/workspace-path-boundary.test.ts:85: expect(JSON.stringify(result)).not.toContain('must not leak');
+tests/data/workspace-path-boundary.test.ts:86: expect(result.truncated).toBe(false);
+tests/data/workspace-path-boundary.test.ts:88: expect(result.excerpts.map((excerpt) => excerpt.path)).toEqual(['src/hello.ts']);
+tests/data/workspace-path-boundary.test.ts:89: expect(result.excerpts[0]!.revision.length).toBeGreaterThan(0);
+tests/data/workspace-path-boundary.test.ts:90: expect(result.excerpts[0]!.content).toContain('rc02');
+tests/data/workspace-path-boundary.test.ts:92: expect(result.excerptNotes.join('\n')).toContain('正文只取前 1 个');
+tests/data/workspace-path-boundary.test.ts:99: expect(result.status).toBe('sourced');
+tests/data/workspace-path-boundary.test.ts:101: expect(result.entryCount).toBeLessThanOrEqual(2);
+tests/data/workspace-path-boundary.test.ts:102: expect(result.truncated).toBe(true);
+tests/data/workspace-path-boundary.test.ts:103: expect(result.excerptNotes.join('\n')).toContain('索引清单达到上限 2 条');
+tests/data/workspace-path-boundary.test.ts:104: expect(result.excerpts).toEqual([]);
+tests/helpers/A2-restart-fixture.ts:290: expect(first.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-01',
+tests/helpers/A2-restart-fixture.ts:294: expect(steps.at(-1)).toMatchObject({ state: 'waiting', next: null });
+tests/helpers/A2-restart-fixture.ts:295: expect(first.scripted.calls(), 'the pause landed at the safe point after the first tool call').toBe(1);
+tests/helpers/A2-restart-fixture.ts:299: expect(fanOut).toMatchObject({ outcome: 'submitted', reason: null });
+tests/helpers/A2-restart-fixture.ts:309: expect(paused.run).toMatchObject({ status: 'running', controlState: { intentRef: pauseIntentRef, desiredState: 'paused' } });
+tests/helpers/A2-restart-fixture.ts:310: expect(await post(first, 'controls/read', plain(AG2B_SCOPE, pauseIntentRef))).toMatchObject({ status: 'ready',
+tests/helpers/A2-restart-fixture.ts:313: expect(oldSession.occupancy).toMatchObject({ kind: 'execution', executionRef: { runId: runRef.runId } });
+tests/helpers/A2-restart-fixture.ts:321: expect(existsSync(lockPath)).toBe(false);
+tests/helpers/S1-session-facts-fixture.ts:229: expect(result.value.provenance ?? null).toBeNull();
+tests/helpers/S1-workflow-archive-fixture.ts:736: expect(result, 'formal authorize prerequisite').toMatchObject({ status: 'committed', replayed: false });
+tests/helpers/S1-workflow-archive-fixture.ts:753: expect(result, 'formal fresh begin prerequisite').toMatchObject({ status: 'committed', replayed: false });
+tests/helpers/S1-workflow-archive-fixture.ts:764: expect(result, 'formal entered prerequisite').toMatchObject({ status: 'committed', value: { status: 'running' } });
+tests/helpers/S5-queue-support.ts:276: expect(seeded.status).toBe('committed');
+tests/helpers/S5-queue-support.ts:314: expect((await f.seedCommit(encoded, { guards: [{ refKey: key(activeRef), expectedRevision: previous.revision }] })).status).toBe('committed');
+tests/kernel/RL-12-15-conditions.test.ts:360: expect(elapsed).toBeGreaterThanOrEqual(10_000);
+tests/kernel/RL-12-15-conditions.test.ts:403: expect(elapsed).toBeGreaterThanOrEqual(10_000);
+tests/record-store/SP-text-scan.test.ts:427: expect(refs(legacyPage)).toEqual(expected[position]);
+tests/record-store/SP-text-scan.test.ts:428: expect({ refs: refs(legacyPage), next: legacyPage.next, complete: legacyPage.complete })
+tests/runtime/A2-reconcile-runtime.test.ts:551: expect(before.run, kind).toMatchObject({ status: 'starting', controlState: { intentRef } });
+tests/runtime/A2-reconcile-runtime.test.ts:552: expect(before.run.executionAuthorization, 'Claimed: never authorized').toBeUndefined();
+tests/runtime/A2-reconcile-runtime.test.ts:573: expect(paused, JSON.stringify(paused)).toMatchObject({ status: 'committed', value: { desiredState: 'paused' } });
+tests/runtime/A2-reconcile-runtime.test.ts:574: expect(await settle()).toMatchObject({ row: 'W-04', status: 'left', reason: expect.stringMatching(/^busy: /) });
+tests/runtime/A2-reconcile-runtime.test.ts:575: expect(await controls.readControl(fx.ctx, intentRef)).toMatchObject({ status: 'ready', value: { status: 'queued', revision: 1 } });
+tests/runtime/A2-reconcile-runtime.test.ts:576: expect((await read(fx)).run.revision, 'a refusal writes nothing').toBe(before.run.revision);
+tests/runtime/A2-reconcile-runtime.test.ts:579: expect(resumed, JSON.stringify(resumed)).toMatchObject({ status: 'committed', value: { desiredState: 'active' } });
+tests/runtime/A2-reconcile-runtime.test.ts:581: expect(await settle(), kind).toMatchObject({ row: 'W-04', status: 'reconciled', reason: 'queued intents settled' });
+tests/runtime/A2-reconcile-runtime.test.ts:583: expect(await controls.readControl(fx.ctx, intentRef), kind).toMatchObject({ status: 'ready', value: { status: 'applied',
+tests/runtime/A2-reconcile-runtime.test.ts:586: expect(after.run.controlState, 'the pointer stays').toEqual(before.run.controlState);
+tests/runtime/A2-reconcile-runtime.test.ts:589: expect(after.run).toMatchObject({ status: 'ended', outcome: 'cancelled' });
+tests/runtime/A2-reconcile-runtime.test.ts:590: expect(after.attempt).toMatchObject({ status: 'ended' });
+tests/runtime/A2-reconcile-runtime.test.ts:591: expect(after.session.occupancy).toBeNull();
+tests/runtime/A2-reconcile-runtime.test.ts:592: expect(after.lease?.release).toBeDefined();
+tests/runtime/A2-reconcile-runtime.test.ts:595: expect(after.run.revision).toBe(before.run.revision);
+tests/runtime/A2-reconcile-runtime.test.ts:596: expect(after.run.status).toBe('starting');
+tests/runtime/A2-reconcile-runtime.test.ts:597: expect(after.session.occupancy).toMatchObject({ kind: 'execution', executionRef: { runId: fx.claim.runRef.runId } });
+tests/runtime/A2-reconcile-runtime.test.ts:598: expect(after.lease?.release).toBeUndefined();
+tests/runtime/A2-reconcile-runtime.test.ts:600: expect(fx.scripted.calls(), 'the reconcile calls no model').toBe(0);
+tests/runtime/K3-34-tool-name-constants.test.ts:59: expect(RESERVED_TOOL_NAMES.size).toBe(BUILTIN_TOOL_NAMES.size + 13);
+tests/runtime/K3-34-tool-name-constants.test.ts:65: expect([...EXPLORATION_TOOL_NAMES].sort()).toEqual(['code_index', 'cpp_index', 'list_files', 'project_index',
+tests/runtime/R4b-session-skeleton.test.ts:59: expect(registry.forWorkspace({ projectId: 'p', workspaceId: 'w' })).toBeNull();
+tests/runtime/R4b-session-skeleton.test.ts:60: expect(registry.legacy('legacy-run-store', 'other-session')).toBeNull();
+tests/runtime/R4b-session-skeleton.test.ts:61: expect(registry.legacy('legacy-run-store', 'old-session')?.databasePath).toBe(databasePath);
+tests/runtime/R4b-session-skeleton.test.ts:62: await expect(registry.withStore('legacy-run-store', async () => null)).rejects.toThrow(/unregistered/);
+tests/runtime/R4b-session-skeleton.test.ts:63: await expect(registry.withLegacyReader('legacy-run-store', 'other-session', async () => null)).rejects.toThrow(/mismatched/);
+tests/runtime/R4c-graph-history.test.ts:901: expect(Number(deleted.changes)).toBe(1);
+tests/runtime/R4c-graph-history.test.ts:903: expect(await h.owner.readSessionHistory(fx.ctx, request))
+tests/runtime/R4c-graph-history.test.ts:915: expect(positions.length).toBeGreaterThan(2);
+tests/runtime/R4c-graph-history.test.ts:923: expect(opened.status).toBe('ready');
+tests/runtime/R4c-graph-history.test.ts:925: expect(opened.value.nextCursor).not.toBeNull();
+tests/runtime/R4c-graph-history.test.ts:933: expect(Number(deleted.changes)).toBe(1);
+tests/runtime/R4c-graph-history.test.ts:935: expect(await h.owner.readSessionHistory(fx.ctx,
+tests/runtime/R4c-source-authority-guards.test.ts:280: expect(await fixture.commitRaw([{ refKey, schemaId: 'RunSnapshot@1', revision: damaged.revision,
+tests/runtime/R4c-source-authority-guards.test.ts:285: expect(await material.load(run.ref)).toMatchObject({ status: 'found', snapshot: { envelope } });
+tests/runtime/R4c-source-authority-guards.test.ts:299: expect(result).toMatchObject({ status: 'rejected', code: 'unavailable' });
+tests/runtime/R4c-source-authority-guards.test.ts:326: expect(claimed.status).toBe('committed');
+tests/runtime/R4c-source-authority-guards.test.ts:334: expect(current).toMatchObject({ status: 'starting', envelope: null });
+tests/runtime/R4c-source-authority-guards.test.ts:363: expect(committed).toMatchObject({ status: 'committed' });
+tests/runtime/R4c-source-authority-guards.test.ts:388: expect(revoked).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/runtime/R4c-source-authority-guards.test.ts:389: expect(events).not.toHaveBeenCalled();
+tests/runtime/S1-archive-files-brief.test.ts:218: expect(loaded.input).toBe(OLD_INPUT);
+tests/runtime/S1-archive-files-brief.test.ts:219: expect(loaded.continuationBrief?.anomalies).toBeUndefined();
+tests/runtime/S1-archive-files-brief.test.ts:220: expect(continuationBriefDigest(loaded.continuationBrief!)).toBe(OLD_DIGEST);
+tests/runtime/S1-archive-files-brief.test.ts:221: expect(continuationBriefMarker(OLD_DIGEST)).toBe(OLD_MARKER);
+tests/runtime/S1-archive-files-brief.test.ts:222: expect(renderContinuationBriefZh(loaded.continuationBrief!, OLD_DIGEST)).toBe(OLD_TEXT);
+tests/runtime/S1-archive-files-brief.test.ts:223: expect(loaded.inputDigest).toBe(sha256Hex(OLD_INPUT));
+tests/runtime/S1-archive-files-brief.test.ts:226: expect(bytes.value.body).toBe(OLD_MANIFEST_JSON);
+tests/runtime/S1-archive-files-brief.test.ts:227: expect(OLD_MANIFEST_JSON).not.toContain('anomalies');
+tests/runtime/source-binding-migration.test.ts:148: expect(await read(access)).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/runtime/source-binding-migration.test.ts:187: expect(await read(access)).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/runtime/source-binding-migration.test.ts:225: expect(f.state.scans).toBe(1);
+tests/runtime/source-binding-migration.test.ts:235: await expect(createQuerySourceCaptureFactory(f.deps, f.request, f.root)(signal())).rejects.toThrow();
+tests/runtime/source-binding-migration.test.ts:239: expect(await read(access)).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/runtime/source-tool-lifecycle.test.ts:233: expect(project).toBeDefined();
+tests/runtime/source-tool-lifecycle.test.ts:236: expect(projectDispose).toHaveBeenCalledTimes(1);
+tests/runtime/source-tool-lifecycle.test.ts:255: expect(projectDispose).toHaveBeenCalledTimes(1);
+tests/scenarios/C3-reply-other-session.test.ts:79: expect(await readMessage(h, messageRef)).toMatchObject({ status: 'pending', replyMode: 'wait',
+tests/scenarios/K-W-workflow-close.test.ts:238: expect(ended.session).toMatchObject({ health: 'unavailable', healthConclusion: 'kernel_turn_open' });
+tests/scenarios/K-W-workflow-close.test.ts:241: expect(driven.next?.kind === 'perform' ? driven.next.operation.kind : null, 'the drive stops at the continuation start').toBe('start');
+tests/scenarios/K-W-workflow-close.test.ts:243: expect(kinds).toContain('close_open_turn');
+tests/scenarios/K-W-workflow-close.test.ts:244: expect(kinds).not.toContain('create_session');
+tests/scenarios/K-W-workflow-close.test.ts:245: expect(kinds).not.toContain('transfer_responsibility');
+tests/scenarios/K-W-workflow-close.test.ts:246: expect(kinds).not.toContain('archive_predecessor');
+tests/scenarios/K-W-workflow-close.test.ts:247: expect(closeResult(driven), 'the Kernel Turn is closed and SES-13 returns the Session available')
+tests/scenarios/K-W-workflow-close.test.ts:252: expect(next.session.ref.sessionId).toBe(s1.sessionId);
+tests/scenarios/K-W-workflow-close.test.ts:253: expect(next.session.occupancy).toMatchObject({ kind: 'execution', executionRef: { runId: row.execution.runId } });
+tests/scenarios/K-W-workflow-close.test.ts:266: expect(firstDrive.next?.kind === 'perform' ? firstDrive.next.operation.kind : null, 'the drive stops before the claim commits').toBe('claim_task');
+tests/scenarios/K-W-workflow-close.test.ts:267: expect(closeResult(firstDrive))
+tests/scenarios/K-W-workflow-close.test.ts:273: expect(driven.next?.kind === 'perform' ? driven.next.operation.kind : null, 'the drive stops at the restart re-claim').toBe('start');
+tests/scenarios/K-W-workflow-close.test.ts:275: expect(kinds).not.toContain('close_open_turn');
+tests/scenarios/K-W-workflow-close.test.ts:276: expect(kinds).not.toContain('create_session');
+tests/scenarios/K-W-workflow-close.test.ts:280: expect((await readExecution(third, row.execution)).session.ref.sessionId).toBe(s1.sessionId);
+tests/scenarios/K-W-workflow-close.test.ts:496: expect((await readExecution(second, runRef)).session, 'the start-up reconcile keeps the open-Turn conclusion')
+tests/scenarios/K-W-workflow-close.test.ts:500: expect(driven.next?.kind === 'perform' ? driven.next.operation.kind : null, 'the drive stops at the fallback successor start').toBe('start');
+tests/scenarios/K-W-workflow-close.test.ts:502: expect(kinds).toContain('close_open_turn');
+tests/scenarios/K-W-workflow-close.test.ts:503: expect(closeResult(driven), 'the mapped Session is registered as a legacy reader only')
+tests/scenarios/K-W-workflow-close.test.ts:505: expect(kinds).toContain('create_session');
+tests/scenarios/K-W-workflow-close.test.ts:506: expect(kinds, 'the definite failure hands over to the fallback successor').toContain('transfer_responsibility');
+tests/scenarios/K-W-workflow-close.test.ts:510: expect(history, 'a readable legacy store keeps the original history readable').toMatchObject({ status: 'ready' });
+tests/scenarios/K-W-workflow-close.test.ts:513: expect((await readExecution(second, row.execution)).session.ref.sessionId).not.toBe(s1.sessionId);
+tests/scenarios/K-W-workflow-close.test.ts:516: expect(archived.status).toBe('ready');
+tests/scenarios/K-W-workflow-close.test.ts:517: expect(archived.value.record, 'the legacy-reader fallback still archives the predecessor Session')
+tests/scenarios/S1-wait-copy-retirement.test.ts:81: expect(original.replyMode).toBe('wait');
+tests/scenarios/S1-wait-copy-retirement.test.ts:118: expect({ sender: consumed.sender, recipient: consumed.recipient, bodyRef: consumed.bodyRef, replyMode: consumed.replyMode })
+tests/scenarios/S2C-K-legacy-provenance.test.ts:393: expect(requeue.historySource?.sessionRef).toEqual(P);
+tests/scenarios/S2C-K-legacy-provenance.test.ts:440: expect(list.legacyUnchecked).toEqual({ status: 'exact', value: 7 });
+tests/scenarios/S2C-K-legacy-provenance.test.ts:441: expect(list.counts.archived).toMatchObject({ status: 'partial', atLeast: 0, atMost: 3 });
+tests/scenarios/S2C-K-legacy-provenance.test.ts:444: expect(cRow, 'C is an active line head before maintenance').toBeDefined();
+tests/scenarios/S2C-K-legacy-provenance.test.ts:445: expect(cRow?.chainSessions).toEqual([C]);
+tests/scenarios/S2C-K-legacy-provenance.test.ts:446: expect(cRow?.status.markers).toContainEqual({ kind: 'provenance_unchecked' });
+tests/scenarios/S2C-K-legacy-provenance.test.ts:449: expect(archived.rows).toHaveLength(3);
+tests/scenarios/S2C-K-legacy-provenance.test.ts:451: expect(pRow, 'P is an archived line head before maintenance').toBeDefined();
+tests/scenarios/S2C-K-legacy-provenance.test.ts:452: expect(pRow?.status.markers).toContainEqual({ kind: 'provenance_unchecked' });
+tests/scenarios/S2C-K-legacy-provenance.test.ts:456: expect(again.legacyUnchecked).toEqual({ status: 'exact', value: 7 });
+tests/scenarios/S2C-K-legacy-provenance.test.ts:457: expect(again.rows.map((row) => row.key.sessionId)).toEqual(list.rows.map((row) => row.key.sessionId));
+tests/scenarios/S2C-K-legacy-provenance.test.ts:459: expect(archivedAgain.rows.map((row) => row.key.sessionId)).toEqual(archived.rows.map((row) => row.key.sessionId));
+tests/scenarios/S2C-K-legacy-provenance.test.ts:467: expect(list.legacyUnchecked).toEqual({ status: 'exact', value: 3 });
+tests/scenarios/S2C-K-legacy-provenance.test.ts:468: expect(list.counts.archived).toMatchObject({ status: 'partial', atLeast: 0, atMost: 2 });
+tests/scenarios/S2C-K-legacy-provenance.test.ts:470: expect(cRow, 'C is still the active line head after maintenance').toBeDefined();
+tests/scenarios/S2C-K-legacy-provenance.test.ts:471: expect(cRow?.chainSessions).toEqual([C, P]);
+tests/scenarios/S2C-K-legacy-provenance.test.ts:474: expect(archived.rows).toHaveLength(2);
+tests/scenarios/S2C-K-legacy-provenance.test.ts:475: expect(archivedLineOf(archived, P.sessionId), 'P is no longer an archived head').toBeUndefined();
+tests/scenarios/S2C-K-legacy-provenance.test.ts:478: expect(row.status.markers).toContainEqual({ kind: 'provenance_unchecked' });
+tests/scenarios/S2C-K-legacy-provenance.test.ts:495: expect(before.scope).toBe('indexed');
+tests/scenarios/S2C-K-legacy-provenance.test.ts:498: expect(before.items).toHaveLength(1);
+tests/scenarios/S2C-K-legacy-provenance.test.ts:499: expect(before.items[0]).toMatchObject({ kind: 'execution', task: { taskId: TASK_ID } });
+tests/scenarios/S2C-K-legacy-provenance.test.ts:500: expect(before.items.some((item) => item.kind === 'query')).toBe(false);
+tests/scenarios/S2C-K-legacy-provenance.test.ts:506: expect(after.scope).toBe('indexed');
+tests/scenarios/S2C-K-legacy-provenance.test.ts:510: expect(after.items.every((item) => item.kind === 'execution')).toBe(true);
+tests/scenarios/S2C-K-legacy-provenance.test.ts:511: expect(after.items.map((item) => item.kind === 'execution' ? item.task.taskId : item.queryRunRef.runId))
+tests/scenarios/S3-context-and-inputs.test.ts:394: expect(firstRequest).toBeDefined();
+tests/scenarios/S3-context-and-inputs.test.ts:395: expect(JSON.stringify(firstRequest?.messages)).toContain('## Goal');
+tests/state/S1-dispatch.test.ts:177: expect(record.occupancy).toBeNull();
+tests/state/S1-dispatch.test.ts:184: expect(record.occupancy).toBeNull();
+tests/state/S1-session-archive.test.ts:194: expect(transitionSession(state, { kind: 'legacy_provenance_backfilled', provenance: PROVENANCE_CONTINUATION },
+tests/state/S1-session-archive.test.ts:204: expect(backfillSessionProvenanceRecord(record, PROVENANCE_CONTINUATION)).toEqual({
+tests/state/S1-session-archive.test.ts:214: expect(result).toMatchObject({ ok: false, reason: 'stale', code: 'revision_conflict' });
+tests/state/S1-session-archive.test.ts:215: expect(state).toEqual(frozen);
+tests/state/WP1-goal-content.test.ts:108: expect(contextGoalContentProblem({
+tests/state/WP1-goal-content.test.ts:111: expect(contextGoalContentProblem({
+tests/state/attempt-machine.test.ts:700: expect(attemptNodeOf({ ...ATTEMPT_ENDED, endOutcome: null })).toBe('ended_known');
+tests/state/attempt-machine.test.ts:712: expect(stateToService(stateFromService(dispatchState))).toBe(dispatchState);
+tests/state/command-normalization.test.ts:62: expect(parseShellActions('tool a b')).toEqual({
+tests/state/command-normalization.test.ts:116: expect(parseShellActions('   ')).toEqual({ status: 'parsed', actions: [] });
+tests/state/command-normalization.test.ts:222: expect(parseShellActions('cd /tmp && echo hi && ls -la && git status'))
+tests/state/command-normalization.test.ts:270: expect(result.status).toBe('unparsed');
+tests/state/command-normalization.test.ts:331: expect(parseShellActions('echo $(date)')).toEqual({ status: 'parsed', actions: [] });
+tests/state/command-normalization.test.ts:401: expect(parseShellActions('cd app && tool a')).toEqual({
+tests/state/command-normalization.test.ts:436: expect(parseShellActions('echo x | cd app; npm run x')).toEqual({
+tests/state/context-input.test.ts:100: expect(contextAssemblyProblem({
+tests/state/goal-machine.test.ts:179: expect('desiredStateRevision' in GOAL_NEW).toBe(false);
+tests/state/goal-machine.test.ts:180: expect('desiredStateRequestedBy' in GOAL_NEW).toBe(false);
+tests/state/goal-machine.test.ts:1355: expect(fixing).toMatchObject({ phase: 'RUNNING', row: 'GOAL-27', cause: null });
+tests/state/goal-machine.test.ts:1356: expect(fixing.causes).toEqual([{ code: 'gate_fix_in_progress', gateTaskId: 't-gate', failingChecks: [] }]);
+tests/state/goal-machine.test.ts:1365: expect(reverifying).toMatchObject({ phase: 'RUNNING', row: 'GOAL-27', cause: null });
+tests/state/goal-machine.test.ts:1366: expect(reverifying.causes).toEqual([
+tests/state/message-machine.test.ts:945: expect(Object.keys(waiting).slice(11)).toEqual(['replyMode', 'intent', 'needsReply', 'waitAfterSend']);
+tests/state/message-machine.test.ts:946: expect(waiting).toMatchObject({ replyMode: 'wait', intent: 'inquiry', needsReply: true, waitAfterSend: true });
+tests/state/message-machine.test.ts:951: expect('needsReply' in notify || 'waitAfterSend' in notify || 'replyMode' in notify).toBe(false);
+tests/state/run-machine.test.ts:433: expect(stateOf('Absent')).toEqual({ node: 'Absent', outcome: null, entryGeneration: null, legacyV1: false, pointer: 'none',
+tests/state/run-machine.test.ts:435: expect(stateOf('Claimed')).toMatchObject({ entryGeneration: null, legacyV1: false, pointer: 'none', unresolved: null });
+tests/state/run-machine.test.ts:436: expect(stateOf('Running')).toMatchObject({ entryGeneration: 1, legacyV1: false, outcome: null });
+tests/state/run-machine.test.ts:446: expect(runStateOf(v1Starting)).toMatchObject({ node: 'Claimed', legacyV1: true, entryGeneration: null });
+tests/state/run-machine.test.ts:448: expect(runStateOf(v1Running)).toMatchObject({ node: 'Running', legacyV1: true });
+tests/state/run-machine.test.ts:450: expect(runStateOf(preB2)).toMatchObject({ node: 'Running', legacyV1: true });
+tests/state/run-machine.test.ts:452: expect(runStateOf(d7Ended)).toMatchObject({ node: 'Ended', legacyV1: false });
+tests/state/run-machine.test.ts:453: expect(runCombinationProblem(v1Starting)).toBeNull();
+tests/state/run-machine.test.ts:454: expect(runCombinationProblem(preB2)).toBeNull();
+tests/state/run-machine.test.ts:483: expect(result.next).toMatchObject({ node: 'Claimed', pointer: 'none', entryGeneration: null, legacyV1: false });
+tests/state/run-machine.test.ts:594: expect(at({ ...CLAIMED, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'authorized' } }))
+tests/state/run-machine.test.ts:639: expect(at(v1, CTX, badBudget).detail).toBe('the prepared budget disagrees with the Run');
+tests/state/run-machine.test.ts:640: expect(at(v1, MISMATCHED_CLAIM).code).toBe('invalid');
+tests/state/run-machine.test.ts:721: expect(at(EV.begin, { ...CLAIMED, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'authorized' } }))
+tests/state/run-machine.test.ts:755: expect(at({ ...CLAIMED, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'authorized' } })).toMatchObject({ code: 'invalid' });
+tests/state/run-machine.test.ts:802: expect(at(EV.entered, v1)).toEqual({ reason: 'guard_failed', code: 'forbidden' });
+tests/state/run-machine.test.ts:807: expect(at(EV.entered, v1, MISMATCHED_CLAIM)).toEqual({ reason: 'guard_failed', code: 'invalid' });
+tests/state/run-machine.test.ts:822: expect(ok(transitionRun(runStateOf(run), EV.history, CTX)).effects, label).toEqual(slot('self'));
+tests/state/run-machine.test.ts:854: expect(rejected(transitionRun(runStateOf(malformed), { kind: 'history_recorded', sessionRef, history: observed(3, 6, null) }, CTX)))
+tests/state/run-machine.test.ts:946: expect(at(EV.terminal, CTX, preB2)).toMatchObject({ reason: 'guard_failed', code: 'forbidden' });
+tests/state/run-machine.test.ts:947: expect(at(EV.terminal, MISMATCHED_CLAIM, preB2)).toMatchObject({ reason: 'guard_failed', code: 'invalid' });
+tests/state/run-machine.test.ts:1017: expect(rejected(transitionRun(runStateOf(run), event, CTX)), event.kind)
+tests/state/run-machine.test.ts:1025: expect(runCombinationProblem(damaged), phase).not.toBeNull();
+tests/state/run-machine.test.ts:1026: expect(rejected(transitionRun(runStateOf(damaged), EV.authorize, CTX)), phase)
+tests/state/run-machine.test.ts:1028: expect(rejected(transitionRun(runStateOf(damaged), EV.begin, CTX)), phase)
+tests/state/run-machine.test.ts:1033: expect(ok(transitionRun(runStateOf(finishedStarting), EV.authorize, CTX)).next.record?.outcome).toBe('crashed');
+tests/state/run-machine.test.ts:1034: expect(rejected(transitionRun(runStateOf({ ...AUTHORIZED, status: 'running' }), EV.begin, CTX)))
+tests/state/run-machine.test.ts:1411: expect(answer(transitionRun(runStateOf(legacy), event, CTX)), event.kind).toEqual({ reason: 'guard_failed', code: 'unsupported' });
+tests/state/run-machine.test.ts:1651: expect(entryV2Binding({ ...RUNNING, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'entered' } }))
+tests/state/run-machine.test.ts:1654: expect(entryV2Binding(preB2)).toEqual(noV2('guard_failed'));
+tests/state/run-machine.test.ts:1714: expect(runUnresolvedBlocker({ ...ENDED, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'quarantined' } }))
+tests/state/task-failure.test.ts:412: expect(deriveReworkClass(authQuarantined, null, headOf(FAIL))).toMatchObject({ row: 'FC-2' });
+tests/state/task-failure.test.ts:859: expect(verdictOf(work(failed, headOf(PASS_GAPS))).verdict).toMatchObject({ kind: 'reverify', needsFinalize: false });
+tests/state/task-failure.test.ts:1030: expect(verdictOf(gate(headOf(PASS_GAPS)))).toEqual({ row: 'GV-10', verdict: reverifyOf(false, 'check_incomplete') });
+tests/state/task-machine.test.ts:304: expect(classifyTaskPhase(gateFacts({ round: SIG.passGaps }))).toEqual(P20.inconclusive);
+tests/state/task-machine.test.ts:322: expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.passGaps }))).toEqual({ row: 'P8', phase: 'blocked',
+tests/state/verification-machine.test.ts:853: expect(nextTaskEvidenceIndex({ ref, exists: true, revision: 0, evidenceIds: [] }, ['e-1'])).toEqual({ write: true,
+tests/state/verification-machine.test.ts:881: expect(fold([finishedCheck(LINT, 'PASS'), legacy])).toMatchObject({ outcome: 'INCONCLUSIVE',
+tests/state/verification-machine.test.ts:1094: expect(buildSuccessorRound(successorInput(FINAL_PASS_GAPS, 'round-2')).chain?.reverify?.failureClass).toBe('check_incomplete');
+tests/state/verification-machine.test.ts:1113: expect(roundChainHead([FINAL_PASS_GAPS, next])).toMatchObject({ kind: 'head', head: next });
+tests/state/verification-machine.test.ts:1150: expect(reverifyFailureClass(FINAL_PASS_GAPS)).toBe('check_incomplete');
+tests/state/verification-machine.test.ts:1153: expect([FINAL_FAIL, FINAL_INCONCLUSIVE, FINAL_PASS_GAPS, FINAL_PASS, OPEN_PENDING].map(isFinalizedNonPass))
+tests/state/verification-machine.test.ts:1171: expect(withChecks([pass, { ...interruptedCheck(UNIT, 'host_restart'), incompleteCause: null }])).toBe('none');
+tests/state/verification-machine.test.ts:1172: expect(withChecks([pass, finished(null)], [])).toBe('none');
+tests/state/verification-machine.test.ts:1207: expect(roundTaskSignal([FINAL_PASS_GAPS])).toMatchObject({ kind: 'inconclusive', legacyPassWithGaps: true });
+tests/state/verification-machine.test.ts:1242: expect(requeuedEffects(FINAL_FAIL)[1]).toMatchObject({ claim: { expectedOwner: null, nextOwner: null } });
+tests/work-graph/A1-architecture-catalog.test.ts:173: expect(read.status).toBe('ready');
+tests/work-graph/A1-architecture-catalog.test.ts:175: expect(read.value.baseline.ref).toEqual(legacyRef);
+tests/work-graph/A1-architecture-catalog.test.ts:176: expect(read.value.catalog).toBeNull();
+tests/work-graph/A1-architecture-catalog.test.ts:186: expect(corrupt.status).toBe('rejected');
+tests/work-graph/A1-architecture-catalog.test.ts:187: if (corrupt.status === 'rejected') expect(corrupt.code).toBe('unavailable');
+tests/work-graph/A1-independent-review.test.ts:29: expect(opened.status).toBe('committed');
+tests/work-graph/A1-independent-review.test.ts:35: expect(rows.status).toBe('ready');
+tests/work-graph/A1-independent-review.test.ts:48: expect(await f.commitRaw([
+tests/work-graph/A1-independent-review.test.ts:55: expect(closed).toMatchObject({ status: 'committed', value: { since: opened.value.since } });
+tests/work-graph/A1-independent-review.test.ts:57: expect(closed.value.until).toBe(closed.cursor);
+tests/work-graph/A1-independent-review.test.ts:59: expect(card.status).toBe('ready');
+tests/work-graph/A1-independent-review.test.ts:60: if (card.status === 'ready') expect(card.value.links).toEqual([closed.value]);
+tests/work-graph/A1-independent-review.test.ts:61: expect(await f.lifecycle.linkSessionWork(f.ctx, opening)).toEqual({ ...opened, replayed: true });
+tests/work-graph/A1-independent-review.test.ts:85: expect(await f.commitRaw([encodeGraphGovernance(next), encodeGraphGovernance(pointer)],
+tests/work-graph/A1-independent-review.test.ts:94: else expect(result).toMatchObject({ status: 'ready', value: { baseline: next, catalog: null } });
+tests/work-graph/A1-session-lifecycle.test.ts:118: expect(result.status).toBe('rejected');
+tests/work-graph/A1-session-lifecycle.test.ts:119: if (result.status === 'rejected') expect(result.code).toBe('unavailable');
+tests/work-graph/A2-gate-chain-facts.test.ts:230: expect(await complete(otherFixture, R3E_WORK_TASK_ID, otherWork.ref, 'a2-gate-legacy-work')).toMatchObject({ status: 'committed' });
+tests/work-graph/A2-gate-chain-facts.test.ts:231: expect(await display(otherFixture)).toMatchObject({ phase: 'RUNNING', causes: [{ code: 'awaiting_gate', gateTaskId: R3E_GATE_TASK_ID }] });
+tests/work-graph/A2-gate-chain-facts.test.ts:237: expect(await otherFixture.b2.base.commitRaw(moved.map(encodeVerificationRoundSnapshot))).toMatchObject({ status: 'committed' });
+tests/work-graph/A2-gate-chain-facts.test.ts:238: expect(await row(otherFixture, R3E_GATE_TASK_ID)).toMatchObject({ effectivePhase: 'blocked',
+tests/work-graph/A2-gate-chain-facts.test.ts:243: expect(await display(otherFixture)).toMatchObject({ phase: 'NEEDS_DECISION', row: 'GOAL-30',
+tests/work-graph/A2-gate-chain-facts.test.ts:304: expect(await fixture.b2.base.commitRaw([encodeVerificationRoundSnapshot(foreign)])).toMatchObject({ status: 'committed' });
+tests/work-graph/A2-goal-control.test.ts:111: expect(await goalOf(platform, fixture)).toEqual(paused.value);
+tests/work-graph/A2-goal-control.test.ts:117: expect(resumed).toMatchObject({ status: 'committed', value: { desiredState: 'active', desiredStateRevision: before.revision + 2 } });
+tests/work-graph/A2-goal-control.test.ts:120: expect(await platform.goals.setGoalControl(fixture.ctx, pause))
+tests/work-graph/A2-goal-control.test.ts:124: expect(await platform.goals.setGoalControl(fixture.ctx, pause))
+tests/work-graph/A2-goal-control.test.ts:128: expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-goal-svc-pause',
+tests/work-graph/A2-goal-control.test.ts:132: expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-goal-svc-pause',
+tests/work-graph/A2-step1-codecs.test.ts:382: expect('chain' in legacy).toBe(false);
+tests/work-graph/A2-step1-codecs.test.ts:383: expect(legacy.checks.every(check => !('incompleteCause' in check))).toBe(true);
+tests/work-graph/A2-step1-codecs.test.ts:384: expect(decodeVerificationRoundSnapshot(encodeVerificationRoundSnapshot(legacy))).toEqual({ status: 'decoded', value: legacy });
+tests/work-graph/A2-step1-codecs.test.ts:389: expect(successor.chain?.reverify?.requestedBy.kind).toBe('agent');
+tests/work-graph/A2-step1-codecs.test.ts:559: expect(JSON.parse(encoded.json)).not.toHaveProperty('desiredStateRequestedBy');
+tests/work-graph/A2-step1-codecs.test.ts:560: expect(decodeGoalSnapshot(encoded)).toEqual({ status: 'decoded',
+tests/work-graph/A2-step1-codecs.test.ts:579: expect(encodeGoalSnapshot(adopted).json).toBe(JSON.stringify(legacyAdopted));
+tests/work-graph/A2-step1-codecs.test.ts:580: expect(decodeGoalSnapshot(encodeGoalSnapshot(adopted))).toEqual({ status: 'decoded', value: adopted });
+tests/work-graph/A2-step1-codecs.test.ts:582: expect(JSON.parse(encodeGoalSnapshot(pausedGoal).json)).toMatchObject({ desiredStateRevision: 2, desiredStateRequestedBy: human });
+tests/work-graph/A2-step1-codecs.test.ts:596: expect(decodeGoalSnapshot(await readBack(store, goalKey))).toEqual({ status: 'decoded',
+tests/work-graph/A2-step1-codecs.test.ts:601: expect(await commit(store, { identityKey: 'goal-pause', records: [encodeGoalSnapshot(pausedGoal)],
+tests/work-graph/A2-step1-codecs.test.ts:606: expect(await commit(store, { identityKey: 'goal-resume', records: [encodeGoalSnapshot(resumedGoal)],
+tests/work-graph/A2-step1-codecs.test.ts:610: expect(decodeGoalSnapshot(await readBack(store, goalKey))).toEqual({ status: 'decoded', value: resumedGoal });
+tests/work-graph/A2-step1-codecs.test.ts:612: expect(replayedPause).toEqual(pause);
+tests/work-graph/A2-step1-codecs.test.ts:613: expect(goalSnapshotFromDesiredStateChangedEvent(replayedPause)).toEqual(pausedGoal);
+tests/work-graph/A2-step1-codecs.test.ts:614: expect(goalSnapshotFromDesiredStateChangedEvent(replayedPause).desiredStateRequestedBy).toEqual(human);
+tests/work-graph/A2-step1-codecs.test.ts:616: expect(goalSnapshotFromDesiredStateChangedEvent(replayedResume)).toEqual(resumedGoal);
+tests/work-graph/A2-step1-codecs.test.ts:632: expect(status({ ...pause, goal: withoutRevision })).toBe('invalid');
+tests/work-graph/A2-verification-chain.test.ts:173: expect(first).toMatchObject({ status: 'finalized', outcome: 'PASS', gaps: [] });
+tests/work-graph/A2-verification-chain.test.ts:178: expect(await fixture.b2.base.commitRaw([encodeVerificationRoundSnapshot(legacy)])).toMatchObject({ status: 'committed' });
+tests/work-graph/A2-verification-chain.test.ts:180: expect(await fixture.evidence.queryRoundChainHead!(fixture.ctx, subject))
+tests/work-graph/A2-verification-chain.test.ts:182: expect(await fixture.evidence.openVerification(fixture.ctx, fixture.openRequest()))
+tests/work-graph/A2-verification-chain.test.ts:184: expect(await workRow(fixture)).toMatchObject({ effectivePhase: 'blocked', phaseCause: { code: 'round_ambiguous' } });
+tests/work-graph/A2-verification-chain.test.ts:193: expect(await complete(first.ref, 'a2-complete-ambiguous'))
+tests/work-graph/A2-verification-chain.test.ts:196: expect(await complete({ ...first.ref, roundId: 'a2-missing-round' }, 'a2-complete-missing'))
+tests/work-graph/A2-verification-chain.test.ts:286: expect(await fixture.b2.base.commitRaw([encodeTaskEvidenceIndexSnapshot({ ref: gateIndexRef, revision: 0, schemaVersion: 1,
+tests/work-graph/B2-09-crr-owner.test.ts:450: expect(await answer(world, created.value.request.ref, 'allow_rerun', 1))
+tests/work-graph/B2-execution-entry.test.ts:65: expect(before.session.occupancy).toBeNull();
+tests/work-graph/B2-execution-entry.test.ts:66: expect(await f.entry.authorizeRuntimeEntry(f.ctx, { input: { prepared, consumerId: 'runtime-a' },
+tests/work-graph/B2-execution-entry.test.ts:69: expect(await f.read()).toEqual(before);
+tests/work-graph/B2-execution-entry.test.ts:98: expect(await f.base.commitRaw([{ refKey: b2Key(lease.ref), schemaId: 'TaskLeaseSnapshot@1',
+tests/work-graph/B2-execution-entry.test.ts:108: expect(intervened).toBe(true);
+tests/work-graph/B2-execution-entry.test.ts:109: expect(result).toMatchObject({ status: 'rejected', code: 'revision_conflict' });
+tests/work-graph/B2-execution-entry.test.ts:111: expect(after.run).toEqual(before.run); expect(after.attempt).toEqual(before.attempt);
+tests/work-graph/B2-execution-entry.test.ts:112: expect(after.outbox).toEqual(before.outbox); expect(after.session).toEqual(before.session);
+tests/work-graph/B2-execution-entry.test.ts:113: expect(after.lease).toMatchObject({ revision: lease.revision + 1,
+tests/work-graph/B2-execution-entry.test.ts:209: expect(await f.base.commitRaw([{ refKey: b2Key(legacy.ref), schemaId: 'RunSnapshot@1', revision: legacy.revision, json: JSON.stringify(legacy) }],
+tests/work-graph/B2-execution-entry.test.ts:211: expect((await f.read()).run.executionAuthorization).toEqual(legacy.executionAuthorization);
+tests/work-graph/B2-execution-entry.test.ts:212: expect(await f.entry.beginRuntimeEntry(f.ctx, { input: { permit: f.permit(), kernel: f.kernel },
+tests/work-graph/B2-execution-entry.test.ts:218: expect(await f.base.commitRaw([{ refKey: b2Key(legacy.ref), schemaId: 'RunSnapshot@1', revision: malformed.revision, json: JSON.stringify(malformed) }],
+tests/work-graph/B2-model-request.test.ts:16: expect(await f.model.authorizeModelRequest(f.ctx, { input: request,
+tests/work-graph/B2-model-request.test.ts:19: expect(await f.read()).toEqual(before);
+tests/work-graph/B2-model-request.test.ts:23: expect(rows.status).toBe('ready');
+tests/work-graph/B2-model-request.test.ts:24: if (rows.status === 'ready') expect(rows.value.records).toHaveLength(0);
+tests/work-graph/B2-model-request.test.ts:31: expect(issued).toMatchObject({ status: 'committed' });
+tests/work-graph/B2-model-request.test.ts:39: expect(await f.base.commitRaw([{ refKey: b2Key(lease.ref), schemaId: 'TaskLeaseSnapshot@1',
+tests/work-graph/B2-model-request.test.ts:43: expect(await f.model.recordModelRequestAttempt(f.ctx, {
+tests/work-graph/B2-model-request.test.ts:47: expect(await f.read()).toEqual(before);
+tests/work-graph/B2-model-request.test.ts:49: expect(rows.status).toBe('ready');
+tests/work-graph/B2-model-request.test.ts:51: expect(rows.value.records[0]?.revision).toBe(1);
+tests/work-graph/B2-model-request.test.ts:52: expect(JSON.parse(rows.value.records[0]!.json).permit.consumedByAttemptId).toBeNull();
+tests/work-graph/K3-39-tool-commit-lookup.test.ts:72: expect(toolCommitLookupNotPublished()).toEqual({ status: 'undetermined', reason: 'lookup_not_published' });
+tests/work-graph/R3c-plan-adoption.test.ts:190: expect(await backend.records.commit({ identityKey: 'ended-run-race', fingerprint: 'ended-run-race-v1',
+tests/work-graph/R3c-plan-adoption.test.ts:237: expect(await backend.records.commit({ identityKey: 'canonical-task-state', fingerprint: 'canonical-task-state-v1',
+tests/work-graph/R3c-plan-adoption.test.ts:255: expect(await plans.queryReadyTasks(ctx, { goalRef: goal.value.ref, includeBlocked: false,
+tests/work-graph/R3c-plan-adoption.test.ts:272: expect(await backend.records.commit({ identityKey: 'implement-run-race',
+tests/work-graph/R3c-plan-adoption.test.ts:284: expect(injectImplementRun).toBe(false);
+tests/work-graph/R3c-plan-adoption.test.ts:307: expect(await plans.applyPlanChange(ctx, { meta: { requestId: 'change-no-decision',
+tests/work-graph/R3c-plan-adoption.test.ts:311: expect(await plans.queryGoal(ctx, goal.value.ref)).toMatchObject({ status: 'ready',
+tests/work-graph/R3c-plan-adoption.test.ts:313: expect(await backend.records.readMany([canonicalJson({ aggregateType: 'PlanRevision', projectId,
+tests/work-graph/R3c-task-relations-boundaries.test.ts:90: expect(decodePlanRevisionSnapshot(encodedRecord('PlanRevisionSnapshot@1', v1)).status).toBe('decoded');
+tests/work-graph/R3c-task-relations-boundaries.test.ts:99: expect(decodePlanRevisionSnapshot(encodedRecord('PlanRevisionSnapshot@1', v1WithV2Fields)).status).toBe('invalid');
+tests/work-graph/R3e-reverify.test.ts:477: expect(await fixture.b2.base.commitRaw([encodeVerificationRoundSnapshot(root)])).toMatchObject({ status: 'committed' });
+tests/work-graph/R3e-reverify.test.ts:479: expect(next.chain).toMatchObject({ ordinal: 2, predecessorRoundRef: root.ref, supersededEvidenceIds: chainEvidenceIds(root) });
+tests/work-graph/R3e-reverify.test.ts:481: expect(await fixture.evidence.openVerification(fixture.ctx, fixture.openRequest()))
+tests/work-graph/R3e-reverify.test.ts:485: expect(await fixture.b2.base.commitRaw([encodeVerificationRoundSnapshot(second)])).toMatchObject({ status: 'committed' });
+tests/work-graph/R3e-reverify.test.ts:486: expect(await owner.evidence.reverifyRound!(fixture.ctx, reverifyRequest(second, 'r3e-two-roots')))
+tests/work-graph/R4b-session-directory.test.ts:116: expect(initial.status).toBe('committed');
+tests/work-graph/R4c-execution-history-index.test.ts:290: expect(receipt).toMatchObject({ status: 'committed' });
+tests/work-graph/R4c-execution-history-index.test.ts:621: expect(results.filter(result => result.status === 'committed')).toHaveLength(1);
+tests/work-graph/R4c-execution-history-index.test.ts:622: expect(barrier.arrivals).toBe(2);
+tests/work-graph/R4c-execution-history-index.test.ts:623: expect(results.filter(result => result.status === 'rejected')).toEqual([
+tests/work-graph/R4c-execution-history-index.test.ts:628: expect((await readRun(h.fixture, refs[winner]!)).executionHistory).toBeDefined();
+tests/work-graph/R4c-execution-history-index.test.ts:630: expect(losingRun.executionHistory).toBeUndefined();
+tests/work-graph/R4c-execution-history-index.test.ts:631: expect(losingRun.revision).toBe(pins[loser]!.revision);
+tests/work-graph/R4c-execution-history-index.test.ts:633: expect(await h.service.recordExecutionHistory(h.fixture.ctx, requests[loser]!))
+tests/work-graph/R4c-execution-history-index.test.ts:635: expect(await h.service.recordExecutionHistory(h.fixture.ctx, requests[winner]!))
+tests/work-graph/R4c-execution-history-index.test.ts:663: expect(intruder).toMatchObject({ status: 'rejected', code: 'busy' });
+tests/work-graph/R4c-execution-read.test.ts:203: expect(leaseRead.status).toBe('ready');
+tests/work-graph/R4c-execution-read.test.ts:206: expect(leaseRecord).toBeDefined();
+tests/work-graph/R4c-execution-read.test.ts:212: expect(await fixture.commitRaw([{ ...leaseRecord, revision: 2, json: JSON.stringify(leaseBody) }],
+tests/work-graph/R4c-execution-read.test.ts:219: expect(result.value.session.ref).toMatchObject({ sessionId: claim.sessionRef.sessionId });
+tests/work-graph/R4c-execution-read.test.ts:220: expect(result.value.lease).toMatchObject({ holderRunId: 'a-different-holder', attemptId: 'a-different-attempt' });
+tests/work-graph/R4c-execution-read.test.ts:237: expect(result).toMatchObject({ status: 'rejected', code: 'incomplete' });
+tests/work-graph/R4c-execution-read.test.ts:283: expect(result, scenario.name).toMatchObject({ status: 'rejected', code: 'unavailable' });
+tests/work-graph/R4c-source-authority-reader.test.ts:95: expect(receipt, JSON.stringify(receipt)).toMatchObject({ status: 'committed' });
+tests/work-graph/R4c-source-authority-reader.test.ts:107: await expect(reads.load(run.ref)).resolves.toMatchObject({ status: 'found', snapshot: { ref: run.ref } });
+tests/work-graph/R4c-source-authority-reader.test.ts:108: await expect(reads.load(queryRun.ref)).resolves.toMatchObject({ status: 'found', snapshot: { ref: queryRun.ref } });
+tests/work-graph/R4c-source-authority-reader.test.ts:110: expect(physicalReads).toEqual([[canonical(fixture.workspaceRef)], [canonical(run.ref)], [canonical(queryRun.ref)]]);
+tests/work-graph/R4c-source-authority-reader.test.ts:124: expect(loaded).toMatchObject({ status: 'found', snapshot: { ref: here.ref, task: { goalId: here.ref.goalId } } });
+tests/work-graph/R4c-source-authority-reader.test.ts:126: expect(loaded.snapshot.ref).toEqual(here.ref);
+tests/work-graph/R4c-source-authority-reader.test.ts:127: await expect(reads.load(otherGoal.ref)).resolves.toMatchObject({ status: 'found', snapshot: { ref: otherGoal.ref } });
+tests/work-graph/R4c-source-authority-reader.test.ts:128: await expect(reads.load(queryHere.ref)).resolves.toMatchObject({ status: 'found', snapshot: { ref: queryHere.ref } });
+tests/work-graph/R4c-source-authority-reader.test.ts:129: await expect(reads.load(queryElsewhere.ref)).resolves.toMatchObject({ status: 'found', snapshot: { ref: queryElsewhere.ref } });
+tests/work-graph/R4c-source-authority-reader.test.ts:170: await expect(reads.load(run.ref)).resolves.toMatchObject({ status: 'unavailable' });
+tests/work-graph/R4c-source-authority-reader.test.ts:191: await expect(reads.load(run.ref)).resolves.toMatchObject({ status: 'unavailable' });
+tests/work-graph/R4c-source-authority-reader.test.ts:210: expect(loaded).toMatchObject({ status: 'found', snapshot: { ref: run.ref } });
+tests/work-graph/R4c-source-authority-reader.test.ts:213: await expect(reads.load(run.ref)).resolves.toMatchObject({ status: 'found', snapshot: { task: { taskId: fixture.tasks.first.taskId } } });
+tests/work-graph/R4c-source-authority-reader.test.ts:244: expect(physicalReads).toEqual([[canonical(run.ref)], [canonical(run.ref)]]);
+tests/work-graph/R4c-task-claim-boundaries.test.ts:102: expect(await f.commitRaw([{ ...row, revision: body.revision, json: JSON.stringify(body) }],
+tests/work-graph/R4c-task-claim-boundaries.test.ts:104: expect(await f.service.claimTask(f.ctx, await f.buildRequest()))
+tests/work-graph/R4c-task-claim-concurrency.test.ts:71: expect(await f.commitRaw([{ ...row, revision: 2, json: JSON.stringify(body) }],
+tests/work-graph/S1-codecs-indexes.test.ts:277: expect(decodedSession.status).toBe('decoded');
+tests/work-graph/S1-codecs-indexes.test.ts:279: expect(decodedSession.value.provenance).toBeNull();
+tests/work-graph/S1-codecs-indexes.test.ts:280: expect(decodedSession.value.archiveRequest).toBeNull();
+tests/work-graph/S1-codecs-indexes.test.ts:287: expect(decodedOperation.status).toBe('decoded');
+tests/work-graph/S1-codecs-indexes.test.ts:289: expect(decodedOperation.value.action.provenance ?? null).toBeNull();
+tests/work-graph/S1-dispatch-guards.test.ts:157: expect(pair.run.run.status).toBe('pending');
+tests/work-graph/S1-dispatch-guards.test.ts:158: expect(pair.run.run.executionState).toBeUndefined();
+tests/work-graph/S1-dispatch-guards.test.ts:160: expect(derived.provenance).toEqual({ schemaVersion: 1, kind: 'readonly_copy',
+tests/work-graph/S1-dispatch-guards.test.ts:162: expect(derived.basis).toEqual({ kind: 'consultation', messageRef: message.ref });
+tests/work-graph/S1-dispatch-guards.test.ts:164: expect(ready(await f.directory.readSession(f.base.ctx, child.ref)).record.provenance).toBeNull();
+tests/work-graph/S1-provenance.test.ts:285: expect(requeued.outcome.requeue.historySource?.sessionRef).toEqual(f.S);
+tests/work-graph/S1-provenance.test.ts:297: await f.assertInvariants();
+tests/work-graph/S1-provenance.test.ts:309: expect(first.status).toBe('committed');
+tests/work-graph/S1-provenance.test.ts:311: expect(first.replayed).toBe(false);
+tests/work-graph/S1-provenance.test.ts:312: expect(first.value).toEqual({ ...before, revision: before.revision + 1, provenance: expected });
+tests/work-graph/S1-provenance.test.ts:314: expect(stored.provenance).toEqual(expected);
+tests/work-graph/S1-provenance.test.ts:315: expect(stored.revision).toBe(first.value.revision);
+tests/work-graph/S1-provenance.test.ts:320: expect(payload.value.basis).toEqual(basis);
+tests/work-graph/S1-provenance.test.ts:321: expect(payload.value.session).toEqual(first.value);
+tests/work-graph/S1-provenance.test.ts:327: expect(replay.status).toBe('committed');
+tests/work-graph/S1-provenance.test.ts:329: expect(replay.replayed).toBe(true);
+tests/work-graph/S1-provenance.test.ts:330: expect(replay.cursor).toEqual(first.cursor);
+tests/work-graph/S1-provenance.test.ts:331: expect(replay.value).toEqual(first.value);
+tests/work-graph/S1-provenance.test.ts:332: expect(await f.audit.counts()).toEqual(replayCounts);
+tests/work-graph/S1-provenance.test.ts:333: expect(f.b2.host.calls).toBe(hostCalls);
+tests/work-graph/S1-provenance.test.ts:334: expect(modelAttempt).toHaveBeenCalledTimes(0);
+tests/work-graph/S1-provenance.test.ts:335: expect(await f.readSession(given.child)).toEqual(stored);
+tests/work-graph/S1-provenance.test.ts:342: await f.assertInvariants();
+tests/work-graph/S1-provenance.test.ts:348: expect(result.status).toBe('committed');
+tests/work-graph/S1-provenance.test.ts:350: expect(result.value.provenance).toEqual(expected);
+tests/work-graph/S1-provenance.test.ts:351: expect(result.value).toEqual({ ...before, revision: before.revision + 1, provenance: expected });
+tests/work-graph/S1-provenance.test.ts:356: expect(payload.value.basis).toEqual(basis);
+tests/work-graph/S1-provenance.test.ts:357: expect(payload.value.session).toEqual(result.value);
+tests/work-graph/S1-provenance.test.ts:359: expect(result.value.provenance).not.toHaveProperty('from');
+tests/work-graph/S1-provenance.test.ts:361: expect(stored.provenance).toEqual(expected);
+tests/work-graph/S1-provenance.test.ts:403: await f.assertInvariants();
+tests/work-graph/S1-provenance.test.ts:408: expect(rejection.code).toBe('incomplete');
+tests/work-graph/S1-provenance.test.ts:409: expect(rejection.reason.startsWith('legacy_provenance_ambiguous:')).toBe(true);
+tests/work-graph/S1-provenance.test.ts:411: expect(await f.audit.counts()).toEqual(before);
+tests/work-graph/S1-provenance.test.ts:412: expect((await f.readSession(given.child)).provenance ?? null).toBeNull();
+tests/work-graph/S1-provenance.test.ts:428: expect(rewritten.status).toBe('committed');
+tests/work-graph/S1-provenance.test.ts:429: await f.assertInvariants();
+tests/work-graph/S1-provenance.test.ts:434: expect(rejection.code).toBe('cycle');
+tests/work-graph/S1-provenance.test.ts:435: expect(rejection.reason.startsWith('session_provenance_cycle:')).toBe(true);
+tests/work-graph/S1-provenance.test.ts:436: expect(await f.audit.counts()).toEqual(before);
+tests/work-graph/S1-provenance.test.ts:437: expect((await f.readSession(given.child)).provenance ?? null).toBeNull();
+tests/work-graph/S1-provenance.test.ts:448: expect(reopened.since).not.toEqual((given.creationLink as SessionWorkLink).since);
+tests/work-graph/S1-provenance.test.ts:451: expect(located.value.cursor).toBe(reopened.since);
+tests/work-graph/S1-provenance.test.ts:452: expect(located.value.event.eventType).toBe('SessionWorkLinkChanged');
+tests/work-graph/S1-provenance.test.ts:454: expect(changed.sessionRef).toEqual(given.child);
+tests/work-graph/S1-provenance.test.ts:455: expect(changed.active).toBe(true);
+tests/work-graph/S1-provenance.test.ts:456: expect(changed.boundField).toBe('since');
+tests/work-graph/S1-provenance.test.ts:457: expect(changed.link).toEqual({ ...reopened, since: null });
+tests/work-graph/S1-provenance.test.ts:460: expect(original.value.event.eventType).toBe('SessionCreated');
+tests/work-graph/S1-provenance.test.ts:461: await f.assertInvariants();
+tests/work-graph/S1-provenance.test.ts:465: expect(value.provenance).toEqual({ schemaVersion: 1, kind: 'new' });
+tests/work-graph/S1-provenance.test.ts:466: expect(value.basis).toEqual({ kind: 'no_reliable_predecessor' });
+tests/work-graph/S1-provenance.test.ts:469: expect(value.basis.kind).not.toBe('requeue_creation');
+tests/work-graph/S1-session-facts.test.ts:183: expect(value.latestWork).toEqual(f.b2.claim);
+tests/work-graph/S1-session-facts.test.ts:184: expect(value.wait).toEqual({ runRef: f.b2.claim.runRef, messageRef: message.ref, task: f.b2.claim.task });
+tests/work-graph/S1-session-facts.test.ts:186: expect(queries.items).toEqual([old]);
+tests/work-graph/S1-session-facts.test.ts:187: expect(queries.items[0]?.run.executionState).toBeUndefined();
+tests/work-graph/S1-session-facts.test.ts:188: expect(queries.nextCursor).toBeNull();
+tests/work-graph/S2A-notices-rework.test.ts:42: expect(seeded.status).toBe('committed');
+tests/work-graph/S2A-notices-rework.test.ts:50: expect(first.notices.map(notice => notice.itemKey)).toEqual([...legacyKeys, realKey]);
+tests/work-graph/S2A-notices-rework.test.ts:51: expect(first.notices.map(notice => notice.position.kind)).toEqual(['legacy', 'legacy', 'legacy', 'commit']);
+tests/work-graph/S2A-notices-rework.test.ts:52: expect(first.notices.slice(0, 3).map(notice => notice.position)).toEqual([
+tests/work-graph/S2A-notices-rework.test.ts:57: expect(first.counts.notices.automatic_rework).toBe(4);
+tests/work-graph/S2A-notices-rework.test.ts:61: expect(pageOne.notices.map(notice => notice.itemKey)).toEqual([legacyKeys[0], legacyKeys[1]]);
+tests/work-graph/S2A-notices-rework.test.ts:62: expect(pageOne.counts.notices.automatic_rework).toBe(4);
+tests/work-graph/S2A-notices-rework.test.ts:63: expect(pageOne.nextCursor).not.toBeNull();
+tests/work-graph/S2A-notices-rework.test.ts:65: expect(pageTwo.notices.map(notice => notice.itemKey)).toEqual([legacyKeys[2], realKey]);
+tests/work-graph/S2A-notices-rework.test.ts:66: expect(pageTwo.counts.notices.automatic_rework).toBe(4);
+tests/work-graph/S2A-notices-rework.test.ts:71: expect(seenFirst.notices.map(notice => notice.itemKey)).toEqual([legacyKeys[0]]);
+tests/work-graph/S2A-notices-rework.test.ts:72: expect(seenFirst.seenThrough).toEqual({ automatic_rework: seenFirst.notices[0]!.position });
+tests/work-graph/S2A-notices-rework.test.ts:75: expect(after.notices.map(notice => notice.itemKey)).toEqual([legacyKeys[1], legacyKeys[2], realKey]);
+tests/work-graph/S2B-30-track-bars.test.ts:205: expect(page.bars.filter((bar) => bar.kind === 'check')).toHaveLength(0);
+tests/work-graph/S2B-30-track-bars.test.ts:206: expect(page.unplaced.rounds).toBe(2);
+tests/work-graph/S2B-32-task-timeline-fold.test.ts:235: expect(spans(await taskSegments(fx, goalRef, 'work-1'))).toEqual([
+tests/work-graph/S2B-33-task-timeline-pagination.test.ts:111: expect(read.status).toBe('ready');
+tests/work-graph/S2B-33-task-timeline-pagination.test.ts:114: expect(task?.untimedPoints.map(point => point.kind)).toEqual(['check_start', 'check_start', 'check_end']);
+tests/work-graph/S2B-33-task-timeline-pagination.test.ts:115: expect(task?.segments.some(segment => segment.state === 'verifying')).toBe(false);
+tests/work-graph/S2B-activity-calendar-tasks.test.ts:164: expect(filtered.coverage).toMatchObject({ runsCounted: 1, runsSessionUnknown: 1 });
+tests/work-graph/S2B-activity-calendar-tasks.test.ts:167: expect(cellAt(whole, 10).steps).toBe(12);
+tests/work-graph/S2B-activity-calendar-tasks.test.ts:168: expect(whole.coverage).toMatchObject({ runsCounted: 3, runsSessionUnknown: null });
+tests/work-graph/S2B-activity-calendar-tasks.test.ts:200: expect(cellAt(whole, 9).uncountedRuns).toBe(2);
+tests/work-graph/S2B-activity-calendar.test.ts:241: expect(legacy.checksBegun).toBe(4);
+tests/work-graph/S2B-activity-calendar.test.ts:258: expect(cellAt(calendar, 8)).toMatchObject({ checks: 0 });
+tests/work-graph/S2B-activity-calendar.test.ts:259: expect(calendar.cells.flatMap((cell) => cell.tasks).some((task) => task.taskId === 'work-3')).toBe(false);
+tests/work-graph/S2B-activity-calendar.test.ts:260: expect(calendar.coverage).toMatchObject({ checksUnplaced: 4 });
+tests/work-graph/S2B-r2-never-entered.test.ts:35: expect(result.value[0]).toMatchObject({ status: 'unknown', reason: 'not_recorded', error: true });
+tests/work-graph/S2B-r2-never-entered.test.ts:36: expect(result.value[0]?.status).not.toBe('not_entered');
+tests/work-graph/S2B-r2-r5-not-entered.test.ts:49: expect(bar.activity.status).toBe('unknown');
+tests/work-graph/S2B-r2-r5-not-entered.test.ts:50: expect(bar.activity.reason).toBe('no_recording_epoch');
+tests/work-graph/S2B-r2-r5-not-entered.test.ts:51: expect(bar.activity.error).toBe(false);
+tests/work-graph/S2C-lines-d1.test.ts:37: expect(list.counts.standby).toEqual({ status: 'exact', value: 6 });
+tests/work-graph/S2C-lines-d1.test.ts:38: expect(list.counts.archived).toEqual({ status: 'partial', atLeast: 1, atMost: 2,
+tests/work-graph/S2C-lines-d1.test.ts:52: expect(row(d1.l)?.status.own).toBe('standby');
+tests/work-graph/S2C-lines-d1.test.ts:57: expect(list.rows).toHaveLength(9);
+tests/work-graph/S2C-lines-d1.test.ts:65: expect(list.rows[0]?.key.sessionId).toBe(d1.l.sessionId);
+tests/work-graph/S2C-lines-page.test.ts:420: expect(page.items.map(itemKey)).toEqual([`execution:w@${at}`]);
+tests/work-graph/S3-context-inputs.test.ts:714: expect(result).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/work-graph/S3-context-inputs.test.ts:715: expect(f.materialsSpy.openArtifactCalls).toBe(0);
+tests/work-graph/S3-context-inputs.test.ts:802: expect(result).toMatchObject({ status: 'ready' });
+tests/work-graph/S3-context-inputs.test.ts:805: expect(result.value[0]).toMatchObject({ state: 'missing' });
+tests/work-graph/S3-context-inputs.test.ts:806: expect(result.value[0]!.source).toBeNull();
+tests/work-graph/S3-context-inputs.test.ts:877: expect(result).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/work-graph/S3-context-inputs.test.ts:878: expect(result).not.toHaveProperty('value');
+tests/work-graph/S3-context-inputs.test.ts:881: expect(page).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/work-graph/S3-context-inputs.test.ts:882: expect(page).not.toHaveProperty('value');
+tests/work-graph/S3-context-inputs.test.ts:883: expect(f.materialsSpy.openArtifactCalls).toBe(0);
+tests/work-graph/S3-prepared-context-admission.test.ts:503: expect(result).toMatchObject({ status: 'committed', replayed: false });
+tests/work-graph/S3-prepared-context-admission.test.ts:505: expect(stored.status).toBe('ready');
+tests/work-graph/S3-prepared-context-admission.test.ts:507: expect(stored.value.body.includes('"contextAssembly"')).toBe(false);
+tests/work-graph/S3-prepared-context-admission.test.ts:556: expect(moved).toMatchObject({ status: 'committed' });
+tests/work-graph/S5-notices.test.ts:200: expect(JSON.parse(oldWire.json)).not.toHaveProperty('since');
+tests/work-graph/S5-notices.test.ts:206: expect(items).toHaveLength(2);
+tests/work-graph/S5-notices.test.ts:207: expect(items.map(e => key(e.rework!.sourceRef))).toEqual([key(old.ref), key(fresh.ref)]);
+tests/work-graph/S5-notices.test.ts:208: expect(items[0]!.position).toEqual({ kind: 'legacy', occurredAt: old.requestedAt, itemKey: items[0]!.itemKey });
+tests/work-graph/S5-notices.test.ts:209: expect(items[1]!.position).toEqual({ kind: 'commit', cursor: origin.value.since, itemKey: items[1]!.itemKey });
+tests/work-graph/S5-notices.test.ts:274: expect(JSON.parse((await storedRecord(f.records, head.ref)).json)).not.toHaveProperty('noticeAutomationCap');
+tests/work-graph/S5-notices.test.ts:276: expect(first).toHaveLength(1);
+tests/work-graph/S5-notices.test.ts:277: expect(first[0]!.rework).toMatchObject({ sourceRef: head.ref, operation: 'reverify', actorClass: 'system', count: 1, cap: null });
+tests/work-graph/S5-notices.test.ts:278: expect(first[0]!.summary).toMatch(/^自动返工 · .+ · 第 1 次（上限未记录）$/);
+tests/work-graph/S5-notices.test.ts:281: expect(work.automationPolicy.current.autoReworkLimit).toBe(7);
+tests/work-graph/S5-notices.test.ts:283: expect(after).toEqual(first);
+tests/work-graph/S5-request-candidates.test.ts:275: expect(seeded.status).toBe('committed');
+tests/work-graph/S5-request-candidates.test.ts:277: expect(JSON.parse(raw.json)).not.toHaveProperty('requestRef');
+tests/work-graph/S5-request-candidates.test.ts:278: expect(JSON.parse(raw.json)).not.toHaveProperty('notAdopted');
+tests/work-graph/S5-request-candidates.test.ts:281: expect(result).toEqual(old);
+tests/work-graph/S5-request-candidates.test.ts:285: expect(await recordAt(f.records, old.ref)).toEqual(raw);
+tests/work-graph/S5-request-candidates.test.ts:286: expect(await f.storeSnapshot()).toEqual(before);
+tests/work-graph/S5-request-candidates.test.ts:287: expect(f.allocationCounts).toEqual(allocations);
+tests/work-graph/S5-request-candidates.test.ts:288: expect(before.claims.filter(claim => claim.owner === keyOf(old.ref))).toEqual([]);
+tests/work-graph/S5-request-candidates.test.ts:326: expect(seeded.status).toBe('committed');
+tests/work-graph/S5-request-candidates.test.ts:330: expect(result).toEqual({ kind: 'legacy_v1', ref: legacy.ref, revision: 1, schemaVersion: 1,
+tests/work-graph/S5-request-candidates.test.ts:332: expect(result).not.toHaveProperty('requestRef');
+tests/work-graph/S5-request-candidates.test.ts:333: expect(result).not.toHaveProperty('notAdopted');
+tests/work-graph/S5-request-candidates.test.ts:334: expect(candidateRequestRef(result)).toBeNull();
+tests/work-graph/S5-request-candidates.test.ts:335: expect(JSON.parse(raw.json)).not.toHaveProperty('requestRef');
+tests/work-graph/S5-request-candidates.test.ts:336: expect(JSON.parse(raw.json)).not.toHaveProperty('notAdopted');
+tests/work-graph/S5-request-candidates.test.ts:337: expect(await recordAt(f.records, legacy.ref)).toEqual(raw);
+tests/work-graph/S5-request-candidates.test.ts:338: expect(await f.storeSnapshot()).toEqual(before);
+tests/work-graph/S5-request-candidates.test.ts:339: expect(f.allocationCounts).toEqual(allocations);
+tests/work-graph/S5-request-candidates.test.ts:340: expect(before.claims.filter(claim => claim.owner === keyOf(legacy.ref))).toEqual([]);
+tests/work-graph/S5-user-messages.test.ts:85: expect(Object.prototype.hasOwnProperty.call(value, field)).toBe(false);
+tests/work-graph/S5-user-messages.test.ts:292: expect(body.status).toBe('ready');
+tests/work-graph/S5-user-messages.test.ts:301: expect(seeded.status).toBe('committed');
+tests/work-graph/S5-user-messages.test.ts:302: expect(sessionMessageFromEvent(oldSent)).toEqual({ status: 'decoded', value: oldPending });
+tests/work-graph/S5-user-messages.test.ts:304: expect(ready(await h.mailbox.readMessage(h.f.ctx, ref))).toEqual({ ...oldPending, replyHandler: null, archiveWaitDisposition: null });
+tests/work-graph/S5-user-messages.test.ts:316: expect(acked).toEqual({ status: 'committed', value: oldAckDto, cursor: expectedCursor, replayed: false });
+tests/work-graph/S5-user-messages.test.ts:327: expect(receipt).toEqual({ status: 'ready', value: { status: 'committed', replayed: true, identityKey: ackIdentityKey,
+tests/work-graph/S5-user-messages.test.ts:330: expect(JSON.parse(rawAfter)).toStrictEqual(oldAckDto);
+tests/work-graph/S5-user-messages.test.ts:334: expect(after.recordCount).toBe(before.recordCount);
+tests/work-graph/S5-user-messages.test.ts:335: expect(after.eventCount - before.eventCount).toBe(1);
+tests/work-graph/S5-user-messages.test.ts:336: expect(after.claims).toEqual(claimsBefore);
+tests/work-graph/S5-user-messages.test.ts:339: expect(replay).toEqual({ status: 'committed', value: oldAckDto, cursor: expectedCursor, replayed: true });
+tests/work-graph/S5-user-messages.test.ts:341: expect(h.f.allocationCounts).toEqual(allocations);
+tests/work-graph/S5-user-messages.test.ts:342: expect(await h.f.storeSnapshot()).toEqual(after);
+tests/work-graph/S5-user-messages.test.ts:343: expect(await storedJson(h.f, ref)).toBe(rawAfter);
+tests/work-graph/S5-user-messages.test.ts:344: expect(await h.f.userMessagesByGoal('B')).toEqual(userBefore);
+tests/work-graph/W1-future-plan.test.ts:779: expect(decodePlanRevisionSnapshot({ refKey: canonicalJson(v1.ref as unknown as JsonValue),
+tests/work-graph/W2-future-intent.test.ts:131: expect(decodePlanRevisionSnapshot(record({ ...base, tasks: withExecutionIntent(base.tasks, 0, 'plan_only') })))
+tests/work-graph/WP1-goal-content-entry.test.ts:84: expect(result.status).toBe('committed');
+tests/work-graph/WP2-undelivered-notices.test.ts:261: expect(otherGoal.status).toBe('ready');
+tests/work-graph/WP2-undelivered-notices.test.ts:263: expect(otherGoal.value.items).toEqual([]);
+tests/work-graph/WP2-undelivered-notices.test.ts:266: expect(affected.status).toBe('rejected');
+tests/work-graph/WP2-undelivered-notices.test.ts:268: expect(affected.code).toBe('incomplete');
+tests/work-graph/WP2-undelivered-notices.test.ts:269: expect(affected.reason.startsWith('undelivered_reply_position_missing:')).toBe(true);
+tests/work-graph/WP2-undelivered-notices.test.ts:272: expect(unfiltered.status).toBe('rejected');
+
+## REMOVED test or describe: 122
+tests/app/MVP-ui-entry.test.ts:239: it('keeps display ids per scope and migrates only the explicit v1 scopeKey', () => {
+tests/app/S0-attention-edge-label.test.ts:67: describe('S0 attention edge label', () => {
+tests/app/S2C-line-routes.test.ts:166: it('2C-31 (d) lines/list returns exactly the LE3 WorkLineReadPort value', async () => {
+tests/app/S2C-line-routes.test.ts:299: it('2C-31 (h) the routes return exactly the LE3 results over the 14-Session D1 dataset', async () => {
+tests/app/orchestration-mechanism.test.ts:181: it('normalizes the legacy replyMode=wait into the same single wait path', async () => {
+tests/app/project-source-tool.test.ts:266: it('publishes one TS project protocol per trusted mode while retaining the full old wire and live stale checks', async () => {
+tests/composition/K-R-close-open-turn.test.ts:142: it('KA-12 answers unsupported when only the legacy Kernel reader is registered', async () => {
+tests/composition/K-R-close-open-turn.test.ts:191: it('KA-12 answers unreadable when the mapped Kernel database file is missing', async () => {
+tests/composition/K-R-close-open-turn.test.ts:219: it('KA-12 closes a RUN-19 Turn, re-probes and returns the health owner the result available', async () => {
+tests/data/R3b-body-boundaries.test.ts:44: it('rejects a valid body row stored or returned under a different content key', async () => {
+tests/data/R3b-body-boundaries.test.ts:67: it('rejects a row that claims two conflicting owner authorities', async () => {
+tests/data/R3b-body-boundaries.test.ts:79: it('closes a newly opened SQLite connection when the existing artifacts schema cannot be prepared', async () => {
+tests/data/R3b-materials-contract.test.ts:63: it('reopens the original artifacts table and reads legacy first-owner provenance', async () => {
+tests/data/R3b-materials-contract.test.ts:88: it('rejects newly forged legacy origins and reports damaged SQLite bodies as corrupt', async () => {
+tests/data/R3b-materials-contract.test.ts:151: it('does not infer a Host-readable scope from a legacy record without an owner', async () => {
+tests/data/workspace-path-boundary.test.ts:65: it('没有 read 工具就不读取：一个路径都不返回（端口不授权，也不放宽）', async () => {
+tests/data/workspace-path-boundary.test.ts:73: it('有界索引不含任何拒绝前缀下的路径，正文只取调用方声明的模块前缀', async () => {
+tests/data/workspace-path-boundary.test.ts:95: it('上限造成的未取全如实记在 excerptNotes 里，索引本身仍然是有界清单', async () => {
+tests/record-store/SP-text-scan.test.ts:400: it('SP-12 sqlite: the 4B-era file upgrade-compatibility check (results through the ports)', async () => {
+tests/runtime/A2-reconcile-runtime.test.ts:545: it('A8-1d (W-04, CI-01, CI-02, CTL-08(a), RUN-09..11 (R)): a Run that never entered still holds a pre-D-7 queued intent at the restart; a cancel ends it and releases the claim, a pause is applied in place, a resume waits while the Goal is paused', async () => 
+tests/runtime/R4b-session-skeleton.test.ts:54: it('requires an explicit trusted legacy locator and matching original Kernel Session ID', async () => {
+tests/runtime/R4c-graph-history.test.ts:867: it('preserves an empty terminal page at the real upper cursor while still detecting a truncated source', async () => {
+tests/runtime/R4c-graph-history.test.ts:907: it('rejects continuation after the frozen Session tail is truncated instead of shrinking its range', async () => {
+tests/runtime/R4c-source-authority-guards.test.ts:264: it('rejects unreadable consumed envelope identity from a real stored Run without throwing or file I/O', async () => {
+tests/runtime/R4c-source-authority-guards.test.ts:321: it('uses real SQLite facts through both readers: a starting claim is denied, a trusted running seed can read, and revocation is fresh', async () => {
+tests/runtime/S1-archive-files-brief.test.ts:204: it('IT04 loading a frozen old manifest keeps the exact marker, digest and text with no new section', async () => {
+tests/runtime/source-binding-migration.test.ts:139: it('rechecks Run termination, revoked entry and read grant on every request', async () => {
+tests/runtime/source-binding-migration.test.ts:221: it('resolves Query source authority from the original submission with one shared history scan', async () => {
+tests/runtime/source-binding-migration.test.ts:232: it('rejects a conflicting original Query submission and changed current execution', async () => {
+tests/runtime/source-tool-lifecycle.test.ts:226: it('closes legacy language services once and refuses new handlers after the tool group closes', async () => {
+tests/runtime/source-tool-lifecycle.test.ts:246: it('reports actual index disposal failure, attempts the other index and keeps close idempotent', async () => {
+tests/scenarios/K-W-workflow-close.test.ts:233: it('KA-07 (KE3, L4/L7): a person continues a paused-interrupted Run; the Workflow closes the dangling Kernel Turn and the continuation is a new Run in the same Session, with no create_session, transfer or archive', async () => {
+tests/scenarios/K-W-workflow-close.test.ts:259: it('KA-09 flow half (KE3, L6/L7): a Host restart after the close committed and its health was written reuses the Session on the next advancement; the continuation is still a new Run there', async () => {
+tests/scenarios/K-W-workflow-close.test.ts:287: it('KA-11 (c) (KE3, L6/L7): the closure is idempotent — on the next advancement after a restart the Session is available, so no close step is produced, no new Session is created, and the requeue is claimed in place', async () => {
+tests/scenarios/K-W-workflow-close.test.ts:487: it('KA-12 (KE4, L8): only a read-only legacy reader is registered for the mapped Kernel adapter; the Runtime answers unsupported and the Workflow falls back to a new Session, while the original history stays readable through the legacy reader', async () => {
+tests/scenarios/S2C-K-legacy-provenance.test.ts:415: describe('2C-26 legacy provenance set (LE4)', () => {
+tests/scenarios/S2C-K-legacy-provenance.test.ts:437: it('2C-26 before maintenance: seven unchecked, P and C are separate checked-when-read lines, three archived rows; reading again backfills nothing', async () => {
+tests/scenarios/S2C-K-legacy-provenance.test.ts:462: it('2C-26 after one maintenance pass C joins P, three unchecked remain and the archived page has two rows', async () => {
+tests/scenarios/S2C-K-legacy-provenance.test.ts:482: it('2C-26 the executions section stays indexed: the old no-dispatch QueryRun is never listed', async () => {
+tests/state/S1-dispatch.test.ts:109: it('UT27 a Session waiting on m refuses ordinary Work as busy with no effects', () => {
+tests/state/S1-dispatch.test.ts:115: it('UT28 a stored response on m that is not yet consumed is still a wait, not idle', () => {
+tests/state/S1-dispatch.test.ts:173: it('UT52 a null record provenance with a trusted readonly_copy legacy provenance is forbidden for Work', () => {
+tests/state/S1-dispatch.test.ts:180: it('UT53 a null record provenance with no legacy provenance is incomplete, never treated as new', () => {
+tests/state/S1-session-archive.test.ts:192: it('UT09 a null legacy provenance is backfilled once with the continuation, revision 4', () => {
+tests/state/S1-session-archive.test.ts:209: it('UT10 backfilling an existing new provenance is a revision conflict and changes nothing', () => {
+tests/state/WP1-goal-content.test.ts:107: it('CG04 a missing binding, a null digest and another Goal all pass', () => {
+tests/state/command-normalization.test.ts:268: it('B2-10 returns unparsed at the fourth level', () => {
+tests/state/command-normalization.test.ts:400: it('keeps the public projection exactly today s { words, text } shape', () => {
+tests/state/command-normalization.test.ts:435: it('keeps the public parseShellActions projection unchanged', () => {
+tests/state/context-input.test.ts:99: it('ST01 no binding keeps the legacy input and reports no problem', () => {
+tests/state/goal-machine.test.ts:176: it('newGoalSnapshot writes Goal@1 with today\'s key order and no D-9 fields (commit-compiler.ts:111-118)', () => {
+tests/state/goal-machine.test.ts:1347: it('a legacy PASS with gaps is not a clean PASS (VD-4): never gate_verifying; GV-5 or GV-10 as for a non-PASS head', () => {
+tests/state/plan-machine.test.ts:498: it('accepts a schema 1 draft (initial plans may be schema 1 or 2)', () => {
+tests/state/plan-machine.test.ts:549: it('runs the fresh admission before the Goal scope, and the scope before the draft checks', () => {
+tests/state/plan-machine.test.ts:828: it('reads the state after the Agent pre-checks: legacy, not pending and old revisions keep their codes', () => {
+tests/state/run-machine.test.ts:444: it('reads V1 and pre-B2 authorizations as legacy history, not damage', () => {
+tests/state/run-machine.test.ts:818: it('keeps the slot self → self for an existing locator without a held V2 begin binding (execution-history-binding.ts:152-154)', () => {
+tests/state/run-machine.test.ts:1012: it('refuses a V1 or pre-B2 Run with the one text of a Run without a V2 binding', () => {
+tests/state/run-machine.test.ts:1022: it('reads a fresh entry by status, then the V2 phase, also outside the eight states', () => {
+tests/state/run-machine.test.ts:1409: it('reconcile_*: legacy, Host lease, probe, then the row', () => {
+tests/state/task-machine.test.ts:321: it('a legacy PASS with gaps is P8 round_inconclusive, never awaiting completion (VD-4)', () => {
+tests/state/verification-machine.test.ts:516: it('VD-1/VD-15: an existing chain (a legacy root included) is busy, an invalid one incomplete, after the subject checks', () => {
+tests/state/verification-machine.test.ts:1066: it('autoCount: human 0, Host interruption keeps it, otherwise +1 (legacy root reads 0)', () => {
+tests/state/verification-machine.test.ts:1101: it('none, a single legacy root, and a chain in any input order', () => {
+tests/state/verification-machine.test.ts:1111: it('a legacy PASS with gaps may have a successor', () => {
+tests/work-graph/A1-architecture-catalog.test.ts:169: it('reads a historical baseline as catalog:null instead of guessing an empty catalog', async () => {
+tests/work-graph/A1-architecture-catalog.test.ts:179: it('distinguishes a missing pointer, a digest-inconsistent record and a readable revision', async () => {
+tests/work-graph/A1-independent-review.test.ts:22: it('can explicitly close an old Task relation after the active Plan removes that Task', async () => {
+tests/work-graph/A1-session-lifecycle.test.ts:112: it('refuses to follow a digest-inconsistent catalog record', async () => {
+tests/work-graph/A2-gate-chain-facts.test.ts:218: it('an invalid gate chain (two slot-less legacy roots) projects P20 blocked/round_ambiguous, reads GV-2 and is GOAL-30, never awaiting_gate', async () => {
+tests/work-graph/A2-goal-control.test.ts:99: it('commits the desired state, its epoch and requester; a replay restores the original snapshot', async () => {
+tests/work-graph/A2-step1-codecs.test.ts:380: it('a legacy round (no chain, no incompleteCause) still decodes unchanged', () => {
+tests/work-graph/A2-step1-codecs.test.ts:395: it.each(KINDS)('%s: legacy and successor rounds persist and are found by the chain lookups', async kind => {
+tests/work-graph/A2-step1-codecs.test.ts:557: it('decodes a record written before A.2 as desiredStateRevision 1 and desiredStateRequestedBy null', () => {
+tests/work-graph/A2-step1-codecs.test.ts:573: it('writes a never-changed Goal in its legacy shape, so a plan adoption keeps the pre-A.2 bytes', () => {
+tests/work-graph/A2-step1-codecs.test.ts:592: it.each(KINDS)('%s: a GoalDesiredStateChanged receipt replays the original requester after a later change', async kind => {
+tests/work-graph/A2-verification-chain.test.ts:170: it('a legacy slot-less second root makes the chain invalid: no head, no new root, P10 and no completion', async () => {
+tests/work-graph/A2-verification-chain.test.ts:269: it('VR-10..12: no index row for zero evidence, a legacy @0 row repaired', async () => {
+tests/work-graph/B2-execution-entry.test.ts:59: it('a real claim whose Session occupancy was lost cannot receive fresh entry authorization', async () => {
+tests/work-graph/B2-execution-entry.test.ts:86: it('a Lease released after admission reads wins CAS and leaves no entry authorization', async () => {
+tests/work-graph/B2-execution-entry.test.ts:205: it('does not allow a legacy authorization to begin; malformed V2 is rejected by the real Run codec', async () => {
+tests/work-graph/B2-model-request.test.ts:12: it('an entered Run that lost its Session cannot issue another model-call permit', async () => {
+tests/work-graph/B2-model-request.test.ts:27: it('a Lease released after permit issuance prevents attempted consumption and preserves permit revision 1', async () => {
+tests/work-graph/K3-39-tool-commit-lookup.test.ts:71: it('K3-39 a row-4 name with no published owner lookup is undetermined', () => {
+tests/work-graph/R3c-task-relations-boundaries.test.ts:87: it('uses one stable Store codec family and explicit Plan content versions', () => {
+tests/work-graph/R3c-task-relations-boundaries.test.ts:97: it('rejects a v1 PlanRevisionSnapshot that carries v2-only fields', () => {
+tests/work-graph/R3e-reverify.test.ts:467: it('a legacy slot-less root is reverified null → successor; a second legacy root makes the chain invalid (incomplete)', async () => {
+tests/work-graph/R4c-execution-history-index.test.ts:610: it('atomically grants an unowned Kernel identity to one of two different Runs', async () => {
+tests/work-graph/R4c-execution-read.test.ts:233: it('reports incomplete, never a fabricated null Session, for an unmapped Run', async () => {
+tests/work-graph/R4c-execution-read.test.ts:256: it('reports unavailable for damaged records and inconsistent cross-links', async () => {
+tests/work-graph/R4c-task-claim.test.ts:270: it('does not treat an ended Run without a lease as a fresh pending Task', async () => {
+tests/work-graph/S1-codecs-indexes.test.ts:275: it('SV01: frozen old Session/Operation/Message bytes decode to the legacy defaults and the old brief digest is byte-identical', () => {
+tests/work-graph/S1-dispatch-guards.test.ts:151: it('SV58 a legacy copy with fixed saved message derivation is forbidden before Query claim', async () => {
+tests/work-graph/S1-provenance.test.ts:292: describe.each(['memory', 'sqlite'] as const)('S1 legacy Session provenance reader (%s)', (kind) => {
+tests/work-graph/S1-provenance.test.ts:293: it('SV12 an old first claim plus a new creation operation with a unique requeue.historySource backfills a '
+tests/work-graph/S1-provenance.test.ts:338: it('SV13 an existing old Session was reused and historySource points at another Session: backfill is new '
+tests/work-graph/S1-provenance.test.ts:393: it('SV15 two reliable legacy evidence sources conflict: incomplete/legacy_provenance_ambiguous, '
+tests/work-graph/S1-provenance.test.ts:415: it('SV45 an old provenance trace closes a cycle: cycle/session_provenance_cycle, nothing is written',
+tests/work-graph/S1-provenance.test.ts:440: it('SV46 the initial link.since points at a later linkChanged, not SessionCreated: requeue_creation is not '
+tests/work-graph/S1-session-facts.test.ts:172: it('SV53 an old Query pointer without executionState locates one Query and preserves the Work wait', async () => {
+tests/work-graph/S2A-notices-rework.test.ts:37: it('QA-11 legacy requeues without since order by occurredAt before the commit-position requeues', async () => {
+tests/work-graph/S2B-30-track-bars.test.ts:188: it('2B-30 legacy rounds without since and pre-2B finalized rounds without finalizedAt are only counted in unplaced.rounds', async () => {
+tests/work-graph/S2B-32-task-timeline-fold.test.ts:226: it('2B-32 fold order (a): a pause before entry -> paused, a resume -> pending, entry -> running', async () => {
+tests/work-graph/S2B-33-task-timeline-pagination.test.ts:98: it('2B-33 a pre-2B finalized round puts check_start and check_end in untimedPoints with no verifying segment', async () => {
+tests/work-graph/S2B-activity-calendar-tasks.test.ts:146: it('2B-26 filters a cell to one line with sessionRefs and counts Runs whose claiming Session is unknown', async () => {
+tests/work-graph/S2B-activity-calendar-tasks.test.ts:171: it('2B-26 sessionRefs skips a foreign-line uncounted Run and counts an unresolvable claiming Session', async () => {
+tests/work-graph/S2B-activity-calendar.test.ts:215: it('2B-24 attributes begun checks to the round start hour and its task and counts legacy rounds as unplaced', async () => {
+tests/work-graph/S2B-r2-never-entered.test.ts:23: it('R5 a V1 authorization phase authorized does not prove non-entry', async () => {
+tests/work-graph/S2B-r2-r5-not-entered.test.ts:36: it('2B-r2 R5 a V1 authorization does not prove non-entry', async () => {
+tests/work-graph/S2C-lines-d1.test.ts:32: it('2C-14 (1) the literal D1 counts are working 3, standby 6 and the archived range', async () => {
+tests/work-graph/S2C-lines-page.test.ts:394: it('2C-18 executions list only the indexed Work claims and QueryRuns on a legacy Session', async () => {
+tests/work-graph/S3-context-inputs.test.ts:711: it('IN04 an owner outside the consumer workspace is forbidden and returns no body', async () => {
+tests/work-graph/S3-context-inputs.test.ts:799: it('IN12 a finalized FAIL suppresses an older PASS for the same check', async () => {
+tests/work-graph/S3-context-inputs.test.ts:874: it('IN18 an owner-less legacy origin is forbidden and never guessed from the caller scope', async () => {
+tests/work-graph/S3-prepared-context-admission.test.ts:499: it('AD05: an old manifest without contextAssembly authorizes as before and is not migrated', async () => {
+tests/work-graph/S5-request-candidates.test.ts:269: it('RC09 an old v2 candidate gains neither optional fields nor a request claim on read', async () => {
+tests/work-graph/S5-request-candidates.test.ts:305: it('RC11 a legacy v1 proposal remains a read-only candidate without added request fields or claims', async () => {
+tests/work-graph/S5-user-messages.test.ts:277: it('UM12 a genuinely old absent-field Session message keeps its frozen ack DTO/receipt and origin absence', async () => {
+tests/work-graph/W2-agent-whiteboard.test.ts:239: it.each(['initial', 'foreign-source', 'v1'] as const)(
+tests/work-graph/W2-future-intent.test.ts:116: it('codec: v2 accepts executionIntent; v1, gate and unknown values are rejected', async () => {
+tests/work-graph/WP1-goal-content-entry.test.ts:79: it('GE03 commits the same unbound manifest when the stored Goal digest is null', async () => {
+tests/work-graph/WP2-undelivered-notices.test.ts:221: it('M05 old data missing a position blocks only its Goal; a damaged position is refused', async () => {
+
+## DELETED test files: 3
+tests/data/project-source-index.test.ts: 7 tests, 40 expects
+tests/helpers/S5-goal-settings-support.ts: 0 tests, 0 expects
+tests/helpers/SP-storage-migration-fixture.ts: 0 tests, 0 expects
+
+# lines to justify (excluding MOVED): 702, plus 3 deleted files
+
+# D3 pure-file guard: 25 *-pure.test.ts files
+# D3 hits: 0

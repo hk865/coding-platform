@@ -1,0 +1,17 @@
+T full suite W1: copy /home/han001/dsh-work/slices/s9tbW1 at 5daea2e lead fix: R4b-session-directory seeds the current-format catalog row (TQ-091); bubblewrap, 5 workers, scope 7G; started 21:46 available 14297 MB
+build 0
+typecheck 0
+check:architecture 0
+vitest exit 1
+failing files:
+ended 22:29
+vitest summary (added by the lead 2026-10-20 from full-W1-vitest.log; the script's grep missed the ANSI-coloured lines):
+ Test Files  5 failed | 767 passed (772)
+      Tests  24 failed | 9913 passed | 5 skipped (9942)
+   Duration  2542.11s (transform 26.05s, setup 0ms, import 471.42s, tests 12159.19s, environment 58ms)
+failing files:
+ ❯ tests/work-graph/R3e-reverify.test.ts (20 tests | 1 failed) 17655ms
+ ❯ tests/work-graph/A2-gate-chain-facts.test.ts (5 tests | 2 failed) 3818ms
+ ❯ tests/work-graph/S3-prepared-context-admission.test.ts (14 tests | 12 failed) 8695ms
+ ❯ tests/runtime/source-binding-migration.test.ts (7 tests | 1 failed) 496ms
+ ❯ tests/work-graph/S1-requeue.test.ts (18 tests | 8 failed) 19453ms

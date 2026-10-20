@@ -1,0 +1,13 @@
+{
+  "rows": [
+    {
+      "row": "C3-057",
+      "cls": "D2",
+      "winner": "both",
+      "reason": "The agreed D2 class stands. The only production createWorkflow call is src/composition/create-platform.ts:1887, and it always supplies goalSettings and decisionMessages (create-platform.ts:1854-1855). The builder only builds the coordinator when goalSettings exists and always passes goalPhasePin (src/business/workflow/workflow.ts:2875-2898). So no production path can enter any of the four unsupported arms (src/business/workflow/decision-actions.ts:329, :502, :547, :598), and the helper at :142 is never executed. The skeptic's objection to the proposal is right, though. Claude's 'make goalSettings, decisionMessages and goalPhasePin required' (Codex's '收紧必需依赖' has the same effect) forces the builder guard at workflow.ts:2875 to require decisionMessages too. tests/business/S5-decision-workflow.test.ts:111-122 builds a goalSettings-only Workflow and at :258/:261 expects orderGoalAdvances to return the ready ordering; it would instead get the Workflow-level unsupported at workflow.ts:2908-2914. Requiring goalSettings/goalPhasePin also breaks the decisionMessages-only direct composition at tests/business/K3-17-goal-guard.test.ts:120-138, the goalSettings+decisionMessages composition at tests/business/S4C2-U6.test.ts:50-69, and the K3/B2 fixtures (tests/helpers/K3-blocked-command-fixture.ts:489-499, tests/helpers/K3-review-card-fixture.ts:315-327, tests/work-graph/B2-09-crr-owner.test.ts:164-174) - none passes goalPhasePin, and tsconfig.json:16 typechecks tests/**/*.ts.",
+      "proposal": "Delete narrowly or keep untested, not 'make all three required'. If the deps type is left as is, keep the helper and the :502/:547 guards (a goalSettings-only Workflow is a real supported composition, exercised by tests/business/S5-decision-workflow.test.ts:250-261); deleting :329/:598 alone still leaves no sound path because goalSettings and goalPhasePin are genuinely optional for the direct decisionMessages-only composition. If the lead accepts test edits, split the deps by method - require decisionMessages only on the resolveDecision/advanceReviewDisposition path and goalPhasePin only for conflict_wait (decision-actions.ts:328-331), keep orderGoalAdvances's goalSettings guard - so the builder passes exactly what it has; only then can :329/:502/:547/:598 and the helper go. A blanket required-type change must also update the builder guard at workflow.ts:2875-2898 and all six test compositions listed above.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    }
+  ]
+}

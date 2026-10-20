@@ -1,0 +1,275 @@
+# D1 assertion ledger w2-base..HEAD (tests)
+
+## MOVED: 35
+
+## NEW timeout in an existing file: 3
+tests/work-graph/UCR-settle-review.test.ts:209: }, 120_000);
+tests/work-graph/UCR-settle-review.test.ts:237: }, 120_000);
+tests/work-graph/UCR-settle-review.test.ts:295: }, 120_000);
+
+## REMOVED assertion: 207
+tests/business/K3-46-review-advance-failures.test.ts:647: expect(rejected.reason).toContain('failedReviewRefs');
+tests/business/K3-UR7-crr-failed-set.test.ts:547: expect(rejected).toMatchObject({ status: 'rejected', code: 'invalid' });
+tests/business/K3-UR7-crr-failed-set.test.ts:552: expect(fresh.status).toBe('ready');
+tests/business/K3-UR7-crr-failed-set.test.ts:554: expect(hasKey(fresh.value.next, 'failedCardRefs')).toBe(false);
+tests/business/K3-UR7-crr-failed-set.test.ts:555: expect(hasKey(fresh.value.next, 'failedReviewRefs')).toBe(false);
+tests/business/K3-review-workflow-rows.test.ts:568: expect(result).toMatchObject({ status: 'ready', value: { state: 'advance', next: { kind: 'perform',
+tests/business/K3-review-workflow-rows.test.ts:574: expect(w.settleCalls).toBe(0);
+tests/business/K3-review-workflow-rows.test.ts:945: expect(result).toMatchObject({ status: 'ready', value: { state: 'advance',
+tests/business/K3-review-workflow-rows.test.ts:948: expect(result.value.receipt).toEqual({ kind: 'settle_review', result: settled });
+tests/record-store/R3a-transaction-boundaries.test.ts:50: expect(await backend.records.commit(scopeSeed)).toMatchObject({ status: 'committed' });
+tests/record-store/R3a-transaction-boundaries.test.ts:81: expect(await backend.records.commit(scopeSeed)).toMatchObject({ status: 'committed' });
+tests/record-store/R3a-transaction-boundaries.test.ts:108: expect(await backend.records.commit(scopeSeed)).toMatchObject({ status: 'committed' });
+tests/record-store/R3a-transaction-boundaries.test.ts:127: expect(await pending).toMatchObject({ status: 'rejected', code: 'unavailable' });
+tests/record-store/R3a-transaction-boundaries.test.ts:128: expect(Number(observer.prepare('SELECT COUNT(*) AS n FROM events').get()!['n'])).toBe(before);
+tests/record-store/R3a-transaction-boundaries.test.ts:129: expect(await backend.records.readMany([canonicalRefKey({ aggregateType: 'Goal', projectId, goalId: 'tamper-goal' })]))
+tests/record-store/S2A-ordered-lookup.test.ts:143: expect(await backend.records.commit(change(`${prefix}-${String(position)}`, row)))
+tests/record-store/S2C-count-lookup.test.ts:108: expect(await backend.records.commit(change(`${prefix}-${String(position)}`, row)))
+tests/record-store/S4B-text-search.test.ts:388: expect(sqlitePages).toEqual(memoryPages);
+tests/record-store/SP-literal-type.test.ts:147: expect(await commitRow(backend, 'w1', typed('W', 'w1', { status: 'open', n: 1 }))).toMatchObject({ status: 'committed' });
+tests/record-store/SP-literal-type.test.ts:148: expect(await commitRow(backend, 'w2', typed('W', 'w2', { n: 2 }))).toMatchObject({ status: 'committed' });
+tests/record-store/SP-literal-type.test.ts:149: expect(await commitRow(backend, 'w3', typed('W', 'w3', { status: 'held', n: 3 }))).toMatchObject({ status: 'committed' });
+tests/record-store/SP-literal-type.test.ts:150: expect(await commitRow(backend, 'v1', typed('V', 'v1', { status: 'closed', n: 1 }))).toMatchObject({ status: 'committed' });
+tests/record-store/SP-literal-type.test.ts:151: expect(await commitRow(backend, 'v2', typed('V', 'v2', { n: 2 }))).toMatchObject({ status: 'committed' });
+tests/record-store/SP-literal-type.test.ts:152: expect(await commitRow(backend, 'v3', typed('V', 'v3', { status: 'open', n: 3 }))).toMatchObject({ status: 'committed' });
+tests/record-store/lookup.test.ts:200: try { expect(await lookup(damaged, ['shared', 'open'])).toMatchObject({ status: 'rejected', code: 'corrupt' }); }
+tests/runtime/B2-04-allowance.test.ts:76: expect(await w.answer('allow_rerun', pending.ref, pending.revision))
+tests/runtime/B2-04-allowance.test.ts:80: expect(await runHook(w.hook, shell('npm run db:migrate')))
+tests/runtime/B2-04-allowance.test.ts:84: expect(still).toMatchObject({ state: 'allowed', revision: 2, usedAt: null });
+tests/runtime/B2-09-allowance-crash.test.ts:74: expect(await w.answer('allow_rerun', pending.ref, pending.revision))
+tests/runtime/B2-09-allowance-crash.test.ts:78: expect(await runHook(w.hook, shell(command, callId)))
+tests/runtime/B2-09-allowance-crash.test.ts:81: expect(used).toMatchObject({ state: 'used', revision: 3, usedBy: { runId: w.runRef.runId, callId } });
+tests/runtime/B2-09-allowance-crash.test.ts:89: expect(blocked).toMatchObject({ point: 'before_tool', kind: 'block' });
+tests/runtime/B2-09-allowance-crash.test.ts:90: if (blocked.kind === 'block') expect(blocked.reason).toContain('request_command_rerun');
+tests/runtime/C1-communication-tools.test.ts:118: expect(handle.names).toEqual([...SESSION_MAILBOX_TOOL_NAMES]);
+tests/runtime/C1-communication-tools.test.ts:119: expect(definitions.map(definition => definition.name)).toEqual([...SESSION_MAILBOX_TOOL_NAMES]);
+tests/runtime/C1-communication-tools.test.ts:190: expect(byName('read_session_inbox').effectClass).toBe('read_only');
+tests/runtime/C1-communication-tools.test.ts:191: expect(byName('read_session_message').effectClass).toBe('read_only');
+tests/runtime/C1-communication-tools.test.ts:192: expect(byName('read_session_message_body').effectClass).toBe('read_only');
+tests/runtime/C1-communication-tools.test.ts:194: expect(byName(name).effectClass).not.toBe('read_only');
+tests/runtime/K3-continuation-review-note.test.ts:324: expect(before).toBe(BASE_RENDER);
+tests/runtime/K3-continuation-review-note.test.ts:326: expect(renderContinuationBriefZh({ ...brief, unknownCallReview: null }, continuationBriefDigest(brief))).toBe(BASE_RENDER);
+tests/runtime/R4b-session-operations.test.ts:149: expect(created.status).toBe('completed');
+tests/runtime/R4b-session-operations.test.ts:158: expect(result).toMatchObject({ status: 'rejected', code: 'unavailable' });
+tests/runtime/S4C-note-run-task-resolver.test.ts:60: expect(result).toEqual({ status: 'ready', value: { goalId: G, taskId: 't1', planRef: PLAN_REF } });
+tests/runtime/S4C-note-run-task-resolver.test.ts:65: expect(await createNoteRunTaskResolver(recordsReturning(RUN_RECORD))(hostContext()))
+tests/runtime/S4C-note-run-task-resolver.test.ts:67: expect(await createNoteRunTaskResolver(recordsReturning(null))(workContext()))
+tests/runtime/S4C-note-run-task-resolver.test.ts:70: expect(await createNoteRunTaskResolver(recordsReturning(damaged))(workContext()))
+tests/runtime/S4C-note-tools.test.ts:137: expect(input.note).toMatchObject({ kind: 'convention', topic: 'auth flow', conclusion: 'use jwt',
+tests/runtime/S4C-note-tools.test.ts:158: expect(writes[0]!.input.note).toMatchObject({ kind: 'understanding',
+tests/runtime/S4C-note-tools.test.ts:160: expect('body' in writes[0]!.input.note).toBe(false);
+tests/runtime/S4C-note-tools.test.ts:201: expect(outputValue(withdrawn)).toMatchObject({ status: 'done', state: 'withdrawn' });
+tests/runtime/S4C-note-tools.test.ts:272: expect(built).toStrictEqual({ op: 'write', request: {
+tests/runtime/S4C-note-tools.test.ts:286: expect(built.request).toStrictEqual({ commandId: 'cmd-10', expectedPointerRevision: null, goalId: null,
+tests/runtime/S4C-note-tools.test.ts:290: expect('body' in built.request.note).toBe(false);
+tests/runtime/S4C-note-tools.test.ts:296: expect(withResolution).toStrictEqual({ op: 'review', request: { commandId: 'cmd-11', noteId: 'n1',
+tests/runtime/S4C-note-tools.test.ts:301: expect(plain).toStrictEqual({ op: 'review', request: { commandId: 'cmd-12', noteId: 'n2',
+tests/runtime/S4C-note-tools.test.ts:308: expect(built).toStrictEqual({ op: 'withdraw', request: { commandId: 'cmd-13', noteId: 'n3',
+tests/runtime/S4C-note-tools.test.ts:311: expect(noReason).toStrictEqual({ op: 'withdraw', request: { commandId: 'cmd-14', noteId: 'n4',
+tests/runtime/S5-user-message-tools.test.ts:284: expect(before.run).toMatchObject({ status: 'starting', revision: 1 });
+tests/runtime/S5-user-message-tools.test.ts:289: expect((await read()).run.executionAuthorization).toMatchObject({ phase: 'authorized' });
+tests/runtime/S5-user-message-tools.test.ts:413: expect(userPump.consumeCalls()).toBe(0);
+tests/runtime/S5-user-message-tools.test.ts:414: expect(userPump.queryStarts()).toBe(0);
+tests/runtime/S5-user-message-tools.test.ts:436: expect(await consumer(f.ctx, input)).toMatchObject({ status: 'rejected', code: 'unsupported' });
+tests/runtime/S5-user-message-tools.test.ts:437: expect(userPump.queryStarts()).toBe(0);
+tests/runtime/S5-user-message-tools.test.ts:438: expect(await f.storeSnapshot()).toEqual(before);
+tests/runtime/S5-user-message-tools.test.ts:453: expect(sessionPump.consumeCalls()).toBe(1);
+tests/scenarios/C6-unrelated-adoption.test.ts:170: expect(claim.planRef).toEqual(p1);
+tests/scenarios/C6-unrelated-adoption.test.ts:177: expect({ run: heldAfter.value.run, session: heldAfter.value.session, lease: heldAfter.value.lease })
+tests/scenarios/C6-unrelated-adoption.test.ts:179: expect(heldAfter.value.lease?.release).toBeUndefined();
+tests/scenarios/C6-unrelated-adoption.test.ts:182: expect(toOpen.receipts[0]).toMatchObject({ kind: 'start', result: { status: 'ready',
+tests/scenarios/C6-unrelated-adoption.test.ts:187: expect(open.operation.request.input.planRef).toEqual(p2.ref);
+tests/scenarios/C6-unrelated-adoption.test.ts:188: expect(await drive(platform, open)).toMatchObject({ state: 'completed' });
+tests/scenarios/C6-unrelated-adoption.test.ts:190: expect(row).toMatchObject({ effectivePhase: 'satisfied', execution: claim.runRef });
+tests/scenarios/C6-unrelated-adoption.test.ts:191: expect(row.requeueRef ?? null).toBeNull();
+tests/scenarios/C6-unrelated-adoption.test.ts:192: expect(scripted.calls(), 'one model call, no rework').toBe(1);
+tests/scenarios/C6-unrelated-adoption.test.ts:194: expect(c6Case.phasesOf(platform)).not.toContain('FAILED');
+tests/scenarios/C6-unrelated-adoption.test.ts:196: expect(world?.requeues).toEqual([]);
+tests/scenarios/C6-unrelated-adoption.test.ts:200: expect(noProgressKeyAgainst(p2, ended.value.run, head)).toEqual(noProgressKeyAgainst(p1Plan.value.plan, ended.value.run, head));
+tests/scenarios/C6-unrelated-adoption.test.ts:203: expect(authorizedEvents(directory)).toEqual([expect.objectContaining({ activePlanRef: p2.ref,
+tests/scenarios/K3-05-review-round.test.ts:155: expect(ended.run).toMatchObject({ status: 'ended', outcome: 'completed' });
+tests/scenarios/K3-05-review-round.test.ts:178: expect(resolved.value).toMatchObject({ status: 'resolved', decisionReasons: [], activeRound: null });
+tests/scenarios/K3-06-mixed-batch.test.ts:199: expect(claimStop.stopped.kind).toBe('perform');
+tests/scenarios/K3-06-mixed-batch.test.ts:203: expect(reviewBasisOf(claimStop.stopped)).toMatchObject({ phase: 'review' });
+tests/scenarios/K3-06-mixed-batch.test.ts:206: expect(startStop.receipts.map(receipt => receipt.kind)).toEqual(['claim_task', 'prepare']);
+tests/scenarios/K3-06-mixed-batch.test.ts:209: expect(roundRunRef.runId).not.toBe(prepared.claim.runRef.runId);
+tests/scenarios/K3-06-mixed-batch.test.ts:216: expect(concluded, JSON.stringify(concluded)).toMatchObject({ status: 'ready', value: { status: 'pending_review',
+tests/scenarios/K3-06-mixed-batch.test.ts:223: expect(kinds).toContain('settle_review');
+tests/scenarios/K3-06-mixed-batch.test.ts:224: expect(kinds).not.toContain('open_checks');
+tests/scenarios/K3-06-mixed-batch.test.ts:225: expect(kinds).not.toContain('finalize_checks');
+tests/scenarios/K3-06-mixed-batch.test.ts:227: expect(resolved, JSON.stringify(resolved)).toMatchObject({ status: 'ready', value: {
+tests/scenarios/K3-06-mixed-batch.test.ts:234: expect(original.run).toMatchObject({ status: 'ended', outcome: 'crashed' });
+tests/scenarios/K3-06-mixed-batch.test.ts:235: expect(original.lease?.release?.runRef.runId).toBe(roundRunRef.runId);
+tests/scenarios/K3-09-restart-between-calls.test.ts:121: expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+tests/scenarios/K3-16-proposal-round.test.ts:128: expect(prepared.envelope.permissions.tools)
+tests/scenarios/K3-16-proposal-round.test.ts:130: expect(prepared.envelope.permissions.writeScope).toEqual([]);
+tests/scenarios/K3-29-maintenance-review-run.test.ts:109: expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+tests/scenarios/K3-29-recovery-continuation.test.ts:121: expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+tests/scenarios/K3-29-recovery-round.test.ts:173: expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+tests/scenarios/K3-29-startup-variants.test.ts:215: expect(prepared.envelope.permissions.tools)
+tests/scenarios/K3-37-stopped-review-round.test.ts:140: expect(reportA).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+tests/scenarios/K3-37-stopped-review-round.test.ts:330: expect(paused.run).toMatchObject({ status: 'running',
+tests/scenarios/K3-37-stopped-review-round.test.ts:332: expect(await readControl(h.host, goalPauseRef)).toMatchObject({ kind: 'pause', status: 'applied',
+tests/scenarios/K3-37-stopped-review-round.test.ts:338: expect(report.report?.runs.find(row => row.ref === JSON.stringify(roundRunRef)))
+tests/scenarios/K3-37-stopped-review-round.test.ts:341: expect(reconciled.run).toMatchObject({ status: 'ended', outcome: 'crashed',
+tests/scenarios/K3-37-stopped-review-round.test.ts:351: expect(settleResult).toMatchObject({ status: 'ready', value: { receipt: { kind: 'settle_review' } } });
+tests/scenarios/K3-37-stopped-review-round.test.ts:353: expect(unfinished.status).toBe('ready');
+tests/scenarios/K3-37-stopped-review-round.test.ts:355: expect(unfinished.value).toMatchObject({ status: 'pending_review', activeRound: null, decisionReasons: [] });
+tests/scenarios/K3-37-stopped-review-round.test.ts:356: expect(unfinished.value.rounds).toHaveLength(1);
+tests/scenarios/K3-37-stopped-review-round.test.ts:357: expect(unfinished.value.rounds[0]).toMatchObject({ result: 'unfinished', round: 1, stateEntry: 1 });
+tests/scenarios/K3-37-stopped-review-round.test.ts:365: expect((await reviewOf(h, preparedA.claim.runRef))).toMatchObject({ status: 'ready',
+tests/scenarios/K3-37-stopped-review-round.test.ts:370: expect(resumed).toMatchObject({ status: 'committed' });
+tests/scenarios/K3-37-stopped-review-round.test.ts:373: expect(second.receipts.map(receipt => receipt.kind)).toEqual(expect.arrayContaining(['claim_task', 'prepare']));
+tests/scenarios/K3-37-stopped-review-round.test.ts:375: expect(reopened.status).toBe('ready');
+tests/scenarios/K3-37-stopped-review-round.test.ts:377: expect(reopened.value.status).toBe('pending_review');
+tests/scenarios/K3-37-stopped-review-round.test.ts:378: expect(reopened.value.activeRound).toMatchObject({ phase: 'review', round: 2 });
+tests/scenarios/K3-37-stopped-review-round.test.ts:379: expect(reopened.value.rounds).toHaveLength(1);
+tests/scenarios/K3-44-hold-restart.test.ts:93: expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+tests/scenarios/K3-44-recovery-answers.test.ts:150: expect(settled).toMatchObject({ status: 'ready', value: { receipt: { kind: 'settle_review' } } });
+tests/scenarios/K3-44-recovery-answers.test.ts:155: expect(read.status).toBe('ready');
+tests/scenarios/K3-44-recovery-answers.test.ts:157: expect(read.value).toMatchObject({ status: 'needs_decision', open: 'yes', activeRound: null });
+tests/scenarios/K3-R1-file-change.test.ts:260: expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+tests/scenarios/K3-R1-file-change.test.ts:265: expect(read.status).toBe('ready');
+tests/scenarios/K3-R1-file-change.test.ts:269: expect(review.items).toHaveLength(2);
+tests/scenarios/K3-R1-file-change.test.ts:270: expect(review.items.map(item => item.toolName)).toEqual(['edit', 'edit']);
+tests/scenarios/K3-R1-file-change.test.ts:271: expect(review.items.map(item => item.kind)).toEqual(['file_edit', 'file_edit']);
+tests/scenarios/K3-R1-file-change.test.ts:272: expect(review.items.map(item => item.observed)).toEqual([
+tests/scenarios/K3-R1-file-change.test.ts:278: expect(review.workspace).toMatchObject({ status: 'captured', runBaselineKnown: true });
+tests/scenarios/K3-R1-file-change.test.ts:292: expect(section).not.toBeNull();
+tests/scenarios/K3-R1-file-change.test.ts:297: expect(replaceItem?.files[0]).toMatchObject({ path: 'src/module.ts', mode: 'replace', change: 'modified' });
+tests/scenarios/K3-R1-file-change.test.ts:298: expect(createItem?.files[0]).toMatchObject({ path: 'src/new-file.txt', mode: 'create', change: 'added' });
+tests/scenarios/K3-R1-file-change.test.ts:300: expect(replaceFile?.diff?.text).toBe(EXPECTED_DIFF);
+tests/scenarios/K3-R1-file-change.test.ts:301: expect(replaceFile?.diff?.truncated).toBe(false);
+tests/scenarios/K3-R1-file-change.test.ts:302: expect((replaceFile?.diff?.text.length ?? 0)).toBeLessThanOrEqual(2_000);
+tests/scenarios/K3-R1-file-change.test.ts:303: expect(note).toContain('- 不在变动清单里，不证明没做。');
+tests/scenarios/K3-R1-file-change.test.ts:322: expect(editSeam.calls.map(call => call.callId)).toEqual(['k3-04-replace', 'k3-04-create']);
+tests/scenarios/K3-r1-seams.test.ts:151: expect(beforeMessage.locked(), 'K3-02 locks right after the model evidence, before the message').toBe(true);
+tests/scenarios/K3-r1-seams.test.ts:158: expect(afterMessage.locked(), 'K3-01 locks right after the message commit').toBe(true);
+tests/scenarios/K3-r1-seams.test.ts:175: expect(lock.locked(), 'the lock was taken at the evidence commit').toBe(true);
+tests/scenarios/K3-r1-seams.test.ts:176: expect(model.calls(), 'the provider produced the send').toBe(1);
+tests/scenarios/K3-r1-seams.test.ts:177: expect(h.ledgerEventTypes()).toContain('ModelRequestEvidenceRecorded');
+tests/scenarios/K3-r1-seams.test.ts:178: expect(h.ledgerEventTypes()).not.toContain('SessionMessageSent');
+tests/scenarios/K3-r1-seams.test.ts:181: expect(messages, 'no SessionMessage snapshot ever committed').toEqual([]);
+tests/scenarios/harness.test.ts:198: expect(reworked.state).toBe('stopped');
+tests/scenarios/harness.test.ts:199: expect(committedOutcomesOf(reworked)).toEqual(['FAIL', 'FAIL']);
+tests/scenarios/harness.test.ts:200: expect(h.lastWorld?.rounds.map(round => round.configuration.configurationRevision)).toEqual([checkRevisionOf(2), checkRevisionOf(2)]);
+tests/scenarios/harness.test.ts:201: expect(h.lastWorld?.requeues).toMatchObject([{ failureClass: 'check_failed', automation: { automatic: true, counted: true,
+tests/scenarios/harness.test.ts:205: expect(h.automationPolicy()).toMatchObject({ autoReworkLimit: 0 });
+tests/scenarios/harness.test.ts:206: expect(await h.taskRow()).toMatchObject({ failure: { automation: { cap: 0,
+tests/scenarios/harness.test.ts:210: expect(stopped).toMatchObject({ state: 'waiting', receipts: [] });
+tests/scenarios/harness.test.ts:211: expect(h.counts()).toEqual(before);
+tests/state/S1-anomaly.test.ts:135: expect(view.pickedUpBy).toBeNull();
+tests/state/S1-anomaly.test.ts:137: expect(archive.label).toBe('中断，待核对');
+tests/state/S1-anomaly.test.ts:138: expect(archive.next).toEqual({ kind: 'dispatch' });
+tests/state/command-rerun-request-pure.test.ts:93: expect(full.declaredForms).toHaveLength(8);
+tests/state/command-rerun-request-pure.test.ts:95: expect(result.ok).toBe(false);
+tests/state/command-rerun-request-pure.test.ts:97: expect([result.reason, result.code]).toEqual(['guard_failed', 'capacity']);
+tests/state/command-rerun-request-pure.test.ts:105: expect(result.ok).toBe(false);
+tests/state/command-rerun-request-pure.test.ts:107: expect([result.reason, result.code]).toEqual(['guard_failed', 'invalid']);
+tests/state/control-intent-machine.test.ts:603: expect(transitionControlIntent({ node: 'Queued', kind: null, revision: 1, observation: null }, SUPERSEDED_EVENT, ctxWith()))
+tests/state/control-intent-machine.test.ts:854: expect(transitionControlIntent({ node: 'Queued', kind: null, revision: 1, observation: null },
+tests/state/control-intent-machine.test.ts:863: expect(observe(ctxWith({ history: 'malformed' }))).toEqual(malformed);
+tests/state/control-intent-machine.test.ts:865: expect(observe(ctxWith({ history: 'malformed' }, { pinsMatch: { intent: false, run: true } })))
+tests/state/control-intent-machine.test.ts:867: expect(observe(ctxWith({ history: 'malformed' }, { pinsMatch: { intent: true, run: false } })))
+tests/state/control-intent-machine.test.ts:869: expect(observe(ctxWith({ history: 'malformed', entry: null })))
+tests/state/control-intent-machine.test.ts:871: expect(observe(ctxWith({ history: 'malformed', entry: { ...ENTRY, consumerId: 'consumer-2' } })))
+tests/state/control-intent-machine.test.ts:874: expect(observe(ctxWith({ history: 'malformed' }), kernelObservation('cancelled', { source: { ...KERNEL, position: 99 } }),
+tests/state/k3-review-claim.test.ts:97: expect(problem).toMatchObject({ reason: 'illegal', code: 'invalid' });
+tests/work-graph/K3-11-review-reasons.test.ts:325: expect(result).toMatchObject({ status: 'committed', value: {
+tests/work-graph/K3-11-review-reasons.test.ts:336: expect(result).toMatchObject({ status: 'committed', value: {
+tests/work-graph/K3-11-review-reasons.test.ts:346: expect(result).toMatchObject({ status: 'committed', value: {
+tests/work-graph/K3-11-review-reasons.test.ts:355: expect(first).toMatchObject({ status: 'committed', value: {
+tests/work-graph/K3-11-review-reasons.test.ts:363: expect(result).toMatchObject({ status: 'committed', value: {
+tests/work-graph/K3-11-review-reasons.test.ts:379: expect(first).toMatchObject({ status: 'committed', value: { decisionReasons: [], activeRound: null } });
+tests/work-graph/K3-11-review-reasons.test.ts:384: expect(result).toMatchObject({ status: 'committed', value: {
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:161: expect(first).toMatchObject({ status: 'committed', replayed: false });
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:166: expect(replay).toEqual({ ...first, replayed: true });
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:168: expect(afterReplay).toEqual(afterFirst);
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:175: expect(first).toMatchObject({ status: 'committed' });
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:178: expect(conflict).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:185: expect(first).toMatchObject({ status: 'committed', value: { revision: 3 } });
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:188: expect(second).toMatchObject({ status: 'committed', value: { revision: 4 } });
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:190: expect(read).toMatchObject({ status: 'ready', value: { revision: 4, items: [{ alias: 1,
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:202: expect(notProcess).toMatchObject({ status: 'rejected', code: 'invalid' });
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:203: expect(await fx.reviews.readReview(fx.roundCtx, { ref: fx.reviewRef })).toEqual(before);
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:225: expect(receipt.status).toBe('committed');
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:228: expect(late).toMatchObject({ status: 'rejected', code: 'source_stale' });
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:305: expect(receipt.status).toBe('committed');
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:325: expect(await fx.reviews.readReview(fx.roundCtx, { ref: fx.reviewRef })).toEqual(before);
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:875: expect(facts).toMatchObject({ status: 'ready' });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:877: expect(facts.value.byTaskId.get(record.task.taskId)).toMatchObject({ execution: origin,
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:892: expect(broken).toMatchObject({ status: 'ready' });
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:894: expect(broken.value.byTaskId.get(record.task.taskId)?.unknownCallReview).toEqual({ status: 'unreadable' });
+tests/work-graph/K3-47-reader-facts.test.ts:206: expect(row.unknownCallReview).toMatchObject({ status: 'pending_review', hold: null });
+tests/work-graph/K3-48-2-unknown-call-review-model-text-budget.test.ts:211: expect(bytesOf(record)).toBe(target);
+tests/work-graph/UCR-settle-review.test.ts:138: expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed',
+tests/work-graph/UCR-settle-review.test.ts:210: expect(receipt.status).toBe('committed');
+tests/work-graph/UCR-settle-review.test.ts:225: expect(await fx.reviews.readReview(fx.b2.ctx, { ref: fx.reviewRef })).toEqual(before);
+tests/work-graph/UCR-settle-review.test.ts:275: expect(await fx.reviews.readReview(fx.b2.ctx, { ref: fx.reviewRef })).toEqual(before);
+tests/work-graph/UCR-settle-review.test.ts:292: expect(result).toMatchObject({ status: 'committed', value: { status: 'resolved' } });
+tests/work-graph/UCR-settle-review.test.ts:293: expect(calls).toBe(1);
+tests/work-graph/unknown-call-review-list.test.ts:103: expect(first).toMatchObject({ status: 'ready', value: { items: [{ ref: { runId: 'run-a1' } }] } });
+tests/work-graph/unknown-call-review-list.test.ts:108: expect(second).toMatchObject({ status: 'ready', value: { items: [{ ref: { runId: 'run-a2' } }], nextCursor: null } });
+tests/work-graph/unknown-call-review-list.test.ts:135: expect(await fx.reviews.listReviews(fx.b2.ctx, { workspace: scope,
+tests/work-graph/unknown-call-review-list.test.ts:138: expect(await fx.reviews.listReviews(fx.b2.ctx, { workspace: scope,
+tests/work-graph/unknown-call-review-list.test.ts:184: expect(first.value.items.map(record => record.ref.runId))
+tests/work-graph/unknown-call-review-list.test.ts:192: expect(second.value.items.map(record => record.ref.runId))
+tests/work-graph/unknown-call-review-list.test.ts:224: expect(page.value.readThrough).toBe(makeCommitCursor(3));
+
+## REMOVED test or describe: 47
+tests/business/K3-15-ur3h.test.ts:203: it.each(['memory', 'sqlite'] as const)('K3-15 (六) %s: hold then the next advance cancels the round (RUN-09(U)), UR4 settles it (UCR-08b), zero model calls', async kind => {
+tests/business/K3-UR7-crr-failed-set.test.ts:540: it('the failed-card set is never a public advance input (both field names are refused)', async () => {
+tests/business/K3-review-workflow-rows.test.ts:560: it.each(['memory', 'sqlite'] as const)('K3 UR8 (%s): a held record with a claimed round is skipped, never prepared or settled', async kind => {
+tests/business/K3-review-workflow-rows.test.ts:936: it('K3 settle_review: the owner receipt is preserved field for field and the next selection follows', async () => {
+tests/record-store/R3a-transaction-boundaries.test.ts:103: it('SQLite rejects a same-revision scope identity change made after the Goal pre-read', async () => {
+tests/record-store/S4B-text-search.test.ts:380: it('T-05 both: the memory and sqlite backends agree page by page', async () => {
+tests/record-store/S4B-text-search.test.ts:692: it('T-05 both: more than 1000 prefix records yield the same next on both backends', async () => {
+tests/record-store/S4B-text-search.test.ts:709: it('T-05 both: more than 1000 prefix records yield the same complete on both backends', async () => {
+tests/record-store/lookup.test.ts:174: it('SQLite adds an index to an existing database and refuses to return a matching damaged row', async () => {
+tests/runtime/B2-04-allowance.test.ts:72: it('B2-04: a failed consumeAllowance commit blocks the call and keeps the allowance allowed', async () => {
+tests/runtime/B2-09-allowance-crash.test.ts:65: it('B2-09b (owner part): the committed consume leaves the request used with usedBy, and the same command is blocked again', async () => {
+tests/runtime/C1-communication-tools.test.ts:115: it('publishes exactly the six fixed names and matching definitions', () => {
+tests/runtime/C1-communication-tools.test.ts:187: it('declares read_only for reads and a real platform side effect for writes', () => {
+tests/runtime/K3-continuation-review-note.test.ts:321: it('leaves a brief without unknownCallReview byte-identical to the pre-K3 bytes', () => {
+tests/runtime/R4b-session-operations.test.ts:144: it('fails closed when the original Kernel session.created record is damaged', async () => {
+tests/runtime/S4C-note-run-task-resolver.test.ts:64: it('GTN21 a non-work principal, a missing Run and a damaged Run are unavailable', async () => {
+tests/runtime/S4C-note-tools.test.ts:264: describe('RW-14 recordNoteRequestOf is the one pure request builder', () => {
+tests/runtime/S4C-note-tools.test.ts:265: it('RW-14 write: maps the model args to the writeNote request with the trusted commandId and defaults', () => {
+tests/runtime/S4C-note-tools.test.ts:281: it('RW-14 write: an understanding carries sections and no body; absent lists default to empty', () => {
+tests/runtime/S4C-note-tools.test.ts:293: it('RW-14 review: maps verdict/resolution/defaults with the trusted commandId', () => {
+tests/runtime/S4C-note-tools.test.ts:305: it('RW-14 withdraw: maps the withdrawNote request with the trusted commandId', () => {
+tests/scenarios/C6-unrelated-adoption.test.ts:163: it('C6: an unrelated adoption after the claim does not stop the claimed Run; it completes under the new Plan', async () => {
+tests/scenarios/K3-05-review-round.test.ts:86: it('K3-05: RUN-25 leaves a process item pending; the review claim, the prepared L13 tools and the Run purpose are real; the round records done/unlikely, settle_review (no open_checks) resolves the record and the round releases the lease', async () => {
+tests/scenarios/K3-06-mixed-batch.test.ts:174: it('K3-06 (process, L9/L10-L16): one in-flight shell call, its own Run, is reviewed, settled and read back', async () => {
+tests/scenarios/K3-37-stopped-review-round.test.ts:298: it('K3-37 (三): a Goal-pause interrupted review round is recorded unfinished; only after the Goal resumes does a second round open', async () => {
+tests/scenarios/K3-R1-file-change.test.ts:226: it('injection example (not R1): a read-only independent stand-in makes a two-entry review reachable', async () => {
+tests/scenarios/K3-r1-seams.test.ts:136: describe('K3 §5.2 crash point recipes', () => {
+tests/scenarios/K3-r1-seams.test.ts:145: it('locks at ModelRequestEvidenceRecorded (K3-02, before the message) and at SessionMessageSent (K3-01)', async () => {
+tests/scenarios/K3-r1-seams.test.ts:162: it('K3-02 real flow: the evidence lock leaves the send model call but no message commit', async () => {
+tests/scenarios/harness.test.ts:191: it('platform mode seams: a registered check is a new configuration revision; cap 0 stops the automatic rework', async () => {
+tests/state/S1-anomaly.test.ts:106: it('UT19 only a claimed successor carries the anchor, so it is not picked up and the Task waits for dispatch', () => {
+tests/state/S1-anomaly.test.ts:132: it('UT21 a cancelled successor that never entered carries the anchor but does not pick it up', () => {
+tests/state/command-rerun-request-pure.test.ts:91: it('refuses forms_added on a full eight-form request with capacity', () => {
+tests/state/command-rerun-request-pure.test.ts:101: describe('CRR-02 (F-027): card-key admission is fixed literal', () => {
+tests/state/command-rerun-request-pure.test.ts:102: it('refuses an answer whose card key does not match, writing nothing', () => {
+tests/state/control-intent-machine.test.ts:602: it('a recorded state without a kind is malformed', () => {
+tests/state/control-intent-machine.test.ts:853: it('a recorded state without a kind is malformed', () => {
+tests/state/control-intent-machine.test.ts:859: it('a stored locator that fails the locator codec is unavailable right after the missing-locator row (`control-service.ts:551`)', () => {
+tests/state/k3-review-claim.test.ts:92: it('K3-38 lets an ordinary (first/requeue) claim answer busy while the record is unsettled', () => {
+tests/work-graph/K3-11-review-reasons.test.ts:319: it.each(['memory', 'sqlite'] as const)('K3-11 %s: second_consecutive appears once alone', async kind => {
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:157: it.each(['memory', 'sqlite'] as const)('K3-14 %s: the same call replays the original receipt and leaves the record unchanged', async kind => {
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:171: it.each(['memory', 'sqlite'] as const)('K3-14 %s: the same identity with different content is idempotency_conflict', async kind => {
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:194: it.each(['memory', 'sqlite'] as const)('K3-14 %s: a missing or non-process alias is invalid_arguments and writes nothing', async kind => {
+tests/work-graph/K3-14-unknown-call-review-tool.test.ts:206: it.each(['memory', 'sqlite'] as const)('K3-14 %s: writing after the round settled is stale', async kind => {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:861: describe('K3-47 (二) task read model review projection', () => {
+tests/work-graph/K3-26-unknown-call-review-storage.test.ts:862: it.each(['memory', 'sqlite'] as const)(
+tests/work-graph/UCR-settle-review.test.ts:278: it('L16 D6: the per-round display map is read once for a multi-item round', async () => {
+
+## DELETED test files: 2
+tests/scenarios/K3-13-two-commands.test.ts: 1 tests, 18 expects
+tests/work-graph/K3-45-review-incomplete.test.ts: 1 tests, 10 expects
+
+# lines to justify (excluding MOVED): 257, plus 2 deleted files
+
+# D3 pure-file guard: 26 *-pure.test.ts files
+# D3 hits: 0

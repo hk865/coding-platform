@@ -1,0 +1,1 @@
+报告：`./t-C.md`。29 条：stale 7、duplicate 9、trivial 0、handwritten 6、tamper 6、helper 1，估计 1,072 行。116 个文件全部打开（约 70 个完整读、46 个略读），无整份未读；未跑测试/构建。未定：R4a 冻结公开面三处删除、S1 旧 manifest 是否属当前可选字段、`legacy_live` 生产可达性；略读段含 R4-control 尾部、R4c 中段、S2B-tally、S3-context 中段。

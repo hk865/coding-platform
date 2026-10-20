@@ -1,0 +1,58 @@
+{
+  "rows": [
+    {
+      "row": "B-020",
+      "cls": "D2",
+      "winner": "codex",
+      "reason": "The uncovered arm is the null return at run-limits.ts:32. remainingTaskDeadlineMs is not dead (it is live at :31 and its only caller in src or tests is kernelRunLimits at :46; grep finds no other), and :44 guards the call with `if (taskBudget.deadline !== null)`, so the `deadline === null` state cannot arise from the only caller: the upstream check guarantees it. That is D2 (callers exist, the state is impossible), not D1 (no production caller path): the production caller path reaches the function, only not this arm. T narrowed the parameter from `ModelTokenBudget | null | undefined` (before/run-limits.ts:31) to ModelTokenBudget but left the now-unreachable check.",
+      "proposal": "Delete the null return at run-limits.ts:32 and narrow the parameter/return: take the deadline (or a ModelTokenBudget whose caller has already checked `deadline !== null`) and return `number`; then drop the `!` at :46. No new test: the callers' existing tests already exercise the remaining path.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "B-036",
+      "cls": "G",
+      "winner": "codex",
+      "reason": "body-codec.ts:168-179 normalizes a platform_operation origin; arm 0 is the `workspaceId === undefined ? {} : ...` spread at :179. The write boundary takes a caller-supplied MaterialWriteOrigin (material-service.ts:119-135), writeOriginMatchesContext (material-service.ts:273-287) rejects only an origin workspaceId that is present and different, and PlatformMaterialOrigin.workspaceId is optional by type (contracts/core/call-context.ts:40-48). The read policy has an explicit project-wide branch: a Host with no workspaceId may read same-project platform material (materials/applicability.ts:49-58; docs/refactor/tasks/R3b-work-graph-dsh-repair.md:5). Every current production call site happens to pass a workspaceId (mailbox-service.ts:1029, requeue-service.ts:1067, evidence-service.ts:2006, architecture-service.ts:1169/1180; the only conditional one, evidence-service.ts:848-849, sits on a ctx bound by tasks/trusted-context.ts:42-48, which requires a non-empty workspaceId), so no production writer emits the omitted shape today. But the composition's public MaterialPort accepts it and the shape is a designed capability, not an impossible state, so this is a public-step test gap (G), not D2; D2 would need the type, the codec or an upstream check to forbid it, and none does.",
+      "proposal": "Test gap. In the public composition materials test (tests/composition/platform.test.ts:60) and/or the real-store half of tests/data/R3b-materials-contract.test.ts:71: build a project-wide Host call context (projectId only, no workspaceId, materialReader {kind:'host', projectId, actor}), call platform.materials.storeArtifact with origin {kind:'platform_operation', projectId, requestId, actor} and no workspaceId, then read the row back through the same real body store, and expect a ready artifact with the body. Also assert the stored origin has no workspaceId key (the codec encodes and decodes the omitted shape), and that an origin naming a different workspaceId is refused.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "B-039",
+      "cls": "U",
+      "winner": "codex",
+      "reason": "The uncovered arm is the right operand `!isCommitCursor(since)` of catalog-record-codecs.ts:459, inside readArchitectureCatalogRecordValue, which validates the catalog row embedded in a stored ArchitectureCatalogRevised event. The only writer embeds the pre-bind record with `since: null` (catalog-service.ts:702-707; comment :322-324), and commitCursorBindings rewrites record payloads only, not event JSON (catalog-service.ts:738; sqlite-record-store.ts:455 bindPreparedRecords), so no platform writer produces a non-null embedded since. A non-null embedded since can only come from a hand-edited or foreign stored event: a valid cursor passes the operand, an invalid one hits the reject. That is U (reached only while reading a stored record shape no platform writer produces), not D2; it is also not D1 because the validator is live and runs when the revised event is read back.",
+      "proposal": "Keep it untested: do not fabricate a revised event with a non-null cursor to execute the check (a tamper test is exactly what decision 79 / AGENTS.md rule 4 exclude). If the lead wants the dead sub-check gone, replace :459 with `if (since !== null) reject(...)`: the event always embeds the pre-bind null placeholder, which leaves the tamper-only reject (B-040, U) and deletes the cursor comparison.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "B-042",
+      "cls": "D2",
+      "winner": "codex",
+      "reason": "The uncovered then-arm at catalog-service.ts:400 compares the decoded catalog's baselineRef with the pointer's activeRevision. The pointer read is schema-validated: the registered ProjectArchitectureBaselineActiveSnapshot@1 validator requires parsed.projectId === ref.projectId and activeRevision.projectId === ref.projectId (tasks/plan-readers.ts:274-288, especially :283 and :286), and readMany applies the schema before handing rows back (in-memory-record-store.ts:240-249; sqlite-record-store.ts:371-385), so a pointer naming another project is `corrupt` and never reaches decodeActivePointer (:131-137). The requested activeKey forces ref.projectId === projectId, hence baselineRef.projectId === projectId. catalogKey is then built from that baselineId/revision (:378), and the catalog codec ties the row's baselineRef to its own ref and its ref to the outer ref_key (catalog-record-codecs.ts:405-414, exact keys :138, refKey check :411), so decoded.value.baselineRef is canonically equal to baselineRef by construction. Claude's cross-project-pointer route does not survive the pointer codec; the arm cannot arise even from a schema-valid tampered store, so this is D2 (the codecs guarantee it), not U.",
+      "proposal": "Delete the duplicate comparison at catalog-service.ts:400-402; the preceding `decoded.status !== 'decoded'` guard already rejects a damaged or mismatched catalog. Nothing else depends on the arm; no test is needed to replace it.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C4-012",
+      "cls": "F",
+      "winner": "codex",
+      "reason": "The uncovered function is the restoreAdopted callback at catalog-service.ts:565, which runs only when recoverConflictByIdentity's requery (:340) finds a same-identity/same-fingerprint receipt. Adoption reaches it before any commit: the early lookupCommit (:497) can miss while an identical peer commits, then readAdoptionScope (:506) sees the peer's active/baseline/catalog rows and returns revision_conflict (:243-245), and the requery finds the peer's receipt; the code comment at :508 says exactly this. This is a concurrent writer racing between two reads, and two identical adoption requests with one gated after its early lookup reach it deterministically. Claude's D2 only rules out the in-transaction commit path (identity is checked before guards: in-memory-record-store.ts:268-279; sqlite-record-store.ts:396-408); it misses the pre-commit scope window, so F is right.",
+      "proposal": "Public steps in tests/work-graph/A1-architecture-catalog.test.ts:41 (memory and sqlite): build createArchitectureCatalogService (imported there at :14) over the fixture records (GraphSessionFixture.records, tests/helpers/graph-session-fixture.ts:104) wrapped so the first call's lookupCommit returns not_found and then waits on a deferred gate (tests/helpers/A2-restart-fixture.ts:202). Run a second identical adoption (same actor/requestId/body) to completion through the same service, release the gate, and let the first run its readAdoptionScope. Expect the first call {status:'committed', replayed:true} with the same baseline/catalog refs and cursor as the second, i.e. the restored original event, not revision_conflict.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C4-016",
+      "cls": "F",
+      "winner": "codex",
+      "reason": "The uncovered function is the restoreRevised callback at catalog-service.ts:746; it runs when the requery (:340) finds a same-identity/same-fingerprint receipt. After the early lookupCommit (:631), revise reads the current window (:640) and compares basedOn with its baseline (:653-660): if an identical peer commits in that window, the current baseline is the peer's next revision, the comparison sends the call to recoverConflictByIdentity, and the requery finds the peer's receipt, so restoreRevised executes. readCurrentCatalogWindow can also return source_stale when the pointer moves between its two reads (:386-389), which the code at :642-649 routes to the same recovery. The in-transaction identity-first check (in-memory-record-store.ts:268-279; sqlite-record-store.ts:396-408) only makes the commit-time branch rare; Claude's D2 ignores the pre-commit read window, so F is right.",
+      "proposal": "Public steps in tests/work-graph/A1-architecture-catalog.test.ts (or S8A:21): build createArchitectureCatalogService (imported at A1 :14) over the fixture records (tests/helpers/graph-session-fixture.ts:104) wrapped so the first revise call's lookupCommit returns not_found and then waits on a deferred gate (tests/helpers/A2-restart-fixture.ts:202). Let a second identical reviseArchitectureCatalog (same requestId/basedOn/body) commit, release the gate, and let the first read the current window. Expect the first call {status:'committed', replayed:true} with the same baseline/catalog ref and cursor as the second and value.catalog.since equal to that cursor.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    }
+  ]
+}

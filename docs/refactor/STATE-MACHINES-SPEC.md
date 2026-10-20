@@ -3290,7 +3290,7 @@ stateDiagram-v2
 | `status` | `SessionMessage.status`（`model/communication-contracts.ts:104`），类型定义在 `:88` | `'pending' \| 'read' \| 'responded'` | 只能单调前进 |
 | `readAt` | `:105` | `null \| string` | ack 时写入；回复时若仍为空则回填 |
 | `response` | `:106`，类型 `MessageResponse` 在 `:81-86` | `null \| {sender: work_run \| query_run, bodyRef, sourceRef, respondedAt}` | 单槽，只写一次 |
-| `replyMode`、`intent`、`needsReply`、`waitAfterSend` | `:113-119`；意图类型见 `src/contracts/core/session-message.ts:22`、`:25-29` | `'wait'`；`notify/inquiry/action_request`；boolean | 发送时固定，之后不变 |
+| `replyMode`、`intent`、`needsReply`、`waitAfterSend`（2026-10-20 补注：`replyMode` 已由 T 轮删除，TP-031） | `:113-119`；意图类型见 `src/contracts/core/session-message.ts:22`、`:25-29` | `'wait'`；`notify/inquiry/action_request`；boolean | 发送时固定，之后不变 |
 | `acceptedInputs[]` | `:132-138` | `{inputId, part: message \| response, executionRef, kernel{…position}, acceptedAt}` | 只追加 |
 | `consultationDerivation` | `:139-144` | `{childSessionRef, sourceSessionRef, sourceKernel, throughPosition}` | 只写一次，先写者胜 |
 | `sender`、`recipient`、`bodyRef`、`sourceRef`、`createdAt` | `:99-103` | sender 为 `host`（`:36-39`）或 `work_run`（`:46-52`） | 不可变 |
@@ -3341,7 +3341,7 @@ type MessageGuardContext = {
 
 **等待怎样表达（D-17 缺口）**
 
-1. **发送时的意图。** `needsReply`、`waitAfterSend`、`replyMode` 在发送时归一化（`mailbox-service.ts:1072-1077`）后固定。`waitAfterSend` 与 `needsReply=false` 不能同时出现，服务（`:1075-1077`）和 codec（`message-record-codecs.ts:325-327`）都会拒绝。
+1. **发送时的意图。**（2026-10-20 补注：T 轮删了 `replyMode`（TP-031）。代码里的 `sendFlags` 已经没有它（`message-machine.ts:302`）；上面的类型示例和下面的行号是当时的写法，现在归一化在 `mailbox-service.ts:2065-2069`，codec 的拒绝在 `message-record-codecs.ts:787-789`。下面的规则对其余两个照旧。）`needsReply`、`waitAfterSend`、`replyMode` 在发送时归一化（`mailbox-service.ts:1072-1077`）后固定。`waitAfterSend` 与 `needsReply=false` 不能同时出现，服务（`:1075-1077`）和 codec（`message-record-codecs.ts:325-327`）都会拒绝。
 2. **执行中的等待登记只在内存。** 登记链路是 `communication-tools.ts:243-247` → `execution-driver.ts:328-331`（`handle.waitMessage`）。工具组屏障在 `after_group` 时让出（`execution-driver.ts:678-680`）。
 3. **只有 yielded 终态会把等待写入持久记录。** `execution-control.ts:220-232` 构造 `RunContinuationV1{kind:'wait_reply', messageRef}`，经 `execution-observation.ts:647`、`:658` 交给 `recordRunResult`，写入 `Run.continuation`。yielded 终态必须带 continuation，否则 `recordRunResult` 拒绝（`execution-entry-service.ts:1373-1378`）。
 4. **等待何时算满足。** 条件是消息为 `responded`，且 `response.bodyRef` 等于后继领取中 `consumedWait.responseRef`。后继领取写 `Run.consumedWait`，并在同一提交里守卫消息 revision（`claim-service.ts:590-638`、`:703`、`:731`）。`read` 状态或 `acceptedInputs` 都不满足等待（M3：“读取/接收确认不能解除等待”）。
@@ -5274,7 +5274,7 @@ D-17 原列表六项为 GAP-03…08；lead 决定 L-7 把 GAP-41 补入这一列
 | 行号 | 摘要 | state 文件 | 服务文件 | 测试（用例） |
 | --- | --- | --- | --- | --- |
 | S1-SES-01 | absent → `session_created(provenance)` → active/available，创建时写来历（改造 SES-01） | session-availability.ts（`createSessionRecord`） | wg/sessions/session-directory.ts | state/session-availability.test.ts（SES-01 字面量不变）；work-graph/S1-codecs-indexes.test.ts SV04；work-graph/S1-provenance.test.ts SV12、SV14 |
-| S1-SES-02 | 旧 Session `provenance=null` → `legacy_provenance_backfilled`，只在唯一可靠依据时补一次 | session-availability.ts | wg/sessions/session-directory.ts；依据由 wg/tasks/session-provenance-facts.ts 读 | state/S1-session-archive.test.ts UT09、UT10；work-graph/S1-provenance.test.ts SV12、SV13、SV15、SV45、SV46 |
+| S1-SES-02 | 旧 Session `provenance=null` → `legacy_provenance_backfilled`，只在唯一可靠依据时补一次（2026-10-20 补注：T 轮按决定 79 删了这条补填和 `session-provenance-facts.ts`，Session 记录必须带 provenance，没有的读不了；对应的旧 Session 测试一起删了，TP-007、TP-062） | session-availability.ts | wg/sessions/session-directory.ts；依据由 wg/tasks/session-provenance-facts.ts 读 | state/S1-session-archive.test.ts UT09、UT10；work-graph/S1-provenance.test.ts SV12、SV13、SV15、SV45、SV46 |
 | S1-SES-03 | active、R=null → `archive_requested` → R 非空，三维不变 | session-availability.ts | wg/sessions/session-lifecycle.ts（`requestSessionArchive`） | state/S1-session-archive.test.ts UT01–UT03；work-graph/S1-archive-owner.test.ts SV21、SV24 |
 | S1-SES-04 | active、无占用 → `session_archived` → archived，同次清 R（改造 SES 归档行：先无占用 → 无开放负责 → 不在等；退役免等待） | session-availability.ts | wg/sessions/session-lifecycle.ts（`finishSessionArchive`） | state/S1-session-archive.test.ts UT04–UT06；work-graph/S1-archive-owner.test.ts SV22、SV23、SV25、SV56；business/S1-archive-flow.test.ts IT13、IT14 |
 | S1-SES-05 | archived → `session_reactivated`；退役或不可用的拒为 `unavailable`（改造重新启用行，决定 38） | session-availability.ts | wg/sessions/session-lifecycle.ts | state/S1-session-archive.test.ts UT07、UT08；work-graph/S1-archive-owner.test.ts SV25 |

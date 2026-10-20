@@ -1,0 +1,23 @@
+# D1 assertion ledger 03b9cfd..HEAD (tests)
+
+## REMOVED assertion: 9
+tests/app/session-rendering.test.ts:447: expect(html).toContain('future.unknown');
+tests/composition/K-R-previous-turn-bounds.test.ts:93: expect(seam.calls, 'an absent seam is never consulted').toBe(0);
+tests/composition/R3d-R3g-platform.test.ts:231: expect(current.observedRef).toEqual({ aggregateType: 'ObservedArchitecture', ...scope,
+tests/composition/R3d-R3g-platform.test.ts:233: expect(await inspect.records.readMany([canonicalJson({ aggregateType: 'ProjectArchitectureBaselineActive',
+tests/runtime/R4b-session-recovery.test.ts:248: expect(wrongSession.status).toBe('rejected');
+tests/work-graph/S4C2-goal-triggers.test.ts:669: expect(result.status).toBe('ready');
+tests/work-graph/S4C2-goal-triggers.test.ts:671: expect([...result.triggers].sort(byKey)).toEqual([
+tests/work-graph/S4C2-goal-triggers.test.ts:676: expect([...result.claimedArchiveKeys]).toEqual(['archive:t1/run-2']);
+tests/work-graph/unknown-call-review-list.test.ts:307: expect(page).toMatchObject({ status: 'ready', value: { items: [], nextCursor: null } });
+
+## REMOVED test or describe: 2
+tests/work-graph/S4C2-goal-triggers.test.ts:578: describe('S4C2-3d BLOCKED archive-time sub-part (w2-base form, R-20)', () => {
+tests/work-graph/S4C2-goal-triggers.test.ts:657: it('S4C2-3d BLOCKED archive-time sub-part, kept in w2-base form: archiveOrigin replaces the rework trigger with archive at the archive requeue requestedAt', async () => {
+
+## DELETED test files: 0
+
+# lines to justify (excluding MOVED): 11, plus 0 deleted files
+
+# D3 pure-file guard: 25 *-pure.test.ts files
+# D3 hits: 0

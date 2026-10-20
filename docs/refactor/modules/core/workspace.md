@@ -1,5 +1,7 @@
 # WorkspaceTools：文件、Git 与源码索引实现骨架
 
+> **2026-10-20 补注（T 轮）：** `project-source-index.ts`（`ProjectSourceIndex`）、`role-source-reader.ts`（`WorkspaceSourceIndexReader`）和 `tests/data/project-source-index.test.ts` 已删除（TP-026、TQ-089，决定 79-4）。下文提到它们的地方是当时的设计，不是现有文件；现有的分析器见[能力索引](../../IMPLEMENTED-CAPABILITIES.md) WS5。
+
 > **2026-09-26 next当前实现：** 文件当前/捕获版本读取比较、正式来源与Runtime工具消费者已有；固定Git commit读取/比较已独审，git↔working_tree普通文本raw摘要与mode双向比较也已独审导入（15项/2文件与types，单次有界观察）。Git/capture、mixed binary、Git写版本、语言扩展与完整Host目录/保存/diff消费者仍待完成。以下带日期的旧工程实施记录保留历史含义；next当前证据以[能力索引](../../IMPLEMENTED-CAPABILITIES.md)为准。
 
 状态：目标详细设计及分批实施，2026-09-23。R2a 已把 18 个 TS 实现与真实消费者迁至 `src/core/workspace/` 并独立验收。本文可单独作为 R2 施工入口；跨模块约定见[公共契约](../../skeleton/CONTRACTS.md)、[核心数据 D2](../../CORE-DATA-OPERATIONS.md)和[状态机](../../ORCHESTRATION-STATE-MACHINES.md)。§10 的 R1、R2a、R2b及R2c真实访问/捕获/游标/架构接线已独立验收。R2d.1模型协议及错误优先级补测已通过；R2d.2 Work/explore/Reviewer真实运行接线已验收，Query R2d.3也已验收。readWorkspace/compareWorkspace、Git历史以及非TS的统一冻结provider仍待实施，旧Python/C++工具已有真实能力。（2026-10-08 注：上一句写于 09-23，`readWorkspace/compareWorkspace` 和 Git 固定版本读取、比较后来已接通一个子集：读工作树单个文件、capture 冻结正文和某个 commit 的文本，比较同范围的两次 capture、两个 commit，以及 git↔工作树的普通文本，见能力索引 WS3、WS7；仍没有的是非 TS 的冻结 provider、Git/capture 混合比较、二进制的混合比较、三方 merge 和 Git 写版本。）当前精确进度见[批次证据](../../reviews/implementation-batches.md)。

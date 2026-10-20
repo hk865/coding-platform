@@ -1,0 +1,13 @@
+{
+  "rows": [
+    {
+      "row": "A1-007",
+      "cls": "U",
+      "winner": "neither",
+      "reason": "The U class stands (both reviewers right): the plan-record-codecs.ts:126 then-arm needs a right-hand chain whose decoded since is null. Every chain-creating writer writes {since:null} and binds it (plan-service.ts:1421-1434, :3350-3361) or copies the stored origin (plan-service.ts:1348-1350; plan-commit-compiler.ts:245, :436), and decodePlanProposalOrigin maps only an absent since to the legacy null position (plan-record-codecs.ts:984-996). The arm is reached only by a pre-slice-5 or hand-written stored record. But the skeptic is right about the proposal: seedCandidateProposal (tests/helpers/S5-decision-fixture.ts:1233) commits encodePlanProposal(proposal) with no origin through seedCommit (:569-586), which passes no commitCursorBindings, and S2A-queue-request-candidates.test.ts:72 seeds 5,001 such records. findCandidateProposal decodes every candidate's origin before selecting the live head (decision-read-model.ts:1656-1660), so a strict decoder would throw 'unavailable' there and break a sanctioned test.",
+      "proposal": "Delete the absent-since tolerance only together with the fixture: let seedCommit (:569-586) accept commitCursorBindings and have seedCandidateProposal (:1233) commit encodePlanProposal(proposal, { since: null }) with commitCursorBindings [{ refKey: planProposalRefKey(proposal.ref), field: 'since' }], as production creates a new chain (plan-service.ts:1421-1434). Then positions become CommitCursor and compareProposalChainPositions drops both null arms (:125-127); no tamper test is added. If the fixture is not changed, keep the decoder lenient and keep both null arms.",
+      "t_reason_wrong": false,
+      "t_item": "TP-100 (converted the before-T tests/helpers/S5-decision-fixture.ts:810-826 candidate seeds to real proposePlan, after fixture :1052-1061), so every chain now carries since; before-T R2A01-R2A03 tests/work-graph/S5R2-queue-history.test.ts:27-69. Attribution inferred from fixture shape (no per-test coverage map)."
+    }
+  ]
+}

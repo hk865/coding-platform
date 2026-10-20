@@ -1,0 +1,38 @@
+{"rows": [
+  {
+    "row": "C4-113",
+    "cls": "D1",
+    "winner": "claude",
+    "reason": "No construction ever omits listExecutions, so no caller path reaches the fallback arrow at :1328. The one production construction passes executionReader (:1122), built by createRunStateReader (:693), and run-state-service.ts:902 always returns `{ readExecution, listExecutions, readContinuationBasis }`; every test construction also passes a real reader (tests/helpers/WP1-entry-fixture.ts:128-135, tests/work-graph/S3-graph-context.test.ts:749-761, S3-prepared-context-admission.test.ts:356-359). The `!== undefined` test at :1307 is therefore constant true: the fallback at :1327-1329 is dead code inside a live factory — D1 (a constant condition / code no caller path reaches), not D2 (no caller reaches it with a state that cannot arise). The optional method exists only so narrow ExecutionReadPort doubles compile (model/execution-read-contracts.ts:101-103), not for a reachable state.",
+    "proposal": "Delete the fallback at :1327-1329 and the `if` at :1307, keeping the listing loop, and type GraphContextReaderDependencies.executions (:76) as ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>>, as the route layer already does (src/app/core-routes.ts:276). No test edit is needed: all three current constructions already pass a reader that has listExecutions.",
+    "t_reason_wrong": false,
+    "t_item": ""
+  },
+  {
+    "row": "C4-123",
+    "cls": "U",
+    "winner": "codex",
+    "reason": "The arm runs only for a stored SessionMessage whose goalRef disagrees with its work_run sender.runRef (:414-420). The only platform writer of goalRef is sendUserMessage, which refuses exactly that disagreement for a work_run sender (communication/mailbox-service.ts:3396-3399) and then writes the checked value (:3516-3520); sendMessage writes no goalRef (:2141-2144), and synthetic decision answers are Host-sender records (:846) that readUndeliveredReplies refuses because the sender is not work_run (:3286-3289). The mismatch is therefore reachable only from a hand-edited/foreign/old-format stored record — U, not D2. Unlike C4-124 it is computed from the re-read record, not from the DTO, so the DTO is not the source.",
+    "proposal": "Keep the conflicting-Goal rejection and do not add a tamper test: silently re-attributing such a record to sender.runRef would file the notice under the wrong Goal. If decision 79's no-old-data line is preferred over the guard, delete :324-326 and make attributedGoal return `explicit ?? fromRun`; either way add no test that doctors a stored record.",
+    "t_reason_wrong": false,
+    "t_item": ""
+  },
+  {
+    "row": "C4-124",
+    "cls": "D2",
+    "winner": "claude",
+    "reason": "reply.responseSince is copied from the same stored SessionMessage field (communication/mailbox-service.ts:3296, :3310) and the source re-reads that record through readMessage (mailbox-service.ts:2157-2159). For a work_run message with a saved response the record codec requires a real non-null cursor and validateRecord calls checkSessionMessageBody(body, true) (sessions/message-record-codecs.ts:883-891, :1085), the commit tail binds the field once (commitCursorFields at :1118-1121), and bindMessageResponseCursor never rebinds a non-null value (state/message-machine.ts:1327-1330). The listing also rejects a missing reply position before any DTO is built (mailbox-service.ts:3303-3305). So a platform-built DTO always agrees with the re-read record; a between-read commit moves the window and stableDamage returns window_changed before the callback runs (:401-403), and a hand-edited static record feeds both reads the same value. The arm is dead, not a foreign-record shape: D2, not U.",
+    "proposal": "Delete :340-342 (and its arrow) and keep `const responseSince = reply.responseSince` (:344); the DTO contract is still checked for the entry position at :337-339. Decide :337-339 separately, since it compares the directory's Session read with the mailbox's Session read. Add no DTO-doctoring test.",
+    "t_reason_wrong": false,
+    "t_item": ""
+  },
+  {
+    "row": "C4-125",
+    "cls": "G",
+    "winner": "claude",
+    "reason": "The uncovered arrow is the `some` callback at :381, which executes for any non-empty acceptedInputs on the re-read message. The listing excludes only an accepted 'response' part (communication/mailbox-service.ts:3294), not an accepted 'message' part, and the runtime records acceptance for either part (core/agent-runtime/execution-inputs.ts:106-131, :232-250). A recipient Run can take the message body as input and then reply while the message is pending/read (state/message-machine.ts:656-667), and the source Session is retired as a separate normal step (tests/work-graph/WP2-undelivered-notices.test.ts:48-53 uses the public retire; the health step is tests/helpers/WP2-notices-fixture.ts:133-135). The fixture's accept helper hardcodes part 'response' (tests/helpers/WP2-notices-fixture.ts:146-149; tests/helpers/S1-archive-service-fixture.ts:369, :377), which is the only reason no test runs the callback. Plain public steps reach it, so G; a concurrent response-part acceptance is only a second, fault-shaped route.",
+    "proposal": "Test gap in tests/work-graph/WP2-undelivered-notices.test.ts. Steps: A sends to B with needsReply; B's entered Run accepts the message part (a kernelAccept variant reading part 'message' at tests/helpers/S1-archive-service-fixture.ts:362 and recordInputAccepted with part 'message', extending the fixture accept at tests/helpers/WP2-notices-fixture.ts:146 to take a part); B responds; retire A (f.retire()); read the queue. Assert one undelivered_reply notice with its summary and position and no 'was already accepted' source_mismatch. No fault and no DTO doctoring.",
+    "t_reason_wrong": false,
+    "t_item": ""
+  }
+]}

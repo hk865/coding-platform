@@ -1,0 +1,15 @@
+# D1 assertion ledger w1r2..HEAD (tests)
+
+## ADDED expected value from a constant: 1
+tests/work-graph/S3-context-inputs.test.ts:593: expect(sent.value.ref.messageId).toBe(DECISION_MESSAGE_ID);
+
+## REMOVED assertion: 2
+tests/work-graph/S3-prepared-context-admission.test.ts:666: expect(kernelHistory.records.some(row => row.recordType === 'turn.started')).toBe(false);
+tests/work-graph/S3-prepared-context-admission.test.ts:674: expect(committedRevoke).toMatchObject({ status: 'committed' });
+
+## DELETED test files: 0
+
+# lines to justify (excluding MOVED): 3, plus 0 deleted files
+
+# D3 pure-file guard: 25 *-pure.test.ts files
+# D3 hits: 0

@@ -1,0 +1,22 @@
+{
+  "rows": [
+    {
+      "row": "C2-003",
+      "cls": "U",
+      "winner": "neither",
+      "reason": "The agreed D2 does not survive the stored-record read. The row is the sort comparator at src/contracts/core/prepared-execution.ts:149 inside renderUnknownCallReviewZh; the renderer is not only called on the freshly built input (src/core/agent-runtime/context-assembler.ts:1441-1444) but is also re-run on the manifest read from the stored envelope: contextConsumptionProblem takes manifest.unknownCallReview (src/core/work-graph/tasks/execution-entry-service.ts:1049), calls renderUnknownCallReviewZh at :1053, and this runs inside authorizeAdmission (:1161-1175, reached from begin's freshAdmissionOf at :1502-1504). readManifestFromEnvelope only runs manifestProblem (:309-347), and manifestProblem (:429-489) never inspects unknownCallReview, so a hand-edited or corrupted manifest body carrying a complete proposal-phase unknownCallReview with two platformTargets executes the comparator at prepared-execution.ts:149 before contextAssemblyProblem can reject the changed bytes at :1054-1061. No platform writer produces that shape: buildUnknownCallReviewInputV1 already sorts platformTargets (context-assembler.ts:511), platformTargets is derived from undetermined platform items (:1434-1440), and a real crash leaves at most one unresolved non-read-only call because the Kernel serialises any non-read-only batch (vendor/coding-agent/dist/tools/registry/tool-registry.js:133-143; tests/work-graph/K3-06-mixed-kinds-owner.test.ts:6-12). The arm is reached only by a foreign/tampered stored record, which is U, not D2.",
+      "proposal": "Delete only the redundant re-sort at prepared-execution.ts:149: a spread followed by .map is byte-identical for every platform-written manifest, because buildUnknownCallReviewInputV1 copies and sorts platformTargets at context-assembler.ts:511 and aliasOf sorts too (:1426-1430). Keep the platform-alias line :148-152, which is the current L20/D7 mixed card (docs/refactor/design/orchestration-2026-10/slices/slice-K3-SPEC.md:102, :432-435), and add no tamper test; keeping the re-sort untested is also acceptable under rule 79-4.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-010",
+      "cls": "U",
+      "winner": "neither",
+      "reason": "The live submit route is closed, but the arm is not D2. validQueryExecution is the registered shape decoder for every stored QueryJob (src/core/work-graph/queries/query-record-codecs.ts:238 called from jobIssues at :401; the schema's validate at :688-692) and is also run on the retained running job (src/core/agent-runtime/source-capture-access.ts:612). A hand-edited or corrupted QueryJob whose intent.execution is execution_coordination with a non-empty feedback.failureIssueIds passes query-job.ts:252 and runs the .some callback at :262, which needs only one array entry. No platform writer writes feedback: the only producer, submitQueryJob, refuses execution_coordination before validating (src/core/work-graph/queries/query-job-service.ts:280-286), and every later writer spreads the stored intent unchanged (src/core/work-graph/queries/query-execution.ts:1594-1630; src/core/work-graph/state/query-run-recovery.ts:562-563, :623-630). Only a foreign or old-format stored record reaches the callback, so the class is U, not D2.",
+      "proposal": "Do not delete now. The protocol is deliberately deferred, not dead: docs/refactor/tasks/R5b-query-planning-skeleton.md:101 keeps execution_coordination unsupported, and docs/refactor/design/orchestration-2026-10/DESIGN.md:431 explicitly keeps the UserDecisionV1 family, naming the query validation in contracts/query-job.ts, until slice 6 writes the exact delete/keep list; docs/refactor/design/orchestration-2026-10/slices/slice-6-SPEC.md:79 (F12) lists the query feedback validation and execution-feedback.ts as still present. Keep query-job.ts:252-266 untested (no tamper test; AGENTS.md rule 4 / 79-4) and decide the deletion at slice 6 together with src/contracts/execution-feedback.ts and the DESIGN/slice-6 text.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    }
+  ]
+}

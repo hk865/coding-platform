@@ -1,0 +1,13 @@
+{
+  "rows": [
+    {
+      "row": "A2-032",
+      "cls": "D2",
+      "winner": "both",
+      "reason": "The agreed D2 class stands. The uncovered arm is the else of the cond-expr at src/core/work-graph/views/goal-conflicts.ts:267 ('not_available'), fed only by executedFilesAvailable at :420, which is `executed.value.availability === 'available'`. The only production GoalExecutedFilesPort implementation is createGoalExecutedFilesReader (src/composition/create-platform.ts:944-945, wired to the conflict assembler and node detail at :945 and :2198; grep for readGoalExecutedFiles finds no other src implementation), and its only `ready` return writes availability:'available' (src/core/work-graph/tasks/goal-executed-files-reader.ts:203-205). So the state cannot arise from a platform writer, a stored record or an external fault; only a test double produced 'not_available' (./.dsh-ref/before/tests/helpers/executed-files-stub.ts:21-31), which makes this D2, not U/F/G. T3-103 (W2b-26) replaced that stub with the real reader; the before-T DQ01 test (./.dsh-ref/before/tests/work-graph/S5-decision-queue.test.ts:43, test at :91) executed the arm only through the hand-written DTO, and the S5 rework test now asserts 'available' (tests/scenarios/S5-goal-conflict-rework.test.ts:53-55), so T's reason holds and t_reason_wrong is false.",
+      "proposal": "The skeptic's objection to the agreed deletion is upheld: codex's 'narrow the ready result and delete the arm' would narrow the frozen slice-5 port DTO (src/core/work-graph/model/decision-contracts.ts:61; docs/refactor/design/orchestration-2026-10/slices/slice-5-SPEC.md:312) and thus break the frozen 2C L15 mapping (src/core/work-graph/views/node-detail-reader.ts:180; docs/refactor/design/orchestration-2026-10/slices/slice-2C-SPEC.md:405) and the 2C tests that inject 'not_available' (tests/helpers/S2C-D-node-support.ts:715; tests/work-graph/S2C-node-detail-task.test.ts:41-42; tests/work-graph/S2C-node-detail-executions.test.ts:35), and would force edits at goal-conflicts.ts:421 and state/goal-settings-machine.ts:292. Recommended now: keep goal-conflicts.ts:267 untested (rule 4 / 79-4), as with the 2C mapping. A deletion is sound only as a lead-approved spec change that narrows decision-contracts.ts:61 and updates GoalConflictReadV1:337, goal-conflicts.ts:420-421, goal-settings-machine.ts:292, node-detail-reader.ts:180 and those 2C tests; a bare one-line ':267 -> available' change is behaviour-equivalent but saves almost nothing and leaves the same DTO value, so it is not worth a partial deletion.",
+      "t_reason_wrong": false,
+      "t_item": "T3-103 (W2b-26); before-T test ./.dsh-ref/before/tests/work-graph/S5-decision-queue.test.ts:43,91 (DQ01, createExecutedFilesStub)"
+    }
+  ]
+}

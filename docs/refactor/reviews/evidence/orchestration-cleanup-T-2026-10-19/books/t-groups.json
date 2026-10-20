@@ -1,0 +1,123 @@
+{
+ "summary": {
+  "T1": {
+   "items": 70,
+   "files": 77,
+   "categories": {
+    "helper": 2,
+    "duplicate": 24,
+    "handwritten": 24,
+    "stale": 8,
+    "tamper": 8,
+    "trivial": 4
+   },
+   "kinds": {
+    "delete": 20,
+    "merge-into": 28,
+    "convert": 20,
+    "?": 2
+   }
+  },
+  "T2": {
+   "items": 64,
+   "files": 60,
+   "categories": {
+    "duplicate": 22,
+    "helper": 15,
+    "stale": 5,
+    "tamper": 8,
+    "handwritten": 13,
+    "trivial": 1
+   },
+   "kinds": {
+    "merge-into": 28,
+    "delete": 22,
+    "convert": 12,
+    "?": 2
+   }
+  },
+  "T3": {
+   "items": 106,
+   "files": 95,
+   "categories": {
+    "handwritten": 18,
+    "helper": 32,
+    "duplicate": 43,
+    "stale": 6,
+    "trivial": 6,
+    "tamper": 1
+   },
+   "kinds": {
+    "convert": 22,
+    "merge-into": 49,
+    "delete": 34,
+    "?": 1
+   }
+  },
+  "TP": {
+   "items": 172,
+   "files": 222,
+   "categories": {
+    "n0": 2,
+    "c1-transfer": 7,
+    "legacy": 9,
+    "old-data": 25,
+    "allowlist-kept-for": 24,
+    "stale": 42,
+    "helper": 15,
+    "handwritten": 31,
+    "duplicate": 10,
+    "trivial": 1,
+    "tamper": 6
+   },
+   "kinds": {
+    "delete": 67,
+    "change": 41,
+    "user-decides": 11,
+    "p": 1,
+    "convert": 28,
+    "merge-into": 18,
+    "merge": 1,
+    "stale": 1,
+    "?": 4
+   }
+  },
+  "TQ": {
+   "items": 115,
+   "files": 59,
+   "categories": {
+    "legacy": 1,
+    "allowlist-pre-batch": 62,
+    "old-data": 11,
+    "allowlist-kept-for": 15,
+    "allowlist-wire-format": 2,
+    "c1-transfer": 1,
+    "stale": 8,
+    "tamper": 6,
+    "handwritten": 7,
+    "helper": 1,
+    "duplicate": 1
+   },
+   "kinds": {
+    "change": 11,
+    "user-decides": 66,
+    "delete": 29,
+    "?": 1,
+    "convert": 6,
+    "merge-into": 1,
+    "in": 1
+   }
+  }
+ },
+ "overlaps": {
+  "TP&TQ": [
+   "tests/architecture/production-reach-allowlist.json"
+  ]
+ },
+ "dropped": [
+  "C:P2b-15",
+  "D:P2b-23"
+ ],
+ "overridden": 85,
+ "left_user": []
+}

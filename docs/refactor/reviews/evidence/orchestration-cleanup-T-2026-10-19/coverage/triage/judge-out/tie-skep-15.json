@@ -1,0 +1,13 @@
+{
+  "rows": [
+    {
+      "row": "A3-021",
+      "cls": "D1",
+      "winner": "neither",
+      "reason": "The D1 class stands (both reviewers right): the judged arm is the `checked.status !== 'ready'` then-arm at src/core/agent-runtime/source-capture-access.ts:457, and the only caller of authorizeReviewWork (:476-516) is :456 inside `if (binding.mode === 'review')` (:455). The sole production factory call builds a literal spec with no mode/review (src/core/agent-runtime/execution-driver.ts:1147-1151), createQuerySourceCaptureFactory has no review mode (query-execution.ts:346), and only tests/runtime/source-binding-migration.test.ts:242 passes mode:'review'. But the skeptic is right about the proposal: this branch is the only src caller of reviewerSourcePathAllowed (source-capture-access.ts:472, import :17), and DESIGN.md:554 explicitly keeps that path rule for the independent reviewer placed in slice 9 (DESIGN.md:561); reviewer-source-reader.ts has no other caller and no production-reach allowlist entry, and a kept-for note must literally name 'slice N of the orchestration design' (tests/architecture/production-reach.test.ts:14, :40). R2d-2:65-71 specifies these review checks and IMPLEMENTED-CAPABILITIES.md:300 says the binding is in use. Deleting the branch, authorizeReviewWork and its only candidate-exclusion test (source-binding-migration.test.ts:227-266) is therefore a coordinated capability/product change, not cleanup.",
+      "proposal": "Keep the review binding (:455-459), authorizeReviewWork (:476-516) and the candidate-exclusion test (:227-266) untested as retained slice-9 Reviewer groundwork. If the lead chooses deletion, delete reviewerSourcePathAllowed (src/core/workspace/reviewer-source-reader.ts:4) with it, update DESIGN.md:554 and IMPLEMENTED-CAPABILITIES.md:300, and delete the test or add a production-reach allowlist kept-for entry naming 'slice 9 of the orchestration design'; deleting only the branch leaves the retained path rule unreached and removes its only exclusion coverage.",
+      "t_reason_wrong": false,
+      "t_item": "TP-117 / W1 B-04 (R-3): deleted the in-place accepted-ReviewWork digest rewrite at before-T tests/runtime/source-binding-migration.test.ts:186-187, the only non-ready coverage of this arm; the after-T case at :227-266 keeps the profile matching, so arm 0 no longer runs. The arm is test-only (D1), so removing the tamper test for its stated reason is not a wrong T reason."
+    }
+  ]
+}

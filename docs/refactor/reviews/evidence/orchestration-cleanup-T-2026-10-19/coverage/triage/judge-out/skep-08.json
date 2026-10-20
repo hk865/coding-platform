@@ -1,0 +1,74 @@
+{"rows": [
+ {
+  "row": "A2-004",
+  "refuted": false,
+  "cls": "U",
+  "evidence": "The arm at mailbox-service.ts:1338 reads the freshly re-read TaskExecutionRecord (readFreshWorkRunFacts :1137-1149); :1329 already refuses any Run not 'running' and :1330 any terminal Run. A claim writes lease+attempt+Run+outbox+Session in one atomic commit (claim-service.ts:479-483, :1255-1272) and newTaskLeaseRecord sets holderRunId/attemptId from that same claim (attempt-machine.ts:277-283); continuation/requeue/review claims may only re-hold a lease already released by the prior, ended Run (attempt-machine.ts:753-800; claim-service.ts:358-376). So a running Run with a missing or foreign-held lease needs a store edit (the before-T test did exactly that: .dsh-ref/before/tests/work-graph/C1-session-mailbox.test.ts:355-365 via commitRaw). T removed it as tamper in T1-015 (t-items-T1-w2.md:114).",
+  "proposal_ok": true,
+  "proposal_note": "Deleting the fence is safe: the commit pins the lease revision (mailbox-service.ts:1422-1427), so a concurrent re-hold yields revision_conflict, not silent admission; keeping it untested is equally allowed for U and matches AGENTS rule 4."
+ },
+ {
+  "row": "A2-005",
+  "refuted": false,
+  "cls": "U",
+  "evidence": "The arm at mailbox-service.ts:1344 requires status 'running' plus a same-owner lease that already carries a release stamp; :1329 refuses anything not running first. Release is written by transitionTaskLease only on attempt_ended/attempt_resolved and the Run end plus the lease release are encoded and committed together (attempt-machine.ts:719-725, :804-807; execution-entry-service.ts:873-932), so no commit can leave a running Run with a released lease. The before-T test manufactured it by hand-writing release into a running Run's lease (C1-session-mailbox.test.ts:467-490 in .dsh-ref/before/); T removed it as handwritten/tamper in T1-014.",
+  "proposal_ok": true,
+  "proposal_note": "Same as A2-004: lease revision is a commit guard (mailbox-service.ts:1422-1427), and :1330 covers real ends; deleting or keeping untested are both valid U proposals."
+ },
+ {
+  "row": "B-044",
+  "refuted": false,
+  "cls": "U",
+  "evidence": "preservedNoticeOrigin is only called on updates (mailbox-service.ts:304, :2969). Every create path writes the origin with a null 'since' placeholder and binds it in the same commit (mailbox-service.ts:300-302, :318, :323); updates and archive-wait disposal copy the decoded origin unchanged (:304-306, :2969-2983); encodeSessionMessageRecord is called only with an origin (:318, :2983). decodeNoticeOrigin deliberately leaves an absent 'since' as legacy (decision-record-codecs.ts:381-396, and noticeOriginFieldsProblem at rework-codecs.ts:71-74 accepts absence), so only an old-format/hand-edited record reaches :198.",
+  "proposal_ok": true,
+  "proposal_note": "Keep-untested is the U-permitted option and T's own intent: without the guard the update would re-encode a since-less origin silently, emitting a record with no creation position; decision 79 means no such current record is produced."
+ },
+ {
+  "row": "B-046",
+  "refuted": false,
+  "cls": "D2",
+  "evidence": "manifestAgainstRun (mailbox-service.ts:1281) has exactly one caller, mailbox-service.ts:1397, inside authorizeNewWorkRunAction, and it is passed the same 'record' whose executionAuthorization was already required to be defined at :1357-1360. The Caller path exists (sendMessage :3420, respondMessage :2550, etc. reach authorizeNewWorkRunAction), but no intervening re-read changes the authorization. Status 'running' also implies an authorization: the only writer of status 'running' is enteredRunRecord (run-machine.ts:874-878), and later transitions keep or replace executionAuthorization (run-machine.ts:930-994).",
+  "proposal_ok": true,
+  "proposal_note": "Deleting :1297-1300 and passing the verified AuthorizationV2/its inputDigest in is behaviour-preserving; nothing else calls manifestAgainstRun and the DTO/DTO narrowing at :1301 stays."
+ },
+ {
+  "row": "B-047",
+  "refuted": false,
+  "cls": "D2",
+  "evidence": "The arm needs a stored Run that is status 'running' with executionAuthorization undefined; :1329 has already required 'running'. The only writer of status 'running' is enteredRunRecord (run-machine.ts:874-878), which writes phase 'entered' with a kernel binding; all later Run transitions either keep the authorization or change its phase (run-machine.ts:855-994, e.g. revoked at :935-962, settled at :983-994). The codec accepts an absent authorization only as a historical/no-entry Run (execution-entry-codecs.ts:121-136), and a claimed/starting Run is refused by :1329. No production caller reaches a running Run without the binding.",
+  "proposal_ok": true,
+  "proposal_note": "Folding the undefined case into the :1361 phase/sessionGeneration test (or narrowing the running-facts type) leaves the phase and kernel checks intact; no exhaustive switch or type depends on the separate arm."
+ },
+ {
+  "row": "B-050",
+  "refuted": false,
+  "cls": "D2",
+  "evidence": "The cond-expr at mailbox-service.ts:2786 only evaluates its ': null' arm when a Run executionRef has no executionAuthorization. Every Run caller of recordInputAccepted has one: execution-observation.ts:530-535 returns early unless auth is defined and phase entered/settled (and :518-520 already has executionHistory, so the ?? left side is taken); run-reconcile.ts:263-265 refuses undefined, :703-707 and :764 require auth.kernel; create-platform.ts:2123-2132 calls readReviewDraftAtEntry only for a non-null auth.kernel, and :2163 passes a QueryRunRef (other branch). recordInputAccepted has no Host/UI route (only the composition facade create-platform.ts:1388 and the runtime confirm at execution-inputs.ts:240-246).",
+  "proposal_ok": true,
+  "proposal_note": "Replacing the ternary with 'authorization?.kernel' keeps the same value for a tampered/legacy Run too (undefined -> no match at :2802), and no other code depends on the null fallback."
+ },
+ {
+  "row": "B-051",
+  "refuted": false,
+  "cls": "U",
+  "evidence": "The arm at mailbox-service.ts:3300 is reached only for a retired source (sourceDecoded.value.health === 'unavailable' at :3249). The current writers always give an unavailable Session a position: available->unavailable writes the null placeholder and the same commit binds it (session-availability.ts:386-392, :451-452, :462-463; binds at session-health.ts:143-144, run-reconcile-service.ts:93-96, query-execution.ts:558-561); an already-unavailable Session keeps its bound value (:392, :446-448). A persisted null is refused by the decoder before this line (session-record-codecs.ts:751, decodeSessionRecord :1021); only an absent key on an unavailable record is accepted, which no current writer produces (old-format or hand edit).",
+  "proposal_ok": true,
+  "proposal_note": "Keeping it untested is correct: it narrows optional SessionRecord.unavailableSince to the required UndeliveredReplyV1 field (communication-contracts.ts:72); T deliberately did not enforce it in the codec because an available Session legitimately lacks the field (t-items-TP.md:486-488)."
+ },
+ {
+  "row": "B-052",
+  "refuted": false,
+  "cls": "U",
+  "evidence": "The arm at mailbox-service.ts:3303 needs a work_run message (:3287) with a saved response (:3291) and no responseSince. The only responded/decision_answered constructors write responseSince: null for a work_run sender (message-machine.ts:1236-1243, :1298-1329) and the same commit binds it (mailbox-service.ts:307-311); decision-service and respondFromQueryAnswer go through those constructors. The one direct responded constructor is the synthetic decision answer, whose sender is a Host sender, not work_run (message-machine.ts:1134-1170), so the :3287 filter never yields it. A persisted null is refused at decode (message-record-codecs.ts:883 with requireBound=true at :1085); only a missing key on a replied work_run message remains (old format/tamper).",
+  "proposal_ok": true,
+  "proposal_note": "Keep-untested matches the U rule and the DTO requirement (UndeliveredReplyV1.responseSince is a required CommitCursor, communication-contracts.ts:73); deleting it would only hide damaged records."
+ },
+ {
+  "row": "C4-034",
+  "refuted": false,
+  "cls": "D1",
+  "evidence": "recheckPersist is a local function of createMessageWriteOwner with exactly one occurrence in src/ and tests/: its definition at mailbox-service.ts:3661. The returned owner object exposes only storeBody and persist (:3665-3764), so no caller can reach it; it merely wraps recheckSessionMessageReceipt, which stays used at :262/:330/:334/:1891. No spec or type reserves it (grep of docs and evidence finds no reference).",
+  "proposal_ok": true,
+  "proposal_note": "Deleting :3661-3663 removes only the unused wrapper; recheckSessionMessageReceipt and the public replay path are untouched."
+ }
+]}

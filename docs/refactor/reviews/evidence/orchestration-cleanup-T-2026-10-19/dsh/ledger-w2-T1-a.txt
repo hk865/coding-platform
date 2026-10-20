@@ -1,0 +1,351 @@
+# D1 assertion ledger w2-base..HEAD (tests)
+
+## ADDED expected value from a constant: 3
+tests/work-graph/S4C2-goal-triggers.test.ts:287: expect(plan.acceptedAt).toBe(P1_AT);
+tests/work-graph/S4C2-goal-triggers.test.ts:311: expect(p2.acceptedAt).toBe(P2_AT);
+tests/work-graph/S4C2-goal-triggers.test.ts:312: expect(p3.acceptedAt).toBe(P3_AT);
+
+## MOVED: 94
+
+## REMOVED assertion: 263
+tests/composition/R3e-completion-platform.test.ts:73: expect(workOpened, 'the work round opens on the real platform').toMatchObject({ status: 'committed' });
+tests/helpers/W2-whiteboard-fixture.ts:363: expect(entered, 'W2 fixture first entered Run prerequisite').toBeTruthy();
+tests/helpers/W2-whiteboard-fixture.ts:394: expect(result, 'formal terminal prerequisite').toMatchObject({ status: 'committed', value: { status: 'ended' } });
+tests/runtime/K3-12-review-round-tools.test.ts:135: expect(manifest.permissions.tools).toEqual(EXPECTED_REVIEW_TOOLS);
+tests/runtime/K3-12-review-round-tools.test.ts:136: expect(manifest.permissions.writeScope).toEqual([]);
+tests/runtime/K3-12-review-round-tools.test.ts:138: expect(manifest.permissions.tools).not.toContain(forbidden);
+tests/runtime/K3-12-review-round-tools.test.ts:144: expect(manifest.unknownCallReview).toBeDefined();
+tests/scenarios/S2C-K-unknown-outcome.test.ts:60: expect(unknown.run).toMatchObject({ status: 'ended', outcome: 'outcome_unknown' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:61: expect(unknown.session).toMatchObject({ health: 'unavailable', healthConclusion: 'missing' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:78: expect(unknown.run).toMatchObject({ status: 'ended', outcome: 'outcome_unknown' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:79: expect(unknown.session).toMatchObject({ health: 'unavailable', healthConclusion: 'damaged' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:116: expect(attested).toMatchObject({ status: 'committed' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:122: expect(afterAttest.session).toMatchObject({ health: 'unavailable', healthConclusion: 'kernel_turn_open' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:133: expect(afterPass1.session).toMatchObject({ health: 'unavailable', healthConclusion: 'missing' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:140: expect(archived, 'the retired line is archived').toBeDefined();
+tests/scenarios/S2C-K-unknown-outcome.test.ts:141: expect(archived?.status.bucket).toBe('archived');
+tests/scenarios/S2C-K-unknown-outcome.test.ts:142: expect(archived?.status.archivedTag).toBe('retired');
+tests/scenarios/S2C-K-unknown-outcome.test.ts:143: expect(archived?.status.own).toBe('retired');
+tests/scenarios/S2C-K-unknown-outcome.test.ts:144: expect(archived?.retired).toMatchObject({ conclusion: 'missing' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:146: expect(reactivate).toMatchObject({ availability: 'unavailable', reasonCode: 'reactivate_refused_retired' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:149: expect(card).toMatchObject({ lifecycle: 'archived', health: 'unavailable', healthConclusion: 'missing' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:185: expect(attested).toMatchObject({ status: 'committed' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:188: expect(afterAttest.session).toMatchObject({ health: 'unavailable', healthConclusion: 'kernel_turn_open' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:193: expect(afterPass1.session).toMatchObject({ health: 'unavailable', healthConclusion: 'damaged' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:198: expect(archived, 'the damaged retired line is archived').toBeDefined();
+tests/scenarios/S2C-K-unknown-outcome.test.ts:199: expect(archived?.status.bucket).toBe('archived');
+tests/scenarios/S2C-K-unknown-outcome.test.ts:200: expect(archived?.status.archivedTag).toBe('retired');
+tests/scenarios/S2C-K-unknown-outcome.test.ts:201: expect(archived?.status.own).toBe('retired');
+tests/scenarios/S2C-K-unknown-outcome.test.ts:202: expect(archived?.retired).toMatchObject({ conclusion: 'damaged' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:204: expect(reactivate).toMatchObject({ availability: 'unavailable', reasonCode: 'reactivate_refused_retired' });
+tests/scenarios/S2C-K-unknown-outcome.test.ts:206: expect(card).toMatchObject({ lifecycle: 'archived', health: 'unavailable', healthConclusion: 'damaged' });
+tests/scenarios/S3-query-graph.test.ts:441: expect(JSON.stringify(historyResult)).toContain(RUN_A.runId);
+tests/state/S2C-line-status.test.ts:154: expect(status.own).toBe('retired');
+tests/state/S2C-line-status.test.ts:155: expect(status.ownReason.code).toBe('retired_unrecorded');
+tests/state/S2C-line-status.test.ts:156: expect(status.attention?.code).toBe('unknown');
+tests/work-graph/A2-control-service.test.ts:272: expect(yielded).toMatchObject({ status: 'committed', value: { status: 'ended', outcome: 'yielded' } });
+tests/work-graph/A2-control-service.test.ts:284: expect(resume.intent).toMatchObject({ status: 'queued' });
+tests/work-graph/A2-control-service.test.ts:285: expect(await readIntent(controls, fixture, pause.intent.ref)).toMatchObject({ status: 'superseded',
+tests/work-graph/A2-control-service.test.ts:287: expect((await fixture.read()).run.controlState).toEqual({ intentRef: resume.intent.ref, desiredState: 'running' });
+tests/work-graph/A2-control-service.test.ts:305: expect(await controls.submitControl(fixture.ctx, { input: { runRef: fixture.claim.runRef, kind, reason: 'too late' },
+tests/work-graph/A2-control-service.test.ts:311: expect(await controlsOn(fixture.base.records, 'not-consumed').submitControl(fixture.ctx, {
+tests/work-graph/A2-control-service.test.ts:336: expect(await controlsOn(counted.records, `goal-${desiredState}`).submitControl(fixture.ctx, {
+tests/work-graph/A2-control-service.test.ts:343: expect((await submit(fixture, controls, 'a2-goal-active-resume', 'resume')).intent).toMatchObject({ status: 'applied' });
+tests/work-graph/A2-control-service.test.ts:347: expect((await submit(fixture, pausedGoal, 'a2-goal-paused-pause', 'pause')).intent).toMatchObject({ status: 'applied' });
+tests/work-graph/A2-disposition-change.test.ts:460: expect(await f.adopt(cancelB, f.plan, ['B'])).toMatchObject({ status: 'rejected', ...refusal });
+tests/work-graph/A2-disposition-change.test.ts:501: expect(await f.planServiceOver(racing).applyPlanChange(ctx, applyRequest('c7-race-apply-1')))
+tests/work-graph/A2-disposition-change.test.ts:503: expect(raced).toBe(true);
+tests/work-graph/A2-disposition-change.test.ts:504: expect(await f.activePlan()).toEqual(f.plan.ref);
+tests/work-graph/A2-disposition-change.test.ts:506: expect(await f.plans.applyPlanChange(ctx, applyRequest('c7-race-apply-2')))
+tests/work-graph/A2-gate-chain-facts.test.ts:275: expect(await fixture.b2.base.commitRaw([encodeVerificationRoundSnapshot(foreign, { finalizedAt: B2_AT })])).toMatchObject({ status: 'committed' });
+tests/work-graph/A2-gate-chain-facts.test.ts:276: expect(await fixture.b2.base.plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.goalRef })).toEqual({ status: 'rejected',
+tests/work-graph/B2-11-script-expansion.test.ts:162: expect(result.expansions[1]?.actions.map(action => action.text)).toEqual(['npm run c']);
+tests/work-graph/B2-11-script-expansion.test.ts:196: expect(result.reads).toEqual(['a/package.json', 'b/package.json', 'c/package.json', 'd/package.json']);
+tests/work-graph/B2-11-script-expansion.test.ts:197: expect(result.expansions).toHaveLength(4);
+tests/work-graph/B2-11-script-expansion.test.ts:246: expect(Buffer.byteLength(entry.scriptText, 'utf8')).toBeLessThanOrEqual(2_048);
+tests/work-graph/B2-11-script-expansion.test.ts:248: expect(entry.actions).toEqual([{ text: words.join(' '), sha256: keyOf(words) }]);
+tests/work-graph/B2-execution-result.test.ts:31: expect(await f.base.commitRaw([{ refKey: b2Key(link.ref), schemaId: 'SessionWorkLink@1', revision: 1, json: JSON.stringify(link) }]))
+tests/work-graph/B2-execution-result.test.ts:49: expect(ended.run.executionHistory).toMatchObject({ startPosition: 2, observedThroughPosition: 4, endPosition: 4 });
+tests/work-graph/C1-session-mailbox.test.ts:359: expect(read.status).toBe('ready'); if(read.status !== 'ready') return;
+tests/work-graph/C1-session-mailbox.test.ts:362: expect(await h.fixture.commitRaw([{...row,revision:lease.revision,json:JSON.stringify(lease)}],[{refKey:row.refKey,expectedRevision:row.revision}])).toMatchObject({status:'committed'});
+tests/work-graph/C1-session-mailbox.test.ts:363: expect(await h.mailbox.sendMessage(h.ctxWork,sendRequest(h.idleSession,'stale owner','lease-changed'))).toMatchObject({status:'rejected',code:'forbidden'});
+tests/work-graph/C1-session-mailbox.test.ts:364: expect(await h.mailbox.readInbox(h.ctxHost,{recipient:h.idleSession,page:{limit:10}})).toMatchObject({status:'ready',value:{items:[]}});
+tests/work-graph/C1-session-mailbox.test.ts:471: expect(sent.status).toBe('committed'); if (sent.status !== 'committed') return;
+tests/work-graph/C1-session-mailbox.test.ts:475: expect(loaded.status).toBe('ready'); if (loaded.status !== 'ready') return;
+tests/work-graph/C1-session-mailbox.test.ts:483: expect(await h.fixture.commitRaw([{ ...row, revision: released.revision, json: JSON.stringify(released) }],
+tests/work-graph/C1-session-mailbox.test.ts:485: expect(await h.mailbox.sendMessage(h.ctxWork, request)).toEqual({ ...sent, replayed: true });
+tests/work-graph/C1-session-mailbox.test.ts:486: expect(await h.mailbox.sendMessage(h.ctxWork, sendRequest(h.idleSession, 'after release', 'same-owner-fresh')))
+tests/work-graph/C1-session-mailbox.test.ts:489: expect(inbox).toMatchObject({ status: 'ready', value: { items: [sent.value] } });
+tests/work-graph/K3-15-disposition-effects.test.ts:235: expect(applied.blockedCommands).toHaveLength(1);
+tests/work-graph/K3-15-disposition-effects.test.ts:236: expect(applied.blockedCommands[0]).toMatchObject({ alias: 1, reviewRunId: applied.runRef.runId });
+tests/work-graph/K3-15-disposition-effects.test.ts:237: expect(section.blockedCommands).toHaveLength(1);
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:128: expect(crashed).toMatchObject({ status: 'ended', outcome: 'crashed' });
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:130: expect(after).toMatchObject({ status: 'awaiting_proposal', activeRound: null });
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:131: expect(after.rounds).toHaveLength(1);
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:132: expect(after.rounds[0]).toMatchObject({ phase: 'proposal', round: 1, result: 'unfinished' });
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:134: expect(proposalIds(after)).toEqual([after.items[0]!.callId]);
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:145: expect(created.items).toHaveLength(1);
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:158: expect(afterFirst).toMatchObject({ status: 'awaiting_proposal', activeRound: null });
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:164: expect(final.status).toBe('needs_decision');
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:165: expect(final.decisionReasons).toEqual(['review_incomplete']);
+tests/work-graph/R3a-goal-replay-boundaries.test.ts:44: expect(await backend.records.commit(scopeCommit([project, workspace], null))).toMatchObject({ status: 'committed' });
+tests/work-graph/R3a-goal-replay-boundaries.test.ts:50: expect(await backend.records.commit(scopeCommit([{ ...project, revision: 2 }, { ...workspace, revision: 2 }], 1)))
+tests/work-graph/R3a-goal-replay-boundaries.test.ts:67: expect(await backend.records.commit(scopeCommit([project, workspace], null))).toMatchObject({ status: 'committed' });
+tests/work-graph/R3b-material-applicability.test.ts:87: expect(await store.records.commit(seedCommit([workspace(sourceWorkspace), workspace(targetWorkspace),
+tests/work-graph/R3b-material-applicability.test.ts:97: expect(await materials.openArtifact(queryCtx(reader), historical)).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/work-graph/R3b-material-applicability.test.ts:98: expect(await materials.openArtifact(workCtx(otherRun, targetWorkspace), historical))
+tests/work-graph/R3c-plan-adoption.test.ts:109: expect(await backend.records.commit(seed)).toMatchObject({ status: 'committed' });
+tests/work-graph/R3c-plan-entry.test.ts:46: expect(await backend.records.commit(seed)).toMatchObject({ status: 'committed' });
+tests/work-graph/R3c-task-relations.test.ts:93: expect(await backend.records.commit({ identityKey: 'relation-seed', fingerprint: 'relation-seed',
+tests/work-graph/R3e-completion.test.ts:54: expect(read, 'directed round read').toMatchObject({ status: 'ready' });
+tests/work-graph/R3e-completion.test.ts:64: expect(begin, `begin ${check.checkId}`).toMatchObject({ status: 'committed' });
+tests/work-graph/R3e-completion.test.ts:69: expect(recorded, `record ${check.checkId}`).toMatchObject({ status: 'committed' });
+tests/work-graph/R3e-completion.test.ts:74: expect(finalized, 'the formal round finalizes into mechanical Evidence')
+tests/work-graph/R3e-completion.test.ts:98: expect(workOpened, 'the work round opens').toMatchObject({ status: 'committed', value: { subject: { taskId: R3E_WORK_TASK_ID } } });
+tests/work-graph/R3e-completion.test.ts:105: expect(gateOpened, 'the Goal gate round opens on its own subject').toMatchObject({ status: 'committed', value: { subject: { taskId: R3E_GATE_TASK_ID } } });
+tests/work-graph/R3e-completion.test.ts:119: expect(completedWork, 'work completion must commit the formal satisfied reduction')
+tests/work-graph/R3e-completion.test.ts:131: expect(completedGate, 'the Goal gate completion must commit').toMatchObject({ status: 'committed', value: { phase: 'satisfied' } });
+tests/work-graph/R3e-completion.test.ts:143: expect(completedGoal, 'the Goal completion must write the formal COMPLETED phase')
+tests/work-graph/R3e-completion.test.ts:148: expect(graph, 'the graph is readable after completion').toMatchObject({ status: 'ready' });
+tests/work-graph/R3e-completion.test.ts:152: expect(workRow, 'the work task is formally satisfied').toMatchObject({ effectivePhase: 'satisfied' });
+tests/work-graph/R3e-completion.test.ts:153: expect(gateRow, 'the Goal gate is formally satisfied').toMatchObject({ effectivePhase: 'satisfied' });
+tests/work-graph/R3e-completion.test.ts:157: expect(graph.value.completion, 'the formal Goal completion is projected').toMatchObject({
+tests/work-graph/R3e-completion.test.ts:163: expect(replayedWork, 'the original work completion request replays').toEqual({ ...completedWork, replayed: true });
+tests/work-graph/R3g-role-spec.test.ts:386: expect(await backend.records.commit({ identityKey: 'r3g-missing-policy-seed',
+tests/work-graph/R3g-role-spec.test.ts:394: expect(await roles.resolveRoleBinding(ctx, request)).toMatchObject({ status: 'rejected' });
+tests/work-graph/R3g-role-spec.test.ts:397: expect(await backend.records.commit({ identityKey: 'r3g-corrupt-seed', fingerprint: 'r3g-corrupt-seed-v1',
+tests/work-graph/R3g-role-spec.test.ts:404: expect(await roles.resolveRoleBinding(ctx, request)).toMatchObject({ status: 'rejected' });
+tests/work-graph/R3g-role-spec.test.ts:512: expect(await backend.records.commit(seedProject)).toMatchObject({ status: 'committed' });
+tests/work-graph/R3g-role-spec.test.ts:518: expect(installed).toMatchObject({ status: 'committed' });
+tests/work-graph/R3g-role-spec.test.ts:522: expect(await roles.activateRoleSpec(ctx, activate)).toMatchObject({ status: 'committed' });
+tests/work-graph/R3g-role-spec.test.ts:524: expect(before).toMatchObject({ status: 'ready' });
+tests/work-graph/R3g-role-spec.test.ts:538: expect(await alteredEventReader.installRoleSpec(ctx, install)).toMatchObject({ status: 'rejected' });
+tests/work-graph/R3g-role-spec.test.ts:539: expect(await alteredEventReader.activateRoleSpec(ctx, activate)).toMatchObject({ status: 'rejected' });
+tests/work-graph/R3g-role-spec.test.ts:542: expect(after).toMatchObject({ status: 'ready', value: { records: [
+tests/work-graph/R4b-session-boundaries.test.ts:78: expect(admitted.status).toBe('committed');
+tests/work-graph/R4b-session-boundaries.test.ts:82: expect(await sessions.getSessionOperation(inB, admitted.value.ref)).toMatchObject({ status: 'not_found' });
+tests/work-graph/R4b-session-boundaries.test.ts:88: expect(first.status).toBe('committed');
+tests/work-graph/R4b-session-boundaries.test.ts:144: expect(seeded.status).toBe('committed');
+tests/work-graph/R4b-session-boundaries.test.ts:148: if (found.status === 'ready') expect(found.value.items.map(item => item.record.ref.sessionId)).toEqual(['matching-role']);
+tests/work-graph/R4b-session-boundaries.test.ts:222: expect(seeded.status).toBe('committed');
+tests/work-graph/R4b-session-boundaries.test.ts:234: expect(found).toContain('scan-1000');
+tests/work-graph/R4b-session-boundaries.test.ts:262: expect(seeded.status).toBe('committed');
+tests/work-graph/R4b-session-directory.test.ts:146: expect(accepted.status).toBe('committed');
+tests/work-graph/R4b-session-directory.test.ts:238: expect(admitted.status).toBe('committed');
+tests/work-graph/R4b-session-directory.test.ts:244: expect(registered.status).toBe('committed');
+tests/work-graph/R4b-session-directory.test.ts:250: expect(card.value.links[0]?.since).toBe(registered.cursor);
+tests/work-graph/R4b-session-directory.test.ts:264: expect(['not_found', 'dependency_blocked', 'invalid']).toContain(admitted.code);
+tests/work-graph/R4b-session-directory.test.ts:271: expect(registered.status).toBe('rejected');
+tests/work-graph/R4b-session-directory.test.ts:272: expect(await sessions.readSession(ctx, admitted.value.action.plannedSessionRef)).toEqual({ status: 'not_found' });
+tests/work-graph/R4c-execution-history-index.test.ts:799: expect(damaged).toMatchObject({ status: 'rejected', code: 'unavailable' });
+tests/work-graph/R4c-execution-history-index.test.ts:962: expect(first).toMatchObject({ status: 'committed', replayed: false });
+tests/work-graph/R4c-execution-history-index.test.ts:964: expect(first.value.runRevision).toBe(pin.revision + 1);
+tests/work-graph/R4c-execution-history-index.test.ts:975: expect(Number(changed.changes)).toBe(1);
+tests/work-graph/R4c-execution-history-index.test.ts:976: expect(database.prepare('SELECT * FROM idempotency ORDER BY identity_key').all()).toEqual(receiptBefore);
+tests/work-graph/R4c-execution-history-index.test.ts:977: expect((await readRun(h.fixture, h.claim.runRef)).revision).toBe(first.value.runRevision);
+tests/work-graph/R4c-execution-history-index.test.ts:980: expect(replay).toMatchObject({ status: 'rejected', code: 'unavailable' });
+tests/work-graph/S1-codecs-indexes.test.ts:229: expect(page.value.next).toBeNull();
+tests/work-graph/S1-codecs-indexes.test.ts:257: expect(decodedMessage.status).toBe('decoded');
+tests/work-graph/S1-codecs-indexes.test.ts:259: expect(decodedMessage.value.replyHandler).toBeNull();
+tests/work-graph/S1-codecs-indexes.test.ts:260: expect(decodedMessage.value.archiveWaitDisposition).toBeNull();
+tests/work-graph/S1-codecs-indexes.test.ts:263: expect(continuationBriefDigest(OLD_BRIEF)).toBe(OLD_BRIEF_DIGEST);
+tests/work-graph/S1-codecs-indexes.test.ts:360: expect(decoded.status).toBe('decoded');
+tests/work-graph/S1-codecs-indexes.test.ts:361: if (decoded.status === 'decoded') expect(decoded.value.claim.runRef).toEqual(claim.runRef);
+tests/work-graph/S1-codecs-indexes.test.ts:365: expect(first.status, 'first IDX-S2 read').toBe('ready');
+tests/work-graph/S1-codecs-indexes.test.ts:367: expect(first.value.records).toHaveLength(1);
+tests/work-graph/S1-codecs-indexes.test.ts:370: expect(found.refKey).toBe(dispatchOutboxRefKey(claim.outboxRef));
+tests/work-graph/S1-codecs-indexes.test.ts:372: expect(reopened.status).toBe('decoded');
+tests/work-graph/S1-codecs-indexes.test.ts:373: if (reopened.status === 'decoded') expect(reopened.value.claim.runRef).toEqual(claim.runRef);
+tests/work-graph/S1-codecs-indexes.test.ts:375: expect(second.status, 'second IDX-S2 read').toBe('ready');
+tests/work-graph/S1-codecs-indexes.test.ts:390: expect(before).toEqual({ records: 1, events: 1, receipts: 1 });
+tests/work-graph/S1-codecs-indexes.test.ts:391: await assertLookup(backend.records);
+tests/work-graph/S1-codecs-indexes.test.ts:392: expect(await memoryOutboxCounts(backend.records, receipts)).toEqual(before);
+tests/work-graph/S1-codecs-indexes.test.ts:401: expect(sqliteCounts(ledger)).toEqual({ records: 0, events: 0, receipts: 0 });
+tests/work-graph/S1-codecs-indexes.test.ts:404: expect(before).toEqual({ records: 1, events: 1, receipts: 1 });
+tests/work-graph/S1-codecs-indexes.test.ts:408: expect(sqliteCounts(ledger)).toEqual(before);
+tests/work-graph/S1-codecs-indexes.test.ts:409: await assertLookup(reopened.records);
+tests/work-graph/S1-codecs-indexes.test.ts:410: expect(sqliteCounts(ledger)).toEqual(before);
+tests/work-graph/S1-codecs-indexes.test.ts:413: expect(JSON.parse(persisted.value.records[0]!.json)).toEqual(JSON.parse(outbox.json));
+tests/work-graph/S2C-lines-attention.test.ts:229: expect(finalized.outcome).toBe('INCONCLUSIVE');
+tests/work-graph/S2C-lines-attention.test.ts:233: expect(row?.status.attention?.code).toBe('blocked');
+tests/work-graph/S2C-lines-attention.test.ts:234: expect(row?.status.attention?.reason.code).toBe('round_inconclusive');
+tests/work-graph/S2C-lines-failure.test.ts:181: expect(row).toBeDefined();
+tests/work-graph/S2C-lines-failure.test.ts:182: expect(row?.problem).toMatchObject({ code: 'unavailable' });
+tests/work-graph/S2C-lines-failure.test.ts:183: expect(row?.status.bucket).toBeNull();
+tests/work-graph/S2C-lines-failure.test.ts:194: expect(row).toBeDefined();
+tests/work-graph/S2C-lines-failure.test.ts:195: expect(row?.problem).toMatchObject({ code: 'source_moving' });
+tests/work-graph/S2C-lines-failure.test.ts:196: expect(row?.status.bucket).toBeNull();
+tests/work-graph/S2C-lines-scale.test.ts:184: expect(m).toBeGreaterThan(0);
+tests/work-graph/S2C-node-detail-anomalies.test.ts:117: expect(anomalies.value.items[0]!.anchor.ref.runId).toBe('s2c-d-anomaly-run-task-a');
+tests/work-graph/S2C-node-detail-anomalies.test.ts:129: expect(pickedPage.value.items[0]!.pickedUpBy).not.toBeNull();
+tests/work-graph/S2C-node-detail-anomalies.test.ts:155: expect(partial.status).toBe('ready');
+tests/work-graph/S2C-node-detail-anomalies.test.ts:157: expect(partial.value.goal?.anomalyCount).toEqual({
+tests/work-graph/S2C-node-detail-executions.test.ts:36: expect(summary.value.notes).toEqual({ status: 'unavailable', reason: 'the notes read is not wired' });
+tests/work-graph/S4A-note-history.test.ts:471: expect(u1.status).toBe('accepted');
+tests/work-graph/S4A-note-history.test.ts:478: expect(pitfall).toMatchObject({ status: 'pending_review', reasons: ['user_note_replaced'] });
+tests/work-graph/S4A-note-history.test.ts:481: expect(accepted).toMatchObject({ status: 'done', state: 'accepted' });
+tests/work-graph/S4A-note-history.test.ts:484: expect(page.value.pointer).toEqual({ noteId: u1Id, revision: 1 });
+tests/work-graph/S4A-note-history.test.ts:487: expect(u1Item.value.storedState).toBe('accepted');
+tests/work-graph/S4A-note-history.test.ts:497: expect(x.status).toBe('accepted');
+tests/work-graph/S4A-note-history.test.ts:502: expect(replacement).toMatchObject({ status: 'pending_review', reasons: ['user_note_replaced'] });
+tests/work-graph/S4A-note-history.test.ts:505: expect(beforeAccept.value.storedState).toBe('accepted');
+tests/work-graph/S4A-note-history.test.ts:508: expect(accepted).toMatchObject({ status: 'done', state: 'accepted' });
+tests/work-graph/S4A-note-history.test.ts:511: expect(afterAccept.value.storedState).toBe('superseded');
+tests/work-graph/S4B-memory-anchor-not-found.test.ts:50: expect(read.status).toBe('rejected');
+tests/work-graph/S4B-memory-anchor-not-found.test.ts:52: expect(read.code).toBe('not_found');
+tests/work-graph/S4B-memory-anchor-not-found.test.ts:53: expect(read.reason).toBe('anchor_not_found');
+tests/work-graph/S4B-memory-version-lists.test.ts:117: expect(page.value.items.map(item => item.revision)).toEqual([2, 1]);
+tests/work-graph/S4B-memory-version-lists.test.ts:122: expect(newest.revision).toBe(2);
+tests/work-graph/S4B-memory-version-lists.test.ts:123: expect(typeof newest.at).toBe('string');
+tests/work-graph/S4B-memory-version-lists.test.ts:124: expect(newest.reason).toBe('s4b M-10 catalog revision');
+tests/work-graph/S4B-memory-version-lists.test.ts:125: expect(newest.reasonLabel).toBe('s4b M-10 catalog revision');
+tests/work-graph/S4B-memory-version-lists.test.ts:127: expect([legacy.revision, legacy.at, legacy.reason]).toEqual([1, null, null]);
+tests/work-graph/S4B-memory-version-lists.test.ts:128: expect(legacy.reasonLabel).toBe('原因记在目录修订里，第 8 片接上后显示');
+tests/work-graph/S4B-memory-version-lists.test.ts:129: expect(page.value.complete).toBe(true);
+tests/work-graph/S4B-note-freshness.test.ts:63: expect(page.status).toBe('ready');
+tests/work-graph/S4B-note-symbol-recheck.test.ts:79: expect(read.status).toBe('ready');
+tests/work-graph/S4B-note-symbol-recheck.test.ts:81: expect(read.value.anchorStatus).toBe('retired');
+tests/work-graph/S4B-note-symbol-recheck.test.ts:82: expect(read.value.anchorRetiredReasons).toContain('symbol_missing');
+tests/work-graph/S4C-note-protection.test.ts:264: expect(note).toMatchObject({ status: 'accepted', reasons: [] });
+tests/work-graph/S4C-note-protection.test.ts:265: expect((await itemOf(f, mineId)).storedState).toBe('accepted');
+tests/work-graph/S4C-note-protection.test.ts:266: expect((await itemOf(f, idOf(note))).coexistWith).toEqual([mineId]);
+tests/work-graph/S4C-note-protection.test.ts:295: expect((await itemOf(f, idOf(note))).storedState).toBe('accepted');
+tests/work-graph/S4C-note-protection.test.ts:303: expect(pending).toMatchObject({ status: 'pending_review' });
+tests/work-graph/S4C-note-protection.test.ts:308: expect((await itemOf(f, idOf(pending))).storedState).toBe('pending_review');
+tests/work-graph/S4C-project-understanding.test.ts:57: expect(looked.status).toBe('ready');
+tests/work-graph/S4C-project-understanding.test.ts:59: expect(looked.value.items.map(item => item.noteId)).toContain(understanding);
+tests/work-graph/S4C2-D-rows.test.ts:115: expect(result).toMatchObject({ status: 'ready', value: { state: 'applied',
+tests/work-graph/S4C2-D-rows.test.ts:118: expect(await noteOf(f, agentId)).toMatchObject({ storedState: 'accepted', replaces: [userId] });
+tests/work-graph/S4C2-D-rows.test.ts:119: expect((await noteOf(f, userId)).storedState).toBe('superseded');
+tests/work-graph/S4C2-U3.test.ts:85: expect(committed.eventIds).toEqual([event.eventId]);
+tests/work-graph/S4C2-U3.test.ts:101: expect(otherAnswer).not.toEqual(f.messages.answered.ref);
+tests/work-graph/S4C2-U3.test.ts:107: expect(result).toMatchObject({ status: 'rejected', code: 'invalid' });
+tests/work-graph/S4C2-goal-triggers.test.ts:171: expect(result.status).toBe('ready');
+tests/work-graph/S4C2-goal-triggers.test.ts:173: expect([...result.triggers].sort(byKey)).toEqual([
+tests/work-graph/S4C2-goal-triggers.test.ts:178: expect([...result.claimedArchiveKeys]).toEqual(['archive:t1/run-2']);
+tests/work-graph/S4C2-goal-triggers.test.ts:185: expect(result.status).toBe('ready');
+tests/work-graph/S4C2-goal-triggers.test.ts:187: expect(result.triggers).toEqual([{ key: 'rework:t1/run-1', at: REWORK_AT, kind: 'rework', taskId: 't1' }]);
+tests/work-graph/S4C2-goal-triggers.test.ts:194: expect(result.status).toBe('ready');
+tests/work-graph/S4C2-goal-triggers.test.ts:196: expect(result.triggers).toEqual([]);
+tests/work-graph/S4C2-project-set-shared.test.ts:215: expect(assembly.status).toBe('ready');
+tests/work-graph/S4C2-project-set-shared.test.ts:218: expect(state.project).toBe(5);
+tests/work-graph/S4C2-project-set-shared.test.ts:221: expect(projectRow!.version).toBe(1);
+tests/work-graph/S4C2-project-set-shared.test.ts:222: expect(projectRow!.status.pointer).toMatchObject({ noteId: seeded.understandingId, revision: 1 });
+tests/work-graph/S4C2-project-set-shared.test.ts:223: expect(notes.understanding.norms).toHaveLength(1);
+tests/work-graph/S4C2-project-set-shared.test.ts:224: expect(notes.understanding.norms[0]).toMatchObject({ noteId: seeded.normId, version: 2,
+tests/work-graph/S5R2-queue-history.test.ts:147: expect(result).toMatchObject({ status: 'ready' });
+tests/work-graph/S5R2-queue-history.test.ts:148: expect(await f.storeSnapshot()).toEqual(before);
+tests/work-graph/S8A-L8-reminders-pure.test.ts:131: expect(texts({ facts: facts(), taskModuleRef: A, now: THREE_HOURS_FIVE })).toEqual([
+tests/work-graph/S8A-L8-reminders-pure.test.ts:143: expect(texts({
+tests/work-graph/S8A-L8-reminders-pure.test.ts:157: expect(rows).toHaveLength(11);
+tests/work-graph/S8A-L8-reminders-pure.test.ts:158: expect(rows.slice(0, 10)).toEqual(Array.from({ length: 10 }, (_unused, index) =>
+tests/work-graph/S8A-L8-reminders-pure.test.ts:160: expect(rows[10]).toBe('另有 2 条架构提醒没列出');
+tests/work-graph/S8A-L8-reminders-pure.test.ts:164: expect(texts({
+tests/work-graph/S8A-path-ownership-dedupe.test.ts:22: expect(resolved).toEqual({ status: 'owner', owner: 'A', prefix: 'src/a' });
+tests/work-graph/S8A-path-ownership-dedupe.test.ts:23: expect(canonical('src/loose.ts', [root])).toEqual({ status: 'owner', owner: 'Root', prefix: '.' });
+tests/work-graph/S8A-path-ownership-dedupe.test.ts:24: expect(canonical('src/loose.ts', [
+tests/work-graph/S8A-path-ownership-dedupe.test.ts:27: expect(canonical('', [root])).toEqual({ status: 'none' });
+tests/work-graph/W1-future-plan.test.ts:390: expect(injectedCommit).toMatchObject({ status: 'committed' });
+tests/work-graph/W1-future-plan.test.ts:434: expect(decodePlanRevisionSnapshot(changed)).toMatchObject({ status: 'decoded' });
+tests/work-graph/W1-future-plan.test.ts:438: expect(await planServiceOver(corruptReads, `origin-${mutation}`).queryTaskGraph(ctx,
+tests/work-graph/W1-future-plan.test.ts:440: expect(originRead).toBe(true);
+tests/work-graph/W1-future-plan.test.ts:443: expect(await f.readJsons([runA.ref, leaseA.ref, reductionC.ref])).toEqual(before);
+tests/work-graph/W1-future-plan.test.ts:459: expect((await g.readJsons([runGA.ref]))[canonicalJson(runGA.ref as unknown as JsonValue)]).toBe(JSON.stringify(runGA));
+tests/work-graph/W1-future-plan.test.ts:467: expect(await f.applyChange(proposed.value.ref, proposed.value.revision + 1, 'w1-s4-rev'))
+tests/work-graph/W1-future-plan.test.ts:482: expect(Object.keys(stored)).toHaveLength(1);
+tests/work-graph/W1-future-plan.test.ts:576: expect(Object.keys(stored), label).toEqual([]);
+tests/work-graph/W1-future-plan.test.ts:624: expect(proposed).toMatchObject({ status: 'committed', value: { issues: [] } });
+tests/work-graph/W1-future-plan.test.ts:632: expect(await f.plans.queryTaskGraph(ctx, { goalRef: f.goalRef }))
+tests/work-graph/W1-future-plan.test.ts:650: expect(decodePlanRevisionSnapshot(corrupted)).toMatchObject({ status: 'decoded' });
+tests/work-graph/W1-future-plan.test.ts:684: expect(proposed, label).toMatchObject({ status: 'committed', value: { status: 'candidate', issues: [] } });
+tests/work-graph/W1-future-plan.test.ts:696: expect(applied, label).toEqual(expected);
+tests/work-graph/W1-future-plan.test.ts:698: expect(await head(), label).toEqual(before);
+tests/work-graph/W1-future-plan.test.ts:699: expect((await f.currentGoal()).activePlanRevision, label).toEqual(f.planRef);
+tests/work-graph/W1-future-plan.test.ts:700: expect(await f.plans.readPlanProposal(ctx, proposed.value.ref), label)
+tests/work-graph/W1-future-plan.test.ts:702: expect(await f.readJsons([{ aggregateType: 'PlanRevision', projectId, planId: draft.planId }]), label).toEqual({});
+tests/work-graph/goal-independent.test.ts:47: expect(await backend.records.commit(seed)).toMatchObject({ status: 'committed', replayed: false });
+tests/work-graph/goal-independent.test.ts:56: expect(await goal.tasks.createGoal(ctx, request('create-goal', 'Changed objective')))
+tests/work-graph/goal-independent.test.ts:58: expect(await goal.tasks.createGoal(ctx, request('another-request')))
+tests/work-graph/goal-independent.test.ts:60: expect(await goal.tasks.createGoal({ ...ctx, workspaceId: 'other-workspace' }, request('forged-scope')))
+tests/work-graph/goal-independent.test.ts:63: expect(await backend.records.readMany([goalKey])).toMatchObject({ status: 'ready',
+tests/work-graph/material-readers.test.ts:63: expect(await store.records.commit(commitRows(rows))).toMatchObject({ status: 'committed', replayed: false });
+tests/work-graph/material-readers.test.ts:79: expect(await authority.load(runRef('absent'))).toMatchObject({ status: 'not_found' });
+tests/work-graph/material-readers.test.ts:83: expect(await authority.load(owner)).toMatchObject({ status: 'found', snapshot: { workspaceSnapshot: { workspaceId } } });
+
+## REMOVED test or describe: 67
+tests/runtime/K3-12-review-round-tools.test.ts:128: describe('K3-12 review round preparation', () => {
+tests/runtime/K3-12-review-round-tools.test.ts:129: it.each(['memory', 'sqlite'] as const)('(%s) K3-12 prepares a review-purpose Run with exactly the L13 tools and an empty write scope', async kind => {
+tests/runtime/K3-review-preparation.test.ts:168: it.each(['memory', 'sqlite'] as const)('(%s) K3-L13-5 prepares with the L13 tools, empty write scope, sessionBasis and the review section', async kind => {
+tests/scenarios/S2C-K-retired.test.ts:243: it(`2C-21 (2) a ${name} Kernel leaves the line retired with an unreadable history; the probe then retires it and maintenance archives it (SES-19a)`, async () => {
+tests/scenarios/S2C-K-unknown-outcome.test.ts:105: it('2C-22 (2) after the person attests a missing-Kernel unknown Run, the attestation writes kernel_turn_open, maintenance pass 1 records the unreadable probe, and pass 2 archives the line as retired (lead 2026-10-15)', async () => {
+tests/scenarios/S2C-K-unknown-outcome.test.ts:174: it('2C-22 (4) after the person attests a damaged-Kernel unknown Run, the attestation writes kernel_turn_open, pass 1 records the damaged probe, and pass 2 archives the line as retired (lead 2026-10-15)', async () => {
+tests/state/S2C-line-status.test.ts:148: it('2C-01 T1 before T2: a legacy null conclusion with an unknown occupancy is 已退役 and 待核对', () => {
+tests/work-graph/A2-control-service.test.ts:261: describe('a yielded wait: D-8 on the fence, RD-8 once a successor consumed the continuation', () => {
+tests/work-graph/A2-control-service.test.ts:277: it('a resume over the queued wait-window pause supersedes it (RUN-14)', async () => {
+tests/work-graph/A2-control-service.test.ts:290: it('RD-8: once a successor Run holds the Lease, the yielded Run takes no control and nothing is written', async () => {
+tests/work-graph/A2-disposition-change.test.ts:442: it.each<[string, (f: Awaited<ReturnType<typeof setup>>) => Promise<unknown>, object]>([
+tests/work-graph/A2-disposition-change.test.ts:479: it('a claim between the TASK-19 read and the adoption commit moves the Lease: revision_conflict, zero writes; a re-read is busy', async () => {
+tests/work-graph/A2-gate-chain-facts.test.ts:267: it('a gate chain row that names another subject refuses the whole read (unavailable), never a guessed chain', async () => {
+tests/work-graph/B2-11-script-expansion.test.ts:190: it('reads one file per distinct directory and at most maxFiles (the rest are absent)', async () => {
+tests/work-graph/B2-11-script-expansion.test.ts:214: it('marks a failed read as unavailable with no actions and never throws', async () => {
+tests/work-graph/B2-11-script-expansion.test.ts:241: it('clips scriptText to 2,048 UTF-8 bytes but keys come from the untruncated body', async () => {
+tests/work-graph/C1-session-mailbox.test.ts:355: it('rejects a formal lease successor even when the Run and Session still appear running', async () => {
+tests/work-graph/C1-session-mailbox.test.ts:467: it('a released same-owner Lease denies fresh mail while restoring the original send receipt', async () => {
+tests/work-graph/K3-15-disposition-effects.test.ts:230: it('K3-15 (L20): a card skip_as_done records the one blocked command', async () => {
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:121: it.each(['memory', 'sqlite'] as const)(
+tests/work-graph/K3-16-proposal-round-fixture.test.ts:137: it.each(['memory', 'sqlite'] as const)(
+tests/work-graph/R3e-completion.test.ts:87: it('completes work and the Goal gate from formal rounds, then reads back satisfied and COMPLETED', async () => {
+tests/work-graph/R3g-role-spec.test.ts:341: it.each(['memory', 'sqlite'] as const)('%s: verified absence differs from corrupt role governance', async kind => {
+tests/work-graph/R3g-role-spec.test.ts:506: it.each(['memory', 'sqlite'] as const)('%s: review replay rejects an event attributed to another actor', async kind => {
+tests/work-graph/R4c-execution-history-index.test.ts:788: it('reports a malformed stored locator as unavailable', async () => {
+tests/work-graph/R4c-execution-history-index.test.ts:956: it('rejects replay when the stored event Run revision disagrees with the committed receipt', async () => {
+tests/work-graph/S1-codecs-indexes.test.ts:255: it('SV01: frozen old Message bytes decode and the old brief digest is byte-identical', () => {
+tests/work-graph/S1-codecs-indexes.test.ts:348: it('SV03: IDX-S2 returns the original claim runRef from old-format outbox bytes, and SQLite indexes a row written before the new schema existed', async () => {
+tests/work-graph/S2C-lines-attention.test.ts:216: it('2C-12 (9) an INCONCLUSIVE formal check is the blocked round_inconclusive attention', async () => {
+tests/work-graph/S2C-lines-failure.test.ts:173: it('2C-14 (review item 2) an undecodable open responsible link marks the line B4, never no responsibility', async () => {
+tests/work-graph/S2C-lines-failure.test.ts:186: it('2C-14/L11 an ended-but-occupied Run rereads once and then reports source_moving', async () => {
+tests/work-graph/S2C-lines-scale.test.ts:146: it('A2 measured on this build (printout, not asserted)', async () => {
+tests/work-graph/S2C-node-detail-executions.test.ts:19: it('2C-29 notes say not_available/slice_4 and a failed Run read keeps its executions item with a problem', async () => {
+tests/work-graph/S4A-note-history.test.ts:463: describe('S4A N-08 pointer discriminating cases', () => {
+tests/work-graph/S4A-note-history.test.ts:464: it.each(KINDS)('N-08 %s accepting a pending general note on a goal anchor leaves the pointer', async kind => {
+tests/work-graph/S4A-note-history.test.ts:492: describe('S4A N-06 accepting a pending replacement', () => {
+tests/work-graph/S4A-note-history.test.ts:493: it.each(KINDS)('N-06 %s accepting a pending replacement supersedes its target in that commit', async kind => {
+tests/work-graph/S4A-note-write.test.ts:699: it.each(KINDS)('N-10 accepting a pending note supersedes its current replaces targets', async kind => {
+tests/work-graph/S4B-memory-anchor-not-found.test.ts:45: it.each(['memory', 'sqlite'] as const)('MF9 %s: lookup of a missing module anchor carries the module candidates', async kind => {
+tests/work-graph/S4B-memory-version-lists.test.ts:102: it.each(['memory', 'sqlite'] as const)('M-10 %s: two catalog versions list newest first with the 8A reason label', async kind => {
+tests/work-graph/S4B-note-budget-check.test.ts:127: it.each(['memory', 'sqlite'] as const)('M-14 %s: a message fact that cannot be read is sourceUnavailable and the item remains', async kind => {
+tests/work-graph/S4B-note-freshness.test.ts:54: describe('S4B M-05 unavailable fact source', () => {
+tests/work-graph/S4B-note-freshness.test.ts:55: it.each(['memory', 'sqlite'] as const)('M-05 %s: an unreadable message fact is sourceUnavailable and the note is still returned', async kind => {
+tests/work-graph/S4B-note-symbol-recheck.test.ts:73: it.each(['memory', 'sqlite'] as const)('MF4 %s: a renamed symbol is still symbol_missing', async kind => {
+tests/work-graph/S4C-note-protection.test.ts:256: describe('S4C D-16: replaces a user note that is also in coexistWith', () => {
+tests/work-graph/S4C-note-protection.test.ts:257: it.each(KINDS)('D-16 %s: the write is accepted directly with no user reason', async kind => {
+tests/work-graph/S4C-note-protection.test.ts:287: describe('RW-8 a resolution is only applicable to an accept', () => {
+tests/work-graph/S4C-note-protection.test.ts:288: it.each(KINDS)('RW-8 review %s: a review carrying a resolution is invalid, resolution_not_applicable', async kind => {
+tests/work-graph/S4C-note-protection.test.ts:299: it.each(KINDS)('RW-8 reject %s: a reject carrying a resolution is invalid, resolution_not_applicable', async kind => {
+tests/work-graph/S4C-project-understanding.test.ts:40: describe('S4C DS-07 project understanding visibility', () => {
+tests/work-graph/S4C-project-understanding.test.ts:41: it.each(['memory', 'sqlite'] as const)(
+tests/work-graph/S4C2-D-rows.test.ts:274: it.each(KINDS)('D-16 %s: a replaced user note also in coexistWith is admitted directly, no card', async kind => {
+tests/work-graph/S4C2-goal-triggers.test.ts:115: describe('S4C2-3 readGoalTriggerRecords (spec §11.5, U-9)', () => {
+tests/work-graph/S4C2-goal-triggers.test.ts:129: it('S4C2-3b: a TaskReduction that is not satisfied produces no task_end', async () => {
+tests/work-graph/S4C2-goal-triggers.test.ts:181: it('S4C2-3e: plan === null drops T1/T2/T4 but still builds T3', async () => {
+tests/work-graph/S4C2-goal-triggers.test.ts:190: it('S4C2-3h: a requeue key is only built for ended Runs', async () => {
+tests/work-graph/S4C2-project-set-shared.test.ts:160: it.each(KINDS)('item 3 %s: the Goal-card work material reads the project set once (5, not 10)', async kind => {
+tests/work-graph/S4C2-project-set-shared.test.ts:197: it.each(KINDS)('item 3 %s: the Goal-card query material reads the project set once (5, not 10)', async kind => {
+tests/work-graph/S5R2-queue-history.test.ts:141: it('R2A08 - exactly 200 Goals remain inside the Workspace queue limit', async () => {
+tests/work-graph/S8A-L8-reminders-pure.test.ts:130: it('A-03: the four rows in kind order, each with the 3-hour observation time', () => {
+tests/work-graph/S8A-L8-reminders-pure.test.ts:139: it('an unknown dependency finding ends with ，不确定', () => {
+tests/work-graph/S8A-L8-reminders-pure.test.ts:148: it('caps at 10 rows and adds 另有 N 条架构提醒没列出', () => {
+tests/work-graph/S8A-L8-reminders-pure.test.ts:163: it('no successful observation -> 还没有观测', () => {
+tests/work-graph/S8A-catalog-version-time.test.ts:21: it('binds the revised record to its event cursor so the list shows that event time and reason', async () => {
+tests/work-graph/S8A-path-ownership-dedupe.test.ts:18: it('S8A-06b the canonical decision keeps the 4C-1/8A semantics', () => {
+tests/work-graph/W1-future-plan.test.ts:600: it('scenario 8: codec rejects broken shapes and graph reads verify the actual basis source', async () => {
+tests/work-graph/W1-future-plan.test.ts:663: it('scenario 9: a changed or added Task with a Run, TaskLease or TaskReduction is no longer future (zero writes)', async () => {
+
+## DELETED test files: 2
+tests/scenarios/K3-19-missing-read-no-round.test.ts: 1 tests, 23 expects
+tests/work-graph/B2-11-expansion-levels.test.ts: 8 tests, 31 expects
+
+# lines to justify (excluding MOVED): 333, plus 2 deleted files
+
+# D3 pure-file guard: 25 *-pure.test.ts files
+# D3 hits: 0

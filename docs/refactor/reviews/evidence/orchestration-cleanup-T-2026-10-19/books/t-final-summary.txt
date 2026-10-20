@@ -1,0 +1,59 @@
+rows 721  acting (final action changes code) 529  no change 192
+verdict: {'confirmed': 346, 'partly': 327, 'refuted': 48}
+source: {'codex+dsh': 249, 'conflict': 131, 'codex': 146, 'dsh-new': 195}
+conflict winner: {'dsh': 43, 'codex': 86, 'neither': 2}
+acting kind: {'delete': 172, 'merge-into': 124, 'convert': 88, 'user-decides': 79, 'change': 52, '?': 10, 'in': 1, 'stale': 1, 'merge': 1, 'p': 1}
+acting needs_user 67   acting spec_row 342
+
+area   rows acts   none needs_user est_lines(acting)
+A1       72   58      14          0     2752
+A2       81   54      27          0     1682
+B        33   24       9          0     2424
+C        45   38       7          0     1743
+D        48   33      15          0      689
+E1       50   34      16          0      897
+E2       66   58       8          0     1543
+F        79   69      10          0     4942
+P1      188  109      79         65      421
+P2a      28   27       1          0     3569
+P2b      31   25       6          2     1757
+
+acting category x kind:
+  allowlist-kept-for change         9
+  allowlist-kept-for delete         15
+  allowlist-kept-for user-decides   15
+  allowlist-pre-batch user-decides   63
+  allowlist-wire-format delete         2
+  c1-transfer  change         5
+  c1-transfer  delete         3
+  duplicate    ?              1
+  duplicate    delete         6
+  duplicate    merge-into     93
+  handwritten  ?              2
+  handwritten  convert        83
+  handwritten  delete         3
+  handwritten  in             1
+  handwritten  merge-into     3
+  handwritten  stale          1
+  helper       ?              3
+  helper       delete         39
+  helper       merge          1
+  helper       merge-into     22
+  legacy       change         7
+  legacy       delete         3
+  n0           change         1
+  n0           delete         1
+  old-data     change         29
+  old-data     delete         6
+  old-data     p              1
+  old-data     user-decides   1
+  stale        ?              4
+  stale        change         1
+  stale        convert        5
+  stale        delete         56
+  stale        merge-into     3
+  tamper       delete         29
+  trivial      delete         9
+  trivial      merge-into     3
+
+problems (0):

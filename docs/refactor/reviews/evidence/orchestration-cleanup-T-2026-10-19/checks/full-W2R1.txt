@@ -1,0 +1,14 @@
+T full suite W2R1: copy /home/han001/dsh-work/slices/s9tb2M at 722ddf3 T W2 rework 1: merge w2fix5; bubblewrap, 5 workers, scope 7G; started 17:26 available 14290 MB
+build 0
+typecheck 0
+check:architecture 0
+vitest exit 1
+failing files:
+ended 18:13
+(added by the lead 18:25: the script's summary grep missed the ANSI-coloured lines; stripped summary below)
+ Test Files  1 failed | 765 passed (766)
+      Tests  2 failed | 9773 passed | 3 skipped (9778)
+   Duration  3017.30s (transform 25.89s, setup 0ms, import 520.28s, tests 14482.73s, environment 62ms)
+failing:
+ FAIL  tests/work-graph/unknown-call-review-list.test.ts > listReviews > listReviews memory: more than a store page of records lists without a cap
+ FAIL  tests/work-graph/unknown-call-review-list.test.ts > listReviews > listReviews sqlite: more than a store page of records lists without a cap

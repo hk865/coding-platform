@@ -1,0 +1,67 @@
+{
+  "rows": [
+    {
+      "row": "C2-034",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "The deletion-side fallback runs whenever before.length*after.length > 250,000 (continuation-brief-assembly.ts:191-192), which the 501-line baseline / 500-line current pair in a files map reaches (250,500). The exported pure builder is already called directly with hand-built review/callArguments/files facts (continuation-brief-assembly.ts:237; tests/runtime/K3-continuation-review-note.test.ts:181-199, :216-258), so no crash has to be injected to execute this line-diff branch; the crash precondition Codex names belongs to the review record, not to the line diff. Each side is far below the 1 MiB read cap cited by Claude, and short lines keep the unified diff under the 8 KiB section cap (:283).",
+      "proposal": "Test gap. In tests/runtime/K3-continuation-review-note.test.ts add one file_edit item whose files map has a 501-line baseline and a 500-line current (short lines); expect diff not null, header '@@ -1,501 +1,500 @@', every baseline line emitted with '-' and no ' ' line, then '+' lines; because 1,001 operations exceed REVIEW_DIFF_CHARS = 2,000 (:149, :284), expect truncated true (assert prefixes, not every trailing '+' line).",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-035",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "This is the second map callback of the same fallback (continuation-brief-assembly.ts:192), invoked only when the oversized product takes the branch at :191; it runs on the same 501x500 files-map input through the exported assembleUnknownCallReviewSection (:237, :281) that tests already drive with hand-built facts (tests/runtime/K3-continuation-review-note.test.ts:181-199). No fault is needed to run it; Codex's crash is a precondition of the review record, not of this callback.",
+      "proposal": "Covered by the same new case as C2-034: after the '-' lines, assert the '+' lines appear (the 2,000-char bound may cut the tail, so assert the '+' prefix rather than every line).",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-036",
+      "cls": "F",
+      "winner": "claude",
+      "reason": "In the same-Session identity path the filter is bypassed: readTurnBounds returns an endPosition for every terminal status (vendor/coding-agent/dist/storage/adapters/sqlite/sqlite-stores.js:578-583), so an interrupted Turn goes to readInterruptedTurnWindow at continuation-brief-assembly.ts:581-582. The filter at :516 is reached instead when a locator-less attested Run is read outside its own Session: :545 admits it, :586 calls readPlatformTurnWindow with locator undefined, :490-499 reads to the Session tail, the run.interrupted appended by close_open_turn reduces to interrupted (:502, :512-516), and terminalPositionOf bounds the window. Such a Run exists only after a crash between ExecutionEntryBegun and the entered fact plus Kernel store loss plus a human attestation (tests/scenarios/K-R-attested-facts-source.test.ts:104-171); the existing KA-09 reads it in its own Session, so it takes the :581 branch instead (:177-199). The archive changed-files reader reaches it without sameSession (session-anomaly-facts.ts:119-123; session-archive.ts:487) as does a cross-Session claim (context-assembler.ts:1587-1589, 1601). Codex's concurrent-close window is unproven, but it is not needed.",
+      "proposal": "Test gap (a crash/restart is the seam). In tests/scenarios/K-R-attested-facts-source.test.ts reuse openAttestedEnteringRun (lockLedgerAfter, moveKernelAside, executions/resolve-unknown, then the restart that closes the dangling Turn), then either claim the continuation in a new Session or call the archive changed-files facts for Run 2; expect stoppedAt.turnStatus 'interrupted' and the window ending at the run.interrupted position, so the later accepted message is excluded.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-037",
+      "cls": "F",
+      "winner": "claude",
+      "reason": "terminalPositionOf is called only from the interrupted arm at continuation-brief-assembly.ts:514; grep finds no other caller in src (definition :601-613). Its reachability is exactly C2-036's: a locator-less attested Run read outside its own Session, whose Turn was closed interrupted. If that arm is a fault-reachable test gap, so is this function.",
+      "proposal": "Covered by the C2-036 case: the same scenario executes terminalPositionOf and must assert the window ends at the run.interrupted position (later records excluded).",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-042",
+      "cls": "D2",
+      "winner": "neither",
+      "reason": "mapWorkspace is reached only from resolveRoot (:866) and authorize (:1132). Start always resolves the Host configuration first (:811-829), and the Host's configurationRevision hashes the workspaceId (host.ts:717-730), so a request scoped to another workspace of the same project cannot match the prepared revision and is refused at :825 before :862; a request scoped to the Run's own workspace always resolves, because byScope only grows (host.ts:840-842) and the public server admits only registered scopes (server.ts:241). With the Run's own scope, resolveRoot is ready and authorize succeeds for the Host principal (host.ts:455-477). So Claude's question (b) is closed by the revision check and (a) by :824 (a dropped workspace has no binding), while Codex's revoked-root path does not exist. Claude's analysis supports his D2 branch; neither reviewer recorded D2.",
+      "proposal": "Delete mapWorkspace (execution-driver.ts:376-378) and, since WorkspaceResult still has a non-ready arm, return a fail-closed rejected('unavailable', result.reason) at :867 and :1133; CORE_ERROR_CODES (:375) then has no user. No new test.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-043",
+      "cls": "F",
+      "winner": "claude",
+      "reason": "The comparator at :494 runs only when the Task holds two `allowed` CRRs with the same commandSha256 (:486-494). Uniqueness is per (task, review record, alias) only (command-rerun-request.ts:153-168), and rewriteOf lets an unrecognised command declare any blocked alias (command-rerun-request-service.ts:544-567, :776-781), while allow_rerun sets one request to allowed (:1016-1039). Hence two same-sha allowances coexist: one crash-round review record with two blocked process aliases for the same command (or two records from two rounds), two request_command_rerun calls with the same rewrite, two allow answers, then a shell call in a Run. The review records need the crash/unknown end, so the class is F. Codex's 待定 is resolved by the per-alias uniqueness.",
+      "proposal": "Test gap. In tests/runtime/B2-04-allowance.test.ts use the review-card-round helpers (tests/scenarios/support/review-card-round.ts:169-171) to give one Task two blocked aliases for the same command (or two crash rounds with two records), declare the same new command with request_command_rerun(Z, rewriteOf #1) and (Z, rewriteOf #2), answer allow_rerun on both, then run that command; expect the oldest allowance (createdAt, then requestId) consumed and the other still allowed.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-059",
+      "cls": "D2",
+      "winner": "claude",
+      "reason": "mapWorkspace is reached only from resolveRoot (:307) and authorize (:325). startQuery requires the Host principal (:144) and rejects a QueryRun whose workspace differs from the call scope (:167-169), and the same scope's resolveQueryConfiguration is mandatory first, with its projected configurationRevision compared to the manifest (:194-202). Under the Host bindings the runtime binding and the registered workspace come from the same workspaces list (host.ts:351, :717-730, :840-842), so a workspace whose binding resolves is registered and resolveRoot is ready, while a dropped workspace fails at :200. After a restart a claimed/prepared QueryRun is settled as Q-01 not_entered before any start (run-reconcile.ts:597). Both arms are unreachable in production; Codex's F is wrong.",
+      "proposal": "Delete mapWorkspace (:81-83) and CORE_ERROR_CODES (:47); inline a fail-closed rejected('unavailable', result.reason) at :307 and :325 (the port contract still has a non-ready arm). No new test.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    }
+  ]
+}

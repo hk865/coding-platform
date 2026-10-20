@@ -1,0 +1,100 @@
+{
+  "rows": [
+    {
+      "row": "B-092",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "`read` is an Outcome<ArchitectureRevision | null>, and the null value is produced only in the `deps.architecture === undefined` arm at note-views.ts:528-529. The only production constructor always passes the real catalog service: create-platform.ts:840 builds `catalog = createArchitectureCatalogService(...)`, and :1624-1625 calls createNoteCheck({..., architecture: catalog}); grep finds no other createNoteCheck call in src or tests. With the dep present, a ready read returns a non-null ArchitectureRevision (catalog-service.ts:398-403, :774-782) whose modules array is required by the codec (catalog-record-codecs.ts:415 -> :253-269; contracts/architecture-catalog.ts:41-46), so the `?? null` arm at :654 cannot arise.",
+      "proposal_ok": true,
+      "proposal_note": "Making NoteCheckDependencies.architecture required (note-views.ts:72) is safe: the single constructor supplies it and no test builds createNoteCheck directly. The `deps.architecture === undefined` checks at :528 and :549 then go too. No spec line reserves an absent catalog dependency; 'no catalog adopted' is a failed ready read (unavailable), not a missing dep."
+    },
+    {
+      "row": "B-093",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "At note-views.ts:776 the function returns when `current.value === null`, so `current.value` is non-null on :777; the ready value is an ArchitectureRevision (catalog-service.ts:774-782) and the catalog row is decoded by validateAdoptedArchitecture, which requires `modules` to be an array (catalog-record-codecs.ts:415, :253-269). `modules ?? null` at :777 therefore never takes the null arm. T only removed the optional `catalog?.` chain (A1-01/79-1), which is why this `??` is now dead.",
+      "proposal_ok": true,
+      "proposal_note": "Dropping `?? null` here and the null checks at :784-785 is safe once B-092's required dep is in place: modules is a required array in the type (contracts/architecture-catalog.ts:41-46) and in the codec. Nothing else reads the local `currentModules` variable."
+    },
+    {
+      "row": "B-094",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "`basis.value === null` already returns at note-views.ts:780 (architectureRevision yields either a ready ArchitectureRevision or unavailable, :552-554), and `modules` is required by the type and by the catalog codec (contracts/architecture-catalog.ts:41-46; catalog-record-codecs.ts:415, :253-269). So `basis.value.catalog.catalog.modules ?? null` at :781 cannot yield null; only the redundant null test at :784 remains.",
+      "proposal_ok": true,
+      "proposal_note": "Same simplification as B-092; both modules locals then become plain arrays and :784-785 lose their null tests. No switch, export or spec line depends on the null form."
+    },
+    {
+      "row": "B-095",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "classFiveHints reads the catalog at note-views.ts:865-869, and `read.value` is null only when deps.architecture is missing (currentArchitecture :528-529); production always injects it (create-platform.ts:1624-1625). The `?? null` arm at :868 is therefore dead, and because :870's attributedModuleOf is called only at :878 under the same :875 condition that guarantees :865 ran, its `catalog === null` test and the `catalog !== null` test at :875 are equally unreachable without the missing dep.",
+      "proposal_ok": true,
+      "proposal_note": "Making the dep required removes the null state and lets :868, :870 and :875 simplify as Claude lists. Checked: attributedModuleOf is local and has no other caller, so no path observes catalog null."
+    },
+    {
+      "row": "C1-009",
+      "refuted": true,
+      "cls": "U",
+      "evidence": "materialGrantRefProblem runs only from the loop at execution-entry-codecs.ts:173-177, i.e. only when inputBinding.materialAccessRefs is non-empty; the only platform writers write `materialAccessRefs: []` (execution-preparation.ts:532, :595; grep shows no other writer or constructor). But the loop is reached by reading a stored binding: record-readers.ts:213-216 validates every stored Run snapshot through inputBindingProblem, and plan-write-admission.ts:327-330 and execution-entry-service.ts:608-611 re-validate a stored Run's inputBinding. The codec only requires an array (:173) and does not exclude a non-empty one, so a hand-edited/foreign/old Run record with entries reaches the function: U, not D2 (same split as C4-090 and A3-019 in the other batches).",
+      "proposal_ok": true,
+      "proposal_note": "Either U-legal option works, but prefer Claude's 'must be an empty array' over Codex's plain deletion: it keeps rejecting a foreign non-empty array and keeps the declared field (contracts/dispatch.ts:304, contracts/core/prepared-execution.ts:192) instead of silently accepting malformed entries. No tamper test (AGENTS rule 4). If a later material-grants slice fills the field, the element check returns with it."
+    },
+    {
+      "row": "C1-010",
+      "refuted": true,
+      "cls": "U",
+      "evidence": "deliveryPinProblem runs only from the loop at execution-entry-codecs.ts:178-182, i.e. only for a non-empty inputBinding.deliveryRefs; the only platform writers write `deliveryRefs: []` (execution-preparation.ts:532, :595; grep shows no other writer; model-call-service.ts:148 only copies the array into the permit). The loop is still reached by reading a stored binding: record-readers.ts:213-216, plan-write-admission.ts:327-330 and execution-entry-service.ts:608-611 all run inputBindingProblem on a stored Run. The codec does not exclude a non-empty array, so only a hand-edited/foreign/old record with entries reaches it: U, not D2.",
+      "proposal_ok": true,
+      "proposal_note": "As C1-009: the empty-array form (Claude) is the safe cleanup; plain deletion (Codex) would let a well-formed but foreign delivery pin pass. Keep the field (contracts/dispatch.ts:307) and add no tamper test; the permit copy at model-call-service.ts:148 then still receives an empty list."
+    },
+    {
+      "row": "C1-020",
+      "refuted": true,
+      "cls": "U",
+      "evidence": "keyFact is called only at no-progress.ts:345 inside compareCheckFacts, and only when two facts of one round share a checkId (:342-345). The facts come from a stored VerificationRoundSnapshot: roundFailureFacts (:96-107) is applied to the head round at task-failure.ts:1176-1180 and to the checks round at continuation-brief-assembly.ts:930-931. The platform writer builds unique ids from the compiled plan's Map (verification-plan.ts:76, :96-102 -> verification-machine.ts:884-895), but the round codec only validates each check and never rejects duplicate checkIds (evidence-record-codecs.ts:303-307). A hand-edited/foreign/old round with duplicated ids therefore reaches the tie-break: U, not D2.",
+      "proposal_ok": true,
+      "proposal_note": "Deleting keyFact and comparing checkId only is safe: every platform round has unique ids, and a duplicate-id foreign round merely keeps its stored array order (deterministic). If the lead prefers keeping the determinism line, keep it untested (AGENTS rule 4); no switch or export depends on keyFact."
+    },
+    {
+      "row": "C1-021",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "incompleteFacts (:877) is returned only when a guard step is UNREAD or when ctx.requestCandidate is absent (:1083, :1264, :1590, :1596, :1639, :1679). Every production transition call builds the full context and sets requestCandidate whenever the event names a requestRef: plan-service.ts:1376-1378, :1392-1396, :1695-1697, :2437-2441 (requestCandidate built explicitly at :2438), :3045-3048, :3326-3333; requestFacts is set in the requestRef !== null block at :1329-1356. UNREAD means the caller skipped a read, not that a stored record produced one, so the state cannot arise in production: D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Delete the six returns and either require requestCandidate in the full-context type or replace them with the module's unreachable() throw; no test asserts 'the plan proposal guard context is incomplete' (grep tests) and no spec row names it. The progressive planProposalProblem UNREAD path (:862-870) is a different mechanism and stays."
+    },
+    {
+      "row": "C1-022",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "The callback at ref-equality.ts:7 runs only when both compared values are arrays of equal non-zero length (:5-7). All five production call sites compare codec-validated flat refs: session-anomaly.ts:64-65 (SessionRef and SessionAnomalyAnchorRef, forced to complete objects by session-anomaly-codecs.ts:211-214 and by decodeRun's executionHistory check at record-readers.ts:202-205) and session-availability.ts:249, :500, :1001 (ExecutionRef/SessionHolderRef/SessionWorkWaitStateV1, flat records at :38-39 and :127-129). An array in any compared position is rejected by those codecs before the comparison, so the array branch cannot arise: D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Deleting :5-8 is safe: the record branch compares arrays by index keys plus key count, so flat refs are unchanged and arrays still compare correctly; the only difference is an array vs an object with the same index keys, which no caller compares. sameRef is imported only by the two state files (grep), and no spec reserves array refs."
+    },
+    {
+      "row": "C1-048",
+      "refuted": true,
+      "cls": "U",
+      "evidence": "manifestProblem loops manifest.materialAccessRefs at execution-entry-service.ts:459-463 and calls materialGrantRefProblem (:391). The manifest body is a stored artifact read by readManifestFromEnvelope at :324; before validation it only checks ref/body size, body digest and owner (:327-335) and has no 'must be empty' rule, so a non-empty array passes into the loop. The only platform writer writes `materialAccessRefs: []` (execution-preparation.ts:532, :595; grep shows no other writer), so entries can come only from a hand-edited body+ref digest, a foreign writer or an old manifest: U, not D2.",
+      "proposal_ok": true,
+      "proposal_note": "Claude's 'require an empty array' is the right form; Codex's plain deletion of the helper and loop would accept a malformed foreign entry. The field is still declared (contracts/dispatch.ts:304, contracts/core/prepared-execution.ts:192) and is never filled today (B2-material-facts-skeleton.md:111 keeps it empty), so keep the empty-array check and add no tamper test."
+    },
+    {
+      "row": "C1-049",
+      "refuted": true,
+      "cls": "U",
+      "evidence": "manifestProblem loops manifest.deliveryRefs at execution-entry-service.ts:468-472 and calls deliveryPinProblem (:399). The manifest is read from a stored artifact (readManifestFromEnvelope :324) and validated at :343-347 after only digest/owner checks (:327-335), with no emptiness rule, so a non-empty list reaches the loop. The only platform writer writes `deliveryRefs: []` (execution-preparation.ts:532, :595; grep shows no other writer), so only a hand-edited/foreign/old manifest with entries reaches it: U, not D2.",
+      "proposal_ok": true,
+      "proposal_note": "As C1-048: use the 'must be an empty array' form rather than deleting the check, keep the declared field (contracts/dispatch.ts:307, contracts/core/prepared-execution.ts:194) and add no tamper test. No exhaustive switch or other caller depends on the helper."
+    },
+    {
+      "row": "C1-060",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "unavailable (:48) is called only from the four decode-failure sites: Goal (:98-101), Run (:120-121), RunActivity (:138-141) and ActivityRecording (:157-160). Every store read failure is mapped by storeFailureToRejection instead (:92, :95, :117, :134, :154). The records are built by the platform's own encoders (run-activity-service.ts:245, :390; the Goal/Run codecs), so only an old, corrupted, hand-edited or foreign record decodes to a failure: U stands.",
+      "proposal_ok": true,
+      "proposal_note": "Keeping the guards untested (AGENTS rule 4) is right: the helper converts a decoder status result into a CoreRejection and cannot simply be deleted, and no platform writer produces an undecodable current record. No spec line asks for a tamper test."
+    }
+  ]
+}

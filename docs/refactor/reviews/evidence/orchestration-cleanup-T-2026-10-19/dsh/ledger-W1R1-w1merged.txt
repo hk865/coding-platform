@@ -1,0 +1,106 @@
+# D1 assertion ledger w1-merged..HEAD (tests)
+
+## MOVED: 11
+
+## REMOVED assertion: 73
+tests/app/A2-continuation-projection.test.ts:84: expect((await driveWorkflow(host, selectWork('a2-td5-ready-1'))).at(-1)).toMatchObject({ state: 'waiting', next: null,
+tests/app/A2-continuation-projection.test.ts:91: expect((await driveWorkflow(host, selectWork('a2-td5-paused'))).at(-1)).toMatchObject({ state: 'waiting', next: null,
+tests/app/A2-continuation-projection.test.ts:97: expect((await driveWorkflow(host, selectWork('a2-td5-ready-2'))).at(-1)).toMatchObject({ state: 'waiting', next: null,
+tests/app/A2-continuation-projection.test.ts:105: expect((await driveWorkflow(host, selectWork('a2-td5-cancelled'))).at(-1)).toMatchObject({ state: 'waiting', next: null,
+tests/composition/platform.test.ts:80: expect(await platform.workflow.handleGoalInput(ctx,
+tests/helpers/S1-session-facts-fixture.ts:227: expect(result.value.provenance).toEqual({ schemaVersion: 1, kind: 'new' });
+tests/helpers/S5-queue-support.ts:300: expect(activatedPolicy.activeRevision).toEqual(installed.ref);
+tests/runtime/K3-34-tool-name-constants.test.ts:59: expect(RESERVED_TOOL_NAMES.size).toBe(BUILTIN_TOOL_NAMES.size + 12);
+tests/runtime/source-binding-migration.test.ts:158: expect(await read(access)).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/runtime/source-binding-migration.test.ts:197: expect(await read(access)).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/runtime/source-binding-migration.test.ts:397: await expect(createQuerySourceCaptureFactory(f.deps, f.request, f.root)(signal())).rejects.toThrow();
+tests/runtime/source-binding-migration.test.ts:401: expect(await read(access)).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/scenarios/K-W-workflow-close.test.ts:238: expect(ended.session).toMatchObject({ health: 'unavailable', healthConclusion: 'kernel_turn_open' });
+tests/scenarios/K-W-workflow-close.test.ts:241: expect(driven.next?.kind === 'perform' ? driven.next.operation.kind : null, 'the drive stops at the continuation start').toBe('start');
+tests/scenarios/K-W-workflow-close.test.ts:243: expect(kinds).toContain('close_open_turn');
+tests/scenarios/K-W-workflow-close.test.ts:244: expect(kinds).not.toContain('create_session');
+tests/scenarios/K-W-workflow-close.test.ts:245: expect(kinds).not.toContain('transfer_responsibility');
+tests/scenarios/K-W-workflow-close.test.ts:246: expect(kinds).not.toContain('archive_predecessor');
+tests/scenarios/K-W-workflow-close.test.ts:247: expect(closeResult(driven), 'the Kernel Turn is closed and SES-13 returns the Session available')
+tests/scenarios/K-W-workflow-close.test.ts:252: expect(next.session.ref.sessionId).toBe(s1.sessionId);
+tests/scenarios/K-W-workflow-close.test.ts:253: expect(next.session.occupancy).toMatchObject({ kind: 'execution', executionRef: { runId: row.execution.runId } });
+tests/scenarios/S3-context-and-inputs.test.ts:396: expect(firstRequest).toBeDefined();
+tests/scenarios/S3-context-and-inputs.test.ts:397: expect(JSON.stringify(firstRequest?.messages)).toContain('## Goal');
+tests/work-graph/A1-independent-review.test.ts:29: expect(opened.status).toBe('committed');
+tests/work-graph/A1-independent-review.test.ts:35: expect(rows.status).toBe('ready');
+tests/work-graph/A1-independent-review.test.ts:48: expect(await f.commitRaw([
+tests/work-graph/A1-independent-review.test.ts:55: expect(closed).toMatchObject({ status: 'committed', value: { since: opened.value.since } });
+tests/work-graph/A1-independent-review.test.ts:57: expect(closed.value.until).toBe(closed.cursor);
+tests/work-graph/A1-independent-review.test.ts:59: expect(card.status).toBe('ready');
+tests/work-graph/A1-independent-review.test.ts:60: if (card.status === 'ready') expect(card.value.links).toEqual([closed.value]);
+tests/work-graph/A1-independent-review.test.ts:61: expect(await f.lifecycle.linkSessionWork(f.ctx, opening)).toEqual({ ...opened, replayed: true });
+tests/work-graph/A2-gate-chain-facts.test.ts:230: expect(await complete(otherFixture, R3E_WORK_TASK_ID, otherWork.ref, 'a2-gate-legacy-work')).toMatchObject({ status: 'committed' });
+tests/work-graph/A2-gate-chain-facts.test.ts:231: expect(await display(otherFixture)).toMatchObject({ phase: 'RUNNING', causes: [{ code: 'awaiting_gate', gateTaskId: R3E_GATE_TASK_ID }] });
+tests/work-graph/A2-gate-chain-facts.test.ts:237: expect(await otherFixture.b2.base.commitRaw(moved.map(encodeVerificationRoundSnapshot))).toMatchObject({ status: 'committed' });
+tests/work-graph/A2-gate-chain-facts.test.ts:238: expect(await row(otherFixture, R3E_GATE_TASK_ID)).toMatchObject({ effectivePhase: 'blocked',
+tests/work-graph/A2-gate-chain-facts.test.ts:243: expect(await display(otherFixture)).toMatchObject({ phase: 'NEEDS_DECISION', row: 'GOAL-30',
+tests/work-graph/A2-gate-chain-facts.test.ts:304: expect(await fixture.b2.base.commitRaw([encodeVerificationRoundSnapshot(foreign)])).toMatchObject({ status: 'committed' });
+tests/work-graph/R3e-reverify.test.ts:477: expect(await fixture.b2.base.commitRaw([encodeVerificationRoundSnapshot(root)])).toMatchObject({ status: 'committed' });
+tests/work-graph/R3e-reverify.test.ts:479: expect(next.chain).toMatchObject({ ordinal: 2, predecessorRoundRef: root.ref, supersededEvidenceIds: chainEvidenceIds(root) });
+tests/work-graph/R3e-reverify.test.ts:481: expect(await fixture.evidence.openVerification(fixture.ctx, fixture.openRequest()))
+tests/work-graph/R3e-reverify.test.ts:485: expect(await fixture.b2.base.commitRaw([encodeVerificationRoundSnapshot(second)])).toMatchObject({ status: 'committed' });
+tests/work-graph/R3e-reverify.test.ts:486: expect(await owner.evidence.reverifyRound!(fixture.ctx, reverifyRequest(second, 'r3e-two-roots')))
+tests/work-graph/R4c-execution-history-index.test.ts:290: expect(receipt).toMatchObject({ status: 'committed' });
+tests/work-graph/R4c-execution-history-index.test.ts:621: expect(results.filter(result => result.status === 'committed')).toHaveLength(1);
+tests/work-graph/R4c-execution-history-index.test.ts:622: expect(barrier.arrivals).toBe(2);
+tests/work-graph/R4c-execution-history-index.test.ts:623: expect(results.filter(result => result.status === 'rejected')).toEqual([
+tests/work-graph/R4c-execution-history-index.test.ts:628: expect((await readRun(h.fixture, refs[winner]!)).executionHistory).toBeDefined();
+tests/work-graph/R4c-execution-history-index.test.ts:630: expect(losingRun.executionHistory).toBeUndefined();
+tests/work-graph/R4c-execution-history-index.test.ts:631: expect(losingRun.revision).toBe(pins[loser]!.revision);
+tests/work-graph/R4c-execution-history-index.test.ts:633: expect(await h.service.recordExecutionHistory(h.fixture.ctx, requests[loser]!))
+tests/work-graph/R4c-execution-history-index.test.ts:635: expect(await h.service.recordExecutionHistory(h.fixture.ctx, requests[winner]!))
+tests/work-graph/R4c-execution-history-index.test.ts:663: expect(intruder).toMatchObject({ status: 'rejected', code: 'busy' });
+tests/work-graph/R4c-execution-read.test.ts:180: expect(leaseRead.status).toBe('ready');
+tests/work-graph/R4c-execution-read.test.ts:183: expect(leaseRecord).toBeDefined();
+tests/work-graph/R4c-execution-read.test.ts:189: expect(await fixture.commitRaw([{ ...leaseRecord, revision: 2, json: JSON.stringify(leaseBody) }],
+tests/work-graph/R4c-execution-read.test.ts:196: expect(result.value.session.ref).toMatchObject({ sessionId: claim.sessionRef.sessionId });
+tests/work-graph/R4c-execution-read.test.ts:197: expect(result.value.lease).toMatchObject({ holderRunId: 'a-different-holder', attemptId: 'a-different-attempt' });
+tests/work-graph/R4c-execution-read.test.ts:214: expect(result).toMatchObject({ status: 'rejected', code: 'incomplete' });
+tests/work-graph/R4c-task-claim-concurrency.test.ts:71: expect(await f.commitRaw([{ ...row, revision: 2, json: JSON.stringify(body) }],
+tests/work-graph/S1-codecs-indexes.test.ts:270: expect(decodedOperation.status).toBe('decoded');
+tests/work-graph/S1-codecs-indexes.test.ts:272: expect(decodedOperation.value.action.provenance ?? null).toBeNull();
+tests/work-graph/S2B-32-task-timeline-fold.test.ts:239: expect(spans(await taskSegments(fx, goalRef, 'work-1'))).toEqual([
+tests/work-graph/S3-context-inputs.test.ts:712: expect(result).toMatchObject({ status: 'rejected', code: 'forbidden' });
+tests/work-graph/S3-context-inputs.test.ts:713: expect(f.materialsSpy.openArtifactCalls).toBe(0);
+tests/work-graph/S3-context-inputs.test.ts:800: expect(result).toMatchObject({ status: 'ready' });
+tests/work-graph/S3-context-inputs.test.ts:803: expect(result.value[0]).toMatchObject({ state: 'missing' });
+tests/work-graph/S3-context-inputs.test.ts:804: expect(result.value[0]!.source).toBeNull();
+tests/work-graph/S5-request-candidates.test.ts:275: expect(JSON.parse(raw.json)).not.toHaveProperty('requestRef');
+tests/work-graph/S5-request-candidates.test.ts:276: expect(JSON.parse(raw.json)).not.toHaveProperty('notAdopted');
+tests/work-graph/S5-request-candidates.test.ts:283: expect(await recordAt(f.records, ref)).toEqual(raw);
+tests/work-graph/S5-request-candidates.test.ts:284: expect(await f.storeSnapshot()).toEqual(before);
+tests/work-graph/S5-request-candidates.test.ts:285: expect(f.allocationCounts).toEqual(allocations);
+tests/work-graph/S5-request-candidates.test.ts:286: expect(before.claims.filter(claim => claim.owner === keyOf(ref))).toEqual([]);
+
+## REMOVED test or describe: 19
+tests/app/S2C-line-routes.test.ts:293: it('2C-31 (h) the routes return exactly the LE3 results over the 14-Session D1 dataset', async () => {
+tests/runtime/R4c-source-authority-guards.test.ts:279: it('uses real SQLite facts through both readers: a starting claim is denied, a trusted running seed can read', async () => {
+tests/runtime/source-binding-migration.test.ts:148: it('rechecks Run termination, revoked entry and read grant on every request', async () => {
+tests/runtime/source-binding-migration.test.ts:394: it('rejects a conflicting original Query submission and changed current execution', async () => {
+tests/scenarios/K-W-workflow-close.test.ts:233: it('KA-07 (KE3, L4/L7): a person continues a paused-interrupted Run; the Workflow closes the dangling Kernel Turn and the continuation is a new Run in the same Session, with no create_session, transfer or archive', async () => {
+tests/state/S1-dispatch.test.ts:109: it('UT27 a Session waiting on m refuses ordinary Work as busy with no effects', () => {
+tests/state/command-normalization.test.ts:399: it('keeps the public projection exactly today s { words, text } shape', () => {
+tests/work-graph/A1-architecture-catalog.test.ts:169: it('distinguishes a missing pointer, a digest-inconsistent record and a readable revision', async () => {
+tests/work-graph/A1-independent-review.test.ts:22: it('can explicitly close an old Task relation after the active Plan removes that Task', async () => {
+tests/work-graph/A2-gate-chain-facts.test.ts:218: it('an invalid gate chain (two slot-less legacy roots) projects P20 blocked/round_ambiguous, reads GV-2 and is GOAL-30, never awaiting_gate', async () => {
+tests/work-graph/R3e-reverify.test.ts:467: it('a legacy slot-less root is reverified null → successor; a second legacy root makes the chain invalid (incomplete)', async () => {
+tests/work-graph/R4c-execution-history-index.test.ts:610: it('atomically grants an unowned Kernel identity to one of two different Runs', async () => {
+tests/work-graph/R4c-execution-read.test.ts:210: it('reports incomplete, never a fabricated null Session, for an unmapped Run', async () => {
+tests/work-graph/S1-codecs-indexes.test.ts:266: it('SV01: frozen old Operation/Message bytes decode and the old brief digest is byte-identical', () => {
+tests/work-graph/S2B-activity-calendar-tasks.test.ts:114: it('2B-26 filters a cell to one line with sessionRefs and counts Runs whose claiming Session is unknown', async () => {
+tests/work-graph/S2B-activity-calendar-tasks.test.ts:135: it('2B-26 sessionRefs skips a foreign-line uncounted Run and counts an unresolvable claiming Session', async () => {
+tests/work-graph/S2B-activity-calendar.test.ts:215: it('2B-24 attributes begun checks to the round start hour and its task and counts legacy rounds as unplaced', async () => {
+tests/work-graph/S3-context-inputs.test.ts:709: it('IN04 an owner outside the consumer workspace is forbidden and returns no body', async () => {
+tests/work-graph/S3-context-inputs.test.ts:797: it('IN12 a finalized FAIL suppresses an older PASS for the same check', async () => {
+
+## DELETED test files: 0
+
+# lines to justify (excluding MOVED): 92, plus 0 deleted files
+
+# D3 pure-file guard: 25 *-pure.test.ts files
+# D3 hits: 0

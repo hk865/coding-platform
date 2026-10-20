@@ -1,0 +1,100 @@
+{
+ "rows": [
+  {
+   "row": "C2-016",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "context-assembler.ts:498 sorts platformTargets inside buildUnknownCallReviewInputV1; the comparator runs only for 2+ entries. Its one production caller is prepareUnknownCallReview at :1441-1443, which passes aliasOf(...) output (:1426-1430): already ascending, and at most one alias because a Turn's unresolved process/platform calls number at most one (vendor/coding-agent/dist/tools/registry/tool-registry.js:131-143 only parallelises all-independent-read-only calls; runtime-runner.js:695-708,757-762 records outcome_unknown and commits run.cancelled without starting another group).",
+   "proposal_ok": true,
+   "proposal_note": "Deleting only .sort keeps the spread copy and changes no production order; the mixed-card projection at :1434-1440 is untouched."
+  },
+  {
+   "row": "C2-018",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "The inadmissible arm is context-assembler.ts:658-661. rolePayload (:623) has two callers: assembleTask :1715, whose only caller execution-preparation.ts:482 refuses inadmissible first (execution-preparation.ts:359), and assembleQuery :1972, whose role type already excludes inadmissible (:1957). contracts/role-spec-materials.ts:29 requires refusing an inadmissible Role with zero writes. No third caller of rolePayload in src.",
+   "proposal_ok": true,
+   "proposal_note": "Narrowing assembleTask's role to Exclude<RoleSpecResolutionV1,{status:'inadmissible'}> matches contracts/core/prepared-execution.ts:250; the arm has no exhaustive switch or stored format behind it."
+  },
+  {
+   "row": "C2-022",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "queryPlanSummary is called only at context-assembler.ts:1999-2001, which needs planning (QueryJob kind initial_coordination) AND input.facts.focusPlan !== null. Submission refuses initial_coordination when the Goal has an active Plan (query-job-service.ts:688-690) and refuses non-empty focus without an active Plan (:694-697); the intent is fixed at submission, and query-execution.ts:401-417 sets focusPlan only from non-empty focusTaskRefs. The conjunction cannot hold.",
+   "proposal_ok": false,
+   "proposal_note": "Class stands, but the delete is not clean: slice-3-SPEC.md:502 requires the planning task section to be the current Plan summary, and the function/comment at :915-920 implements exactly that row. docs/refactor/tasks/R5b-query-job-implementation.md:20 defines initial_coordination as accepted with no Plan, so the spec row and the submission rule conflict. The lead must either rewrite/drop slice-3-SPEC.md:502 (then deleting :915-920 is right) or wire the planning summary to the active Plan; deleting only the code leaves a frozen spec row unimplemented."
+  },
+  {
+   "row": "C2-023",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "context-assembler.ts:917 is the stage.map inside queryPlanSummary; it runs only when queryPlanSummary is called, and that call needs the same impossible conjunction as C2-022 (query-job-service.ts:688-697; query-execution.ts:401-417).",
+   "proposal_ok": false,
+   "proposal_note": "Contingent on C2-022: if the lead keeps queryPlanSummary for slice-3-SPEC.md:502, this stage map stays too."
+  },
+  {
+   "row": "C2-024",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "context-assembler.ts:918 is the task.map inside queryPlanSummary; same unreachable call as C2-022 (query-job-service.ts:688-697; query-execution.ts:401-417).",
+   "proposal_ok": false,
+   "proposal_note": "Contingent on C2-022: keep with queryPlanSummary if slice-3-SPEC.md:502 is kept."
+  },
+  {
+   "row": "C2-027",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "The handler at context-assembler.ts:1002-1003 runs only if workspaceSource.captureDigest rejects. The only production workspaceSource is continuationWorkspaceSource (create-platform.ts:1206), whose captureDigest is VerificationWorkspaceReader.captureDigest (create-platform.ts:993); that method wraps the whole snapshot in try/catch and returns {status:'unavailable'} (src/core/workspace/verification-workspace-reader.ts:27-35). A real IO failure becomes unavailable, not a rejection.",
+   "proposal_ok": true,
+   "proposal_note": "Deleting the catch leaves the digest.status==='unavailable' path at :1006-1008 unchanged, so the brief still reports the reason."
+  },
+  {
+   "row": "C2-028",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "The catch at context-assembler.ts:1009 runs only if workspaceSource.capture rejects. create-platform.ts:995 wires VerificationWorkspaceReader.capture, whose body is wholly inside try/catch returning {status:'incomplete',code:'source_unavailable'} (src/core/workspace/verification-workspace-reader.ts:36-94); it never rejects. The captured===null arm at :1012-1013 is therefore dead.",
+   "proposal_ok": true,
+   "proposal_note": "After deletion the remaining captured.status!=='ready' arm still produces 'the workspace capture is <status>'."
+  },
+  {
+   "row": "C2-030",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "The comparator at context-assembler.ts:1429 runs only for 2+ aliases. aliasOf filters review.items, and a record's items are one Turn's unresolved calls (unknown-call-draft.ts:181-196; kernel-turn-facts.ts:81-92). The Kernel turns every batch that is not all-independent-read-only into single-call serial groups (vendor/coding-agent/dist/tools/registry/tool-registry.js:131-143) and a cancelled serial group records outcome_unknown then returns run.cancelled without starting the next group (runtime-runner.js:695-708,757-762). Every independentReadOnly tool name maps to kind read_only or is serial (unknown-call-kinds.ts:19-28; readonly-command-tool.ts:362). So a production record holds at most one process/platform item.",
+   "proposal_ok": true,
+   "proposal_note": "The .sort is a no-op even for the pure fixtures because draft aliases are assigned 1..n in items order (unknown-call-draft.ts:187-190); filter/map/Set semantics stay."
+  },
+  {
+   "row": "C2-031",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "The projection at context-assembler.ts:1434-1440 (map at :1439) yields entries only for a proposal-phase record that has an undetermined platform item in dispositionTargets but not in proposalTargets; safer_method needs a non-empty process proposalTargets (unknown-call-review.ts:512-513,802-814), so the record would need one process and one platform item. Today's Kernel cannot leave two non-read-only calls unresolved in one Turn (same evidence as C2-030: tool-registry.js:131-143; runtime-runner.js:695-708,757-762).",
+   "proposal_ok": false,
+   "proposal_note": "Class stands for today's writer, but 'reduce the projection to []' deletes the implementation of the frozen mixed-card row: slice-K3-SPEC.md:1441 K3-46(二), L20 at :555, and the contract/rendering at contracts/core/prepared-execution.ts:76-78,148-150 plus tests/runtime/K3-16-review-extremes-pure.test.ts:106-113. Keep it (owner-level fixture is the only coverage) or narrow the spec with the lead first; do not silently return []."
+  },
+  {
+   "row": "C2-038",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "messageOf (execution-control.ts:140-142) is used only at :174, in the catch around controls.readControl (:171-175). Production passes rawControls (create-platform.ts:696, :1200); its readControl (src/core/work-graph/tasks/control-service.ts:766-793) returns a ReadResult on every path and catches the store throw at :781-782; bindTrustedContext/refKeyOf (control-service.ts:770-778; trusted-context.ts:30-90) return rejections without throwing.",
+   "proposal_ok": true,
+   "proposal_note": "Deleting the try/catch and messageOf still propagates the owner's unavailable result unchanged."
+  },
+  {
+   "row": "C2-039",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "The unsupported closure (execution-control.ts:153-154) is called only at :165 when deps.controls is undefined. createAgentRuntime(deps) is reached in production only from create-platform.ts:1234, whose dependency object always sets controls: rawControls (:1200); createAgentRuntime() with no deps returns basePort, whose deliverControl is a separate unsupported (runtime.ts:488, :84-86). The optional field exists only for direct test callers (execution-contracts.ts:294-299).",
+   "proposal_ok": true,
+   "proposal_note": "Safe for src, but 73 test call sites pass deps to createAgentRuntime and the helpers without controls (e.g. tests/helpers/B2-runtime-fixture.ts, tests/helpers/K3-35-runtime.ts) must build/pass the owner service; keeping the optional seam untested is the smaller alternative if the lead does not want that churn."
+  },
+  {
+   "row": "C2-040",
+   "refuted": false,
+   "cls": "D1",
+   "evidence": "No production caller: src has only the type member (execution-control.ts:118), the RuntimeControlInspection type (:89) and the implementation (:311-341); runtime.ts uses the coordinator only for deliver (:576) and proof (:581). No test calls inspect either, and the wait-after-send tool named in the comment (:83-88) no longer exists in src (no SessionMailboxWaitControl).",
+   "proposal_ok": true,
+   "proposal_note": "Deleting the member, type and implementation leaves no exhaustive switch or object-literal dependency; nothing else imports RuntimeControlInspection."
+  }
+ ]
+}

@@ -1,0 +1,100 @@
+{
+  "rows": [
+    {
+      "row": "B-015",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "dispatch.ts:217 declares executionAuthorization optional, but the only writer of an entered Run is enteredRunRecord (run-machine.ts:875-880): it spreads the claimed V2 auth and writes phase 'entered'. onEnteredObserved gets that auth from claimedV2Binding (run-machine.ts:1617-1644). recordExecutionEntered's committed value is either nextRun from that transition (execution-entry-service.ts:1718-1752) or, on a lost-response replay, event.run (execution-entry-service.ts:1755-1764); the only writer of that event is this same service (grep recordExecutionEntered: execution-entry-service.ts:1668). So entered.value.executionAuthorization at execution-driver.ts:1054 is always defined and arm 1 at :1055-1056 cannot execute. The codec does not enforce it (runSnapshotProblem execution-entry-codecs.ts:771-777; runExecutionAuthorizationProblem :130-133 accepts undefined), so the guarantee is the only writer plus decision 79's rebuilt stores, not the type.",
+      "proposal_ok": true,
+      "proposal_note": "'The entered return type requires authorization' is not true today: RunSnapshot.executionAuthorization stays optional and the entered-event codec accepts its absence. Narrowing therefore needs a documented assertion or a stricter entered-event check in execution-entry-codecs.ts:783-791; the branch itself can go. No test executes the arm (it is uncovered before and after T), so the deletion is test-safe."
+    },
+    {
+      "row": "B-017",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "readTurnTail has exactly one caller, execution-driver.ts:988, which passes record.session.kernel.adapterId; the same value was looked up and accepted at :870-871 in the same startRun. The registry can only grow: byAdapterId reads a Map (kernel-store-locator.ts:82), registerCurrentEntry refuses a duplicate adapterId, database path or workspace (kernel-store-locator.ts:53-67), and registerCurrent only calls it (:89-95). There is no delete, replace or reset, and deps.kernelStores is the same frozen registry object for the whole startRun. So the second byAdapterId cannot return null and the :1333 throw cannot run.",
+      "proposal_ok": true,
+      "proposal_note": "Sound. location is used only for the truthiness check, so deleting :1332-1334 leaves withStore (:1347) to throw the equivalent 'unregistered Kernel adapterId' (kernel-store-locator.ts:83-86); the only observable change would be the error text on an unreachable path. No test asserts the old text (grep 'not a current registered store': only execution-driver.ts:1333)."
+    },
+    {
+      "row": "B-018",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "The arm at execution-observation.ts:530 is reached only after locator exists (:520-522). The only writers of executionHistory are enteredRunRecord (run-machine.ts:877), endedRunRecord (run-machine.ts:892) and onHistoryRecorded (run-machine.ts:1664). The first two always write executionAuthorization in the same record (run-machine.ts:874-879 and :888-894). onHistoryRecorded is reached only through recordExecutionHistory (execution-history-service.ts:282), whose only production caller is advanceLocator (execution-observation.ts:858), and advanceLocator returns unless a locator already exists (:855) - which by induction requires an earlier auth-bearing entered/ended write. recordExecutionHistory has no route (core-routes.ts:424-428 lists executions/read and executions/list only) and no other src caller (grep recordExecutionHistory: only create-platform.ts:1265 and execution-observation.ts:858). So locator-without-authorization is not produced by any current writer.",
+      "proposal_ok": true,
+      "proposal_note": "Sound: folding :530-533 into authUsable (:534-535) is behaviour-identical and removes the only read of the optional auth on this path; the later v2Auth use still needs a local narrowing. No test executes the arm, so nothing depends on the early return."
+    },
+    {
+      "row": "B-021",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "isV2Kernel's null arm (run-reconcile.ts:100-103) needs run.executionAuthorization undefined. Caller :244 requires status ended and outcome_unknown, and every such end is written by reconciledEndRecord from a claimed V2 auth (run-machine.ts:987-994, call sites :1025, :1047, :1708). Caller :535 is reconcileRunControlsAtStartup, reached only from startup step 5 (startup-reconcile.ts:420); step 5 skips running Runs and every starting Run whose startingEntryOf is not 'not_entered' (:204-210, :414), and skips a starting Run with no queued pointer (:418). A never-authorized Run's pause/cancel/resume is applied in the submission commit (run-machine.ts:1882-1915; control-intent-machine.ts:681-694), so it leaves no queued pointer intent; a queued steer alone is skipped for a starting Run. The only residual shape is a pre-D-7 leftover queued pointer intent, i.e. old data that decision 79 rebuilds (STATE-MACHINES-SPEC RUN-09/CTL-08(a) 'R' source).",
+      "proposal_ok": true,
+      "proposal_note": "Sound for current records. When deleting the null arm, replace :244's test with an explicit executionAuthorization check and assert at :535 (the `kernel !== null` in :537 becomes redundant); do not leave an unguarded access for the legacy CTL-08(a) shape. No test executes the null arm."
+    },
+    {
+      "row": "B-022",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "The :264 arm needs a Run reaching classifyRun with no executionAuthorization. reconcileRunAtStartup (run-reconcile.ts:221-231) is the only production entry to classifyRun, through create-platform.ts:2032-2044, and its only caller is startup step 2 (startup-reconcile.ts:339). Step 2 lists starting, running and outcome_unknown Runs (:328-330) and skips every starting not_entered Run (:331-333 with startingEntryOf :204-210); running and outcome_unknown Runs are always entered and carry auth (run-machine.ts:875-879; reconciledEndRecord :987-994). bookLateEvidenceInProcess requires isV2Kernel(run) !== null at :244 before calling classifyRun (:247). So no caller can supply an auth-less record; grep reconcileRun in src: only startup-reconcile.ts:339 and create-platform.ts:2032.",
+      "proposal_ok": true,
+      "proposal_note": "Sound. The 'V1/none' row and its legacy wording (run-reconcile.ts:264-266) have no other reader (grep V1/none: only this line), and no route exposes classifyRun; deleting the branch then needs a local assertion that auth is present after the caller filters. No test executes the branch."
+    },
+    {
+      "row": "B-023",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "The null arm (runtime.ts:329) needs executionHistory absent AND authorization undefined at :327. The Run must pass :280-310: either pausedInterrupted, run19/run22/run23/run25, or the paused review/requeue path. Every one of those end shapes comes from reconciledEndRecord, which takes a claimed V2 auth (run-machine.ts:987-994; call sites :1025, :1047, :2356, :2427, :2541); RUN-22 can leave executionHistory absent (RunReconciledEnd history null, :2542) but still writes the auth. A D-7 ended cancelled Run (stoppedNotEnteredRunRecord :930-946) has no reconciliation and is refused by the run19/22/23/25 test at :308; a Claimed starting Run is refused at :280. So authorization is always defined at :327.",
+      "proposal_ok": true,
+      "proposal_note": "Sound: after :280-310 the auth is guaranteed, so `executionHistory?.kernel ?? authorization.kernel` can drop the nested `authorization !== undefined` test once the local narrowing is made explicit; keep handling executionHistory === undefined (RUN-22) via auth.kernel. No other caller of createCloseOpenTurn exists besides the Workflow (workflow.ts:149, :2310; session-maintenance.ts:137)."
+    },
+    {
+      "row": "C2-067",
+      "refuted": false,
+      "cls": "D1",
+      "evidence": "basePort.capabilities (runtime.ts:58-62) is never called on a production path. runtime.port is spread only at create-platform.ts:1442 (runtimePort) and :1527 (rawRuntime); runtimePort defines the real capabilities at :1443-1453 and is the published platform.runtime (:2226). The only .capabilities calls in src are the route binding platform.runtime.capabilities (core-routes.ts:398, :714) and the Goal fan-out's deps.runtime.capabilities (goal-fan-out-driver.ts:550), whose runtime is platform.runtime (host.ts:585); the collaboration driver also gets platform.runtime (host.ts:573). grep 'capabilities' under src/business: no hits. rawRuntime keeps the stub but nobody calls it.",
+      "proposal_ok": true,
+      "proposal_note": "The deletion is type-coupled: capabilities is required on RuntimeExecutionPort (ports.ts:36-37; AgentRuntimeService.port ports.ts:141-142) and WorkflowDependencies.runtime is RuntimeExecutionPort (src/business/workflow/ports.ts:98). The proposed Omit change also needs create-platform.ts:1443's `Parameters<typeof runtime.port.capabilities>` retyped, and rawRuntime must either get the real member or the Workflow port drop it. ports.ts:32-34 documents why the stub exists, so that contract text must be updated with the change; no test references the base member (grep .port.capabilities: only create-platform.ts:1443)."
+    },
+    {
+      "row": "C2-068",
+      "refuted": false,
+      "cls": "D1",
+      "evidence": "basePort.createSession (runtime.ts:63-65) is always shadowed: runtimePort binds sessionOperations.createSession (create-platform.ts:1453-1455) and rawRuntime binds it at :1528-1529. runtime.port is spread only at :1442 and :1527. Both production callers use an overridden surface: the sessions/create route binds platform.runtime (core-routes.ts:399, :715), and the Workflow uses rawRuntime (create-platform.ts:1795) in workflow.ts:2340 and consultation.ts:387. So the base body never runs.",
+      "proposal_ok": true,
+      "proposal_note": "Same Omit type change as C2-067; no other caller or type depends on the base implementation, only on the RuntimeExecutionPort interface, which stays. No test calls runtime.port.createSession (grep: no hits)."
+    },
+    {
+      "row": "C2-069",
+      "refuted": false,
+      "cls": "D1",
+      "evidence": "basePort.readSessionHistory (runtime.ts:66-68) is shadowed at runtimePort (create-platform.ts:1462-1464) and rawRuntime (:1530-1531). The route sessions/history binds platform.runtime (core-routes.ts:400, :716) and the host-side read at create-platform.ts:2210 uses runtimePort.readSessionHistory. runtime.port is spread only at :1442 and :1527, so the base body is unreachable.",
+      "proposal_ok": true,
+      "proposal_note": "Same Omit type change as C2-067. The tests that call a 'port.readSessionHistory' use a separately built session-operations port (tests/helpers/RL-re2-support.ts:33, tests/runtime/K-readonly-command.test.ts:338), not runtime.port."
+    },
+    {
+      "row": "C2-070",
+      "refuted": false,
+      "cls": "D1",
+      "evidence": "basePort.readExecutionHistory (runtime.ts:69-71) is shadowed at runtimePort (create-platform.ts:1459-1461) and rawRuntime (:1534-1535). Independently, the Runtime port member has no caller at all: grep readExecutionHistory shows only the owner implementation (observation-recovery.ts:246; graph-execution-history.ts:271 calls the history owner, not the Runtime port), the type (ports.ts:46) and the two composition bindings; the executions/history route binds readTaskExecutionHistory instead (core-routes.ts:425, :741). So the base body is dead twice over.",
+      "proposal_ok": true,
+      "proposal_note": "Same Omit type change as C2-067. Nothing calls runtime.port.readExecutionHistory, so even keeping the interface member would leave it dead."
+    },
+    {
+      "row": "C2-071",
+      "refuted": false,
+      "cls": "D1",
+      "evidence": "basePort.readTaskExecutionHistory (runtime.ts:72-74) is shadowed at runtimePort (create-platform.ts:1456-1458) and rawRuntime (:1532-1533). The route executions/history is bound to platform.runtime.readTaskExecutionHistory (core-routes.ts:425, :741), i.e. runtimePort. No caller uses the base member (grep runtime.readTaskExecutionHistory / .port.readTaskExecutionHistory: no hits).",
+      "proposal_ok": true,
+      "proposal_note": "Same Omit type change as C2-067; only the RuntimeExecutionPort interface keeps the member, and the composition supplies it."
+    },
+    {
+      "row": "C2-078",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "runtime.ts:496-498: the fallback arrow executes only when deps.readTaskClosure is undefined. The only production construction with deps is create-platform.ts:1234, and its literal always sets readTaskClosure at :1220 (the local type even intersects a required readTaskClosure, :1184-1185). create-platform.ts:1170 calls createAgentRuntime() with no deps and returns basePort at runtime.ts:489 before :496. createExecutionPreparation has no other caller (grep: only runtime.ts:499). The exact fallback reason string appears nowhere in tests (grep 'did not wire the Task-closure': only runtime.ts:498), so even tests never run the arrow.",
+      "proposal_ok": true,
+      "proposal_note": "Sound, with a documented consequence: execution-contracts.ts:329-337 says readTaskClosure is OPTIONAL precisely so unrelated direct createAgentRuntime callers keep compiling and createAgentRuntime installs this fail-closed reader. Making it required deletes that documented default and needs that contract comment updated plus any direct deps literal without the field (tests use casts/spreads; the type checker will list them). No production construction changes."
+    }
+  ]
+}

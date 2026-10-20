@@ -1,0 +1,58 @@
+{
+  "rows": [
+    {
+      "row": "A1-099",
+      "cls": "D2",
+      "winner": "claude",
+      "reason": "The fallback runs only when a lookup page's `readThrough` is null; both stores return null only for an empty ledger (`in-memory-record-store.ts:256-259` takes the last event cursor; `sqlite-record-store.ts:310-315` takes `MAX(id)` of `events`), and every commit carries at least one event (`record-codec.ts:643-650`). Every caller that can reach `listReviews` runs after such a commit: the HTTP route requires an allowed Host scope (`app/server.ts:241`), and a Host scope exists only after the Project/Workspace registration commits (`app/host.ts:901-927`) and, for a leased Host, the start-of-recording commit before the server exists (`app/host.ts:1049-1058`); the startup reconcile returns on an empty ledger before it ever reads reviews (`app/startup-reconcile.ts:285`); the prepare-time task-review read runs after a claim commit (`execution-preparation.ts:436`); the decision queue reads the Goal window first (`views/decision-read-model.ts:425-437`). Codex's P15 starts a backend with registered schemas and no events and calls the owner with an unbacked scope, which is precisely the fixture T removed; `listReviews` validating the request scope (`:1417-1427`) is not a production path. The value is already typed `CommitCursor | null` (`record-store/lookup-ports.ts:60`), so `?? null` is a no-op on it as well.",
+      "proposal": "Delete the redundant `?? null` at `:1501` (`read.map(page => page.readThrough)`); no other change. Do not add a fresh-empty-store test that no Workspace record backs.",
+      "t_reason_wrong": false,
+      "t_item": "T2-034; before test tests/runtime/S3-context-assembler.test.ts:409 (empty in-memory review store read during prepare, CA03/CA04/CA15)"
+    },
+    {
+      "row": "A1-100",
+      "cls": "D2",
+      "winner": "claude",
+      "reason": "Same state as A1-099: `valueTuples` always has at least one tuple (one per requested status at `:1465-1470`, or the single `open` tuple at `:1472`), so `watermarks[0]` exists and is null only when the single lookup page's watermark is null; the stability check at `:1502` requires every watermark to equal it, so the arm needs all-null watermarks, i.e. an empty ledger (`in-memory-record-store.ts:256-259`, `sqlite-record-store.ts:310-315`). Every commit writes at least one event (`record-codec.ts:643-650`) and every reachable caller has already committed (route scope: `app/server.ts:241`; registration/start commits: `app/host.ts:901-927`, `:1049-1058`; empty-ledger startup skip: `app/startup-reconcile.ts:285`; claim-before-prepare: `execution-preparation.ts:436`; Goal-window-first queue: `views/decision-read-model.ts:425-437`). `watermarks[0]` is typed `CommitCursor | null`, so `?? null` is again a no-op.",
+      "proposal": "Delete the redundant `?? null` at `:1504` (`readThrough = watermarks[0]`); no behaviour changes and no new test.",
+      "t_reason_wrong": false,
+      "t_item": "T2-034; before test tests/runtime/S3-context-assembler.test.ts:409 (empty in-memory review store read during prepare, CA03/CA04/CA15)"
+    },
+    {
+      "row": "C1-108",
+      "cls": "D1",
+      "winner": "claude",
+      "reason": "Only two production constructions exist. `create-platform.ts:735-778` passes `now` and `eventId` (`:777`). `run-reconcile-service.ts:473` omits both, but that instance is used for one call only, `reviewService.readReview` (`:477`), and `readReview` (`unknown-call-review-service.ts:1378-1404`) never calls `now()`: every `now()` call is inside a write entry point (`:458`, `:577`, `:742`, `:909`, `:1037`, `:1107`, `:1312`) and `newEventId()` is called only in `commitReview` (`:464`). So the default clock body is executed only by tests — a function only tests use, which is D1 (`no production caller path reaches the code at all`), not D2 (callers exist but a state cannot arise). Codex's path is right but its class is weaker.",
+      "proposal": "Make `now`/`eventId` required in `UnknownCallReviewServiceDependencies` (`:99-100`) and delete the defaults at `:418` and `:420` plus `eventSeq` (`:419`). At `run-reconcile-service.ts:473` pass `deps.now`/`deps.eventId` (`RunReconcileDependencies` already has both, used at `:828-834`) or split a read-only dependency type. Test constructions that omit them need a fixture clock/id: `tests/business/K3-review-workflow-rows.test.ts:160`, `tests/business/S1-session-maintenance.test.ts:496,506`.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C1-109",
+      "cls": "D1",
+      "winner": "claude",
+      "reason": "Same split as C1-108: the writable instance gets `eventId: randomUUID` (`create-platform.ts:777`), while the only construction that omits it (`run-reconcile-service.ts:473`) calls only `readReview` (`:477`), and `newEventId()` is reached only from `commitReview` (`unknown-call-review-service.ts:464`), which that instance never runs. The default id closure (and `eventSeq` at `:419`) is therefore test-only: D1.",
+      "proposal": "Delete the `deps.eventId ?? (() => ...)` default and `eventSeq` together with C1-108; require `eventId` and pass `deps.eventId` at `run-reconcile-service.ts:473` (or keep a read-only construction). Update the same test constructions that omit it.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C1-111",
+      "cls": "D2",
+      "winner": "claude",
+      "reason": "The arrow is reached only if `decodeUnknownCallReview` fails on a record just returned by `readMany`. Both production stores already apply the registered schema validate to every returned record (`in-memory-record-store.ts:248-254`, `sqlite-record-store.ts:375-388`), and the UnknownCallReview schema's `validate` is exactly `decodeUnknownCallReview` over the same `{refKey, schemaId, revision, json}` (`unknown-call-review-codecs.ts:649-658`); the registry enforces one schema per aggregate type (`record-codec.ts:153-173`), and `applyRecordSchema` rejects a changed record and returns the identical encoded record (`record-codec.ts:379-396`). Re-decoding the same pure function on the same bytes therefore cannot fail. A hand-edited or corrupted store is refused earlier, at `owner-record-read.ts:34`, as a store failure (`unavailable`), so tampering does not reach this arm either — that is D2 (the codec/upstream check guarantees the state), not U.",
+      "proposal": "Delete the per-owner `decodeError` arrow here and the CommandRerunRequest twin (`command-rerun-request-service.ts:185-189`), and drop the `decodeError` parameter of `readOwnerRecord` (`owner-record-read.ts:26`), keeping the store-failure mapping. If a fail-closed arm is preferred, collapse it to one fixed `invalid` fallback at `owner-record-read.ts:38` and leave it untested; no tampering test (AGENTS.md rule 4).",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C1-112",
+      "cls": "D2",
+      "winner": "codex",
+      "reason": "The comparator runs only for an approval with `current.proposals.length >= 2` (`:1317-1324`). `proposals` is written only by `proposalRecorded`, which keeps one entry per callId and stores it alias-ascending (`state/unknown-call-review.ts:337-343`), and `safer_method` resets it to `[]` (`:519`); production creation never seeds proposals (`run-machine.ts:2414-2425`, `run-reconcile-service.ts:953-963`). A process item exists only for an unresolved call; the Kernel plans any non-read-only/unknown batch one call at a time (`vendor/coding-agent/dist/tools/registry/tool-registry.js:134-142`), and only the started call becomes `outcome_unknown` on a terminal (`run-state-reducer.js:47-60`; `kernel-turn-facts.ts:81-91` as read by `unknown-call-draft.ts:186-203`). So a real crash leaves exactly one process item (stated as fact in `tests/work-graph/K3-06-mixed-kinds-owner.test.ts:6-10` and `tests/work-graph/K3-16-approval-application.test.ts:18-20`) — a position the lead adopted in T1-023 (`t-items-T2-w2.md:62`: the real serial path yields one process item — confirmed correct) and T1-061 (`:75`: the multi-process row is unreachable). Two proposals cannot arise, so the `sort` is unreachable, and it is redundant besides.",
+      "proposal": "Delete the `.sort((left, right) => left.alias - right.alias)` at `:1321` and map `current.proposals` directly (the `[...]` copy becomes unnecessary): `approvedMethods` stays alias-ascending because the only writer stores that order. No multi-process store fixture.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    }
+  ]
+}

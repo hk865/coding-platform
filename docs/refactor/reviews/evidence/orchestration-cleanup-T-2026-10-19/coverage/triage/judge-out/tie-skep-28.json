@@ -1,0 +1,49 @@
+{
+  "rows": [
+    {
+      "row": "C3-070",
+      "cls": "D2",
+      "winner": "both",
+      "reason": "The agreed D2 class stands: the fallback runs only when deps.now is undefined (workflow.ts:2924) and the only production createWorkflow call passes the composition clock (create-platform.ts:1814, :1887, defaulted at :605), so no production caller reaches the arrow. The skeptic is right about the proposal: slice-1-SPEC.md:600 explicitly keeps `new Date().toISOString()` when no clock is injected, repeated at ports.ts:124-129 (L-g, S:597) and in the slice-1 evidence s1-p2g.md:101-105. Deleting it is a spec change, not a D2 cleanup.",
+      "proposal": "Keep the `?? (() => new Date().toISOString())` fallback and the optional `now`; leave it untested and owe no test. Do not make `now` required unless the lead first amends slice-1-SPEC.md:600.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C3-105",
+      "cls": "D1",
+      "winner": "both",
+      "reason": "The agreed D1 class stands: the frozen `sourceIdentity` closure (capture.ts:341) is only handed to provider.extractImports (capture.ts:407), and the production providers (C++ built at capture.ts:396-403, Python at workspace-tools.ts:79-85) use only source.allowed/inventory/read (architecture-language-provider.ts:124-140, :246, :301-307), never sourceIdentity. The skeptic is right about the proposal: slice-8-SPEC.md:316 still declares `source: ProjectSourceAccess` and :323 defines that frozen accessor as carrying the identity (Rust/Go keep the interface), so narrowing or deleting it is a spec change.",
+      "proposal": "Keep the member as the spec'd type stub and delete nothing; if the narrowing is wanted, amend slice-8-SPEC.md:316/:323 first and then use `Pick<ProjectSourceAccess,...>`. Nothing to test today.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C4-025",
+      "cls": "U",
+      "winner": "both",
+      "reason": "U stands, though not for the reviewers' exact reason. Their 'same validate' argument only covers records whose aggregate type matches the decoder. readSource parses the client-supplied `source.key` and checks only kind, canonical identity and project/workspace scope (decision-source-facts.ts:437-462, :270-283); the `goal_cause`/`candidate` branches then pass `identity.goalRef` to readGoal (:512, :576, :295-296). A source key can name a valid record of another registered type (e.g. a real PlanRevision ref); readStoredRecord loads it by canonical key without knowing the decoder (decision-source-facts.ts:224-243), the store validates it under that key's aggregate type (in-memory-record-store.ts:236-253; sqlite-record-store.ts:362-386), and decodeGoalSnapshot then rejects its schemaId (record-codecs.ts:422-425, :743-745), running the damaged arrow at decision-source-facts.ts:201. The public route passes the request source straight through (decision-service.ts:726; only non-empty kind/key is checked at :692-694).",
+      "proposal": "Keep the damaged mapping untested (no tamper test, AGENTS rule 4). It is reached only by a foreign source ref whose aggregate type does not match the decoder, a shape no platform writer produces. Optionally map that case to `invalid`, but do not delete the mapping.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C4-026",
+      "cls": "U",
+      "winner": "both",
+      "reason": "U stands. readSavedAnswerReaderSessions re-reads the refs inside the saved SessionMessage's `decision.source.key` (decision-source-facts.ts:977-1032). The SessionMessage codec requires that key to be only a non-empty string and never parses it (message-record-codecs.ts:522-527; validateRecord :1071-1087), so a hand-edited message whose key is canonical (checked at :991-992) but names a valid record of another aggregate type passes the store's SessionMessage validation. readStoredDecoded then loads that other-type record and the expected SessionMessage/QueryJobAnswer/QueryRun decoder rejects its schemaId (decision-source-facts.ts:999-1000, :1024-1030), running the damaged arrow at :209. The skeptic's argument only rules out damaged record bodies, not a mismatched ref inside an opaque key.",
+      "proposal": "Keep the diagnostic untested (AGENTS rule 4); do not add a tamper test. It is the only decode-failure mapping in the shared ReadRecordTemplates and remains reachable from a hand-edited saved-answer key.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C4-048",
+      "cls": "D2",
+      "winner": "both",
+      "reason": "The agreed D2 class stands: unavailableFacts handles only `not_ready` (note-anchors.ts:677-679, :699, :706), and both producers return ready/not_found/rejected only (note-service.ts:1052-1055 -> catalogModuleFactsOf; the fallback readCatalogModuleFacts at catalog-service.ts:797-805 -> catalogModuleFactsOf :813-817 over CurrentCatalogWindow :354-357, which maps StoreFailure to a rejection at :85-97). The skeptic is right about the proposal: narrowing only NoteAnchorFactsDeps.catalogModuleFacts (:56) is not enough. moduleFactsOf is annotated Promise<ReadResult<CatalogModuleFacts>> (:690) and the interface arm needs the not_ready guard to reach facts.value (:706-710), while the fallback and the seam at note-service.ts:1052-1055 still carry not_ready; narrowing the dep alone fails to typecheck. Slice-4-SPEC.md:730 also requires a failed catalog read to be unavailable.",
+      "proposal": "Keep the one-line guard, which is behaviour-neutral today, or if deleting it also narrow catalogModuleFactsOf/readCatalogModuleFacts to exclude not_ready so the fallback and the seam typecheck; no test is owed either way.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    }
+  ]
+}

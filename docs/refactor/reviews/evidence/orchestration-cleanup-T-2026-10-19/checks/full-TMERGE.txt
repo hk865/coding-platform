@@ -1,0 +1,10 @@
+T full suite TMERGE: copy /home/han001/dsh-work/slices/s9tmerge at e99b385 T merged (t-base..w2r3 = 9a69bdb); bubblewrap, 5 workers, scope 7G; started 19:22 available 11322 MB
+build 0
+typecheck 0
+check:architecture 0
+vitest exit 0
+ Test Files  766 passed (766)
+      Tests  9774 passed | 3 skipped (9777)
+   Duration  3592.14s (transform 33.12s, setup 0ms, import 621.00s, tests 17224.33s, environment 78ms)
+failing files:
+ended 20:23

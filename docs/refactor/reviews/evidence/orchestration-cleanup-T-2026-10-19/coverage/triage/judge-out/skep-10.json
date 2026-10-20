@@ -1,0 +1,100 @@
+{
+ "rows": [
+  {
+   "row": "A2-020",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "Line 202 is inside validateRunSnapshot itself, the RunSnapshot@1 validator registered at record-readers.ts:341-344; the store applies it to every unbound record before commit (record-codec.ts:634-639 via applyRecordSchema :369-397). The only writer of an executionHistory is the Run machine (run-machine.ts:870-871, :991), and a write goes through locatorAfter, which rebuilds the locator and rejects a bad shape at :1242-1244 (locatorShapeOk at :1212-1221 rejects observedThroughPosition 0) and takes its sessionRef from the claim (claim-service.ts:997 refuses another project). A search for `executionHistory:` in src finds only those two Run-machine sites. A malformed stored locator therefore needs a hand-edited/old/shadow-written row; U stands.",
+   "proposal_ok": true,
+   "proposal_note": "Keeping the commit/read validator boundary without a tamper test is right (AGENTS rule 4); no deletion is coherent here because the validator is the codec that rejects the damaged row."
+  },
+  {
+   "row": "A2-023",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "Line 785 is the schemaId check of validateRecord (:784-797), the body of the registered CoreOperation/Session/SessionWorkLink validators (SESSION_RECORD_SCHEMAS :882-909) and of the typed decoders (:1012-1035). The store selects the schema from the record's own schemaId (record-codec.ts:558) and checks aggregateType from that body (:565-571), and every writer encodes a link with SESSION_WORK_LINK_SCHEMA_ID (:994; claim-service.ts:1263, session-lifecycle.ts:417, session-responsibility-service.ts:176-180). Every decodeSessionWorkLink call site passes a record read by that work-link ref key (session-links.ts:54, claim-service.ts:1004, session-lifecycle.ts:363, session-responsibility-service.ts:112). A record carrying another schemaId under a work-link ref key can only be a hand-edited/foreign row; U stands.",
+   "proposal_ok": true,
+   "proposal_note": "Keeping it untested is right (rule 4); there is no production writer of a mismatched schemaId, so no test can reach it without tampering."
+  },
+  {
+   "row": "A2-024",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "Line 1032 returns a failed decodeSessionWorkLink. The strict payload rule at :1030-1031 is checkWorkLinkBody(body, true), which requires a bound `since` cursor (:765-770). Every writer that creates a link registers a commit-cursor binding for `since` (session-directory.ts:1008-1013, session-lifecycle.ts:390-395 and :422, session-responsibility-service.ts:176-181, claim-service.ts:1263-1279), and a closing link keeps the stored `since` (session-lifecycle.ts:393, session-responsibility-service.ts:176-180); the store re-validates the bound record with this same strict validator (record-codec.ts:604-640). So a link with a null/unbound `since` cannot be committed, and only a damaged/foreign row reaches the arm. U stands.",
+   "proposal_ok": true,
+   "proposal_note": "Keeping the read-side rejection untested is right; deleting it would turn a damaged link into an accepted unbound interval."
+  },
+  {
+   "row": "B-068",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "Line 661 rejects an operation action with no provenance. The only current-format creator is admitSessionCreation: it fills {schemaVersion:1, kind:'new'} when the key is omitted or a validated value when present (session-directory.ts:704-712), and writes it into action.provenance (:782). The completed operation spreads the stored one (:968-982), so replay also keeps it. SessionOperationRecord requires it (session-contracts.ts:27-28), and the record validator runs on commit (record-codec.ts:634-639). Only a pre-slice-1 or hand-edited operation lacks it; U stands.",
+   "proposal_ok": true,
+   "proposal_note": "Keep it and do not add a tamper test (rule 4): it is the current-format requirement T introduced with the provenance backfill removal, and no production writer omits the field."
+  },
+  {
+   "row": "B-069",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "Line 664 reports checkSessionProvenance(actionProvenance, ref.projectId, planned.sessionId) failing. On the write path the same pure check already ran with the same ids before any commit: session-directory.ts:710-712 uses scope.projectId and the derived sessionId, and the record's ref.projectId/plannedSessionRef.sessionId are set from that same scope at :694 and :772. checkSessionProvenance (session-record-codecs.ts:381-430) is pure and depends only on those ids, so a writer that accepted the value cannot produce a record failing this line; the commit validator (record-codec.ts:634-639) therefore never fires here. Only a hand-edited or old-format operation with a bad provenance value reaches it; U stands.",
+   "proposal_ok": true,
+   "proposal_note": "Keeping it untested is right (rule 4); no other validator or writer depends on removing it."
+  },
+  {
+   "row": "B-070",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "Line 736 requires a Session record to carry non-null provenance. The only Session creator, admitSessionCreation, copies the accepted operation's provenance (session-directory.ts:956-967, createSessionRecord called only at :960) and createSessionRecord's input type makes it required (state/session-availability.ts:315-346); every later write spreads the stored record and the type requires it (contracts/core/session.ts:39-40). TP-062/T1 also deleted the old backfill path by design (t-items-TP.md:448-454). So only a pre-slice-1 or hand-edited Session reaches the arm; U stands.",
+   "proposal_ok": true,
+   "proposal_note": "Keeping the current-format check untested is right; it replaced the deleted backfill and is the intended 79-1 behaviour, not a gap."
+  },
+  {
+   "row": "A2-028",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "Line 345 counts an activity record whose stored sessionRef is null. A null is written only by run-activity-service.ts:288-309, at :302, when the Run has no DispatchOutboxEntry. Every Run is created by the claim effect pair create_run+create_outbox (state/task-machine.ts:925-932; claim-service.ts:456-466, :480-482) in one commit, and the store has no production record deletion, so a current Run always has its outbox. End commits pass the claim Session explicitly (execution-entry-service.ts:1920-1927). The test T deleted did not use the writer at all: seedLegacyActivity hand-wrote the legacy Run through commitRaw with no claim/outbox and then wrote the activity (before: tests/helpers/S2B-activity-fixture.ts:302-326, used by S2B-activity-calendar-tasks.test.ts:146-168). Only an old/hand-made Run reaches it; U stands.",
+   "proposal_ok": true,
+   "proposal_note": "Both proposals delete the compatibility count; the safe scope is Claude's: run-activity-service.ts:302 should refuse a missing dispatch as unavailable, RunActivitySnapshot.sessionRef becomes non-null (contracts/run-activity.ts:63; the codec is src/core/work-graph/persistence/run-activity-codecs.ts:288-293), then :345 and the null arm at :367 go. That edits the L9/L17 spec sentence (slice-2B-SPEC.md:430-436, :171) which still says old executions may be null, so the lead must sign the spec note; keeping it untested under rule 4 is the alternative."
+  },
+  {
+   "row": "A2-029",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "Line 367 is the `session !== null` guard around cell.sessions.set; its uncovered arm needs a counted RunActivity whose stored sessionRef is null. The same evidence as A2-028 applies: null comes only from run-activity-service.ts:302 for a Run with no dispatch outbox, while every current Run is created together with that outbox (task-machine.ts:925-932; claim-service.ts:456-466, :480-482) and the end commit passes the claim Session (execution-entry-service.ts:1926). The deleted case's legacy Run was hand-written through commitRaw, without a claim/outbox (before: tests/helpers/S2B-activity-fixture.ts:302-326; asserted at S2B-activity-calendar-tasks.test.ts:165-168). U stands.",
+   "proposal_ok": true,
+   "proposal_note": "Deleting the guard only makes sense together with A2-028's sessionRef narrowing; otherwise keep it untested. Codex's one-line 'simplify to attributed counts' omits the non-null contract change and the L17 spec note that Claude lists."
+  },
+  {
+   "row": "A2-030",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "claimingSessionOf is declared `Promise<SessionRef | null>` (activity-read-helpers.ts:176-180) but has no null return: :182 returns history.sessionRef, :187 throws rejected('unavailable', ...) when the dispatch record is missing, and :190 returns claim.sessionRef. Every caller at activity-read-model.ts:401 and :431 (and track-read-model.ts:509, :565) therefore receives a SessionRef, so the `session === null` arm at :402-403 cannot be taken; the stale return type is the only reason the branch type-checks. The deleted case (before: S2B-activity-calendar-tasks.test.ts:171-208) seeded the same hand-written legacy Run through commitRaw (tests/helpers/S2B-activity-fixture.ts:57-78), i.e. no dispatch record, and W2b-57 turned that state into the throw at :187. D2 stands, not U: the arm lives in live computation and the function's own contract guarantees it.",
+   "proposal_ok": true,
+   "proposal_note": "Narrowing to Promise<SessionRef> and deleting the null arm is sound; it also reaches activity-read-model.ts:432-433 (null part), :652/:663, track-read-model.ts:510/:566 and the subjectSessionCached signatures at activity-read-model.ts:661-672 / track-read-model.ts:584-604, which all assign the result to `SessionRef | null`. L9/L17 (slice-2B-SPEC.md:283, :430-436) still describe the null and need a note."
+  },
+  {
+   "row": "A2-031",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "Line 496 rejects a cell Session whose stored workspaceId differs from the bound workspace. The calendar is already bound to the Goal's workspace (activity-read-model.ts:234-239) and every cell Session comes from the claim/history SessionRef or a responsible link. Claims refuse a Session of another workspace (:997-998) and links do too: targetSession rejects a foreign Session (session-lifecycle.ts:203-213) and validateTaskTarget refuses a Goal of another workspace (session-targets.ts:87-93, reached from :149); link writers reuse the claim SessionRef. A Session's workspaceId is taken only from the creating scope (session-directory.ts:960-966, the field at :964) and later writes spread the stored record. The cross-workspace relation can only be made by cloning rows in the store, which is what T3-089 deleted (t-items-T3-w2.md:746-752). U stands.",
+   "proposal_ok": true,
+   "proposal_note": "Both options are valid: codex's keep-untested matches rule 4, and Claude's delete of :486-502 is behaviour-equivalent for production data (the block's only job is the project check at :487 and workspace check at :496). Deleting is explicitly left to the lead by T3-089, removes one Session read per distinct Session (read-count literals in the cap tests change) and drops a scope guard for corrupt rows, so I recommend keeping it unless L17/R4 wants otherwise."
+  },
+  {
+   "row": "A2-032",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "Line 267's not_available arm needs footprint.executedFilesAvailable false, i.e. executed.value.availability !== 'available' (goal-conflicts.ts:420-421). The only production GoalExecutedFilesPort implementation is createGoalExecutedFilesReader (create-platform.ts:944-945, injected at :1858 and :2198; the conflict assembler gets it at :945), and its only ready return writes availability:'available' (goal-executed-files-reader.ts:203-205). The frozen DTO still allows 'not_available' (model/decision-contracts.ts:57-66) and the Node reader maps it (node-detail-reader.ts:167-185), but only tests inject it (tests/helpers/S2C-D-node-support.ts:715, :690). No production writer produces the value; D2 stands.",
+   "proposal_ok": false,
+   "proposal_note": "The class is right, the deletion as agreed is not self-contained: narrowing the port result to 'available' breaks node-detail-reader.ts:180 (the L15 'not_recorded' mapping, a frozen 2C contract) and the default scriptedExecutedFiles({availability:'not_available'}) used by the node tests (tests/helpers/S2C-D-node-support.ts:715; decision/2C spec L15), besides goal-conflicts.ts:421. Only Claude's conditional version ('spec change plus deletion, or keep as the frozen DTO value untested') is sound; codex's bare 'narrow and delete' omits those dependants. Also decide whether the frozen DTO is kept as an injection-only value."
+  },
+  {
+   "row": "A2-033",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "The anonymous callback at :413 runs only in the `architecture === null` branch (:412-414), i.e. when the current-catalog read is not_found (goal-conflicts.ts:365-380, :380). That pointer is ProjectArchitectureBaselineActive (catalog-service.ts:122-124, :368-373), the very record plan adoption requires: initial adoption is refused without resolved governance (plan-service.ts:1679-1682), which requires that pointer (plan-readers.ts:812-827). Executed files come from Runs, Runs require an accepted Plan (task-machine claim path), and no writer removes the pointer (only adopt/revise write it, catalog-service.ts:523-541, :701-720). So with architecture null the file list is necessarily empty and the callback can never be invoked; D2 stands. The test title 'no catalog adopted' is stale since TP-107 (tests/helpers/task-claim-fixture.ts:265-279 adopts a catalog).",
+   "proposal_ok": true,
+   "proposal_note": "Replacing the null branch with [] and dropping the callback is behaviour-equivalent and nothing else calls it; cosmetic, so keeping it is also acceptable. No spec line reserves the null-with-files state."
+  }
+ ]
+}

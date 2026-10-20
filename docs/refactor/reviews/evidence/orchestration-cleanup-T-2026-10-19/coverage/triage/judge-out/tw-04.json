@@ -1,0 +1,19 @@
+{
+ "upheld": true,
+ "still_covered_by": "",
+ "t_reason_check": "TP-172 (evidence/books/t-items-TP.md:1269-1274) deleted before-T WP2-undelivered-notices.test.ts:226-272 as 'old data missing a position' and cites F09/F10 as the coverage. That reason covers the affected/unfiltered sub-reads, not the otherGoal read at before :258-263: the Goal filter at src/core/work-graph/views/undelivered-reply-notices.ts:330-333 runs before the R/P checks at :337-340, so a current record (both positions present) takes the same then-arm and returns ready/[]; F09/F10 (tests/work-graph/WP2-undelivered-notices.test.ts:113-165) read without a goalRef. The related T item TP-067 says to keep the Goal filter (:327-342) while its only test was dropped (t-items-TP.md:486). No after-T test reaches the arm: the only foreign-Goal read, tests/work-graph/WP2-undelivered-notices.test.ts:383-387, is rejected as an incompatible cursor at src/core/work-graph/views/undelivered-reply-notices.ts:464-465 before assembly.",
+ "rows": [
+  {
+   "row": "A2-054",
+   "cls": "G",
+   "note": "if (projectedItem === null) continue at :271 is reached only through projectReply's ready/null return at :332. A Goal-filtered readPage for a real second Goal (tests/helpers/B2-execution-fixture.ts:144-149 creates 'b2-second-goal' in the same workspace) over a workspace that holds the base Goal's undelivered reply executes it, and the decision queue passes input.goalRef to notice sources (src/core/work-graph/views/decision-read-model.ts:1017-1018), so a public path exists without tampering or a fault. No after-T test performs such a read."
+  },
+  {
+   "row": "A2-055",
+   "cls": "G",
+   "note": "The if at :330 then-arm is the Goal filter, reachable whenever a work_run reply attributed to Goal A (attributedGoal :414-421) is read with goalRef Goal B for an existing Goal (goalScopeProblem :134-166). Only the `goalRef === null` disjunct is dead, because non-work_run senders are refused at :371; the projectId/goalId mismatch is live current behaviour, and its only test (before :258-263) was deleted."
+  }
+ ],
+ "restore": "In tests/work-graph/WP2-undelivered-notices.test.ts add an M05 test: `const f = await open(); await unavailableWithReply(f);` (helpers at :39-53: real enter/send/yieldWait/retire/respond, which write current positions). `const src = f.notices().source;` then `const other = await src.readPage(f.ctx, { workspace: f.scope, goalRef: { aggregateType: 'Goal', projectId: f.f.base.goalRef.projectId, goalId: 'b2-second-goal' }, page: { limit: 100 } });` (the second real Goal is created in tests/helpers/B2-execution-fixture.ts:144-149; f.scope is exposed at tests/helpers/WP2-notices-fixture.ts:286). Expect `other.status === 'ready'`, `other.value.availability === 'available'`, and `other.value.items` toEqual []. Then `const own = await src.readPage(f.ctx, { workspace: f.scope, goalRef: f.f.base.goalRef, page: { limit: 100 } });` and expect status ready, `own.value.items` toHaveLength(1), category 'undelivered_reply'. Both calls use the public DecisionNoticeSourcePort with no tampering and no fault.",
+ "spec_basis": "docs/refactor/design/orchestration-2026-10/slices/wiring-2-SPEC.md:60 (L7: '先核消息归属/Goal、排除确定不在过滤范围内的项，再要求 R/P') and :64 (L11 item 3: '先定消息归属和 Goal，再对范围内项要求位置，NR28 分其它 Goal/受影响 Goal/无过滤 Workspace'); the rule is restated at :202 ('先核消息归属并作 Goal 过滤，再要求位置')."
+}

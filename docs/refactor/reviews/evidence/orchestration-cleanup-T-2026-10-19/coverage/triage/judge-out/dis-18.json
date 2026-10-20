@@ -1,0 +1,58 @@
+{
+  "rows": [
+    {
+      "row": "C2-005",
+      "cls": "G",
+      "winner": "codex",
+      "reason": "validMaterialSourceSet has one caller, validMaterialSourcePin (material-access.ts:71), which is called at execution-entry-service.ts:388 by manifestProblem (:457) when the stored manifest carries materialBasis.sourcePin. The built-in localWorkbenchGrant writes materialBasis: null (host.ts:297), but that is not the only writer: an explicit config binding's grant is cloned as-is from the CLI/workbench config (main.ts:124) and spread unchanged into the resolved Host configuration (runtime-configuration.ts:446); validateWorkbenchRuntimeConfiguration (:251-329) checks other grant fields but never materialBasis. prepare copies hostConfig.materialBasis into the manifest (execution-preparation.ts:531, :630); start re-reads that persisted manifest and validates it (execution-entry-service.ts:1161 -> :345 -> :457 -> :388). A well-formed sourceSet therefore executes :53-65 with no fault and no store tampering. Claude's D2 only covers host.ts:297 and the query-feedback caller (query-job.ts:266, whose only writer refuses execution_coordination at query-job-service.ts:280-281); neither rules out the explicit trusted-config path.",
+      "proposal": "Test gap. Extend PreparationHostConfiguration/preparationHost (tests/helpers/task-claim-fixture.ts:505-537) with an optional materialBasis (default null, used at :531) and B2PreparedOptions (tests/helpers/B2-execution-fixture.ts:62-72) so buildPrepared (:213-225) passes it through. In tests/work-graph/B2-execution-entry.test.ts: buildPrepared({materialBasis:{planRef:null,workspaceRevision:null,sourceDigest:null,sourcePin:{schemaVersion:1,projectId:f.base.scope.projectId,workspaceId:f.base.scope.workspaceId,sourceSet:{kind:'workspace_paths',paths:['src/a.ts']},identity:{workspace:'/tmp',commit:null},manifestDigest:'a'.repeat(64)}}}), then await f.authorize({prepared}) (the helper asserts committed) and assert the persisted manifest body still carries that pin. No store edit and no fault injection.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-006",
+      "cls": "G",
+      "winner": "codex",
+      "reason": "The uncovered anonymous_1 is the arrow at material-access.ts:61, inside validMaterialSourceSet. That function's only caller is validMaterialSourcePin (:71), reached at execution-entry-service.ts:388 when the persisted manifest's materialBasis.sourcePin exists. A trusted explicit config binding supplies that basis: the config grant is cloned as-is (main.ts:124) and spread into the resolved Host configuration (runtime-configuration.ts:446) with no materialBasis check (:251-329), prepare copies it (execution-preparation.ts:531) and start re-reads/validates the manifest (execution-entry-service.ts:1161/:457/:388). For kind 'workspace_paths' with 1..64 paths, :59 falls through and :61's set.paths.every(...) invokes this arrow once per path. No fault or tampering is needed.",
+      "proposal": "Same test as C2-005: the single valid nested path 'src/a.ts' in the pin's sourceSet executes the :61 callback. Assert authorize (and start/enter) committed with the pin present in the stored manifest.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-007",
+      "cls": "G",
+      "winner": "codex",
+      "reason": "The uncovered anonymous_2 is the arrow at material-access.ts:62, the segment predicate of `path.split('/').some(part => ...)` inside the :61 callback of validMaterialSourceSet. The same trusted-config-to-manifest path as C2-005/C2-006 reaches it (main.ts:124 -> runtime-configuration.ts:446 -> execution-preparation.ts:531 -> execution-entry-service.ts:1161/:457/:388 -> material-access.ts:71). Any non-'.' path without \\\\, : or NUL takes the `!path.split('/').some(...)` branch, so a nested relative path such as 'src/a.ts' executes this arrow for each segment; the record does not have to be invalid. Claude's D2 rests on host.ts:297 being the only writer, which the explicit config binding path falsifies.",
+      "proposal": "Same test as C2-005: 'src/a.ts' executes the :62 segment callback (twice, for 'src' and 'a.ts'). No separate test is needed.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-008",
+      "cls": "G",
+      "winner": "codex",
+      "reason": "The uncovered anonymous_3 is the arrow at material-access.ts:64, the final `set.paths.every((path, index) => index === 0 || set.paths[index - 1]! < path)` in validMaterialSourceSet. It runs whenever the earlier per-path checks pass, so a valid sorted unique set executes it even with one element (index 0 short-circuits true). The same trusted config path reaches it: main.ts:124 clones the config grant as-is, runtime-configuration.ts:446 spreads it unchecked (:251-329 never validates materialBasis), prepare copies it at execution-preparation.ts:531, and start re-reads the manifest and calls validMaterialSourcePin at execution-entry-service.ts:388. No fault, no hand-edited record.",
+      "proposal": "Same test as C2-005: one sorted unique path ('src/a.ts') executes the :64 callback. Optionally add the negative arm with paths ['b.ts','a.ts'] to assert the malformed-manifest rejection, but the valid pin alone covers this row.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-009",
+      "cls": "G",
+      "winner": "codex",
+      "reason": "validMaterialSourcePin has two callers: execution-entry-service.ts:388 on the stored manifest's materialBasis.sourcePin, and query-job.ts:266 on an execution_coordination feedback. The query writer refuses that kind before validating (query-job-service.ts:280-281), so that caller is not reachable; but the entry caller is. The built-in grant writes null (host.ts:297), yet an explicit config binding's grant is cloned as-is (main.ts:124) and spread into the resolved Host configuration (runtime-configuration.ts:446) with no materialBasis check (:251-329); prepare copies it into the manifest (execution-preparation.ts:531, :630) and start re-reads and validates it (execution-entry-service.ts:1161 -> :345 -> :457 -> :388). A well-formed MaterialSourcePinV1 in that trusted config therefore executes :66-74 with no fault. Claude's D2 covers only host.ts:297 and the refused feedback branch.",
+      "proposal": "Test gap, same setup as C2-005: the well-formed pin must be accepted through prepare/authorize/enter (assert committed and the manifest keeps it); a malformed pin (for example manifestDigest 'x') must be rejected as unavailable 'the stored prepared manifest is malformed: materialBasis sourcePin is not a valid MaterialSourcePinV1'. Do not restore an old-format store and do not add a test that edits stored records.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-012",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "failed (command-rerun-tools.ts:79) is reached by plain tool input, not only by an external fault. The strict-schema check at :157-159 rejects an extra key (runTool calls handler.execute directly, tests/helpers/B2-blocked-runtime.ts:417-424); and a schema-valid reason longer than 2000 code points passes :157 because inputSchema puts no upper bound on the string (:37-46), then the real owner rejects it as invalid (command-rerun-request-service.ts:148-154, :661-662) and the adapter maps that at :200 to failed('invalid_arguments', owner reason). The driver registers this tool on every blocked Work Run (execution-driver.ts:755-782), and the existing tool tests cover only requested/pending/allowed/not_blocked (tests/runtime/B2-03-request-tool.test.ts:58-116). Codex's F is therefore too narrow: :183-186 (requestRerun throws) is one path, not the only one.",
+      "proposal": "In tests/runtime/B2-03-request-tool.test.ts:57 add a case with openB2BlockedWorld (tests/helpers/B2-blocked-runtime.ts:373) and runTool (:417-424). (1) runTool(w.tool,{command:'npm run db:migrate',reason:'重跑',extra:true}) -> status error, error.code invalid_arguments, message 'request_command_rerun 参数非法', effects {sideEffect:'none'}, and w.listRequests(w.ctx) length unchanged. (2) runTool(w.tool,{command:'npm run db:migrate',reason:'x'.repeat(2001)}) -> error invalid_arguments with the owner's message 'requestRerun requires a reason of 1..2000 code points' and no CRR written; a following legal request still commits. Run both under the existing describe.each for memory and sqlite.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    }
+  ]
+}

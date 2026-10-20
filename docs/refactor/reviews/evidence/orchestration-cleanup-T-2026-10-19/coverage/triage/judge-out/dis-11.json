@@ -1,0 +1,67 @@
+{
+  "rows": [
+    {
+      "row": "A2-044",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "Line 319 is the L7 fallback for an ended Run that has no RunActivity and is not proven not-entered (track-read-model.ts:303-320). That state is current, not old-format: the end commit accepts an observation without `activity` and then writes no RunActivity record (`execution-entry-contracts.ts:85`; slice-2B-SPEC.md:537 says the field is optional and absent means no record, the read applying L7), and execution-entry-service.ts:1920-1931 only plans a record when `observation.activity` is present. Surviving after-T tests build exactly this state through the real writes: tests/work-graph/S2B-34-executed-files.test.ts:98-107 (runAndEnd then ensureRecording, the `not_backfilled` case) and tests/app/S2B-backfill-workflow.test.ts:278-290 (ensureRecording then runAndEnd, the `not_recorded` case), using S2B-track-fixture.ts:372-402 and :436-442. They read the activity reader, not readTrackBars, so line 319 stays unexecuted; a track test only has to read the same runs with ctx.since non-null (track-read-model.ts:1105, 1111). Binary arm 0 (`run.endedAt !== null`) is evaluated as soon as the expression is reached. Codex's U assumes only old data reaches it, which these two current tests and the optional-activity contract refute.",
+      "proposal": "Test gap, in tests/work-graph/S2B-30-track-bars.test.ts, with the existing fixture methods: (1) ensureRecording(T0), then runAndEnd with the end after T0 and no activity, and readTrackBars: the run bar is status 'unknown', reason 'not_recorded', error true; (2) runAndEnd with the end before T0, then ensureRecording(T0): reason 'not_backfilled', error false. The pair evaluates both binary arms and both inner ternaries.",
+      "t_reason_wrong": false,
+      "t_item": "W2b-57; before-T test .dsh-ref/before/tests/work-graph/S2B-r2-r5-not-entered.test.ts:54-68 (the not_recorded case; the file was deleted)"
+    },
+    {
+      "row": "A2-045",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "Same expression and state as A2-044: track-read-model.ts:319 (`run.endedAt !== null && run.endedAt >= ctx.since`). Arm 1 (`run.endedAt >= ctx.since`) is evaluated once `endedAt !== null`, and every ended Run has an endedAt, so either of the two public `runAndEnd` sequences that reaches line 319 also evaluates arm 1. The after-T tests at tests/work-graph/S2B-34-executed-files.test.ts:98-107 and tests/app/S2B-backfill-workflow.test.ts:278-290 show the no-activity ended Run is a current public state written by the real entry (S2B-track-fixture.ts:372-402, :436-442). Codex repeats A2-044's old-data premise without new evidence.",
+      "proposal": "The same two cases as A2-044 (end after the epoch: not_recorded; end before: not_backfilled); they evaluate this arm too.",
+      "t_reason_wrong": false,
+      "t_item": "W2b-57; before-T test .dsh-ref/before/tests/work-graph/S2B-r2-r5-not-entered.test.ts:54-68 (the not_recorded case; the file was deleted)"
+    },
+    {
+      "row": "A2-046",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "The inner cond arm 0 is the 'not_recorded' result at track-read-model.ts:319. It is reached by an ended Run at or after the recording epoch that has no RunActivity: `ensureActivityRecording` writes the epoch (run-activity-service.ts:419-458) and an end commit with no `activity` writes no record (execution-entry-service.ts:1920-1931; execution-entry-contracts.ts:85). This is exactly what tests/app/S2B-backfill-workflow.test.ts:278-290 builds with the public fixture writes and asserts on the activity reader ('not_recorded', error true); the track fixture can build the same Run with S2B-track-fixture.ts:399-402 plus :436-442. No after-T test calls readTrackBars on it, which is the gap. Codex's U is the same old-data premise, refuted by that current test.",
+      "proposal": "In tests/work-graph/S2B-30-track-bars.test.ts: ensureRecording('2026-10-14T10:00:00.000Z'), then runAndEnd ending after it with no activity, readTrackBars, and assert the run bar is status 'unknown', reason 'not_recorded', error true.",
+      "t_reason_wrong": false,
+      "t_item": "W2b-57; before-T test .dsh-ref/before/tests/work-graph/S2B-r2-r5-not-entered.test.ts:54-68 (it asserted 'not_recorded'; the file was deleted)"
+    },
+    {
+      "row": "A2-047",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "This duplicate cond-expr arm 1 can only be the outer ternary's alternate (the whole `&&` expression, reached whenever since is non-null) or the inner 'not_backfilled' alternate at track-read-model.ts:319. Both are public states: the outer alternate by either no-activity end, and 'not_backfilled' by a no-activity Run that ends before `ensureRecording` starts the epoch — tests/work-graph/S2B-34-executed-files.test.ts:98-107 builds precisely this with the real writes and asserts the current L7 result, and the same sequence is available in tests/helpers/S2B-track-fixture.ts:399-402, :436-442 before a readTrackBars at S2B-30-track-bars.test.ts. The list gives no column so the two A2-047/A2-048 entries cannot be told apart, but both identities are G; Codex's U is refuted by the surviving S2B-34 test.",
+      "proposal": "In tests/work-graph/S2B-30-track-bars.test.ts add both no-activity cases: runAndEnd ending at 09:30 then ensureRecording at 10:00 with a 10:00..12:00 read -> reason 'not_backfilled', error false; and ensureRecording at 10:00 then a run ending at 10:30 -> 'not_recorded', error true. Between them both candidate arms of this row are evaluated.",
+      "t_reason_wrong": false,
+      "t_item": "W2b-57; before-T test .dsh-ref/before/tests/work-graph/S2B-r2-r5-not-entered.test.ts:54-68 (the file was deleted)"
+    },
+    {
+      "row": "A2-048",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "Same duplicate as A2-047: the second cond-expr arm 1 on track-read-model.ts:319 is either the outer alternate (any since-non-null no-activity ended Run) or the inner 'not_backfilled' alternate (ended before the recording epoch). Both are reachable with the production writes, as tests/work-graph/S2B-34-executed-files.test.ts:98-107 shows for the not_backfilled state and tests/app/S2B-backfill-workflow.test.ts:278-290 for not_recorded (S2B-track-fixture.ts:372-402, :436-442). Which entry is A2-047 vs A2-048 is unresolved because the list carries no column, but the class is the same for either. No after-T track test reads these Runs, so it is a test gap, not old data.",
+      "proposal": "The same two S2B-30 cases as A2-047; no separate work is needed to distinguish this duplicate row.",
+      "t_reason_wrong": false,
+      "t_item": "W2b-57; before-T test .dsh-ref/before/tests/work-graph/S2B-r2-r5-not-entered.test.ts:54-68 (the file was deleted)"
+    },
+    {
+      "row": "A2-049",
+      "cls": "U",
+      "winner": "claude",
+      "reason": "Line 647 has two `??`. The `finalizedAt` fallback is covered after T: the open round read in tests/work-graph/S2B-30-track-bars.test.ts:168-170 has no finalizedAt (evidence-service.ts:355-358 writes it only when finalizing), and readCheckStart runs for rounds_open at track-read-model.ts:744. So the uncovered arm 1 is `origin.value.since ?? null`. A persisted null since is refused by the codec (decision-record-codecs.ts:394), and every creating commit binds since to the commit cursor (evidence-service.ts:351-358, :1697-1702); preservedRoundNoticeOrigin only copies an existing value (:305-316). Both callers already assume it with `parsed.since!` (track-read-model.ts:699, :746). Only a legacy or hand-edited stored round reaches the null, i.e. the U shape; Codex's 待定 is right that the list has no column, but the covered sibling fixes the arm.",
+      "proposal": "Delete the fallback under 79-1: readCheckStart returns `since: CommitCursor` and throws rejected('unavailable', 'round <refKey> is missing its since cursor') when it is absent, as activity-read-model.ts:452-453 already does for the same origin; keep `finalizedAt ?? null` for open rounds. Do not restore a stripped-round test (it used stripRoundSince, i.e. tampering).",
+      "t_reason_wrong": false,
+      "t_item": "TP-154; before-T test .dsh-ref/before/tests/work-graph/S2B-30-track-bars.test.ts:188-207"
+    },
+    {
+      "row": "A2-052",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "The catch's non-capacity arm (track-read-model.ts:1181) is reachable with no fault. validateTrackInput checks only the bound project, not that the Goal exists (:1031-1035); readTrackBarsWindow calls goalWorkspaceId (:1100), which throws rejected('unavailable', 'the Goal ... is missing') when the key is absent (:1019-1020). That throw is inside the try (:1167-1174) and is neither CapacityError nor ForbiddenError, so :1181 maps it through storeFailureToRejection (read-result-failures.ts:42-44) and returns unavailable. The activity/track route passes the body straight through (core-routes.ts:487, :1155). The deleted foreign-workspace test was tamper-only (T3-089 kept the guard untested per AGENTS rule 4), but this missing-Goal path never had a track test. Codex's F store-failure variant also exists (page failures are rethrown at :491, :547, :692, :738, :815), yet a plain public step already reaches the arm, so G is the class.",
+      "proposal": "In tests/work-graph/S2B-30-track-bars.test.ts call f.track().readTrackBars(f.ctx, { goalRef: { aggregateType: 'Goal', projectId: f.goalRef.projectId, goalId: 'no-such-goal' }, from: R2_DAY_FROM, to: R2_DAY_TO, cursor: null, limit: 10 }) (fixture track() at S2B-track-fixture.ts:144, :743) and expect { status: 'rejected', code: 'unavailable' } with a reason naming the missing Goal. Optional F variant: pass faultyRecords(...) to f.track(records) as in tests/work-graph/S2B-activity-read-faults.test.ts:30-55 and expect unavailable.",
+      "t_reason_wrong": false,
+      "t_item": "T3-089; before-T test .dsh-ref/before/tests/work-graph/S2B-r4-session-workspace.test.ts:44-61"
+    }
+  ]
+}

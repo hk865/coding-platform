@@ -1,0 +1,100 @@
+{
+  "rows": [
+    {
+      "row": "C4-128",
+      "refuted": false,
+      "cls": "D1",
+      "evidence": "countingStore (work-line-reader.ts:124-166) builds the budget wrapper; only its read members are ever called (readMany :139, lookup :151, lookupOrdered :156, countLookup :161, eventAt :146). The wrapper is created by readBudgetState (:325-328) and passed only to readDoneEvidence (:408), readWrittenAnchors (:1894) and deps.undeliveredRepliesFor (:2064); the mailbox factory returns only readUndeliveredReplies (create-platform.ts:2179-2184), whose body uses records.lookup only (mailbox-service.ts:3199-3320; the commit at :328 is on unrelated write methods). Grep for commit in work-line-reader.ts finds only :145 and the type at :88. No production caller path invokes the wrapper's commit: D1 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Deleting the forwarder is behaviour-safe but not a one-line edit: WorkLineStore is GoalRecordTransactionPort&... (:88), and both the *For parameters (:100-102) and the mailbox records dependency still require commit, so dropping it means narrowing those to a read port; keeping it as the type-required pass-through (Claude's alternative) is also fine. No spec line reserves it."
+    },
+    {
+      "row": "C4-130",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "unknownTask runs from work-line-reader.ts:1006 (decodeLink null, or link.until null) and from targetTaskOf :1039 (non-task target). The only call site queries S2C_CLOSED_TASK_LINKS_LOOKUP with values [... 'task'] (:1000-1003); that index orders by until as text (session-record-codecs.ts:950-952), and both backends drop a null/empty order value (lookup-index.ts:537-549; in-memory-record-store.ts:524-531; sqlite-record-store.ts:627-630), so the until-null half cannot be returned here, and the index equality pins target.kind='task', so :1039 is dead on this path. What remains is decodeSessionWorkLink failure (:619-622; validator session-record-codecs.ts:1029-1036, checkWorkLinkBody :760-773), i.e. an old/corrupt link body. U stands.",
+      "proposal_ok": true,
+      "proposal_note": "Claude's split is right: drop `|| link.until === null` (readClosure still handles a null until at :1051) and the non-task fallback, keep the decode-damage placeholder untested (rule 4); Codex's keep-untested placeholder is compatible. No spec line reserves a non-task target in this closed-task read."
+    },
+    {
+      "row": "C4-131",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "The reduce at :1542 runs only when cycleRepresentativesByWalk finds a predecessor already on the current walk's path (:1539-1541), i.e. a provenance cycle of at least two members. Provenance is fixed at creation: admission walks the predecessor chain and refuses a loop or a missing predecessor (session-directory.ts:616-662, called at :762-768), and later Session transitions spread the record so provenance is unchanged (session-availability.ts:355-360, :382-403; only createSessionRecord writes it, :318-339). A cycle therefore needs an old, foreign or hand-edited Session record: U stands.",
+      "proposal_ok": true,
+      "proposal_note": "Do not delete by default: N9 is current spec (slice-2C-SPEC.md:1037 requires the min representative row with problem invalid; :1343 says defensive, no test; :1475 says only a DB edit triggers it and no test is written). Claude's keep-untested is right; Codex's deletion would be a 2C spec change for the lead."
+    },
+    {
+      "row": "C4-132",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "The filter at :1556-1557 runs only for the archived page (call at :1675 passes filterToCandidates=true) and its non-empty input is the representatives map filled solely on a detected provenance cycle (:1543-1545). Same admission guarantee as C4-131 (session-directory.ts:616-662; provenance unchanged after creation, session-availability.ts:355-360). Only an old or corrupted Session record can produce a cycle: U stands.",
+      "proposal_ok": true,
+      "proposal_note": "Same N9 point: keep untested (slice-2C-SPEC.md:1037, :1343, :1475). The filter is the 'archived cycle emitted once, by the page holding the representative' rule, so deleting it is a spec change, not a safe cleanup."
+    },
+    {
+      "row": "C4-135",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "cycleRepresentativeOf (:2354-2356) is called only for resolveContinuationLine's kind 'cycle' (:2370 in resolveLine, :3062 in readWorkLine). That kind is produced only when the successor BFS meets a Session twice (:1449-1463, :1470). Each Session has one fixed provenance.from, so the graph is functional and a revisit is a real cycle; admission refuses loops and missing predecessors (session-directory.ts:616-662) and transitions keep provenance unchanged (session-availability.ts:355-360). Only old, foreign or corrupt Session records reach it: U stands.",
+      "proposal_ok": true,
+      "proposal_note": "Keep untested per N9 (slice-2C-SPEC.md:1037, :1343, :1475). Codex's deletion would remove a required 2C behaviour (one representative row with problem invalid), so it is the lead's spec decision, not part of this cleanup."
+    },
+    {
+      "row": "C4-136",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "This is the reduce callback inside cycleRepresentativeOf (:2355), so it runs only for a cycle of two or more SessionRefs (a reduce without an initial value does not call back for a single member). Same guarantee as C4-135: a cycle needs a repeated predecessor, admission refuses loops (session-directory.ts:616-662), and provenance never changes after creation (session-availability.ts:355-360). U stands.",
+      "proposal_ok": true,
+      "proposal_note": "Same as C4-135: keep untested per slice-2C-SPEC.md:1343/1475, or delete only together with the N9 spec change."
+    },
+    {
+      "row": "A3-001",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "The only production producer of GraphAttentionStamp is the Host scanner at attention-observer.ts:648-657, fed by readAttentionGraph -> contextAssembler.readAttentionGraph (context-assembler.ts:2032-2038) -> graphContext.readAttentionFacts, whose only ready return sets nodes = Object.keys(details) (:1706) and details itself (:1714). GraphAttentionFactsV1.details is required (contracts/graph-context.ts:137-141) and the scanner dependency is typed to it (:591-594); create-platform passes the value through unchanged (create-platform.ts:1490-1497). processed/delivered baselines are in-process clones (cloneGraph :426-430). For a real stamp a key in either node set always has its detail, so :275 needs a stamp whose nodes and details disagree, which only the deleted direct-scanner fallback built. D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Class confirmed, but the check cannot simply be deleted: with noUncheckedIndexedAccess (tsconfig.json:10) Record indexing is Detail|undefined, so :275 (and the twins :268/:272) remain as type narrowing even after GraphAttentionStamp.details is made required; deleting it needs a cast/restructure. Claude's 'plain narrowing or can go' covers this; Codex's plain deletion is not compile-safe as written."
+    },
+    {
+      "row": "B-002",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "The conditional spread at :655 has its empty arm only when read.value.details is undefined. readAttentionGraph is typed to ReadResult<GraphAttentionFactsV1> (:591-594), whose details is required (contracts/graph-context.ts:137-141); the single implementation returns details on its only ready return (graph-context-reader.ts:1714, nodes built from Object.keys(details) :1706), and create-platform/context-assembler pass it through (context-assembler.ts:2032-2038; create-platform.ts:1490-1497). No codec sits between; the skeleton runtime stub answers unsupported (runtime.ts:96-98) and the real port binds the assembler (:736). D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Deleting the conditional (always copy read.value.details, and make GraphAttentionStamp.details required at :53-58) is coherent; it also makes the parallel graph.details conditional in cloneGraph (:429) redundant, and the hand-built stamps without details (tests/app/orchestration-mechanism.test.ts:86-95) must then carry one."
+    },
+    {
+      "row": "A3-002",
+      "refuted": true,
+      "cls": "U",
+      "evidence": "The null arm is not confined to live assembly. renderContinuationBriefZh is also run on a saved-manifest brief: continuationSuffixOf (:975) at :1058, and continuationBriefVerdict (:1201) at :1478, both on a manifest read by readManifestFromEnvelope (execution-entry-service.ts:309-349); its manifestProblem validates the brief with continuationBriefShapeProblem (execution-entry-service.ts:480), whose previousProblem accepts endedAt via nullableString (continuation-brief.ts:1160-1180). So a stored brief with previous.endedAt null passes the shape check and reaches :604. The deleted IT04 used exactly that body (OLD_MANIFEST_JSON previous.endedAt null) through loadPreparedManifest+render. Today's builder copies previous.run.endedAt (continuation-brief-assembly.ts:915), and live ends write a string (:892, :938, :993; the null-keeping :2498/:2542 follow an outcome_unknown end that already set it). Only an old-format or hand-edited stored manifest reaches the arm, so the evidence supports U, not D2.",
+      "proposal_ok": true,
+      "proposal_note": "Keep the null check untested (rule 4), or delete it per decision 79 and then also tighten the shared validator previousProblem/continuationBriefShapeProblem (not only the decode codec) so a stored manifest is refused at execution-entry-service.ts:480 before the render; dropping only the guard would render 'null' for such a body. The builder's previous.run.endedAt must be asserted/narrowed at assembly."
+    },
+    {
+      "row": "A3-003",
+      "refuted": true,
+      "cls": "U",
+      "evidence": "Same stored-manifest route as A3-002: readManifestFromEnvelope's manifestProblem (execution-entry-service.ts:480) accepts uncommitted.reason null through uncommittedProblem's nullableString (continuation-brief.ts:1382-1389), and the renderer runs on the loaded manifest at :975/:1058 and :1201/:1478. The deleted IT04's OLD_MANIFEST_JSON is exactly status 'unavailable' with reason null, which reaches :687. Today's only producer briefWorkspaceFactsFor sets a string reason in every unavailable(...) arm (context-assembler.ts:975-983, :1010-1014); reason null is written only for git/not_git (:1019-1023). Only an old-format or hand-edited stored brief reaches the arm: U, not D2.",
+      "proposal_ok": true,
+      "proposal_note": "As U, keep untested or delete the null-reason shape; tightening the union (:245) and uncommittedProblem (:1382-1389) also makes the shared shape check reject a stored old brief at execution-entry-service.ts:480, which is needed because loadPreparedManifest/render is a real read path."
+    },
+    {
+      "row": "A3-004",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "deps.kernel is the real vendor namespace (create-platform.ts:5, :1077-1078), and RegisteredCheckKernel is Pick<typeof import(...public-api.js)> (check-execution.ts:38-41). ProcessExecutionResult.resourceCaps is required (vendor/coding-agent/dist/sandbox/process/process-sandbox.d.ts:43-44), and every result return fills it (process-sandbox.js:1461, :1609, :1856; the not-configured path throws RESOURCE_CAP_NOT_CONFIGURED :758-759). No other production composition builds the runner (createRegisteredCheckRunner only at create-platform.ts:1077). The undefined arm needs a result without the field, which only the deleted K3 stand-in produced: D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Deleting the cast and conditional at :240/:248 and always copying result.resourceCaps is safe. Whether the stored CheckProcessObservation.resourceCaps stays optional is a separate record-shape question, not this branch."
+    },
+    {
+      "row": "A3-012",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "The throw at :85 can fire only if current.get(adapterId) is missing right after a byAdapterId check on the same id. The registry only adds entries (:52-66, :89-96 registerCurrent), never deletes, and both accessors read the same current Map (:77-79, :84). Every production call is preceded by byAdapterId on the same id: session-operations.ts:633-634/671, :784-787/808, :898-903, :1008-1013, :1025-1040; runtime.ts:353-355/366; execution-driver.ts:870-871/1273->1308 and :1333-1339/1347 (readTurnTail does its own byAdapterId check). Construction throws at startup for bad entries (:64-72), so a location once returned stays for the process. D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Deleting the throw means withStore should take the already-resolved location (or a non-null assertion), otherwise the map lookup can be undefined; the entry-level unsupported/unavailable rejections stay. No type, switch or spec line depends on the duplicate guard."
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+T round - coverage after (V8, vitest 4.1.10, include src/**)
+copy: /home/han001/dsh-work/slices/s9tcova  files in report: 483
+note: after T: merge copy e99b385 (worktree 47cc63e8 + t-base..9a69bdb), 4 workers, MemoryMax 8G, --coverage.reportOnFailure
+
+Totals (computed from coverage-final.json)
+  statements 64289/85333 (75.34%)
+  branches   52822/76037 (69.47%)
+  functions  9089/10202 (89.09%)
+  lines      57159/68225 (83.78%)
+Totals (vitest coverage-summary.json)
+  statements 64289/85333 (75.33%)
+  branches   52822/76037 (69.46%)
+  functions  9089/10202 (89.09%)
+  lines      57159/68225 (83.78%)
+
+zero files (statements > 0, none executed): 30
+files with no statements at all (type-only etc., not in the zero list): 72
+uncovered functions: 1113   uncovered branch arms: 23214
+TSV columns: functions = path, declaration line, name; branches = path, arm start line (branch line if the arm has none), type, arm index, arm count
+
+Per directory (src/<top>; src/core/<a>/<b>), sorted by uncovered statements
+directory                                    files unc.stmt              statements                branches             functions                   lines
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+src/ui                                          78     4820      1614/6434 (25.09%)      1085/5651 (19.20%)      295/926 (31.86%)      1381/5106 (27.05%)
+src/core/work-graph/tasks                       64     3839    12202/16041 (76.07%)    10219/14532 (70.32%)    1490/1580 (94.30%)    11190/12889 (86.82%)
+src/core/work-graph/views                       17     1426      6614/8040 (82.26%)      4609/6562 (70.24%)      883/930 (94.95%)      5769/6419 (89.87%)
+src/core/agent-runtime                          46     1382      6303/7685 (82.02%)      5428/7015 (77.38%)      915/995 (91.96%)      5572/6305 (88.37%)
+src/core/work-graph/sessions                    12     1347      2834/4181 (67.78%)      2594/3997 (64.90%)      291/309 (94.17%)      2711/3352 (80.88%)
+src/core/work-graph/persistence                 17     1306      2817/4123 (68.32%)      2811/4248 (66.17%)      373/379 (98.42%)      2709/3162 (85.67%)
+src/core/work-graph/communication                4      957      2448/3405 (71.89%)      2022/3083 (65.59%)      270/284 (95.07%)      2295/2749 (83.48%)
+src/core/work-graph/architecture                10      772      2359/3131 (75.34%)      1714/2510 (68.29%)      310/330 (93.94%)      2094/2342 (89.41%)
+src/app                                         17      653      3444/4097 (84.06%)      2858/3607 (79.23%)      550/604 (91.06%)      2971/3300 (90.03%)
+src/business                                    10      623      2270/2893 (78.47%)      2100/2887 (72.74%)      275/291 (94.50%)      2012/2360 (85.25%)
+src/core/work-graph/queries                      4      597      1302/1899 (68.56%)      1095/1695 (64.60%)      129/138 (93.48%)      1237/1494 (82.80%)
+src/core/work-graph/state                       29      591      6183/6774 (91.28%)      6400/7122 (89.86%)    1041/1052 (98.95%)      5241/5575 (94.01%)
+src/core/work-graph/notes                       15      563      3548/4111 (86.31%)      2596/3371 (77.01%)      479/499 (95.99%)      3057/3260 (93.77%)
+src/core/work-graph/configuration                9      523      1300/1823 (71.31%)       968/1519 (63.73%)      163/167 (97.60%)      1213/1449 (83.71%)
+src/core/workspace                              25      414      3316/3730 (88.90%)      2218/2730 (81.25%)      606/638 (94.98%)      2596/2709 (95.83%)
+src/core/record-store                           17      352      1990/2342 (84.97%)      1078/1423 (75.76%)      243/248 (97.98%)      1812/1990 (91.06%)
+src/contracts                                   71      288      1360/1648 (82.52%)      1389/1791 (77.55%)      252/262 (96.18%)      1195/1376 (86.85%)
+src/core/work-graph/evidence                     2      281       936/1217 (76.91%)        683/998 (68.44%)       92/104 (88.46%)        866/967 (89.56%)
+src/composition                                  6      156       939/1095 (85.75%)        486/663 (73.30%)      354/386 (91.71%)        766/857 (89.38%)
+src/core/work-graph/materials                    5      116        314/430 (73.02%)        344/469 (73.35%)        48/50 (96.00%)        293/357 (82.07%)
+src/core/work-graph                              2       36         91/127 (71.65%)          63/97 (64.95%)       11/11 (100.00%)         80/108 (74.07%)
+src/core/work-graph/model                       23        2        105/107 (98.13%)          62/67 (92.54%)       19/19 (100.00%)         99/99 (100.00%)
+
+Files with no statements at all:
+  src/business/workflow/contracts.ts
+  src/business/workflow/index.ts
+  src/contracts/context-continuity.ts
+  src/contracts/control-intent.ts
+  src/contracts/coordination.ts
+  src/contracts/core/call-context.ts
+  src/contracts/core/execution-history.ts
+  src/contracts/core/identity.ts
+  src/contracts/core/operations.ts
+  src/contracts/core/results.ts
+  src/contracts/core/source.ts
+  src/contracts/core/task-claim.ts
+  src/contracts/delegated-write.ts
+  src/contracts/execution-feedback.ts
+  src/contracts/goal-change.ts
+  src/contracts/goal-phase.ts
+  src/contracts/initial-planning.ts
+  src/contracts/memory.ts
+  src/contracts/opaque.ts
+  src/contracts/platform-duty.ts
+  src/contracts/query-execution-context.ts
+  src/contracts/reduction.ts
+  src/contracts/reviewer-context.ts
+  src/contracts/reviewer-verification.ts
+  src/contracts/role-spec-materials.ts
+  src/contracts/session-anomaly.ts
+  src/contracts/task-envelope.ts
+  src/contracts/task-failure.ts
+  src/contracts/verification-context.ts
+  src/contracts/verification-import.ts
+  src/contracts/work-line.ts
+  src/core/agent-runtime/contracts.ts
+  src/core/agent-runtime/execution-contracts.ts
+  src/core/agent-runtime/execution-history-contracts.ts
+  src/core/agent-runtime/index.ts
+  src/core/agent-runtime/ports.ts
+  src/core/agent-runtime/source-binding-types.ts
+  src/core/agent-runtime/source-tool-ports.ts
+  src/core/record-store/body-ports.ts
+  src/core/record-store/ports.ts
+  src/core/work-graph/architecture/catalog-contracts.ts
+  src/core/work-graph/architecture/contracts.ts
+  src/core/work-graph/configuration/project-bootstrap-contracts.ts
+  src/core/work-graph/materials/record-ports.ts
+  src/core/work-graph/model/claim-contracts.ts
+  src/core/work-graph/model/command-recognition-contracts.ts
+  src/core/work-graph/model/command-rerun-request-contracts.ts
+  src/core/work-graph/model/configuration-contracts.ts
+  src/core/work-graph/model/context-input-contracts.ts
+  src/core/work-graph/model/decision-contracts.ts
+  src/core/work-graph/model/evidence-contracts.ts
+  src/core/work-graph/model/execution-entry-contracts.ts
+  src/core/work-graph/model/execution-history-contracts.ts
+  src/core/work-graph/model/execution-read-contracts.ts
+  src/core/work-graph/model/graph-context-contracts.ts
+  src/core/work-graph/model/kernel-command-read-contracts.ts
+  src/core/work-graph/model/material-contracts.ts
+  src/core/work-graph/model/plan-contracts.ts
+  src/core/work-graph/model/session-contracts.ts
+  src/core/work-graph/model/task-contracts.ts
+  src/core/work-graph/model/unknown-call-review-contracts.ts
+  src/core/work-graph/model/work-line-contracts.ts
+  src/core/work-graph/notes/note-path-ownership.ts
+  src/core/work-graph/queries/contracts.ts
+  src/core/work-graph/sessions/lifecycle-contracts.ts
+  src/core/work-graph/source-authority-ports.ts
+  src/core/work-graph/tasks/codec-fields.ts
+  src/core/work-graph/tasks/control-contracts.ts
+  src/core/work-graph/tasks/run-activity-codecs.ts
+  src/core/work-graph/tasks/run-reconcile-contracts.ts
+  src/ui/styles.css
+  src/ui/views.ts

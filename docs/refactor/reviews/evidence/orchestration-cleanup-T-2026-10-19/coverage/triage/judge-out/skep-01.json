@@ -1,0 +1,76 @@
+{
+  "rows": [
+    {
+      "row": "A1-002",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "decodeNoticeOrigin accepts an absent `since` at decision-record-codecs.ts:396 (a persisted null is already refused at :394). Every platform writer was rechecked: SessionMessage creation writes the {since:null} placeholder and binds it (mailbox-service.ts:301, :318); every message update copies the stored origin and refuses a missing one (:194-202, :2969-2983); VerificationRound creation writes {since:null} with a binding (evidence-service.ts:352, :357, :1700-1701) and updates preserve it (:305-310); TaskRequeue is write-once with its binding (requeue-service.ts:1110, :1116). The Store fills the placeholder with the commit cursor (sqlite-record-store.ts:455). So only a pre-slice-5 or hand-written record reaches the arm; U stands.",
+      "proposal_ok": true,
+      "proposal_note": "Deleting the tolerance is coherent and matches decision 79: mailbox-service.ts:198-200 and the undefined test at evidence-service.ts:310 then become redundant. Only old-record reads change (work-line-reader.ts:2438, :2550 and track-read-model.ts:643-647 are the two readers that still tolerate an absent origin as null; decision-read-model.ts:1564 and automatic-rework-notices.ts:126-128 already reject it). The legacy sentence at slice-5-SPEC.md:299 needs a decision-79 note."
+    },
+    {
+      "row": "A1-003",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "receipt.code === 'corrupt' from records.commit is produced only by damaged stored rows: a damaged idempotency row (sqlite-record-store.ts:398-401), a guarded snapshot that fails its body decode (currentRevisionOf :324-336 via guardConflicts :412-415), or a damaged claim row (:421-427); the in-memory store has the same sources (in-memory-record-store.ts:272-275, :283-284). A real concurrent writer yields revision_conflict (:416-418), and a bad prepared record is invalid (:498). graph-repository.ts:335-337 is therefore reached only by hand-edited/old rows. The before-T test (R3a-transaction-boundaries.test.ts:123) UPDATEs the snapshot without a revision bump, i.e. tamper. U stands.",
+      "proposal_ok": true,
+      "proposal_note": "Keeping the mapping untested is right (AGENTS.md rule 4). The only caller is task-service.ts:257 and it maps every leftover to unavailable (:268), so Claude's optional fold of corrupt/unsupported into the default arm changes no public result; the unsupported label itself is row A1-004's separate dead arm."
+    },
+    {
+      "row": "A1-007",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "The arm needs a right-hand chain with a null position. terminalProposalOf passes positions.get(...) ?? null (plan-readers.ts:763-765), and both maps are filled for every candidate they hold (plan-readers.ts:693-697; decision-read-model.ts:1656-1661). decodePlanProposalOrigin accepts an absent `since` (plan-record-codecs.ts:984-996), but every creating writer writes {since:null} and binds it (plan-service.ts:1421-1423, :3352-3354; the compiler's origin at plan-commit-compiler.ts:245/:436 is the stored candidate origin), and the Store fills it (sqlite-record-store.ts:455). So only a hand-seeded or pre-slice-5 chain has null; U stands.",
+      "proposal_ok": false,
+      "proposal_note": "Class right, proposal as written is not: making decodePlanProposalOrigin strict breaks a current sanctioned test. tests/work-graph/S2A-queue-request-candidates.test.ts:72 seeds 5,001 proposals through the fixture's seedCandidateProposal (tests/helpers/S5-decision-fixture.ts:1233, encodePlanProposal with no origin; seedCommit at :569-586 passes no commitCursorBindings), and findCandidateProposal decodes every origin at decision-read-model.ts:1656-1660 before returning the live head, so it would return unavailable. The comment at S2A-queue-request-candidates.test.ts:1-13 records that the public propose path was ruled infeasible for this scale test. Fix: let the fixture's seedCommit pass commitCursorBindings and seed {since:null}; otherwise keep the decoder lenient, but then the comparer's null arm cannot be dropped (positions can still be null)."
+    },
+    {
+      "row": "A1-009",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "value['kind'] here is a decoded stored proposal/event body: validatePlanProposalRecord (plan-record-codecs.ts:794-813) and validatePlanProposalRecordedEvent (:893-913). The only plan machine constructor writes kind:'candidate_v2' (plan-machine.ts:90-101, :124-127), and the record type is only that kind. No src writer encodes another kind, so the else arm (:790) needs a legacy v1 or foreign record. U stands; TP-168 removed the v1 test branch.",
+      "proposal_ok": true,
+      "proposal_note": "Keeping the one-line rejection untested is right, and rule 4 forbids a tamper test. The comment at plan-record-codecs.ts:725-726 ('a legacy v1 candidate ... reads as null') is now unreachable (the validator rejects v1 before candidateRequestRef sees it) and should be dropped with the same edit."
+    },
+    {
+      "row": "A1-010",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "history becomes 'malformed' only at control-service.ts:231. Every Run that reaches controlContext is schema-checked: loadRun (:380-394) goes through authority.load -> decodeCanonical (record-readers.ts:378-384, :410-436), whose Run validator refuses any executionHistory that fails isRunExecutionHistoryV1 (record-readers.ts:202-205); the execution path uses decodeRun (run-snapshot-decoder.ts:23-30; run-state-service.ts:461-462, :505-506); the :723 call passes a machine-built next Run. So the malformed arm cannot arise at all, not merely via old data. D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Safe to delete: only the guard rows at :580-581, :584, :590, :597 and the type member at :109-113 use 'malformed'. Note npm run typecheck includes tests (tsconfig.json include tests/**), so tests/state/control-intent-machine.test.ts:906 passes history:'malformed' and must drop that argument; it never asserts the row (the pins are stale before the Run read)."
+    },
+    {
+      "row": "A1-011",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "ControlIntentState is produced only by controlIntentStateOf (control-intent-machine.ts:330-333; no other producer in src): kind is null only for Absent, otherwise it is snapshot.kind, and the intent codec restricts kind to pause/cancel/resume/steer (control-record-codecs.ts:302-305). onObserved's cases (:718-721) exclude Absent, so kind cannot be null there, and accept() keeps the decoded kind (:736-737). D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "The proposed discriminated-union narrowing (Absent{kind:null} | non-Absent{kind:ControlIntentKindV1}) makes :723 and the twin :756 dead; it also makes the third identical guard at :843-844 redundant, so delete all three and keep controlIntentRecordOf's Absent check (:378)."
+    },
+    {
+      "row": "A1-012",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "Same guarantee as A1-011: onSupersededByNewer's Queued case (:752-756) gets its state from controlIntentStateOf (:330-333), whose non-Absent kind is the codec-checked snapshot.kind (control-record-codecs.ts:302-305); no src producer builds a Queued state with a null kind. D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Delete with A1-011 through the narrowed state type; nothing else reads a nullable kind on this path."
+    },
+    {
+      "row": "A1-013",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "The arm runs when health === 'unavailable' (line-status.ts:286-289) and healthConclusion is null/undefined. Every writer of an unavailable Session sets a conclusion: releaseSessionRecord (session-availability.ts:389, :767-768), observeSessionHealthRecord (:443-452), and the machine (:894, :908; the observation type at :189-191 allows only missing/damaged). Available states write null only with health available (:441, :619). The Session codec is the only thing that still accepts null/absent (session-record-codecs.ts:714-720; contract comment contracts/core/session.ts:33-34), i.e. pre-A.2 records; no current writer produces the shape. U stands; the before-T test handmade the facts with a null conclusion.",
+      "proposal_ok": true,
+      "proposal_note": "Requiring a conclusion whenever health==='unavailable' in checkSessionBody, then dropping `?? null` at :289/:353 and 'retired_unrecorded' at :824, is coherent (no current test writes unavailable without a conclusion). It also needs the contract comment (contracts/core/session.ts:33-34) and slice-2C-SPEC.md:1048/:1185/:1299 updated under decision 79, and makes work-line-reader.ts:2296-2297's null->'retired_unrecorded' fallback unreachable."
+    },
+    {
+      "row": "A1-016",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "retiredReason's default (:819-825) is reached only from line-status.ts:289 and :353, both passing healthConclusion ?? null. The null conclusion has no current writer (session-availability.ts:389, :447-452, :768, :894, :908 are the only unavailable writes; all set conclusion), and the Session codec still admits null/absent for pre-A.2 records (session-record-codecs.ts:714-720). Same U as A1-013.",
+      "proposal_ok": true,
+      "proposal_note": "Delete together with A1-013's codec tightening; the switch then has the three SessionHealthConclusion cases. 'retired_unrecorded' also appears in contracts/work-line.ts:46 and work-line-reader.ts:2297 (that branch is already unused for null/kernel_turn_open because reason is set only for missing/damaged, :2287-2304) and in slice-2C-SPEC.md:1048/:1185; drop or keep the enum consistently."
+    }
+  ]
+}

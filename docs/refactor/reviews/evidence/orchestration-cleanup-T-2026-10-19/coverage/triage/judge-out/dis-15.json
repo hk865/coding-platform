@@ -1,0 +1,67 @@
+{
+  "rows": [
+    {
+      "row": "B-059",
+      "cls": "D2",
+      "winner": "claude",
+      "reason": "The only caller is query-preparation.ts:387, and it binds a manifest its own prepare call assembled at :317-359 with role: executionState.roleResolution (:319, :345) and sessionRole: executionState.role (:344); both come from the same record read at :250-256, and executionState.role is written as session.role at claim (query-execution.ts:966). The assembler's effectiveDuty is roleDuty ?? hostDuty ?? templateDuty ?? 'executor' and it refuses a Host duty that conflicts with the Role or the legacy template first (context-assembler.ts:608-621); expectedQueryDuty returns exactly role.spec.platformDuty or legacyTemplateDutyOf(sessionRole) (query-execution.ts:105-108), and legacyTemplateDutyOf (:95-99) matches templateDutyOf (context-assembler.ts:599-605) against the same table (role-profiles.ts:19-59, all templateRevision 's3.1'). There is no Role hot-switch (AGENTS rule 4), so the expected duty always equals the assembled duty. Tests reach bind only through the real prepare (tests/work-graph/S3-prepared-context-admission.test.ts:710-843).",
+      "proposal": "Delete query-execution.ts:1060-1067 with B-060's lines and the now-unused legacyTemplateDutyOf/expectedQueryDuty (:95-108); nothing else uses them. Caveat for the lead: slice-3-SPEC.md:271 (G-CTX) explicitly requires a 'forbidden' re-check of the saved binding against the canonical Run/Query facts; while that clause stays, keep these re-checks untested (no forged-manifest test, AGENTS rule 4) and delete only if the clause is struck.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "B-060",
+      "cls": "D2",
+      "winner": "claude",
+      "reason": "The only caller is query-preparation.ts:387 with the manifest assembled at :317-329. assembleQuery sets callKind 'planning' only when the graph port is wired and the Query kind is 'initial_coordination', else 'copy' (context-assembler.ts:1996-2014). expectedQueryCallKinds allows planning or copy for initial_coordination and copy for every other kind (query-execution.ts:116-119), so every value the assembler can produce is accepted. Both sides read the same QueryJobSnapshot: intent is fixed at submit and the later snapshots only carry status/answer (query-execution.ts:1240, :1522, :1630 pass the job through). Tests bind only through the real prepare (tests/work-graph/S3-prepared-context-admission.test.ts:710-843).",
+      "proposal": "Delete query-execution.ts:1068-1070 and expectedQueryCallKinds (:112-119), which is used only there, under the same slice-3-SPEC.md:271 G-CTX caveat as B-059: keep it as an untested re-check while G-CTX stands.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C4-067",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "toRejection is called from claim's readCore result at query-execution.ts:875-876. readCore returns not_found for a missing QueryJob (:279-280) or Session (:291); claim validates only the request and pin shape (:840-848, :864-868) and validateExpected (:699-743) accepts any well-formed refs, so the read executes before any existence or revision guard. queries/claim is a public graph_write route (core-routes.ts:412, :1091) bound to platform.queries.claimQuery (create-platform.ts:1318). No test claims a nonexistent QueryJob/Session. A plain invalid request reaches the function, so G (no injected fault is needed, so Codex's F is unnecessary).",
+      "proposal": "Test gap: call the public queries/claim with a syntactically complete QueryRunRef whose queryJobId/runId do not exist (or a real Query whose sessionRef names 'no-such-session') and meta.expected = [QueryJob pin rev 0, QueryRun pin rev 0, Session pin rev 0]; readMany reports the records missing, readCore returns not_found, toRejection returns rejected 'not_found' and nothing is committed. Add it to tests/work-graph/S1-dispatch-guards.test.ts (pendingQuery helper) or tests/runtime/R5b-query-session-loop.test.ts.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C1-005",
+      "cls": "U",
+      "winner": "claude",
+      "reason": "mapBodyStoreError is called only at material-service.ts:79 with the StoreFailure of bodies.put (:71). RawArtifactBodyStore.put returns only invalid from an encode error (body-store.ts:29-33) or corrupt from a stored winner row that fails decoding or disagrees with its content key (:41-45); SQLite failures throw instead of returning (sqlite-body-store.ts:31-45), and material-service.ts:75-76 turns those throws into 'unavailable', never reaching this map. storeRawBody already checks contentType, body, empty sources and size (:56-68), and every production storeArtifact caller supplies well-formed SourceRefV1/origin/requestedAt (query-observation.ts:449-460, mailbox-service.ts:1024-1031, evidence-service.ts:839-850 and :2004-2007, requeue-service.ts:1065-1068), so 'invalid' cannot arise; 'corrupt' needs an artifacts row written outside the platform owners. Only such a stored/corrupt record reaches the function, so this is U rather than F.",
+      "proposal": "Keep it untested (AGENTS rule 4: no test that hand-corrupts the artifacts table). It is the exhaustive StoreFailure-to-code map for storeRawBody and the typed rejection the owner owes on a damaged body row. Optional simplification: reuse fromStoreFailure (material-service.ts:203-213) instead of the second switch; it maps the same union.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C1-007",
+      "cls": "U",
+      "winner": "neither",
+      "reason": "sessionWorkLinkPinProblem runs only for a stored record's pin whose ref is a SessionWorkLink: aggregateRefProblem returns it at decision-record-codecs.ts:192, and every caller is a read-side validator - decisionChangeProofProblem (:295-327) via decision-application.ts:150 and note-record-codecs.ts:621, plan-record-codecs.ts:660/691-717 applied to the stored PlanRevisionAccepted payload at :957-959, and message-record-codecs.ts:384/393 applied to a stored message's decision-source pins at :522-541. No platform writer puts a SessionWorkLink pin in such a record: the only SessionWorkLink pin the platform builds is the transfer_responsibility expected guard at business/workflow/workflow.ts:2058, which is a GraphWrite guard and never a decision/plan/message body; message decision objects of that type are refused ('does not establish its owning Workspace', mailbox-service.ts:1617-1683, :1682); command-rerun cards pin only request/review/goal (command-rerun-request-card.ts:191-201); goal-cause pins are the Goal plus reader-produced affected pins (goal-decision-reader.ts:160-188). exactPinSet forces an answer's pins to the card's own pins (decision-service.ts:755-756). So only a stored record written outside the platform owners (foreign writer or a hand-edited/corrupted store) reaches the function: U, not Claude's D2 and not Codex's 待定.",
+      "proposal": "Keep it untested and keep the member: the code comment (decision-record-codecs.ts:109-113) and spec §3.3 line 625 ask the shared check to cover every AggregateRef type, and #22 was a lead review item for the SessionWorkLink pin shape; AGENTS rule 4 forbids a test that hand-writes such a record. If the lead later decides the union-wide shape check is not required, delete sessionWorkLinkPinProblem (:203-219), WORK_LINK_TARGET_REF_FIELDS (:196-200) and the :192 dispatch (the AGGREGATE_REF_RULES:118 entry may stay; a stray pin is then refused as 'not a known aggregate' at :179).",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C1-008",
+      "cls": "U",
+      "winner": "neither",
+      "reason": "This anonymous callback is the fields.some(...) arrow inside sessionWorkLinkPinProblem at decision-record-codecs.ts:212-214; it executes only after the type, target kind, hasOnlyKeys and ref shape checks pass, i.e. only on the path C1-007 analyses. The same read-side callers (decisionChangeProofProblem, plan-record-codecs.ts:957-959, message-record-codecs.ts:522-541) and the same absence of any platform writer for a SessionWorkLink pin apply, so only a stored record from a foreign/corrupt writer reaches it.",
+      "proposal": "Goes with C1-007: keep untested with the shape check (no hand-written record per AGENTS rule 4), or delete with the function if the ledger-wide AggregateRef completeness check is dropped.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C1-026",
+      "cls": "U",
+      "winner": "neither",
+      "reason": "The callback runs only when roleMatchRejection sees resolution.status === 'inadmissible' (claim-service.ts:683-685, reached from :1162-1167). resolveRoleBindingFacts returns 'inadmissible' only from the Role-matrix phases (role-memory-service.ts:701-766); those need an active ProjectCoordinationPolicyActive (:664-672) and a CoordinationPolicyRevision (:674-695), and with no policy it returns 'absent' at :663-666. Nothing in src writes either record: only the codecs/schemas (role-record-codecs.ts:463-472, :491-499) and this reader mention them, and the docs record the CoordinationPolicy writer as still missing (docs/refactor/HANDOFF.md:954; docs/refactor/IMPLEMENTED-CAPABILITIES.md:212). Tests reach the matrix only by a raw backend.records.commit seed (tests/work-graph/R3g-role-spec.test.ts:82-88) and call resolveRoleBinding directly, not claim. Today only a record written outside the platform owners reaches the arm, so it is U, not Codex's G and not Claude's 待定.",
+      "proposal": "Keep it untested now (no raw-store seed test): the matrix writer is a named but unimplemented slice, so keep this arm and the matrix phases. When the CoordinationPolicy writer lands it becomes G - install and activate RoleSpec rev 1, install and activate a policy that pins it, install rev 2 and re-pin/activate, then claimTask with the rev-1 binding and expect forbidden 'the role binding is not admissible: role_spec_stale' (tests/work-graph/R4c-task-claim-boundaries.test.ts:118). If the lead drops the writer instead, it is D2: delete the matrix phases B/C (role-memory-service.ts:672-770) together with this arm.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    }
+  ]
+}

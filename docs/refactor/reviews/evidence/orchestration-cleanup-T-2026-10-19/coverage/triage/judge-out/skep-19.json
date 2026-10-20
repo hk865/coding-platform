@@ -1,0 +1,92 @@
+{
+ "rows": [
+  {
+   "row": "C3-091",
+   "refuted": false,
+   "cls": "D1",
+   "evidence": "D1 stands. The inner trackedCall delegate at create-platform.ts:1396 is the body of platform.goalSettings.resolveGoalConflict (facade :1392, published :2231). core-routes.ts binds only readGoalSettings/setGoalSettings/reorderGoals (:472-474, :840-845); grep over src for resolveGoalConflict finds only the owner (goal-settings-service.ts:592), the port type (decision-contracts.ts:218) and decision-actions.ts:376, which receives the raw owner through WorkflowDependencies.goalSettings (create-platform.ts:1854; workflow.ts:2875-2876). No route, UI, main or recovery path calls the facade member.",
+   "proposal_ok": true,
+   "proposal_note": "Deleting it with C3-090 needs C3-090's type narrowing: `const goalSettings: GoalSettingsPort` (:1392) and CoreRoutePlatform.goalSettings (core-routes.ts:297) must omit the member because GoalSettingsPort requires it (decision-contracts.ts:218). The raw owner stays for the decision chain. No spec line reserves the published facade member (slice-5-SPEC.md:892 speaks of the owner through the Workflow)."
+  },
+  {
+   "row": "C3-094",
+   "refuted": false,
+   "cls": "D1",
+   "evidence": "D1 stands. The override at :1466 is spread into the published runtimePort (:1441-1478; platform at :2227), but no route binds readCompletedBoundary: core-routes.ts runtime bindings (:682-767) and the route table (:400, :425) list only capabilities/createSession/readSessionHistory/readTaskExecutionHistory/prepareQuery/startQuery/observeQuery/readAttentionGraph/readContinuationBrief/deliverControl. grep over src for readCompletedBoundary finds only base runtime.ts:523/:726, ports.ts:45 and the Workflow consultation step (consultation.ts:379-382), whose deps.runtime is rawRuntime (create-platform.ts:1526, :1795) spreading the BASE runtime.port (:1525), so it calls runtime.ts:523, not this override. The Host drivers that receive platform.runtime (host.ts:573, :585) use only capabilities/deliverControl/startRun (:966-971; goal-fan-out-driver.ts:291, :318, :550).",
+   "proposal_ok": true,
+   "proposal_note": "Deleting :1466-1478 is behaviour-safe; platform.runtime keeps the base member via the spread at :1442 (also uncalled, so Claude's further narrowing is optional). createSessionHistoryCursorOwner is still needed at :1101. No test or spec line reserves this override."
+  },
+  {
+   "row": "C3-095",
+   "refuted": false,
+   "cls": "D1",
+   "evidence": "D1 stands. rawRuntime (:1526-1535) is passed only as WorkflowDependencies.runtime (:1795); the Workflow reads only countRunActivity, observeQuery/prepareQuery/startQuery, readCompletedBoundary, createSession, readArchiveChangedFiles, deliverControl, closeOpenTurn, reviewCapability and prepareExecution/startRun/observeRun (consultation.ts:212-226, :379-387; workflow.ts:1478-1482, 2308-2344, 2409-2444; session-maintenance.ts:135-137, :476-486). No src/business caller of readSessionHistory exists; the public read is runtimePort.readSessionHistory (:1463), wired to workLineConversation (:2210) and sessions/history (core-routes.ts:400, :716).",
+   "proposal_ok": true,
+   "proposal_note": "Deleting :1530-1531 is safe but leaves the base stub from `...runtime.port` (runtime.ts:66-68) in the value; Claude's narrowing of WorkflowDependencies.runtime (business/workflow/ports.ts:98) is the sounder fix, so the base stub is not silently relied on. No spec line reserves the raw member."
+  },
+  {
+   "row": "C3-096",
+   "refuted": false,
+   "cls": "D1",
+   "evidence": "D1 stands. Same rawRuntime object (:1526-1535), whose only consumer is the Workflow (:1795). No src/business caller of readTaskExecutionHistory exists; the Workflow's graph reads go through other owners (graph-tools.ts:358, graph-execution-history.ts:181). The base member is runtime.ts:71-72, and the public route binds platform.runtime.readTaskExecutionHistory (core-routes.ts:425, :741), not this raw override.",
+   "proposal_ok": true,
+   "proposal_note": "Delete :1532-1533 with C3-095; the base stub then comes from the `...runtime.port` spread. Narrowing WorkflowDependencies.runtime (ports.ts:98) is the clean fix and keeps the raw surface from advertising an untracked, unused read. No spec line reserves it."
+  },
+  {
+   "row": "C3-097",
+   "refuted": false,
+   "cls": "D1",
+   "evidence": "D1 stands. Same rawRuntime (:1526-1535) with the Workflow as its only consumer (:1795); no src/business caller of readExecutionHistory exists. The base member is runtime.ts:68-69 (ports.ts:46) and the real execution-history work runs through the Runtime's own owners (execution-history-contracts.ts:29-37, observation-recovery.ts:246-285), never through this raw adapter. No route binds it.",
+   "proposal_ok": true,
+   "proposal_note": "Delete :1534-1535 with C3-095/096; the spread still supplies the base stub. The better cleanup is Claude's narrowed WorkflowDependencies.runtime, and no spec line reserves the raw member."
+  },
+  {
+   "row": "C3-098",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "D2 stands. The uncovered function is the `.catch(() => undefined)` callback at :1604 inside noteWorkspace.capture (:1598), which is reached only through resolveSymbol (note-anchors.ts:310, :317) and missingFileCandidates (note-anchors.ts:219-225) from the note write service. `access` is createWorkspaceAccessFactory(options.workspace) (:686), the only factory in production (grep over src); its open returns an access object whose release is `async release() { released = true; }` (core/workspace/access.ts:147) - no IO and no throw, so the catch callback cannot run.",
+   "proposal_ok": true,
+   "proposal_note": "Replace `await opened.value.release().catch(() => undefined)` with `await opened.value.release()`; nothing else simplifies and no other WorkspaceAccessFactory exists in src. The capture function itself is covered; only the catch arm is not."
+  },
+  {
+   "row": "C3-099",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "D2 stands. The :2029 fallback runs only through trackedCall when isClosing is set (:1135-1136), and isClosing is written only by platform.close (:2287). The only callers of platform.reconcile.probe are startup-reconcile.ts:302/:315, called by runStartupReconcile (host.ts:1060-1069) either awaited during host construction (:1069) or from reconcileAddedScope (:1127-1135) via addWorkspaceState (:865) inside the settings `workspaces/open` request (host-settings.ts:707). host.close() awaits server.close() (:1617) before platform.close() (:1628), and server.close drains every in-flight HTTP handler (server.ts:413-418, :436-446). createTargetPlatform is called only at host.ts:509.",
+   "proposal_ok": true,
+   "proposal_note": "Codex's 'delete the close fallback' is not a standalone edit: whenClosed is a required trackedCall argument (:1135) and probe's result type needs the cancelled verdict, so deleting it needs a separate drain/port change. Claude's keep-untested is the sound disposition; keep the one trackedCall/close path."
+  },
+  {
+   "row": "C3-100",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "D2 stands. Same guarantee as C3-099: the :2045 fallback runs only when isClosing was set by platform.close (:1135-1136, :2287). Its only production caller is startup-reconcile.ts:339, reached by runStartupReconcile at host.ts:1069 (during construction) or at :1135 inside the drained `workspaces/open` request; host.close() awaits server.close() (:1617) before platform.close() (:1628) and server.close awaits every in-flight handler (server.ts:413-418, :436-446).",
+   "proposal_ok": true,
+   "proposal_note": "Same as C3-099: keep untested. The row is trackedCall's required whenClosed argument returning the run row; deleting it needs a new type/drain arrangement and buys nothing."
+  },
+  {
+   "row": "C3-101",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "D2 stands. The :2055 fallback runs only when isClosing is already true (:1135-1136, set only at :2287). reconcileQuery has one production caller, startup-reconcile.ts:365, reached from runStartupReconcile at host.ts:1069 (before the Host exists) or from reconcileAddedScope (:1135) triggered by addWorkspaceState (:865) from the drained settings `workspaces/open` request (host-settings.ts:707); host.close() awaits server.close() (:1617) before platform.close() (:1628) and server.close awaits in-flight handlers (server.ts:436-446). The settings restore loop runs before reconcileAddedScope is installed (host-settings.ts:576-582; host.ts:1022, :1127).",
+   "proposal_ok": true,
+   "proposal_note": "Same as C3-099/100: keep untested; Claude is right that trackedCall requires the argument (:1135) and bypassing it would break the single close path. Codex's deletion is not self-contained."
+  },
+  {
+   "row": "C3-102",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "D2 stands. The :2061 fallback runs only when isClosing is true (:1135-1136, :2287). reconcileControls has one production caller, startup-reconcile.ts:420, in runStartupReconcile, which is awaited at host.ts:1069 during construction or reached at host.ts:1135 through the drained `workspaces/open` request; host.close() awaits server.close() (:1617) before platform.close() (:1628) and server.close awaits every handler in flight (server.ts:413-418, :436-446). No timer, driver or recovery loop calls reconcile.",
+   "proposal_ok": true,
+   "proposal_note": "Same as C3-099..101: keep untested (trackedCall's required whenClosed at :1135); Codex's deletion is not a standalone edit. The 2059/2060 functions are covered, so only the post-close fallback is unexecuted."
+  },
+  {
+   "row": "B-013",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "D2 stands. The false arm at :592 runs only when `auth === undefined` (:591), and readPreviousTurn calls kernelBindingOf only for a locator-less Run whose reconciliation observation is human_attested (:544-546). The only writer of that observation is onUnknownAttested (run-machine.ts:2537-2545), which first calls claimedV2Binding (:2539 -> :1139-1142 -> :1165-1168, refusing a Run without a V2 binding) and then reconciledEndRecord, which always writes executionAuthorization (:983-1000). newRunRecord writes no reconciliation (:837-850), so a requeue/continuation Run cannot inherit human_attested; the codec does permit an absent binding on a stored Run (record-readers.ts:208-215, comment :213) but no current writer pairs it with human_attested. The assembler candidate walk also passes only runEnteredKernel records (:1599-1600; runEnteredKernel context-assembler.ts:1467-1473).",
+   "proposal_ok": true,
+   "proposal_note": "Deleting the arm is behaviour-safe for current records but not compile-safe as written: RunSnapshot.executionAuthorization stays optional (contracts/dispatch.ts:217), so use the internal-assertion form (as in A1-076/B-047) or narrow the attested branch before returning auth.kernel; keep the kernel === null test at :547 (auth.kernel is nullable). T item TP-060 (t-items-TP.md:433) already called this V1 narrowing incidental cleanup, not required."
+  }
+ ]
+}

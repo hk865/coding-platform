@@ -1,0 +1,100 @@
+{
+  "rows": [
+    {
+      "row": "C2-050",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "The row is the second arrow in `.catch(() => {})` on the promise derived by `running.finally(...)` (src/core/agent-runtime/exploration-tools.ts:237-240); it runs only if the wrapped handler's `running` promise rejects. Every definition in this group is either a `tool()` handler whose whole body after safeParse sits inside try/catch and returns a ToolResult on every path (exploration-tools.ts:137-161: aborted at 138, bad args at 140, success at 154, caught failure at 156-159), or `project_source`, which does the same (project-source-tool.ts:257-311, catch at 307-310). The only statements outside a try are the zod safeParse on already-decoded JSON arguments. The dispatcher converts a handler rejection anyway (vendor/coding-agent/dist/tools/dispatcher/tool-dispatcher.js:145-153), but that is downstream of this derived promise.",
+      "proposal_ok": true,
+      "proposal_note": "Deleting the `.catch(() => {})` and keeping the finally/inFlight cleanup is safe while every wrapped handler stays self-contained; the returned `running` promise is still awaited by the dispatcher, only the derived finally-promise loses its sink. Nothing else uses the callback and no type or switch depends on it. It is a zero-cost unhandled-rejection guard, so keeping it untested is an equally defensible outcome."
+    },
+    {
+      "row": "C2-081",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "`cancelled` has exactly one caller, session-discovery-tools.ts:133, at the top of the handler wrapper before any await: schema.safeParse at 124, structuredClone at 128-131 and snapshotContext at 132 are all synchronous, so the abort check at 133 cannot be reached with a newly aborted signal. The Kernel dispatcher refuses an aborted call before the handler (vendor/coding-agent/dist/tools/dispatcher/tool-dispatcher.js:115-117) and then creates the handler controller and calls the handler synchronously (119-130); the only abort sources in between are the parent listener (121-122) and the timeout timer (124-127), neither of which can fire in that synchronous window. Both discovery tools are registered only through this dispatcher (src/core/agent-runtime/execution-driver.ts:288-289) and no other code calls definition.handler.execute (grep: only the dispatcher and exploration-tools' own group wrapper).",
+      "proposal_ok": true,
+      "proposal_note": "Delete `cancelled` and the check at 133; the dispatcher already returns the cancelled result before entry, so nothing else depends on the helper. A direct pre-aborted-signal handler test would only exercise a bypassed path, consistent with the reviewers' no-test proposal."
+    },
+    {
+      "row": "C2-083",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "`cancelledResult` is called only from mapRead at session-discovery-tools.ts:78 when a ReadResult carries code 'cancelled'. The two tool results come from the Runtime's session directory (create-platform.ts:1188 -> execution-driver.ts:289): readSession and findSessions return ready/not_found/not_ready or rejections built by mapStoreFailure/readContext (session-directory.ts:1178-1210, 1413ff, 160-210; trusted-context.ts:38-50), and the only 'cancelled' rejects in session-directory.ts are write paths (676, 818, 840, 1044). Store failures map through sessionStoreFailureToRejection, which has no cancelled case and defaults to unavailable (persistence/read-result-failures.ts:71-84); readSessionWorkLinks uses the same mapStoreFailure (session-links.ts:45).",
+      "proposal_ok": true,
+      "proposal_note": "Delete cancelledResult and the `result.code === 'cancelled'` arm at 78; a rejected result then falls through to rejectedResult at 79 with the same reason. No other caller and no exhaustive switch/type uses the helper."
+    },
+    {
+      "row": "C2-092",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "`messageOf` in commit-extensions.ts is used only by parseRecordObject's JSON.parse catch (commit-extensions.ts:47-58). bindCommitCursor's only caller is bindPreparedRecords (record-codec.ts:707-712), which both backends feed from planPreparedCommit (sqlite-record-store.ts:455/497; in-memory-record-store.ts:326/412). planPreparedCommit decodes every record body with decodeRecordBody/parseJsonObject before binding (record-codec.ts:560, 276-277), rejects non-string/non-object json and non-matching aggregate types there (548-577), and decodeRecordBody keeps the already-parsed input string as record.json (record-codec.ts:299-304). So JSON.parse at commit-extensions.ts:55 cannot throw on a reachable commit, and the 'not a string'/'not an object' arms are also behind planPreparedCommit's identical checks.",
+      "proposal_ok": true,
+      "proposal_note": "Delete the catch arm and the helper (or pass the already-parsed bodies into bindCommitCursor); the second parse at 172/189 is a duplicate of the decode planPreparedCommit already did. Nothing else uses commit-extensions' messageOf (record-codec.ts has its own), and no type depends on the helper."
+    },
+    {
+      "row": "C2-094",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "(anonymous_5) is the `.sort((a, b) => a.pk - b.pk)` comparator at migrations.ts:111-113. It runs only when PRAGMA table_info returns two or more rows with pk>0; every core table is created by CORE_TABLE_DDL with exactly one primary-key column (migrations.ts:17-21: events.id, snapshots.ref_key, idempotency.identity_key, identity_claims.claim_key), and the platform's other CREATE TABLEs are single-column too (sqlite-text-scan.ts:39/169, sqlite-body-store.ts:81). A composite key exists only in a hand-edited, foreign-created or old-format database file, which the same check rejects at 116-117 whatever order the sort gives; the sort only changes the diagnostic text.",
+      "proposal_ok": true,
+      "proposal_note": "Keep the primary-key mismatch rejection untested (AGENTS rule 4 forbids a tamper test); no platform writer produces a composite key, and the check rejects an incompatible store rather than reading an old format. Deleting only the sort is optional and would not change the verdict."
+    },
+    {
+      "row": "C3-001",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "(anonymous_7) is the second `() => undefined` in `tracked.then(() => undefined, () => undefined)` at src/app/auto-capture-driver.ts:99; it runs only if a detached task rejects (the fulfilled arm runs on every normal settle, so the uncovered row is the rejection arm). All three detach call sites are self-contained: accept's task awaits only writeRequest, which catches everything (108-117), and a finally that only deletes a Set key (128-137); pump's task awaits runCapture (149-156), whose every await is inside try/catch (165-173, 185-201, 210-223, 231-243, 251-258; the only call outside a try is moduleMappingsOf on a codec-checked catalog at 230, architecture-catalog.ts:81-87); retryPending's task wraps its only await (280-288). `track` is the platform's trackDetached, which returns the same promise (create-platform.ts:1146-1150, host.ts:542).",
+      "proposal_ok": true,
+      "proposal_note": "Delete the onRejected arrow; the fulfilled arm, the Set cleanup and close()'s drain stay. Nothing else calls it and no type depends on it. This is the one rejection sink in detach, so leaving it untested while detached tasks remain non-rejecting is equally acceptable."
+    },
+    {
+      "row": "C3-004",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "(anonymous_48) is the `.catch` arrow on the rendezvous pass at src/app/collaboration-driver.ts:556. runRendezvous (582-619) awaits only orderAdvanceSelection inside try/catch (591-596), then does synchronous Map/array work (597-609), and its finally only deletes a map entry and resolves entry promises (612-618); entry.proceeded can only resolve (531, 538-541) and entry.release is resolveReleased (536). orderAdvanceSelection wraps the optional Workflow seam in that try (491-500). A synchronous throw before the promise exists (loopContext at 553) would reject awaitAdvanceAdmission, not this pass.",
+      "proposal_ok": true,
+      "proposal_note": "Delete `pass.catch` (keep `void pass;`) and keep the finally release; nothing else consumes the pass promise in a way that depends on the rejection arm. A future rejection would become an unhandled rejection, which is exactly the state D2 excludes."
+    },
+    {
+      "row": "C3-006",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "(anonymous_62) is the `.catch` on pumpDone at src/app/collaboration-driver.ts:766; pumpDone is pump(...) from 754. pump's entire loop body is inside try/catch (655-695: readAllOutbox, consultOne, project and the reason writes are all at 656/677/679/683-694), and after the catch only `await tick` runs (697): tick calls changed, whose JSON/digest and notify work is inside try/catch (345-361), and sleep, which only resolves (219-227). The mailbox/consult seams are inside the try, so their rejections are caught at 693-695.",
+      "proposal_ok": true,
+      "proposal_note": "Replace `await pumpDone.catch(...)` with `await pumpDone`, keeping the drain flag and the listener/activePumpAbort cleanup. No other code uses the callback and no type or switch depends on it."
+    },
+    {
+      "row": "C3-007",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "(anonymous_66) is the second `.catch` on the SAME pump at src/app/collaboration-driver.ts:884: pumpDone = pump(handle, wakeRunRef, wakeAbort.signal, false) at 878. The pump body and tick are non-rejecting for the same reasons as C3-006 (655-695 fully caught; tick at 363-366 calls changed 345-361 and sleep 219-227). awaitWake at 704-737 has its own try/finally and its own try around readMessage (719-728); its readExecution call is above this row's promise and any throw there goes to runHandle's catch, not to pumpDone.",
+      "proposal_ok": true,
+      "proposal_note": "Same as C3-006: deletion is allowed (`await pumpDone`), the wakeAbort.abort and activePumpAbort clear stay. Nothing else uses the rejection arm."
+    },
+    {
+      "row": "C3-008",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "(anonymous_70) is the `.catch` on `handle.done` at src/app/collaboration-driver.ts:1011. handle.done is Promise.resolve() (1065) or runHandle(handle).finally(() => changed(handle)) (1071). runHandle catches every loop error at 908-912; its finally only calls the idempotent admission proceed and clears fields (913-923), and changed never throws (345-361). The only theoretical throw is messageOf's String(error) inside runHandle's catch for an exotic thrown value, which no platform port produces.",
+      "proposal_ok": true,
+      "proposal_note": "Delete the `.catch(...)` and await handle.done; keep the two requestCancel calls and the final stopped transition. No other consumer of handle.done depends on the rejection arm."
+    },
+    {
+      "row": "C3-009",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "(anonymous_81) is the inner `.catch` in `all.map(handle => stopHandle(handle).catch(...))` at src/app/collaboration-driver.ts:1114 (the outer map arrow is covered). stopHandle returns Promise.resolve (999), the existing stopDrain (998), or the new async task at 1006-1016, which awaits requestCancel twice and the non-rejecting handle.done (see C3-008). requestCancel wraps both readExecution calls, submitControl and deliverControl in try/catch (931-936, 950-955, 970-980, 984-989), and its request is built from an already-validated, structured-cloned RunRef (944-948); no platform writer produces a RunRef that canonicalJson/sha256Hex would reject.",
+      "proposal_ok": true,
+      "proposal_note": "Delete the per-handle catch (`Promise.all(all.map(stopHandle))`); stopDrain is the only work and cannot reject. handle.done's own catch at 1011 may remain. No other code uses the callback."
+    },
+    {
+      "row": "C3-010",
+      "refuted": false,
+      "cls": "D1",
+      "evidence": "CoreUnsupportedError's constructor (src/app/core-routes.ts:528-533) has no `new CoreUnsupportedError` anywhere in src or tests, before or after T; the only references are the import (server.ts:37) and the instanceof branch (server.ts:251). Nothing can throw it, and even a thrown instance would be handled identically by the next branch because it extends CoreRouteRejectionError and statusForCode('unsupported') is 501 (server.ts:151-169, 252). No exhaustive switch or type uses the class, and nothing in docs/ reserves it for a later slice (grep of docs/refactor/design finds no CoreUnsupportedError).",
+      "proposal_ok": true,
+      "proposal_note": "Delete the class, the import name at server.ts:37 and the instanceof branch at 251; the generic CoreRouteRejectionError branch keeps the same 501 status and rejection body. The class doc's 'capability not wired yet' role is unused and unreferenced."
+    }
+  ]
+}

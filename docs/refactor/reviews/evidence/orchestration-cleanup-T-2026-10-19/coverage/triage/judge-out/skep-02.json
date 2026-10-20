@@ -1,0 +1,76 @@
+{
+ "rows": [
+  {
+   "row": "A1-018",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "src/core/work-graph/state/run-machine.ts:1217 is the then-arm of locatorShapeOk; locatorAfter (:1229-1266) builds the new locator only from the caller's RunObservedHistory. The three entry writers supply it: recordExecutionEntered requires positive start/observed (src/core/work-graph/tasks/execution-entry-service.ts:1684 with observedHistoryProblem at :2060-2066); recordExecutionHistory requires the same (src/core/work-graph/tasks/execution-history-service.ts:147, :168); and recordRunResult's only callers take startPosition from a codec-validated persisted locator or from a Kernel turn.started position: src/core/agent-runtime/execution-observation.ts:522 (isRunExecutionHistoryV1), :742-747 (startPosition: locator.startPosition), :855; src/core/agent-runtime/run-reconcile.ts:346, :396 (locator?.startPosition ?? start.position), :621 (start.position, always >= afterPosition+1). No route, tool, runtime or recovery path passes a non-positive start. (recordRunResult itself does not re-check positions: execution-entry-service.ts:1775-1798.)",
+   "proposal_ok": true,
+   "proposal_note": "Deleting the check is behaviour-preserving for today's only callers, and locatorShapeOk has no other call site (:1242, :1252), no switch/type dependency and no spec line asking the machine to re-derive the shape (RUN-06 row, docs/refactor/STATE-MACHINES-SPEC.md:1869). But recordRunResult has no positive-position input check of its own, so prefer claude's variant: either keep :1242 as the machine's input check, or add the positive-position check to recordRunResult (execution-entry-service.ts:1775-1798) before dropping the positivity line here; codex's bare deletion would leave that port unvalidated (no behaviour change today)."
+  },
+  {
+   "row": "A1-019",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "run.executionHistory is only ever read from a decoded RunSnapshot. src/core/work-graph/materials/record-readers.ts:202-204 rejects any Run whose executionHistory fails isRunExecutionHistoryV1, and that validator is at least as strict as locatorShapeOk: it also requires the exact keys (src/core/work-graph/persistence/execution-history-codecs.ts:74, :78, :82) and positive start/observed, a null-or-positive end, start<=observed and end in [start,observed] (:91-94). The Run codec does not cross-check status/phase (:248 is status only), but the locator itself is fully checked, so even a hand-edited store row fails to decode before transitionRun and :1252's then-arm is unreachable; the before-T test at .dsh-ref/before/tests/state/run-machine.test.ts:852-855 bypassed the store by hand-building the RunSnapshot, and no after-T test does. The same predicate at :1242 guards every locator locatorAfter writes.",
+   "proposal_ok": true,
+   "proposal_note": "Deleting the check at :1252 and its 'the stored executionHistory is malformed' failure changes no decodable record's behaviour; locatorShapeOk then has only the :1242 call site (or none, if A1-018 is removed too), nothing else calls it, no switch or type depends on the failure, and I found no spec line requiring the stored-locator refusal (RUN-06 only fixes identity/start, monotone watermark and write-once end, STATE-MACHINES-SPEC.md:1869)."
+  },
+  {
+   "row": "A1-020",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "Only src/core/work-graph/state/run-machine.ts:876-877 writes phase 'entered', and it writes status 'running' in the same record (enteredRunRecord). reconciledEndRecord (:987-1003) writes 'settled'/'unknown' together with status 'ended' (:993). The Run codec validates status (src/core/work-graph/materials/record-readers.ts:248) and the V2 authorization (execution-entry-codecs.ts:130-142) but never cross-checks them against each other, so a hand-edited store row with status 'starting' and phase 'entered' decodes; onEntryAuthorized (:1435) then gets 'damaged' from startingClassOf (:1310) and rejects 'busy' (:1451-1452), and onEntryBegun rejects it the same way (:1587-1589). No platform writer, route or public step builds starting+entered.",
+   "proposal_ok": true,
+   "proposal_note": "Keep the refusal and add no tampering test is right (AGENTS rule 4, decision 79-4). The state is explicitly 'damaged' by spec (STATE-MACHINES-SPEC.md:1634), and deleting the case would send such a record to unreachable() (state/transition.ts:53), i.e. throw instead of answering busy; the two consumers switch on 'damaged' (:1451, :1587), so the case must stay."
+  },
+  {
+   "row": "A1-021",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "Only src/core/work-graph/state/run-machine.ts:1810 (onUnresolvedTerminal, via reconciledEndRecord) and :2357 (onReconcileUnknown) write phase 'unknown', and both go through reconciledEndRecord, which also writes status 'ended' (:993). The Run codec validates status (src/core/work-graph/materials/record-readers.ts:248) and the authorization shape (execution-entry-codecs.ts:130-142) without cross-checking phase against status, so a hand-edited starting+unknown Run decodes and startingClassOf returns 'damaged' (:1311), which onEntryAuthorized/onEntryBegun answer with busy (:1451-1452, :1587-1589). No platform writer produces starting+unknown.",
+   "proposal_ok": true,
+   "proposal_note": "Keep untested (rule 4; decision 79-4); the combination is 'damaged' by spec (STATE-MACHINES-SPEC.md:1634). Removing the case would make the tampered record hit unreachable() (state/transition.ts:53) or force the 'damaged' consumer cases to be rewritten, so there is nothing to gain."
+  },
+  {
+   "row": "A1-022",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "Phase 'settled' is written only by endedRunRecord (src/core/work-graph/state/run-machine.ts:890-892, status 'ended') and by reconciledEndRecord (:1026, :1048, :2428, :2542), whose single return sets status 'ended' at :993. The Run codec validates status (src/core/work-graph/materials/record-readers.ts:248) and the authorization (execution-entry-codecs.ts:130-142) but does not cross-check them, so a hand-edited starting+settled row decodes and reaches the 'damaged' case at :1312; both entry rows then reject busy (:1451-1452, :1587-1589). No platform writer builds starting+settled.",
+   "proposal_ok": true,
+   "proposal_note": "Keep untested (rule 4; decision 79-4); spec calls the combination damaged (STATE-MACHINES-SPEC.md:1634). Removing the case would only turn the tampered record into an unreachable() throw (state/transition.ts:53) and require changing the 'damaged' consumer arms."
+  },
+  {
+   "row": "A1-023",
+   "refuted": false,
+   "cls": "D2",
+   "evidence": "SessionRecord.provenance is required by the contract (src/contracts/core/session.ts:39-40, 'Required') and by the record codec, which refuses a missing or null value (src/core/work-graph/sessions/session-record-codecs.ts:736-738); createSessionRecord always writes it (src/core/work-graph/state/session-availability.ts:325-341) and the only creation path always supplies one (src/core/work-graph/sessions/session-directory.ts:702-716, :960-967). I found no provenance backfill left in src (grep 'legacyProvenance' / 'legacy_provenance': no hits), and every sessionMachineStateOf caller passes a decoded record: tasks/claim-service.ts:996/:1016, sessions/session-directory.ts:341, sessions/session-health.ts:107, sessions/session-lifecycle.ts:196, queries/query-execution.ts:637/:1608, tasks/execution-entry-service.ts:909. So the right arm of :301 cannot arise.",
+   "proposal_ok": true,
+   "proposal_note": "Dropping `?? null` is safe and SessionMachineState.provenance is not read by production code; making it required only forces the one narrow test fixture that omits it (tests/state/k3-run-reconcile.test.ts:349) to add a value. The other `provenance ?? null` readers claude lists (views/work-line-reader.ts:649 etc.) are separate cleanups, and no spec line reserves a null provenance for current records."
+  },
+  {
+   "row": "A1-025",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "src/core/work-graph/state/task-failure.ts:1109 returns early for chain 'none'; :1110-1116 then builds the facts, and the arm is head===null inside anchor===null. src/core/work-graph/tasks/plan-service.ts:916-919 makes head null exactly when chain.kind!=='head' and anchorRun null when head is null (or the anchored Run was not read), so this arm needs a chain that is not 'none' but has no head, i.e. roundChainHead 'invalid' (src/core/work-graph/state/verification-machine.ts:477-512: two roots, ordinal gap, foreign subject, non-finalized predecessor). Every platform writer keeps one root and linked successors: roundOnOpened claims the subject slot null->owner (:1549-1570), buildSuccessorRound writes ordinal+1/predecessor (:629-676), roundOnReverified moves the same slot (:1506-1535); the gate slot key excludes runId (:125-135), so no second root. The round codec checks only the per-record chain shape (src/core/work-graph/persistence/evidence-record-codecs.ts:231-260; cross-record linearity is explicitly left to roundChainHead at :234), so a hand-written row reaches it (the before-T test committed two chain-less roots with commitRaw, .dsh-ref/before/tests/work-graph/A2-gate-chain-facts.test.ts:218-245). No platform writer or public step produces an invalid chain.",
+   "proposal_ok": true,
+   "proposal_note": "Keep the bad-chain diagnostic untested is right (rule 4; decision 79-4). Codex's extra 'delete the old-root compatibility input' has no target left here: roundOrdinalOf reads chain.ordinal directly (verification-machine.ts:98) and TP-025 already removed the default. Claude's optional GAP-52 note (give tests/state/task-failure.test.ts:1288 anchorRun:null) is a test-fixture choice that would exercise the arm but still not make the state reachable by public steps, so it does not change the class."
+  },
+  {
+   "row": "A1-026",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "src/core/work-graph/state/verification-machine.ts:821 is the `?? null` of step.check.incompleteCause for an interrupted check. The only writer of an interrupted check is changedCheck (:989-991), fed by CheckPhaseChange {phase:'interrupted'; incompleteCause: CheckInterruptionCause} (:935-936), and the only event that produces an interrupted check is check_interrupted with a required cause host_restart|ticket_invalid (:1639-1651); the replay event decoder is stricter still, requiring the check's incompleteCause to equal the event cause (persistence/evidence-record-codecs.ts:526-537). But the persisted-shape codec explicitly admits an interrupted check with the field absent or null ('C5: absent on legacy checks', evidence-record-codecs.ts:182-187; incompleteCauseProblem accepts null, persistence/rework-codecs.ts:228-231), so a legacy or hand-edited row reaches :821. No platform writer omits the cause.",
+   "proposal_ok": true,
+   "proposal_note": "Deleting the arm and tightening the codec is safe for all current writers; the same change must update the contract type that still says 'absent on legacy checks' (src/contracts/verification.ts:148) and the spec lines that still say legacy absent reads as null (STATE-MACHINES-SPEC.md:2949, :3064, :3665), which TP-137 already orders. Then :821 can read the cause directly."
+  },
+  {
+   "row": "A1-027",
+   "refuted": false,
+   "cls": "U",
+   "evidence": "src/core/work-graph/state/verification-machine.ts:823 is the '' arm of the `cause === null ? '' : (${cause})` conditional; cause comes from :821, and only an interrupted check reaches it. Every interrupted check written by the machine carries a non-null cause (:935-936, :989-991, :1639-1651), and no current writer can produce one without it; only a legacy/hand-written record does, because the codec admits the absent/null shape (persistence/evidence-record-codecs.ts:182-187; rework-codecs.ts:228-231). Same state as A1-026, so the same U.",
+   "proposal_ok": true,
+   "proposal_note": "Deleting it together with A1-026 (message always appends ` (${cause})`) is right; the type/spec cleanup listed on A1-026 is required in the same change, and no after-T test asserts the no-cause message (the before-T one was deleted by TP-137)."
+  }
+ ]
+}

@@ -1,0 +1,84 @@
+{
+  "rows": [
+    {
+      "row": "B-053",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "The only finalized-round constructor is buildFinalizedRound (verification-machine.ts:1008-1020, no finalizedAt), reached only via round_finalized (its sole caller :1586). The only finalize commit passes finalizedAt (evidence-service.ts:1605, merged into the wire origin at :354-355), later rewrites preserve it (:314), and encodeVerificationRoundSnapshot has one production call (:357). The old-shape writer was the deleted stripRoundFinalizedAt fixture (t-items-TP.md:474,1140: the shape is only reachable by rewriting the store), so only an old/tampered record reaches :334.",
+      "proposal_ok": true,
+      "proposal_note": "Keep, untested: it is the registered current-format check (validateRoundRecord :682-685, writes validated at record-codec.ts:638); without it a finalized round missing finalizedAt would also drop out of the s2b-round-by-goal-finalized index ordered by finalizedAt (evidence-record-codecs.ts:746-750)."
+    },
+    {
+      "row": "B-054",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "nextTaskEvidenceIndex is the only producer of the snapshot: revision = stored ids + appended and nothing is written for zero appended (verification-machine.ts:1047-1051); its one call is evidence-service.ts:1604 and the one encoder :371. A missing row is a virtual @0 in memory only (:552). Every commit validates against the same codec (record-codec.ts:638; registration evidence-record-codecs.ts:759), so revision>=1 and revision == evidenceIds.length always hold; only a stored @0 (old format, T deliberately rejects it: TP-046, t-items-TP.md:330) or a corrupt row reaches :436.",
+      "proposal_ok": true,
+      "proposal_note": "Keep, untested: T tightened it to isSafeInteger(revision,1) on purpose to reject old @0 rows; no platform writer can produce the rejected shape, so a test would have to tamper with the store."
+    },
+    {
+      "row": "B-055",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "newNoteVersionRecord is the only NoteVersion constructor and always writes the key, defaulting to null (note-machine.ts:294-306); all four writers pass it (note-service.ts:703, 831, 1496, 1537) and only note-service encodes NoteVersion rows. The row/event codec is also the write validator (record-codec.ts:638; note-record-codecs.ts:467,579,606). Only a pre-4C-2 record/event lacking the key reaches :364 (TQ-084 removed the withNoticeClass default, t-items-TQ.md:520-522).",
+      "proposal_ok": true,
+      "proposal_note": "Keep, untested: deleting it would make a keyless old version decode with noticeClass undefined, against NoteVersionSnapshot (contracts/note.ts:90); no current writer omits the key."
+    },
+    {
+      "row": "B-056",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "noticeClassOf can return only 'user_affected', 'structural', 'scribe_result' or null (note-machine.ts:276-291), and newNoteVersionRecord stores exactly that value or the literal null (note-machine.ts:296,306); the other two writers pass null (note-service.ts:703,1537). JSON cannot carry undefined and :364 already requires the key, so a foreign value exists only in a hand-edited/corrupted record or event body; the same validator runs on every write (record-codec.ts:638).",
+      "proposal_ok": true,
+      "proposal_note": "Keep, untested: it is the codec's enum check guarding the notice lookup by class; no platform writer produces another value, so a test would need tampering."
+    },
+    {
+      "row": "B-057",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "All three NoteDispositionChanged emitters write actor explicitly, including null where there is no card (note-service.ts:708-710, 844-869, 1542-1544); the event type requires the field (note-record-codecs.ts:84-90). Only a pre-4C-2 event (TQ-084 removed the ?? null default, t-items-TQ.md:520-522) or a tampered/foreign event lacks the key; the validator also runs on every commit (record-codec.ts:664ff).",
+      "proposal_ok": true,
+      "proposal_note": "Keep, untested: it is the event's current-format check; deleting it would let decision-application.ts:72 and note-service.ts:576 read an event whose actor is undefined."
+    },
+    {
+      "row": "B-058",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "Same three emitters write proof explicitly (null at note-service.ts:708-710 and :1542-1544; value-or-null at :864-869), and the event type requires it (note-record-codecs.ts:84-90). Only an old-format or tampered/foreign event lacks the key because T removed the proof ?? null default (TQ-084); every commit validates (record-codec.ts:664ff).",
+      "proposal_ok": true,
+      "proposal_note": "Keep, untested: same as B-057; a keyless event would hand consumers an undefined proof against the type."
+    },
+    {
+      "row": "B-063",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "validQueryExecution accepts only semantic_query, initial_coordination and execution_coordination (contracts/query-job.ts:246), and query-job-service.ts:280-282 has already refused execution_coordination; after :286 the condition at :289 is always false. prepareSubmit is the only caller of this code (:593, submit path only). The message at :290 has no other reference in src or tests.",
+      "proposal_ok": true,
+      "proposal_note": "Delete query-job-service.ts:289-291: no test references the message, no switch/type depends on the narrowing (nothing later reads execution['kind'], :280 is the only other use), and the later-slice reservation of execution_coordination stays in :280-282."
+    },
+    {
+      "row": "B-065",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "prepareSubmit requires intent.execution to be an object before anything is written (query-job-service.ts:279); the only QueryJob creation is newPendingQueryRecords (query-run-recovery.ts:492, called at query-job-service.ts:729, replay :496), later writes spread the snapshot (query-run-recovery.ts:562,623; query-execution.ts:1240,1522,1630), and every commit validates the record/event against this codec (record-codec.ts:638; registration query-record-codecs.ts:691, event :696). Only an old Query without execution (allowed before T: TP-015, t-items-TP.md:110) or a foreign/corrupt record reaches :237.",
+      "proposal_ok": true,
+      "proposal_note": "Keep, untested: readers now assume job.intent.execution is present (e.g. query-execution.ts:1191), and T made execution required on purpose; deleting the check would silently accept old records again."
+    },
+    {
+      "row": "B-066",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "The single writer validates the exact binding shape with the same validQueryExecution before writing (query-job-service.ts:286), and every later write copies the intent unchanged (query-run-recovery.ts:562,623); the codec is also the commit-time validator (record-codec.ts:638; registration query-record-codecs.ts:691). So only a hand-edited/corrupted snapshot or a foreign event body reaches :238.",
+      "proposal_ok": true,
+      "proposal_note": "Keep, untested: it is the shape check for the binding, run on write and read; no public step can produce an invalid binding, so a test would have to fake a record."
+    },
+    {
+      "row": "B-067",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "New QueryJobs always carry the locator: newPendingQueryRecords writes it (query-run-recovery.ts:492) from both the submit (query-job-service.ts:729, valid identityKey/fingerprint/eventId from sha256Hex and deps.eventId) and the replay rebuild (:496); later writes spread the snapshot (query-run-recovery.ts:562,623; query-execution.ts:1240,1522,1630). The record is validated on every commit (record-codec.ts:638; registration query-record-codecs.ts:691). T removed the 'snapshot without locator stays readable' allowance (TP-052), so only an old or tampered snapshot reaches :446.",
+      "proposal_ok": true,
+      "proposal_note": "Keep, untested: readers now use the locator unconditionally (query-execution.ts:333, source-authority-reader.ts:198 after T removed the undefined fallbacks), so the current-format check must stay."
+    }
+  ]
+}

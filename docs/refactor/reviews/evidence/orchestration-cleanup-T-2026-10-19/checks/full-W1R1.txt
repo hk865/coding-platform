@@ -1,0 +1,12 @@
+T full suite W1R1: copy /home/han001/dsh-work/slices/s9tbW1 at ed26c44 T W1 rework 1; bubblewrap, 5 workers, scope 7G; started 01:42 available 14346 MB
+build 0
+typecheck 0
+check:architecture 0
+vitest exit 0
+failing files:
+ended 02:22
+vitest summary (added by the lead 2026-10-20 from full-W1R1-vitest.log; the script's grep missed the ANSI-coloured lines):
+ Test Files  773 passed (773)
+      Tests  9929 passed | 5 skipped (9934)
+   Duration  2457.01s (transform 22.66s, setup 0ms, import 375.39s, tests 11848.27s, environment 46ms)
+failing files:

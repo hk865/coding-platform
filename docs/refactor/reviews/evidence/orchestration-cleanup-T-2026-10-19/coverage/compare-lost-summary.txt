@@ -1,0 +1,30 @@
+T round - coverage lost or gained in src files T did not change
+
+branches: uncovered before 11002, after 11047 (unchanged files only); lost in T 79, gained 34
+    src/core/work-graph/views/work-line-reader.ts                                      20
+    src/core/work-graph/tasks/run-state-service.ts                                      8
+    src/core/record-store/sqlite-record-store.ts                                        5
+    src/core/work-graph/configuration/role-memory-service.ts                            5
+    src/core/work-graph/state/line-status.ts                                            4
+    src/core/work-graph/tasks/unknown-call-review-service.ts                            4
+    src/core/record-store/body-store.ts                                                 3
+    src/core/work-graph/configuration/role-record-codecs.ts                             3
+    src/core/work-graph/evidence/evidence-service.ts                                    3
+    src/core/work-graph/state/control-intent-machine.ts                                 3
+    src/core/work-graph/tasks/reconcile-intents.ts                                      3
+    src/core/work-graph/tasks/task-service.ts                                           3
+    src/contracts/continuation-brief.ts                                                 2
+    src/core/work-graph/notes/note-service.ts                                           2
+    src/core/work-graph/persistence/graph-repository.ts                                 2
+    src/core/work-graph/sessions/session-targets.ts                                     2
+    src/core/agent-runtime/check-execution.ts                                           1
+    src/core/agent-runtime/graph-execution-history.ts                                   1
+    src/core/record-store/guarded-revision.ts                                           1
+    src/core/record-store/record-codec.ts                                               1
+    src/core/work-graph/materials/record-readers.ts                                     1
+    src/core/work-graph/persistence/commit-compiler.ts                                  1
+    src/core/work-graph/tasks/execution-history-service.ts                              1
+
+functions: uncovered before 758, after 756 (unchanged files only); lost in T 1, gained 3
+    src/core/work-graph/evidence/evidence-service.ts                                    1
+

@@ -1,0 +1,8 @@
+w2 env run T3 at 54380f7 T T3 wave 2, started 13:34
+vitest exit 1
+ FAIL  tests/scenarios/K3-07-real-host-kill.test.ts > K3-07 real Host SIGKILL during a real shell command > K3-07 (L2 premise): the sandboxed command dies with the Host, and the new Host auto-closes the Run with hl03_stale_lock carrying the killed pid
+Error: K3-07 child needs the build output; run npm run build first (missing dist/app/main.js, dist/app/host.js)
+ Test Files  1 failed | 9 passed (10)
+      Tests  1 failed | 71 passed (72)
+   Duration  57.00s (transform 3.42s, setup 0ms, import 6.32s, tests 102.08s, environment 1ms)
+ended 13:35

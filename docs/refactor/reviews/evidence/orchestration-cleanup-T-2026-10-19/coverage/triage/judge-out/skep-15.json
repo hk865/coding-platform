@@ -1,0 +1,100 @@
+{
+  "rows": [
+    {
+      "row": "A3-016",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "isCompleteRunRef's then arm (:71) is reached only through readEnvelopeIdentity (:94), whose only caller is authorizeRuntimeSubject (:439). The only Run envelope writer is the entry_authorized transition (run-machine.ts:853-860), and every entry path refuses an incomplete prepared envelope first: execution-entry-service.ts:1996-2012 checks runRef/attemptRef with sameRef (:1999-2001), roleBinding with isRoleBinding (:2007), permissions (:2009) and budget (:2010) before the event is built (:1401-1402). The RunSnapshot codec only proves a stored envelope is an object or null (record-readers.ts:268), so a non-object runRef needs a hand-edited/truncated stored Run. The deleted TP-113 test did exactly that with commitRaw (before/tests/runtime/R4c-source-authority-guards.test.ts:277-282: an envelope with permissions only). No platform writer produces the shape; U stands.",
+      "proposal_ok": true,
+      "proposal_note": "Both class-sanctioned options. Codex's deletion is mechanically self-contained (isCompleteRunRef/isCompleteAttemptRef/isCompleteRoleBinding at :70-86 are called only from readEnvelopeIdentity:94, and readEnvelopeIdentity only at :439), but then a damaged stored envelope reaches canonicalJson(undefined) and throws inside authorizeRuntimeSubject (fingerprint.ts:47 Object.keys(undefined)) instead of returning unavailable. Claude's keep-untested keeps that diagnostic and is the safer choice under rule 4. Decide A3-016/A3-017/A3-020 together."
+    },
+    {
+      "row": "A3-017",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "The :94 then arm is readEnvelopeIdentity's single 'recorded envelope identity is unavailable' return, and the helper is called only at :439. Same write guarantee as A3-016: authorizedRunRecord (run-machine.ts:853-860) is the only writer, and authorizeRuntimeEntry validates the prepared envelope first (execution-entry-service.ts:1999-2007: runRef/attemptRef via sameRef, roleBinding via isRoleBinding). The record codec only checks that the stored envelope is an object (record-readers.ts:268), so an object envelope with a missing or non-object runRef/attemptRef/roleBinding is only reachable by editing the store or a foreign writer. No production caller path or public step produces it; U stands.",
+      "proposal_ok": true,
+      "proposal_note": "Keep untested (Claude) or delete with A3-016/A3-020 (Codex); no platform writer produces a partial identity, and rule 4 forbids restoring the tamper test. Same canonicalJson-throw caveat on deletion as A3-016."
+    },
+    {
+      "row": "A3-020",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "The :440 then arm returns readEnvelopeIdentity's unavailable, so it can only fire when one of the three identity leaves checked at :94 is incomplete. The only writer is still the entry_authorized transition (run-machine.ts:853-860) after execution-entry-service.ts:1999-2007 validates runRef, attemptRef and roleBinding; the codec admits any object envelope (record-readers.ts:268). The permissions counterpart at :447 keeps current tests (tests/runtime/R4c-source-authority-guards.test.ts:188-204), but the identity counterpart lost its only coverage in TP-113, whose test wrote a permissions-only envelope via commitRaw (before/tests/runtime/R4c-source-authority-guards.test.ts:277-282). U stands; no production path.",
+      "proposal_ok": true,
+      "proposal_note": "One decision with A3-016/A3-017: keep means this propagation stays (it is what turns a damaged envelope into unavailable), delete means :439-440 goes with the leaf helpers. Codex's 'simplify with the guards' and Claude's 'keep untested as one decision' are both class-consistent."
+    },
+    {
+      "row": "A3-021",
+      "refuted": false,
+      "cls": "D1",
+      "evidence": "copyRuntimeSourceBinding copies mode only from spec.mode (source-capture-access.ts:398), and the only production factory call is execution-driver.ts:1147-1151, whose literal spec has projectId/workspaceId/goalId/runId/taskId/root and no mode/review. createQuerySourceCaptureFactory has no review mode. No production writer sets envelope.work/reviewInput either (execution-preparation.ts:587 builds the envelope without them; the 'unknownCallReview' at :499 is a manifest field, not this binding). So :455-459 and authorizeReviewWork (:476-515) run only in tests/runtime/source-binding-migration.test.ts:242 (mode:'review' plus a state.set-built ReviewWork). Even if called, the real reader returns unsupported for ReviewWork (source-authority-reader.ts:155-160), so review authorization cannot succeed today. D1 stands.",
+      "proposal_ok": false,
+      "proposal_note": "Class right, but the deletion is not safe as written: the review binding is work kept for the later reviewer slice. R2d-2 (docs/refactor/tasks/R2d-2-work-source-binding.md:38, :65-71) specifies exactly this review binding and the reviewerSourcePathAllowed intersection; DESIGN.md:548-555 puts the independent reviewer in slice 9 and says the reviewer path rule/config types were kept; IMPLEMENTED-CAPABILITIES.md:300 says the review source binding is in use. This branch is also the only src caller of reviewerSourcePathAllowed (:472). Either keep it untested as slice-9 groundwork, or delete it together with reviewerSourcePathAllowed and update DESIGN.md:554 and IMPLEMENTED-CAPABILITIES.md:300; if reviewer-source-reader.ts stays, the production-reach test then needs a kept-for entry naming 'slice 9 of the orchestration design' (tests/architecture/production-reach.test.ts:1-22), because this branch is its only caller. Deleting the branch alone leaves the kept path rule unreached. Claude's proposed test deletion (source-binding-migration.test.ts:227 'limits a bound Reviewer to candidate source') is the only coverage of the candidate exclusion, so that is a product decision, not cleanup."
+    },
+    {
+      "row": "A3-022",
+      "refuted": false,
+      "cls": "D1",
+      "evidence": "authorizeReviewWork is called only at :456 under binding.mode==='review'; no production caller passes mode (:398; execution-driver.ts:1147-1151), so the :509 then arm (stored reviewerProfile differs from the prepared profile) lives inside a function only tests use. The only test user today (tests/runtime/source-binding-migration.test.ts:227-266) stores the same profile it passes, so it does not take :509; the before-T digest rewrite that did (:194-195, then forbidden) was deleted as tamper in TP-117/B-04. D1 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Deleting it is only the tail of the A3-021 decision (see the objection there). If the review branch is kept for slice 9, this mismatch check becomes U-shaped: only an in-place rewrite of the accepted ReviewWork reaches it, so keep it untested (rule 4) and do not restore the digest test, as Claude's second option says."
+    },
+    {
+      "row": "B-027",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "The :632 check is a runtime typeof on the injected reader, so refuting D2 needs a production caller that omits the method. The only production caller of createQuerySourceCaptureFactory is query-execution.ts:346-352, which forwards deps.sourceAuthority; create-platform.ts:1022 builds that value as createSourceAuthorityReader({authority, records: backend.records}), and its readQuerySubmission is always defined (source-authority-reader.ts:163-166; with no records it returns rejected 'unsupported', never an absent member). No other src caller exists (only query-execution.ts:30), and the Work path never calls resolveQueryOrigin. D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Deleting :632-633 is right, but 'make it required' needs the correct type. Claude's change on SourceSnapshotReads (source-authority-ports.ts:22-32) makes the Work port require it too; because tsconfig includes tests, the two SourceAuthorityReads fakes at tests/runtime/R4c-source-authority-guards.test.ts:83 and tests/runtime/source-binding-migration.test.ts:80 must add readQuerySubmission, and the 'optional so a snapshot-only Work caller' comment at ports.ts:24-31 must change. Codex's narrower option (require it only in the Query factory dep at :259) also needs execution-contracts.ts:254 / query-execution.ts:348 to expose the required member, because sourceAuthority is typed () => SourceSnapshotReads. No behaviour change either way."
+    },
+    {
+      "row": "B-029",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "The :636 then arm (status 'not_found') needs readQuerySubmission to return not_found, which the real reader does only when the QueryJob batch says missing (source-authority-reader.ts:184-185, :190) or the submission receipt lookupCommit says not_found (:206). loadCurrentQueryState has just loaded the same Job successfully (:629; the load at :598), and submitQueryJob writes the QueryJob, QueryRun, QueryJobSubmitted event and idempotency receipt in one commit (query-job-service.ts:727-776); the QueryJob codec requires the submission locator (query-record-codecs.ts:445-446). The store has no record delete/prune path (only DELETE FROM identity_claims, sqlite-record-store.ts:105; ports.ts:6 says it never drops snapshots). No concurrent writer can remove the job or receipt, so only a hand-edited/truncated store or a foreign writer reaches this label; U stands.",
+      "proposal_ok": true,
+      "proposal_note": "Keep the throw untested (rule 4) is right: a corrupt store should still report the submission as unreadable. Claude's simplification (status === 'rejected' ? code+': '+reason : status) produces the same string for not_found (and drops the not_ready word with B-030); codex's keep-as-is is equivalent. Nothing parses the message (grep finds 'the exact QueryJob submission is not readable' only at :639)."
+    },
+    {
+      "row": "B-030",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "The :637 then arm needs submissionRead.status === 'not_ready'. The only implementation is readQuerySubmission (source-authority-reader.ts:163-245), and it maps every non-ready store read to not_found or rejected: job readMany at :183-188, lookupCommit at :205-210, eventAt at :222-226; it returns only ready, not_found or rejected. The port's ReadResult does admit not_ready (contracts/core/results.ts:29-30) and the optional member is typed with the full ReadResult (source-authority-ports.ts:31), but no production code yields that status. D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Delete :637 and the not_ready branch of the detail; narrow readQuerySubmission's return type (and the optional member at source-authority-ports.ts:31) to ReadResult<QueryJobSubmittedEvent> without not_ready. It is the only implementation, so no other consumer changes."
+    },
+    {
+      "row": "B-033",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "The :646 right operand (?? null) can only run when submitted.runRef is null or undefined. The only QueryJobSubmitted writer is query-job-service.ts:731-770 (encode only at :770), and newPendingQueryRecords always sets runRef to the full queryRunRef (query-run-recovery.ts:459-476). The event codec rejects a missing runRef key (jobIssues: undefined -> queryRunRefFromValue null -> 'job.runRef is not a complete QueryRunRef', query-record-codecs.ts:398-406, applied to the event at :508), so a decoded event's runRef is either a complete ref or null; for null, ?? null yields null, i.e. the same canonical JSON. The fallback therefore never changes the compared value and only an undefined key (which the codec refuses) would; D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Delete ?? null and compare canonicalJson(submitted.runRef) directly: for a foreign null runRef the comparison still differs from the current job and :650 throws as before. Only this expression changes; the type allows QueryRunRef | null (query-job.ts), so no cast is needed."
+    },
+    {
+      "row": "B-034",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "The :650 then arm needs the stored submission event's initial Job to disagree with the current Job on queryJobId/projectId/workspaceId/goalId (:643-645), runRef (:646), submittedAt (:647), intent (:648) or the pending/no-answers/no-close initial state (:649). The event is written once from the submit draft (query-job-service.ts:727-770) and is immutable; later lifecycle steps spread the job and change only status/updatedAt/answers/closeReason (query-run-recovery.ts:562, and the machine uses the same job), and the reader already pins the exact event by the Job's own locator, eventId, identityKey/fingerprint and scope (source-authority-reader.ts:196-243). A mismatch therefore needs a hand-edited Job or event record or a foreign writer; U stands.",
+      "proposal_ok": true,
+      "proposal_note": "Keep untested (rule 4) is right, and the check is not fully redundant: the reader re-checks the event scope, eventId and identity/fingerprint but not goalId, runRef, submittedAt, intent or the initial pending/answers/close shape, which is the 'this is the original submission, not a later or foreign snapshot' invariant Claude names. Do not restore a test that rewrites the accepted submission."
+    },
+    {
+      "row": "B-035",
+      "refuted": false,
+      "cls": "U",
+      "evidence": "The :651 then arm needs the stored QueryJobSubmitted event to carry an agent actor, i.e. it is a read-time guard on a stored record. The only writer, submitQueryJob, admits only a Host principal with kind human or system (query-job-service.ts:220, :231-233) and copies that actor into the event (:743; encoded only at :770), so no platform writer produces the shape. But the event codec still accepts an agent actor (query-record-codecs.ts:191-199 isActorRef allows agent + RunRef), so a hand-edited or foreign event can carry one and pass the reader's eventId/identity/scope checks (source-authority-reader.ts:228-243). No production caller path, public step or real fault yields it, so refuted is false; the evidence nevertheless matches the U reading ('only a record written outside the platform's owners reaches it'), not D2's 'cannot arise'.",
+      "proposal_ok": true,
+      "proposal_note": "The agreed deletion is valid for U, but it needs Claude's codec narrowing first: isActorRef (query-record-codecs.ts:191-199) must reject agent for this event, otherwise :652 no longer typechecks as human|system and the check cannot simply be dropped. Keeping it as that type narrowing and untested (rule 4) is the smaller diff. No test either way; do not add a test that forges an agent-actor event."
+    },
+    {
+      "row": "C2-085",
+      "refuted": false,
+      "cls": "D2",
+      "evidence": "The function is the arrow at :345, handle.close().catch(() => {}), inside the catch at :343-347. It runs only if the try block (:329-342) throws and handle.close() then rejects. Before the try, access.open and release (:324-327) and createWorkspaceTools (:328) have already succeeded, so any throw there is outside. Inside, the code only returns an object literal: port reads handle.tools, which createWorkspaceTools returns as a plain object (workspace-tools.ts:89-107, no getter), workspace is copyWorkspace(workspace) (:26, three plain field reads of an already-validated WorkspaceRef), context is the prebuilt closure passed in (:323), and the method and close arrow are not invoked. Nothing in the literal can throw, so the catch and its callback are unreachable in production, tests or a real fault; D2 stands.",
+      "proposal_ok": true,
+      "proposal_note": "Deleting the try/catch at :329 and :343-347 and returning the literal directly is correct; the normal close at :341 stays. The only other reference is the comment at :344, which goes with it. No type or switch depends on the catch."
+    }
+  ]
+}

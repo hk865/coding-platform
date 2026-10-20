@@ -1,0 +1,120 @@
+T round - coverage before (V8, vitest 4.1.10, include src/**)
+copy: /home/han001/dsh-work/slices/s9tcov  files in report: 487
+note: run 2 of 2 (with --coverage.reportOnFailure). Run 1 (13:28:58-14:26:35, same 13 failures, exit 1) wrote no report because vitest coverage.reportOnFailure defaults to false; run-1 scope MemoryPeak 4457402368 bytes (4251 MiB), duration 3720.86s; its cleaned log is before-run1-suite-clean.log. All 13 failures in both runs are tests/architecture/boundaries.test.ts reporting: package.json: unapproved dependency @vitest/coverage-v8 (the dev dependency added only for this measurement).
+
+Totals (computed from coverage-final.json)
+  statements 65252/86559 (75.38%)
+  branches   53945/77523 (69.59%)
+  functions  9154/10283 (89.02%)
+  lines      57985/69203 (83.79%)
+Totals (vitest coverage-summary.json)
+  statements 65252/86559 (75.38%)
+  branches   53945/77523 (69.58%)
+  functions  9154/10283 (89.02%)
+  lines      57985/69203 (83.78%)
+
+zero files (statements > 0, none executed): 30
+files with no statements at all (type-only etc., not in the zero list): 73
+uncovered functions: 1129   uncovered branch arms: 23577
+TSV columns: functions = path, declaration line, name; branches = path, arm start line (branch line if the arm has none), type, arm index, arm count
+
+Per directory (src/<top>; src/core/<a>/<b>), sorted by uncovered statements
+directory                                    files unc.stmt              statements                branches             functions                   lines
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+src/ui                                          78     4822      1636/6458 (25.33%)      1097/5671 (19.34%)      297/927 (32.04%)      1399/5125 (27.30%)
+src/core/work-graph/tasks                       65     3960    12537/16497 (76.00%)    10511/14965 (70.24%)    1510/1604 (94.14%)    11485/13242 (86.73%)
+src/core/work-graph/sessions                    12     1416      2960/4376 (67.64%)      2716/4213 (64.47%)      304/326 (93.25%)      2831/3513 (80.59%)
+src/core/work-graph/views                       17     1415      6699/8114 (82.56%)      4729/6659 (71.02%)      889/934 (95.18%)      5833/6475 (90.08%)
+src/core/agent-runtime                          46     1400      6387/7787 (82.02%)      5579/7204 (77.44%)     921/1005 (91.64%)      5643/6388 (88.34%)
+src/core/work-graph/persistence                 17     1313      2864/4177 (68.57%)      2873/4316 (66.57%)      376/382 (98.43%)      2750/3203 (85.86%)
+src/core/work-graph/communication                4      952      2453/3405 (72.04%)      2046/3111 (65.77%)      270/284 (95.07%)      2298/2748 (83.62%)
+src/core/work-graph/architecture                10      772      2374/3146 (75.46%)      1731/2531 (68.39%)      310/330 (93.94%)      2104/2352 (89.46%)
+src/app                                         17      681      3465/4146 (83.57%)      2859/3671 (77.88%)      547/604 (90.56%)      2991/3343 (89.47%)
+src/business                                    10      644      2290/2934 (78.05%)      2126/2936 (72.41%)      276/292 (94.52%)      2031/2394 (84.84%)
+src/core/work-graph/queries                      4      611      1311/1922 (68.21%)      1117/1732 (64.49%)      129/138 (93.48%)      1247/1511 (82.53%)
+src/core/work-graph/state                       29      591      6244/6835 (91.35%)      6520/7236 (90.11%)    1048/1059 (98.96%)      5291/5627 (94.03%)
+src/core/work-graph/notes                       15      565      3548/4113 (86.26%)      2603/3381 (76.99%)      479/499 (95.99%)      3057/3261 (93.74%)
+src/core/work-graph/configuration                9      515      1308/1823 (71.75%)       976/1519 (64.25%)      163/167 (97.60%)      1215/1449 (83.85%)
+src/core/workspace                              27      426      3383/3809 (88.82%)      2298/2824 (81.37%)      614/646 (95.05%)      2651/2774 (95.57%)
+src/core/record-store                           17      342      2036/2378 (85.62%)      1112/1449 (76.74%)      245/250 (98.00%)      1848/2021 (91.44%)
+src/contracts                                   72      288      1363/1651 (82.56%)      1399/1798 (77.81%)      252/263 (95.82%)      1198/1379 (86.87%)
+src/core/work-graph/evidence                     2      280       937/1217 (76.99%)        685/998 (68.64%)       93/104 (89.42%)        867/967 (89.66%)
+src/composition                                  6      161       940/1101 (85.38%)        492/670 (73.43%)      352/388 (90.72%)        768/862 (89.10%)
+src/core/work-graph/materials                    5      114        318/432 (73.61%)        348/471 (73.89%)        48/50 (96.00%)        296/358 (82.68%)
+src/core/work-graph                              2       37         92/129 (71.32%)          64/99 (64.65%)       11/11 (100.00%)         81/110 (73.64%)
+src/core/work-graph/model                       23        2        107/109 (98.17%)          64/69 (92.75%)       20/20 (100.00%)       101/101 (100.00%)
+
+Files with no statements at all:
+  src/business/workflow/contracts.ts
+  src/business/workflow/index.ts
+  src/contracts/context-continuity.ts
+  src/contracts/control-intent.ts
+  src/contracts/coordination.ts
+  src/contracts/core/call-context.ts
+  src/contracts/core/execution-history.ts
+  src/contracts/core/identity.ts
+  src/contracts/core/operations.ts
+  src/contracts/core/results.ts
+  src/contracts/core/source.ts
+  src/contracts/core/task-claim.ts
+  src/contracts/delegated-write.ts
+  src/contracts/execution-feedback.ts
+  src/contracts/goal-change.ts
+  src/contracts/goal-phase.ts
+  src/contracts/initial-planning.ts
+  src/contracts/memory.ts
+  src/contracts/opaque.ts
+  src/contracts/platform-duty.ts
+  src/contracts/query-execution-context.ts
+  src/contracts/reduction.ts
+  src/contracts/reviewer-context.ts
+  src/contracts/reviewer-verification.ts
+  src/contracts/role-material-channels.ts
+  src/contracts/role-spec-materials.ts
+  src/contracts/session-anomaly.ts
+  src/contracts/task-envelope.ts
+  src/contracts/task-failure.ts
+  src/contracts/verification-context.ts
+  src/contracts/verification-import.ts
+  src/contracts/work-line.ts
+  src/core/agent-runtime/contracts.ts
+  src/core/agent-runtime/execution-contracts.ts
+  src/core/agent-runtime/execution-history-contracts.ts
+  src/core/agent-runtime/index.ts
+  src/core/agent-runtime/ports.ts
+  src/core/agent-runtime/source-binding-types.ts
+  src/core/agent-runtime/source-tool-ports.ts
+  src/core/record-store/body-ports.ts
+  src/core/record-store/ports.ts
+  src/core/work-graph/architecture/catalog-contracts.ts
+  src/core/work-graph/architecture/contracts.ts
+  src/core/work-graph/configuration/project-bootstrap-contracts.ts
+  src/core/work-graph/materials/record-ports.ts
+  src/core/work-graph/model/claim-contracts.ts
+  src/core/work-graph/model/command-recognition-contracts.ts
+  src/core/work-graph/model/command-rerun-request-contracts.ts
+  src/core/work-graph/model/configuration-contracts.ts
+  src/core/work-graph/model/context-input-contracts.ts
+  src/core/work-graph/model/decision-contracts.ts
+  src/core/work-graph/model/evidence-contracts.ts
+  src/core/work-graph/model/execution-entry-contracts.ts
+  src/core/work-graph/model/execution-history-contracts.ts
+  src/core/work-graph/model/execution-read-contracts.ts
+  src/core/work-graph/model/graph-context-contracts.ts
+  src/core/work-graph/model/kernel-command-read-contracts.ts
+  src/core/work-graph/model/material-contracts.ts
+  src/core/work-graph/model/plan-contracts.ts
+  src/core/work-graph/model/session-contracts.ts
+  src/core/work-graph/model/task-contracts.ts
+  src/core/work-graph/model/unknown-call-review-contracts.ts
+  src/core/work-graph/model/work-line-contracts.ts
+  src/core/work-graph/notes/note-path-ownership.ts
+  src/core/work-graph/queries/contracts.ts
+  src/core/work-graph/sessions/lifecycle-contracts.ts
+  src/core/work-graph/source-authority-ports.ts
+  src/core/work-graph/tasks/codec-fields.ts
+  src/core/work-graph/tasks/control-contracts.ts
+  src/core/work-graph/tasks/run-activity-codecs.ts
+  src/core/work-graph/tasks/run-reconcile-contracts.ts
+  src/ui/styles.css
+  src/ui/views.ts

@@ -1,0 +1,67 @@
+{
+  "rows": [
+    {
+      "row": "C2-061",
+      "cls": "U",
+      "winner": "claude",
+      "reason": "messageOf has exactly three call sites. The try at query-observation.ts:253-257 awaits owner.readPositionWindow, whose every Kernel read is wrapped by withSessionReader's try/catch (session-operations.ts:895-906) and whose mapHistoryFailure never throws (:339-350); readPositionWindow itself only returns (session-operations.ts:942-991), so that catch cannot run (D2). The try at :455-463 awaits materials.storeArtifact, which returns statuses and whose only awaited write (bodies.put) has its own try (material-service.ts:70-77); storeArtifact itself never throws on the observe path, so that catch is D2 too. The only arm that can run is :286-292: the entries are already schema-decoded (decodeEntry :76-90; sessionRecordSchema validates turn.started payload.run and agent.event, session-store-port.js:96-125), so only a schema-valid but non-reducible event sequence can throw from reduceRunState (run-state-reducer.js:274-284, e.g. a tool result with no matching call at :165). A history the Kernel wrote is reducible by construction; only a hand-edited, corrupted or foreign/old-format Kernel history reaches it, which is U, not D2.",
+      "proposal": "Keep the guard at :286-292 untested (no test may hand-write a non-reducible Kernel history: AGENTS.md rule 4, decision 79). Delete the two dead try wrappers at :253-257 and :455-463 so their callers' returned rejections carry the failure; messageOf then has one real caller.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-076",
+      "cls": "F",
+      "winner": "claude",
+      "reason": "The helper's refusal arms are mostly dead: :418 cannot happen because the port is published only when deps.turnClosure is defined (runtime.ts:745-747); :419 cannot happen through the Host because create-platform always passes turnClosure with the Host lease (create-platform.ts:1212-1213), the start-up reconcile that calls turnClosureSupport runs only when leaseOwned (host.ts:1069), and a lease held by another Host carries takeover null (host-instance-lease.ts:130) so G1 refuses before G6 (run-reconcile.ts:453-454); :425 cannot happen because deps.kernel is the static public-api module (execution-contracts.ts:266); :429 is row B-024. But :421-423 can: the Runtime's deps.sessions is the RAW sessionDirectory (create-platform.ts:1188), whose readSession awaits records.readMany without a try (session-directory.ts:1193), so a real store IO failure throws into :422 or returns a not-ready result for :423, and run-reconcile.ts:461-462 then maps it to closure_unsupported. That is a real external fault (F), not a plain public-step path (G).",
+      "proposal": "Add one test in tests/runtime/A2-reconcile-runtime.test.ts (K3-21 block). Build createAgentRuntime({...fx.rebuildDeps({hostInstance: HOST_1}), turnClosure: {recordSessionHealth: async () => ({status:'ready'}), lease: 'owned'}, sessions: {...fx.deps.sessions, readSession: async () => { throw new Error('store IO failed'); }}}) (the fixture rebuilds deps through plain overrides, B2-runtime-fixture.ts:100-112, :310), call runtime.port.turnClosureSupport!(fx.ctx, {sessionRef: fx.claim.sessionRef}) and expect {status:'unsupported', reason:/could not be read/}; a second case returning {status:'rejected', code:'unavailable'} covers :423. Then pass that runtime port as the classifier's turnClosureSupport (A2-reconcile-runtime.test.ts:104-108) and expect blockedBy 'closure_unsupported'.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C2-093",
+      "cls": "D2",
+      "winner": "claude",
+      "reason": "appendEvents pushes each entry at index seq-1 with cursor makeCommitCursor(cursorSeq) (in-memory-record-store.ts:157-163), a failed commit restores both eventLog.length and cursorSeq (:383-384), and the state starts empty (:84-90), so eventLog[i].cursor === makeCommitCursor(i+1) always holds. makeCommitCursor/seqOfCommitCursor accept only the canonical c########## form (ledger.ts:101-115). Hence every cursor this store can issue or store makes direct at :456 match and the find callback at :458 is never evaluated; an out-of-range canonical cursor can only exist in a record no platform writer produced, and the callers that would pass a stored cursor (requeue-service.ts:1218, note-version-lists.ts:148, work-line-reader.ts:2440, mailbox-service.ts:230) all read bindings written by this store. The in-memory backend has no persisted or foreign writer at all, so D2, not U.",
+      "proposal": "Replace :457-458 with `const positioned = direct !== undefined && direct.cursor === cursor ? direct : undefined;`; results are identical in every state the store can produce and the linear scan disappears. Keep the notFound at :459 for a canonical cursor beyond the head. No new test.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C3-005",
+      "cls": "D1",
+      "winner": "claude",
+      "reason": "handle.abort is created at collaboration-driver.ts:1064 and is never aborted anywhere: the only .abort( calls in the file are pumpAbort (:749), wakeAbort (:883) and activePumpAbort (:1004), and stop/close cancel only activePumpAbort (:1004, :1114). The field comment at :292 says the signal is aborted by close, but close (:1110-1115) never touches it. So the listener registered at :750 never fires, and the direct call at :751 is guarded by a constant-false check; the same dead check sits at :518, :562 and :704. onLoopAbort is never called at all, i.e. no production caller path reaches it (D1), not a state that merely cannot arise.",
+      "proposal": "Delete onLoopAbort with its add/remove listener (:749-751, :767) and the constant-false `handle.abort.signal.aborted` checks at :518, :562 and :704; the real stop path is activePumpAbort (:1004) and loopContext (:410) can keep one never-aborted lifetime signal. If the lead instead means close() to cancel an in-flight advance (per the :292 comment), abort it in close() (:1110-1115); this row then becomes G and needs a close-during-advance test.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C3-011",
+      "cls": "D2",
+      "winner": "codex",
+      "reason": "The inner arrow at core-routes.ts:636 is selected only when createPlatformCoreRouteBindings is built without a driver (:737-739). The only production assembly passes collaborationDriver (host.ts:1574), created unconditionally at host.ts:571-580, so the missing-driver state never arises in production. The 33 test calls in 12 files that omit the driver (e.g. tests/app/S1-session-routes.test.ts:160) never call driverStart/driverRead/driverStop (no such name in tests). Callers of the binding exist but the state that selects the fallback cannot arise, which is D2 rather than a dead function.",
+      "proposal": "Make the driver parameter required for the production bindings and delete unsupportedDriver (:633-639) plus the three missing-driver branches; the narrow test callers must then pass a stub driver (or use a separate narrow builder). No new test either way.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C3-012",
+      "cls": "D2",
+      "winner": "codex",
+      "reason": "The inner arrow at core-routes.ts:643 is selected only when a fallback-gated owner or method is absent (:688-911). Production passes the createTargetPlatform object straight through with workbenchTools.tools, goalFanOut and the reconcile report (host.ts:1574; platform built at host.ts:507-509), and that composition publishes every gated member: readProject (create-platform.ts:1301), readCurrentCompletionPolicy (:1309), observationState (:1327), the wrapped groups at :1247-1335 and the platform assembly at :2213-2240; notes is unconditional (:1763, :2225). The comments at core-routes.ts:786-788 and :796-798 call these gaps old-narrow-double / spread-double only, and no production code spreads the platform (grep: only the two comments). The absent-owner state cannot arise (D2).",
+      "proposal": "Tighten CoreRoutePlatform and the optional method types so the real owners are required, delete `unsupported` (:643-645) and the absent-owner fallbacks, and let the narrow test platforms supply the owners; keep it as test-only scaffolding only if the lead accepts the churn (decision 79 says drop old doubles). No new test.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C3-014",
+      "cls": "D2",
+      "winner": "codex",
+      "reason": "The catch at core-routes.ts:961 can run only if platform.controls.readControl rejects. In production platform.controls is the composition's wrapped port (create-platform.ts:1419-1421), whose readControl catches the store read and returns `unavailable` (control-service.ts:780-783); its other steps (bindTrustedContext, controlIntentRefProblem, decodeControlIntentSnapshot) return values instead of throwing. A real store failure therefore surfaces as a rejected result at :965-969, not as the null branch. The catch-to-null is a state that cannot arise (D2), not a fault test gap.",
+      "proposal": "Delete `.catch(() => null)` and the `intentRead === null` branch (:961-964), keep the not-ready handling. No new test: the K3-41 rejected-read double (tests/business/K3-41-release-hold.test.ts:567-578) already covers the surviving path.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    }
+  ]
+}

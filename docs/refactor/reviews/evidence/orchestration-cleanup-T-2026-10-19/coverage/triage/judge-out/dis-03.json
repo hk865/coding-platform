@@ -1,0 +1,58 @@
+{
+  "rows": [
+    {
+      "row": "A1-039",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "Both arms only need a non-null non-ok MachineRefusal; no external fault is required. `admitEnteredRun` checks the caller's permit at execution-entry-service.ts:600-601: `permitClaimGuard` (run-machine.ts:1124-1127) or `entryPermitGuard` (run-machine.ts:1194-1203) refuses whenever the permit's claim/consumerId/entryGeneration/authorizationRevision/inputDigest disagrees with the persisted claim or the current V2 binding. `actualModelRequestProblem` checks only the permit's shape (model-call-service.ts:61-64; taskEntryPermitProblem at execution-entry-service.ts:2049-2057 only requires a non-empty consumerId), so a permit carrying another consumerId or generation passes validation and reaches :724 with a refusal. That is the same kind of caller input as the digest-substitution case already tested after T (tests/work-graph/B2-model-request.test.ts:12-28); it is not a stored record or tampering.",
+      "proposal": "In tests/work-graph/B2-model-request.test.ts, after `f.enter()`: call `f.model.authorizeModelRequest(f.ctx, { input: { ...request, permit: { ...request.permit, consumerId: 'runtime-other' } }, meta: { requestId: 'changed-consumer', expected: [await f.pin()] } })`. Expect rejected forbidden 'the entry permit does not match the current V2 entry binding', the store unchanged and no ModelRequestPermit row (the digest test's assertions at :21 and :26 are the template). Repeat on `recordModelRequestAttempt` if the consumption lane is wanted too.",
+      "t_reason_wrong": false,
+      "t_item": "TP-145; before: .dsh-ref/before/tests/work-graph/B2-model-request.test.ts:12-25"
+    },
+    {
+      "row": "A1-040",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "Same condition as A1-039: a caller-supplied permit that disagrees with the persisted claim or the current V2 binding makes `refusalOf`'s `||` false and its cond-expr take the else arm, so `runRefusal` maps the guard's code/detail (execution-entry-service.ts:600-601, :606-607, :724; run-machine.ts:1194-1203). No fault or store record is needed to produce it.",
+      "proposal": "The test proposed for A1-039 covers this arm: expect code forbidden and the guard's reason preserved through `runRefusal`; also assert no permit row and an unchanged store.",
+      "t_reason_wrong": false,
+      "t_item": "TP-145 (before: .dsh-ref/before/tests/work-graph/B2-model-request.test.ts:12-25) + TP-144 (:27-54)"
+    },
+    {
+      "row": "C1-046",
+      "cls": "G",
+      "winner": "codex",
+      "reason": "`notFound` is called from `readAdmissionFacts` at :264 when `readExecution` answers not_found (run-state-service.ts:455-459), and from `mapReadResult` at :150. The caller supplies the RunRef: `authorizeRuntimeEntry` takes `prepared.claim` from the request (:1355-1356) and only shape, scope and pin checks it (:1370-1385); the model/entered/result lanes pass `permit.claim.runRef`/`claim.runRef`. `readExecution` returns not_found for a missing Run key, so a shape-correct prepared claim whose runRef names a nonexistent Run, with a matching positive expected pin, reaches :264 with no fault and no store record. Claude's D2 only rules out the :150 arm (Role/Host reads); it does not cover :264.",
+      "proposal": "In tests/work-graph/B2-execution-entry.test.ts: take `f.buildPrepared()`, clone claim and envelope with a new runId in the same project/goal (taskClaimProblem and preparedEnvelopeProblem only require scope consistency), call `authorizeRuntimeEntry` with `meta.expected = [{ ref: newRunRef, revision: 1 }]`, and expect rejected not_found 'the target Run does not exist'; assert the store is unchanged.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C1-047",
+      "cls": "G",
+      "winner": "claude",
+      "reason": "`planRefProblem` runs from `materialBasisProblem` (:381-382) whenever a stored manifest's materialBasis.planRef is non-null (validated at :345/:444-457). The built-in grant fixes materialBasis null (host.ts:297), but an explicit config-file binding's grant is cloned as-is (main.ts:124) and spread into the resolved Host configuration (runtime-configuration.ts:446), with no materialBasis check in validateWorkbenchRuntimeConfiguration (:251-330); prepare copies it into the manifest (execution-preparation.ts:531). So a trusted config carrying a non-null materialBasis reaches :372 at entry. Codex's 'always null' only covers `localWorkbenchGrant`, not the explicit binding path.",
+      "proposal": "Test gap, or a field decision. Extend `preparationHost` (tests/helpers/task-claim-fixture.ts:515-537) to accept materialBasis (default null) and `B2PreparedOptions` (tests/helpers/B2-execution-fixture.ts:66-72) to pass it; prepare with { planRef: { aggregateType: 'PlanRevision', projectId, planId }, workspaceRevision: null, sourceDigest: null } and authorize/enter -> committed; repeat with a malformed planRef -> entry unavailable 'the stored prepared manifest is malformed: materialBasis planRef is invalid'. Put it in tests/work-graph/B2-execution-entry.test.ts. If the lead decides the field is unconsumed, drop materialBasis from the grant contract instead.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C1-050",
+      "cls": "U",
+      "winner": "neither",
+      "reason": "The arm at :520-521 runs only when `resolveRoleBindingFacts` returns a ready resolution with status 'inadmissible' (:518-521); that status comes only from the ProjectCoordinationPolicyActive + CoordinationPolicyRevision matrix arms (role-memory-service.ts:701-766). No src owner writes either record: grep finds only the codecs/schemas (role-record-codecs.ts:463-472) and the reader (role-memory-service.ts:631), and the writer is recorded as still pending (HANDOFF.md:1015 '正式writer仍待后续'; IMPLEMENTED-CAPABILITIES.md:212). Today only test-seeded records reach it (R3g-role-spec.test.ts:81-89 seedPolicy commits them by hand). That is exactly U's close-call rule (a stored record in a shape no platform writer produces today), not D2: the resolver's type legitimately includes inadmissible and deleting the arm would narrow the entry re-check. Codex's no-hot-switch premise does not make it a plain D2 deletion, and Claude's 待定 understates that the missing writer is documented as planned.",
+      "proposal": "Keep it untested; do not delete and do not add a hand-seeded policy test (AGENTS.md rule 4). When the CoordinationPolicy writer lands, the arm becomes reachable only by installing/activating a policy that makes the current Role inadmissible between prepare and entry (a concurrent writer): entry then returns forbidden 'the role binding is not admissible: <codes>' from :521, tested in tests/work-graph/B2-execution-entry.test.ts; that is an F-type fault, not a plain step. If the lead drops the planned writer, then D2 and the matrix phases go with it.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    },
+    {
+      "row": "C1-052",
+      "cls": "G",
+      "winner": "codex",
+      "reason": "`replayEntered` is called at :1698 when `lookupCommit` finds the same identityKey+fingerprint for the caller's request. The identity is `b2-entered:${requestId}` (execution-driver.ts:1005) and the fingerprint covers the caller's permit, kernelSource, history and expected pin, so a second `recordExecutionEntered` with the same requestId and identical input reaches the lookup before readAdmissionFacts or any pin check and replays with no fault. The suite already tests this same idempotent repeat for the sibling write: tests/work-graph/B2-execution-result.test.ts:104 expects a second `recordRunResult(request)` to return {...result, replayed:true}. Claude's lost-response story is why the production driver retries, not a condition of the :1698 arm; only the :1744 `receipt.replayed` call site needs a race.",
+      "proposal": "In tests/work-graph/B2-execution-entry.test.ts: `f.start()`, build one entered request (permit, B2_AT, kernelSource position 3, matching observed history, meta.requestId 'entered-replay', expected [await f.pin()]), call `recordExecutionEntered` twice with that same object, and expect the second to equal {...first, replayed:true}, the Run still running, exactly one entered event and no extra records/events. Optionally also wrap the port to throw after commit (tests/helpers/S2B-runtime-steps-fixture.ts) for the lost-response variant.",
+      "t_reason_wrong": false,
+      "t_item": ""
+    }
+  ]
+}

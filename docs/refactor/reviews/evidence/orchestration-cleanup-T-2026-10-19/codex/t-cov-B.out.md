@@ -1,0 +1,134 @@
+已完成只读审查，未写文件、未运行测试或构建。**100 行中，98 行已定类，2 行待定；F/G 合计 35 行是测试缺口。**清单范围为 `lists/list-B.tsv:2` 至 `lists/list-B.tsv:101`。
+
+下表第二列均相对于 `D:/cxt/t-docs/tree/`；理由中的源码短名指该树内同名文件。`kind` 全部为 branch，括号内列出分支类型及 arm。U 行的“保留、免补测”指保留现有格式或完整性拒绝边界，不恢复篡改数据库的测试，遵守 `AGENTS.md:33`。
+
+| row | path:line_after | kind | class | reason（file:line） | proposal |
+|---|---|---|---|---|---|
+| B-001 | `src/app/attention-observer.ts:654` | branch(cond,0) | G | 没有 Plan、没有架构基线时，真实 reader 返回 `revision:undefined`；`graph-context-reader.ts:1709`。 | 新建项目/工作区，不采纳架构，配置 `goalRef:null` 后 scan；补入 `tests/app/S0-attention-edge-label.test.ts:182` 的真实 scanner 链。 |
+| B-002 | `src/app/attention-observer.ts:655` | branch(cond,0) | D2 | reader 总创建并返回 `details`，包括空对象；`graph-context-reader.ts:1640`、`:1714`。 | 删缺 `details` 的条件展开，直接复制字段。 |
+| B-003 | `src/app/attention-observer.ts:657` | branch(if,1) | G | attention scope 可显式指定 Goal；不存在的 Goal 经 `loadUniverse` 原样传播 not_found；`attention-observer.ts:610`、`graph-context-reader.ts:767`。 | 配置一个尚未创建的 GoalRef→scan，断言不标 graphUnreadable；补 `tests/app/S0-attention-edge-label.test.ts:182`。 |
+| B-004 | `src/app/collaboration-driver.ts:671` | branch(if,1) | G | `manageState=false` 有正式调用；非等待 inquiry 也不必把 handle 改成 waiting；`collaboration-driver.ts:878`、`:662`。 | 真实协作中发送 `waitAfterSend:false` 的 inquiry，或走 wake pump；扩展 `tests/app/AG2b-collaboration.test.ts:150`。 |
+| B-005 | `src/app/goal-fan-out-driver.ts:475` | branch(binary,2) | F | 重入队失败后重新读 Goal；Goal 可经 pause→resume 回到 active，但 epoch 已增加；`goal-fan-out-driver.ts:472`、`:475`。 | 在 continuation 读取与 requeue 间并发 pause→resume；沿用 `tests/scenarios/A7-control-goal29.test.ts:208` 的委托包装，断言 stale。 |
+| B-006 | `src/business/workflow/consultation.ts:250` | branch(if,0) | G | 非 consultation 提交可自选 Job/Run ID；consultation 会先读确定性 ID 下的既有 Job；`query-job-service.ts:203`、`consultation.ts:343`。 | sendMessage→用其确定性 ID 提交普通 semantic Query→consume，断言 forbidden；补 `tests/app/AG2-consultation.test.ts:303`。 |
+| B-007 | `src/business/workflow/session-maintenance.ts:346` | branch(binary,1) | G | 公开 Session 创建接受显式 readonly_copy provenance，并非只允许 inquiry 创建；`session-directory.ts:695`、`:710`。 | 发普通 notify→公开 createSession 指向该消息的 readonly_copy→完成 Query→maintainSessions；扩展 `tests/business/S1-session-maintenance.test.ts:683`，验证 acceptedInputs 路径。 |
+| B-008 | `src/composition/create-platform.ts:2124` | branch(cond,1) | D2 | 此前 admission 已要求 ended/outcome_unknown；未知结束的状态写入保留授权；`create-platform.ts:2120`、`run-machine.ts:994`、`:2357`。 | 删“无授权→空 Kernel”的兜底；把已准入 unknown Run 的授权类型收窄。 |
+| B-009 | `src/contracts/run-activity.ts:99` | branch(if,0) | G | 授权后、begin 前取消会产生 ended/revoked，且没有 not_entered reconciliation；`run-machine.ts:934`。 | claim→prepare→authorize→submitControl(cancel)→readRunActivities/calendar；扩展 `tests/app/S2B-be2-run09-activity.test.ts:37`。 |
+| B-010 | `src/contracts/run-activity.ts:100` | branch(binary,0) | G | 上述取消保留原授权的 `kernel:null`；授权初值见 `run-machine.ts:854`，取消见 `:937`。 | 同 B-009 的公开链；断言 not_entered、零活动；测试位置 `tests/app/S2B-be2-run09-activity.test.ts:37`。 |
+| B-011 | `src/contracts/run-activity.ts:101` | branch(binary,1) | G | revoked/null Kernel 会执行 `phase==='authorized'` 比较，即使比较结果为 false；`run-machine.ts:937`、`run-activity.ts:100`。 | 同 B-009；不要把“比较为 false”误当作该 operand 不可执行。归入 `tests/app/S2B-be2-run09-activity.test.ts:37`。 |
+| B-012 | `src/contracts/run-activity.ts:101` | branch(binary,2) | G | 同一真实取消路径继续执行并满足 revoked 比较；`run-machine.ts:937`。 | 同 B-009，断言授权撤销后的 not_entered 投影；`tests/app/S2B-be2-run09-activity.test.ts:37`。 |
+| B-013 | `src/core/agent-runtime/continuation-brief-assembly.ts:592` | branch(cond,1) | D2 | 无 locator 且非 attested 已在前面返回；能到 helper 的无 locator Run 是人工核定结束，保留授权；`continuation-brief-assembly.ts:545`、`run-machine.ts:994`、`:2544`。 | 删无授权 fallback；收窄 attested 分支，必要时内联 helper。 |
+| B-014 | `src/core/agent-runtime/execution-driver.ts:871` | branch(if,0) | F | Session 持久化映射可在重启后的 Host 注册表中缺失；注册表来自启动配置；`kernel-store-locator.ts:6`、`:82`。 | 真实 prepare→关闭 Host→以缺少原 adapter 的注册表重开→startRun；沿用注册表重开 seam `tests/runtime/R4b-session-recovery.test.ts:153`，补 `tests/runtime/B2-runtime-execution.test.ts:353`。 |
+| B-015 | `src/core/agent-runtime/execution-driver.ts:1055` | branch(if,1) | D2 | committed entered 的 writer 同时写 history、running 和授权；`run-machine.ts:875`。 | 删可选判断；entered 返回类型要求授权，直接更新 permit revision。 |
+| B-016 | `src/core/agent-runtime/execution-driver.ts:1302` | branch(if,0) | F | entered 已提交但两次回执均丢失，可使本地 enteredDone 仍为 false，而重读 Run 已 running；`execution-driver.ts:1008`、`:1015`、`:1272`。 | 包装真实 `recordExecutionEntered`：先委托提交，再让初次及 replay 回执抛错；使用 `tests/runtime/B2-runtime-execution.test.ts:391` 的 entry 包装 seam，验证不撤销已 entered 的 Run。 |
+| B-017 | `src/core/agent-runtime/execution-driver.ts:1333` | branch(if,0) | D2 | 同一 adapter 已在 :870 验过；注册表冻结且只能追加，不能删除或替换；`execution-driver.ts:870`、`kernel-store-locator.ts:54`、`:77`、`:89`。 | 删重复 location 查找及拒绝；直接使用既有映射/withStore。 |
+| B-018 | `src/core/agent-runtime/execution-observation.ts:530` | branch(if,0) | D2 | 此处已有 locator；正式 entered 写入将 locator 与授权一起保存；`execution-observation.ts:521`、`run-machine.ts:875`。 | 删“有 history、无授权”的旧形状放行；收窄已 entered 的读取类型。 |
+| B-019 | `src/core/agent-runtime/query-execution.ts:312` | branch(if,0) | F | 已 prepared 的 Query 可在注册表变化后的重启中 start；入口直到这里才查 adapter；`agent-runtime/query-execution.ts:185`、`:311`。 | submit→createSession→claim→prepare→重启漏配 adapter→startQuery；使用 `tests/runtime/R4b-session-recovery.test.ts:156` 的配置 seam，补 `tests/runtime/R5b-query-session-loop.test.ts:161`。 |
+| B-020 | `src/core/agent-runtime/run-limits.ts:32` | branch(if,0) | D2 | 唯一生产调用在 `deadline!==null` 内；`run-limits.ts:44`、`:46`。 | 删 null 返回分支；参数/返回值收窄，并去掉调用处 `!`。 |
+| B-021 | `src/core/agent-runtime/run-reconcile.ts:102` | branch(cond,1) | D2 | late-evidence 调用先要求 unknown end；controls 调用由 queued-pointer/steer 筛选，未授权起始 Run 不会进入；`run-reconcile.ts:244`、`startup-reconcile.ts:418`。 | 删无授权 fallback；在两个调用点按已筛选状态取授权，简化 helper。 |
+| B-022 | `src/core/agent-runtime/run-reconcile.ts:264` | branch(if,0) | D2 | startup 已跳过 never-authorized 起始 Run；进程内 caller 只处理 unknown end；`startup-reconcile.ts:333`、`run-reconcile.ts:244`。 | 删 `V1/none` 返回；去掉 legacy 文案，收窄 classifier 输入。 |
+| B-023 | `src/core/agent-runtime/runtime.ts:329` | branch(cond,1) | D2 | 前置只放行 interrupted/attested/takeover 等结束形态，均从有授权的 Run 转移；`runtime.ts:285`、`:308`、`run-machine.ts:994`。 | 删无授权 fallback；保留 history/authorization Kernel 选择所需的真实路径。 |
+| B-024 | `src/core/agent-runtime/runtime.ts:429` | branch(if,0) | F | closure capability 查询可读到历史 Session，而当前 Host 未注册其 adapter；`runtime.ts:421`、`kernel-store-locator.ts:82`。 | 真实 Session→重启漏配原 adapter→turnClosureSupport；使用 `tests/runtime/R4b-session-recovery.test.ts:156` 的 registry seam，归入 `tests/runtime/A2-reconcile-runtime.test.ts:1069` 附近。 |
+| B-025 | `src/core/agent-runtime/session-operations.ts:213` | branch(if,0) | G | lower 来自外部 continuation cursor；解析失败映射 invalid；`session-operations.ts:425`。 | 先读合法 history 页，再提交 `l=0`/非整数的请求游标；补 `tests/runtime/R4b-session-input-boundaries.test.ts:136`。这是改请求，不是改库。 |
+| B-026 | `src/core/agent-runtime/session-operations.ts:787` | branch(if,0) | F | 注册表在启动时由 Host 配置给定；新进程可把同一 adapter 配到另一工作区，旧 Session 仍保留原 workspace；`kernel-store-locator.ts:8`、`:69`、`session-operations.ts:769`。 | 创建 Session→关闭→重开真实 registry，把 adapter 配到另一 workspace→readSessionHistory；用 `tests/runtime/R4b-session-recovery.test.ts:153` seam，归入 `tests/runtime/R4b-session-operations.test.ts:147`。 |
+| B-027 | `src/core/agent-runtime/source-capture-access.ts:632` | branch(if,0) | D2 | composition 总安装带该方法的真实 source authority；`create-platform.ts:1022`、`source-authority-reader.ts:163`。 | 将 Query source 所需 reader 标为必填，删运行时“方法不存在”检查。 |
+| B-028 | `src/core/agent-runtime/source-capture-access.ts:635` | branch(if,0) | F | lookupCommit/eventAt 的真实失败会返回 rejected；`source-authority-reader.ts:201`、`:218`。 | 真实 Query 保持 running→首次打开 source capture 时令 lookupCommit 或 eventAt 失败；扩展 `tests/runtime/source-binding-migration.test.ts:389` 的真实 authority 包装。 |
+| B-029 | `src/core/agent-runtime/source-capture-access.ts:636` | branch(cond,0) | U | 当前 Job 已读成功；原提交 receipt 与 Job 同批生成，后续“找不到提交”需缺失/损坏记录；`source-capture-access.ts:629`、`query-run-recovery.ts:492`、`source-authority-reader.ts:206`。 | 保留、免补测：明确报告提交链损坏，不能退回扫描旧事件。 |
+| B-030 | `src/core/agent-runtime/source-capture-access.ts:637` | branch(cond,0) | D2 | 真实 reader 没有 not_ready 返回：store 非 ready 被转换为 not_found/rejected；`source-authority-reader.ts:183`、`:205`、`:222`。 | 收窄该 reader 返回类型，删 not_ready 文案分支。 |
+| B-031 | `src/core/agent-runtime/source-capture-access.ts:637` | branch(cond,1) | F | store 故障返回 rejected，落入此 else；`source-authority-reader.ts:210`、`:223`。 | 同 B-028；对真实 authority 底层注入读取失败，断言保留错误详情；`tests/runtime/source-binding-migration.test.ts:389`。 |
+| B-032 | `src/core/agent-runtime/source-capture-access.ts:638` | branch(cond,1) | F | rejected 的 code/reason 会进入详情拼接；`source-authority-reader.ts:203`、`source-capture-access.ts:638`。 | 同 B-028，覆盖错误详情而非假造 submission 状态；`tests/runtime/source-binding-migration.test.ts:394`。 |
+| B-033 | `src/core/agent-runtime/source-capture-access.ts:646` | branch(binary,1) | D2 | 唯一初始 Job writer 总写真实 QueryRunRef；`query-run-recovery.ts:476`。 | 删除 `submitted.runRef ?? null` 的 null fallback，直接比较 runRef。 |
+| B-034 | `src/core/agent-runtime/source-capture-access.ts:650` | branch(if,0) | U | 初始提交的 intent、身份、时间与初始状态由同一 writer 固定；出现差异须改写提交或当前 Job；`query-run-recovery.ts:468`、`:492`。 | 保留、免补测：拒绝提交链不一致；不恢复改写已接受 intent 的测试。 |
+| B-035 | `src/core/agent-runtime/source-capture-access.ts:651` | branch(if,0) | D2 | Query 提交只接受 Host 的 human/system actor，agent 在写入前拒绝；`query-job-service.ts:220`、`:232`。 | 删除重复 actor 拒绝，收窄 submission actor 类型。 |
+| B-036 | `src/core/record-store/body-codec.ts:179` | branch(cond,0) | G | platform_operation 的 workspaceId 可省略，公开 material owner 明确允许；`material-service.ts:281`。 | Host→storeArtifact，origin 不带 workspaceId→openArtifact；扩展 `tests/data/R3b-materials-contract.test.ts:71`，使用真实 body backend。 |
+| B-037 | `src/core/record-store/body-codec.ts:188` | branch(if,0) | U | 当前编码入口必规范化并保存 origin；缺 origin 属旧格式/坏行；`body-codec.ts:193`，T 的写入链核对见 `t-items-TQ.md:428`。 | 保留、免补测：继续拒绝缺 origin，不恢复 legacy 解码。 |
+| B-038 | `src/core/work-graph/architecture/catalog-record-codecs.ts:402` | branch(if,0) | U | catalog 的 since 由 null 初值和提交游标绑定产生，不会写非法 cursor；`catalog-service.ts:702`、`:736`。 | 保留、免补测：当前存储格式校验。 |
+| B-039 | `src/core/work-graph/architecture/catalog-record-codecs.ts:459` | branch(binary,1) | U | 此 helper 校验 Revised **事件内嵌** catalog；正式事件写入的是绑定前 `since:null`，非 null 来自外部写入；`catalog-record-codecs.ts:511`、`catalog-service.ts:702`、`:710`。 | 保留、免补测：不要为执行 cursor 检查而伪造事件。 |
+| B-040 | `src/core/work-graph/architecture/catalog-record-codecs.ts:459` | branch(if,0) | U | 内嵌 catalog 的非法 since 只能由坏事件触发；正常事件取同一 null 初值；`catalog-service.ts:710`。 | 保留、免补测：事件格式拒绝边界。 |
+| B-041 | `src/core/work-graph/architecture/catalog-service.ts:395` | branch(if,0) | U | active pointer、baseline、catalog 在同一事务写入；缺 catalog 需要外部删除/旧数据；`catalog-service.ts:549`、`:727`。 | 保留、免补测：缺关联记录明确 unavailable。 |
+| B-042 | `src/core/work-graph/architecture/catalog-service.ts:400` | branch(if,0) | D2 | 按 catalogKey 取行后，codec 已验证 refKey 及 baselineRef 与 ref 的一致性；`catalog-record-codecs.ts:407`、`:412`。 | 删除重复 baselineRef 比较。 |
+| B-043 | `src/core/work-graph/architecture/catalog-service.ts:417` | branch(if,0) | U | 正式 baseline 与 catalog 同事务存在，历史修订也如此；`catalog-service.ts:549`、`:727`。 | 保留、免补测：拒绝缺目录的旧/损坏基线。 |
+| B-044 | `src/core/work-graph/communication/mailbox-service.ts:198` | branch(if,0) | U | 新消息总写 since 占位并绑定提交游标，更新保留它；`mailbox-service.ts:300`、`:304`。 | 保留、免补测：缺创建位置时拒绝更新。 |
+| B-045 | `src/core/work-graph/communication/mailbox-service.ts:614` | branch(if,0) | G | respondFromQueryAnswer 接收 AnswerRef，再检查其 Job 是否 consultation；可传真实普通 Query 的答案；`mailbox-service.ts:1781`、`:1800`、`:2587`。 | 发消息→完成无 consultation 的 semantic Query→respondFromQueryAnswer；补 `tests/app/AG2-consultation.test.ts:491` 的拒绝用例。 |
+| B-046 | `src/core/work-graph/communication/mailbox-service.ts:1298` | branch(if,0) | D2 | 同一个 record 已在 caller 的 :1358 排除无授权，然后才调用 manifestAgainstRun；`mailbox-service.ts:1358`、`:1397`。 | 删重复检查，参数携带已验证授权。 |
+| B-047 | `src/core/work-graph/communication/mailbox-service.ts:1358` | branch(if,0) | D2 | 此前已要求 running；正式 running writer 同时写 entered 授权；`mailbox-service.ts:1329`、`run-machine.ts:875`。 | 删除旧 running/无授权兼容检查，收窄 running facts 类型；保留 phase/generation 校验。 |
+| B-048 | `src/core/work-graph/communication/mailbox-service.ts:2786` | branch(binary,1) | F | 重启核对可在平台 locator 尚未落地时，先确认真实 Kernel input_accepted；`run-reconcile.ts:310`、`:342`。 | Kernel 已接受消息、entered 平台写入失败→重启 reconcile；通过 `tests/runtime/R4-control-runtime.test.ts:383` 的 entry 包装制造失败，验证确认消息成功。 |
+| B-049 | `src/core/work-graph/communication/mailbox-service.ts:2786` | branch(cond,0) | F | 上述窗口已有 begin 授权及 Kernel 身份，但无 history；`run-machine.ts:864`、`run-reconcile.ts:342`。 | 与 B-048 共用一例，核对从 authorization 取得 Kernel；归入 `tests/runtime/A2-reconcile-runtime.test.ts:225` 附近。 |
+| B-050 | `src/core/work-graph/communication/mailbox-service.ts:2786` | branch(cond,1) | D2 | 正式 observer 只确认真实 Kernel 事件；恢复调用先要求授权，正常 observation 也先排除无授权；`execution-inputs.ts:240`、`run-reconcile.ts:264`、`execution-observation.ts:530`。 | 删无授权→null 的内部 fallback；保留授权 Kernel 路径。 |
+| B-051 | `src/core/work-graph/communication/mailbox-service.ts:3300` | branch(if,0) | U | retired 要求 health=unavailable；进入该状态的 owner 写 unavailableSince，null 已由 codec 拒绝；`mailbox-service.ts:3249`、`session-availability.ts:452`、`session-record-codecs.ts:751`。 | 保留、免补测：缺失退休位置属于坏记录。 |
+| B-052 | `src/core/work-graph/communication/mailbox-service.ts:3303` | branch(if,0) | U | work_run 回复 writer 写 responseSince；绑定后的 null 已在 codec 拒绝；`message-machine.ts:1243`、`:1329`、`message-record-codecs.ts:883`。 | 保留、免补测：拒绝缺回复位置的记录。 |
+| B-053 | `src/core/work-graph/persistence/evidence-record-codecs.ts:334` | branch(if,0) | U | 正式 finalize 总传 finalizedAt，并由持久化尾部写入；`evidence-service.ts:1605`、`:355`。 | 保留、免补测：finalized 当前格式必须带时间。 |
+| B-054 | `src/core/work-graph/persistence/evidence-record-codecs.ts:436` | branch(if,0) | U | index writer 用旧列表长度加新增项同时生成 revision 和 evidenceIds；`verification-machine.ts:1049`。 | 保留、免补测：拒绝计数不一致的存储行。 |
+| B-055 | `src/core/work-graph/persistence/note-record-codecs.ts:364` | branch(if,0) | U | newNoteVersionRecord 总写 noticeClass，默认显式 null；`note-machine.ts:296`、`:306`。 | 保留、免补测：缺字段不再作为旧格式接受。 |
+| B-056 | `src/core/work-graph/persistence/note-record-codecs.ts:387` | branch(if,0) | U | noticeClass 由正式分类函数及枚举生成；`note-machine.ts:276`、`note-service.ts:832`。 | 保留、免补测：拒绝未知分类值。 |
+| B-057 | `src/core/work-graph/persistence/note-record-codecs.ts:608` | branch(if,0) | U | disposition 事件总显式写 actor，包括 null；`note-service.ts:844`、`:868`。 | 保留、免补测：拒绝缺 actor 的旧事件。 |
+| B-058 | `src/core/work-graph/persistence/note-record-codecs.ts:609` | branch(if,0) | U | disposition 事件总显式写 proof，包括 null；`note-service.ts:842`、`:868`。 | 保留、免补测：拒绝缺 proof 的旧事件。 |
+| B-059 | `src/core/work-graph/queries/query-execution.ts:1065` | branch(if,0) | **待定** | 正式 assembler 保证 duty 一致；bind 又是内部端口，但既有测试将其视为 admission 边界；`context-assembler.ts:614`、`:1965`、`queries/contracts.ts:135`、`tests/work-graph/S3-prepared-context-admission.test.ts:7`。 | 暂不删、不补造库测试。需核实是否存在允许提交**新建、合法 Run-owned manifest**的公开 owner 路径；存在则 G，在该 admission 文件补错 duty 请求；不存在则按 D2 删除重复检查。 |
+| B-060 | `src/core/work-graph/queries/query-execution.ts:1068` | branch(if,0) | **待定** | 正式 assembler 只按 Query kind 生成 planning/copy，恰好满足该判断；同样有内部 admission 边界问题；`context-assembler.ts:1997`、`:2014`、`queries/query-execution.ts:116`、`tests/work-graph/S3-prepared-context-admission.test.ts:7`。 | 与 B-059 一并核实新 manifest 的公开入口；有则补错 callKind 请求，无则 D2 删重复检查。 |
+| B-061 | `src/core/work-graph/queries/query-job-service.ts:279` | branch(if,0) | G | execution 来自公开 submit 的原始请求，尚未经过 execution shape 校验；`query-job-service.ts:195`、`:278`。 | 创建 Project/Workspace/Goal→submitQueryJob，execution 缺失/null；补 `tests/work-graph/R5b-query-job.test.ts:196`。 |
+| B-062 | `src/core/work-graph/queries/query-job-service.ts:286` | branch(if,0) | G | object 形状不足以保证合法 execution；未知 kind、错误 budget/binding 会在此拒绝；`query-job-service.ts:279`、`contracts/query-job.ts:246`。 | 同一公开提交链，传对象形状但非法 execution；补 `tests/work-graph/R5b-query-job.test.ts:196`。 |
+| B-063 | `src/core/work-graph/queries/query-job-service.ts:289` | branch(if,0) | D2 | validQueryExecution 只认三种 kind，其中 execution_coordination 已先拒绝；`contracts/query-job.ts:246`、`query-job-service.ts:280`。 | 删此重复 kind 拒绝分支。 |
+| B-064 | `src/core/work-graph/queries/query-job-service.ts:688` | branch(if,0) | G | 已有 active Plan 的 Goal 仍可收到新的 initial_coordination 提交请求；这是请求拒绝边界；`query-job-service.ts:688`。 | 公开采纳 Plan→用最新 pins 提交 initial_coordination；补 `tests/work-graph/R5b-query-job.test.ts:234`。 |
+| B-065 | `src/core/work-graph/queries/query-record-codecs.ts:237` | branch(if,0) | U | 公开提交先拒绝非对象 execution；存储缺该形状须绕过 owner；`query-job-service.ts:279`。 | 保留、免补测：当前记录格式校验。 |
+| B-066 | `src/core/work-graph/queries/query-record-codecs.ts:238` | branch(if,0) | U | 不合法 execution 在公开写入口已拒绝；`query-job-service.ts:286`。 | 保留、免补测：坏记录校验，不用 codec 测试冒充公开输入测试。 |
+| B-067 | `src/core/work-graph/queries/query-record-codecs.ts:446` | branch(if,0) | U | 初始 writer 必带 submission，后续基于既有快照演进；`query-run-recovery.ts:464`、`:492`。 | 保留、免补测：缺失/损坏 locator 必须拒绝，不能恢复事件扫描兼容。 |
+| B-068 | `src/core/work-graph/sessions/session-record-codecs.ts:661` | branch(if,0) | U | admission 对缺省 provenance 生成 new，对显式非法值拒绝，然后写 action；`session-directory.ts:707`、`:710`、`:782`。 | 保留、免补测：operation 当前格式要求 provenance。 |
+| B-069 | `src/core/work-graph/sessions/session-record-codecs.ts:664` | branch(if,0) | U | operation 写入前已通过同一 provenance 校验；`session-directory.ts:710`。 | 保留、免补测：存储解码边界拒绝损坏值。 |
+| B-070 | `src/core/work-graph/sessions/session-record-codecs.ts:736` | branch(if,0) | U | Session 创建复制已接受 operation 的 provenance；`session-directory.ts:959`、`:966`。 | 保留、免补测：拒绝旧/损坏 Session，不补 null provenance。 |
+| B-071 | `src/core/work-graph/tasks/claim-record-codecs.ts:245` | branch(if,0) | U | 正式 claim 写 null outcome；结束 writer 同时写 ended 和合法 outcome；`attempt-machine.ts:272`、`:308`。 | 保留、免补测：非法状态/outcome 组合属于坏记录。 |
+| B-072 | `src/core/work-graph/tasks/claim-record-codecs.ts:247` | branch(binary,1) | U | 非 ended Attempt 的 endOutcome 保持 null；late resolution 也只准 ended_unknown；`attempt-machine.ts:272`、`:551`。 | 保留、免补测：不要为了执行第二 operand 伪造活跃 Attempt 的 outcome。 |
+| B-073 | `src/core/work-graph/tasks/claim-record-codecs.ts:248` | branch(cond,0) | U | ended 缺合法 outcome 违反正式结束 writer 的组合；`attempt-machine.ts:308`。 | 保留、免补测：保留具体损坏原因。 |
+| B-074 | `src/core/work-graph/tasks/claim-record-codecs.ts:248` | branch(cond,1) | U | 非 ended 且非法非 null outcome 只能由库外写入；`attempt-machine.ts:272`、`:308`。 | 保留、免补测：保留具体损坏原因。 |
+| B-075 | `src/core/work-graph/tasks/model-request-codecs.ts:92` | branch(if,0) | U | requestId 在 issuance 输入校验后原值写入 permit；`model-call-service.ts:65`、`:146`。 | 保留、免补测：缺 requestId 属坏/旧 permit。 |
+| B-076 | `src/core/work-graph/tasks/model-request-codecs.ts:93` | branch(if,0) | U | requestDigest 先验 SHA-256 再写入；`model-call-service.ts:66`、`:146`。 | 保留、免补测：持久化 digest 格式校验。 |
+| B-077 | `src/core/work-graph/tasks/model-request-codecs.ts:94` | branch(if,0) | U | contextInputDigest 先验格式，并与输入绑定比对；`model-call-service.ts:67`、`:125`。 | 保留、免补测：拒绝不完整 permit。 |
+| B-078 | `src/core/work-graph/tasks/model-request-codecs.ts:95` | branch(if,0) | U | manifestDigest 先验格式，并与正式绑定比对；`model-call-service.ts:68`、`:128`。 | 保留、免补测：拒绝不完整 permit。 |
+| B-079 | `src/core/work-graph/tasks/plan-service.ts:772` | branch(cond,0) | G | advisory relation 只校验两端存在，没有禁止同一 Task；不能套用 DAG 的 self_dependency 规则；`plan-validation.ts:158`、`:163`、`:167`，`contracts/plan.ts:186`。 | proposePlan 含同 Task 的 coordination relation→review/apply→queryTaskGraph；补 `tests/work-graph/W1-future-plan.test.ts:125`，断言关系只列一次。 |
+| B-080 | `src/core/work-graph/tasks/plan-service.ts:782` | branch(if,1) | G | requirementId 要唯一，但多个 requirement 可指向同一 consumer；`plan-validation.ts:175`、`:185`。 | 为一个 Task 提交两个不同 requirementId→采纳→queryTaskGraph；扩展 `tests/work-graph/W1-future-plan.test.ts:301`。 |
+| B-081 | `src/core/work-graph/tasks/plan-service.ts:1139` | branch(if,0) | G | 公开 initial-plan owner 接受 AnswerRef，再核实原 Query kind；`plan-service.ts:1755`、`:1820`。 | 完成普通 semantic Query→把真实 AnswerRef 交 proposeInitialPlanFromAnswer，断言 invalid；补 `tests/work-graph/R5b-initial-plan.test.ts:110` 的反例。 |
+| B-082 | `src/core/work-graph/tasks/requeue-service.ts:951` | branch(if,0) | D2 | 正式 fan-out 将 trigger 与 Goal pin 从同一次读取绑定；旧 pin 在 :870 先拒绝，非 active 另有 permission 拒绝；`goal-fan-out-driver.ts:454`、`:458`，`requeue-service.ts:870`、`:940`。 | 删重复 epoch/state 拒绝；保留 Goal pin 与 actor/class 检查。普通 stale-pin 竞态不能覆盖此行。 |
+| B-083 | `src/core/work-graph/tasks/run-reconcile-service.ts:1035` | branch(switch,2) | D2 | Claimed 的 pointer control 同提交 applied；startup 对 starting 且无 queued pointer 的 Run 跳过；`run-machine.ts:1902`、`startup-reconcile.ts:418`。 | 删除 Claimed 专用拒绝 case，归入非法调用的统一处理；不手造 queued pointer。 |
+| B-084 | `src/core/work-graph/tasks/run-reconcile-service.ts:1036` | branch(switch,3) | D2 | Authorized 的未进入控制同样原子应用，正式 startup 不会送来该组合；`run-machine.ts:1904`、`startup-reconcile.ts:418`。 | 删除 Authorized 专用 case，合并统一非法调用处理。 |
+| B-085 | `src/core/work-graph/tasks/run-reconcile-service.ts:1037` | branch(switch,4) | D2 | revoke 与对应控制结算由同一状态转移完成；starting 无 queued pointer 被跳过；`run-machine.ts:2214`、`:2220`、`startup-reconcile.ts:418`。 | 删除 Revoked 专用 case；不恢复手写该前态的测试。 |
+| B-086 | `src/core/work-graph/tasks/session-facts.ts:442` | branch(if,0) | U | 查询索引键正是 executionState.sessionRef.sessionId，正常 owner 不迁移已 claim 的 Session；`query-record-codecs.ts:741`、`session-facts.ts:399`。 | 保留、免补测：索引与 canonical 行不一致是存储损坏边界，不伪造命中记录。 |
+| B-087 | `src/core/work-graph/views/activity-read-helpers.ts:187` | branch(if,0) | U | Run 和 DispatchOutbox 必须在同一 claim 提交产生；`claim-service.ts:479`。T 对该删除理由亦明确记录；`t-items-T1-w2.md:234`。 | 保留、免补测：缺派工记录报 unavailable 并带 key；不恢复旧形状 Run 测试。 |
+| B-088 | `src/core/work-graph/views/activity-read-helpers.ts:187` | branch(if,1) | G | 正常 claimed、尚无 history 的 Run 仍有 outbox；calendar 会为 open Run 查 claiming Session；`claim-service.ts:483`、`activity-read-model.ts:429`。 | claim 后不 start→readActivityCalendar（带/不带 sessionRefs）→验证归属；补 `tests/app/S2B-be2-run09-activity.test.ts:37` 的取消前读取。 |
+| B-089 | `src/core/work-graph/views/automatic-rework-notices.ts:194` | branch(if,0) | U | human 已被过滤；非 human 的 automation cap 由 policy 写成数值；`automatic-rework-notices.ts:179`、`task-failure.ts:508`、`:515`。 | 保留、免补测：拒绝不完整自动返工记录。 |
+| B-090 | `src/core/work-graph/views/automatic-rework-notices.ts:383` | branch(if,0) | U | 自动 successor round 写入 noticeAutomationCap；`evidence-service.ts:2030`、`:1701`。 | 保留、免补测：缺 cap 不猜默认值。 |
+| B-091 | `src/core/work-graph/views/decision-read-model.ts:1564` | branch(if,0) | U | 新消息总绑定 since；null 已在 decodeNoticeOrigin 拒绝，剩余缺键是旧/坏记录；`mailbox-service.ts:301`、`decision-record-codecs.ts:394`。 | 保留、免补测：不恢复旧时间排序 fallback。 |
+| B-092 | `src/core/work-graph/views/note-views.ts:654` | branch(binary,1) | D2 | production 总注入 architecture；非 ready 返回错误，ready catalog/modules 为必需；`create-platform.ts:1625`、`note-views.ts:531`、`catalog-record-codecs.ts:415`。 | 删除 optional access/`?? null` 的生产无效 fallback；相应依赖收窄为必填。 |
+| B-093 | `src/core/work-graph/views/note-views.ts:777` | branch(binary,1) | D2 | 已排除 current.value=null；合法 catalog 的 modules 必需且已校验；`note-views.ts:776`、`catalog-record-codecs.ts:415`。 | 删除 `modules ?? null`，使用数组。 |
+| B-094 | `src/core/work-graph/views/note-views.ts:781` | branch(binary,1) | D2 | basis.value 已排除 null，返回的 catalog 同样经过正式校验；`note-views.ts:780`、`catalog-record-codecs.ts:415`。 | 删除 `modules ?? null`；后续 null 检查随之简化。 |
+| B-095 | `src/core/work-graph/views/note-views.ts:868` | branch(binary,1) | D2 | 缺 architecture 只来自未完整装配的依赖；正式 composition 必传，读失败不会返回 ok/null；`create-platform.ts:1625`、`note-views.ts:528`、`:532`。 | 依赖改必填，删除该 null fallback；不能把“尚未采纳架构”的读取错误当成 ready/null。 |
+| B-096 | `src/core/work-graph/views/task-state-timeline.ts:399` | branch(if,0) | F | 真实 round 的 since→eventAt 可遇到存储读取失败；`task-state-timeline.ts:398`。 | openVerification→读取 task timeline；只对 eventAt 注入 unavailable，沿用 `tests/work-graph/S2B-activity-read-faults.test.ts:47` wrapper；补 `tests/work-graph/S2B-31-task-timeline-main.test.ts:1`。 |
+| B-097 | `src/core/work-graph/views/track-read-model.ts:222` | branch(if,0) | G | `ca` 来自请求中的 Query 分段游标，属于外部输入；`track-read-model.ts:226`、`:240`。 | 真实 Query 轨迹分页→下次请求将 q.ca 改成数字/对象→断言 invalid；扩展 `tests/work-graph/S2B-30-track-bars.test.ts:333`。 |
+| B-098 | `src/core/work-graph/views/track-read-model.ts:222` | branch(if,1) | G | 正常 Query continuation 的 ca 为 string/null，可继续解析；`track-read-model.ts:219`、`:223`。 | 同一 Session 完成多次真实 Query→小 page limit 连续读页，原样传回 cursor；补 `tests/work-graph/S2B-30-track-bars.test.ts:333`。 |
+| B-099 | `src/ui/views/execution/panel.ts:36` | branch(cond,0) | G | 公开 sendMessage 支持 waitAfterSend:true，UI 展示等待文字；`mailbox-service.ts:2037`、`panel.ts:36`。 | 用真实协作 wait 消息 DTO 渲染面板，断言等待文字；业务链取 `tests/app/AG2b-collaboration.test.ts:167`，渲染断言放 `tests/app/MVP-ui-entry.test.ts:28` 所在 UI 测试。 |
+| B-100 | `src/ui/views/execution/panel.ts:36` | branch(cond,1) | G | notify/非等待 inquiry 可合法令 waitAfterSend 不为 true；`mailbox-service.ts:2037`。 | sendMessage(waitAfterSend:false)→读取协作 DTO→渲染，断言无等待文字；放 `tests/app/MVP-ui-entry.test.ts:28` 所在 UI 测试。 |
+
+**分类计数**，按上述覆盖行计算，不代表独立测试用例数量；输入共 100 行，见 `lists/list-B.tsv:2`、`:101`。
+
+| 类别 | 行数 |
+|---|---:|
+| D1 走不到 | 0 |
+| D2 不会发生 | 27 |
+| U 只有篡改才会发生 | 36 |
+| F 外部故障 | 12 |
+| G 公开步骤能到、没测 | 23 |
+| N 不适用 | 0 |
+| 待定 | 2 |
+| **合计** | **100** |
+
+**针对 T 错删测试的发现：本组不产生 A 类结论。**B 是新增或改写行上的未覆盖分支，不能据此认定某条 T 删除理由错误；A 的“原覆盖消失”另列统计。依据：`ref/mapped-summary.txt:3`。因此这里没有可以负责任列出的“A 行＋错误删除 item id”。B-059、B-060 的待定事项是 admission 边界范围，需要 lead 核实后决定删除还是补拒绝测试，证据见 `queries/contracts.ts:135`、`tests/work-graph/S3-prepared-context-admission.test.ts:7`。
+
+**L-2 对应项如下。**`ref/t-end-list.md:23` 把 `provenNotEnteredKernel` 标在 activity helper 下；实际定义在 `src/contracts/run-activity.ts:91`。应按下面的分支拆开处理。
+
+| L-2 对应内容 | 本组行 | 分类 | 给 lead 的处理建议 |
+|---|---|---|---|
+| `provenNotEnteredKernel` 的授权分支 | B-009 | G | 保留并补“授权后、begin 前取消”的公开链；`run-machine.ts:934`。 |
+| 同一谓词的 Kernel 判断 | B-010 | G | 与 B-009 共用一例；初始授权的 Kernel 为 null；`run-machine.ts:857`。 |
+| 同一谓词的 authorized 比较 operand | B-011 | G | 该 operand 在 revoked 路径也会被执行；`run-activity.ts:101`。 |
+| 同一谓词的 revoked operand | B-012 | G | 同例覆盖真实 revoked 状态；`run-machine.ts:937`。 |
+| 同一轮遗留裁定涉及的“缺 dispatch”拒绝分支 | B-087 | U | 保留、免补测；不恢复旧形状 Run 测试。对应 T1-036 / W2b-57，见 `t-items-T1-w2.md:237`、`t-w2b-findings.md:132`。 |
+| 同一 dispatch 判断的正常继续分支 | B-088 | G | 补真实 claim 后、start 前的活动读取；`activity-read-model.ts:429`。 |
+
+L-2 中“B-03 背后的重查”是当前执行绑定变化检查，位于 `src/core/agent-runtime/source-capture-access.ts:684`；它**不在本组清单**，不能把 B-034 的原始 submission 一致性检查算作它。两者分别见 `source-capture-access.ts:650`、`:684`；本组该文件的行只列在 `lists/list-B.tsv:28` 至 `:36`。

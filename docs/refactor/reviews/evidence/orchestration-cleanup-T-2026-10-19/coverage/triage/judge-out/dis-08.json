@@ -1,0 +1,20 @@
+{"rows": [
+  {
+    "row": "A2-006",
+    "cls": "G",
+    "winner": "claude",
+    "reason": "The mailbox read for a line runs on the reader's budgeted store, not the raw one: `work-line-reader.ts:327` wraps `deps.records` in `countingStore`, and `:2064` passes `state.records` into `readUndeliveredReplies`, whose `lookup` spends one unit (`work-line-reader.ts:151-155`). R is a one-Session retired line (no provenance, `tests/helpers/S2C-X-scale-fixture.ts:256,298`), so `readWrittenAnchors` spends exactly one unit on its first anchor page (`work-line-reader.ts:1894,1938`), then the mailbox's source read at `mailbox-service.ts:3242` spends the second (`readMany`, `plan-readers.ts:361`). With budget 2 the continuation lookup at `mailbox-service.ts:3254` is rejected `history_budget` (`work-line-reader.ts:119-121`), so `continuationRead.status !== 'ready'` at `mailbox-service.ts:3262` is taken and the part is reported partial (`work-line-reader.ts:2079-2087`). That is the exact call the deleted measurement made (`before tests/work-graph/S2C-lines-scale.test.ts:156-157`, `countAcceptedCalls(..., 2)`), so no injected store failure is needed and the class is G, not F. A real backend failure is a second route but does not make the arm fault-only.",
+    "proposal": "Add a case next to 2C-25 (4) in `tests/work-graph/S2C-lines-scale.test.ts` (line 115): `fixture.readerWith(fixture.deps.records, 2)`, then `listWorkLines` (or `assembleLineBriefs` for `fixture.r`); assert the R row's `undelivered` marker is `{status:'partial', atLeast:0}`, `r.status.partialParts` contains `{part:'undelivered', reason:'history_budget'}`, and the row is still returned (not rejected). Budget 10 (2C-25 (4)) exhausts in the message-page lookup instead, so it does not cover this stop; the F route (`failingLookup(records,'session-by-provenance')`, `tests/helpers/S2C-L-line-support.ts:540-551`) stays available but is not needed.",
+    "t_reason_wrong": false,
+    "t_item": "T1-039; before test tests/work-graph/S2C-lines-scale.test.ts:146-183 (budget-2 measurement at :156-157)"
+  },
+  {
+    "row": "B-045",
+    "cls": "D2",
+    "winner": "claude",
+    "reason": "`respondFromQueryAnswer` is not published on the platform mailbox: `create-platform.ts:1375-1389` lists only send/read/inbox/outbox/ack/respondMessage/undelivered-replies/input-accepted, and it is wired only into `consultations.messages` at `create-platform.ts:1845-1847`. Its sole production caller is `consultation.ts:177`; that consumer reads the deterministic QueryJob first (`consultation.ts:343-345`) and `continueExisting` refuses anything that is not `semantic_query` with a `consultation` binding before any attach (`consultation.ts:250-251`), while every job it submits itself always carries `execution.consultation` (`consultation.ts:451-458`). So no production path ever passes an ordinary Query's AnswerRef here; the mailbox is also Host-only (`mailbox-service.ts:2593`). Codex's route needs a direct call to the unpublished port, which no route (`src/app/core-routes.ts:404-420`) or Host code makes, so the state cannot arise: D2, not G. Codex's cited `mailbox-service.ts:1781`/`:1800` are the fact reader and the `consultationBindingOf` call itself, not a caller.",
+    "proposal": "Delete the arm `mailbox-service.ts:614-616` and the `not_consultation` verdict (`message-machine.ts:365`, its case at `:696-697`) plus the pure-machine row `tests/state/message-machine.test.ts:143`. Keep a narrowing for the optional field (the codec still admits `semantic_query` without `consultation`, `query-job.ts:159,248`): return `{binding:'other_message'}` (or assert) when `consultation === undefined`, so the following `consultation.messageRef` accesses type-check; `QueryAnswerBinding` then has one fewer state and `queryAnswerProblem` one fewer case. Do not add a test that calls the unpublished port directly.",
+    "t_reason_wrong": false,
+    "t_item": ""
+  }
+]}

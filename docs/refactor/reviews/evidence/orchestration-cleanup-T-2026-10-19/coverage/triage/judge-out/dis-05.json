@@ -1,0 +1,49 @@
+{
+  "rows": [
+    {
+      "row": "A1-060",
+      "cls": "D2",
+      "winner": "codex",
+      "reason": "The TaskLease body is validated by the same store read that builds `present`: validateTaskLeaseSnapshot (src/core/work-graph/tasks/plan-readers.ts:133-145) calls taskLeaseSnapshotProblem (src/core/work-graph/persistence/execution-entry-codecs.ts:254-269), which already requires a JSON object, schemaVersion 1, non-empty holderRunId/attemptId. Both stores decode each snapshot body against that registered schema and return corrupt before a ready batch exists (src/core/record-store/sqlite-record-store.ts:375-385; src/core/record-store/in-memory-record-store.ts:248-253); readFutureChangeTaskFacts maps any non-ready read to unavailable at plan-readers.ts:2049-2052. parseLease (plan-readers.ts:1142-1146) checks only a subset of the codec's fields, so a ready batch can never yield null. The before-T 'undecodable-lease' case did not tamper with the store: corruptLeaseB wraps readMany and substitutes json '{}' at the port (before tests/work-graph/W1-future-plan.test.ts:671-676, :740-741), bypassing the codec. The arm is unreachable even with a hand-edited database, so D2, not U.",
+      "proposal": "Delete the duplicate null check at src/core/work-graph/tasks/plan-readers.ts:2076 and consume the lease record the store already validated; parseLease's remaining null arms at other callers can be judged the same way. No test belongs anywhere (do not restore the port-substituted 'undecodable-lease' case).",
+      "t_reason_wrong": false,
+      "t_item": "T1-065 (.dsh-ref/evidence/books/t-items-T1-w2.md:472); before-T test .dsh-ref/before/tests/work-graph/W1-future-plan.test.ts:740 'undecodable-lease' with corruptLeaseB :671-676"
+    },
+    {
+      "row": "A1-062",
+      "cls": "U",
+      "winner": "neither",
+      "reason": "Arm 0 at plan-readers.ts:2081 needs a TaskReduction record for a touched Task with no TaskLease record. Only completeTask writes a TaskReduction (src/core/work-graph/tasks/completion.ts:469; the sole write_task_reduction effect is src/core/work-graph/state/task-machine.ts:1139). For a work Task the round's producer must be the Task's own Run (completion.ts:366-369, task-machine.ts:1062-1064), and every Run is created by a claim whose same commit writes the Lease (src/core/work-graph/tasks/claim-service.ts:445-448); snapshots are never deleted (in-memory-record-store.ts:387 is rollback only), so the Lease arm at :2074 always returns first for it (Lease and Reduction come from one readMany at :2048). A completed gate has a Reduction and no Lease, but any gate in the touched set has a changed execution definition, which validateFutureObligationCoverage refuses first as gate_definition_changed (src/core/work-graph/tasks/plan-validation.ts:503-520, called at src/core/work-graph/tasks/plan-service.ts:2953-2955); added gates are new taskIds. Codex's P10 path therefore stops at the gate freeze. What remains is a decodable TaskReduction written outside the platform's writers, with no lease: that reaches the arm (the store will return it), so U, not G and not D2.",
+      "proposal": "Keep the reduction read and the untraced rule's reduction branch untested: do not restore T1-062's raw-seeded changed-reduction/added-reduction/task-order cases (AGENTS rule 4, decision 79). Do not delete :2080-2086 either: a foreign or old store carrying a formal reduction should still be refused with 'already has a formal reduction' (already pinned for the pure rule at tests/state/plan-machine.test.ts:699), and the key-order read is cheap.",
+      "t_reason_wrong": false,
+      "t_item": "T1-062 (.dsh-ref/evidence/books/t-items-T1-w2.md:444); before-T test .dsh-ref/before/tests/work-graph/W1-future-plan.test.ts:708 'changed-reduction', :712 'added-reduction', :723 'task-order' (seedReduction commits the record raw)"
+    },
+    {
+      "row": "A1-063",
+      "cls": "U",
+      "winner": "neither",
+      "reason": "Arm 1 at plan-readers.ts:2083 is the fall-through of `if (reduction === null)`, so its only entry is A1-062's state: a decodable TaskReduction for a touched Task with no TaskLease. Every platform-written reduction belongs to a Task that also holds a Lease (work: completion.ts:366-369, :469; claim-service.ts:445-448; leases are never removed), or to a gate, which the gate freeze keeps out of the touched set (plan-validation.ts:503-520 via plan-service.ts:2953-2955). A decodable foreign/hand-written reduction record reaches the line (the body codec accepts it), so U, not D2; the before-T cases seeded exactly that state raw (:708, :712, :723). Codex's G reading ('P10 writes a decodable gate Reduction') is blocked by the same gate freeze at :518-520.",
+      "proposal": "Same as A1-062: keep the live arm untested, with no new tamper test. It only turns a foreign/old reduction record into a fact the untraced rule can refuse on; the store's TaskReduction codec already rejects a damaged body before this line.",
+      "t_reason_wrong": false,
+      "t_item": "T1-062 (.dsh-ref/evidence/books/t-items-T1-w2.md:444); before-T test .dsh-ref/before/tests/work-graph/W1-future-plan.test.ts:708 'changed-reduction', :712 'added-reduction', :723 'task-order'"
+    },
+    {
+      "row": "A1-078",
+      "cls": "D2",
+      "winner": "claude",
+      "reason": "Line 166 has two ternaries and the covered arms identify the row: the after-T A8-2a queued-cancel case takes the outer false branch and the 'cancelled' arm (tests/scenarios/A8-host-restart-entry.test.ts:148-171, the reconcile_not_entered path at run-reconcile-service.ts:870-871 with nodeBefore 'Revoked'), leaving the outer-then 'paused' arm (A1-077) and the inner-else 'resumed' arm (A1-078) uncovered. 'resumed' needs a non-cancel intent to reach :164: RUN-16 emits a control_reconciled effect only for a queued cancel (pointer cancelled) or a queued pause (pointer paused) (src/core/work-graph/state/run-machine.ts:2217-2223); reconcileRunControls refuses a Claimed/Authorized/Revoked node (run-reconcile-service.ts:1035-1038) and its Ended/EndedUnknown case passes nodeBefore Ended/EndedUnknown (:1049); every other end passes Entering/Running/Ended, for which notEnteredEntryPhase is null (src/core/work-graph/state/control-intent-machine.ts:449-462). A resume on a Run that never entered is applied in its submitting commit instead (src/core/work-graph/tasks/control-service.ts:264-277). The deleted test seeded the impossible pre-D-7 ledger (queued resume plus a bumped pointer) raw at before tests/runtime/A2-reconcile-runtime.test.ts:527-543, :545. No platform writer or fault produces it, so D2, not F or G.",
+      "proposal": "Delete the resume arm: :166 becomes `kind: intent.kind === 'pause' ? 'paused' : 'cancelled'`, and make a resume reaching :164 an internal assertion/unavailable like the impossible nodes elsewhere. Do not restore A8-1d's raw-seeded resume case.",
+      "t_reason_wrong": false,
+      "t_item": "TP-109 (.dsh-ref/evidence/books/t-items-TP.md:799); before-T test .dsh-ref/before/tests/runtime/A2-reconcile-runtime.test.ts:545 A8-1d resume variant, seedPreD7Intent :527-543"
+    },
+    {
+      "row": "A1-079",
+      "cls": "F",
+      "winner": "claude",
+      "reason": "runRefusal is reached only when transitionRun rejects at run-reconcile-service.ts:866 (reconcileRun) or :947 (resolveUnknownRun). The Host attestation entry pre-checks this Host's lease, a non-empty reason, the exact pin and that the Run's outcome is outcome_unknown (src/composition/create-platform.ts:2082-2099), so the machine's known_terminal/never_begun/invalid refusals are not production steps; Codex's G example (calling it for a Run not in the unknown state) is stopped at :2099. What survives the gate is the Host-read fact inputsConfirmed: the honest W-14 flow makes a real outcome_unknown Run (tests/scenarios/A8-host-restart-attestation.test.ts:54-70) and readReviewDraftAtEntry passes confirmMailboxInputs' false straight to the owner (src/core/agent-runtime/run-reconcile.ts:764, :774-786; create-platform.ts:2134-2135), and confirmMailboxInputs returns false when recordInputAccepted does not commit or throws (src/core/agent-runtime/execution-inputs.ts:243-252) - a store failure; RUN-22 then refuses 'unavailable' at src/core/work-graph/state/run-machine.ts:2536-2537 through runRefusal. A Host lease lost between the gate and the commit (hostLeaseGuard at run-machine.ts:2533-2534) is the second fault path. Both need a real external event, so F, not G.",
+      "proposal": "Add one case to tests/scenarios/A8-host-restart-attestation.test.ts, which already makes a real W-14 outcome_unknown Run (:54-70) and calls the owner directly through the attest helper (:86-88): with a fresh requestId call owner.resolveUnknownRun with {kernelTurnOpen:false, inputsConfirmed:false, review:<the incomplete draft>} - the facts the Host passes after recordInputAccepted fails - and expect {status:'rejected', code:'unavailable'} with ledgerEvents and the execution record unchanged, using the no-write assertion already in the file (:98-105). That reaches the RUN-22 refusal at run-machine.ts:2536 through runRefusal; the same seam pattern as the W-09 unconfirmed refusal at tests/runtime/A2-reconcile-runtime.test.ts:382-389.",
+      "t_reason_wrong": false,
+      "t_item": "TP-109 (.dsh-ref/evidence/books/t-items-TP.md:799); before-T test .dsh-ref/before/tests/runtime/A2-reconcile-runtime.test.ts:545 A8-1d resume-while-paused, whose reconcileRunControls call site was the only covered runRefusal path and was removed with the test"
+    }
+  ]
+}
