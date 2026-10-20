@@ -38,7 +38,6 @@ export const ARCHITECTURE_SOURCE_OBSERVED_EVENT = 'ArchitectureSourceObserved';
 export const ARCHITECTURE_SOURCE_OBSERVED_EVENT_VERSION = 1;
 export const OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE = 'application/vnd.coding-platform.observed-architecture+json';
 /** File-level chunk body (spec L12). One artifact per chunk. */
-export const FILE_GRAPH_CHUNK_SCHEMA_ID = 'ObservedFileGraphChunk@1';
 export const FILE_GRAPH_CHUNK_CONTENT_TYPE = 'application/vnd.coding-platform.observed-file-graph-chunk+json';
 
 /** One stored file-level graph chunk. A chunk is always the current `schemaVersion: 2`

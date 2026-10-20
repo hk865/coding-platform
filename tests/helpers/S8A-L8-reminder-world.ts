@@ -44,19 +44,19 @@ export const FIRST_AT = '2026-10-17T00:00:00.000Z';
 export const THREE_HOURS_FIVE = 3 * 60 + 5;
 const actor = { kind: 'human' as const, id: 's8a-l8-operator' };
 
-export type ReminderBackend = 'memory' | 'sqlite';
+type ReminderBackend = 'memory' | 'sqlite';
 type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;
 
-export type ModuleSpec = { id: string; paths: string[] };
-export type CatalogSpec = {
+type ModuleSpec = { id: string; paths: string[] };
+type CatalogSpec = {
   modules: ModuleSpec[];
   dependencies: { from: string; to: string }[];
   taskModule: string;
 };
 /** One capture stage: remove these files, then write these files, then capture. */
-export type StageSpec = { write: Record<string, string>; remove?: string[] };
+type StageSpec = { write: Record<string, string>; remove?: string[] };
 
-export const A03_CATALOG: CatalogSpec = {
+const A03_CATALOG: CatalogSpec = {
   modules: [{ id: 'A', paths: ['src/a/core'] }, { id: 'B', paths: ['src/b'] }],
   dependencies: [{ from: 'A', to: 'B' }],
   taskModule: 'A',
@@ -77,7 +77,7 @@ export const A03_STAGES: StageSpec[] = [
 ];
 
 /** A2 fault at the reminder-reader seam. `gate-*` holds after the REAL read. */
-export type ReminderFault =
+type ReminderFault =
   | { kind: 'throw' }
   | { kind: 'reject' }
   | { kind: 'cancel' }
@@ -85,16 +85,16 @@ export type ReminderFault =
   | { kind: 'gate-throw' };
 
 /** A2/A3 fault at the graph-context seam, on the upstream missing-input read only. */
-export type GraphFault =
+type GraphFault =
   | { kind: 'cancel-upstream' }
   | { kind: 'gate-upstream' };
 
 /** A2/A3 fault at the task-input page owner, after its REAL read. */
-export type InputPageFault =
+type InputPageFault =
   | { kind: 'cancel-page' }
   | { kind: 'gate-page' };
 
-export type ReminderGate = {
+type ReminderGate = {
   /** Resolves once the real reader returned and the wrapper is holding. */
   entered: Promise<void>;
   release(): void;
@@ -104,7 +104,7 @@ export type ReminderGate = {
 
 type GateState = ReminderGate & { released: Promise<void>; markEntered(): void };
 
-export type ReminderWorldOptions = {
+type ReminderWorldOptions = {
   catalog?: CatalogSpec;
   stages?: StageSpec[];
   fileGraph?: { maxNodes: number; maxEdges: number; chunkBytes?: number };
@@ -118,7 +118,7 @@ export type ReminderWorldOptions = {
   gatePreparedPut?: boolean;
 };
 
-export type ReminderWorld = {
+type ReminderWorld = {
   platform: Platform;
   ctx: CoreCallContext;
   ctxWithSignal(signal: AbortSignal): CoreCallContext;
@@ -151,7 +151,7 @@ export type ReminderWorld = {
   close(): Promise<void>;
 };
 
-export async function writeFilesAt(root: string, files: Record<string, string>): Promise<void> {
+async function writeFilesAt(root: string, files: Record<string, string>): Promise<void> {
   for (const [path, body] of Object.entries(files)) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), body);
@@ -159,7 +159,7 @@ export async function writeFilesAt(root: string, files: Record<string, string>):
 }
 
 /** A scripted Host: the preparation reads this configuration and calls no model. */
-export function hostFor(): RuntimeHostBindings {
+function hostFor(): RuntimeHostBindings {
   return {
     async resolveConfiguration(): Promise<{ status: 'ready'; value: ResolvedRuntimeConfiguration }> {
       return { status: 'ready', value: {
@@ -421,7 +421,7 @@ export async function createReminderWorld(kind: ReminderBackend,
     requirementLevel: 'optional', taskKind: 'work', disposition: 'active', phase: 'pending',
     scope: { kind: 'module', stageId: 'stage-a', moduleRef: catalog.taskModule },
   }];
-  const draft: PlanRevisionDraft = { schemaVersion: 1, planId: planRef.planId, planRevision: 1,
+  const draft: PlanRevisionDraft = { schemaVersion: 2, planId: planRef.planId, planRevision: 1,
     goalId: goalRef.goalId, stages: [{ stageId: 'stage-a', title: 'A' }],
     tasks: [
       { taskId: 'task-a', stageId: 'stage-a', title: 'A work', requirementLevel: 'required',

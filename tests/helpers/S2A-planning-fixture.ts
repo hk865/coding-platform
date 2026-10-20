@@ -7,17 +7,17 @@
  * No record is written directly.
  */
 import type { WriteResult } from '../../src/contracts/core/results.js';
-import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { QueryJobAnswerRef, QueryJobAnswerV1, QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { QueryEntryIdentity } from '../../src/core/work-graph/queries/contracts.js';
-import { createQueryExecution, QUERY_MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/queries/query-execution.js';
+import { createQueryExecution } from '../../src/core/work-graph/queries/query-execution.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { T, WORKSPACE, WORKSPACE_SCOPE, type S5DecisionFixture } from './S5-decision-fixture.js';
 import { ready, pin } from './S5-queue-support.js';
+import { preparationHost, prepareQueryForReal } from './task-claim-fixture.js';
 
 /** The planning Goal D the queue's cause cards are scoped to. */
 export const PLANNING_GOAL_REF = { aggregateType: 'Goal' as const, projectId: 'P', goalId: 'D' };
@@ -39,7 +39,7 @@ export async function buildPlanningQuestions(
     meta: { requestId: 's2a-planning-goal', expected: [await pin(f.records, { aggregateType: 'Project', projectId: 'P' }),
       await pin(f.records, WORKSPACE)] } }));
   const roles = createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId });
-  const roleBinding = f.runRA.roleBinding;
+  const roleBinding = f.runRB.roleBinding;
   const budget = { contextWindowTokens: 128000, inputTokens: null, outputTokens: null,
     maxRequests: 4, maxToolCalls: 8, timeoutMs: null, perResponseTokens: 512 };
   const host = { configurationRevision: 's2a-planning-host-1', permissions: { tools: ['read'], writeScope: [] as [] },
@@ -70,22 +70,13 @@ export async function buildPlanningQuestions(
     const state = record.run.run.executionState;
     if (state === undefined) throw new Error('planning claim has no usable role');
     const facts = ready(await execution.readPreparationFacts(f.ctx, runRef));
-    const input = 'Produce one schemaVersion 2 needs_decision question.';
-    const manifest: PreparedQueryManifestV1 = { schemaVersion: 1, kind: 'query_execution', queryRunRef: runRef,
-      sessionRef: session, sessionGeneration: state.sessionGeneration, roleBinding, sessionRole: state.role,
-      role: state.roleResolution, hostTemplate: host.hostTemplate, hostConfigurationRevision: host.configurationRevision,
-      goal: { ref: facts.goal.ref, revision: facts.goal.revision },
-      workspace: { ref: facts.workspace.ref, revision: facts.workspace.revision },
-      focusPlan: facts.focusPlan === null ? null : { ref: facts.focusPlan.ref, revision: facts.focusPlan.revision },
-      permissions: host.permissions, runtimeBudget: budget, budget: { tokenBudget: null, deadline: null },
-      sourceRefs: [], input, inputDigest: sha256Hex(input) };
-    const body = ready(await f.bodies.put({ body: JSON.stringify(manifest), contentType: QUERY_MANIFEST_CONTENT_TYPE,
-      sourceRefs: [{ kind: 'workspace', refId: 'W', revision: String(facts.workspace.revision) }],
-      origin: { kind: 'run', owner: runRef }, requestedAt: T }));
-    const prepared = { queryRunRef: runRef, bundleRef: body.ref, inputDigest: manifest.inputDigest };
-    record = mustWrite(await execution.bindPreparedQuery(f.ctx, { input: { prepared }, meta: {
-      requestId: `S2A-PQ-prepare-${suffix}`, expected: [{ ref: runRef, revision: record.run.revision },
-        { ref: record.session.ref, revision: record.session.revision }] } }));
+    const prepared = (await prepareQueryForReal(f, {
+      bodies: f.bodies, queryRunRef: runRef, queryExecution: execution, now: f.now,
+      requestId: `S2A-PQ-prepare-${suffix}`,
+      host: preparationHost({ configurationRevision: host.configurationRevision, permissions: host.permissions,
+        hostTemplate: host.hostTemplate, budget }),
+    })).prepared;
+    record = ready(await execution.readQueryExecution(f.ctx, runRef));
     const kernel = { adapterId: record.session.kernel.adapterId, kernelSessionId: record.session.kernel.kernelSessionId,
       runId: `S2A-PQ-kernel-${suffix}`, turnId: `S2A-PQ-turn-${suffix}` };
     const ticket = mustWrite(await execution.beginQueryEntry(f.ctx, { input: { prepared, consumerId: `S2A-PQ-consumer-${suffix}`, kernel },

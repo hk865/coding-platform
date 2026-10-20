@@ -14,26 +14,19 @@
  * public `readRunActivities`.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { RuntimeExecutionPort } from '../../src/core/agent-runtime/ports.js';
 import { unknownFacts } from '../../src/core/agent-runtime/run-activity-reader.js';
-import type { RunActivityViewV1 } from '../../src/core/work-graph/views/activity-read-model.js';
 import { createActivityBackfill } from '../../src/business/workflow/activity-backfill.js';
 import {
   countedFacts, openS2BActivityFixture, WORK_TASK_IDS, type S2BActivityFixture,
 } from '../helpers/S2B-activity-fixture.js';
+import { viewOf } from '../helpers/S2B-activity-fixture.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 
 const DAY = 86_400_000;
 const T0 = Date.parse('2026-10-20T00:00:00.000Z');
 const at = (offsetDays: number): string => new Date(T0 + offsetDays * DAY).toISOString();
 
-function viewOf(read: ReadResult<RunActivityViewV1[]>, runId: string): RunActivityViewV1 {
-  if (read.status !== 'ready') throw new Error(`the activity read was not ready: ${JSON.stringify(read)}`);
-  const found = read.value.find(view => view.runRef.runId === runId);
-  if (found === undefined) throw new Error(`no activity view for ${runId}`);
-  return found;
-}
 
 let fixture: S2BActivityFixture | null = null;
 afterEach(async () => { await fixture?.close(); fixture = null; });

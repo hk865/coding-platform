@@ -27,11 +27,11 @@ const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'r3c-boundaries';
 const goalRef = { aggregateType: 'Goal', projectId, goalId: 'goal-1' } as const;
 
-function snapshotBody(schemaVersion: 1 | 2, extra: Record<string, unknown> = {}): Record<string, unknown> {
+function snapshotBody(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     ref: { aggregateType: 'PlanRevision', projectId, planId: 'plan-1' },
     revision: 1,
-    schemaVersion,
+    schemaVersion: 2,
     goalRef,
     planId: 'plan-1',
     planRevision: 1,
@@ -84,17 +84,10 @@ it('does not treat an absent canonical task phase as pending', () => {
   ]));
 });
 
-it('uses one stable Store codec family and explicit Plan content versions', () => {
-  const v1 = snapshotBody(1);
-  const v2 = snapshotBody(2, { taskRelations: [], inputRequirements: [] });
-  expect(decodePlanRevisionSnapshot(encodedRecord('PlanRevisionSnapshot@1', v1)).status).toBe('decoded');
+it('uses one stable Store codec family and an explicit Plan content version', () => {
+  const v2 = snapshotBody({ taskRelations: [], inputRequirements: [] });
   expect(decodePlanRevisionSnapshot(encodedRecord('PlanRevisionSnapshot@1', v2)).status).toBe('decoded');
   expect(decodePlanRevisionSnapshot(encodedRecord('PlanRevisionSnapshot@2', v2)).status).toBe('invalid');
   expect(decodePlanRevisionSnapshot(encodedRecord('PlanRevisionSnapshot@1', { ...v2, schemaVersion: 99 })).status).toBe('invalid');
   expect(encodePlanRevisionSnapshot(v2 as unknown as PlanRevisionSnapshot).schemaId).toBe('PlanRevisionSnapshot@1');
-});
-
-it('rejects a v1 PlanRevisionSnapshot that carries v2-only fields', () => {
-  const v1WithV2Fields = snapshotBody(1, { taskRelations: [], inputRequirements: [] });
-  expect(decodePlanRevisionSnapshot(encodedRecord('PlanRevisionSnapshot@1', v1WithV2Fields)).status).toBe('invalid');
 });

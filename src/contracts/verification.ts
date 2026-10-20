@@ -197,10 +197,10 @@ export type RoundReverifyFactV1 = {
 };
 /**
  * The round's place in its subject's chain (C5), written once at creation.
- * Absent means a legacy slot-less chain root (ordinal 1). Shape rules:
- * `predecessorRoundRef = null` ⇔ `ordinal = 1` ⇔ `reverify = null`; an
- * ordinal-1 chain has empty `supersededEvidenceIds`/`basisDigests` and
- * `autoCount = 0`. Cross-record linearity is judged by `roundChainHead`.
+ * Shape rules: `predecessorRoundRef = null` ⇔ `ordinal = 1` ⇔
+ * `reverify = null`; an ordinal-1 chain has empty
+ * `supersededEvidenceIds`/`basisDigests` and `autoCount = 0`. Cross-record
+ * linearity is judged by `roundChainHead`.
  */
 export type RoundChainV1 = {
     schemaVersion: 1;
@@ -235,8 +235,7 @@ export type RoundSnapshot = {
     outcome: EvidenceOutcome | null;
     gaps: { code: string; message: string; coverage?: EvidenceCoverageV1 }[];
     evidenceRefs: EvidenceRef[];
-    /** Every round written from A.2 on carries it; absent = legacy chain root. */
-    chain?: RoundChainV1;
+    chain: RoundChainV1;
 };
 
 // ------------------------------------------------------------------------ //

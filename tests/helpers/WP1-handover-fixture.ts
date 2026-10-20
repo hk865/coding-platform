@@ -110,7 +110,7 @@ function sameTask(a: TaskTriple, b: TaskTriple): boolean {
   return a.projectId === b.projectId && a.goalId === b.goalId && a.taskId === b.taskId;
 }
 
-export type HandoverWorkflowOptions = {
+type HandoverWorkflowOptions = {
   now: () => string;
   configuration: WorkflowHostConfiguration;
   /** HO10 only: omit the Workflow seam, retaining real setup owners. */
@@ -121,7 +121,7 @@ export type HandoverWorkflowOptions = {
 };
 
 /** Copied from S1 workflowForFixture:1169-1256, with explicit config and now. */
-export async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverWorkflowOptions) {
+async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverWorkflowOptions) {
   const base = b2.base;
   let finalArchiveConflicts = 0;
   // S1-archive-flow.test.ts:189-203 (IT13): refuse exactly one final commit;
@@ -349,7 +349,7 @@ async function createBase() {
     async close() { try { await b2.close(); } finally { vi.useRealTimers(); } },
   };
 }
-export type HandoverBase = Awaited<ReturnType<typeof createBase>>;
+type HandoverBase = Awaited<ReturnType<typeof createBase>>;
 
 async function observedCrash(f: HandoverBase, claim: TaskClaim = f.b2.claim): Promise<void> {
   // Same legal terminal observation as S1-session-facts-fixture.ts:285-305.
@@ -434,7 +434,6 @@ export async function createInterruptedHandoverFixture(options: { responsibiliti
     return { ...f, composition, workflow: composition.workflow, requeueRecord: requeue, requeueRef: requeue.ref };
   } catch (error) { await f.close(); throw error; }
 }
-export type InterruptedHandoverFixture = Awaited<ReturnType<typeof createInterruptedHandoverFixture>>;
 
 async function claimOtherTask(f: HandoverBase): Promise<TaskClaim> {
   // Same Goal/propose/apply/claim sequence as the B2 independent claim
@@ -447,7 +446,7 @@ async function claimOtherTask(f: HandoverBase): Promise<TaskClaim> {
     meta: { requestId: f.requestId('other-goal'), expected: [
       { ref: f.base.projectRef, revision: 1 }, { ref: f.base.workspaceRef, revision: 1 }] },
   }));
-  const draft: PlanRevisionDraft = { schemaVersion: 1, planId: 'wp1-other-plan', planRevision: 1,
+  const draft: PlanRevisionDraft = { schemaVersion: 2, planId: 'wp1-other-plan', planRevision: 1,
     goalId: goalRef.goalId, stages: [],
     tasks: [
       { taskId: 'wp1-other-task', title: 'T2', requirementLevel: 'required', taskKind: 'work',
@@ -505,7 +504,6 @@ export async function createRoleMismatchHandoverFixture(options: { failFinalArch
 }
 export async function createOtherResponsibilityFixture() { return roleMismatch('responsible', false); }
 export async function createOccupiedPredecessorFixture() { return roleMismatch('occupied', false); }
-export type RoleMismatchHandoverFixture = Awaited<ReturnType<typeof createRoleMismatchHandoverFixture>>;
 
 export async function createReusablePredecessorFixture() {
   const f = await createBase();
@@ -515,7 +513,6 @@ export async function createReusablePredecessorFixture() {
     return { ...f, composition: f.composition1, workflow: f.workflow1, requeueRecord: requeue, requeueRef: requeue.ref };
   } catch (error) { await f.close(); throw error; }
 }
-export type ReusablePredecessorFixture = Awaited<ReturnType<typeof createReusablePredecessorFixture>>;
 
 export async function createArchivedPredecessorFixture() {
   const f = await createReusablePredecessorFixture();
@@ -526,7 +523,6 @@ export async function createArchivedPredecessorFixture() {
     return { ...f, archiveResult };
   } catch (error) { await f.close(); throw error; }
 }
-export type ArchivedPredecessorFixture = Awaited<ReturnType<typeof createArchivedPredecessorFixture>>;
 
 async function retiredContinuation(kind: 'handed_over' | 'responsible' | 'unknown' | 'module') {
   const f = await createBase();
@@ -561,7 +557,6 @@ export async function createHandedOverRetiredFixture() { return retiredContinuat
 export async function createStillResponsibleRetiredFixture() { return retiredContinuation('responsible'); }
 export async function createUnknownOccupiedRetiredFixture() { return retiredContinuation('unknown'); }
 export async function createModuleOnlyRetiredFixture() { return retiredContinuation('module'); }
-export type RetiredContinuationFixture = Awaited<ReturnType<typeof createHandedOverRetiredFixture>>;
 
 /** HO08: invoke only after the test itself performed create_session. */
 export async function bumpSessionRevision(f: HandoverBase, C: SessionRef): Promise<number> {

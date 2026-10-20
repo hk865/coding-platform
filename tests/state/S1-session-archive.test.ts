@@ -9,12 +9,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { ActorRef } from '../../src/contracts/command-event.js';
-import type { RoleConfigurationRef, SessionAggregateRef, SessionRef } from '../../src/contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionAggregateRef } from '../../src/contracts/core/identity.js';
 import type { SessionArchiveRequestV1 } from '../../src/contracts/core/session-archive.js';
 import type { SessionProvenanceV1, SessionRecord } from '../../src/contracts/core/session.js';
-import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
+import type { RunRef } from '../../src/contracts/dispatch.js';
 import {
-  backfillSessionProvenanceRecord, executorArchiveDue, reactivateSessionRecord,
+  executorArchiveDue, reactivateSessionRecord,
   releaseSessionArchiveRequestRecord, requestSessionArchiveRecord, transitionSession,
   type SessionArchiveGuardV1, type SessionEvent, type SessionGuardContext, type SessionMachineState,
 } from '../../src/core/work-graph/state/session-availability.js';
@@ -29,17 +29,10 @@ const T1_MINUS_1MS = '2026-10-08T23:59:59.999Z';
 const DAY_MS = 86_400_000;
 
 const S_REF: SessionAggregateRef = { aggregateType: 'Session', projectId: 'p', sessionId: 'S' };
-const S_PLAIN: SessionRef = { projectId: 'p', sessionId: 'S' };
-/** §2.2: a continuation never names the planned Session as its own predecessor. */
-const S_PREV: SessionRef = { projectId: 'p', sessionId: 'S-prev' };
 const RUN_0: RunRef = { aggregateType: 'Run', projectId: 'p', goalId: 'g', runId: 'r0' };
-const TASK_A: TaskTriple = { projectId: 'p', goalId: 'g', taskId: 'A' };
 const ROLE: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'tpl-1', templateRevision: 'r1' };
 
 const PROVENANCE_NEW: SessionProvenanceV1 = { schemaVersion: 1, kind: 'new' };
-const PROVENANCE_CONTINUATION: SessionProvenanceV1 = {
-  schemaVersion: 1, kind: 'continuation', from: S_PREV, reason: 'interrupted', task: TASK_A,
-};
 
 function archiveRequest(id: string): SessionArchiveRequestV1 {
   return {
@@ -79,7 +72,7 @@ function archiveGuard(overrides: Partial<SessionArchiveGuardV1> = {}): SessionAr
   return {
     requestMatches: true, choicesValid: true, authorityValid: true,
     wait: 'not_waiting', retired: false, sourceExecutionStopped: true,
-    stopQueued: false, failedDisposal: false, provenanceBasisValid: true,
+    stopQueued: false, failedDisposal: false,
     ...overrides,
   };
 }
@@ -187,32 +180,6 @@ describe('S1-session-archive: the Session archive state rows (S1-SES-02..06, S1-
     expect(reactivateSessionRecord(record)).toEqual({
       ...record, lifecycle: 'active', revision: 10, archivedAt: null,
     });
-  });
-
-  it('UT09 a null legacy provenance is backfilled once with the continuation, revision 4', () => {
-    const state = machineState({ provenance: null, revision: 3, occupancy: null });
-    expect(transitionSession(state, { kind: 'legacy_provenance_backfilled', provenance: PROVENANCE_CONTINUATION },
-      ctx({ pin: 3, archive: archiveGuard({ provenanceBasisValid: true }) }))).toEqual({
-      ok: true,
-      next: { ...state, revision: 4, provenance: PROVENANCE_CONTINUATION },
-      effects: [
-        { kind: 'write_session_provenance', provenance: PROVENANCE_CONTINUATION },
-        { kind: 'emit_event', eventType: 'SessionProvenanceBackfilled' },
-      ],
-    });
-    const record = sessionRecord({ provenance: null, revision: 3 });
-    expect(backfillSessionProvenanceRecord(record, PROVENANCE_CONTINUATION)).toEqual({
-      ...record, revision: 4, provenance: PROVENANCE_CONTINUATION,
-    });
-  });
-
-  it('UT10 backfilling an existing new provenance is a revision conflict and changes nothing', () => {
-    const state = machineState({ provenance: PROVENANCE_NEW, revision: 3, occupancy: null });
-    const frozen = { ...state };
-    const result = transitionSession(state, { kind: 'legacy_provenance_backfilled', provenance: PROVENANCE_CONTINUATION },
-      ctx({ pin: 3, archive: archiveGuard({ provenanceBasisValid: true }) }));
-    expect(result).toMatchObject({ ok: false, reason: 'stale', code: 'revision_conflict' });
-    expect(state).toEqual(frozen);
   });
 
   it('UT49 releasing request a while its stop is queued stays busy with the request and revision', () => {

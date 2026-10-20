@@ -25,10 +25,6 @@ export function renderArchitectureContainment(
   if (result.status === 'not_found') return renderGap('architecture/read', '没有已采用的架构 baseline');
   if (result.status === 'not_ready') return renderGap('architecture/read', '采用架构尚未就绪');
   const revision = result.value;
-  if (revision.catalog === null) {
-    return `<section class="panel" data-view="architecture-containment"><h3>架构包含结构</h3>`
-      + `<p class="muted">该 baseline 早于 catalog，未记录模块包含关系。</p></section>`;
-  }
   const modules = revision.catalog.catalog.modules;
   const containment = revision.catalog.catalog.containment;
   // A missing containment declaration is not a guessed tree: an empty relation
@@ -99,7 +95,6 @@ export function renderArchitectureDependencies(
   if (result.status === 'not_found') return renderGap('architecture/read', '没有已采用的架构 baseline');
   if (result.status === 'not_ready') return renderGap('architecture/read', '采用架构尚未就绪');
   const revision = result.value;
-  if (revision.catalog === null) return `<section class="panel" data-view="architecture-dependencies"><h3>模块依赖 DAG</h3><p class="muted">该 baseline 早于 catalog，未记录依赖。</p></section>`;
   const modules = revision.catalog.catalog.modules;
   const dependencies = revision.catalog.catalog.dependencies;
   const html = renderNodeLinkGraph(

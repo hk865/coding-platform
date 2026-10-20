@@ -2,18 +2,19 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, expect, it } from 'vitest';
-import { buildRawTurn, rawInsertRecords } from '../kernel/R4a-legacy-fixtures.js';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import { GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionOperations, type CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
+import { createR4HistoryWorld, type R4HistoryRun, type R4HistoryWorld } from '../helpers/R4-history-turn-support.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'session-boundary-project';
@@ -27,7 +28,7 @@ const workspace = { projectId, workspaceId };
 const schemas: RecordBackendSchemas = {
   records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
-    { eventType: 'TrustedScopeSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) }],
+    ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
   lookups: SESSION_RECORD_SCHEMAS.lookups ?? [],
 };
 const directories: string[] = [];
@@ -42,16 +43,19 @@ async function open() {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'next-r4b-input-boundaries-'));
   directories.push(directory);
   const backend = createSqliteRecordBackend({ schemas, path: path.join(directory, 'ledger.sqlite') });
-  const project: ProjectSnapshot = { ref: { aggregateType: 'Project', projectId }, revision: 1 };
-  const workspaceSnapshot: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projectId, workspaceId }, revision: 1 };
-  const event = { eventId: 'boundary-scope-seeded', eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: at };
-  const seed: PreparedCommit = { identityKey: 'boundary-scope-seed', fingerprint: 'boundary-scope-seed',
-    guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null },
-      { refKey: canonicalRefKey(workspaceSnapshot.ref), expectedRevision: null }],
-    records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspaceSnapshot)],
-    claims: [], indexGuards: [], indexChanges: [], events: [{ ...event, json: JSON.stringify(event) }] };
-  const seeded = await backend.records.commit(seed);
-  if (seeded.status !== 'committed') throw Error(`scope seed failed: ${seeded.reason}`);
+  // The real public bootstrap owns the Project/Workspace snapshot and its event.
+  let bootstrapSeq = 0;
+  const bootstrap = createProjectBootstrapServices({ records: backend.records, now: () => at,
+    eventId: () => `boundary-bootstrap-${++bootstrapSeq}` });
+  const projectRef = { aggregateType: 'Project' as const, projectId };
+  const workspaceRef = { aggregateType: 'Workspace' as const, projectId, workspaceId };
+  const project = await bootstrap.projects.createProject(ctx, { input: { projectId },
+    meta: { requestId: 'boundary-create-project', expected: [{ ref: projectRef, revision: 0 }] } });
+  if (project.status !== 'committed') throw Error(`project bootstrap failed: ${JSON.stringify(project)}`);
+  const registered = await bootstrap.projects.registerWorkspace(ctx, { input: { workspace },
+    meta: { requestId: 'boundary-register-workspace', expected: [
+      { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }] } });
+  if (registered.status !== 'committed') throw Error(`workspace bootstrap failed: ${JSON.stringify(registered)}`);
   const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
@@ -103,31 +107,45 @@ it('keeps the original request identity and role when the caller mutates input a
   } finally { release(); await backend.close(); }
 });
 
-it('rejects history limit outside 1..200 and a continuation cursor from another principal', async () => {
-  const { backend, sessions, kernelStores } = await open();
-  const runtime = createSessionOperations({ sessions, kernelStores });
-  try {
-    const created = await runtime.createSession(ctx, request('history-boundaries'));
-    expect(created.status).toBe('completed');
-    if (created.status !== 'completed') return;
-    for (const limit of [0, -1, 201]) {
-      expect(await runtime.readSessionHistory(ctx, { sessionRef: created.value.ref,
-        afterCursor: null, throughCursor: null, limit })).toMatchObject({ status: 'rejected', code: 'invalid' });
-    }
-    const location = kernelStores.byAdapterId(created.value.kernel.adapterId);
-    if (!location) throw Error('missing Kernel store location');
-    rawInsertRecords(location.databasePath, buildRawTurn({ sessionId: created.value.kernel.kernelSessionId,
-      startPosition: 2, runId: 'fixture-run', turnId: 'fixture-turn', input: 'history input' }).records);
-    const first = await runtime.readSessionHistory(ctx, { sessionRef: created.value.ref,
-      afterCursor: null, throughCursor: null, limit: 1 });
-    expect(first.status).toBe('ready');
-    if (first.status !== 'ready') return;
-    expect(first.value.nextCursor).not.toBeNull();
-    const otherActor = { kind: 'human' as const, id: 'other-operator' };
-    const other: CoreCallContext = { ...ctx, principal: { kind: 'host', actor: otherActor },
-      materialReader: { kind: 'host', projectId, workspaceId, actor: otherActor } };
-    expect(await runtime.readSessionHistory(other, { sessionRef: created.value.ref,
-      afterCursor: first.value.nextCursor, throughCursor: null, limit: 1 }))
-      .toMatchObject({ status: 'rejected' });
-  } finally { await backend.close(); }
+describe('rejects: history limit outside 1..200 and a continuation cursor from another principal', () => {
+  /**
+   * R-18 frame for one refused history read. Prior state (A1): one real Run in the
+   * fixture's first mapped Session (shared real-Turn helper). The row sends ONE
+   * refused read; the public whole-history read of that Session, before and after,
+   * shows that the refusal changed nothing.
+   */
+  async function expectRefusedWithoutChange(expected: { status: 'rejected'; code: 'invalid' },
+    refuse: (world: R4HistoryWorld, run: R4HistoryRun) => Promise<unknown>): Promise<void> {
+    const world = await createR4HistoryWorld();
+    try {
+      const run = await world.run({ text: 'history input' });
+      const whole = () => world.history.readSessionHistory(world.ctx, { sessionRef: run.sessionRef,
+        afterCursor: null, throughCursor: null, limit: 200 });
+      const before = await whole();
+      expect(before.status).toBe('ready');
+      expect(await refuse(world, run)).toMatchObject(expected);
+      expect(await whole()).toEqual(before);
+    } finally { await world.close(); }
+  }
+
+  it.each([0, -1, 201])('rejects history limit %s', limit =>
+    expectRefusedWithoutChange({ status: 'rejected', code: 'invalid' }, (world, run) =>
+      world.history.readSessionHistory(world.ctx, { sessionRef: run.sessionRef,
+        afterCursor: null, throughCursor: null, limit })));
+
+  it('rejects a continuation cursor from another principal', () =>
+    expectRefusedWithoutChange({ status: 'rejected', code: 'invalid' }, async (world, run) => {
+      // The real Run appended Kernel records after the position-1 session.created,
+      // so a one-line page still has a real continuation.
+      const first = await world.history.readSessionHistory(world.ctx, { sessionRef: run.sessionRef,
+        afterCursor: null, throughCursor: null, limit: 1 });
+      expect(first.status).toBe('ready');
+      if (first.status !== 'ready') return first;
+      expect(first.value.nextCursor).not.toBeNull();
+      const otherActor = { kind: 'human' as const, id: 'other-operator' };
+      const other: CoreCallContext = { ...world.ctx, principal: { kind: 'host', actor: otherActor },
+        materialReader: { kind: 'host', projectId: world.projectId, workspaceId: world.workspaceId, actor: otherActor } };
+      return world.history.readSessionHistory(other, { sessionRef: run.sessionRef,
+        afterCursor: first.value.nextCursor, throughCursor: null, limit: 1 });
+    }));
 });

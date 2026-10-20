@@ -17,8 +17,8 @@
  * Owners: `claim-service.ts` (RUN-01), `execution-entry-service.ts` (RUN-02..05,
  * and RUN-07/08, 17/18, 21 through `recordRunResult`), `execution-history-binding.ts`
  * (RUN-06), `control-service.ts` (RUN-09..15 (U), event picked by
- * `controlSubmissionRunEvent`) and `run-reconcile-service.ts` (RUN-09..11 (R),
- * RUN-16, 19, 20, 22..24). Each row keeps the record key order, codes and texts
+ * `controlSubmissionRunEvent`) and `run-reconcile-service.ts` (RUN-16, 19, 20,
+ * 22..24). Each row keeps the record key order, codes and texts
  * of the service code it replaced. Rows and their status: spec §15.2/§15.3.
  *
  * Line references (`file.ts:NNN`) cite the code of 2026-10-02 (before A.2 step 3),
@@ -33,7 +33,7 @@ import type { CoreRejection } from '../../../contracts/core/results.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import {
   TERMINAL_PAYLOAD_TEXT_MAX_CHARS, TERMINAL_PAYLOAD_TRUNCATION_SUFFIX,
-  type EntryPlanVerdict, type ExecutionAuthorizationV1, type ExecutionAuthorizationV2, type RoleBindingRefV1,
+  type EntryPlanVerdict, type ExecutionAuthorizationV2, type RoleBindingRefV1,
   type RunContinuationV1, type RunOutcome, type RunReconciliationBasisV1, type RunReconciliationV1, type RunRef,
   type RunSnapshot, type RuntimeEventV1, type RuntimeInputBindingV1, type TaskBudgetV1, type TaskLeaseSnapshot,
 } from '../../../contracts/dispatch.js';
@@ -72,13 +72,6 @@ export type RunState = {
   outcome: RunOutcome | null;
   /** V2 entryGeneration; `null` without a V2 authorization. */
   entryGeneration: number | null;
-  /**
-   * A read-only historical Run that takes no fresh entry and no reconcile: a
-   * V1 authorization (`dispatch.ts:112-116`), or a `running` Run that carries
-   * no authorization at all (written before B2). An ended Run without one is
-   * not legacy: a D-7 stop ends a Run that never had a binding.
-   */
-  legacyV1: boolean;
   pointer: RunPointer;
   /** Ordering only, never proof of a new Kernel fact (RD-4). */
   lastEventSeq: number;
@@ -91,8 +84,8 @@ export type RunState = {
   record: RunSnapshot | null;
 };
 
-function isAuthorizationV2(auth: ExecutionAuthorizationV1 | ExecutionAuthorizationV2 | undefined): auth is ExecutionAuthorizationV2 {
-  return auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2;
+function isAuthorizationV2(auth: ExecutionAuthorizationV2 | undefined): auth is ExecutionAuthorizationV2 {
+  return auth !== undefined;
 }
 
 /**
@@ -154,7 +147,7 @@ export function runControlNodeOf(record: RunSnapshot): Exclude<RunNode, 'Absent'
 /** The machine state of a stored Run (`null` → `Absent`). */
 export function runStateOf(record: RunSnapshot | null): RunState {
   if (record === null) {
-    return { node: 'Absent', outcome: null, entryGeneration: null, legacyV1: false, pointer: 'none',
+    return { node: 'Absent', outcome: null, entryGeneration: null, pointer: 'none',
       lastEventSeq: 0, unresolved: null, record: null };
   }
   const auth = record.executionAuthorization;
@@ -164,7 +157,6 @@ export function runStateOf(record: RunSnapshot | null): RunState {
     node: runNodeOf(record),
     outcome: record.outcome,
     entryGeneration: v2 ? auth.generation : null,
-    legacyV1: auth === undefined ? record.status === 'running' : !v2,
     pointer: record.controlState?.desiredState ?? 'none',
     lastEventSeq: record.lastEventSeq,
     unresolved: observation !== undefined && observation.kind === 'unresolved'
@@ -240,7 +232,7 @@ export function runUnresolvedBlocker(run: RunSnapshot): string | null {
     if (reconciliation.observation.kind === 'unresolved') return `run ${run.ref.runId} carries an unresolved reconciliation`;
   }
   const authorization = run.executionAuthorization;
-  if (authorization !== undefined && (authorization.phase === 'unknown' || authorization.phase === 'quarantined')) {
+  if (authorization !== undefined && authorization.phase === 'unknown') {
     return `run ${run.ref.runId} carries an unreconciled ${authorization.phase} entry authorization`;
   }
   return null;
@@ -417,13 +409,12 @@ export type RunEvent =
       history: RunObservedHistory | null; continuation?: RunContinuationV1; unresolvedToolCallIds: readonly string[];
       endedAt: string; factEventId: string }
   /**
-   * RUN-09..11: U = the submission on a Run that never entered; R = reconcile of
-   * a leftover queued intent (CTL-08(a)). `recordedAt` is the commit's instant,
-   * the `endedAt` of the cancelled Run.
+   * RUN-09..11: U = the submission on a Run that never entered. `recordedAt` is
+   * the commit's instant, the `endedAt` of the cancelled Run.
    */
-  | { kind: 'stop_not_entered'; source: 'U' | 'R'; intentRef: ControlIntentRef; recordedAt: string }
-  | { kind: 'pause_not_entered'; source: 'U' | 'R'; intentRef: ControlIntentRef }
-  | { kind: 'resume_not_entered'; source: 'U' | 'R'; intentRef: ControlIntentRef }
+  | { kind: 'stop_not_entered'; source: 'U'; intentRef: ControlIntentRef; recordedAt: string }
+  | { kind: 'pause_not_entered'; source: 'U'; intentRef: ControlIntentRef }
+  | { kind: 'resume_not_entered'; source: 'U'; intentRef: ControlIntentRef }
   /** RUN-12..15 (U): the Run side of §7 CTL-01; `intentRef` is derived from the request identity. */
   | { kind: 'control_submitted'; intentRef: ControlIntentRef; control: ControlIntentKindV1; reason: string | null }
   /** RUN-23 (K/R, 新增). */
@@ -935,10 +926,10 @@ function stoppedNotEnteredRunRecord(run: RunSnapshot, change: RunPointerChange, 
 }
 
 /**
- * The end of a Run that never entered (RUN-09, U and R): `cancelled` at the
- * commit instant; an `authorized` binding becomes `revoked` (rev+1). The
- * revision is the caller's: RUN-09 (U) moved the pointer, RUN-09 (R) and the
- * RUN-16 + RUN-09 commit bump it once.
+ * The end of a Run that never entered (RUN-09, U): `cancelled` at the commit
+ * instant; an `authorized` binding becomes `revoked` (rev+1). The revision is
+ * the caller's: RUN-09 (U) moved the pointer, and the RUN-16 + RUN-09
+ * same-commit settlement bumps it once.
  */
 function cancelledNotEnteredFields(run: RunSnapshot, endedAt: string): RunSnapshot {
   const auth = run.executionAuthorization;
@@ -1148,7 +1139,7 @@ function persistedPermitGuard(ctx: RunGuardContext, kind: RunEvent['kind'], perm
 function claimedV2Binding(
   state: RunState, run: RunSnapshot, ctx: RunGuardContext, claim: TaskClaim, kind: RunEvent['kind'], detail: string,
 ): ExecutionAuthorizationV2 | Rejected {
-  return persistedClaimGuard(ctx, claim, kind, detail) ?? v2Binding(state, run);
+  return persistedClaimGuard(ctx, claim, kind, detail) ?? v2Binding(run);
 }
 
 /**
@@ -1168,13 +1159,13 @@ function preparedBindingGuard(run: RunSnapshot, envelope: TaskEnvelopeV1): Rejec
 
 /**
  * The Run's V2 binding, or today's refusal for a Run without one
- * (`execution-entry-service.ts:1089`, `:1222`, `:1362`): one text for a legacy
- * V1 or pre-B2 Run (read-only history) and for a Run that never had a binding.
+ * (`execution-entry-service.ts:1089`, `:1222`, `:1362`): one text for a Run
+ * that never had a binding.
  */
-function v2Binding(state: RunState, run: RunSnapshot): ExecutionAuthorizationV2 | Rejected {
+function v2Binding(run: RunSnapshot): ExecutionAuthorizationV2 | Rejected {
   const auth = run.executionAuthorization;
   if (isAuthorizationV2(auth)) return auth;
-  return reject(state.legacyV1 ? 'guard_failed' : 'illegal', 'forbidden', 'the Run has no formal V2 entry authorization');
+  return reject('illegal', 'forbidden', 'the Run has no formal V2 entry authorization');
 }
 
 /**
@@ -1183,7 +1174,7 @@ function v2Binding(state: RunState, run: RunSnapshot): ExecutionAuthorizationV2 
  * `admitEnteredRun`) asks it first, as RUN-04/05 ask it.
  */
 export function entryV2Binding(run: RunSnapshot): Transition<ExecutionAuthorizationV2, never, never> {
-  const auth = v2Binding(runStateOf(run), run);
+  const auth = v2Binding(run);
   return isRejected(auth) ? auth : accept(auth);
 }
 
@@ -1389,7 +1380,7 @@ export function transitionRun(state: RunState, event: RunEvent, ctx: RunGuardCon
     case 'stop_not_entered':
     case 'pause_not_entered':
     case 'resume_not_entered':
-      return onNotEnteredControl(node, run, event, ctx);
+      return onNotEnteredControl(run, event, ctx);
     case 'control_submitted': return onControlSubmitted(run, event, ctx);
     case 'stop_paused': return onStopPaused(state, node, event, ctx);
     case 'reconcile_not_entered':
@@ -1453,9 +1444,6 @@ function onEntryAuthorized(
   // still waits for this round and the prepared review instruction matches it.
   const reviewEntry = reviewEntryProblem(run, ctx.reviewEntry);
   if (reviewEntry !== null) return reviewEntry;
-  if (state.legacyV1) {
-    return reject('guard_failed', 'forbidden', 'the Run has a legacy V1 authorization that cannot be upgraded into a fresh begin');
-  }
   switch (starting) {
     case 'none': break;
     case 'authorized':
@@ -1483,7 +1471,7 @@ function onEntryAuthorized(
   }
   if (ctx.freshAdmission !== null) return freshAdmissionRejected(ctx.freshAdmission);
   if (starting === 'revoked') {
-    const auth = v2Binding(state, run);
+    const auth = v2Binding(run);
     if (isRejected(auth)) return auth;
     return accept(runStateOf(reauthorizedRunRecord(run, auth, event)));
   }
@@ -1590,7 +1578,7 @@ function onEntryBegun(
   if (starting === 'not_starting') return reject('illegal', 'busy', 'the Run is not in a beginable starting state');
   const persisted = persistedPermitGuard(ctx, event.kind, event.permit);
   if (persisted !== null) return persisted;
-  const auth = v2Binding(state, run);
+  const auth = v2Binding(run);
   if (isRejected(auth)) return auth;
   switch (starting) {
     case 'authorized': break;
@@ -1630,7 +1618,7 @@ function onEnteredObserved(
 ): RunTransition {
   const persisted = persistedPermitGuard(ctx, event.kind, event.permit);
   if (persisted !== null) return persisted;
-  const auth = v2Binding(state, run);
+  const auth = v2Binding(run);
   if (isRejected(auth)) return auth;
   // Today's check is the phase alone (`execution-entry-service.ts:1223`); for the eight machine states it is
   // the node `Entering`, and a Run outside them (`runCombinationProblem`) is read the same way.
@@ -1859,7 +1847,6 @@ function queuedSubmission(run: RunSnapshot, kind: ControlIntentKindV1, intentRef
 }
 
 const NOT_ENTERED_KIND = { stop_not_entered: 'cancel', pause_not_entered: 'pause', resume_not_entered: 'resume' } as const;
-const NOT_ENTERED_ROW = { stop_not_entered: 'RUN-09', pause_not_entered: 'RUN-10', resume_not_entered: 'RUN-11' } as const;
 
 /**
  * The Run event of one Host control submission (`control-service.ts`): a pause,
@@ -1890,14 +1877,13 @@ export function controlSubmissionRunEvent(
  * the same commit, supersedes every queued steer (CTL-04(b)), ends the Attempt
  * (ATT-05), settles the Outbox as not entered (ATT-30), and releases the Lease
  * (ATT-23) and the Session occupancy (SES-05, `historyCursor` kept) the Run
- * still holds. (R), the reconcile of a leftover queued intent (CTL-08(a)), is
- * `onNotEnteredReconcile`.
+ * still holds.
  */
 function onNotEnteredControl(
-  stateNode: Exclude<RunNode, 'Absent'>, run: RunSnapshot,
+  run: RunSnapshot,
   event: Extract<RunEvent, { kind: 'stop_not_entered' | 'pause_not_entered' | 'resume_not_entered' }>, ctx: RunGuardContext,
 ): RunTransition {
-  const node = event.source === 'U' ? runControlNodeOf(run) : stateNode;
+  const node = runControlNodeOf(run);
   const cls = controlClassOf(node);
   switch (cls) {
     case 'not_entered': break;
@@ -1908,7 +1894,6 @@ function onNotEnteredControl(
       return node === 'EndedUnknown' ? reject('illegal', 'invalid', ENTERED_CONTROL_ONLY) : endedRunControlRefusal(run);
     default: return unreachable(cls, 'control class');
   }
-  if (event.source === 'R') return onNotEnteredReconcile(runStateOf(run), run, event, ctx);
   const kind = NOT_ENTERED_KIND[event.kind];
   const problem = submitGuards(run, kind, null, false, ctx);
   if (problem !== null) return problem;
@@ -1942,11 +1927,11 @@ function endedRunControlRefusal(run: RunSnapshot): Rejected {
 }
 
 /**
- * RUN-09's same-commit effects after its intent effects (U and R): every
- * queued steer superseded by the cancel (CTL-04(b)), the Attempt ended
- * cancelled (ATT-05), the Outbox settled as not entered (ATT-30), and the Lease
+ * RUN-09's same-commit effects after its intent effects (U): every queued steer
+ * superseded by the cancel (CTL-04(b)), the Attempt ended cancelled (ATT-05),
+ * the Outbox settled as not entered (ATT-30), and the Lease
  * (ATT-23) and Session occupancy (SES-05, `historyCursor` kept) the Run still
- * holds released.
+ * holds released. The RUN-16 settlement reuses them.
  */
 function notEnteredCancelEffects(claim: TaskClaim, ctx: RunGuardContext, intents: readonly RunEffect[]): RunEffect[] {
   const effects: RunEffect[] = [...intents];
@@ -1961,40 +1946,6 @@ function notEnteredCancelEffects(claim: TaskClaim, ctx: RunGuardContext, intents
       historyCursor: { kind: 'keep' }, kernelTurnOpen: false });
   }
   return effects;
-}
-
-const NOT_ENTERED_POINTER = { cancel: 'cancelled', pause: 'paused', resume: 'running' } as const;
-
-/**
- * RUN-09..11 (R, CTL-08(a), W-04): the start-up reconcile settles the pointer
- * intent a Run that never entered still holds queued (left from before D-7, or
- * submitted while the Run was `Entering` and revoked since by RUN-16). The
- * pointer stays; the intent is reconciled applied (`platform_not_entered`). A
- * cancel ends the Run as RUN-09 (U) does; a pause or resume writes no Run (the
- * commit guards it); a resume needs the Goal active, else it stays queued.
- */
-function onNotEnteredReconcile(
-  state: RunState, run: RunSnapshot,
-  event: Extract<RunEvent, { kind: 'stop_not_entered' | 'pause_not_entered' | 'resume_not_entered' }>, ctx: RunGuardContext,
-): RunTransition {
-  const lease = hostLeaseGuard(true, ctx);
-  if (lease !== null) return lease;
-  const kind = NOT_ENTERED_KIND[event.kind];
-  const control = run.controlState;
-  const intent = ctx.pointerIntent;
-  if (control === undefined || control.desiredState !== NOT_ENTERED_POINTER[kind] || !sameJson(control.intentRef, event.intentRef)
-    || intent === null || intent.kind !== kind || intent.status !== 'queued') {
-    return reject('illegal', 'invalid', `${NOT_ENTERED_ROW[event.kind]} (R) settles only the queued ${kind} the pointer names`);
-  }
-  if (kind === 'resume' && ctx.goal.desiredState !== 'active') {
-    return reject('guard_failed', 'busy', `the Goal is ${ctx.goal.desiredState}; the queued resume stays queued`);
-  }
-  const reconciled: RunEffect = { kind: 'intent', event: 'control_reconciled', intentRef: control.intentRef };
-  if (event.kind !== 'stop_not_entered') return accept(state, [reconciled]);
-  const claim = ctx.persistedClaim;
-  if (claim === null) return noPersistedClaim(event.kind);
-  return accept(runStateOf(cancelledNotEnteredFields({ ...run, revision: run.revision + 1 }, event.recordedAt)),
-    notEnteredCancelEffects(claim, ctx, [reconciled]));
 }
 
 /**
@@ -2196,9 +2147,6 @@ function onReconcile(
   event: Extract<RunEvent, { kind: 'reconcile_not_entered' | 'reconcile_terminal' | 'reconcile_interrupted_clean' | 'reconcile_unknown' }>,
   ctx: RunGuardContext,
 ): RunTransition {
-  if (state.legacyV1) {
-    return reject('guard_failed', 'unsupported', 'a legacy Run has no Kernel binding to reconcile; it is reported as is');
-  }
   const lease = hostLeaseGuard(isTakeover(event.basis), ctx);
   if (lease !== null) return lease;
   const cls = reconcileClassOf(node);
@@ -2250,8 +2198,8 @@ function onReconcile(
  * in-process Kernel call exited before `turn.started`). The binding is revoked
  * (the same claim re-authorizes through RUN-03); Attempt, Outbox, Lease and
  * Session are not written (ATT-04, ATT-21, ATT-25). A leftover queued cancel
- * then ends the Run in the same commit (RUN-09 (R)), a queued pause is
- * reconciled (RUN-10 (R)), both CTL-08(a).
+ * then ends the Run in the same commit as the revoke (the RUN-16 settlement), a
+ * queued pause is reconciled, both CTL-08(a).
  */
 function onReconcileNotEntered(
   state: RunState, run: RunSnapshot, event: Extract<RunEvent, { kind: 'reconcile_not_entered' }>, ctx: RunGuardContext,

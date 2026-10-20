@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 import type { PlanRevisionRef } from "./plan.js";
 import type { TaskReductionRef } from "./reduction.js";
 // ------------------------------------------------------------------------ //

@@ -1,82 +1,35 @@
 /** R4c.2a behavior acceptance: targeted raw execution history over the real
  * persisted Kernel Session. These cases are deliberately red while
  * createExecutionHistoryReader returns unsupported. Do not replace the real
- * Kernel store with a fake or weaken the assertions to make them pass. */
-import { mkdtemp, rm, unlink } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { afterEach, describe, expect, it } from 'vitest';
+ * Kernel store with a fake or weaken the assertions to make them pass.
+ *
+ * The Runs and their Kernel identities come from the shared real-Turn helper
+ * (`tests/helpers/R4-history-turn-support.ts`): a real claim in a mapped
+ * Session, started and finished by the real Runtime, with the identity read
+ * back from the public `readExecution` locator. */
+import { unlink } from 'node:fs/promises';
+import { describe, expect, it } from 'vitest';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import { GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
-import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
-import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
-import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
-import type { SessionHistoryEntry, SessionHistoryRequest, SessionOperationsPort } from '../../src/core/agent-runtime/session-operations.js';
 import { DEFAULT_RUNTIME_BUDGET, ModelBudget } from '../../src/core/agent-runtime/model-budget.js';
 import { runObservedModel, type ObservedModelRunOptions } from '../../src/core/agent-runtime/observed-model-run.js';
 import { createExecutionHistoryReader } from '../../src/core/agent-runtime/observation-recovery.js';
-import type { KernelExecutionIdentity } from '../../src/core/agent-runtime/execution-history-contracts.js';
-
-const at = '2026-09-24T00:00:00.000Z';
-const projectId = 'history-project';
-const workspaceId = 'workspace-a';
-const actor = { kind: 'human' as const, id: 'history-operator' };
-const ctx: CoreCallContext = {
-  projectId, workspaceId, principal: { kind: 'host', actor },
-  materialReader: { kind: 'host', projectId, workspaceId, actor },
-  signal: new AbortController().signal,
-};
-const workspace = { projectId, workspaceId };
-const role = { kind: 'legacy_template' as const, templateId: 'implementer', templateRevision: '1' };
-const schemas: RecordBackendSchemas = {
-  records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records],
-  events: [...GOAL_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
-    { eventType: 'TrustedScopeSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) }],
-  lookups: SESSION_RECORD_SCHEMAS.lookups ?? [],
-};
-const directories: string[] = [];
-afterEach(async () => { await Promise.all(directories.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
+import type { ExecutionHistoryPort, KernelExecutionIdentity } from '../../src/core/agent-runtime/execution-history-contracts.js';
+import type {
+  SessionHistoryEntry, SessionHistoryRequest, SessionOperationsPort,
+} from '../../src/core/agent-runtime/session-operations.js';
+import { createR4HistoryWorld, type R4HistoryRun, type R4HistoryWorld } from '../helpers/R4-history-turn-support.js';
 
 type HistoryOwner = Pick<SessionOperationsPort, 'readSessionHistory'>;
 
-async function open() {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'next-r4c-history-'));
-  directories.push(root);
-  const backend = createSqliteRecordBackend({ schemas, path: path.join(root, 'ledger.sqlite') });
-  const project: ProjectSnapshot = { ref: { aggregateType: 'Project', projectId }, revision: 1 };
-  const workspaceSnapshot: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projectId, workspaceId }, revision: 1 };
-  const seedEvent = { eventId: 'history-scope-seeded', eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-    occurredAt: at, json: JSON.stringify({ eventId: 'history-scope-seeded', eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: at }) };
-  const seed: PreparedCommit = { identityKey: 'history-scope-seed', fingerprint: 'history-scope-seed',
-    guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null },
-      { refKey: canonicalRefKey(workspaceSnapshot.ref), expectedRevision: null }],
-    records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspaceSnapshot)],
-    claims: [], indexGuards: [], indexChanges: [], events: [seedEvent] };
-  const seeded = await backend.records.commit(seed);
-  if (seeded.status !== 'committed') throw Error(`scope seed failed: ${seeded.reason}`);
-  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
-  const databasePath = path.join(root, 'kernel.sqlite');
-  const kernelStores = await createKernelStoreRegistry({ entries: [{
-    adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace, databasePath,
-  }] });
-  const runtime = createSessionOperations({ sessions, kernelStores });
-  return { backend, runtime, kernelStores, root, databasePath };
-}
-
-async function createMappedSession(runtime: SessionOperationsPort, requestId: string) {
-  const created = await runtime.createSession(ctx, {
-    workspace, role, recommendedRefs: [], initialLinks: [], meta: { requestId, expected: [] },
-  });
-  if (created.status !== 'completed') throw Error(`Session creation failed: ${JSON.stringify(created)}`);
-  return created.value;
-}
-
+/**
+ * T2-025 BLOCKED sub-case: the "best-effort observer is down" row drives the
+ * production `runObservedModel` directly because the real Runtime passes a
+ * no-op publish sink (`src/core/agent-runtime/execution-driver.ts:1253`), so no
+ * public step can expose a failing observer. Its Turn therefore still carries a
+ * test-declared identity; do not move this path into the shared helper. The
+ * W2b-53 mixed run/turn row keeps its w2-base declared Turns on the same path.
+ */
 function scriptedClient(): kernel.ModelClientPort {
   const requests: kernel.ModelRequest[] = [];
   return {
@@ -91,7 +44,7 @@ function scriptedClient(): kernel.ModelClientPort {
 }
 
 type TurnInput = {
-  root: string; databasePath: string; sessionId: string; input: string;
+  directory: string; databasePath: string; sessionId: string; input: string;
   identity: KernelExecutionIdentity; client: kernel.ModelClientPort;
   publish?: ObservedModelRunOptions['publish']; signal?: AbortSignal;
 };
@@ -102,8 +55,9 @@ async function runTurn(turn: TurnInput) {
     kernel,
     bound: { configuration: { revision: 'local-r4c-history', provider: 'deepseek',
       model: 'local-history-fixture', baseUrl: 'http://127.0.0.1' }, client: turn.client },
-    root: turn.root, databasePath: turn.databasePath, sessionId: turn.sessionId, input: turn.input,
-    budget, executionIdentity: turn.identity, signal: turn.signal ?? new AbortController().signal,
+    root: turn.directory, databasePath: turn.databasePath, sessionId: turn.sessionId, input: turn.input,
+    budget, taskBudget: { tokenBudget: null, deadline: null },
+    executionIdentity: turn.identity, signal: turn.signal ?? new AbortController().signal,
     meter: new ModelBudget(budget, async () => {}, {
       count: () => ({ tokens: 100, method: 'model_tokenizer', tokenizer: 'r4c-history-fixture' }),
     }),
@@ -112,6 +66,9 @@ async function runTurn(turn: TurnInput) {
   });
 }
 
+/** Reads the Kernel store directly (F7). Only the two BLOCKED parts kept in their
+ * old form use it: the observer-down row (T2-025) and the mixed run/turn row
+ * (W2b-53, R-20). Every other row takes its evidence from the public history read. */
 async function rawRecords(databasePath: string, sessionId: string): Promise<kernel.SessionRecord[]> {
   const store = await kernel.SqliteStores.open(databasePath);
   try {
@@ -145,25 +102,93 @@ function spyOn(real: HistoryOwner) {
   return { history, requests };
 }
 
+/** Positions of the public raw history entries that belong to one execution, read
+ * from the inline Kernel record each public entry carries. Positions stay as the
+ * public read returned them and are only compared between public reads (R-16). */
+function entryPositionsOf(entries: readonly SessionHistoryEntry[], identity: KernelExecutionIdentity): number[] {
+  return entries.filter(entry => {
+    if (!('text' in entry.body)) return false;
+    const record = JSON.parse(entry.body.text) as {
+      recordType: string;
+      payload: { run?: { runId?: string; turn?: { turnId?: string } };
+        event?: { meta?: { runId?: string; turnId?: string } } };
+    };
+    return record.recordType === 'turn.started'
+      ? record.payload.run?.runId === identity.runId && record.payload.run?.turn?.turnId === identity.turnId
+      : record.recordType === 'agent.event'
+        ? record.payload.event?.meta?.runId === identity.runId && record.payload.event?.meta?.turnId === identity.turnId
+        : false;
+  }).map(entry => entry.source.position);
+}
+
+type RefusalPrior = { world: R4HistoryWorld; run: R4HistoryRun; reader: ExecutionHistoryPort; cursor: string };
+
+/**
+ * R-18 frame for one refused execution history read. Prior state (A1): one real
+ * Run in Session a (`world.sessions.first`, shared real-Turn helper) and the reader
+ * cursor of a public one-record reader page. The row sends ONE refused input; the
+ * public raw history reads of both mapped Sessions, before and after, show that the
+ * refusal changed nothing.
+ *
+ * W2c-03: the Session history owner below refuses some of these inputs as well, so
+ * the code alone does not show that the reader's own check refused them. A row that
+ * passes `noLowerRequest` gives the reader the real history through `spyOn`; once the
+ * cursor is set up the recorded requests are cleared, and the refused call must make
+ * 0 lower requests.
+ */
+async function expectRefusedWithoutChange(code: 'invalid' | 'forbidden',
+  refuse: (prior: RefusalPrior) => Promise<unknown>,
+  options: { noLowerRequest?: true } = {}): Promise<void> {
+  const world = await createR4HistoryWorld();
+  try {
+    const run = await world.run({ text: 'cursor' });
+    const spy = options.noLowerRequest === true ? spyOn(world.history) : null;
+    const reader = createExecutionHistoryReader({ history: spy?.history ?? world.history });
+    const opened = await reader.readExecutionHistory(world.ctx, { sessionRef: run.sessionRef,
+      executionIdentity: run.identity, afterCursor: null, throughCursor: null, limit: 1 });
+    expect(opened.status).toBe('ready');
+    if (opened.status !== 'ready') return;
+    const cursor = opened.value.nextCursor;
+    expect(cursor).not.toBeNull();
+    if (cursor === null) return;
+    spy?.requests.splice(0);
+    const histories = () => Promise.all([world.sessions.first, world.sessions.second].map(sessionRef =>
+      world.history.readSessionHistory(world.ctx, { sessionRef, afterCursor: null, throughCursor: null, limit: 200 })));
+    const before = await histories();
+    expect(before.map(read => read.status)).toEqual(['ready', 'ready']);
+    expect(await refuse({ world, run, reader, cursor })).toMatchObject({ status: 'rejected', code });
+    if (spy !== null) expect(spy.requests).toHaveLength(0);
+    expect(await histories()).toEqual(before);
+  } finally { await world.close(); }
+}
+
 describe('R4c.2a targeted raw execution history', () => {
   it('returns only the requested execution identity and preserves the original evidence and basis', async () => {
-    const fx = await open();
+    const world = await createR4HistoryWorld();
     try {
-      const created = await createMappedSession(fx.runtime, 'history-chain');
-      const client = scriptedClient();
-      const first: KernelExecutionIdentity = { runId: 'run-first', turnId: 'turn-first' };
-      const second: KernelExecutionIdentity = { runId: 'run-second', turnId: 'turn-second' };
-      const sessionId = created.kernel.kernelSessionId;
-      await runTurn({ ...fx, sessionId, input: 'first question', identity: first, client });
-      await runTurn({ ...fx, sessionId, input: 'second question', identity: second, client });
-      const records = await rawRecords(fx.databasePath, sessionId);
-      const firstPositions = positionsOf(records, first);
-      const secondPositions = positionsOf(records, second);
-      expect(firstPositions.length).toBeGreaterThanOrEqual(2);
-      expect(secondPositions.length).toBeGreaterThanOrEqual(2);
+      const firstRun = await world.run({ text: 'first question' });
+      const secondRun = await world.run({ text: 'second question' });
+      const first = firstRun.identity;
+      const second = secondRun.identity;
+      const sessionRef = firstRun.sessionRef;
+      // The evidence is the public raw Session history, read whole (W2b-52).
+      const raw = await world.history.readSessionHistory(world.ctx, { sessionRef, afterCursor: null,
+        throughCursor: null, limit: 200 });
+      expect(raw.status).toBe('ready');
+      if (raw.status !== 'ready') return;
+      // Hand count. A real Run with one scripted text reply (no usage, no tool call)
+      // appends 5 Kernel records: turn.started, then the agent.events run.started,
+      // model.request_started, assistant.message_completed and run.completed. The
+      // Session holds session.created + 2 Runs x 5 = 1 + 10 = 11 records.
+      expect(raw.value.items).toHaveLength(11);
+      expect(raw.value.nextCursor).toBeNull();
+      const firstPositions = entryPositionsOf(raw.value.items, first);
+      const secondPositions = entryPositionsOf(raw.value.items, second);
+      expect(firstPositions).toHaveLength(5);
+      expect(secondPositions).toHaveLength(5);
 
-      const reader = createExecutionHistoryReader({ history: fx.runtime });
-      const page = await reader.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: first,
+      const reader = createExecutionHistoryReader({ history: world.history });
+      const page = await reader.readExecutionHistory(world.ctx, { sessionRef, executionIdentity: first,
         afterCursor: null, throughCursor: null, limit: 200 });
       expect(page.status).toBe('ready');
       if (page.status !== 'ready') return;
@@ -171,19 +196,10 @@ describe('R4c.2a targeted raw execution history', () => {
       expect(page.value.items.map(item => item.source.position)).toEqual(firstPositions);
       expect(page.value.items.some(item => item.kind === 'session_created')).toBe(false);
       expect(page.value.items.some(item => secondPositions.includes(item.source.position))).toBe(false);
-      expect(page.value.scannedCount).toBe(records.length);
-      for (const mismatched of [{ runId: first.runId, turnId: second.turnId },
-        { runId: second.runId, turnId: first.turnId }]) {
-        expect(await reader.readExecutionHistory(ctx, { sessionRef: created.ref,
-          executionIdentity: mismatched, afterCursor: null, throughCursor: null, limit: 200 }))
-          .toMatchObject({ status: 'ready', value: { items: [], scannedCount: records.length } });
-      }
-      expect(page.value.basis).toMatchObject({ kind: 'session', ref: { projectId, sessionId: created.ref.sessionId } });
-
-      const raw = await fx.runtime.readSessionHistory(ctx, { sessionRef: created.ref, afterCursor: null,
-        throughCursor: null, limit: 200 });
-      expect(raw.status).toBe('ready');
-      if (raw.status !== 'ready') return;
+      // One page of limit 200 scans the whole Session: the 11 records counted above.
+      expect(page.value.scannedCount).toBe(11);
+      expect(page.value.basis).toMatchObject({ kind: 'session',
+        ref: { projectId: world.projectId, sessionId: sessionRef.sessionId } });
       expect(page.value.basis).toEqual(raw.value.basis);
       const rawByPosition = new Map(raw.value.items.map(item => [item.source.position, item] as const));
       for (const item of page.value.items) {
@@ -191,25 +207,66 @@ describe('R4c.2a targeted raw execution history', () => {
         expect(original).toBeDefined();
         expect(item).toEqual(original);
       }
-    } finally { await fx.backend.close(); }
+    } finally { await world.close(); }
+  });
+
+  /**
+   * W2b-53 BLOCKED sub-part (R-20, unreachable), kept in its w2-base form
+   * (`w2-base:tests/runtime/R4c-execution-history.test.ts:155-160`, `:176-181`): a
+   * run/turn pair that mixes two executions. No public step returns such a pair, and
+   * the reader answers it with an empty ready page, not a refusal (it matches both
+   * fields, `src/core/agent-runtime/observation-recovery.ts:235-240`), so it is
+   * neither a returned identity nor an A6 row. As at w2-base, its two Turns carry
+   * test-declared identities (the observer-down path) and the count is read from the
+   * Kernel store. T2-025 stays partial.
+   */
+  it('answers a run/turn pair that mixes two executions with an empty ready page (BLOCKED, w2-base form)', async () => {
+    const world = await createR4HistoryWorld();
+    try {
+      const sessionRef = world.sessions.first;
+      const client = scriptedClient();
+      const first: KernelExecutionIdentity = { runId: 'run-first', turnId: 'turn-first' };
+      const second: KernelExecutionIdentity = { runId: 'run-second', turnId: 'turn-second' };
+      const sessionId = (await world.sessionKernel(sessionRef)).kernelSessionId;
+      await runTurn({ directory: world.directory, databasePath: world.databasePath, sessionId,
+        input: 'first question', identity: first, client });
+      await runTurn({ directory: world.directory, databasePath: world.databasePath, sessionId,
+        input: 'second question', identity: second, client });
+      const records = await rawRecords(world.databasePath, sessionId);
+      const reader = createExecutionHistoryReader({ history: world.history });
+      for (const mismatched of [{ runId: first.runId, turnId: second.turnId },
+        { runId: second.runId, turnId: first.turnId }]) {
+        expect(await reader.readExecutionHistory(world.ctx, { sessionRef,
+          executionIdentity: mismatched, afterCursor: null, throughCursor: null, limit: 200 }))
+          .toMatchObject({ status: 'ready', value: { items: [], scannedCount: records.length } });
+      }
+    } finally { await world.close(); }
   });
 
   it('freezes the raw upper bound and advances by the underlying raw cursor, not the last match cursor', async () => {
-    const fx = await open();
+    const world = await createR4HistoryWorld();
     try {
-      const created = await createMappedSession(fx.runtime, 'history-upper');
-      const client = scriptedClient();
-      const first: KernelExecutionIdentity = { runId: 'run-a', turnId: 'turn-a' };
-      const sessionId = created.kernel.kernelSessionId;
-      await runTurn({ ...fx, sessionId, input: 'a', identity: first, client });
-      const firstPositions = positionsOf(await rawRecords(fx.databasePath, sessionId), first);
+      const firstRun = await world.run({ text: 'a' });
+      const first = firstRun.identity;
+      const sessionRef = firstRun.sessionRef;
+      // The evidence is the public raw Session history after the first Run (W2b-52).
+      const before = await world.history.readSessionHistory(world.ctx, { sessionRef, afterCursor: null,
+        throughCursor: null, limit: 200 });
+      expect(before.status).toBe('ready');
+      if (before.status !== 'ready') return;
+      // Hand count: session.created + the first Run's 5 records (turn.started,
+      // run.started, model.request_started, assistant.message_completed,
+      // run.completed) = 1 + 5 = 6.
+      expect(before.value.items).toHaveLength(6);
+      const firstPositions = entryPositionsOf(before.value.items, first);
+      expect(firstPositions).toHaveLength(5);
       const lastFirst = firstPositions.at(-1);
       expect(lastFirst).toBeDefined();
       if (lastFirst === undefined) return;
 
-      const { history, requests } = spyOn(fx.runtime);
+      const { history, requests } = spyOn(world.history);
       const reader = createExecutionHistoryReader({ history });
-      const partial = await reader.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: first,
+      const partial = await reader.readExecutionHistory(world.ctx, { sessionRef, executionIdentity: first,
         afterCursor: null, throughCursor: null, limit: 1 });
       expect(partial.status).toBe('ready');
       if (partial.status !== 'ready') return;
@@ -217,144 +274,146 @@ describe('R4c.2a targeted raw execution history', () => {
       expect(partial.value.nextCursor).not.toBeNull();
       expect(requests).toHaveLength(1);
 
-      await runTurn({ ...fx, sessionId, input: 'b', identity: { runId: 'run-b', turnId: 'turn-b' }, client });
-      const continued = await reader.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: first,
+      await world.run({ text: 'b' });
+      const continued = await reader.readExecutionHistory(world.ctx, { sessionRef, executionIdentity: first,
         afterCursor: partial.value.nextCursor, throughCursor: null, limit: 200 });
       expect(continued.status).toBe('ready');
       if (continued.status !== 'ready') return;
       expect(continued.value.items.map(item => item.source.position)).toEqual(firstPositions);
-      expect(continued.value.scannedCount).toBe(firstPositions.length);
+      // The one-record page scanned session.created and froze the upper bound at the
+      // Session tail it saw (6 records), so the continuation scans 6 - 1 = 5 records,
+      // all of them the first Run's; the second Run's 5 lie above the bound.
+      expect(continued.value.scannedCount).toBe(5);
       expect(continued.value.items.every(item => item.source.position <= lastFirst)).toBe(true);
       expect(requests).toHaveLength(2);
 
-      const underlying = await fx.runtime.readSessionHistory(ctx, { sessionRef: created.ref, afterCursor: null,
-        throughCursor: null, limit: lastFirst + 1 });
+      // A raw page of 7 records: session.created, the first Run's 5 and the first
+      // record of the second Run (1 + 5 + 1 = 7). The Session now holds 1 + 5 + 5 = 11,
+      // so the page has a raw continuation and its last record is not a match.
+      const throughFirstRunAndOne = 7;
+      const underlying = await world.history.readSessionHistory(world.ctx, { sessionRef, afterCursor: null,
+        throughCursor: null, limit: throughFirstRunAndOne });
       expect(underlying.status).toBe('ready');
       if (underlying.status !== 'ready') return;
       expect(underlying.value.nextCursor).not.toBeNull();
-      const rawTail = await reader.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: first,
-        afterCursor: null, throughCursor: null, limit: lastFirst + 1 });
+      const rawTail = await reader.readExecutionHistory(world.ctx, { sessionRef, executionIdentity: first,
+        afterCursor: null, throughCursor: null, limit: throughFirstRunAndOne });
       expect(rawTail.status).toBe('ready');
       if (rawTail.status !== 'ready') return;
       expect(rawTail.value.nextCursor).not.toBeNull();
       expect(rawTail.value.items.map(item => item.source.position)).toEqual(firstPositions);
-      await reader.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: first,
+      await reader.readExecutionHistory(world.ctx, { sessionRef, executionIdentity: first,
         afterCursor: rawTail.value.nextCursor, throughCursor: null, limit: 200 });
       expect(requests.at(-1)?.afterCursor).toBe(underlying.value.nextCursor);
-    } finally { await fx.backend.close(); }
+    } finally { await world.close(); }
   });
 
-  it('rejects cursors that change the Session or execution target, malformed cursors and invalid limits', async () => {
-    const fx = await open();
-    try {
-      const a = await createMappedSession(fx.runtime, 'cursor-a');
-      const b = await createMappedSession(fx.runtime, 'cursor-b');
-      const client = scriptedClient();
-      const first: KernelExecutionIdentity = { runId: 'run-cursor', turnId: 'turn-cursor' };
-      await runTurn({ ...fx, sessionId: a.kernel.kernelSessionId, input: 'cursor', identity: first, client });
-      const reader = createExecutionHistoryReader({ history: fx.runtime });
-      const opened = await reader.readExecutionHistory(ctx, { sessionRef: a.ref, executionIdentity: first,
-        afterCursor: null, throughCursor: null, limit: 1 });
-      expect(opened.status).toBe('ready');
-      if (opened.status !== 'ready') return;
-      const changedActor = { kind: 'human' as const, id: 'another-authorized-host' };
-      const otherHost: CoreCallContext = { ...ctx, principal: { kind: 'host', actor: changedActor },
-        materialReader: { kind: 'host', projectId, workspaceId, actor: changedActor } };
-      expect(await reader.readExecutionHistory(otherHost, { sessionRef: a.ref, executionIdentity: first,
-        afterCursor: opened.value.nextCursor, throughCursor: null, limit: 200 }))
-        .toMatchObject({ status: 'rejected', code: 'invalid' });
-      const cursor = opened.value.nextCursor;
-      expect(cursor).not.toBeNull();
+  describe('rejects: cursors that change the Session or execution target, malformed cursors and invalid limits', () => {
+    it('rejects the cursor when another authorized Host principal reads it', () =>
+      expectRefusedWithoutChange('invalid', ({ world, run, reader, cursor }) => {
+        const changedActor = { kind: 'human' as const, id: 'another-authorized-host' };
+        const otherHost: CoreCallContext = { ...world.ctx, principal: { kind: 'host', actor: changedActor },
+          materialReader: { kind: 'host', projectId: world.projectId, workspaceId: world.workspaceId, actor: changedActor } };
+        return reader.readExecutionHistory(otherHost, { sessionRef: run.sessionRef, executionIdentity: run.identity,
+          afterCursor: cursor, throughCursor: null, limit: 200 });
+      }));
 
-      expect(await reader.readExecutionHistory(ctx, { sessionRef: a.ref,
-        executionIdentity: { runId: 'run-other', turnId: first.turnId }, afterCursor: cursor, throughCursor: null, limit: 200 }))
-        .toMatchObject({ status: 'rejected', code: 'invalid' });
-      expect(await reader.readExecutionHistory(ctx, { sessionRef: a.ref,
-        executionIdentity: { runId: first.runId, turnId: 'turn-other' }, afterCursor: cursor, throughCursor: null, limit: 200 }))
-        .toMatchObject({ status: 'rejected', code: 'invalid' });
-      expect(await reader.readExecutionHistory(ctx, { sessionRef: b.ref, executionIdentity: first,
-        afterCursor: cursor, throughCursor: null, limit: 200 })).toMatchObject({ status: 'rejected', code: 'invalid' });
-      expect(await reader.readExecutionHistory(ctx, { sessionRef: a.ref, executionIdentity: first,
-        afterCursor: 'not-a-reader-cursor', throughCursor: null, limit: 200 })).toMatchObject({ status: 'rejected', code: 'invalid' });
+    it('rejects the cursor for another runId', () =>
+      expectRefusedWithoutChange('invalid', ({ world, run, reader, cursor }) =>
+        reader.readExecutionHistory(world.ctx, { sessionRef: run.sessionRef,
+          executionIdentity: { runId: 'run-other', turnId: run.identity.turnId }, afterCursor: cursor, throughCursor: null, limit: 200 })));
 
-      const bottom = await fx.runtime.readSessionHistory(ctx, { sessionRef: a.ref, afterCursor: null, throughCursor: null, limit: 1 });
-      expect(bottom.status).toBe('ready');
-      if (bottom.status !== 'ready') return;
-      expect(bottom.value.nextCursor).not.toBeNull();
-      expect(await reader.readExecutionHistory(ctx, { sessionRef: a.ref, executionIdentity: first,
-        afterCursor: bottom.value.nextCursor, throughCursor: null, limit: 200 })).toMatchObject({ status: 'rejected', code: 'invalid' });
+    it('rejects the cursor for another turnId', () =>
+      expectRefusedWithoutChange('invalid', ({ world, run, reader, cursor }) =>
+        reader.readExecutionHistory(world.ctx, { sessionRef: run.sessionRef,
+          executionIdentity: { runId: run.identity.runId, turnId: 'turn-other' }, afterCursor: cursor, throughCursor: null, limit: 200 })));
 
-      for (const limit of [0, 201, 1.5]) {
-        expect(await reader.readExecutionHistory(ctx, { sessionRef: a.ref, executionIdentity: first,
-          afterCursor: null, throughCursor: null, limit })).toMatchObject({ status: 'rejected', code: 'invalid' });
-      }
-    } finally { await fx.backend.close(); }
+    it('rejects the cursor on another Session', () =>
+      expectRefusedWithoutChange('invalid', ({ world, run, reader, cursor }) =>
+        reader.readExecutionHistory(world.ctx, { sessionRef: world.sessions.second, executionIdentity: run.identity,
+          afterCursor: cursor, throughCursor: null, limit: 200 }), { noLowerRequest: true }));
+
+    it('rejects a malformed cursor', () =>
+      expectRefusedWithoutChange('invalid', ({ world, run, reader }) =>
+        reader.readExecutionHistory(world.ctx, { sessionRef: run.sessionRef, executionIdentity: run.identity,
+          afterCursor: 'not-a-reader-cursor', throughCursor: null, limit: 200 })));
+
+    it('rejects a raw Session history cursor in place of a reader cursor', () =>
+      expectRefusedWithoutChange('invalid', async ({ world, run, reader }) => {
+        const bottom = await world.history.readSessionHistory(world.ctx, { sessionRef: run.sessionRef, afterCursor: null,
+          throughCursor: null, limit: 1 });
+        expect(bottom.status).toBe('ready');
+        if (bottom.status !== 'ready') return bottom;
+        expect(bottom.value.nextCursor).not.toBeNull();
+        return reader.readExecutionHistory(world.ctx, { sessionRef: run.sessionRef, executionIdentity: run.identity,
+          afterCursor: bottom.value.nextCursor, throughCursor: null, limit: 200 });
+      }));
+
+    it.each([0, 201, 1.5])('rejects limit %s', limit =>
+      expectRefusedWithoutChange('invalid', ({ world, run, reader }) =>
+        reader.readExecutionHistory(world.ctx, { sessionRef: run.sessionRef, executionIdentity: run.identity,
+          afterCursor: null, throughCursor: null, limit }), { noLowerRequest: true }));
   });
 
   it('passes the original boundary through and propagates owner rejections instead of an empty page', async () => {
-    const fx = await open();
+    const world = await createR4HistoryWorld();
     try {
-      const created = await createMappedSession(fx.runtime, 'owner-boundary');
-      const client = scriptedClient();
-      const identity: KernelExecutionIdentity = { runId: 'run-boundary', turnId: 'turn-boundary' };
-      await runTurn({ ...fx, sessionId: created.kernel.kernelSessionId, input: 'boundary', identity, client });
-      const full = await fx.runtime.readSessionHistory(ctx, { sessionRef: created.ref, afterCursor: null, throughCursor: null, limit: 200 });
+      const run = await world.run({ text: 'boundary' });
+      const identity = run.identity;
+      const full = await world.history.readSessionHistory(world.ctx, { sessionRef: run.sessionRef,
+        afterCursor: null, throughCursor: null, limit: 200 });
       expect(full.status).toBe('ready');
       if (full.status !== 'ready') return;
       expect(full.value.basis.kind).toBe('session');
       if (full.value.basis.kind !== 'session') return;
       const through = full.value.basis.cursor;
 
-      const { history, requests } = spyOn(fx.runtime);
+      const { history, requests } = spyOn(world.history);
       const reader = createExecutionHistoryReader({ history });
-      const read = await reader.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: identity,
+      const read = await reader.readExecutionHistory(world.ctx, { sessionRef: run.sessionRef, executionIdentity: identity,
         afterCursor: null, throughCursor: through, limit: 200 });
       expect(read.status).toBe('ready');
       expect(requests).toHaveLength(1);
       expect(requests[0]?.afterCursor).toBeNull();
       expect(requests[0]?.throughCursor).toBe(through);
 
-      const otherCtx: CoreCallContext = { ...ctx, workspaceId: 'workspace-b',
-        materialReader: { kind: 'host', projectId, workspaceId: 'workspace-b', actor } };
-      expect(await reader.readExecutionHistory(otherCtx, { sessionRef: created.ref, executionIdentity: identity,
-        afterCursor: null, throughCursor: null, limit: 200 })).toMatchObject({ status: 'rejected', code: 'forbidden' });
-
-      const database = new DatabaseSync(fx.databasePath);
-      try {
-        database.prepare('UPDATE session_records SET record_json = ? WHERE session_id = ? AND position = 1')
-          .run('{}', created.kernel.kernelSessionId);
-      } finally { database.close(); }
-      expect(await reader.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: identity,
-        afterCursor: null, throughCursor: null, limit: 200 })).toMatchObject({ status: 'rejected', code: 'unavailable' });
-
-      await unlink(fx.databasePath);
-      expect(await reader.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: identity,
+      // Another workspace's forbidden refusal is the R-18 row below.
+      await unlink(world.databasePath);
+      expect(await reader.readExecutionHistory(world.ctx, { sessionRef: run.sessionRef, executionIdentity: identity,
         afterCursor: null, throughCursor: null, limit: 200 })).toMatchObject({ status: 'rejected', code: 'not_found' });
 
       const notReady = createExecutionHistoryReader({ history: {
         async readSessionHistory() {
           return { status: 'not_ready' as const, observed: null,
-            required: { kind: 'session' as const, ref: created.ref, cursor: 'owner-watermark' } };
+            required: { kind: 'session' as const, ref: run.sessionRef, cursor: 'owner-watermark' } };
         },
       } });
-      expect(await notReady.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: identity,
+      expect(await notReady.readExecutionHistory(world.ctx, { sessionRef: run.sessionRef, executionIdentity: identity,
         afterCursor: null, throughCursor: null, limit: 200 })).toMatchObject({ status: 'not_ready' });
-    } finally { await fx.backend.close(); }
+    } finally { await world.close(); }
+  });
+
+  describe('rejects: an owner refusal is propagated instead of an empty page', () => {
+    it('rejects a read from another workspace as forbidden', () =>
+      expectRefusedWithoutChange('forbidden', ({ world, run, reader }) => {
+        const otherCtx: CoreCallContext = { ...world.ctx, workspaceId: 'workspace-b',
+          materialReader: { kind: 'host', projectId: world.projectId, workspaceId: 'workspace-b', actor: world.actor } };
+        return reader.readExecutionHistory(otherCtx, { sessionRef: run.sessionRef, executionIdentity: run.identity,
+          afterCursor: null, throughCursor: null, limit: 200 });
+      }));
   });
 
   it('keeps the original signal and rejects a page cancelled before or while awaiting the owner', async () => {
-    const fx = await open();
+    const world = await createR4HistoryWorld();
     try {
-      const created = await createMappedSession(fx.runtime, 'cancel');
-      const client = scriptedClient();
-      const identity: KernelExecutionIdentity = { runId: 'run-cancel', turnId: 'turn-cancel' };
-      await runTurn({ ...fx, sessionId: created.kernel.kernelSessionId, input: 'cancel', identity, client });
+      const run = await world.run({ text: 'cancel' });
+      const identity = run.identity;
 
       const before = new AbortController();
       before.abort();
-      const reader = createExecutionHistoryReader({ history: fx.runtime });
-      expect(await reader.readExecutionHistory({ ...ctx, signal: before.signal },
-        { sessionRef: created.ref, executionIdentity: identity, afterCursor: null, throughCursor: null, limit: 200 }))
+      const reader = createExecutionHistoryReader({ history: world.history });
+      expect(await reader.readExecutionHistory({ ...world.ctx, signal: before.signal },
+        { sessionRef: run.sessionRef, executionIdentity: identity, afterCursor: null, throughCursor: null, limit: 200 }))
         .toMatchObject({ status: 'rejected', code: 'cancelled' });
 
       let release!: () => void;
@@ -363,7 +422,7 @@ describe('R4c.2a targeted raw execution history', () => {
       const reachedOwner = new Promise<void>(resolve => { ownerRead = resolve; });
       const delayed: HistoryOwner = {
         async readSessionHistory(context, request) {
-          const page = await fx.runtime.readSessionHistory(context, request);
+          const page = await world.history.readSessionHistory(context, request);
           ownerRead();
           await gate;
           return page;
@@ -371,8 +430,8 @@ describe('R4c.2a targeted raw execution history', () => {
       };
       const gated = createExecutionHistoryReader({ history: delayed });
       const controller = new AbortController();
-      const pending = gated.readExecutionHistory({ ...ctx, signal: controller.signal },
-        { sessionRef: created.ref, executionIdentity: identity, afterCursor: null, throughCursor: null, limit: 200 });
+      const pending = gated.readExecutionHistory({ ...world.ctx, signal: controller.signal },
+        { sessionRef: run.sessionRef, executionIdentity: identity, afterCursor: null, throughCursor: null, limit: 200 });
       const firstResult = await Promise.race([reachedOwner.then(() => 'owner' as const), pending]);
       if (firstResult !== 'owner') {
         release();
@@ -382,17 +441,15 @@ describe('R4c.2a targeted raw execution history', () => {
       controller.abort();
       release();
       expect(await pending).toMatchObject({ status: 'rejected', code: 'cancelled' });
-    } finally { await fx.backend.close(); }
+    } finally { await world.close(); }
   });
 
   it('owns the request before the first await so caller mutation cannot retarget the execution read', async () => {
-    const fx = await open();
+    const world = await createR4HistoryWorld();
     try {
-      const a = await createMappedSession(fx.runtime, 'mutate-a');
-      const b = await createMappedSession(fx.runtime, 'mutate-b');
-      const client = scriptedClient();
-      const identityA: KernelExecutionIdentity = { runId: 'run-a', turnId: 'turn-a' };
-      await runTurn({ ...fx, sessionId: a.kernel.kernelSessionId, input: 'a', identity: identityA, client });
+      const a = await world.run({ text: 'a' });
+      const b = world.sessions.second;
+      const identityA = a.identity;
 
       let release!: () => void;
       const gate = new Promise<void>(resolve => { release = resolve; });
@@ -401,23 +458,23 @@ describe('R4c.2a targeted raw execution history', () => {
         async readSessionHistory(context, request) {
           seen.push(structuredClone(request));
           await gate;
-          expect(context.principal).toEqual(ctx.principal);
-          expect(context.materialReader).toEqual(ctx.materialReader);
-          expect(context.signal).toBe(ctx.signal);
-          return fx.runtime.readSessionHistory(context, request);
+          expect(context.principal).toEqual(world.ctx.principal);
+          expect(context.materialReader).toEqual(world.ctx.materialReader);
+          expect(context.signal).toBe(world.ctx.signal);
+          return world.history.readSessionHistory(context, request);
         },
       };
       const reader = createExecutionHistoryReader({ history: delayed });
-      const request = { sessionRef: { projectId, sessionId: a.ref.sessionId }, executionIdentity: { runId: 'run-a', turnId: 'turn-a' },
-        afterCursor: null, throughCursor: null, limit: 200 };
-      const ownedCtx: CoreCallContext = { ...ctx, principal: structuredClone(ctx.principal),
-        materialReader: structuredClone(ctx.materialReader) };
+      const request = { sessionRef: { projectId: world.projectId, sessionId: a.sessionRef.sessionId },
+        executionIdentity: { ...identityA }, afterCursor: null, throughCursor: null, limit: 200 };
+      const ownedCtx: CoreCallContext = { ...world.ctx, principal: structuredClone(world.ctx.principal),
+        materialReader: structuredClone(world.ctx.materialReader) };
       const pending = reader.readExecutionHistory(ownedCtx, request);
       if (ownedCtx.principal.kind === 'host') ownedCtx.principal.actor.id = 'mutated-actor';
       ownedCtx.workspaceId = 'mutated-workspace';
       request.executionIdentity.runId = 'run-b';
       request.executionIdentity.turnId = 'turn-b';
-      request.sessionRef.sessionId = b.ref.sessionId;
+      request.sessionRef.sessionId = b.sessionId;
       request.limit = 1;
       release();
       const result = await pending;
@@ -427,16 +484,16 @@ describe('R4c.2a targeted raw execution history', () => {
       expect(result.value.items.length).toBeGreaterThan(0);
       expect(result.value.items.every(item => item.source.kernelSessionId === a.kernel.kernelSessionId)).toBe(true);
       expect(seen[0]).toMatchObject({ limit: 200, afterCursor: null, throughCursor: null });
-      expect(seen[0]?.sessionRef.sessionId).toBe(a.ref.sessionId);
-    } finally { await fx.backend.close(); }
+      expect(seen[0]?.sessionRef.sessionId).toBe(a.sessionRef.sessionId);
+    } finally { await world.close(); }
   });
 
   it('rejects damaged inline evidence, inconsistent envelopes and unsupported external bodies', async () => {
-    const fx = await open();
+    const world = await createR4HistoryWorld();
     try {
-      const session = await createMappedSession(fx.runtime, 'damaged-page');
+      const session = world.sessions.first;
       const identity = { runId: 'absent', turnId: 'absent' };
-      const request = { sessionRef: session.ref, executionIdentity: identity,
+      const request = { sessionRef: session, executionIdentity: identity,
         afterCursor: null, throughCursor: null, limit: 10 };
       for (const [code, mutate] of [
         ['unavailable', (_entry: SessionHistoryEntry) => null as unknown as SessionHistoryEntry],
@@ -453,41 +510,42 @@ describe('R4c.2a targeted raw execution history', () => {
           source: { ...entry.source, kernelSessionId: 'wrong-kernel-session' } })],
         ['unsupported', (entry: SessionHistoryEntry) => ({ ...entry,
           body: { kind: 'artifact' as const, contentType: 'application/json', digest: 'a'.repeat(64), sizeBytes: 10,
-            source: { kind: 'workspace' as const, refId: workspaceId, revision: '1' } } })],
+            source: { kind: 'workspace' as const, refId: world.workspaceId, revision: '1' } } })],
       ] as const) {
         const reader = createExecutionHistoryReader({ history: {
           async readSessionHistory(context, input) {
-            const result = await fx.runtime.readSessionHistory(context, input);
+            const result = await world.history.readSessionHistory(context, input);
             if (result.status !== 'ready') return result;
             return { ...result, value: { ...result.value, items: result.value.items.map(mutate) } };
           },
         } });
-        expect(await reader.readExecutionHistory(ctx, request)).toMatchObject({ status: 'rejected', code });
+        expect(await reader.readExecutionHistory(world.ctx, request)).toMatchObject({ status: 'rejected', code });
       }
-    } finally { await fx.backend.close(); }
+    } finally { await world.close(); }
   });
 
   it('still reads persisted Kernel evidence when the best-effort observer is down', async () => {
-    const fx = await open();
+    const world = await createR4HistoryWorld();
     try {
-      const created = await createMappedSession(fx.runtime, 'observer-down');
+      const sessionId = (await world.sessionKernel(world.sessions.first)).kernelSessionId;
       const client = scriptedClient();
       const identity: KernelExecutionIdentity = { runId: 'run-observed', turnId: 'turn-observed' };
       let failures = 0;
-      const result = await runTurn({ ...fx, sessionId: created.kernel.kernelSessionId, input: 'observed', identity, client,
+      const result = await runTurn({ directory: world.directory, databasePath: world.databasePath, sessionId,
+        input: 'observed', identity, client,
         publish: async () => { failures += 1; throw new Error('observer sink down'); } });
       expect(result.state.status).toBe('completed');
       expect(failures).toBeGreaterThan(0);
 
-      const persisted = positionsOf(await rawRecords(fx.databasePath, created.kernel.kernelSessionId), identity);
+      const persisted = positionsOf(await rawRecords(world.databasePath, sessionId), identity);
       expect(persisted.length).toBeGreaterThanOrEqual(2);
 
-      const reader = createExecutionHistoryReader({ history: fx.runtime });
-      const page = await reader.readExecutionHistory(ctx, { sessionRef: created.ref, executionIdentity: identity,
+      const reader = createExecutionHistoryReader({ history: world.history });
+      const page = await reader.readExecutionHistory(world.ctx, { sessionRef: world.sessions.first, executionIdentity: identity,
         afterCursor: null, throughCursor: null, limit: 200 });
       expect(page.status).toBe('ready');
       if (page.status !== 'ready') return;
       expect(page.value.items.map(item => item.source.position)).toEqual(persisted);
-    } finally { await fx.backend.close(); }
+    } finally { await world.close(); }
   });
 });

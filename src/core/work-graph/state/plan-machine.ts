@@ -44,7 +44,6 @@ import type { CoreError, CoreRejection } from '../../../contracts/core/results.j
 import type { PlanWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskLeaseSnapshot } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { PlanProposalSnapshot } from '../../../contracts/goal-change.js';
 import type { GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
 import type {
   AcceptanceObligation, Disposition, PlanRevisionDraft, PlanRevisionRef, PlanValidationError, RuntimeTask,
@@ -101,15 +100,8 @@ export type CandidatePlanProposal = {
   submittedBy?: PlanWriteProvenanceV1;
 };
 
-/** `plan-contracts.ts:45-47`: read-only; always `candidate` (`plan-record-codecs.ts:752`). */
-export type LegacyPlanProposal = {
-  kind: 'legacy_v1'; ref: PlanProposalRef; revision: 1; schemaVersion: 1;
-  goalRef: GoalRef; basedOn: PlanRevisionRef; draft: null;
-  legacy: PlanProposalSnapshot; status: 'candidate'; issues: PlanValidationError[];
-};
-
 /** `PlanProposal` (`plan-contracts.ts:36-47`). */
-export type PlanProposalRecord = CandidatePlanProposal | LegacyPlanProposal;
+export type PlanProposalRecord = CandidatePlanProposal;
 
 // --------------------------------------------------------------------------
 // Record constructors (§14.1: the only writers of `PlanProposal.status`)
@@ -169,7 +161,7 @@ export function derivePlanProposalStatus(
     case 'not_adopted':
       return 'rejected';
     default:
-      return unreachable(proposal, 'plan proposal status');
+      return unreachable(proposal.status, 'plan proposal status');
   }
 }
 
@@ -1045,9 +1037,6 @@ function recordedWriterStep(event: RecordedWriterEvent, facts: PlanProposalReadF
         () => event.submittedBy === null
           ? reject('illegal', 'invalid', 'an Agent proposal requires the admitted submission provenance') : null,
         scope,
-        // :1954-1958
-        () => event.draft.schemaVersion !== 2
-          ? reject('guard_failed', 'unsupported', 'an Agent proposal requires a schemaVersion 2 future draft') : null,
         () => event.basedOn === null
           ? reject('guard_failed', 'forbidden', 'an Agent proposal must be based on an accepted source plan') : null,
         // :1959-1970
@@ -1247,8 +1236,6 @@ function acceptedStep(
   if (state === undefined) return UNREAD;
   if (state === null) return reject('illegal', 'not_found', `proposal ${event.proposalRef.proposalId} does not exist`);
   switch (state.kind) {
-    case 'legacy_v1':
-      return reject('illegal', 'unsupported', legacyAdoptionDetail(event.adopter));
     case 'candidate_v2':
       switch (state.status) {
         case 'accepted':
@@ -1261,10 +1248,10 @@ function acceptedStep(
         case 'not_adopted':
           return reject('illegal', 'invalid', `proposal ${event.proposalRef.proposalId} is not a pending candidate`);
         default:
-          return unreachable(state, 'plan proposal status');
+          return unreachable(state.status, 'plan proposal status');
       }
     default:
-      return unreachable(state, 'plan proposal kind');
+      return unreachable(state.kind, 'plan proposal kind');
   }
 }
 
@@ -1278,18 +1265,6 @@ function onProposalAccepted(
   if (!isAdmitted(step)) return step;
   return accept<PlanProposalMachineState, PlanProposalEffect>(acceptProposalRecord(step.proposal),
     adoptionEffects(step, event.adopter));
-}
-
-/** :1144 (Host), :2069 (Agent). */
-function legacyAdoptionDetail(adopter: PlanAdopter): string {
-  switch (adopter) {
-    case 'host':
-      return 'a legacy v1 patch proposal cannot be adopted by this slice';
-    case 'agent':
-      return 'a legacy v1 patch proposal cannot be adopted by an Agent';
-    default:
-      return unreachable(adopter, 'plan adopter');
-  }
 }
 
 /** The adopter's own CAS guards: the fresh Agent admission joins the commit (`extraGuards`, :2095 → :1773-1774). */
@@ -1397,12 +1372,6 @@ function futureAdoptionStep(
   facts: PlanProposalReadFacts,
 ): AcceptStep {
   const draft = proposal.draft;
-  // :1695-1700
-  if (draft.schemaVersion !== 2) {
-    return event.decisionRefs.length === 0
-      ? reject('guard_failed', 'incomplete', 'a plan change requires an accepted UserDecision; this slice does not accept raw full drafts')
-      : reject('guard_failed', 'unsupported', 'authorized plan-change delta compilation is not implemented in this slice');
-  }
   // :1703-1705
   if (event.decisionRefs.length > 0) {
     return reject('guard_failed', 'unsupported', 'a W1 future-only revision does not accept decision references');
@@ -1570,7 +1539,7 @@ function onProposalStale(state: PlanProposalMachineState, ctx: PlanProposalGuard
     case 'not_adopted':
       return reject('illegal', 'invalid', 'a not_adopted proposal is terminal; it is never read as stale');
     default:
-      return unreachable(state, 'plan proposal status');
+      return unreachable(state.status, 'plan proposal status');
   }
 }
 
@@ -1591,7 +1560,7 @@ function onProposalRejected(state: PlanProposalMachineState): PlanProposalTransi
     case 'not_adopted':
       return reject('illegal', 'invalid', 'the proposal is already not_adopted; it is final');
     default:
-      return unreachable(state, 'plan proposal status');
+      return unreachable(state.status, 'plan proposal status');
   }
 }
 
@@ -1620,9 +1589,6 @@ function onProposalReplaced(
   const writer = recordedWriterStep(event, ctx);
   if (writer !== null) return writer === UNREAD ? incompleteFacts() : writer;
   if (state === null) return reject('illegal', 'not_found', `proposal ${event.head.proposalRef.proposalId} does not exist`);
-  if (state.kind === 'legacy_v1') {
-    return reject('illegal', 'unsupported', 'a legacy v1 proposal cannot be replaced by a request candidate');
-  }
   if (state.status !== 'candidate') {
     return reject('illegal', 'invalid', `proposal ${event.ref.proposalId} is not a pending candidate`);
   }
@@ -1706,9 +1672,6 @@ function onProposalAbandoned(
   ctx: PlanProposalGuardContext,
 ): PlanProposalTransition {
   if (state === null) return reject('illegal', 'not_found', `proposal ${event.proposalRef.proposalId} does not exist`);
-  if (state.kind === 'legacy_v1') {
-    return reject('illegal', 'unsupported', 'a legacy v1 proposal cannot be abandoned by a request candidate');
-  }
   if (state.status !== 'candidate') {
     return reject('illegal', 'invalid', `proposal ${event.proposalRef.proposalId} is not a pending candidate`);
   }

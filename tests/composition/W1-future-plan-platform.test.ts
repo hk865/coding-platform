@@ -10,10 +10,9 @@
  * win; the selected Plan and Lease prove the committed winner. Store rollback
  * and Claim tests cover atomicity of the complete Run/Lease/occupancy batch.
  *
- * Read-side fixture note: the later accepted Plan and its Run are seeded
- * directly into SQLite only to make the explicit old-Plan read observable; the
- * initial plan adoption, claim and every W1 write otherwise go through public
- * ports.
+ * Read-side note: the Project/Workspace/CompletionPolicy/ArchitectureBootstrap,
+ * the later accepted Plan and its Run are produced by the same public owners as
+ * the initial plan adoption, so the explicit old-Plan read observes real writes.
  *
  * Specification: docs/refactor/tasks/W1-future-plan-skeleton.md §8.
  */
@@ -23,23 +22,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
-import type { GoalRef, GoalSnapshot, ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
+import type { GoalRef, ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
-import type { RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
-import type { EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import type { GoalRecordTransactionPort } from '../../src/core/record-store/ports.js';
 import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
-import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
-import { canonicalRefKey, encodeGoalSnapshot, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { PLAN_RECORD_SCHEMAS, encodePlanRevisionSnapshot } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
-import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
-import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
-import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createTaskClaimFixture } from '../helpers/task-claim-fixture.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
+import type { CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 
 const AT = '2026-09-25T00:00:00.000Z';
@@ -55,44 +47,11 @@ const goalRef: GoalRef = { aggregateType: 'Goal', projectId, goalId: 'goal-1' };
 type Records = GoalRecordTransactionPort & RecordLookupPort;
 type PlanDraftV2 = Extract<PlanRevisionDraft, { schemaVersion: 2 }>;
 
-const digest = (value: JsonValue) => sha256Hex(canonicalJson(value));
+const policyContent = { schemaVersion: 1 as const, requirementKinds: ['test'],
+  minimumRequiredRequirementsPerObligation: 1 };
+const architectureContent = { schemaVersion: 1 as const, description: 'W1 composed baseline', constraints: [] };
 const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId, policyId: 'w1-policy', revision: 1 };
 const architectureRef = { aggregateType: 'ArchitectureBaselineRevision' as const, projectId, baselineId: 'w1-baseline', revision: 1 };
-const policyFixture = { schemaVersion: 1, identity: { policyId: 'w1-policy' }, revision: 1,
-  content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } };
-const architectureFixture = { schemaVersion: 1, identity: { baselineId: 'w1-baseline' }, revision: 1,
-  content: { schemaVersion: 1, description: 'W1 composed baseline', constraints: [] } };
-const governance = [
-  { ref: policyRef, revision: 1, schemaVersion: 1, policyId: 'w1-policy', contentRevision: 1,
-    contentDigest: digest(policyFixture as unknown as JsonValue), content: policyFixture.content },
-  { ref: architectureRef, revision: 1, schemaVersion: 1, baselineId: 'w1-baseline', contentRevision: 1,
-    contentDigest: digest(architectureFixture as unknown as JsonValue), content: architectureFixture.content },
-  { ref: { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId }, projectId, revision: 1, activeRevision: policyRef },
-  { ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId }, projectId, revision: 1, activeRevision: architectureRef },
-];
-const encodeGovernance = (snapshot: (typeof governance)[number]): EncodedRecord => ({
-  refKey: canonicalJson(snapshot.ref as unknown as JsonValue), schemaId: `${snapshot.ref.aggregateType}Snapshot@1`,
-  revision: snapshot.revision, json: JSON.stringify(snapshot),
-});
-const materialSchemas = materialRecordSchemas();
-const fullSchemas: RecordBackendSchemas = {
-  records: [...materialSchemas.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...PLAN_RECORD_SCHEMAS.records,
-    ...PLAN_STATE_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...TASK_CLAIM_RECORD_SCHEMAS.records],
-  events: [...materialSchemas.events, ...PLAN_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
-    ...TASK_CLAIM_RECORD_SCHEMAS.events,
-    { eventType: 'TrustedScopeSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) }],
-  lookups: [...(materialSchemas.lookups ?? []), ...(PLAN_RECORD_SCHEMAS.lookups ?? []),
-    ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_RECORD_SCHEMAS.lookups ?? []),
-    ...(TASK_CLAIM_RECORD_SCHEMAS.lookups ?? [])],
-};
-const seed: PreparedCommit = { identityKey: 'w1-composed-scope-seed', fingerprint: 'w1-composed-scope-seed-v1',
-  guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null },
-    { refKey: canonicalRefKey(workspace.ref), expectedRevision: null },
-    ...governance.map(snapshot => ({ refKey: canonicalJson(snapshot.ref as unknown as JsonValue), expectedRevision: null }))],
-  records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace), ...governance.map(encodeGovernance)],
-  events: [{ eventId: 'w1-composed-scope-event', eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: AT,
-    json: JSON.stringify({ eventId: 'w1-composed-scope-event', eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: AT }) }],
-  claims: [], indexGuards: [], indexChanges: [] };
 
 const composedDraft: PlanDraftV2 = { schemaVersion: 2, planId: 'w1-composed-plan', planRevision: 1,
   goalId: 'goal-1', stages: [],
@@ -130,10 +89,6 @@ afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recurs
 it('scenario 6/restart + W1 success: real SQLite adopt -> replay -> later revision -> reopen replay', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'next-w1-composed-'));
   dirs.push(directory);
-  const ledgerPath = join(directory, 'ledger.sqlite');
-  const seedBackend = createSqliteRecordBackend({ path: ledgerPath, schemas: fullSchemas });
-  try { expect(await seedBackend.records.commit(seed)).toMatchObject({ status: 'committed' }); }
-  finally { await seedBackend.close(); }
 
   const workspaceBindings: WorkspaceHostBindings = {
     async resolveRoot(requested) {
@@ -149,8 +104,38 @@ it('scenario 6/restart + W1 success: real SQLite adopt -> replay -> later revisi
 
   const first = await createTargetPlatform(options);
   let plan1: PlanRevisionSnapshot;
-  let goalAfter: GoalSnapshot;
   try {
+    // Public bootstrap on the same SQLite platform: Project, Workspace, the
+    // active CompletionPolicy and the initial ArchitectureBaseline.
+    const createdProject = await first.projects.createProject(ctx, { meta: {
+      requestId: 'w1-composed-create-project', expected: [{ ref: project.ref, revision: 0 }] },
+      input: { projectId } });
+    expect(createdProject).toMatchObject({ status: 'committed', replayed: false, value: project });
+    const registered = await first.projects.registerWorkspace(ctx, { meta: {
+      requestId: 'w1-composed-register-workspace', expected: [
+        { ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 0 }] },
+      input: { workspace: scope } });
+    expect(registered).toMatchObject({ status: 'committed', replayed: false, value: workspace });
+    const installed = await first.completionPolicies.installCompletionPolicy(ctx, { meta: {
+      requestId: 'w1-composed-install-policy', expected: [
+        { ref: project.ref, revision: 1 }, { ref: policyRef, revision: 0 }] },
+      input: { policyId: policyRef.policyId, contentRevision: policyRef.revision, content: policyContent } });
+    expect(installed).toMatchObject({ status: 'committed', replayed: false });
+    if (installed.status !== 'committed') throw new Error('public CompletionPolicy install failed');
+    expect(await first.completionPolicies.activateCompletionPolicy(ctx, { meta: {
+      requestId: 'w1-composed-activate-policy', expected: [
+        { ref: project.ref, revision: 1 },
+        { ref: { aggregateType: 'ProjectCompletionPolicyActive', projectId }, revision: 0 }] },
+      input: { target: { ref: installed.value.ref, digest: installed.value.contentDigest } } }))
+      .toMatchObject({ status: 'committed', replayed: false });
+    expect(await first.architecture.adoptInitialArchitecture(ctx, { meta: {
+      requestId: 'w1-composed-adopt-architecture', expected: [
+        { ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },
+      input: { baselineId: architectureRef.baselineId, description: architectureContent.description,
+        constraints: architectureContent.constraints,
+        catalog: { requireDag: true, dependencies: [], modules: [] } } }))
+      .toMatchObject({ status: 'committed', replayed: false });
+
     const goal = await first.goals.createGoal(ctx, { meta: { requestId: 'w1-composed-goal',
       expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },
       input: { goalId: goalRef.goalId, workspace: scope, objective: 'W1 composed future whiteboard' } });
@@ -167,34 +152,56 @@ it('scenario 6/restart + W1 success: real SQLite adopt -> replay -> later revisi
     plan1 = applied.value;
     const read = await first.plans.queryGoal(ctx, goalRef);
     if (read.status !== 'ready') throw new Error('composed Goal read failed');
-    goalAfter = read.value.goal;
   } finally { await first.close(); }
 
-  // Read-side fixture: a later accepted Plan pinned by the Goal with a Run for
-  // `refine`, so `polish` stays truly unexecuted for the W1 edit.
+  // The later accepted Plan and the `refine` Run are produced by the same
+  // public owners on a reopened SQLite platform: plan revision 2 is pinned by
+  // the Goal, and a real claim writes the Run (status `starting`) that projects
+  // `refine` as running while `polish` stays truly unexecuted for the W1 edit.
+  // Goal writes: createGoal revision 1, initial apply revision 2, later apply
+  // revision 3.
+  // The ref the later Plan's own draft names (planId 'w1-composed-later').
   const plan2Ref: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId, planId: 'w1-composed-later' };
-  const plan2: PlanRevisionSnapshot = { ...plan1, ref: plan2Ref, planId: plan2Ref.planId, planRevision: 2 };
-  const nextGoal: GoalSnapshot = { ...goalAfter, activePlanRevision: plan2Ref, revision: goalAfter.revision + 1 };
-  const runRef: RunRef = { aggregateType: 'Run', projectId, goalId: goalRef.goalId, runId: 'w1-composed-refine-run' };
-  const run: RunSnapshot = { ref: runRef, revision: 1, schemaVersion: 1,
-    task: { projectId, goalId: goalRef.goalId, taskId: 'refine' }, attemptId: 'w1-composed-refine-attempt',
-    planRef: plan2Ref, roleBinding: { schemaVersion: 1, bindingId: 'w1-binding', templateId: 'builder',
-      templateRevision: '1', bindingVersion: 1, policyRevision: '1' },
-    budget: { tokenBudget: 100, deadline: null }, workspaceSnapshot: { workspaceId, revision: 1 },
-    status: 'running', outcome: null, exitCode: null, lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '',
-    envelope: null, startedAt: AT, endedAt: null };
-  const raw = createSqliteRecordBackend({ path: ledgerPath, schemas: fullSchemas });
+  const writer = await createTargetPlatform(options);
   try {
-    const fixtureEvent = { eventId: 'w1-composed-fixture', eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: AT };
-    const committed = await raw.records.commit({ identityKey: 'w1-composed-fixture', fingerprint: 'w1-composed-fixture-v1',
-      guards: [{ refKey: canonicalJson(goalRef as unknown as JsonValue), expectedRevision: goalAfter.revision },
-        { refKey: canonicalJson(plan2Ref as unknown as JsonValue), expectedRevision: null },
-        { refKey: canonicalJson(runRef as unknown as JsonValue), expectedRevision: null }],
-      records: [encodePlanRevisionSnapshot(plan2), encodeGoalSnapshot(nextGoal),
-        { refKey: canonicalJson(runRef as unknown as JsonValue), schemaId: 'RunSnapshot@1', revision: 1, json: JSON.stringify(run) }],
-      events: [{ ...fixtureEvent, json: JSON.stringify(fixtureEvent) }], claims: [], indexGuards: [], indexChanges: [] });
-    expect(committed).toMatchObject({ status: 'committed' });
-  } finally { await raw.close(); }
+    const plan2Proposal = await writer.plans.proposePlan(ctx, { meta: {
+      requestId: 'w1-composed-plan2-propose', expected: [] },
+      input: { goalRef, basedOn: plan1.ref,
+        draft: { ...composedDraft, planId: 'w1-composed-later', planRevision: 2 },
+        reason: { text: 'Later composed plan pinned by the Goal', sources: [] } } });
+    expect(plan2Proposal).toMatchObject({ status: 'committed', value: { kind: 'candidate_v2', issues: [] } });
+    if (plan2Proposal.status !== 'committed') throw new Error('later Plan proposal failed');
+    const plan2Applied = await writer.plans.applyPlanChange(ctx, { meta: {
+      requestId: 'w1-composed-plan2-apply', expected: [] },
+      input: { proposalRef: plan2Proposal.value.ref,
+        expectedProposalRevision: plan2Proposal.value.revision, decisionRefs: [] } });
+    expect(plan2Applied).toMatchObject({ status: 'committed', replayed: false });
+    if (plan2Applied.status !== 'committed') throw new Error('later Plan adoption failed');
+    expect(plan2Applied.value.ref).toEqual(plan2Ref);
+    expect(await writer.plans.queryGoal(ctx, goalRef)).toMatchObject({ status: 'ready',
+      value: { goal: { activePlanRevision: plan2Ref, revision: 3 } } });
+
+    const sessionRequest: CreateSessionRequest = { workspace: scope,
+      role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
+      recommendedRefs: [], initialLinks: [],
+      meta: { requestId: 'w1-composed-refine-session', expected: [] } };
+    const createdSession = await writer.runtime.createSession(ctx, sessionRequest);
+    expect(createdSession).toMatchObject({ status: 'completed', replayed: false });
+    if (createdSession.status !== 'completed') throw new Error('refine Session creation failed');
+    const claimed = await writer.claims.claimTask(ctx, { meta: {
+      requestId: 'w1-composed-refine-claim', expected: [
+        { ref: { aggregateType: 'Goal', projectId, goalId: goalRef.goalId }, revision: 3 },
+        { ref: workspace.ref, revision: 1 },
+        { ref: createdSession.value.ref, revision: createdSession.value.revision },
+      ] }, input: { goalRef, planRef: plan2Ref, taskId: 'refine',
+      sessionRef: { projectId, sessionId: createdSession.value.ref.sessionId },
+      roleBinding: { schemaVersion: 1, bindingId: 'w1-composed-binding', templateId: 'builder',
+        templateRevision: '1', bindingVersion: 1, policyRevision: 'host-1' },
+      budget: { tokenBudget: 1000, deadline: null } } });
+    expect(claimed).toMatchObject({ status: 'committed', replayed: false,
+      value: { task: { taskId: 'refine' } } });
+    if (claimed.status !== 'committed') throw new Error('refine Run claim failed');
+  } finally { await writer.close(); }
 
   let committedChange: { ref: PlanProposalRef; revision: number; snapshot: PlanRevisionSnapshot } | null = null;
   const reopened = await createTargetPlatform(options);

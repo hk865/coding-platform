@@ -150,12 +150,6 @@ export function parseWorkbenchCliConfig(raw: unknown, configDirectory: string): 
         throw new Error('every kernelStores entry requires a non-empty databasePath');
       entry.databasePath = resolveConfiguredPath(entry.databasePath, configDirectory);
     }
-    if (Array.isArray(kernelStores.legacyEntries)) {
-      for (const entry of kernelStores.legacyEntries) {
-        if (isPlainObject(entry) && typeof entry.databasePath === 'string' && entry.databasePath.length > 0)
-          entry.databasePath = resolveConfiguredPath(entry.databasePath, configDirectory);
-      }
-    }
   }
   const settingsDirectoryRaw = raw.settingsDirectory;
   if (settingsDirectoryRaw !== undefined && (typeof settingsDirectoryRaw !== 'string' || settingsDirectoryRaw.length === 0))

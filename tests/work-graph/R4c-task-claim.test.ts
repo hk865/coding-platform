@@ -19,7 +19,11 @@ import { TASK_ATTEMPT_SCHEMA_ID, TASK_CLAIM_OUTBOX_SCHEMA_ID } from '../../src/c
 import type { ClaimTaskInput, TaskClaim } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { PreparedCommit } from '../../src/core/record-store/ports.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
-import { CLAIM_FIXTURE_EXPIRED_DEADLINE, createTaskClaimFixture,
+import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { CLAIM_FIXTURE_AT, CLAIM_FIXTURE_EXPIRED_DEADLINE, createTaskClaimFixture,
   type ClaimFixtureKind, type Records, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 
 const KINDS = ['memory', 'sqlite'] as const;
@@ -27,7 +31,7 @@ const fixtures: TaskClaimFixture[] = [];
 const connections: { close(): Promise<void> }[] = [];
 
 async function open(kind: ClaimFixtureKind): Promise<TaskClaimFixture> {
-  const fixture = await createTaskClaimFixture(kind);
+  const fixture = await createTaskClaimFixture(kind, CONTROL_RECORD_SCHEMAS);
   fixtures.push(fixture);
   return fixture;
 }
@@ -267,9 +271,24 @@ describe.each(KINDS)('R4c.1 real %s atomic claim', kind => {
     expect(fixture.spy.commits).toBe(0);
   });
 
-  it('does not treat an ended Run without a lease as a fresh pending Task', async () => {
+  it('does not treat an ended Run with a released lease as a fresh pending Task', async () => {
     const fixture = await open(kind);
-    await fixture.seedRun(fixture.tasks.first.taskId, 'ended');
+    const claim = await fixture.service.claimTask(fixture.ctx, await fixture.buildRequest({ requestId: 'ended-run-claim' }));
+    expect(claim).toMatchObject({ status: 'committed' });
+    if (claim.status !== 'committed') return;
+    let sequence = 0;
+    const controls = createRunControlService({
+      records: fixture.records, authority: createMaterialRecordReaders(fixture.records).authority,
+      reads: createRunStateReader({ records: fixture.records }),
+      now: () => CLAIM_FIXTURE_AT, eventId: () => `r4c-claim-control-${++sequence}`,
+    });
+    expect(await controls.submitControl(fixture.ctx, {
+      input: { runRef: claim.value.runRef, kind: 'cancel', reason: 'stop before entering' },
+      meta: { requestId: 'ended-run-cancel', expected: [{ ref: claim.value.runRef, revision: 1 }] },
+    })).toMatchObject({ status: 'committed' });
+    // Every prior step is done; only the refused claim's own calls count.
+    fixture.spy.commits = 0;
+    fixture.spy.lookups.length = 0;
     const result = await fixture.service.claimTask(fixture.ctx, await fixture.buildRequest());
     expect(result).toMatchObject({ status: 'rejected' });
     if (result.status === 'rejected') expect(result.code).not.toBe('unsupported');

@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 /** Shared issue format for consumers and structural primitives for validators.
  * The primitives describe wire shape; they do not decide business admission. */
 export type ValidationIssueCode = "missing_field" | "bad_type" | "unknown_schema_version" | "invalid_command_type" | "empty_entries" | "incomplete_scope" | "duplicate_identity" | "digest_mismatch" | "empty_objective" | "bad_expected_revision" | "unknown_event_type" | "bad_revision" | "invalid_fixture" | "empty_collection" | "conflict_unresolved" | "invalid_escalate" | "unknown_task_ref" | "unknown_stage_ref" | "unknown_obligation_ref" | "bad_scope" | "bad_enum" | "bad_sequence" | "size_exceeded" | "bad_binding_ref" | "bad_ref" | "unknown_field";

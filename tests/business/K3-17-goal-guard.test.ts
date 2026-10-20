@@ -21,7 +21,8 @@ import { readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import {
-  createK3NeedsDecisionRecord, openK3ReviewCardWorld, type K3ReviewCardWorld,
+  createK3NeedsDecisionRecord, interceptDispositionCommits, openK3ReviewCardWorld,
+  type K3ReviewCardWorld,
 } from '../helpers/K3-review-card-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { GOAL_B, WORKSPACE_SCOPE } from '../helpers/S5-decision-fixture.js';
@@ -61,22 +62,13 @@ function goalPhaseRef() {
 /** A records port that runs the real Goal pause once, right before the disposition commit. */
 function pausedBeforeDisposition(records: K3ReviewCardWorld['records'], pause: () => Promise<void>) {
   let fired = false;
-  const wrapped: K3ReviewCardWorld['records'] = {
-    ...records,
-    async commit(batch: Parameters<K3ReviewCardWorld['records']['commit']>[0]) {
-      const isDisposition = batch.events.some((event) => {
-        if (event.eventType !== 'UnknownCallReviewChanged') return false;
-        const body = JSON.parse(event.json) as { change?: unknown };
-        return body.change === 'disposition_applied';
-      });
-      if (!fired && isDisposition) {
-        fired = true;
-        await pause();
-      }
-      return records.commit(batch);
-    },
-  };
-  return wrapped;
+  return interceptDispositionCommits(records, async ({ commit }) => {
+    if (!fired) {
+      fired = true;
+      await pause();
+    }
+    return commit();
+  });
 }
 
 describe('K3-17 (L19) ② guards the Goal it read', () => {

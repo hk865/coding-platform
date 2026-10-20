@@ -89,14 +89,6 @@ describe('K3-38 review claim (TASK-03r / RUN-01r)', () => {
     expect(reviewClaimProblem(reviewFacts())).toBeNull();
   });
 
-  it('K3-38 lets an ordinary (first/requeue) claim answer busy while the record is unsettled', () => {
-    // The ordinary claim has no review facts; the owner's L11 gate answers busy
-    // before the basis (owner-level K3-47); here the review basis is the only
-    // one that carries the review facts.
-    const problem = reviewClaimProblem(null);
-    expect(problem).toMatchObject({ reason: 'illegal', code: 'invalid' });
-  });
-
   it('K3-38 lets an ordinary (first/requeue) claim refuse busy while the selected Run record is unsettled', () => {
     const common = { prior: null, review: null, admission: null } as const;
     expect(claimBasisProblem({ kind: 'first' }, { ...common, taskHasRun: false, requeue: null, reviewBlocker: 'pending' }))

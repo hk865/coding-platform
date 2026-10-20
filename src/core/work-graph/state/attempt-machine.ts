@@ -72,9 +72,7 @@ export type DispatchOutboxRecord = {
 
 /**
  * Attempt machine node. "open" is `claimed` or `started`; `ended_unknown` is
- * the D-4 "待核对" state (`ended` + `outcome_unknown`). A legacy `ended` row
- * without `endOutcome` (the codec allows it, `claim-record-codecs.ts:236-245`)
- * reads as `ended_known`: nothing resolves it further.
+ * the D-4 "待核对" state (`ended` + `outcome_unknown`).
  */
 export type AttemptNode = 'absent' | 'claimed' | 'started' | 'ended_known' | 'ended_unknown';
 /** One lease per Task: held without `release`, released with it; `expiresAt` never releases. */

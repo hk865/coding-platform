@@ -15,9 +15,14 @@ import { join } from 'node:path';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import type { PreparedCommit, EncodedDomainEvent, StoreCommitReceipt } from '../../src/core/record-store/ports.js';
+import type {
+  CollaborationChange, CollaborationDriver, CollaborationSnapshot,
+} from '../../src/app/collaboration-driver.js';
 import type { DecisionApplicationReceiptV1 } from '../../src/contracts/core/session-message.js';
 import type { KernelCommandReader, WorkspaceFileReader } from '../../src/core/work-graph/model/kernel-command-read-contracts.js';
-import type { PlanRevisionDraft, RuntimeTask } from '../../src/contracts/plan.js';
+import type { PlanRevisionDraft, PlanRevisionRef, RuntimeTask } from '../../src/contracts/plan.js';
+import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import type { CommandRerunRequestV1 } from '../../src/contracts/command-rerun-request.js';
 import type { CommandRecognizer } from '../../src/core/work-graph/model/command-recognition-contracts.js';
@@ -50,7 +55,7 @@ import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { readKernelCommandFacts as readProductionKernelCommandFacts } from '../../src/core/agent-runtime/context-assembler.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
-import { createExecutedFilesStub } from './executed-files-stub.js';
+import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import {
   GOAL_B, PLAN_B2, T, WORKSPACE_SCOPE, openS5DecisionFixture, type S5DecisionFixture,
 } from './S5-decision-fixture.js';
@@ -75,6 +80,8 @@ export type K3ReviewCardWorld = {
   /** K3 L19a: the request-card source (the UCR source stays `cardSource`). */
   commandRerunCardSource: DecisionCardSourcePort;
   decisions: ReturnType<typeof createDecisionMessageService>;
+  /** The world's ONE real session mailbox (decision messages are written here). */
+  mailbox: ReturnType<typeof createSessionMailbox>;
   decisionActions: DecisionActionsPort;
   applicationReceipt: (ctx: CoreCallContext, cursor: CommitCursor) => Promise<DecisionApplicationReceiptV1 | null>;
   /** K3-17 fault injection: fail the NEXT ③ commit (not ② or ①), with its rejection reason. */
@@ -312,7 +319,7 @@ export async function openK3ReviewCardWorld(
       readDecisionAnswer: decisions.readDecisionAnswer.bind(decisions),
       recordDecisionApplication: decisions.recordDecisionApplication.bind(decisions),
     },
-    decisionSources, applicationReceipt,
+    applicationReceipt,
     decisionApplications: {
       unknown_call_review: reviewAdapter,
       command_rerun_request: createCommandRerunRequestApplicationAdapter(commandRerun),
@@ -324,9 +331,14 @@ export async function openK3ReviewCardWorld(
     requests: commandRerun, reviews, executions: reads, readKernelCommandFacts,
     ...(options.pageLimit === undefined ? {} : { pageLimit: options.pageLimit }) });
   const cardSources = [cardSource, commandRerunCardSource];
+  // The production executed-files reader over the SAME records: the S5 fixture
+  // registers RUN_ACTIVITY_RECORD_SCHEMAS (with the ordered
+  // `s2b-run-activity-by-goal-last` index) and forwards the backend's real
+  // `lookupOrdered` through its observed port (S5-decision-fixture.ts
+  // `additionalSchemas`, `forwarded`, `observeRecords`).
   const readModel = createDecisionReadModel({ records, cardSources, noticeSources: [],
     conflicts: createGoalConflictAssembler({ records,
-      catalog: createArchitectureCatalogService({ records }), executedFiles: createExecutedFilesStub() }),
+      catalog: createArchitectureCatalogService({ records }), executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)) });
   const reconcile = createRunReconcileService({ records, reads,
     hostInstance: { hostInstanceId: 'k3-review-card-host', lease: 'owned', takeover: { kind: 'hl01_no_lock' } },
@@ -334,7 +346,7 @@ export async function openK3ReviewCardWorld(
 
   const world: K3ReviewCardWorld = {
     kind, fixture, records, tasks: K3_REVIEW_TASKS, reviews, commandRerun, kernelCommands,
-    cardSources, decisions, decisionActions, goalSettings,
+    cardSources, decisions, mailbox, decisionActions, goalSettings,
     applicationReceipt, cardSource, commandRerunCardSource, readModel,
     failNextApplicationCommit: (reason?: string) => {
       faults.applicationCommit.push(reason ?? 'injected ③ commit failure');
@@ -376,13 +388,13 @@ export async function setK3TaskDisposition(
   };
   const proposed = await f.b2.base.plans.proposePlan(f.ctx, { input: {
     goalRef: GOAL_B, basedOn: plan.ref, draft, reason: { text: `K3 end task ${taskId}`, sources: [], affectedTaskIds: [taskId] },
-  }, meta: { requestId: `k3-review-card-end-${taskId}-propose`, expected: [{ ref: GOAL_B, revision: goal.value.goal.revision }] } });
+  }, meta: { requestId: `k3-review-card-end-${taskId}-${String(plan.planRevision + 1)}-propose`, expected: [{ ref: GOAL_B, revision: goal.value.goal.revision }] } });
   if (proposed.status !== 'committed' || proposed.value.issues.length > 0) {
     throw new Error(`the task-ending plan proposal failed: ${JSON.stringify(proposed)}`);
   }
   const applied = await f.b2.base.plans.applyPlanChange(f.ctx, { input: {
     proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [],
-  }, meta: { requestId: `k3-review-card-end-${taskId}-apply`,
+  }, meta: { requestId: `k3-review-card-end-${taskId}-${String(plan.planRevision + 1)}-apply`,
     expected: [{ ref: GOAL_B, revision: goal.value.goal.revision }] } });
   if (applied.status !== 'committed') throw new Error(`the task-ending plan adoption failed: ${JSON.stringify(applied)}`);
 }
@@ -397,7 +409,8 @@ export async function setK3TaskDisposition(
  * event is an input, and no record is hand-encoded.
  */
 export async function createK3NeedsDecisionRecord(
-  world: K3ReviewCardWorld, taskId: string, options: { autoSettled?: boolean } = {},
+  world: K3ReviewCardWorld, taskId: string,
+  options: { autoSettled?: boolean; goalRef?: GoalRef; planRef?: PlanRevisionRef } = {},
 ): Promise<UnknownCallReviewV1> {
   if (!(K3_REVIEW_TASKS as readonly string[]).includes(taskId)) {
     throw new Error(`K3 review fixture: unknown task ${taskId}`);
@@ -409,6 +422,8 @@ export async function createK3NeedsDecisionRecord(
   const pending = await createK3PendingReview(world, {
     taskId, label: `k3-review-card-${taskId}`,
     callId: `k3-review-card-call-${taskId}`, command: `echo ${taskId}`,
+    ...(options.goalRef === undefined ? {} : { goalRef: options.goalRef }),
+    ...(options.planRef === undefined ? {} : { planRef: options.planRef }),
   });
   const settled = await settleK3Review(world, pending, {
     cause: 'review_unavailable', requestId: `k3-review-card-unavailable-${taskId}`,
@@ -464,4 +479,158 @@ async function createAutoSettledK3Record(
     readToolSeam.release();
     await harness.closeUnion();
   }
+}
+
+/**
+ * The ONE predicate behind every K3 store-fault wrapper: the batch carries a
+ * committed disposition (`UnknownCallReviewChanged` whose body's `change` is
+ * `disposition_applied`). Shared by the K3-17/K3-46/K3-UR7 wrappers so the
+ * predicate is written once.
+ */
+function dispositionAppliedEvent(batch: PreparedCommit): EncodedDomainEvent | undefined {
+  return batch.events.find((event) => {
+    if (event.eventType !== 'UnknownCallReviewChanged') return false;
+    const body = JSON.parse(event.json) as { change?: unknown };
+    return body.change === 'disposition_applied';
+  });
+}
+
+/**
+ * The ONE commit-interception wrapper: every commit is delegated unchanged
+ * except the one that carries a disposition, which the caller handles (runs the
+ * real Goal pause first, rejects it with a store-failure, inspects the real
+ * result, …). The caller always decides whether the real commit still runs.
+ */
+export function interceptDispositionCommits(
+  records: K3ReviewCardWorld['records'],
+  intercept: (input: {
+    batch: PreparedCommit;
+    event: EncodedDomainEvent;
+    commit: () => Promise<StoreCommitReceipt>;
+  }) => Promise<StoreCommitReceipt>,
+): K3ReviewCardWorld['records'] {
+  return {
+    ...records,
+    async commit(batch: PreparedCommit): Promise<StoreCommitReceipt> {
+      const event = dispositionAppliedEvent(batch);
+      if (event === undefined) return records.commit(batch);
+      return intercept({ batch, event, commit: () => records.commit(batch) });
+    },
+  } as K3ReviewCardWorld['records'];
+}
+
+/**
+ * K3-46/UR7 item 1 setup: adopt one real Plan revision whose Task order puts
+ * the K3 review tasks first, so an ORDINARY advance reaches a review Task
+ * before the fixture's already-running Tasks. Only the plan id, the request-id
+ * prefix and the reason text differ between the two callers.
+ */
+export async function adoptReorderedPlan(
+  world: K3ReviewCardWorld,
+  options: { planId: string; requestIdPrefix: string; reasonText: string },
+): Promise<void> {
+  const f = world.fixture;
+  const plans = f.b2.base.plans;
+  const goal = await plans.queryGoal(f.ctx, GOAL_B);
+  if (goal.status !== 'ready') throw new Error(`the Goal read failed: ${JSON.stringify(goal)}`);
+  const graph = await plans.queryTaskGraph(f.ctx, { goalRef: GOAL_B });
+  if (graph.status !== 'ready') throw new Error(`the Task graph read failed: ${JSON.stringify(graph)}`);
+  const tasks = graph.value.plan.tasks;
+  const review = tasks.filter(task => (K3_REVIEW_TASKS as readonly string[]).includes(task.taskId));
+  const other = tasks.filter(task => !(K3_REVIEW_TASKS as readonly string[]).includes(task.taskId));
+  const draft: PlanRevisionDraft = {
+    schemaVersion: 2, planId: options.planId, planRevision: 3, goalId: GOAL_B.goalId,
+    stages: structuredClone(graph.value.plan.stages),
+    tasks: [...review.map(task => ({ ...task })), ...other.map(task => ({ ...task }))],
+    assignments: (graph.value.plan.assignments ?? []).map(entry => ({ ...entry })),
+    obligations: graph.value.plan.obligations.map(obligation => ({ ...obligation,
+      taskIds: [...obligation.taskIds],
+      verificationRequirements: obligation.verificationRequirements.map(requirement => ({ ...requirement })) })),
+    taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [],
+  };
+  const proposed = await plans.proposePlan(f.ctx, { input: { goalRef: GOAL_B, basedOn: PLAN_B2, draft,
+    reason: { text: options.reasonText, sources: [] } },
+    meta: { requestId: `${options.requestIdPrefix}-propose`, expected: [{ ref: GOAL_B, revision: goal.value.goal.revision }] } });
+  if (proposed.status !== 'committed' || proposed.value.issues.length > 0) {
+    throw new Error(`the reordered proposal failed: ${JSON.stringify(proposed)}`);
+  }
+  const applied = await plans.applyPlanChange(f.ctx, { input: {
+    proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] },
+  meta: { requestId: `${options.requestIdPrefix}-apply`, expected: [{ ref: GOAL_B, revision: goal.value.goal.revision }] } });
+  if (applied.status !== 'committed') throw new Error(`the reordered adoption failed: ${JSON.stringify(applied)}`);
+}
+
+/**
+ * The real review owner over `records` (a store-fault wrapper in the K3-46 and
+ * K3-UR7 races). Only the event-id prefix differs between the callers.
+ */
+export function reviewServiceOver(
+  world: K3ReviewCardWorld,
+  records: K3ReviewCardWorld['records'],
+  options: { eventIdPrefix: string },
+) {
+  let sequence = 0;
+  return createUnknownCallReviewService({ records, reads: createRunStateReader({ records }),
+    readAnswerText: async (ctx: CoreCallContext, { source }) => {
+      const read = await world.decisions.readDecisionAnswer(ctx, { source });
+      if (read.status !== 'ready') return read;
+      return { status: 'ready', value: read.value.body === null ? null : read.value.body.text };
+    },
+    taskProjection: async (_ctx, task) => {
+      const goalRef = { aggregateType: 'Goal' as const, projectId: task.projectId, goalId: task.goalId };
+      const window = await readGoalPlanWindow(records, goalRef);
+      if (window.status !== 'ready') return window;
+      if (window.plan === null) return { status: 'rejected', code: 'not_found' as const, reason: 'no active Plan' };
+      return readCanonicalTaskFacts(records, goalRef, window.plan, task.taskId);
+    },
+    now: () => world.fixture.now(), eventId: () => `${options.eventIdPrefix}${String(++sequence)}` });
+}
+
+export type K3DriverSettledWaiter = {
+  /** Installed at driver creation; a change only wakes the wait. */
+  onChange: (change: CollaborationChange) => void;
+  /** Read once immediately; if not settled, wake on the driver's change notice, then read again. */
+  waitForSettledDriver: (driver: CollaborationDriver, ctx: CoreCallContext) => Promise<CollaborationSnapshot>;
+};
+
+/**
+ * The A3 change-notice wait: no sleep polling. The driver's `onChange` is
+ * installed when the driver is created; every read is authoritative through
+ * `driver.read`. A notice that arrives before the wait is kept until consumed;
+ * `failureText` is the same bounded refusal the two polling copies raised.
+ */
+export function createDriverSettledWaiter(
+  options: { failureText: string; timeoutMs?: number },
+): K3DriverSettledWaiter {
+  let notified = false;
+  let waiters: (() => void)[] = [];
+  const settled = (state: CollaborationSnapshot['state']): boolean =>
+    state === 'waiting' || state === 'completed' || state === 'failed' || state === 'stopped';
+  const nextChange = (): Promise<void> => new Promise<void>((resolve) => {
+    if (notified) { notified = false; resolve(); return; }
+    waiters.push(resolve);
+  });
+  return {
+    onChange: () => {
+      if (waiters.length === 0) { notified = true; return; }
+      const pending = waiters;
+      waiters = [];
+      for (const resolve of pending) resolve();
+    },
+    async waitForSettledDriver(driver, ctx) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const expiration = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(options.failureText)), options.timeoutMs ?? 10_000);
+      });
+      try {
+        for (;;) {
+          const read = await driver.read(ctx, { goalRef: GOAL_B });
+          if (read.status === 'ready' && settled(read.value.state)) return read.value;
+          await Promise.race([nextChange(), expiration]);
+        }
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    },
+  };
 }

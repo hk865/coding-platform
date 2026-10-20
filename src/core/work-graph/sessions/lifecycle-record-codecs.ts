@@ -11,7 +11,7 @@
  * ORIGINAL receipt cursor; it never scans the current link or guesses a cursor.
  */
 import type { SessionRef } from '../../../contracts/core/identity.js';
-import type { LegacyProvenanceBasisV1, SessionRecord } from '../../../contracts/core/session.js';
+import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
@@ -97,11 +97,6 @@ export type SessionArchiveChangedEventV1 = Slice1EventHeaderV1 & {
   session: SessionRecord; archiveRequestId: string; reason: string;
 };
 
-export type SessionProvenanceBackfilledEventV1 = Slice1EventHeaderV1 & {
-  eventType: 'SessionProvenanceBackfilled'; session: SessionRecord;
-  basis: LegacyProvenanceBasisV1;
-};
-
 export type SessionResponsibilityChangedEventV1 = Slice1EventHeaderV1 & {
   eventType: 'SessionResponsibilityChanged';
   mode: 'transfer' | 'drop' | 'terminal';
@@ -117,7 +112,6 @@ export type SessionResponsibilityChangedEventV1 = Slice1EventHeaderV1 & {
 /** Event type selectors of the three slice-1 replay events. */
 export const SESSION_ARCHIVE_REQUESTED_EVENT = 'SessionArchiveRequested';
 export const SESSION_ARCHIVE_REQUEST_RELEASED_EVENT = 'SessionArchiveRequestReleased';
-export const SESSION_PROVENANCE_BACKFILLED_EVENT = 'SessionProvenanceBackfilled';
 export const SESSION_RESPONSIBILITY_CHANGED_EVENT = 'SessionResponsibilityChanged';
 
 // --------------------------------------------------------------------------
@@ -250,9 +244,6 @@ const ARCHIVE_CHANGED_EVENT_KEYS: readonly string[] = [
   'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId',
   'session', 'archiveRequestId', 'reason',
 ];
-const PROVENANCE_BACKFILLED_EVENT_KEYS: readonly string[] = [
-  'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId', 'session', 'basis',
-];
 const RESPONSIBILITY_CHANGED_EVENT_KEYS: readonly string[] = [
   'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId',
   'mode', 'source', 'destination', 'closed', 'opened', 'openedBound', 'archiveStep', 'taskBasis',
@@ -295,83 +286,6 @@ function checkTaskTriple(value: unknown): Problem {
   }
   return null;
 }
-function checkOperationRef(value: unknown): Problem {
-  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'operationId'])
-    || value['aggregateType'] !== 'CoreOperation' || !nonEmpty(value['projectId']) || !nonEmpty(value['operationId'])) {
-    return 'operationRef must be a complete OperationRef';
-  }
-  return null;
-}
-function checkMessageRef(value: unknown): Problem {
-  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
-    || value['aggregateType'] !== 'SessionMessage'
-    || !nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId']) || !nonEmpty(value['messageId'])) {
-    return 'messageRef must be a complete SessionMessageRef';
-  }
-  return null;
-}
-function checkRequeueRef(value: unknown): Problem {
-  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'taskId', 'afterRunId'])
-    || value['aggregateType'] !== 'TaskRequeue'
-    || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['taskId']) || !nonEmpty(value['afterRunId'])) {
-    return 'requeueRef must be a complete TaskRequeueRef';
-  }
-  return null;
-}
-function checkRunRef(value: unknown): Problem {
-  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'runId'])
-    || value['aggregateType'] !== 'Run'
-    || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['runId'])) {
-    return 'runRef must be a complete RunRef';
-  }
-  return null;
-}
-function checkOutboxRef(value: unknown): Problem {
-  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'goalId', 'taskId', 'attemptId'])
-    || value['aggregateType'] !== 'DispatchOutboxEntry'
-    || !nonEmpty(value['projectId']) || !nonEmpty(value['goalId']) || !nonEmpty(value['taskId']) || !nonEmpty(value['attemptId'])) {
-    return 'firstClaimRef must be a complete DispatchOutboxRef';
-  }
-  return null;
-}
-function checkArtifactRef(value: unknown): Problem {
-  if (!isRecord(value) || !hasOnlyKeys(value, ['kind', 'contentType', 'digest', 'sizeBytes', 'source'])
-    || value['kind'] !== 'artifact' || !nonEmpty(value['contentType']) || !nonEmpty(value['digest'])
-    || !Number.isSafeInteger(value['sizeBytes']) || !isRecord(value['source'])) {
-    return 'manifestRef must be a complete ArtifactRef';
-  }
-  return null;
-}
-function checkLegacyProvenanceBasis(value: unknown): Problem {
-  if (!isRecord(value)) return 'basis must be an object';
-  switch (value['kind']) {
-    case 'consultation':
-      if (!hasOnlyKeys(value, ['kind', 'messageRef'])) return 'consultation basis carries unknown fields';
-      return checkMessageRef(value['messageRef']);
-    case 'requeue_creation': {
-      if (!hasOnlyKeys(value, ['kind', 'operationRef', 'creationCursor', 'requeueRef', 'firstClaimRef'])) {
-        return 'requeue_creation basis carries unknown fields';
-      }
-      return checkOperationRef(value['operationRef'])
-        ?? (nonEmpty(value['creationCursor']) ? null : 'requeue_creation basis creationCursor must be a cursor')
-        ?? checkRequeueRef(value['requeueRef'])
-        ?? checkOutboxRef(value['firstClaimRef']);
-    }
-    case 'manifest_seed': {
-      if (!hasOnlyKeys(value, ['kind', 'operationRef', 'creationCursor', 'runRef', 'manifestRef'])) {
-        return 'manifest_seed basis carries unknown fields';
-      }
-      return checkOperationRef(value['operationRef'])
-        ?? (nonEmpty(value['creationCursor']) ? null : 'manifest_seed basis creationCursor must be a cursor')
-        ?? checkRunRef(value['runRef'])
-        ?? checkArtifactRef(value['manifestRef']);
-    }
-    case 'no_reliable_predecessor':
-      return hasOnlyKeys(value, ['kind']) ? null : 'no_reliable_predecessor basis carries unknown fields';
-    default:
-      return 'basis kind is not recognized';
-  }
-}
 function checkArchiveChangedBody(body: UnknownRecord, eventType: string): Problem {
   if (!hasOnlyKeys(body, ARCHIVE_CHANGED_EVENT_KEYS)) return 'Session archive event carries unknown fields';
   if (!nonEmpty(body['projectId']) || !nonEmpty(body['workspaceId'])) {
@@ -395,26 +309,6 @@ function checkArchiveChangedBody(body: UnknownRecord, eventType: string): Proble
   } else if (request !== null && request !== undefined) {
     return 'SessionArchiveRequestReleased must carry the cleared Session';
   }
-  return null;
-}
-function checkProvenanceBackfilledBody(body: UnknownRecord): Problem {
-  if (!hasOnlyKeys(body, PROVENANCE_BACKFILLED_EVENT_KEYS)) return 'SessionProvenanceBackfilled carries unknown fields';
-  if (!nonEmpty(body['projectId']) || !nonEmpty(body['workspaceId'])) {
-    return 'SessionProvenanceBackfilled requires projectId and workspaceId';
-  }
-  const session = body['session'];
-  if (!isRecord(session)) return 'SessionProvenanceBackfilled requires the transitioned SessionRecord';
-  const sessionProblem = checkSessionBody(session);
-  if (sessionProblem !== null) return `SessionProvenanceBackfilled session: ${sessionProblem}`;
-  const ref = session['ref'];
-  if (!isRecord(ref) || ref['projectId'] !== body['projectId'] || session['workspaceId'] !== body['workspaceId']) {
-    return 'SessionProvenanceBackfilled Session disagrees with the event scope';
-  }
-  if (session['provenance'] === null || session['provenance'] === undefined) {
-    return 'SessionProvenanceBackfilled requires a written provenance';
-  }
-  const basis = checkLegacyProvenanceBasis(body['basis']);
-  if (basis !== null) return `SessionProvenanceBackfilled basis: ${basis}`;
   return null;
 }
 function checkPendingLink(value: unknown): Problem {
@@ -551,11 +445,6 @@ export const SESSION_LIFECYCLE_RECORD_SCHEMAS: RecordBackendSchemas = {
         (body) => checkArchiveChangedBody(body, SESSION_ARCHIVE_REQUEST_RELEASED_EVENT)),
     },
     {
-      eventType: SESSION_PROVENANCE_BACKFILLED_EVENT,
-      schemaVersion: SESSION_LIFECYCLE_EVENT_VERSION,
-      validate: (event) => validateEventBody(event, SESSION_PROVENANCE_BACKFILLED_EVENT, checkProvenanceBackfilledBody),
-    },
-    {
       eventType: SESSION_RESPONSIBILITY_CHANGED_EVENT,
       schemaVersion: SESSION_LIFECYCLE_EVENT_VERSION,
       validate: (event) => validateEventBody(event, SESSION_RESPONSIBILITY_CHANGED_EVENT, checkResponsibilityChangedBody),
@@ -581,10 +470,6 @@ export function encodeSessionHealthObservedEvent(event: SessionHealthObservedEve
 }
 
 export function encodeSessionArchiveChangedEvent(event: SessionArchiveChangedEventV1): EncodedDomainEvent {
-  return encodeEventEnvelope(event);
-}
-
-export function encodeSessionProvenanceBackfilledEvent(event: SessionProvenanceBackfilledEventV1): EncodedDomainEvent {
   return encodeEventEnvelope(event);
 }
 
@@ -642,16 +527,6 @@ export function sessionArchiveChangedEventFromEvent(
   const body = parseObject(event.json);
   if (body === null) return invalid(`${eventType} event json is not an object`);
   return { status: 'decoded', value: body as unknown as SessionArchiveChangedEventV1 };
-}
-
-export function sessionProvenanceBackfilledEventFromEvent(
-  event: EncodedDomainEvent,
-): DecodeResult<SessionProvenanceBackfilledEventV1> {
-  const checked = validateEventBody(event, SESSION_PROVENANCE_BACKFILLED_EVENT, checkProvenanceBackfilledBody);
-  if (checked.status !== 'decoded') return checked;
-  const body = parseObject(event.json);
-  if (body === null) return invalid('SessionProvenanceBackfilled event json is not an object');
-  return { status: 'decoded', value: body as unknown as SessionProvenanceBackfilledEventV1 };
 }
 
 export function sessionResponsibilityChangedEventFromEvent(

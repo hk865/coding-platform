@@ -772,7 +772,7 @@ function declarationsForTask(plan: PlanRevisionSnapshot, taskId: string): InputD
       legacyArtifactRef: null,
     });
   }
-  if (plan.schemaVersion === 2 && plan.inputRequirements !== undefined) {
+  if (plan.inputRequirements !== undefined) {
     for (const requirement of plan.inputRequirements) {
       if (requirement.consumerTaskId !== taskId) continue;
       out.push({
@@ -1468,7 +1468,7 @@ export function runEnteredKernel(run: TaskExecutionRecord['run']): boolean {
   if (run.executionHistory !== undefined) return true;
   if (run.reconciliation?.observation?.kind === 'human_attested') return true;
   const auth = run.executionAuthorization;
-  return auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2
+  return auth !== undefined
     && auth.kernel !== null && auth.phase === 'entered';
 }
 

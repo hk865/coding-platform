@@ -26,18 +26,18 @@ import type {
   CapturedPathV1, UnknownCallReviewItemV1, WorkspaceCaptureV1,
 } from '../../src/contracts/unknown-call-review.js';
 
-export const K3_PADDED_ITEM_COUNT = 32;
+const K3_PADDED_ITEM_COUNT = 32;
 /** One changed path of exactly 512 ASCII bytes. */
-export const K3_PADDED_PATH_BYTES = 512;
+const K3_PADDED_PATH_BYTES = 512;
 /** 512 three-byte characters, i.e. 1,536 UTF-8 bytes, in every command summary. */
-export const K3_PADDED_COMMAND_CHARS = 512;
+const K3_PADDED_COMMAND_CHARS = 512;
 /** The L7 `notVisible` cap used by the padded record. */
-export const K3_PADDED_NOT_VISIBLE_COUNT = 32;
+const K3_PADDED_NOT_VISIBLE_COUNT = 32;
 /** The first 31 `notVisible` entries' three-byte character count. */
-export const K3_PADDED_NOT_VISIBLE_CHARS = 512;
+const K3_PADDED_NOT_VISIBLE_CHARS = 512;
 /** The last entry: 4,589 three-byte characters plus two ASCII bytes. */
-export const K3_PADDED_LAST_NOT_VISIBLE_CHARS = 4_589;
-export const K3_PADDED_LAST_NOT_VISIBLE_SUFFIX = 'vv';
+const K3_PADDED_LAST_NOT_VISIBLE_CHARS = 4_589;
+const K3_PADDED_LAST_NOT_VISIBLE_SUFFIX = 'vv';
 /** The clock the capacity record was frozen with (any 24-byte ISO instant keeps the size). */
 export const K3_PADDED_AT = '2026-10-16T00:00:00.000Z';
 
@@ -55,22 +55,22 @@ export function k3PaddedCallIds(): string[] {
 }
 
 /** One changed path of exactly 512 ASCII bytes. */
-export function k3PaddedPath(index: number): CapturedPathV1 {
+function k3PaddedPath(index: number): CapturedPathV1 {
   return { path: `k335-path-${String(index).padStart(3, '0')}-`.padEnd(K3_PADDED_PATH_BYTES, 'f'), change: 'modified' };
 }
 
 /** The full capture list: 200 changed paths of 512 ASCII bytes each. */
-export function k3PaddedFullChanges(): CapturedPathV1[] {
+function k3PaddedFullChanges(): CapturedPathV1[] {
   return Array.from({ length: 200 }, (_, index) => k3PaddedPath(index));
 }
 
 /** The full capture body the production reader parses (`{ changed: [...] }`). */
-export function k3PaddedCaptureBody(): string {
+function k3PaddedCaptureBody(): string {
   return JSON.stringify({ schemaVersion: 1, changed: k3PaddedFullChanges() });
 }
 
 /** The capture ArtifactRef the record's workspace points at. */
-export function k3PaddedCaptureRef(): ArtifactRef {
+function k3PaddedCaptureRef(): ArtifactRef {
   const body = k3PaddedCaptureBody();
   return {
     kind: 'artifact', contentType: CAPTURE_CONTENT_TYPE, digest: artifactBodyDigest(body),
@@ -79,7 +79,7 @@ export function k3PaddedCaptureRef(): ArtifactRef {
 }
 
 /** The 32 `notVisible` entries: 31 x 512 plus the 4,589-character last one + 2 ASCII bytes. */
-export function k3PaddedNotVisible(): string[] {
+function k3PaddedNotVisible(): string[] {
   return Array.from({ length: K3_PADDED_NOT_VISIBLE_COUNT }, (_, index) =>
     index === K3_PADDED_NOT_VISIBLE_COUNT - 1
       ? '视'.repeat(K3_PADDED_LAST_NOT_VISIBLE_CHARS) + K3_PADDED_LAST_NOT_VISIBLE_SUFFIX

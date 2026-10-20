@@ -7,54 +7,27 @@
  * production path under test is the real Workspace access factory and the observation capture.
  */
 import { afterEach, expect, it } from 'vitest';
-import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { WorkspaceRef } from '../../src/contracts/ledger.js';
-import {
-  createWorkspaceAccessFactory,
-  type WorkspaceHostBindings,
-  type WorkspaceReadAccess,
-} from '../../src/core/workspace/access.js';
-import {
-  captureObservationSource,
-  OBSERVATION_INVENTORY_CAPACITY,
-  type ProjectSourceAccess,
-} from '../../src/core/workspace/project-source-snapshot.js';
+import { OBSERVATION_INVENTORY_CAPACITY } from '../../src/core/workspace/project-source-snapshot.js';
 import { formatProjectListingCapacity } from '../../src/core/workspace/git-read.js';
+import {
+  git,
+  observe,
+  tempRoot,
+  write,
+  type ObservationWorld,
+} from '../helpers/observation-source-fixture.js';
 
-const run = promisify(execFile);
 const roots: string[] = [];
-const accesses = new Set<WorkspaceReadAccess>();
-const signal = () => new AbortController().signal;
 
 afterEach(async () => {
-  await Promise.allSettled([...accesses].map(access => access.release()));
-  accesses.clear();
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
-async function tempRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 's8e-a26-git-classification-'));
-  roots.push(root);
-  return root;
-}
-
-const gitEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
-async function git(cwd: string, ...args: string[]): Promise<void> {
-  await run('git', args, { cwd, env: gitEnv });
-}
-
-async function write(path: string, content: string): Promise<void> {
-  await mkdir(join(path, '..'), { recursive: true });
-  await writeFile(path, content);
-}
-
 async function committedRepo(): Promise<string> {
-  const root = await tempRoot();
+  const root = await tempRoot('s8e-a26-git-classification-', roots);
   await write(join(root, 'a.ts'), 'export const a = 1;\n');
   await git(root, 'init', '-q');
   await git(root, 'config', 'user.email', 'observation@example.test');
@@ -68,49 +41,13 @@ const workspace: WorkspaceRef = {
   aggregateType: 'Workspace', projectId: 's8e-a26-project', workspaceId: 'workspace-main',
 };
 
-function context(): CoreCallContext {
-  const actor = { kind: 'human' as const, id: 'a26-reader' };
-  return {
-    projectId: workspace.projectId,
-    workspaceId: workspace.workspaceId,
-    principal: { kind: 'host', actor },
-    materialReader: { kind: 'host', projectId: workspace.projectId, workspaceId: workspace.workspaceId, actor },
-    signal: signal(),
-  };
-}
-
-function bindingsFor(root: string): WorkspaceHostBindings {
-  return {
-    resolveRoot: async ref => ref.projectId === workspace.projectId && ref.workspaceId === workspace.workspaceId
-      ? { status: 'ready', value: { root, workspaceRevision: 1 } }
-      : { status: 'rejected', code: 'not_found', reason: 'Unknown test workspace' },
-    authorize: async (ctx, ref) => ctx.projectId === ref.projectId && ctx.workspaceId === ref.workspaceId
-      ? { status: 'ready', value: { subjectKey: 'host:a26-reader', permissionRevision: 'read-policy-1', allowsRead: () => true } }
-      : { status: 'rejected', code: 'forbidden', reason: 'Reader scope does not match workspace' },
-  };
-}
-
-function projectAccessOf(access: WorkspaceReadAccess): ProjectSourceAccess {
-  return {
-    allowed: path => access.authorization.allowsRead(path),
-    read: (path, maxBytes) => access.read(path, maxBytes),
-    inventory: () => access.listFiles(60000),
-    sourceIdentity: () => access.sourceIdentity(),
-    ...(access.hostRoot === undefined ? {} : { hostRoot: access.hostRoot }),
-    listObservationFiles: listed => access.listObservationFiles!(listed),
-    listIgnoredCompileDatabases: listed => access.listIgnoredCompileDatabases!(listed),
-  };
-}
-
-async function observe(root: string) {
-  const factory = createWorkspaceAccessFactory(bindingsFor(root));
-  const opened = await factory.open(context(), workspace);
-  if (opened.status !== 'ready') throw new Error(`Expected readable workspace: ${opened.code}: ${opened.reason}`);
-  const access = opened.value;
-  accesses.add(access);
-  try { return await captureObservationSource(projectAccessOf(access), signal()); }
-  finally { await access.release(); }
-}
+const world: ObservationWorld = {
+  workspace,
+  actor: { kind: 'human', id: 'a26-reader' },
+  workspaceRevision: 1,
+  subjectKey: 'host:a26-reader',
+  permissionRevision: 'read-policy-1',
+};
 
 it('A-26 classifies a corrupt repository config as git unusable with a bounded exit-status diagnostic', async () => {
   const root = await committedRepo();
@@ -118,7 +55,7 @@ it('A-26 classifies a corrupt repository config as git unusable with a bounded e
   // but its stderr says "bad config", not "not a git repository".
   await write(join(root, '.git/config'), 'not a git config line\n');
 
-  const observed = await observe(root);
+  const observed = await observe(world, root);
   expect(observed.inventory.source).toBe('skip_list');
   expect(observed.inventory.reason).not.toBe('不是 git 仓库');
   const reason = observed.inventory.reason ?? '';
@@ -131,10 +68,10 @@ it('A-26 classifies a corrupt repository config as git unusable with a bounded e
 });
 
 it('A-26 keeps a real non-repository directory as "not a git repository"', async () => {
-  const root = await tempRoot();
+  const root = await tempRoot('s8e-a26-git-classification-', roots);
   await write(join(root, 'a.ts'), 'export const a = 1;\n');
 
-  const observed = await observe(root);
+  const observed = await observe(world, root);
   expect(observed.inventory).toEqual({ source: 'skip_list', reason: '不是 git 仓库' });
 });
 
@@ -144,7 +81,7 @@ it('A-26 classifies a listing command failure the same way, not as "not a git re
   // listing command itself fails; this exercises the listing's own classification.
   await write(join(root, '.git/index'), 'garbage\n');
 
-  const observed = await observe(root);
+  const observed = await observe(world, root);
   expect(observed.inventory.source).toBe('skip_list');
   expect(observed.inventory.reason).not.toBe('不是 git 仓库');
   const reason = observed.inventory.reason ?? '';

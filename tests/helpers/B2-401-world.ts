@@ -53,8 +53,8 @@ import {
   COMMAND_RERUN_REQUEST_CHANGED_EVENT_TYPE, COMMAND_RERUN_REQUEST_SCHEMA_ID, K3_CRR_BY_TASK_LOOKUP,
 } from '../../src/core/work-graph/tasks/command-rerun-request-codecs.js';
 import { bindingOf, type B2TaskClosureReader } from './B2-blocked-runtime.js';
-import { openK3BlockedReviewServices, sha256Of } from './K3-blocked-command-fixture.js';
-import { openK3ReviewCardWorld, type K3ReviewCardWorld } from './K3-review-card-fixture.js';
+import { openK3BlockedCommandWorld, sha256Of } from './K3-blocked-command-fixture.js';
+import type { K3ReviewCardWorld } from './K3-review-card-fixture.js';
 import { crrCardOf } from './B2-crr-world.js';
 import { openRealRunHarness, type K3_35RealRunHarness } from './K3-35-continuation-fixture.js';
 import { createScriptedModel, type ScriptedModel } from './B2-runtime-fixture.js';
@@ -182,16 +182,15 @@ function committed(reply: CommandRerunRequestReplyV1): Extract<CommandRerunReque
 export async function openB401World(options: { runs?: number } = {}): Promise<B401World> {
   const total = options.runs ?? B401_R;
   const buildMs = Date.now();
-  const world = await openK3ReviewCardWorld('sqlite', { realKernelCommandFacts: true });
+  const blocked = await openK3BlockedCommandWorld('sqlite', {
+    commands: { [BLOCKED_CALL_ID]: { command: COMMAND } }, files: FILES,
+  });
+  const world = blocked.world;
   let harness: K3_35RealRunHarness | undefined;
   let closed = false;
   let live: B401LiveRun | undefined;
   try {
-    const services = await openK3BlockedReviewServices(world, FILES);
-    const seeded = await services.seed({
-      taskId: 'k3-20-a', commands: { [BLOCKED_CALL_ID]: { command: COMMAND } }, label: 'b2-401',
-    });
-    const record = await services.answer(seeded.record, 'skip_as_done', { text: 'done' });
+    const record = await blocked.answer(blocked.record, 'skip_as_done', { text: 'done' });
     if (record.blockedCommands.length === 0) throw new Error('② wrote no blockedCommands');
     const task: TaskTriple = record.task;
     harness = await openRealRunHarness(world);
@@ -273,17 +272,17 @@ export async function openB401World(options: { runs?: number } = {}): Promise<B4
     const reviews = {
       async readReview(ctx: CoreCallContext, input: { ref: { runId: string } }) {
         counters.recordReads.push(input.ref.runId);
-        return services.reviews.readReview(ctx, input as never);
+        return blocked.reviews.readReview(ctx, input as never);
       },
     };
     const ctx: CoreCallContext = {
       projectId: workspace.projectId, workspaceId: workspace.workspaceId,
-      principal: { kind: 'work_run', runRef: seeded.run.ref, roleBinding: seeded.run.roleBinding },
-      materialReader: { kind: 'run', requester: seeded.run.ref },
+      principal: { kind: 'work_run', runRef: blocked.run.ref, roleBinding: blocked.run.roleBinding },
+      materialReader: { kind: 'run', requester: blocked.run.ref },
       signal: new AbortController().signal,
     };
     const hook = createShellBlockedHook({
-      ctx, runRef: seeded.run.ref, taskId: task.taskId, workspace,
+      ctx, runRef: blocked.run.ref, taskId: task.taskId, workspace,
       binding: bindingOf(record), reviews: reviews as never, requests: requestService, recognizer,
     });
 
@@ -292,7 +291,7 @@ export async function openB401World(options: { runs?: number } = {}): Promise<B4
     const requestIds: string[] = [];
     // F-032: the LAST request (page 3) is captured so the hook row can name it.
     let lastRequest: CommandRerunRequestV1 | undefined;
-    let prevClaim = seeded.claim;
+    let prevClaim = blocked.claim;
     for (let index = 1; index <= total; index += 1) {
       // Item 6: `live` holds the Run from the instant `prepareAndStart` returns,
       // so a throw in `waitEntered`, the request or the deny still releases the

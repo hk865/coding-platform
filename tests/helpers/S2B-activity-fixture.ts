@@ -16,14 +16,12 @@
  *     `createActivityReadModel`;
  *   - a real `requirementKinds: ['static']` completion policy through the public
  *     project-bootstrap install/activate operations, and real `responsible`
- *     SessionWorkLinks / `archiveSession` through `createSessionLifecycleService`;
- *   - the §7 old shapes at the storage boundary only: a round without its wire
- *     `since` (`openLegacyRound`) and an old ended Run with no history locator
- *     and no dispatch claim (`seedLegacyActivity`), both in shapes today's
- *     codecs decode.
+ *     SessionWorkLinks / `archiveSession` through `createSessionLifecycleService`.
  *
- * Except those two named legacy shapes, nothing here writes a record directly,
- * calls a model or touches the network.
+ * The default activity Goal has the twelve `WORK_TASK_IDS` work tasks; a caller
+ * that needs a longer plan (for example the R9 backfill paging row) passes
+ * `workTaskIds` to `openS2BActivityFixture` without changing every other world.
+ * Nothing here writes a record directly, calls a model or touches the network.
  */
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
@@ -116,6 +114,45 @@ export function countedFacts(input: {
   };
 }
 
+/** The public activity view of one Run from a `readRunActivities` result. */
+export function viewOf(read: ReadResult<RunActivityViewV1[]>, runId: string): RunActivityViewV1 {
+  if (read.status !== 'ready') throw new Error(`the activity read was not ready: ${JSON.stringify(read)}`);
+  const found = read.value.find(view => view.runRef.runId === runId);
+  if (found === undefined) throw new Error(`no activity view for ${runId}`);
+  return found;
+}
+
+/**
+ * TP-071 A3 gate: `completed` resolves when the REAL automatic backfill loop has
+ * written its last batch (`done` or `next === null`). The wrapper returns the
+ * real `createActivityBackfill` result unchanged; it only signals completion.
+ */
+let resolveActivityBackfill: (() => void) | null = null;
+let activityBackfillCompleted: Promise<void> = new Promise(() => undefined);
+
+export function resetActivityBackfillGate(): Promise<void> {
+  activityBackfillCompleted = new Promise<void>(resolve => { resolveActivityBackfill = resolve; });
+  return activityBackfillCompleted;
+}
+
+/** `vi.mock` factory: wrap the real factory, signal when the real loop finishes. */
+export function activityBackfillGateModule<T extends Record<string, unknown>>(actual: T): T {
+  const create = actual['createActivityBackfill'];
+  if (typeof create !== 'function') return actual;
+  return { ...actual, createActivityBackfill: (deps: unknown) => {
+    const real = (create as (value: unknown) => Record<string, unknown>)(deps);
+    const recent = real['backfillRecentActivity'] as (ctx: unknown, input: unknown) => Promise<unknown>;
+    return { ...real, async backfillRecentActivity(ctx: unknown, input: unknown) {
+      const result = await recent(ctx, input);
+      const batch = result as { status?: string; value?: { done?: boolean; next?: string | null } };
+      if (batch.status !== 'ready' || batch.value?.done === true || batch.value?.next === null) {
+        resolveActivityBackfill?.();
+      }
+      return result;
+    } };
+  } };
+}
+
 export type S2BActivityFixture = {
   kind: S2BActivityFixtureKind;
   b2: B2ExecutionFixture;
@@ -135,26 +172,16 @@ export type S2BActivityFixture = {
   runOpen(taskId: string, sessionRef: SessionRef, startedAt: string): Promise<RunRef>;
   /** Claims a Task and cancels it before entry (RUN-09), so the Run has no history. */
   claimThenCancel(taskId: string, sessionRef: SessionRef, at: string): Promise<RunRef>;
+  /** Claims a Task publicly (the real `TaskClaimPort`) without entering it. */
+  claimWork(taskId: string, sessionRef: SessionRef): Promise<TaskClaim>;
   writeActivity(runRef: RunRef, facts: RunActivityFactsV1): Promise<RunActivitySnapshot>;
   /** Opens one real verification round on an ended subject Run. */
   openRound(subjectRunRef: RunRef, taskId: string, options?: { gateSubject?: 'goal' | 'stage' | 'module' }): Promise<RoundSnapshot>;
   /** Begins the first `count` configured checks of one round. */
   beginChecks(round: RoundSnapshot, count: number): Promise<RoundSnapshot>;
-  /**
-   * Opens and begins a real round, then rewrites its record at the storage
-   * boundary WITHOUT the top-level `since` (the §7 legacy shape a legacy round
-   * has today). Real checks are begun first; only the wire origin is removed.
-   */
-  openLegacyRound(subjectRunRef: RunRef, taskId: string, count: number): Promise<{ round: RoundSnapshot; checksBegun: number }>;
   /** Opens/closes one real `responsible` SessionWorkLink on the activity Goal's gate task. */
   linkResponsible(sessionRef: SessionRef, taskId: string): Promise<void>;
   closeResponsible(sessionRef: SessionRef, taskId: string): Promise<void>;
-  /**
-   * Seeds an OLD ended Run in the activity Goal with no history locator and no
-   * dispatch claim (the legacy execution whose claiming Session reads as null,
-   * L17), then writes its `RunActivity` through the real public port.
-   */
-  seedLegacyActivity(taskId: string, startedAt: string, endedAt: string, facts: RunActivityFactsV1): Promise<RunRef>;
   /** Archives a Session through the real `archiveSession` lifecycle owner. */
   archiveSession(sessionRef: SessionRef): Promise<void>;
   readCalendar(input: { goalRef: GoalRef; from: string; to: string; granularity: 'hour' | 'day';
@@ -166,8 +193,14 @@ export type S2BActivityFixture = {
   close(): Promise<void>;
 };
 
+export type S2BActivityFixtureOptions = {
+  /** The activity Goal's work tasks; default `WORK_TASK_IDS` (twelve). */
+  workTaskIds?: readonly string[];
+};
+
 export async function openS2BActivityFixture(
   kind: S2BActivityFixtureKind = 'memory',
+  options: S2BActivityFixtureOptions = {},
 ): Promise<S2BActivityFixture> {
   const b2 = await createB2ExecutionFixture(kind, ACTIVITY_SCHEMAS);
   const baseRecords = b2.base.records;
@@ -247,24 +280,6 @@ export async function openS2BActivityFixture(
     return result.value;
   }
 
-  /** Opens and begins a real round, then removes the wire `since` (legacy §7 shape). */
-  async function openLegacyRound(subjectRunRef: RunRef, taskId: string,
-    count: number): Promise<{ round: RoundSnapshot; checksBegun: number }> {
-    const opened = await openRound(subjectRunRef, taskId);
-    const begun = await beginChecks(opened, count);
-    const refKey = canonicalJson(begun.ref as unknown as JsonValue);
-    const read = await baseRecords.readMany([refKey]);
-    if (read.status !== 'ready') throw new Error(`S2B legacy round read failed: ${JSON.stringify(read)}`);
-    const record = read.value.records.find((candidate) => candidate.refKey === refKey);
-    if (record === undefined) throw new Error('S2B legacy round record is missing');
-    const body = JSON.parse(record.json) as Record<string, unknown>;
-    delete body['since'];
-    const rewritten = await b2.base.commitRaw([{ ...record, json: JSON.stringify(body) }],
-      [{ refKey, expectedRevision: record.revision }]);
-    if (rewritten.status !== 'committed') throw new Error(`S2B legacy round rewrite failed: ${JSON.stringify(rewritten)}`);
-    return { round: begun, checksBegun: begun.checks.filter((check) => check.invocationId !== null).length };
-  }
-
   /** The real Session lifecycle owner (`linkSessionWork`), over the same store. */
   const lifecycle = createSessionLifecycleService({ records: baseRecords, lookups: baseRecords });
 
@@ -296,31 +311,6 @@ export async function openS2BActivityFixture(
       meta: { requestId: `s2b-archive-${++seq}`, expected: [await b2.base.sessionPin(sessionRef)] },
     });
     if (result.status !== 'committed') throw new Error(`S2B archive failed: ${JSON.stringify(result)}`);
-  }
-
-  /** An old ended Run with no locator/dispatch; its `RunActivity` then has `sessionRef: null`. */
-  async function seedLegacyActivity(taskId: string, startedAt: string, endedAt: string,
-    facts: RunActivityFactsV1): Promise<RunRef> {
-    const goalRead = await b2.base.plans.queryGoal(b2.ctx, activityGoalRef);
-    if (goalRead.status !== 'ready' || goalRead.value.goal.activePlanRevision === null) {
-      throw new Error('the S2B activity Goal has no accepted plan');
-    }
-    const ref: RunRef = { aggregateType: 'Run', projectId: b2.base.scope.projectId,
-      goalId: activityGoalRef.goalId, runId: `s2b-legacy-run-${++seq}` };
-    const snapshot: RunSnapshot = {
-      ref, revision: 1, schemaVersion: 1,
-      task: { projectId: b2.base.scope.projectId, goalId: activityGoalRef.goalId, taskId },
-      attemptId: `s2b-legacy-attempt-${taskId}`, planRef: goalRead.value.goal.activePlanRevision,
-      roleBinding: b2.base.roleBinding, budget: b2.base.budget,
-      workspaceSnapshot: { workspaceId: b2.base.scope.workspaceId, revision: 1 },
-      status: 'ended', outcome: 'failed', exitCode: null, lastEventSeq: 0,
-      lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt, endedAt,
-    };
-    const written = await b2.base.commitRaw([{ refKey: canonicalJson(ref as unknown as JsonValue),
-      schemaId: 'RunSnapshot@1', revision: 1, json: JSON.stringify(snapshot) }]);
-    if (written.status !== 'committed') throw new Error(`S2B legacy Run seed failed: ${JSON.stringify(written)}`);
-    await writeActivity(ref, facts);
-    return ref;
   }
 
   /** Begins the first `count` configured checks of one round; returns the updated round. */
@@ -362,7 +352,7 @@ export async function openS2BActivityFixture(
         taskKind: 'gate', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
     ];
     const draft: PlanRevisionDraft = {
-      schemaVersion: 1, planId: `${goalRef.goalId}-plan`, planRevision: 1, goalId: goalRef.goalId,
+      schemaVersion: 2, planId: `${goalRef.goalId}-plan`, planRevision: 1, goalId: goalRef.goalId,
       stages: [], tasks,
       assignments: workTaskIds.map((taskId) => ({ taskId, role: 'builder', instruction: `Do ${taskId}` })),
       obligations: [{ obligationId: 's2b-activity-obligation', title: 'S2B activity work',
@@ -575,13 +565,14 @@ export async function openS2BActivityFixture(
   });
   if (createdGoal.status !== 'committed') throw new Error(`S2B activity Goal creation failed: ${JSON.stringify(createdGoal)}`);
   await installStaticCompletionPolicy();
-  await adoptInitialPlan(activityGoalRef, WORK_TASK_IDS);
+  await adoptInitialPlan(activityGoalRef, options.workTaskIds ?? WORK_TASK_IDS);
 
   return {
     kind, b2, ctx: b2.ctx, records, activity, model, setClock, clock: () => clock,
     goalRef: activityGoalRef,
-    ensureRecording, runAndEnd, runOpen, claimThenCancel, writeActivity, openRound, beginChecks, openLegacyRound,
-    linkResponsible, closeResponsible, seedLegacyActivity, archiveSession,
+    claimWork: claim,
+    ensureRecording, runAndEnd, runOpen, claimThenCancel, writeActivity, openRound, beginChecks,
+    linkResponsible, closeResponsible, archiveSession,
     readCalendar: (input, options) => readModelWith(records, options?.readRecordCap).readActivityCalendar(b2.ctx, input),
     readRuns: (runRefs, options) => readModelWith(records, options?.readRecordCap).readRunActivities(b2.ctx, { runRefs }),
     readModelWith,

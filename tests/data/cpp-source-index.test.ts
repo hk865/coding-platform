@@ -147,6 +147,7 @@ it('delivers real C++ semantic tool output into the next model request through t
   const meter = new ModelBudget(DEFAULT_RUNTIME_BUDGET, async () => {});
   const result = await runObservedModel({ kernel, bound: { configuration: { revision: 'cpp-test', provider: 'deepseek', model: 'labelled-cpp-model-stub', baseUrl: 'http://127.0.0.1' }, client }, meter,
     root, databasePath: join(storage, 'kernel.sqlite'), sessionId: 'cpp-source-real-kernel', input: 'Inspect the configured C++ pick definition without modifying source.', budget: DEFAULT_RUNTIME_BUDGET, readOnly: true,
+    taskBudget: { tokenBudget: null, deadline: null },
     signal: new AbortController().signal, deniedPrefixes: ['private'], processSandboxOptions: {}, publish: async () => {} });
   expect(result.enabledTools).toContain('cpp_index');
   expect(requests).toHaveLength(2);

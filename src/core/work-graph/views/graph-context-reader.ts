@@ -577,9 +577,6 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       return rejected('forbidden', 'the Goal is outside the QueryRun workspace');
     }
     const submission = job.submission;
-    if (submission === undefined) {
-      return rejected('unsupported', 'the QueryJob has no original submission locator');
-    }
     let found;
     try {
       found = await deps.records.lookupCommit({ identityKey: submission.identityKey, fingerprint: submission.fingerprint });
@@ -795,7 +792,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     let baselineRevision: number | null = null;
     let baselineDigest: string | null = null;
     if (archRead.status === 'ready') {
-      architecture = archRead.value.catalog?.catalog ?? null;
+      architecture = archRead.value.catalog.catalog;
       baseline = archRead.value.baseline.ref;
       baselineRevision = archRead.value.baseline.revision;
       baselineDigest = archRead.value.baseline.contentDigest;
@@ -911,7 +908,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
         legacyArtifactRef: null,
       });
     }
-    if (plan.schemaVersion === 2 && plan.inputRequirements !== undefined) {
+    if (plan.inputRequirements !== undefined) {
       for (const requirement of plan.inputRequirements) {
         if (requirement.consumerTaskId !== taskId) continue;
         out.push({
@@ -1140,7 +1137,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
             if (edge.taskId === node.ref.taskId) out.push(taskNodeOf(universe.plan, edge.dependsOnId));
             if (edge.dependsOnId === node.ref.taskId) out.push(taskNodeOf(universe.plan, edge.taskId));
           }
-          if (universe.plan.schemaVersion === 2 && universe.plan.taskRelations !== undefined) {
+          if (universe.plan.taskRelations !== undefined) {
             for (const relation of universe.plan.taskRelations) {
               if (relation.fromTaskId === node.ref.taskId) out.push(taskNodeOf(universe.plan, relation.toTaskId));
               if (relation.toTaskId === node.ref.taskId) out.push(taskNodeOf(universe.plan, relation.fromTaskId));
@@ -1632,7 +1629,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     let baselineRevision: number | null = null;
     let baselineDigest: string | null = null;
     if (archRead.status === 'ready') {
-      architecture = archRead.value.catalog?.catalog ?? null;
+      architecture = archRead.value.catalog.catalog;
       baseline = archRead.value.baseline.ref;
       baselineRevision = archRead.value.baseline.revision;
       baselineDigest = archRead.value.baseline.contentDigest;

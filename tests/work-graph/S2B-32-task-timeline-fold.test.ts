@@ -54,12 +54,13 @@ describe.each(['memory', 'sqlite'] as const)('S2B-32 task-state timeline fold (%
   it('2B-32 yielded: waiting_reply until the next Run starts', async () => {
     const fx = await open();
     fx.setClock('2026-10-01T09:00:00.000Z');
-    const goalRef = await fx.createGoal({ goalId: 's2b-32-yielded', workTaskIds: ['work-1'] });
-    const planRef = (await fx.activePlanRef(goalRef))!;
-    await fx.seedRun({ goalRef, runId: 'run-1', taskId: 'work-1', planRef,
-      startedAt: '2026-10-01T10:00:00.000Z', endedAt: '2026-10-01T10:30:00.000Z', outcome: 'yielded' });
-    await fx.seedRun({ goalRef, runId: 'run-2', taskId: 'work-1', planRef,
-      startedAt: '2026-10-01T11:00:00.000Z', endedAt: '2026-10-01T11:10:00.000Z', outcome: 'completed' });
+    const goalRef = await fx.createGoal({ goalId: 's2b-32-yielded', workTaskIds: ['work-1', 'work-2'] });
+    await fx.seedYieldedPair({
+      goalRef, yieldTaskId: 'work-1', replyTaskId: 'work-2',
+      yieldStartedAt: '2026-10-01T10:00:00.000Z', yieldedAt: '2026-10-01T10:30:00.000Z',
+      replyStartedAt: '2026-10-01T10:35:00.000Z', replyEndedAt: '2026-10-01T10:40:00.000Z',
+      resumeStartedAt: '2026-10-01T11:00:00.000Z', resumeEndedAt: '2026-10-01T11:10:00.000Z',
+    });
     expect(spans(await taskSegments(fx, goalRef, 'work-1'))).toEqual([
       [null, '2026-10-01T09:00:00.000Z', 'not_in_plan'],
       ['2026-10-01T09:00:00.000Z', '2026-10-01T10:00:00.000Z', 'pending'],
@@ -220,24 +221,6 @@ describe.each(['memory', 'sqlite'] as const)('S2B-32 task-state timeline fold (%
       ['2026-10-01T10:30:00.000Z', '2026-10-01T10:31:00.000Z', 'awaiting_check'],
       ['2026-10-01T10:31:00.000Z', '2026-10-01T10:35:00.000Z', 'verifying'],
       ['2026-10-01T10:35:00.000Z', null, 'check_incomplete'],
-    ]);
-  }, S2B_SLOW_TIMEOUT_MS);
-
-  it('2B-32 fold order (a): a pause before entry -> paused, a resume -> pending, entry -> running', async () => {
-    const fx = await open();
-    fx.setClock('2026-10-01T09:00:00.000Z');
-    const goalRef = await fx.createGoal({ goalId: 's2b-32-fold-a', workTaskIds: ['work-1'] });
-    const planRef = (await fx.activePlanRef(goalRef))!;
-    const run = await fx.seedRun({ goalRef, runId: 'run-1', taskId: 'work-1', planRef,
-      startedAt: '2026-10-01T09:30:00.000Z', endedAt: null, outcome: null, status: 'running' });
-    await fx.seedControl({ runRef: run, kind: 'pause', observedAt: '2026-10-01T09:10:00.000Z' });
-    await fx.seedControl({ runRef: run, kind: 'resume', observedAt: '2026-10-01T09:20:00.000Z' });
-    expect(spans(await taskSegments(fx, goalRef, 'work-1'))).toEqual([
-      [null, '2026-10-01T09:00:00.000Z', 'not_in_plan'],
-      ['2026-10-01T09:00:00.000Z', '2026-10-01T09:10:00.000Z', 'pending'],
-      ['2026-10-01T09:10:00.000Z', '2026-10-01T09:20:00.000Z', 'paused'],
-      ['2026-10-01T09:20:00.000Z', '2026-10-01T09:30:00.000Z', 'pending'],
-      ['2026-10-01T09:30:00.000Z', null, 'running'],
     ]);
   }, S2B_SLOW_TIMEOUT_MS);
 

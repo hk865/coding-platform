@@ -18,7 +18,7 @@ import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.j
 import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
 import { preparedOf, redrivePolicy } from './support/common.js';
 import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
-import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
+import { crashOneCommand } from './support/review-card-round.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { cleanupRestart, readGoal } from '../helpers/A2-restart-fixture.js';
@@ -39,21 +39,8 @@ import type { ResolveDecisionReadV1 } from '../../src/business/workflow/contract
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 // The blocking `shell` stand-in (K3 §5.1): keeps the call in flight until the crash.
@@ -109,34 +96,14 @@ async function setEveryStep(h: HostScenario): Promise<void> {
   expect(set).toMatchObject({ status: 'committed' });
 }
 
-/** One `shell` call in flight, closed by RUN-25 on the crash restart; returns the original RunRef. */
-async function crashOneCommand(h: HostScenario, label: string): Promise<RunRef> {
-  shellSeam.arm();
-  const modelA = createScriptedModel([{ kind: 'calls', calls: [
-    { callId: `${label}-shell`, name: 'shell', args: { command: `${label} runs a program` } }] }]);
-  const rootA = await openShellWorkRoot(h, modelA);
-  let runningA: Promise<unknown> | null = null;
-  let preparedA: ReturnType<typeof preparedOf>;
-  try {
-    const startA = await prepareOn(rootA, h.select(`${label}-a`, AG2B_WORK_TASK_ID));
-    preparedA = preparedOf(startA);
-    runningA = rootA.runtime.startRun(hostCtx(), { prepared: preparedA, consumerId: AG2B_CONSUMER_ID,
-      requestId: `${label}-a-start` });
-    await shellSeam.waitForCall();
-    await h.restart({ crash: true });
-  } finally {
-    shellSeam.release();
-    await runningA?.catch(() => undefined);
-    await rootA.close();
-  }
-  return preparedA.claim.runRef;
-}
-
 /** The real review round settles to the `confirm_each_step` card; read from the public queue. */
 async function needsDecisionCard(h: HostScenario, label: string): Promise<{
   originalRunRef: RunRef; record: UnknownCallReviewV1; card: DecisionCardV1;
 }> {
-  const originalRunRef = await crashOneCommand(h, label);
+  const crashed = await crashOneCommand(h, { callId: `${label}-shell`, select: `${label}-a`,
+    requestId: `${label}-a-start`, shellArgs: { command: `${label} runs a program` } });
+  await crashed.release();
+  const originalRunRef = crashed.runRef;
   const created = await reviewOf(h, originalRunRef);
   expect(created.status).toBe('ready');
   if (created.status !== 'ready') throw new Error('the review record must read');

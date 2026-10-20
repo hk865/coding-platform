@@ -145,6 +145,8 @@ describe.each(BACKENDS)('A-20 Python imports [%s]', backend => {
       });
       expect(edgePairs(graph)).toEqual(byKey(EXPECTED_EDGES, pair => pair.join('\0')));
       expect(unresolvedPairs(graph)).toEqual(byKey(EXPECTED_UNRESOLVED, pair => pair.join('\0')));
+      expect(graph.edges.filter(edge => edge.from === 'pkg/__init__.py' && edge.to === 'pkg/__init__.py')).toEqual([]);
+      expect(graph.unresolved.filter(item => item.from === 'pkg/__init__.py' && item.specifier === '.')).toEqual([]);
       const details = await unresolvedDetails(f);
       expect(byKey(details, detail => detail)).toEqual(byKey(EXPECTED_DETAILS, detail => detail));
     } finally {

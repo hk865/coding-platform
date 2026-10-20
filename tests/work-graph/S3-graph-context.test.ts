@@ -7,64 +7,58 @@
  * SQLite), matching the service-test style of `R4c-execution-history-index` and
  * `R3g-role-spec`.
  *
- * Part 1 of the slice leaves the four methods as stubs, so these rows are RED
- * with `not implemented: GraphContextReadPort.<method>`; part 2 implements the
- * reader without editing this file. The fixture below fixes the exact §5.1
- * values (scope `p/w`, Goal `g`, Plan `p1`, stage `s`, Tasks `tA`/`tB`,
- * obligation `oB`, verification `vB/static`, legacy artifact `old-A`, Workspace
- * revision 7, edge requirement `{kind:'artifact', label:'A.out'}`, workspace
- * `w2`, the GR05/GR06 modules M1/M2, Rounds `ra`/`rb` and Sessions `sa`/`sb`).
+ * The fixture below fixes the §5.1 values (scope `p/w`, Goal `g`, Plans
+ * `p1`/`p2`, stage `s`, Tasks `tA`/`tB` plus the required Goal-level `finish`
+ * gate, obligation `oB`, verification `vB/static`, legacy artifact `old-A`,
+ * edge requirement `{kind:'artifact', label:'A.out'}`, workspace `w2` and the
+ * GR05/GR06 modules M1/M2) through the PUBLIC owners only: project/workspace
+ * bootstrap and governance, `createGoal` for `g`/`g2`, propose/apply for
+ * `p1`/`p2g`, `sessions/create` for A/B/Q, real claims, the shared real
+ * Runtime start/finish for both runs, and real `openVerification` rounds.
+ * GR10's `p2` is adopted on demand by a propose/apply based on `p1`.
  *
- * The two work Runs are NOT bare `RunSnapshot` records: the real execution
- * reader only ever returns `ready` for a claim-linked Run plus its TaskAttempt,
- * dispatch outbox, Lease and Session (`run-state-service.ts`). The fixture
- * therefore drives the runs through the real `TaskClaimPort`; the ended
- * upstream run is rewritten to `ended/completed` after its claim. One legal
- * QueryRun submission is written by the real `QueryJobPort`/`QueryExecution`
- * owners (Session `sq`) so the Query session bridge has a canonical
+ * The two work Runs are ended through the shared real-Runtime helper (R-7),
+ * never by rewriting a claimed Run. One legal QueryRun submission is written by
+ * the real `QueryJobPort`/`QueryExecution` owners (Sessions A/B/Q are the
+ * public creation results) so the Query session bridge has a canonical
  * QueryJobSubmitted event and a persisted Session binding.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AdoptedArchitecture, ModuleDefinition } from '../../src/contracts/architecture-catalog.js';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { ModuleRef, SessionRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
-import type { RoleBindingRefV1, RunRef, SourceRefV1, TaskTriple } from '../../src/contracts/dispatch.js';
+import type { RoleBindingRefV1, RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
-import type { ArchitectureBaselinePin } from '../../src/contracts/governance.js';
 import type { ContextExtensionsV1 } from '../../src/contracts/graph-context.js';
 import type { GoalRef, WorkspaceRef } from '../../src/contracts/ledger.js';
-import type { PlanRevisionRef } from '../../src/contracts/plan.js';
+import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { RuntimeBudget } from '../../src/contracts/runtime-budget.js';
-import type { RoundSnapshot, VerificationRoundRef } from '../../src/contracts/verification.js';
-import type { EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import type { LookupValue, RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
-import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
-import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
+import type { RegisteredCommandCheck, TrustedCheckConfiguration, VerificationRoundRef } from '../../src/contracts/verification.js';
+import type { GoalRecordTransactionPort, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
-import { encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
-import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
-import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import type { ArchitectureCatalogPort } from '../../src/core/work-graph/architecture/catalog-contracts.js';
-import { EVIDENCE_RECORD_SCHEMAS, encodeVerificationRoundSnapshot } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
-import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
-import { SESSION_RECORD_SCHEMAS, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
+import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
+import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
+import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createTaskContextInputService } from '../../src/core/work-graph/tasks/context-input-service.js';
-import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
-import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
@@ -72,6 +66,13 @@ import { createQueryExecution } from '../../src/core/work-graph/queries/query-ex
 import type { MaterialPort } from '../../src/core/work-graph/model/material-contracts.js';
 import { createGraphContextReader } from '../../src/core/work-graph/views/graph-context-reader.js';
 import type { ExecutionReadPort } from '../../src/core/work-graph/model/execution-read-contracts.js';
+import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
+import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
+import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
+import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
+import { createTaskClaimFixture, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
+import { createS2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
+import { B2_HOST } from '../helpers/B2-execution-fixture.js';
 import type {
   ContextReadRequestV1, GraphContextReadPort, GraphFindRequestV1, GraphLookRequestV1,
 } from '../../src/core/work-graph/model/graph-context-contracts.js';
@@ -97,14 +98,6 @@ const planTwoGoalRef: PlanRevisionRef = { aggregateType: 'PlanRevision', project
 const stageId = 's';
 const taskA: TaskTriple = { projectId: 'p', goalId: 'g', taskId: 'tA' };
 const taskB: TaskTriple = { projectId: 'p', goalId: 'g', taskId: 'tB' };
-const runA: RunRef = { aggregateType: 'Run', projectId: 'p', goalId: 'g', runId: 'runA' };
-const runB: RunRef = { aggregateType: 'Run', projectId: 'p', goalId: 'g', runId: 'runB' };
-const sessionA: SessionRef = { projectId: 'p', sessionId: 'sa' };
-const sessionB: SessionRef = { projectId: 'p', sessionId: 'sb' };
-/** §5.4 GR17: the QueryRun's persisted Session binding (distinct so `sb` stays free for the work Run). */
-const sessionQ: SessionRef = { projectId: 'p', sessionId: 'sq' };
-const roundA: VerificationRoundRef = { aggregateType: 'VerificationRound', projectId: 'p', workspaceId: 'w', goalId: 'g', taskId: 'tA', runId: 'runA', roundId: 'ra' };
-const roundB: VerificationRoundRef = { aggregateType: 'VerificationRound', projectId: 'p', workspaceId: 'w', goalId: 'g', taskId: 'tB', runId: 'runB', roundId: 'rb' };
 const workspaceTwo: WorkspaceRef = { aggregateType: 'Workspace', projectId: 'p', workspaceId: 'w2' };
 /** §5.1: legacy artifact body `old-A`, contentType, digest H('old-A'), sizeBytes 5, canonical owner runA. */
 const oldA: ArtifactRef = {
@@ -178,8 +171,8 @@ type FixtureVariant = {
   roleTemplateId: string;
   modulePaths: string[];
   moduleTwoPaths: string[];
-  sessionB: SessionRef;
-  roundB: VerificationRoundRef;
+  /** The id GR07 flips to `rB`; the real openVerification still issues the ref. */
+  roundBId: string;
 };
 
 type MaterialSpy = { openArtifactCalls: number; storeArtifactCalls: number };
@@ -291,88 +284,29 @@ function materialDouble(spy: MaterialSpy): MaterialPort {
   };
 }
 
-function backendSchemas(): RecordBackendSchemas {
-  const materials = materialRecordSchemas();
-  return {
-    records: [
-      ...materials.records,
-      ...PLAN_RECORD_SCHEMAS.records,
-      ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
-      ...PLAN_STATE_RECORD_SCHEMAS.records,
-      ...ARCHITECTURE_CATALOG_SCHEMAS.records,
-      ...EVIDENCE_RECORD_SCHEMAS.records,
-      ...SESSION_RECORD_SCHEMAS.records,
-      ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
-      ...TASK_CLAIM_RECORD_SCHEMAS.records,
-      ...ROLE_RECORD_SCHEMAS.records,
-      ...QUERY_JOB_RECORD_SCHEMAS.records,
-    ],
-    events: [
-      ...materials.events,
-      ...PLAN_RECORD_SCHEMAS.events,
-      ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
-      ...PLAN_STATE_RECORD_SCHEMAS.events,
-      ...ARCHITECTURE_CATALOG_SCHEMAS.events,
-      ...EVIDENCE_RECORD_SCHEMAS.events,
-      ...SESSION_RECORD_SCHEMAS.events,
-      ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
-      ...TASK_CLAIM_RECORD_SCHEMAS.events,
-      ...ROLE_RECORD_SCHEMAS.events,
-      ...QUERY_JOB_RECORD_SCHEMAS.events,
-      { eventType: 'S3GraphSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) },
-    ],
-    lookups: [
-      ...(materials.lookups ?? []),
-      ...(PLAN_RECORD_SCHEMAS.lookups ?? []),
-      ...(PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? []),
-      ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []),
-      ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? []),
-      ...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []),
-      ...(SESSION_RECORD_SCHEMAS.lookups ?? []),
-      ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []),
-      ...(TASK_CLAIM_RECORD_SCHEMAS.lookups ?? []),
-      ...(ROLE_RECORD_SCHEMAS.lookups ?? []),
-      ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []),
-    ],
-  };
-}
-
-/** §5.1 scope seed: Project@1, Workspace@7 and the effective CompletionPolicy. */
-const policyRef = {
-  aggregateType: 'CompletionPolicyRevision' as const, projectId: 'p', policyId: 's3-policy', revision: 1,
+/** Additional real owners the GR world writes through (the claim fixture already
+ * registers the Goal/Plan/Session/claim/Role schemas). */
+const GRAPH_EXTRA_SCHEMAS: RecordBackendSchemas = {
+  records: [...EVIDENCE_RECORD_SCHEMAS.records, ...EXECUTION_ENTRY_RECORD_SCHEMAS.records,
+    ...MODEL_REQUEST_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records,
+    ...QUERY_JOB_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records],
+  events: [...EVIDENCE_RECORD_SCHEMAS.events, ...EXECUTION_ENTRY_RECORD_SCHEMAS.events,
+    ...MODEL_REQUEST_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events,
+    ...QUERY_JOB_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events],
+  lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? []),
+    ...(MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
+    ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [])],
 };
-const policyFixture = {
-  schemaVersion: 1, identity: { policyId: 's3-policy' }, revision: 1,
-  content: { schemaVersion: 1, requirementKinds: ['test', 'static'], minimumRequiredRequirementsPerObligation: 1 },
-};
-const POLICY_DIGEST = H(canonicalJson(policyFixture as unknown as JsonValue));
 
-function scopeRecords(): EncodedRecord[] {
-  const project = { ref: { aggregateType: 'Project' as const, projectId: 'p' }, revision: 1 };
-  const workspace = { ref: { aggregateType: 'Workspace' as const, projectId: 'p', workspaceId: 'w' }, revision: 7 };
-  const policySnapshot = {
-    ref: policyRef, revision: 1, schemaVersion: 1, policyId: 's3-policy', contentRevision: 1,
-    contentDigest: POLICY_DIGEST, content: policyFixture.content,
-  };
-  const policyActive = {
-    ref: { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId: 'p' }, projectId: 'p',
-    revision: 1, activeRevision: policyRef,
-  };
-  return [
-    encodeProjectSnapshot(project),
-    encodeWorkspaceSnapshot(workspace),
-    { refKey: canonicalJson(policyRef as unknown as JsonValue), schemaId: 'CompletionPolicyRevisionSnapshot@1',
-      revision: 1, json: JSON.stringify(policySnapshot) },
-    { refKey: canonicalJson(policyActive.ref as unknown as JsonValue), schemaId: 'ProjectCompletionPolicyActiveSnapshot@1',
-      revision: 1, json: JSON.stringify(policyActive) },
-  ];
-}
+/** The trusted completion policy the accepted Plan pins (vB is `static`). */
+const POLICY_CONTENT = {
+  schemaVersion: 1 as const, requirementKinds: ['test', 'static'], minimumRequiredRequirementsPerObligation: 1,
+};
 
 function variantOf(options: FixtureOptions): FixtureVariant {
   if (options.uppercaseB === true) {
     return {
-      roleTemplateId: 'Builder', modulePaths: ['src/B'], moduleTwoPaths: ['src/shared'],
-      sessionB: { ...sessionB, sessionId: 'sB' }, roundB: { ...roundB, roundId: 'rB' },
+      roleTemplateId: 'Builder', modulePaths: ['src/B'], moduleTwoPaths: ['src/shared'], roundBId: 'rB',
     };
   }
   return {
@@ -381,285 +315,411 @@ function variantOf(options: FixtureOptions): FixtureVariant {
       ?? (options.nestedModulePaths === true ? ['src']
         : options.sharedModulePaths === true ? ['src/shared'] : ['src/b']),
     moduleTwoPaths: options.moduleTwoPaths ?? ['src/shared'],
-    sessionB, roundB,
+    roundBId: 'rb',
   };
 }
 
-/** One shape-valid open VerificationRound record; the round codec keeps the
- * opaque configuration/identity/plan payloads as objects. */
-function roundRecord(ref: VerificationRoundRef, subject: TaskTriple): EncodedRecord {
-  const snapshot = {
-    ref, revision: 1, schemaVersion: 1 as const,
-    subject, subjectRunRef: { aggregateType: 'Run' as const, projectId: 'p', goalId: ref.goalId, runId: ref.runId },
-    adoptedPlanRef: planRef, taskBasisRef: planRef,
-    executor: HOST_ACTOR,
-    configuration: {}, configurationDigest: H('s3-round-config'),
-    identity: { schemaVersion: 1 }, sourceProof: { kind: 'current-workspace-only' },
-    verificationPlan: { schemaVersion: 1 },
-    checks: [], status: 'open' as const, outcome: null, gaps: [], evidenceRefs: [],
-  };
-  return encodeVerificationRoundSnapshot(snapshot as unknown as RoundSnapshot);
-}
-
-/** The §5.1 fact records: Goal g objective `Ship platform`, Plan p1@1 with stage
- * `s`/Tasks tA/tB, obligation oB and verification vB/static, Plan p2 (the GR10
- * switch target), the GR09 other Goal g2, Workspace w2, Rounds ra/rb and
- * Sessions sa/sb/sq. The Runs are created by the real claim path afterwards. */
-function factRecords(architecturePin: ArchitectureBaselinePin, policyDigest: string, variant: FixtureVariant): EncodedRecord[] {
-  const completionPolicyPin = {
-    ref: { aggregateType: 'CompletionPolicyRevision' as const, projectId: 'p', policyId: 's3-policy', revision: 1 },
-    digest: policyDigest,
-  };
-  const workspaceRef = { aggregateType: 'Workspace' as const, projectId: 'p', workspaceId: 'w' };
-  const goal = {
-    ref: goalRef, workspaceRef,
-    objective: 'Ship platform', desiredState: 'active' as const, activePlanRevision: planRef, revision: 2,
-  };
-  const planBody = {
-    revision: 1 as const, schemaVersion: 1 as const, goalRef, planId: 'p1', planRevision: 1,
-    acceptedAt: AT,
-    effectiveCompletionPolicy: completionPolicyPin,
-    effectiveArchitectureBaseline: architecturePin,
+/** The §5.1 two-task Plan plus the Goal-level `finish` gate the validator
+ * requires outside stage `s`; the gate is carried by obligation oB. */
+function planDraft(planId: string, goalId: string, variant: FixtureVariant): PlanRevisionDraft {
+  return {
+    schemaVersion: 2, planId, planRevision: 1, goalId,
     stages: [{ stageId, title: 'Main' }],
     tasks: [
-      { taskId: 'tA', stageId, title: 'A', requirementLevel: 'required' as const, taskKind: 'work' as const,
-        disposition: 'active' as const, phase: 'pending' as const, scope: { kind: 'stage' as const, stageId } },
-      { taskId: 'tB', stageId, title: 'B', requirementLevel: 'required' as const, taskKind: 'work' as const,
-        disposition: 'active' as const, phase: 'pending' as const, scope: { kind: 'stage' as const, stageId } },
+      { taskId: 'tA', stageId, title: 'A', requirementLevel: 'required', taskKind: 'work',
+        disposition: 'active', phase: 'pending', scope: { kind: 'stage', stageId } },
+      { taskId: 'tB', stageId, title: 'B', requirementLevel: 'required', taskKind: 'work',
+        disposition: 'active', phase: 'pending', scope: { kind: 'stage', stageId } },
+      { taskId: 'finish', title: 'Finish', requirementLevel: 'required', taskKind: 'gate',
+        disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
     ],
     assignments: [
       { taskId: 'tA', role: variant.roleTemplateId, instruction: 'Implement A' },
       { taskId: 'tB', role: variant.roleTemplateId, instruction: 'Implement B' },
     ],
     obligations: [{
-      obligationId: 'oB', title: 'Deliver B', requirementLevel: 'required' as const, taskIds: ['tA', 'tB'],
-      verificationRequirements: [{ requirementId: 'vB', requirementLevel: 'required' as const, kind: 'static',
+      obligationId: 'oB', title: 'Deliver B', requirementLevel: 'required', taskIds: ['tA', 'tB', 'finish'],
+      verificationRequirements: [{ requirementId: 'vB', requirementLevel: 'required', kind: 'static',
         description: 'node check-b.js' }],
     }],
     taskHierarchy: { parentOf: [] },
     executionDag: { dependsOn: [{ taskId: 'tB', dependsOnId: 'tA', requires: edgeRequirement }] },
   };
-  const plan = { ...planBody, ref: planRef };
-  const planTwo = { ...planBody, ref: planRefTwo, planId: 'p2' };
-  const goalTwo = {
-    ref: goalTwoRef, workspaceRef,
-    objective: 'Ship the other platform', desiredState: 'active' as const,
-    activePlanRevision: planTwoGoalRef, revision: 1,
-  };
-  const planTwoGoal = { ...planBody, ref: planTwoGoalRef, goalRef: goalTwoRef, planId: 'p2g' };
-  const sessionRecord = (ref: SessionRef, kernelSessionId: string) => ({
-    ref: plainSessionRefToAggregate(ref), revision: 1,
-    kernel: { adapterId: 's3-graph-kernel', kernelSessionId },
-    lifecycle: 'active' as const, health: 'available' as const,
-    role: { kind: 'legacy_template' as const, templateId: variant.roleTemplateId, templateRevision: '1' },
-    workspaceId: 'w', lastExecutionRef: null, occupancy: null, historyCursor: null,
-    createdAt: AT, archivedAt: null,
-  });
-  return [
-    { refKey: canonicalJson(goalRef as unknown as JsonValue), schemaId: 'GoalSnapshot@1', revision: 2, json: JSON.stringify(goal) },
-    { refKey: canonicalJson(planRef as unknown as JsonValue), schemaId: 'PlanRevisionSnapshot@1', revision: 1, json: JSON.stringify(plan) },
-    { refKey: canonicalJson(planRefTwo as unknown as JsonValue), schemaId: 'PlanRevisionSnapshot@1', revision: 1, json: JSON.stringify(planTwo) },
-    { refKey: canonicalJson(goalTwoRef as unknown as JsonValue), schemaId: 'GoalSnapshot@1', revision: 1, json: JSON.stringify(goalTwo) },
-    { refKey: canonicalJson(planTwoGoalRef as unknown as JsonValue), schemaId: 'PlanRevisionSnapshot@1', revision: 1, json: JSON.stringify(planTwoGoal) },
-    encodeWorkspaceSnapshot({ ref: workspaceTwo, revision: 1 }),
-    encodeSessionRecord(sessionRecord(sessionA, 'kernel-sa')),
-    encodeSessionRecord(sessionRecord(variant.sessionB, 'kernel-sb')),
-    encodeSessionRecord(sessionRecord(sessionQ, 'kernel-sq')),
-    roundRecord(roundA, taskA),
-    roundRecord(variant.roundB, taskB),
-  ];
 }
 
+/** The next v2 Plan: the accepted Plan's draft fields only, planId replaced. */
+function draftFromPlan(plan: PlanRevisionSnapshot, planId: string): PlanRevisionDraft {
+  return {
+    schemaVersion: 2, planId, planRevision: plan.planRevision + 1, goalId: plan.goalRef.goalId,
+    stages: structuredClone(plan.stages), tasks: structuredClone(plan.tasks),
+    assignments: structuredClone(plan.assignments ?? []), obligations: structuredClone(plan.obligations),
+    taskHierarchy: structuredClone(plan.taskHierarchy), executionDag: structuredClone(plan.executionDag),
+    taskRelations: structuredClone(plan.taskRelations ?? []),
+    inputRequirements: structuredClone(plan.inputRequirements ?? []),
+  };
+}
+
+/**
+ * GR07: the public Session id is `session-<sha256(canonicalJson(input))>` over
+ * `{"actor":{"id":"u","kind":"human"},"projectId":"p","requestId":"…"}`
+ * (src/core/work-graph/sessions/session-directory.ts:140). Hand-worked literals:
+ *   gr-session-88 {"actor":{"id":"u","kind":"human"},"projectId":"p","requestId":"gr-session-88"}
+ *     -> session-2756a7606765207ade5e4a1939f9f49472a6af969cf7910d74a4719cd799ce73
+ *   gr-session-92 {"actor":{"id":"u","kind":"human"},"projectId":"p","requestId":"gr-session-92"}
+ *     -> session-51c986a1fca760447cad3a47f0786809fd73d20318d8c6c6c439e282d170d79a
+ *   gr-session-44 {"actor":{"id":"u","kind":"human"},"projectId":"p","requestId":"gr-session-44"}
+ *     -> session-dcf115308e5f3d0062a8d7e00ce65a374476573c8356d8414c43f4d70a3cd3a9
+ * None of A/B/Q carries a `b`, so the uppercase fixture's match is only Builder.
+ */
+const SESSION_IDS: Readonly<Record<string, string>> = {
+  'gr-session-88': 'session-2756a7606765207ade5e4a1939f9f49472a6af969cf7910d74a4719cd799ce73',
+  'gr-session-92': 'session-51c986a1fca760447cad3a47f0786809fd73d20318d8c6c6c439e282d170d79a',
+  'gr-session-44': 'session-dcf115308e5f3d0062a8d7e00ce65a374476573c8356d8414c43f4d70a3cd3a9',
+};
+
 async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions = {}): Promise<S3GraphFixture> {
-  const directory = await mkdtemp(join(tmpdir(), `next-s3-graph-${kind}-`));
-  const schemas = backendSchemas();
-  const backend = kind === 'memory'
-    ? createInMemoryRecordBackend({ schemas })
-    : createSqliteRecordBackend({ path: join(directory, 'ledger.sqlite'), schemas });
-
-  const spy = emptySpy();
-  const records = wrapRecords(backend.records, spy);
-  const hostActor = HOST_ACTOR;
   const variant = variantOf(options);
-  const localRoleBinding: RoleBindingRefV1 = { ...roleBinding, templateId: variant.roleTemplateId };
-
+  const base = await createTaskClaimFixture(kind, GRAPH_EXTRA_SCHEMAS);
+  const rawRecords = base.records;
+  const directory = base.directory;
+  const projectRef = { aggregateType: 'Project' as const, projectId: 'p' };
+  const workspaceRef = { aggregateType: 'Workspace' as const, projectId: 'p', workspaceId: 'w' };
+  const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId: 'p', policyId: 's3-policy', revision: 1 };
+  const activePolicyRef = { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId: 'p' };
+  const actor = { kind: 'human' as const, id: 'u' };
   const ctx: CoreCallContext = {
-    projectId: 'p', workspaceId: 'w', principal: { kind: 'host', actor: { kind: 'human', id: 'u' } },
-    materialReader: { kind: 'host', projectId: 'p', workspaceId: 'w', actor: { kind: 'human', id: 'u' } },
-    signal: new AbortController().signal,
+    projectId: 'p', workspaceId: 'w', principal: { kind: 'host', actor },
+    materialReader: { kind: 'host', projectId: 'p', workspaceId: 'w', actor }, signal: new AbortController().signal,
   };
   const queryCtx: CoreCallContext = {
     projectId: 'p', workspaceId: 'w',
     principal: { kind: 'query_run', queryRunRef, initiator: { kind: 'human', id: 'u' } },
-    materialReader: { kind: 'host', projectId: 'p', workspaceId: 'w', actor: { kind: 'human', id: 'u' } },
+    materialReader: { kind: 'host', projectId: 'p', workspaceId: 'w', actor },
     signal: new AbortController().signal,
   };
-  const workCtx: CoreCallContext = {
-    projectId: 'p', workspaceId: 'w',
-    principal: { kind: 'work_run', runRef: runB, roleBinding: localRoleBinding },
-    materialReader: { kind: 'host', projectId: 'p', workspaceId: 'w', actor: HOST_ACTOR },
-    signal: new AbortController().signal,
-  };
+  const localRoleBinding: RoleBindingRefV1 = { ...roleBinding, templateId: variant.roleTemplateId };
+  const claimBudget = { tokenBudget: 100000, deadline: null };
+  let clock = AT;
+  const now = (): string => clock;
+  const setClock = (at: string): void => { clock = at; };
+  let eventSeq = 0;
+  const eventId = (): string => `gr-event-${++eventSeq}`;
 
-  const moduleOne: ModuleDefinition = { ...moduleM1, paths: variant.modulePaths };
-  const moduleTwo: ModuleDefinition = { ...moduleM2, paths: variant.moduleTwoPaths };
-  const modules: ModuleDefinition[] = [moduleOne, moduleTwo];
-  if (options.moduleThreePaths !== undefined) modules.push({ ...moduleM3, paths: options.moduleThreePaths });
-  const chosenCatalog: AdoptedArchitecture = { modules, dependencies: [], requireDag: true };
-  const seedEvent = (id: string) => ({
-    eventId: id, eventType: 'S3GraphSeeded', schemaVersion: 1, occurredAt: AT,
-    json: JSON.stringify({ eventId: id, eventType: 'S3GraphSeeded', schemaVersion: 1, occurredAt: AT }),
+  // ---- public bootstrap and governance -----------------------------------
+  const bootstrap = createProjectBootstrapServices({ records: rawRecords, now, eventId });
+  const createdProject = await bootstrap.projects.createProject(ctx, {
+    input: { projectId: 'p' },
+    meta: { requestId: 'gr-create-project', expected: [{ ref: projectRef, revision: 0 }] },
   });
-  let seedSeq = 0;
-  const seedEventId = () => `s3-graph-seed-${++seedSeq}`;
-
-  // Seed the real scope first (Project/Workspace@7 + CompletionPolicy), so the
-  // real catalog owner can adopt M1/M2 as real persisted architecture.
-  const scopeSeedRecords = scopeRecords();
-  const scopeSeed: PreparedCommit = {
-    identityKey: 's3-graph-scope', fingerprint: 's3-graph-scope-v1',
-    guards: scopeSeedRecords.map(record => ({ refKey: record.refKey, expectedRevision: null })),
-    records: scopeSeedRecords, events: [seedEvent('s3-graph-scope-event')], claims: [], indexGuards: [], indexChanges: [],
-  };
-  const scoped = await backend.records.commit(scopeSeed);
-  if (scoped.status !== 'committed') throw new Error(`S3 graph scope seed failed: ${JSON.stringify(scoped)}`);
-
-  const baseCatalog = createArchitectureCatalogService({ records });
-  const adopted = await baseCatalog.adoptInitialArchitecture(ctx, {
-    input: { baselineId: 's3-baseline', catalog: chosenCatalog, description: 'S3 graph fixture architecture', constraints: [] },
-    meta: {
-      requestId: 's3-graph-adopt',
-      expected: [
-        { ref: { aggregateType: 'Project' as const, projectId: 'p' }, revision: 1 },
-        { ref: { aggregateType: 'Workspace' as const, projectId: 'p', workspaceId: 'w' }, revision: 7 },
-      ],
-    },
-  });
-  if (adopted.status !== 'committed') throw new Error(`S3 graph catalog adopt failed: ${JSON.stringify(adopted)}`);
-  const baselinePin: ArchitectureBaselinePin = {
-    ref: adopted.value.baseline.ref, digest: adopted.value.baseline.contentDigest,
-  };
-
-  // Seed the §5.1 facts (Goal/Plans/Sessions/Rounds/other Goal) as real persisted records.
-  const factSeedRecords = factRecords(baselinePin, POLICY_DIGEST, variant);
-  const factSeed: PreparedCommit = {
-    identityKey: 's3-graph-facts', fingerprint: 's3-graph-facts-v1',
-    guards: factSeedRecords.map(record => ({ refKey: record.refKey, expectedRevision: null })),
-    records: factSeedRecords, events: [seedEvent('s3-graph-facts-event')], claims: [], indexGuards: [], indexChanges: [],
-  };
-  const committed = await backend.records.commit(factSeed);
-  if (committed.status !== 'committed') throw new Error(`S3 graph fixture seed failed: ${JSON.stringify(committed)}`);
-
-  // The Runs are produced by the REAL claim path: each claim writes the
-  // RunSnapshot + TaskAttempt + dispatch outbox + Lease + occupied Session the
-  // real execution reader cross-checks (`run-state-service.ts`).
-  const roleService = createRoleConfigurationService({ records, now: () => AT, eventId: seedEventId });
-  const claimIds = ['runA', 'attempt-a', 'event-a', 'runB', 'attempt-b', 'event-b'];
-  let claimExtra = 0;
-  const claimNewId = () => claimIds.shift() ?? `s3-graph-claim-extra-${++claimExtra}`;
-  const claimService = createTaskClaimService({ records, roles: roleService, now: () => AT, newId: claimNewId });
-
-  async function claim(task: TaskTriple, sessionRef: SessionRef, requestId: string) {
-    const result = await claimService.claimTask(ctx, {
-      input: { goalRef, planRef, taskId: task.taskId, sessionRef, roleBinding: localRoleBinding,
-        budget: { tokenBudget: 100000, deadline: null } },
+  if (createdProject.status !== 'committed') throw new Error(`GR project setup failed: ${JSON.stringify(createdProject)}`);
+  for (const [workspaceId, requestId] of [['w', 'gr-register-workspace'], ['w2', 'gr-register-w2']] as const) {
+    const workspaceCtx: CoreCallContext = workspaceId === 'w' ? ctx : {
+      ...ctx, workspaceId,
+      materialReader: { kind: 'host', projectId: 'p', workspaceId, actor },
+    };
+    const registered = await bootstrap.projects.registerWorkspace(workspaceCtx, {
+      input: { workspace: { projectId: 'p', workspaceId } },
       meta: { requestId, expected: [
-        { ref: goalRef, revision: 2 },
-        { ref: { aggregateType: 'Workspace' as const, projectId: 'p', workspaceId: 'w' }, revision: 7 },
-        { ref: plainSessionRefToAggregate(sessionRef), revision: 1 },
+        { ref: projectRef, revision: 1 },
+        { ref: { aggregateType: 'Workspace' as const, projectId: 'p', workspaceId }, revision: 0 },
       ] },
     });
-    if (result.status !== 'committed') throw new Error(`S3 graph claim ${task.taskId} failed: ${JSON.stringify(result)}`);
-    return result.value;
+    if (registered.status !== 'committed') throw new Error(`GR workspace ${workspaceId} setup failed: ${JSON.stringify(registered)}`);
   }
-  const claimA = await claim(taskA, sessionA, 's3-graph-claim-a');
-  const claimB = await claim(taskB, variant.sessionB, 's3-graph-claim-b');
-  if (claimA.runRef.runId !== 'runA') throw new Error(`S3 graph fixture expected runA, got ${claimA.runRef.runId}`);
-  if (claimB.runRef.runId !== 'runB') throw new Error(`S3 graph fixture expected runB, got ${claimB.runRef.runId}`);
-
-  // §5.1: runA is the ended/completed upstream Run. Its claim-linked records stay.
-  const runAKey = canonicalJson(runA as unknown as JsonValue);
-  const runARead = await records.readMany([runAKey]);
-  if (runARead.status !== 'ready') throw new Error('S3 graph runA read failed');
-  const runARecord = runARead.value.records.find(record => record.refKey === runAKey);
-  if (runARecord === undefined) throw new Error('S3 graph runA record is absent');
-  const runABody = JSON.parse(runARecord.json) as Record<string, unknown>;
-  const runAEnded = { ...runABody, revision: runARecord.revision + 1, status: 'ended', outcome: 'completed', exitCode: 0, startedAt: AT, endedAt: AT };
-  const ended = await records.commit({
-    identityKey: 's3-graph-runA-ended', fingerprint: 's3-graph-runA-ended-v1',
-    guards: [{ refKey: runAKey, expectedRevision: runARecord.revision }],
-    records: [{ refKey: runAKey, schemaId: 'RunSnapshot@1', revision: runARecord.revision + 1, json: JSON.stringify(runAEnded) }],
-    events: [seedEvent('s3-graph-runA-ended-event')], claims: [], indexGuards: [], indexChanges: [],
+  const installed = await bootstrap.completionPolicies.installCompletionPolicy(ctx, {
+    input: { policyId: 's3-policy', contentRevision: 1, content: POLICY_CONTENT },
+    meta: { requestId: 'gr-install-policy', expected: [
+      { ref: projectRef, revision: 1 }, { ref: policyRef, revision: 0 },
+    ] },
   });
-  if (ended.status !== 'committed') throw new Error(`S3 graph runA end failed: ${JSON.stringify(ended)}`);
+  if (installed.status !== 'committed') throw new Error(`GR policy install failed: ${JSON.stringify(installed)}`);
+  const activated = await bootstrap.completionPolicies.activateCompletionPolicy(ctx, {
+    input: { target: { ref: installed.value.ref, digest: installed.value.contentDigest } },
+    meta: { requestId: 'gr-activate-policy', expected: [
+      { ref: projectRef, revision: 1 }, { ref: activePolicyRef, revision: 0 },
+    ] },
+  });
+  if (activated.status !== 'committed') throw new Error(`GR policy activation failed: ${JSON.stringify(activated)}`);
+  const modules: ModuleDefinition[] = [
+    { ...moduleM1, paths: variant.modulePaths }, { ...moduleM2, paths: variant.moduleTwoPaths },
+  ];
+  if (options.moduleThreePaths !== undefined) modules.push({ ...moduleM3, paths: options.moduleThreePaths });
+  const chosenCatalog: AdoptedArchitecture = { modules, dependencies: [], requireDag: true };
+  const adopted = await createArchitectureCatalogService({ records: rawRecords }).adoptInitialArchitecture(ctx, {
+    input: { baselineId: 's3-baseline', catalog: chosenCatalog, description: 'S3 graph fixture architecture', constraints: [] },
+    meta: { requestId: 'gr-adopt-architecture', expected: [
+      { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 },
+    ] },
+  });
+  if (adopted.status !== 'committed') throw new Error(`GR architecture adoption failed: ${JSON.stringify(adopted)}`);
 
-  // §5.1 legacy `old-A` body, canonical owner runA, behind a read counter.
-  const bodyStore = new RawArtifactBodyStore();
+  // ---- Goal g + accepted Plan p1, Goal g2 + accepted Plan p2g ------------
+  const createdGoal = await base.goals.createGoal(ctx, {
+    meta: { requestId: 'gr-create-goal', expected: [
+      { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 },
+    ] },
+    input: { goalId: 'g', workspace: scope, objective: 'Ship platform' },
+  });
+  if (createdGoal.status !== 'committed') throw new Error(`GR Goal g creation failed: ${JSON.stringify(createdGoal)}`);
+  const proposedOne = await base.plans.proposePlan(ctx, {
+    meta: { requestId: 'gr-propose-p1', expected: [{ ref: goalRef, revision: 1 }] },
+    input: { goalRef, basedOn: null, draft: planDraft('p1', 'g', variant),
+      reason: { text: 'S3 graph plan p1', sources: [] } },
+  });
+  if (proposedOne.status !== 'committed' || proposedOne.value.issues.length > 0) {
+    throw new Error(`GR Plan p1 proposal failed: ${JSON.stringify(proposedOne)}`);
+  }
+  const appliedOne = await base.plans.applyPlanChange(ctx, {
+    meta: { requestId: 'gr-apply-p1', expected: [{ ref: goalRef, revision: 1 }] },
+    input: { proposalRef: proposedOne.value.ref, expectedProposalRevision: proposedOne.value.revision, decisionRefs: [] },
+  });
+  if (appliedOne.status !== 'committed') throw new Error(`GR Plan p1 adoption failed: ${JSON.stringify(appliedOne)}`);
+  const plan = appliedOne.value;
+
+  const createdGoalTwo = await base.goals.createGoal(ctx, {
+    meta: { requestId: 'gr-create-goal-two', expected: [
+      { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 },
+    ] },
+    input: { goalId: 'g2', workspace: scope, objective: 'Ship the other platform' },
+  });
+  if (createdGoalTwo.status !== 'committed') {
+    throw new Error(`GR Goal g2 creation failed: ${JSON.stringify(createdGoalTwo)}`);
+  }
+  const proposedTwoGoal = await base.plans.proposePlan(ctx, {
+    meta: { requestId: 'gr-propose-p2g', expected: [{ ref: goalTwoRef, revision: 1 }] },
+    input: { goalRef: goalTwoRef, basedOn: null, draft: planDraft('p2g', 'g2', variant),
+      reason: { text: 'S3 graph plan p2g', sources: [] } },
+  });
+  if (proposedTwoGoal.status !== 'committed' || proposedTwoGoal.value.issues.length > 0) {
+    throw new Error(`GR Plan p2g proposal failed: ${JSON.stringify(proposedTwoGoal)}`);
+  }
+  const appliedTwoGoal = await base.plans.applyPlanChange(ctx, {
+    meta: { requestId: 'gr-apply-p2g', expected: [{ ref: goalTwoRef, revision: 1 }] },
+    input: { proposalRef: proposedTwoGoal.value.ref, expectedProposalRevision: proposedTwoGoal.value.revision, decisionRefs: [] },
+  });
+  if (appliedTwoGoal.status !== 'committed') throw new Error(`GR Plan p2g adoption failed: ${JSON.stringify(appliedTwoGoal)}`);
+
+  // ---- Sessions A/B/Q through the public Session creation route ----------
+  const roleRef = { kind: 'legacy_template' as const, templateId: variant.roleTemplateId, templateRevision: '1' };
+  const kernelStores = await createKernelStoreRegistry({ entries: [{
+    adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store', workspace: scope,
+    databasePath: join(directory, 'kernel.sqlite'),
+  }] });
+  const sessionOperations = createSessionOperations({ sessions: base.sessionsPort, kernelStores });
+  async function createPublicSession(requestId: string): Promise<{ ref: SessionRef; revision: number }> {
+    const created = await sessionOperations.createSession(ctx, {
+      workspace: scope, role: roleRef, recommendedRefs: [], initialLinks: [],
+      meta: { requestId, expected: [] },
+    });
+    if (created.status !== 'completed') throw new Error(`GR Session ${requestId} creation failed: ${JSON.stringify(created)}`);
+    // The operation returns the aggregate record; the SessionRef value itself is
+    // the public plain `{projectId, sessionId}` (never the record envelope).
+    const ref: SessionRef = { projectId: created.value.ref.projectId, sessionId: created.value.ref.sessionId };
+    const expectedSessionId = SESSION_IDS[requestId];
+    if (expectedSessionId === undefined) throw new Error(`GR Session ${requestId} has no hand-worked id`);
+    // GR07: the real ids carry no `b`, so the uppercase fixture's match is only Builder.
+    if (ref.sessionId !== expectedSessionId || ref.sessionId.includes('b')) {
+      throw new Error(`GR Session id disagrees with the hand-worked literal for ${requestId}: ${ref.sessionId}`);
+    }
+    const card = await base.sessionsPort.readSession(ctx, ref);
+    if (card.status !== 'ready') throw new Error(`GR Session ${requestId} read failed: ${JSON.stringify(card)}`);
+    return { ref, revision: card.value.record.revision };
+  }
+  const sessionA = await createPublicSession('gr-session-88');
+  const sessionB = await createPublicSession('gr-session-92');
+  const sessionQ = await createPublicSession('gr-session-44');
+
+  // ---- real claims A/B ---------------------------------------------------
+  const claimIds = ['runA', 'attempt-a', 'event-a', 'runB', 'attempt-b', 'event-b'];
+  let claimExtra = 0;
+  const roleFacts = createRoleConfigurationService({ records: rawRecords, now, eventId });
+  const claimService = createTaskClaimService({
+    records: rawRecords, roles: roleFacts, now,
+    newId: () => claimIds.shift() ?? `gr-claim-extra-${++claimExtra}`,
+  });
+  async function claim(task: TaskTriple, sessionRef: SessionRef, requestId: string) {
+    const goalRead = await base.plans.queryGoal(ctx, goalRef);
+    if (goalRead.status !== 'ready') throw new Error(`GR Goal read failed: ${JSON.stringify(goalRead)}`);
+    const registration = await bootstrap.projects.readWorkspaceRegistration(ctx, scope);
+    if (registration.status !== 'ready') throw new Error(`GR Workspace read failed: ${JSON.stringify(registration)}`);
+    const card = await base.sessionsPort.readSession(ctx, sessionRef);
+    if (card.status !== 'ready') throw new Error(`GR claim Session read failed: ${JSON.stringify(card)}`);
+    const claimed = await claimService.claimTask(ctx, {
+      input: { goalRef, planRef: plan.ref, taskId: task.taskId, sessionRef, roleBinding: localRoleBinding, budget: claimBudget },
+      meta: { requestId, expected: [
+        { ref: goalRef, revision: goalRead.value.goal.revision },
+        { ref: workspaceRef, revision: registration.value.workspace.revision },
+        { ref: plainSessionRefToAggregate(sessionRef), revision: card.value.record.revision },
+      ] },
+    });
+    if (claimed.status !== 'committed') throw new Error(`GR claim ${task.taskId} failed: ${JSON.stringify(claimed)}`);
+    return claimed.value;
+  }
+  const claimA = await claim(taskA, sessionA.ref, 'gr-claim-a');
+  if (claimA.runRef.runId !== 'runA') throw new Error(`GR expected runA, got ${claimA.runRef.runId}`);
+
+  // ---- real Runtime entry/terminal for BOTH runs (R-7) -------------------
+  const bodies = new RawArtifactBodyStore();
   const bodySpy: BodySpy = { reads: 0 };
-  const storedOldA = await bodyStore.put({
+  const bodiesForReader: Pick<RawArtifactStorePort, 'read'> = {
+    async read(ref) { bodySpy.reads += 1; return bodies.read(ref); },
+  };
+  const registrationAtRuntime = await bootstrap.projects.readWorkspaceRegistration(ctx, scope);
+  if (registrationAtRuntime.status !== 'ready') {
+    throw new Error(`GR runtime Workspace read failed: ${JSON.stringify(registrationAtRuntime)}`);
+  }
+  const runtimeBase: TaskClaimFixture = {
+    ...base, ctx, scope, projectRef, workspaceRef, goalRef, planRef: plan.ref, plan,
+    tasks: { first: taskA, second: taskB, gate: { projectId: 'p', goalId: 'g', taskId: 'finish' } },
+    sessions: { first: sessionA.ref, second: sessionB.ref }, roleBinding: localRoleBinding, budget: claimBudget,
+    records: rawRecords, plans: base.plans, sessionsPort: base.sessionsPort, roleService: base.roleService,
+    service: claimService,
+  };
+  let runtimeSeq = 0;
+  const runtimeSteps = await createS2BRuntimeSteps({
+    base: runtimeBase, bodies, ctx, directory, scope, now, setClock, eventId,
+    newId: () => `gr-runtime-${++runtimeSeq}`, consumerId: 'runtime-a',
+    workspaceRevision: registrationAtRuntime.value.workspace.revision,
+    // GR07's uppercase variant keeps only `Builder` as the folded `b`; the
+    // trusted Host template must name the Session's own legacy template.
+    host: {
+      configurationRevision: B2_HOST.configurationRevision,
+      permissions: B2_HOST.permissions,
+      hostTemplate: { ...B2_HOST.hostTemplate, templateId: variant.roleTemplateId },
+    },
+  });
+  const handleA = await runtimeSteps.start(claimA, {
+    at: AT, replies: [{ kind: 'text', text: 'GR run A completed' }],
+  });
+  await handleA.entered;
+  await runtimeSteps.finish(handleA, AT, 'completed');
+  const claimB = await claim(taskB, sessionB.ref, 'gr-claim-b');
+  if (claimB.runRef.runId !== 'runB') throw new Error(`GR expected runB, got ${claimB.runRef.runId}`);
+  const handleB = await runtimeSteps.start(claimB, {
+    at: AT, replies: [{ kind: 'text', text: 'GR run B completed' }],
+  });
+  await handleB.entered;
+  await runtimeSteps.finish(handleB, AT, 'completed');
+  // §5.1 legacy `old-A` body, canonical owner runA, behind a read counter.
+  const storedOldA = await bodies.put({
     body: 'old-A', contentType: 'text/plain',
     sourceRefs: [{ kind: 'artifact', refId: 'old-A', revision: '1' }],
-    origin: { kind: 'run', owner: runA }, requestedAt: AT,
+    origin: { kind: 'run', owner: claimA.runRef }, requestedAt: AT,
   });
-  if (storedOldA.status !== 'ready') throw new Error(`S3 graph old-A body store failed: ${JSON.stringify(storedOldA)}`);
-  const bodiesForReader: Pick<RawArtifactStorePort, 'read'> = {
-    async read(ref) { bodySpy.reads += 1; return bodyStore.read(ref); },
-  };
+  if (storedOldA.status !== 'ready') throw new Error(`GR old-A body store failed: ${JSON.stringify(storedOldA)}`);
 
-  // §5.4 GR17/GR18: ONE legal QueryRun submission (actor human/u) by the real
-  // owners, with its persisted Session binding (sessionQ) from claimQuery.
+
+  // ---- real openVerification for runA and runB --------------------------
+  const workspaceHost: WorkspaceHostBindings = {
+    async resolveRoot(requested) {
+      if (requested.projectId !== 'p' || requested.workspaceId !== 'w') {
+        return { status: 'rejected', code: 'forbidden', reason: 'GR Workspace is not registered' };
+      }
+      return { status: 'ready', value: { root: directory,
+        workspaceRevision: registrationAtRuntime.value.workspace.revision } };
+    },
+    async authorize(callCtx, requested) {
+      if (callCtx.principal.kind !== 'host' || callCtx.projectId !== 'p' || callCtx.workspaceId !== 'w'
+        || requested.projectId !== 'p' || requested.workspaceId !== 'w') {
+        return { status: 'rejected', code: 'forbidden', reason: 'GR Host does not authorize verification source' };
+      }
+      return { status: 'ready', value: {
+        subjectKey: 'host:gr-verification', permissionRevision: 'gr-permission@1', allowsRead: () => true,
+      } };
+    },
+  };
+  const staticCheck: RegisteredCommandCheck = {
+    checkId: 'gr-vB-static', kind: 'static', command: 'echo GR_CHECK_OK', cwd: '.', timeoutMs: 60_000, taskIds: 'all',
+  };
+  const configuration: TrustedCheckConfiguration = {
+    configurationRevision: 'gr-checks@1', workspace: workspaceRef, executor: actor,
+    permissionRevision: 'gr-permission@1', sourceAccess: 'verification_workspace',
+    processAccess: 'all_except_denied', deniedPrefixes: ['.git'], checks: [staticCheck],
+  };
+  const evidenceMaterials = createMaterialService({
+    bodies, authority: createMaterialRecordReaders(rawRecords).authority, now,
+  });
+  const evidenceIds = ['ra', 'ra-event', variant.roundBId, `${variant.roundBId}-event`];
+  let evidenceSeq = 0;
+  const evidence = createEvidenceService({
+    records: rawRecords, materials: evidenceMaterials, executions: createRunStateReader({ records: rawRecords }),
+    workspaceHost, source: new VerificationWorkspaceReader(), configuration, now,
+    newId: () => evidenceIds.shift() ?? `gr-evidence-${++evidenceSeq}`,
+  });
+  const openedA = await evidence.openVerification(ctx, {
+    input: { subjectRunRef: claimA.runRef, subject: claimA.task, planRef: plan.ref },
+    meta: { requestId: 'gr-open-a', expected: [] },
+  });
+  if (openedA.status !== 'committed') throw new Error(`GR openVerification A failed: ${JSON.stringify(openedA)}`);
+  const openedB = await evidence.openVerification(ctx, {
+    input: { subjectRunRef: claimB.runRef, subject: claimB.task, planRef: plan.ref },
+    meta: { requestId: 'gr-open-b', expected: [] },
+  });
+  if (openedB.status !== 'committed') throw new Error(`GR openVerification B failed: ${JSON.stringify(openedB)}`);
+  const roundA = openedA.value.ref;
+  const roundB = openedB.value.ref;
+
+  // ---- the QueryJob keeps its real submit/claim -------------------------
   let queryEventSeq = 0;
-  const queryEventId = () => `s3-graph-query-event-${++queryEventSeq}`;
+  const queryEventId = (): string => `gr-query-event-${++queryEventSeq}`;
   const queryExecution = createQueryExecution({
-    records,
-    roles: roleService,
-    bodies: bodiesForReader,
+    records: rawRecords, roles: roleFacts, bodies: bodiesForReader,
     authorizeConfiguration: async () => ({
       status: 'ready',
       value: {
-        configurationRevision: 's3-graph-host@1',
+        configurationRevision: 'gr-host@1',
         permissions: { tools: ['read'], writeScope: [] },
-        hostTemplate: { templateId: variant.roleTemplateId, revision: '1', digest: H('s3-graph-builder-template') },
+        hostTemplate: { templateId: variant.roleTemplateId, revision: '1', digest: H('gr-builder-template') },
         budget: runtimeBudget,
       },
     }),
-    now: () => AT,
-    eventId: queryEventId,
+    now, eventId: queryEventId,
   });
   const queryJobs = createQueryJobService({
-    records, now: () => AT, eventId: queryEventId,
+    records: rawRecords, now, eventId: queryEventId,
     execution: { claimQuery: queryExecution.claimQuery, readQueryAnswer: queryExecution.readQueryAnswer },
   });
   const queryIntent: QueryJobIntentV1 = {
     schemaVersion: 1, intentId: 'qj', projectId: 'p', workspaceId: 'w', goalId: 'g',
     question: 'What is the current progress?', focusTaskRefs: [],
     budget: { maxTokens: 4096, deadline: null }, multiTurn: { maxRounds: 1 },
-    correlationId: 's3-graph-corr',
+    correlationId: 'gr-corr',
     execution: { kind: 'semantic_query', roleBinding: localRoleBinding, runtimeBudget },
   };
+  const goalAtQuery = await base.plans.queryGoal(ctx, goalRef);
+  if (goalAtQuery.status !== 'ready') throw new Error(`GR query Goal read failed: ${JSON.stringify(goalAtQuery)}`);
+  const registrationAtQuery = await bootstrap.projects.readWorkspaceRegistration(ctx, scope);
+  if (registrationAtQuery.status !== 'ready') {
+    throw new Error(`GR query Workspace read failed: ${JSON.stringify(registrationAtQuery)}`);
+  }
   const submitted = await queryJobs.submitQueryJob(ctx, {
     input: { queryJobId: 'qj', runId: 'qr', intent: queryIntent },
-    meta: { requestId: 's3-graph-query-submit', expected: [
-      { ref: { aggregateType: 'Project' as const, projectId: 'p' }, revision: 1 },
-      { ref: { aggregateType: 'Workspace' as const, projectId: 'p', workspaceId: 'w' }, revision: 7 },
-      { ref: goalRef, revision: 2 },
+    meta: { requestId: 'gr-query-submit', expected: [
+      { ref: projectRef, revision: registrationAtQuery.value.project.revision },
+      { ref: workspaceRef, revision: registrationAtQuery.value.workspace.revision },
+      { ref: goalRef, revision: goalAtQuery.value.goal.revision },
       { ref: queryJobRef, revision: 0 },
       { ref: queryRunRef, revision: 0 },
     ] },
   });
-  if (submitted.status !== 'committed') throw new Error(`S3 graph Query submit failed: ${JSON.stringify(submitted)}`);
+  if (submitted.status !== 'committed') throw new Error(`GR Query submit failed: ${JSON.stringify(submitted)}`);
+  const querySessionCard = await base.sessionsPort.readSession(ctx, sessionQ.ref);
+  if (querySessionCard.status !== 'ready') {
+    throw new Error(`GR Query Session read failed: ${JSON.stringify(querySessionCard)}`);
+  }
   const queryClaimed = await queryJobs.claimQuery(ctx, {
-    input: { queryRunRef, sessionRef: sessionQ },
-    meta: { requestId: 's3-graph-query-claim', expected: [
+    input: { queryRunRef, sessionRef: sessionQ.ref },
+    meta: { requestId: 'gr-query-claim', expected: [
       { ref: queryJobRef, revision: 1 },
       { ref: queryRunRef, revision: 1 },
-      { ref: plainSessionRefToAggregate(sessionQ), revision: 1 },
+      { ref: plainSessionRefToAggregate(sessionQ.ref), revision: querySessionCard.value.record.revision },
     ] },
   });
-  if (queryClaimed.status !== 'committed') throw new Error(`S3 graph Query claim failed: ${JSON.stringify(queryClaimed)}`);
+  if (queryClaimed.status !== 'committed') throw new Error(`GR Query claim failed: ${JSON.stringify(queryClaimed)}`);
 
-  // GR14: keep the real catalog owner, but damage the stored catalog record at
-  // its exact key; the port is never replaced by a fake `unavailable` answer.
+  // ---- the graph reader over the real records ---------------------------
+  const spy = emptySpy();
+  const records = wrapRecords(rawRecords, spy);
   const catalogRef = {
     aggregateType: 'ArchitectureCatalog' as const, projectId: 'p',
     baselineId: adopted.value.baseline.ref.baselineId, revision: adopted.value.baseline.ref.revision,
@@ -667,8 +727,9 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   const catalogKey = canonicalJson(catalogRef as unknown as JsonValue);
   const readerRecords = options.corruptCatalog === true ? corruptRecordReads(records, catalogKey) : records;
 
-  const architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'> = createArchitectureCatalogService({ records: readerRecords });
-  const readerPlans = createPlanService({ records: readerRecords, now: () => AT, eventId: () => 's3-graph-reader-event' });
+  const architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'> =
+    createArchitectureCatalogService({ records: readerRecords });
+  const readerPlans = createPlanService({ records: readerRecords, now, eventId });
   const sessionDirectory = createSessionDirectory({ records: readerRecords, lookups: readerRecords });
   const sessionSpy: SessionSpy = { findSessionsCalls: 0, readSessionCalls: 0, contexts: [] };
   const sessions = {
@@ -701,7 +762,7 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   };
   const materialSpy: MaterialSpy = { openArtifactCalls: 0, storeArtifactCalls: 0 };
   const inputs = createTaskContextInputService({
-    records: readerRecords, materials: materialDouble(materialSpy), bodies: bodiesForReader, hostActor,
+    records: readerRecords, materials: materialDouble(materialSpy), bodies: bodiesForReader, hostActor: HOST_ACTOR,
   });
 
   const extensions: ((callCtx: CoreCallContext, request: ContextReadRequestV1) => Promise<ReadResult<ContextExtensionsV1>>) | undefined =
@@ -724,42 +785,50 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
       : undefined;
 
   const graph = createGraphContextReader({
-    records: readerRecords,
-    goals: readerPlans,
-    plans: readerPlans,
-    architecture,
-    sessions,
-    executions,
-    inputs,
-    hostActor,
+    records: readerRecords, goals: readerPlans, plans: readerPlans, architecture,
+    sessions, executions, inputs, hostActor: HOST_ACTOR,
     ...(extensions === undefined ? {} : { extensions }),
   });
 
   const catalog = adopted.value.catalog?.catalog ?? chosenCatalog;
   const fixture: S3GraphFixture = {
-    kind, directory, records: readerRecords, spy, graph, ctx, queryCtx, workCtx, scope, goalRef, goalTwoRef,
-    planRef, planRefTwo, planTwoGoalRef, stageTwoId: stageId,
-    tasks: { a: taskA, b: taskB }, runs: { a: runA, b: runB },
-    sessions: { a: sessionA, b: variant.sessionB, q: sessionQ },
-    rounds: { a: roundA, b: variant.roundB }, workspaceTwo, oldA, catalog,
+    kind, directory, records: readerRecords, spy, graph, ctx, queryCtx,
+    workCtx: {
+      projectId: 'p', workspaceId: 'w',
+      principal: { kind: 'work_run', runRef: claimB.runRef, roleBinding: localRoleBinding },
+      materialReader: { kind: 'host', projectId: 'p', workspaceId: 'w', actor: HOST_ACTOR },
+      signal: new AbortController().signal,
+    },
+    scope, goalRef, goalTwoRef, planRef: plan.ref, planRefTwo, planTwoGoalRef, stageTwoId: stageId,
+    tasks: { a: taskA, b: taskB }, runs: { a: claimA.runRef, b: claimB.runRef },
+    sessions: { a: sessionA.ref, b: sessionB.ref, q: sessionQ.ref },
+    rounds: { a: roundA, b: roundB }, workspaceTwo, oldA, catalog,
     materialSpy, bodySpy, sessionSpy, executionSpy,
     async switchToPlanTwo() {
-      const goalKey = canonicalJson(goalRef as unknown as JsonValue);
-      const nextGoal = {
-        ref: goalRef, workspaceRef: { aggregateType: 'Workspace' as const, projectId: 'p', workspaceId: 'w' },
-        objective: 'Ship platform', desiredState: 'active' as const, activePlanRevision: planRefTwo, revision: 3,
-      };
-      const switched = await backend.records.commit({
-        identityKey: 's3-graph-plan-switch', fingerprint: 's3-graph-plan-switch-v1',
-        guards: [{ refKey: goalKey, expectedRevision: 2 }],
-        records: [{ refKey: goalKey, schemaId: 'GoalSnapshot@1', revision: 3, json: JSON.stringify(nextGoal) }],
-        events: [seedEvent('s3-graph-plan-switch-event')], claims: [], indexGuards: [], indexChanges: [],
+      const goalRead = await base.plans.queryGoal(ctx, goalRef);
+      if (goalRead.status !== 'ready') throw new Error(`GR plan-switch Goal read failed: ${JSON.stringify(goalRead)}`);
+      const sourceGraph = await base.plans.queryTaskGraph(ctx, { goalRef });
+      if (sourceGraph.status !== 'ready') throw new Error(`GR plan-switch graph read failed: ${JSON.stringify(sourceGraph)}`);
+      const active = goalRead.value.goal.activePlanRevision;
+      if (active === null) throw new Error('GR plan switch requires p1 to be active');
+      // GR10: the change is a public propose/apply based on p1, never a raw Goal rewrite.
+      const proposed = await base.plans.proposePlan(ctx, {
+        meta: { requestId: 'gr-propose-p2', expected: [{ ref: goalRef, revision: goalRead.value.goal.revision }] },
+        input: { goalRef, basedOn: active, draft: draftFromPlan(sourceGraph.value.plan, 'p2'),
+          reason: { text: 'GR10 switch p1 to p2', sources: [] } },
       });
-      if (switched.status !== 'committed') throw new Error(`S3 graph plan switch failed: ${JSON.stringify(switched)}`);
+      if (proposed.status !== 'committed' || proposed.value.issues.length > 0) {
+        throw new Error(`GR Plan p2 proposal failed: ${JSON.stringify(proposed)}`);
+      }
+      const applied = await base.plans.applyPlanChange(ctx, {
+        meta: { requestId: 'gr-apply-p2', expected: [{ ref: goalRef, revision: goalRead.value.goal.revision }] },
+        input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] },
+      });
+      if (applied.status !== 'committed') throw new Error(`GR Plan p2 adoption failed: ${JSON.stringify(applied)}`);
     },
     async close() {
-      await backend.close();
-      await rm(directory, { recursive: true, force: true });
+      await runtimeSteps.close();
+      await base.close();
     },
   };
   fixtures.push(fixture);
@@ -855,8 +924,8 @@ describe.each(['memory', 'sqlite'] as const)('S3 graph context reader (%s)', kin
     const result = await fixture.graph.lookGraph(fixture.ctx, nodeRequest(fixture.goalRef, taskNode(fixture.tasks.b), 'executions'));
     expect(result).toMatchObject({ status: 'ready' });
     if (result.status !== 'ready') return;
-    expect(result.value.items.map(item => item.node)).toEqual([{ kind: 'run', ref: runB }]);
-    expect(result.value.items.map(item => item.node)).not.toContainEqual({ kind: 'run', ref: runA });
+    expect(result.value.items.map(item => item.node)).toEqual([{ kind: 'run', ref: fixture.runs.b }]);
+    expect(result.value.items.map(item => item.node)).not.toContainEqual({ kind: 'run', ref: fixture.runs.a });
     expect(fixture.spy.commits).toBe(before);
   });
 
@@ -879,29 +948,32 @@ describe.each(['memory', 'sqlite'] as const)('S3 graph context reader (%s)', kin
     expect(result).toMatchObject({ status: 'ready' });
     if (result.status !== 'ready') return;
     expect(result.value.items.map(item => item.node)).toEqual([
-      { kind: 'task', ref: taskB, planRef }, { kind: 'module', ref: moduleM1.ref },
-      { kind: 'session', ref: { projectId: 'p', sessionId: 'sa' } },
-      { kind: 'session', ref: { projectId: 'p', sessionId: 'sb' } },
-      { kind: 'session', ref: { projectId: 'p', sessionId: 'sq' } },
-      { kind: 'run', ref: runB },
-      { kind: 'round', ref: roundB },
+      { kind: 'task', ref: fixture.tasks.b, planRef: fixture.planRef },
+      { kind: 'module', ref: moduleM1.ref },
+      { kind: 'session', ref: fixture.sessions.a },
+      { kind: 'session', ref: fixture.sessions.b },
+      { kind: 'session', ref: fixture.sessions.q },
+      { kind: 'run', ref: fixture.runs.b },
+      { kind: 'round', ref: fixture.rounds.b },
     ]);
     expect(result.value.items.map(item => item.node)).not.toContainEqual({ kind: 'module', ref: moduleM2.ref });
   });
 
   it('GR07 find b matches the same B/b nodes now that matching is NFC + ASCII-lowercased', async () => {
     // Uppercase-B-only fixture: every searched `b`/`B` (module path, Session
-    // name, role JSON, Round name) is case-folded, so `b` is no longer empty.
+    // role JSON `Builder`, Round name) is case-folded, so `b` is no longer
+    // empty. The real Session ids carry no `b`, so their match is only Builder.
     const fixture = await createFixture(kind, { uppercaseB: true });
     const result = await fixture.graph.findGraph(fixture.ctx, findRequest(fixture.goalRef, 'b'));
     expect(result).toMatchObject({ status: 'ready' });
     if (result.status !== 'ready') return;
     expect(result.value.items.map(item => item.node)).toEqual([
-      { kind: 'task', ref: taskB, planRef }, { kind: 'module', ref: moduleM1.ref },
-      { kind: 'session', ref: { projectId: 'p', sessionId: 'sB' } },
-      { kind: 'session', ref: { projectId: 'p', sessionId: 'sa' } },
-      { kind: 'session', ref: { projectId: 'p', sessionId: 'sq' } },
-      { kind: 'run', ref: runB },
+      { kind: 'task', ref: fixture.tasks.b, planRef: fixture.planRef },
+      { kind: 'module', ref: moduleM1.ref },
+      { kind: 'session', ref: fixture.sessions.a },
+      { kind: 'session', ref: fixture.sessions.b },
+      { kind: 'session', ref: fixture.sessions.q },
+      { kind: 'run', ref: fixture.runs.b },
       { kind: 'round', ref: fixture.rounds.b },
     ]);
   });
@@ -1124,12 +1196,13 @@ describe.each(['memory', 'sqlite'] as const)('S3 graph context reader (%s)', kin
     expect(recordReads(fixture.spy)).toBe(before);
   });
 
-  it('GR17 a legal QueryRun reads session sb with the original initiator', async () => {
+  it('GR17 a legal QueryRun reads session SB by its full real id with the original initiator', async () => {
     const fixture = await createFixture(kind);
     const commitsBefore = fixture.spy.commits;
     const materialBefore = fixture.materialSpy.openArtifactCalls;
     const bodyBefore = fixture.bodySpy.reads;
-    const result = await fixture.graph.findGraph(fixture.queryCtx, findRequest(fixture.goalRef, 'sb'));
+    const result = await fixture.graph.findGraph(fixture.queryCtx,
+      findRequest(fixture.goalRef, fixture.sessions.b.sessionId));
     expect(result).toMatchObject({ status: 'ready' });
     if (result.status !== 'ready') return;
     expect(result.value.items).toHaveLength(1);
@@ -1180,7 +1253,7 @@ describe.each(['memory', 'sqlite'] as const)('S3 graph context reader (%s)', kin
   it('GR19 a canonical Work runB executions read keeps the work_run Session context', async () => {
     const fixture = await createFixture(kind);
     const commitsBefore = fixture.spy.commits;
-    const runKey = canonicalJson(runB as unknown as JsonValue);
+    const runKey = canonicalJson(fixture.runs.b as unknown as JsonValue);
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(fixture.sessions.b));
     const leaseKey = canonicalJson({ aggregateType: 'TaskLease', projectId: 'p', goalId: 'g', taskId: 'tB' } as unknown as JsonValue);
     const revisionsBefore = [
@@ -1191,7 +1264,7 @@ describe.each(['memory', 'sqlite'] as const)('S3 graph context reader (%s)', kin
     const result = await fixture.graph.lookGraph(fixture.workCtx, nodeRequest(fixture.goalRef, taskNode(fixture.tasks.b), 'executions'));
     expect(result).toMatchObject({ status: 'ready' });
     if (result.status !== 'ready') return;
-    expect(result.value.items.map(item => item.node)).toEqual([{ kind: 'run', ref: runB }]);
+    expect(result.value.items.map(item => item.node)).toEqual([{ kind: 'run', ref: fixture.runs.b }]);
     // The execution reader gets an internal p/w Host context whose actor is the
     // injected deps.hostActor and whose materialReader uses the same actor.
     expect(fixture.executionSpy.contexts.length).toBeGreaterThan(0);
@@ -1205,7 +1278,7 @@ describe.each(['memory', 'sqlite'] as const)('S3 graph context reader (%s)', kin
     // The Session reader for a Work read keeps the ORIGINAL work_run context.
     expect(fixture.sessionSpy.contexts.length).toBeGreaterThan(0);
     for (const received of fixture.sessionSpy.contexts) {
-      expect(received).toMatchObject({ principal: { kind: 'work_run', runRef: runB } });
+      expect(received).toMatchObject({ principal: { kind: 'work_run', runRef: fixture.runs.b } });
     }
     // No Run/Session/lease revision moved and the ledger did not commit.
     expect([

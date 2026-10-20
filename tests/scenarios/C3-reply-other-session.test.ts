@@ -56,7 +56,7 @@ type Answered = { h: HostScenario; run1Ref: RunRef; messageRef: SessionMessageRe
  */
 async function waitCancelledThenAnswered(label: string, otherTask: ScriptedReply | null = null): Promise<Answered> {
   const send = { callId: `${label}-send`, name: 'send_session_message',
-    args: { recipient: {}, text: QUESTION, replyMode: 'wait' } as Record<string, unknown> };
+    args: { recipient: {}, text: QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const replies: ScriptedReply[] = [{ kind: 'calls', calls: [send] }, ...(otherTask === null ? [] : [otherTask]),
     ...editThenText(`${label}-run2`)];
   const h = await openHostScenario({ script: { replies, queryReplies: [{ kind: 'text', text: REPLY }] },
@@ -76,7 +76,7 @@ async function waitCancelledThenAnswered(label: string, otherTask: ScriptedReply
   expect(run1.run).toMatchObject({ status: 'ended', outcome: 'yielded', continuation: { kind: 'wait_reply' } });
   const messageRef = run1.run.continuation?.messageRef;
   if (messageRef === undefined) throw new Error('Run 1 must wait on its message');
-  expect(await readMessage(h, messageRef)).toMatchObject({ status: 'pending', replyMode: 'wait',
+  expect(await readMessage(h, messageRef)).toMatchObject({ status: 'pending', intent: 'inquiry', needsReply: true, waitAfterSend: true,
     recipient: { sessionId: recipient.sessionId }, sender: { kind: 'work_run', sessionRef: { sessionId: run1.session.ref.sessionId } } });
 
   // P17: the person cancels the wait; the Task is failed/continuation_cancelled and is not continued.

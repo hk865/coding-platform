@@ -81,7 +81,7 @@ export async function createS4BMultiScope(f: S4BNoteCheckFixture): Promise<S4BMu
   const planDraft = (input: { planId: string; goalId: string; stages: PlanRevisionDraft['stages'];
     tasks: PlanRevisionDraft['tasks']; label: string }): PlanRevisionDraft => {
     const taskIds = input.tasks.map(task => task.taskId);
-    return { schemaVersion: 1, planId: input.planId, planRevision: 1, goalId: input.goalId,
+    return { schemaVersion: 2, planId: input.planId, planRevision: 1, goalId: input.goalId,
       stages: input.stages, tasks: input.tasks,
       assignments: input.tasks.filter(task => task.taskKind === 'work').map(task => executorAssignment(task.taskId)),
       obligations: [{ ...verification(input.label), taskIds }],

@@ -31,7 +31,8 @@ const ctx: CoreCallContext = { projectId: P, workspaceId: W, principal: { kind: 
 const goalRef = { aggregateType: 'Goal' as const, projectId: P, goalId: G };
 const planRef = { aggregateType: 'PlanRevision' as const, projectId: P, planId: 'a2-l15-plan' };
 const goal: GoalSnapshot = { ref: goalRef, workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: W },
-  objective: 'A2 L-15', desiredState: 'active', activePlanRevision: planRef, revision: 4 } as GoalSnapshot;
+  objective: 'A2 L-15', desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
+  activePlanRevision: planRef, revision: 4 } as GoalSnapshot;
 const runRefOf = (taskId: string): RunRef => ({ aggregateType: 'Run', projectId: P, goalId: G, runId: `run-${taskId}` });
 
 type Shape = { taskId: string; disposition?: Disposition; phase: Phase; kind?: 'work' | 'gate'; planOnly?: boolean };

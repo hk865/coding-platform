@@ -156,41 +156,6 @@ function renderWith(brief: ContinuationBriefV1, review: ContinuationUnknownCallR
   return renderContinuationBriefZh(withReview, continuationBriefDigest(withReview));
 }
 
-/** The exact pre-K3 bytes of `baseBrief()` (captured before the section existed). */
-const BASE_RENDER = [
-  '## 接续说明',
-  '[continuation-brief v1 sha256:a3a9706587bb68975b7a35962c82aa4c961ef75116ff189d11a7ce3e0580a9d6]',
-  '这是任务 k3r-task 的接续执行（返工）：第 1 次重新入队，失败类别：检查未通过，发起方：系统自动，自动返工 1/3。',
-  '接续方式：在同一 Session session-1 中继续，但上一次执行的 Turn 不在模型历史中。',
-  '',
-  '### 上一次执行',
-  '- 执行 run-1（Session session-1）依据执行记录以 completed 结束。',
-  '- 结束时间：2026-10-07T10:05:00.000Z。',
-  '',
-  '### 停在哪里',
-  '- 执行记录无法读取，停在哪里无法确定。',
-  '- 原因：the Kernel store is not registered',
-  '',
-  '### 工具调用',
-  '- 执行记录无法读取，工具调用无法确定。',
-  '',
-  '### 重新入队',
-  '- 原因（系统自动）：auto-rework:check_failed#1',
-  '- 没有新输入。',
-  '',
-  '### 工作区',
-  '- 上一次执行经工具改动的文件：无法确定。',
-  '- 上一次执行结束（2026-10-07T10:05:00.000Z）到“重新入队”之间：无法从持久记录确定是否有改动。',
-  '- 重新入队 → 本次执行开始前：源码摘要相同',
-  '- 工作区不是 git 仓库，未提交的改动无法列出。',
-  '',
-  '### 继续之前',
-  '- 文件可能已经变化，编辑前先重新读取。',
-  '- “结果未知”的工具调用可能已经产生副作用，重做之前先核实当前状态。',
-  '- “没有执行”的工具调用没有产生结果，需要时重新发起。',
-  '- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。',
-].join('\n');
-
 describe('K3 L6: the continuation note review section', () => {
   it('renders a platform item with verdict done as an 已做-class line and the fixed sentence', () => {
     const section = assembleUnknownCallReviewSection({ review: reviewOf([platformItem(1, 'done')]) });
@@ -316,14 +281,6 @@ describe('K3 L6: the continuation note review section', () => {
     const brief = baseBrief();
     expect(continuationBriefShapeProblem({ ...brief, unknownCallReview: section })).toBeNull();
     expect(continuationBriefShapeProblem({ ...brief, unknownCallReview: { bogus: true } })).not.toBeNull();
-  });
-
-  it('leaves a brief without unknownCallReview byte-identical to the pre-K3 bytes', () => {
-    const brief = baseBrief();
-    const before = renderContinuationBriefZh(brief, continuationBriefDigest(brief));
-    expect(before).toBe(BASE_RENDER);
-    // The explicit null spelling behaves exactly like the absent field.
-    expect(renderContinuationBriefZh({ ...brief, unknownCallReview: null }, continuationBriefDigest(brief))).toBe(BASE_RENDER);
   });
 
   it('leaves the review section out when the review is absent', () => {

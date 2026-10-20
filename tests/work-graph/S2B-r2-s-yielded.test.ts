@@ -35,7 +35,7 @@ describe('S2B-r2 Group S yielded Run and successor', () => {
     let h: HostScenario | undefined;
     let recipient: SessionRef | undefined;
     const send = { callId: 'r2s-wait-send', name: 'send_session_message',
-      args: { recipient: {}, text: 'r2s question', replyMode: 'wait' } as Record<string, unknown> };
+      args: { recipient: {}, text: 'r2s question', intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
     const scenario = await openHostScenario({ check: 'pass', automation: NO_REDRIVE, script: {
       replies: [{ kind: 'calls', calls: [send] }, { kind: 'text', text: 'r2s continuation done' }],
       queryReplies: [{ kind: 'text', text: 'r2s reply' }],

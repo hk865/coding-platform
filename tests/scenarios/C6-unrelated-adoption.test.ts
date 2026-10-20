@@ -8,7 +8,8 @@
  *    its Session and Lease; it is authorized (the audit names P2), enters, completes; its round opens
  *    under P2 (VD-7) and PASS satisfies it. The Goal is never FAILED, no TaskRequeue is written, T1's
  *    no-progress key is the same against P1 and P2 (L-4), and the §11 invariants hold after every step.
- * 2. Variant "Host `plans/apply`" (moved case): the operator adopts the unrelated P2 after the claim.
+ * 2. (Merged into the main path, case 1: the moved Host `plans/apply` variant, where the operator adopted
+ *    the unrelated P2 after the claim, no longer has a case of its own.)
  * 3. Variant W-01 note (moved case): an adoption before the prepare and a fresh selection continue the claim.
  * 4. Variant W-01: the Host is restarted (a crash) between the claim and the authorization, after the
  *    adoption: the reconcile leaves the claimed Run as it is (W-01, no transition), the next 推进 continues
@@ -19,9 +20,9 @@
  *    after an unrelated adoption: the relaxed guard passes under P2 (generation 2) and the same claim completes.
  *
  * Moved here (A.2 step 6, user decision 31), assertions kept: cases 2, 3 and 5 were the three cases of
- * tests/composition/A2-entry-plan-platform.test.ts (that file is deleted; case 5 is deleted too); their environment is
- * tests/scenarios/support/plan.ts `c6Case`. Added to them: the §11 invariants after every step and write,
- * and (case 2) the claims of the main path that hold for the Host variant.
+ * tests/composition/A2-entry-plan-platform.test.ts (that file is deleted; case 5 is deleted too, and case 2 was
+ * later merged into the main path); their environment is tests/scenarios/support/plan.ts `c6Case`. Added to
+ * them: the §11 invariants after every step and write.
  *
  * Scripted model replies only; no real model is called.
  */
@@ -158,51 +159,6 @@ it('C6 main path: another Task\'s running Run adopts P2 after the Workflow claim
   expect(keyP2.plan).toEqual(p1.ref);
   expect(keyP2).toEqual(keyP1);
 }, 120_000);
-
-// Moved from tests/composition/A2-entry-plan-platform.test.ts:265 (05125db): the Host `plans/apply` variant.
-it('C6: an unrelated adoption after the claim does not stop the claimed Run; it completes under the new Plan', async () => {
-  const { platform, scripted, directory, p1 } = await openEnvironment();
-  // The Workflow creates a Session, claims work-1 on P1 and prepares it; the adoption lands before the start.
-  const toStart = await drive(platform, select('a2-c6-flow', 'work-1'), performs('start'));
-  const start = toStart.stopped;
-  if (start === null || start.operation.kind !== 'start') throw new Error('the Workflow must reach the start');
-  const claim = claimOf(toStart.receipts);
-  expect(claim.planRef).toEqual(p1);
-  const heldBefore = await platform.executions.readExecution(ctx(), claim.runRef);   // A.2 step 6
-  const p1Plan = await platform.plans.queryTaskGraph(ctx(), { goalRef });   // A.2 step 6
-  const p2 = await adoptUnrelatedFuture(platform.plans, ctx(), goalRef, 'p2');
-  // A.2 step 6: the claimed Run keeps its Session and Lease through the adoption (no record of it changed).
-  const heldAfter = await platform.executions.readExecution(ctx(), claim.runRef);
-  if (heldBefore.status !== 'ready' || heldAfter.status !== 'ready') throw new Error('the claimed Run must be readable');
-  expect({ run: heldAfter.value.run, session: heldAfter.value.session, lease: heldAfter.value.lease })
-    .toEqual({ run: heldBefore.value.run, session: heldBefore.value.session, lease: heldBefore.value.lease });
-  expect(heldAfter.value.lease?.release).toBeUndefined();
-  // W3 used to answer `revision_conflict` here; the claim on P1 is authorized because P2 carries work-1 unchanged.
-  const toOpen = await drive(platform, start, performs('open_checks'));
-  expect(toOpen.receipts[0]).toMatchObject({ kind: 'start', result: { status: 'ready',
-    value: { run: { ref: claim.runRef, status: 'ended', outcome: 'completed', planRef: p1 }, session: { occupancy: null } } } });
-  const open = toOpen.stopped;
-  if (open === null || open.operation.kind !== 'open_checks') throw new Error('the Workflow must reach the open');
-  // VD-7: the round opens under the Goal's current Plan.
-  expect(open.operation.request.input.planRef).toEqual(p2.ref);
-  expect(await drive(platform, open)).toMatchObject({ state: 'completed' });
-  const row = await taskRow(platform, 'work-1');
-  expect(row).toMatchObject({ effectivePhase: 'satisfied', execution: claim.runRef });
-  expect(row.requeueRef ?? null).toBeNull();
-  expect(scripted.calls(), 'one model call, no rework').toBe(1);
-  // A.2 step 6: never FAILED, no TaskRequeue, and the key's `plan` component is the same against P1 and P2 (L-4).
-  expect(c6Case.phasesOf(platform)).not.toContain('FAILED');
-  const world = c6Case.targetOf(platform).lastWorld;
-  expect(world?.requeues).toEqual([]);
-  const ended = await platform.executions.readExecution(ctx(), claim.runRef);
-  if (ended.status !== 'ready' || p1Plan.status !== 'ready') throw new Error('the Run and P1 must be readable');
-  const head = world?.rounds.find(round => round.subject.taskId === 'work-1') ?? null;
-  expect(noProgressKeyAgainst(p2, ended.value.run, head)).toEqual(noProgressKeyAgainst(p1Plan.value.plan, ended.value.run, head));
-  await platform.close();
-  // The audit of the authorization names the active Plan that carried the Task.
-  expect(authorizedEvents(directory)).toEqual([expect.objectContaining({ activePlanRef: p2.ref,
-    permit: expect.objectContaining({ claim }) })]);
-});
 
 // Moved from tests/composition/A2-entry-plan-platform.test.ts:293 (05125db): the in-process half of the W-01 variant.
 it('C6 (W-01 note): an adoption before the prepare and a fresh selection continue the same claim', async () => {

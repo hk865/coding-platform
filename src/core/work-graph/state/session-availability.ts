@@ -117,13 +117,11 @@ export type SessionArchiveGuardV1 = {
   requestMatches: boolean; choicesValid: boolean; authorityValid: boolean;
   wait: 'not_read' | 'not_waiting' | 'waiting'; retired: boolean;
   sourceExecutionStopped: boolean; stopQueued: boolean; failedDisposal: boolean;
-  provenanceBasisValid: boolean;
 };
 /** Slice 1 §3.5: the facts a Work/Query claim admission needs, all read by the owner. */
 export type SessionDispatchGuardV1 = {
   purpose: 'work' | 'query'; waiting: 'not_read' | SessionWorkWaitStateV1 | null;
   consumedWait: SessionWorkWaitStateV1 | null; readonlyQueryMatches: boolean;
-  legacyProvenance: SessionProvenanceV1 | null;
 };
 /** Structural equivalent of the model's `SessionWorkWaitV1`; state never imports model. */
 export type SessionWorkWaitStateV1 = {
@@ -131,12 +129,10 @@ export type SessionWorkWaitStateV1 = {
 };
 export type Slice1SessionEvent =
   | { kind: 'archive_requested'; archive: SessionArchiveRequestV1 }
-  | { kind: 'archive_request_released'; archiveRequestId: string }
-  | { kind: 'legacy_provenance_backfilled'; provenance: SessionProvenanceV1 };
+  | { kind: 'archive_request_released'; archiveRequestId: string };
 export type Slice1SessionEffect =
   | { kind: 'write_archive_request'; archive: SessionArchiveRequestV1 }
-  | { kind: 'clear_archive_request' }
-  | { kind: 'write_session_provenance'; provenance: SessionProvenanceV1 };
+  | { kind: 'clear_archive_request' };
 
 /**
  * Which holder transition carries an `occupancy_released` (§8.2 trigger
@@ -195,7 +191,7 @@ export type SessionHealthObservation =
   | { health: 'unavailable'; conclusion: 'missing' | 'damaged' };
 export type SessionDomainEventType =
   | 'SessionCreated' | 'SessionArchived' | 'SessionReactivated' | 'SessionHealthObserved' | 'SessionWorkLinkChanged'
-  | 'SessionArchiveRequested' | 'SessionArchiveRequestReleased' | 'SessionProvenanceBackfilled'
+  | 'SessionArchiveRequested' | 'SessionArchiveRequestReleased'
   | 'SessionResponsibilityChanged';
 
 /**
@@ -319,11 +315,10 @@ export type NewSessionRecordInput = {
   workspaceId: string;
   createdAt: string;
   /**
-   * Slice 1 §2.2/K2: the normalized creation provenance. Absent writes today's
-   * 12-key literal (an old accepted action); the owner passes `new` for a fresh
-   * admission that did not name one.
+   * Slice 1 §2.2/K2: the normalized creation provenance. The admission always
+   * writes it; an absent one is the `new` default before the record exists.
    */
-  provenance?: SessionProvenanceV1;
+  provenance: SessionProvenanceV1;
 };
 
 /** SES-01: `active / available / null` at revision 1; no `healthConclusion` field (absent reads as null). */
@@ -341,7 +336,7 @@ export function createSessionRecord(input: NewSessionRecordInput): SessionRecord
     historyCursor: null,
     createdAt: input.createdAt,
     archivedAt: null,
-    ...(input.provenance === undefined ? {} : { provenance: input.provenance }),
+    provenance: input.provenance,
   };
 }
 
@@ -393,7 +388,7 @@ export function releaseSessionRecord(record: SessionRecord, release: SessionRele
   if (!release.kernelTurnOpen) return released;
   const entered: SessionRecord = { ...released, health: 'unavailable', healthConclusion: 'kernel_turn_open' };
   // Spec §2.3 P01: this is the first available→unavailable entry, so mark the
-  // pending position; an already-unavailable Session keeps its cursor/absence.
+  // pending position; an already-unavailable Session keeps its existing value.
   return record.health === 'available' ? { ...entered, unavailableSince: null } : entered;
 }
 
@@ -460,8 +455,8 @@ export function observeSessionHealthRecord(
 /**
  * Spec §2.3 P01: the record-store's mechanical commit tail replaces the explicit
  * `null` entry placeholder with the cursor of the commit that carried it. It
- * never fills an absent (legacy) or already-bound field, and never parses a
- * cursor; it is the only writer besides the health constructors above.
+ * never fills an absent or already-bound field, and never parses a cursor; it
+ * is the only writer besides the health constructors above.
  */
 export function bindSessionUnavailableCursor(record: SessionRecord, cursor: CommitCursor): SessionRecord {
   if (record.unavailableSince !== null) return record;
@@ -482,27 +477,18 @@ export function releaseSessionArchiveRequestRecord(session: SessionRecord): Sess
   return { ...session, revision: session.revision + 1, archiveRequest: null };
 }
 
-/** S1-SES-02: writes the one-time legacy provenance, revision + 1; the three dimensions are unchanged. */
-export function backfillSessionProvenanceRecord(session: SessionRecord, provenance: SessionProvenanceV1): SessionRecord {
-  return { ...session, revision: session.revision + 1, provenance };
-}
-
 /**
  * S1-DISPATCH-01/02: the Work/Query claim admission problem, or null to admit.
  * Order (§3.2 `from` column): a pending archive request excludes every claim;
- * the effective provenance (`record ?? trusted legacy`) must be readable and no
- * ordinary claim may run on a readonly copy; a Work wait blocks unless the
- * claim's `consumedWait` is exactly that wait (a Query claim never consumes one).
+ * the recorded provenance must be readable and no ordinary claim may run on a
+ * readonly copy; a Work wait blocks unless the claim's `consumedWait` is exactly
+ * that wait (a Query claim never consumes one).
  */
 export function sessionDispatchAdmissionProblem(session: SessionRecord, facts: SessionDispatchGuardV1): Rejected | null {
   if (session.archiveRequest !== undefined && session.archiveRequest !== null) {
     return reject('guard_failed', 'busy', 'the target Session has a pending archive request');
   }
-  const provenance = session.provenance ?? facts.legacyProvenance ?? null;
-  if (provenance === null) {
-    return reject('guard_failed', 'incomplete',
-      'legacy_provenance_ambiguous: the Session provenance is not readable and no trusted legacy basis proves it');
-  }
+  const provenance = session.provenance;
   if (provenance.kind === 'readonly_copy' && !(facts.purpose === 'query' && facts.readonlyQueryMatches)) {
     return reject('guard_failed', 'forbidden',
       'a readonly copy Session is excluded from ordinary claims except its pinned consultation Query');
@@ -611,8 +597,6 @@ export function transitionSession(state: SessionMachineState, event: SessionEven
       return archiveRequested(state, event.archive, ctx);
     case 'archive_request_released':
       return archiveRequestReleased(state, event.archiveRequestId, ctx);
-    case 'legacy_provenance_backfilled':
-      return legacyProvenanceBackfilled(state, event.provenance, ctx);
     default:
       return unreachable(event, 'Session event');
   }
@@ -633,7 +617,7 @@ function created(ctx: SessionGuardContext): SessionTransition {
   if (!creation.mappingUnique) return reject('stale', 'revision_conflict', 'the Kernel session mapping is held by another Session');
   return done({
     lifecycle: 'active', health: 'available', healthConclusion: null, occupancy: null, revision: 1,
-    provenance: null, archiveRequest: null,
+    provenance: { schemaVersion: 1, kind: 'new' }, archiveRequest: null,
   }, [
     { kind: 'create_session' }, { kind: 'complete_creation_operation' }, { kind: 'write_initial_links' },
     { kind: 'emit_event', eventType: 'SessionCreated' },
@@ -996,28 +980,6 @@ function archiveRequestReleased(
   return done({ ...state, archiveRequest: null, revision: state.revision + 1 }, [
     { kind: 'clear_archive_request' },
     { kind: 'emit_event', eventType: 'SessionArchiveRequestReleased' },
-  ]);
-}
-
-/**
- * S1-SES-02: one-time legacy provenance backfill. An existing value is a
- * revision conflict; a basis the owner could not verify is `incomplete`.
- */
-function legacyProvenanceBackfilled(
-  state: ActiveState, provenance: SessionProvenanceV1, ctx: SessionGuardContext,
-): SessionTransition {
-  const facts = ctx.archive;
-  if (facts === undefined) return reject('guard_failed', 'incomplete', 'legacy_provenance_backfilled requires the archive guard facts');
-  if (state.provenance !== undefined && state.provenance !== null) {
-    return reject('stale', 'revision_conflict', 'the Session already records its provenance');
-  }
-  if (!facts.provenanceBasisValid) {
-    return reject('guard_failed', 'incomplete', 'legacy_provenance_ambiguous: no reliable legacy provenance basis proves this Session');
-  }
-  if (stalePin(state, ctx)) return reject('stale', 'revision_conflict', 'the Session changed since the caller read it');
-  return done({ ...state, provenance, revision: state.revision + 1 }, [
-    { kind: 'write_session_provenance', provenance },
-    { kind: 'emit_event', eventType: 'SessionProvenanceBackfilled' },
   ]);
 }
 

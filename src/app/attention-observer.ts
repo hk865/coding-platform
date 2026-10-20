@@ -587,14 +587,9 @@ export function attentionSignalToJson(signal: AttentionSignal): JsonValue {
 
 export type AttentionScannerDependencies = {
   workspace: Pick<import('../core/workspace/ports.js').WorkspaceToolsPort, 'readWorkspace'>;
-  plans: Pick<import('../core/work-graph/model/plan-contracts.js').PlanTaskPort, 'queryTaskGraph'>;
-  architecture: Pick<import('../core/work-graph/architecture/catalog-contracts.js').ArchitectureCatalogPort, 'readArchitectureRevision'>;
   messages: Pick<import('../core/work-graph/model/communication-contracts.js').SessionMailboxPort, 'readInbox'>;
-  /**
-   * Slice 3: the assembler's `readAttentionGraph`, the same instance the Runtime
-   * exposes. Absent keeps the legacy direct `plans`/`architecture` read.
-   */
-  readAttentionGraph?: (ctx: import('../contracts/core/call-context.js').CoreCallContext,
+  /** The assembler's `readAttentionGraph`, the same instance the Runtime exposes. */
+  readAttentionGraph: (ctx: import('../contracts/core/call-context.js').CoreCallContext,
     request: import('../contracts/graph-context.js').AttentionGraphReadRequestV1)
     => Promise<import('../contracts/core/results.js').ReadResult<import('../contracts/graph-context.js').GraphAttentionFactsV1>>;
 };
@@ -648,71 +643,21 @@ export function createAttentionScanner(deps: AttentionScannerDependencies): Atte
       }
       let graph: GraphAttentionStamp | null = null;
       let graphUnreadable = false;
-      if (deps.readAttentionGraph !== undefined) {
-        // Slice 3: the graph is read ONLY through the assembler's
-        // `readAttentionGraph`. The legacy direct plans/catalog reads never run.
-        try {
-          const read = await deps.readAttentionGraph(ctx, { goalRef: scope.goalRef, focusTaskIds: [] });
-          if (read.status === 'ready') {
-            graph = {
-              nodes: [...read.value.nodes],
-              edges: [...read.value.edges],
-              statuses: { ...read.value.statuses },
-              ...(read.value.revision === undefined ? {} : { revision: read.value.revision }),
-              ...(read.value.details === undefined ? {} : { details: read.value.details }),
-            };
-          } else if (read.status !== 'not_found') {
-            graphUnreadable = true;
-          }
-        } catch { graphUnreadable = true; }
-      } else {
-        const nodes: string[] = [];
-        const edges: string[] = [];
-        const statuses: Record<string, string> = {};
-        let revision: string | null = null;
-        if (scope.goalRef !== null) {
-          const read = await deps.plans.queryTaskGraph(ctx, { goalRef: scope.goalRef });
-          if (read.status === 'ready') {
-            const plan = read.value.plan;
-            for (const row of read.value.tasks) {
-              nodes.push('task:' + row.ref.taskId);
-              statuses['task:' + row.ref.taskId] = row.effectivePhase;
-            }
-            for (const edge of plan.executionDag.dependsOn) edges.push('depends:' + edge.dependsOnId + '->' + edge.taskId + ':' + edge.requires.kind + ':' + edge.requires.label);
-            for (const edge of plan.taskHierarchy.parentOf) edges.push('parent:' + edge.parentTaskId + '->' + edge.childTaskId);
-            for (const row of read.value.tasks) {
-              for (const relation of row.relations) edges.push('relation:' + relation.fromTaskId + '->' + relation.toTaskId + ':' + relation.kind);
-            }
-            revision = 'plan:' + plan.ref.planId;
-          } else if (read.status !== 'not_found') {
-            graphUnreadable = true;
-          }
+      // The graph is read ONLY through the assembler's `readAttentionGraph`.
+      try {
+        const read = await deps.readAttentionGraph(ctx, { goalRef: scope.goalRef, focusTaskIds: [] });
+        if (read.status === 'ready') {
+          graph = {
+            nodes: [...read.value.nodes],
+            edges: [...read.value.edges],
+            statuses: { ...read.value.statuses },
+            ...(read.value.revision === undefined ? {} : { revision: read.value.revision }),
+            ...(read.value.details === undefined ? {} : { details: read.value.details }),
+          };
+        } else if (read.status !== 'not_found') {
+          graphUnreadable = true;
         }
-        // The FORMAL Architecture Catalog is a second real graph owner; a read
-        // failure is unknown, never an empty graph.
-        try {
-          const arch = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
-          if (arch.status === 'ready') {
-            const catalog = arch.value.catalog === null ? null : arch.value.catalog.catalog;
-            if (catalog !== null) {
-              for (const module of catalog.modules) {
-                nodes.push('module:' + module.ref.moduleId);
-                statuses['module:' + module.ref.moduleId] = module.name;
-              }
-              for (const dep of catalog.dependencies) edges.push('arch-depends:' + dep.from.moduleId + '->' + dep.to.moduleId);
-              for (const pair of catalog.containment?.parentOf ?? []) edges.push('arch-parent:' + pair.parent.moduleId + '->' + pair.child.moduleId);
-            }
-            // The baseline content digest is the formal architecture VERSION, so a
-            // re-adoption with identical names still registers as a change.
-            revision = (revision === null ? '' : revision + '|') + 'arch:' + arch.value.baseline.contentDigest;
-          } else if (arch.status !== 'not_found') {
-            graphUnreadable = true;
-          }
-        } catch { graphUnreadable = true; }
-        if (nodes.length > 0 || edges.length > 0 || revision !== null) {
-          graph = { nodes: nodes.sort(), edges: edges.sort(), statuses, ...(revision === null ? {} : { revision }) };
-        }
-      }
+      } catch { graphUnreadable = true; }
       // The target inbox is deliberately NOT a source here: the Host also delivers
       // its own mechanical notifications into it, which would self-oscillate.
       return { messageCursor: null, pendingInputs: 0, files, unreadablePaths, graph, graphUnreadable };

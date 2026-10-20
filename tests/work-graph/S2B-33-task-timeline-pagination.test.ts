@@ -95,26 +95,6 @@ describe.each(['memory', 'sqlite'] as const)('S2B-33 task-state timeline paginat
     expect(task?.segments.map(segment => segment.state)).toEqual(['not_in_plan', 'pending']);
   }, S2B_SLOW_TIMEOUT_MS);
 
-  it('2B-33 a pre-2B finalized round puts check_start and check_end in untimedPoints with no verifying segment', async () => {
-    const fx = await openS2BTimelineFixture(kind);
-    fixture = fx;
-    fx.setClock('2026-10-01T09:00:00.000Z');
-    const goalRef = await fx.createGoal({ goalId: 's2b-33-legacy-round', workTaskIds: ['t1'] });
-    const planRef = (await fx.activePlanRef(goalRef))!;
-    const run = await fx.seedRun({ goalRef, runId: 'run-1', taskId: 't1', planRef,
-      startedAt: '2026-10-01T10:00:00.000Z', endedAt: '2026-10-01T10:30:00.000Z', outcome: 'completed' });
-    // 2B-before finalized round: no `since`, no `finalizedAt`, but a stored outcome.
-    await fx.seedRound({ runRef: run, roundId: 'round-legacy', status: 'finalized', outcome: 'INCONCLUSIVE' });
-    // A legacy round without `since`, still open.
-    await fx.seedRound({ runRef: run, roundId: 'round-open', status: 'open', outcome: null });
-    const read = await fx.timeline({ goalRef, limit: 200 });
-    expect(read.status).toBe('ready');
-    if (read.status !== 'ready') return;
-    const task = read.value.tasks.find(candidate => candidate.taskId === 't1');
-    expect(task?.untimedPoints.map(point => point.kind)).toEqual(['check_start', 'check_start', 'check_end']);
-    expect(task?.segments.some(segment => segment.state === 'verifying')).toBe(false);
-  }, S2B_SLOW_TIMEOUT_MS);
-
   it('2B-33 (L17) a keyed-read miss counts once against the read cap and capacity names the window/cap', async () => {
     const fx = await openS2BTimelineFixture(kind);
     fixture = fx;

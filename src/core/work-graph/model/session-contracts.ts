@@ -5,7 +5,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CommandMeta, RoleConfigurationRef, SessionRef, WorkspaceScope, WorkLinkRelation, WorkLinkTarget } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
-import type { SessionRecord, SessionProvenanceV1, LegacyProvenanceBasisV1, SessionWorkLink } from '../../../contracts/core/session.js';
+import type { SessionRecord, SessionProvenanceV1, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 
 export type GraphWrite<T> = { input: T; meta: CommandMeta };
@@ -24,7 +24,8 @@ export type SessionCreationInput = {
 export type SessionOperationRecord = {
   ref: OperationRef;
   revision: number;
-  action: { kind: 'create'; plannedSessionRef: SessionRef } & SessionCreationInput;
+  action: { kind: 'create'; plannedSessionRef: SessionRef } & Omit<SessionCreationInput, 'provenance'>
+    & { provenance: SessionProvenanceV1 };
   phase: 'accepted' | 'running' | 'completed' | 'failed' | 'unknown';
   requestedAt: string;
   updatedAt: string;
@@ -58,8 +59,4 @@ export interface SessionDirectoryPort {
     workspace: WorkspaceScope; target?: WorkLinkTarget; role?: RoleConfigurationRef;
     includeArchived: boolean; page: SessionPageRequest;
   }): Promise<ReadResult<SessionPage<SessionCard>>>;
-  /** Slice 1 §3.3: Host-only one-time legacy provenance backfill. */
-  backfillSessionProvenance?(ctx: CoreCallContext, request: GraphWrite<{
-    sessionRef: SessionRef; provenance: SessionProvenanceV1; basis: LegacyProvenanceBasisV1;
-  }>): Promise<WriteResult<SessionRecord>>;
 }

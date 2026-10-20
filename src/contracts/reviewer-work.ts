@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 /** Independent review canonical lifecycle. These capabilities are supplied only
  * to trusted Verification and Dispatch at composition; they are not HTTP commands. */
 import type { ArtifactRef } from './artifact.js';

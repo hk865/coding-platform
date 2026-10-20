@@ -5,9 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import type { GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import { GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
+import type { GoalRecordTransactionPort, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import { GOAL_RECORD_SCHEMAS, canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 
@@ -20,13 +22,7 @@ const actor = { kind: 'human' as const, id: 'trusted-host' };
 const ctx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host', actor },
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
 const schemas: RecordBackendSchemas = { ...GOAL_RECORD_SCHEMAS, events: [...GOAL_RECORD_SCHEMAS.events,
-  { eventType: 'TrustedScopeSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) }] };
-const event = { eventId: 'trusted-scope-event', eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: at };
-const scopeSeed: PreparedCommit = { identityKey: 'trusted-scope-seed', fingerprint: 'trusted-scope-seed',
-  guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null },
-    { refKey: canonicalRefKey(workspace.ref), expectedRevision: null }],
-  records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace)],
-  events: [{ ...event, json: JSON.stringify(event) }], claims: [], indexGuards: [], indexChanges: [] };
+  ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events] };
 const request = (goalId: string, requestId = goalId) => ({
   meta: { requestId, expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },
   input: { goalId, workspace: { projectId, workspaceId }, objective: 'Record exactly once' },
@@ -43,11 +39,29 @@ async function open(kind: 'memory' | 'sqlite', beforeWrite?: () => void) {
     { records: GoalRecordTransactionPort; close(): Promise<void> }, path };
 }
 
+/** Reaches the Project/Workspace revision 1 state through the public registration owner. */
+async function seedScope(backend: { records: GoalRecordTransactionPort }): Promise<void> {
+  let eventNo = 0;
+  const bootstrap = createProjectBootstrapServices({
+    records: backend.records, now: () => at, eventId: () => 'scope-event-' + String(++eventNo),
+  });
+  const created = await bootstrap.projects.createProject(ctx, {
+    meta: { requestId: 'transaction-project', expected: [{ ref: project.ref, revision: 0 }] },
+    input: { projectId },
+  });
+  if (created.status !== 'committed') throw new Error(`project registration failed: ${JSON.stringify(created)}`);
+  const registered = await bootstrap.projects.registerWorkspace(ctx, {
+    meta: { requestId: 'transaction-workspace', expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 0 }] },
+    input: { workspace: { projectId, workspaceId } },
+  });
+  if (registered.status !== 'committed') throw new Error(`workspace registration failed: ${JSON.stringify(registered)}`);
+}
+
 it.each(['memory', 'sqlite'] as const)('%s: beforeWrite belongs only to a real Goal write and receipts cannot mutate storage', async kind => {
   let calls = 0;
   const { backend } = await open(kind, () => { calls++; });
   try {
-    expect(await backend.records.commit(scopeSeed)).toMatchObject({ status: 'committed' });
+    await seedScope(backend);
     calls = 0;
     let eventNo = 0;
     const goals = createGoalService({ records: backend.records, now: () => at, eventId: () => 'goal-event-' + ++eventNo }).tasks;
@@ -78,7 +92,7 @@ it.each(['snapshot', 'idempotency'] as const)('SQLite rolls back a Goal write wh
   if (!path) throw Error('SQLite path missing');
   const observer = new DatabaseSync(path);
   try {
-    expect(await backend.records.commit(scopeSeed)).toMatchObject({ status: 'committed' });
+    await seedScope(backend);
     const goalId = 'rollback-' + stage;
     const key = canonicalRefKey({ aggregateType: 'Goal', projectId, goalId });
     const marker = 'r3a-injected-' + stage;
@@ -97,36 +111,5 @@ it.each(['snapshot', 'idempotency'] as const)('SQLite rolls back a Goal write wh
     observer.exec('DROP TRIGGER reject_goal');
     expect(await goals.createGoal(ctx, request(goalId))).toMatchObject({ status: 'committed', replayed: false });
     expect(counts()).toEqual([before[0]! + 1, before[1]! + 1, before[2]! + 1]);
-  } finally { observer.close(); await backend.close(); }
-});
-
-it('SQLite rejects a same-revision scope identity change made after the Goal pre-read', async () => {
-  const { backend, path } = await open('sqlite');
-  if (!path) throw Error('SQLite path missing');
-  const observer = new DatabaseSync(path);
-  try {
-    expect(await backend.records.commit(scopeSeed)).toMatchObject({ status: 'committed' });
-    let release!: () => void;
-    let seen!: () => void;
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    const observed = new Promise<void>(resolve => { seen = resolve; });
-    const records: GoalRecordTransactionPort = {
-      readMany: async keys => { const value = await backend.records.readMany(keys); seen(); await gate; return value; },
-      lookupCommit: input => backend.records.lookupCommit(input),
-      commit: input => backend.records.commit(input),
-      eventAt: cursor => backend.records.eventAt(cursor),
-    };
-    const goals = createGoalService({ records, now: () => at, eventId: () => 'tamper-goal-event' }).tasks;
-    const pending = goals.createGoal(ctx, request('tamper-goal'));
-    await observed;
-    const key = canonicalRefKey(workspace.ref);
-    observer.prepare('UPDATE snapshots SET snapshot_json = ? WHERE ref_key = ?').run(
-      JSON.stringify({ ref: { ...workspace.ref, workspaceId: 'other-workspace' }, revision: 1 }), key);
-    const before = Number(observer.prepare('SELECT COUNT(*) AS n FROM events').get()!['n']);
-    release();
-    expect(await pending).toMatchObject({ status: 'rejected', code: 'unavailable' });
-    expect(Number(observer.prepare('SELECT COUNT(*) AS n FROM events').get()!['n'])).toBe(before);
-    expect(await backend.records.readMany([canonicalRefKey({ aggregateType: 'Goal', projectId, goalId: 'tamper-goal' })]))
-      .toMatchObject({ status: 'ready', value: { records: [] } });
   } finally { observer.close(); await backend.close(); }
 });

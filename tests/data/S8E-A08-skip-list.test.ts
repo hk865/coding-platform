@@ -15,6 +15,11 @@ const entries: [string, string][] = [
   ['node_modules/x.ts', 'export const x = 1;\n'],
   ['a/b/.venv/y.py', 'y = 1\n'],
   ['dist/z.ts', 'export const z = 1;\n'],
+  // The skip list's first entry: `.git` is pruned even outside a work tree.
+  ['.git/config', '[core]\n'],
+  ['a/keep.ts', 'export const keep = 1;\n'],
+  // Same content as the source inventory entry: `build/` stays, not only `dist/`.
+  ['build/compile_commands.json', '[{"directory":".","file":"z.cpp","arguments":["cc","-c","z.cpp"]}]\n'],
 ];
 
 for (const backend of BACKENDS) {
@@ -23,7 +28,20 @@ for (const backend of BACKENDS) {
     fixtures.push(f);
     const captured = await f.capture();
     const page = await f.listFiles(captured);
-    expect(page.nodes).toEqual([{ path: 'dist/z.ts', nonBlankLines: 1, language: 'typescript' }]);
+    expect(page.nodes).toEqual([
+      { path: 'a/keep.ts', nonBlankLines: 1, language: 'typescript' },
+      { path: 'build/compile_commands.json', nonBlankLines: 1, language: 'other' },
+      { path: 'dist/z.ts', nonBlankLines: 1, language: 'typescript' },
+    ]);
     expect(page.inventory).toEqual({ source: 'skip_list', reason: '不是 git 仓库' });
+    // `.git`, `node_modules` and the nested `.venv` are pruned before the
+    // inventory and the ordinary compile database is kept as a file, so none of
+    // them is an issue. The one issue is `dist/z.ts`: it stays in the inventory,
+    // but the TS analysis does not reach it, so it is a TS file left out of the
+    // analysis. Its kind and reason are the literal of slice-8-SPEC.md:608
+    // ("归 TS 但没走到的文件记 `skipped`，原因 `不在 TS 分析的范围里`").
+    expect(page.languages.flatMap(language => language.issues)).toEqual([
+      { path: 'dist/z.ts', kind: 'skipped', reason: '不在 TS 分析的范围里' },
+    ]);
   });
 }

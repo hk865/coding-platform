@@ -16,25 +16,17 @@
  * `decisions/answer`; the failed ③ is a real aborted ledger commit.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { join } from 'node:path';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
-import { ag2bWorkspaceBindings, cleanupScenarios, HostScenario, hostCtx, performs, waitFor } from './harness.js';
-import { preparedOf, redrivePolicy } from './support/common.js';
-import { driveReviewUntil } from './support/review-work-root.js';
-import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
+import { cleanupScenarios, HostScenario, performs, waitFor } from './harness.js';
+import { redrivePolicy } from './support/common.js';
+import { createNeedsDecisionRecord } from './support/review-work-root.js';
 import { failCommitOf } from './support/receipts.js';
 import { expectQuietHarnessRestart } from './support/restart.js';
-import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { cleanupRestart, readExecution } from '../helpers/A2-restart-fixture.js';
-import { createTargetPlatform } from '../../src/composition/create-platform.js';
-import { createWorkbenchRuntimeHostBindings, type WorkbenchRuntimeConfiguration } from '../../src/app/runtime-configuration.js';
-import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import {
-  AG2B_AT, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_ROLE,
-  AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, graphWrite, permissionRevision, plain,
+  AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
-import type { Platform } from './harness.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { DecisionSelectionV1 } from '../../src/contracts/goal-decisions.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
@@ -44,11 +36,11 @@ import type {
 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 
-const sandbox = vi.hoisted(() => ({ available: true as boolean, executeChecks: false as boolean }));
+const sandbox = vi.hoisted(() => ({ available: true as boolean, real: false as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
-  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
+  const { createProcessSandboxSwitch } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxSwitch(actual, sandbox) };
 });
 
 const seams = vi.hoisted(() => ({ shellSeam: undefined as unknown }));
@@ -66,7 +58,7 @@ afterEach(async () => {
   for (const release of crashHandles.splice(0)) await release();
   shellSeam.release();
   sandbox.available = true;
-  sandbox.executeChecks = false;
+  sandbox.real = false;
   await cleanupScenarios();
   await cleanupRestart();
 });
@@ -76,87 +68,6 @@ function reviewOf(h: HostScenario, runRef: RunRef): Promise<ReadResult<UnknownCa
 }
 
 const crashHandles: Array<() => Promise<void>> = [];
-/** K3-05's A half: a `shell` call in flight is closed by RUN-25, leaving `pending_review`. */
-async function crashShellRun(h: HostScenario, label: string): Promise<RunRef> {
-  shellSeam.arm();
-  const modelA = createScriptedModel([{ kind: 'calls', calls: [
-    { callId: `${label}-shell`, name: 'shell', args: { command: `${label} runs a program` } }] }]);
-  const rootA = await openShellWorkRoot(h, modelA);
-  let runningA: Promise<unknown> | null = null;
-  let released = false;
-  const release = async (): Promise<void> => {
-    if (released) return;
-    released = true;
-    shellSeam.release();
-    await runningA?.catch(() => undefined);
-    await rootA.close();
-  };
-  try {
-    const startA = await prepareOn(rootA, h.select(`${label}-a`, AG2B_WORK_TASK_ID));
-    const preparedA = preparedOf(startA);
-    runningA = rootA.runtime.startRun(hostCtx(), { prepared: preparedA, consumerId: AG2B_CONSUMER_ID,
-      requestId: `${label}-a-start` });
-    await shellSeam.waitForCall();
-    await h.restart({ crash: true });
-    crashHandles.push(release);
-    return preparedA.claim.runRef;
-  } catch (error) {
-    await release();
-    throw error;
-  }
-}
-
-/** K3-17's missing-read review root: `settle_review{review_unavailable}` gives `needs_decision`. */
-async function openMissingReadReviewRoot(h: HostScenario): Promise<Platform> {
-  const configuration: WorkbenchRuntimeConfiguration = {
-    schemaVersion: 1,
-    bindings: [{
-      id: 'k3-44-missing-read-binding', label: 'K3-44 missing-read binding',
-      scope: AG2B_SCOPE, role: AG2B_WORK_ROLE, configurationRevision: 'k3-44-missing-read@1',
-      model: { revision: 'k3-44-missing-read-model@1', provider: 'deepseek', model: 'k3-44-scripted',
-        secretEnvironmentVariable: 'K3_44_SECRET' },
-      grant: {
-        budget: AG2B_RUNTIME_BUDGET,
-        hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex('K3-44 instruction') },
-        tools: ['shell', 'run_readonly_command'], writeScope: [],
-        skills: { resourceRoot: h.root, enabledIds: [] },
-        systemInstruction: 'K3-44 instruction', deniedPrefixes: [], processSandboxOptions: {},
-        materialBasis: null, readonlyCommandAccess: 'all_except_denied' as const,
-      },
-    }],
-    queryProfiles: [],
-  };
-  const runtime = createWorkbenchRuntimeHostBindings(configuration, { secretSource: { get: () => undefined } });
-  return await createTargetPlatform({
-    storage: { kind: 'sqlite', directory: h.database },
-    workspace: ag2bWorkspaceBindings(h.root, { value: 1 }, permissionRevision(h.stepActor(), AG2B_SCOPE, ['.'])),
-    now: () => AG2B_AT,
-    kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
-      databasePath: join(h.database, 'kernel.sqlite') }] },
-    runtime,
-    hostInstance: { hostInstanceId: 'k3-44-review-host', lease: 'owned' },
-    workflow: { consumerId: AG2B_CONSUMER_ID, bindings: [{ workspace: AG2B_SCOPE, sessionRole: AG2B_WORK_ROLE,
-      roleBinding: AG2B_WORK_ROLE_BINDING, budget: { tokenBudget: 1_000_000, deadline: null } }] },
-  });
-}
-
-async function createNeedsDecisionRecord(h: HostScenario, label: string): Promise<{ origin: RunRef; review: UnknownCallReviewV1 }> {
-  const origin = await crashShellRun(h, label);
-  const reviewRoot = await openMissingReadReviewRoot(h);
-  try {
-    const toSettle = await driveReviewUntil(reviewRoot, h.select(`${label}-settle`, AG2B_WORK_TASK_ID),
-      performs('settle_review'));
-    const settled = await reviewRoot.workflow.advanceWork(hostCtx(), toSettle.stopped);
-    expect(settled).toMatchObject({ status: 'ready', value: { receipt: { kind: 'settle_review' } } });
-  } finally {
-    await reviewRoot.close();
-  }
-  const read = await reviewOf(h, origin);
-  expect(read.status).toBe('ready');
-  if (read.status !== 'ready') throw new Error(JSON.stringify(read));
-  expect(read.value).toMatchObject({ status: 'needs_decision', open: 'yes', activeRound: null });
-  return { origin, review: read.value };
-}
 
 async function queue(h: HostScenario): Promise<DecisionQueueReadV1> {
   const read = await h.post<ReadResult<DecisionQueueReadV1>>('decisions/queue',
@@ -218,7 +129,9 @@ async function waitForFlowToStop(h: HostScenario, label: string): Promise<void> 
 describe('K3-44 (一): ② applied, ③ failed, then a direct hold; 6b kind 4 hands the answer by its reviewRef', () => {
   it('K3-44 (一): the real answer index hands over the answer, UR7b replays ② and does ③; the hold stays held and no continuation appears', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const { origin, review } = await createNeedsDecisionRecord(h, 'k3-44a');
+    const { origin, review, release } = await createNeedsDecisionRecord(h, 'k3-44a',
+      'k3-44-review-host');
+    crashHandles.push(release);
     const card = await reviewCard(h);
     const { answerRef } = await answerWithFailedApplication(h, card, 'k3-44a');
     const record = await resolvedRecord(h, origin);
@@ -264,11 +177,17 @@ describe('K3-44 (一): ② applied, ③ failed, then a direct hold; 6b kind 4 ha
 
 describe('K3-44 (三): ② applied, ③ failed, then the continuation claimed; 6b kind 4 still hands the answer', () => {
   it('K3-44 (三): UR7b replays ② and does ③ on a historical record (open no, selected Run the continuation); no hold is released and no second continuation is claimed', async () => {
-    sandbox.executeChecks = true;
-    const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false),
-      check: { command: `${JSON.stringify(process.execPath)} -e "process.exit(0)"` },
+    // R-10: this test runs the registered formal check, so it uses the real
+    // operating-system sandbox (bwrap) throughout, never the stand-in.
+    sandbox.real = true;
+    // The real sandbox mounts only /usr, /bin, /lib and /lib64 beside the
+    // workspace, so the passing check runs the `node` on that PATH (the
+    // harness's `pass` check), never this test process's own binary.
+    const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass',
       script: { replies: [{ kind: 'text', text: 'K3-44 (三): the continuation ran' }] } });
-    const { origin, review } = await createNeedsDecisionRecord(h, 'k3-44c');
+    const { origin, review, release } = await createNeedsDecisionRecord(h, 'k3-44c',
+      'k3-44-review-host');
+    crashHandles.push(release);
     const card = await reviewCard(h);
     const { answerRef } = await answerWithFailedApplication(h, card, 'k3-44c');
     const record = await resolvedRecord(h, origin);

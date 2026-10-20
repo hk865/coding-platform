@@ -20,7 +20,6 @@ import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execut
 import { assembleContinuationBrief } from '../../src/core/agent-runtime/continuation-brief-assembly.js';
 
 export const P = 'P';
-export const G = 'B';
 export const W = 'W';
 export const sha = (char: string): string => char.repeat(64);
 export const at = (minute: number): string => `2026-10-07T10:${String(minute).padStart(2, '0')}:00.000Z`;
@@ -30,7 +29,7 @@ const ROLE: RoleBindingRefV1 = {
   policyRevision: 'policy-1',
 };
 /** The pure-renderer fixture's default task (no public world is involved there). */
-export const task: TaskTriple = { projectId: 'k3r-project', goalId: 'k3r-goal', taskId: 'k3r-task' };
+const task: TaskTriple = { projectId: 'k3r-project', goalId: 'k3r-goal', taskId: 'k3r-task' };
 const SESSION: { projectId: string; sessionId: string } = { projectId: task.projectId, sessionId: 'session-1' };
 const runRef = (taskTriple: TaskTriple, runId: string): RunRef =>
   ({ aggregateType: 'Run', projectId: taskTriple.projectId, goalId: taskTriple.goalId, runId });
@@ -126,24 +125,7 @@ export const K3_35_REQUIRED_REVIEW_BLOCK_ONE = [
 // The required review block, one literal (optional `- #n = …` excluded).   //
 // ------------------------------------------------------------------------ //
 const REVIEW_TITLE = '### 结果未知的调用：核对和处置';
-const NOT_LISTED = '- 不在变动清单里，不证明没做。';
 const SENTENCE = '- 平台拦下原命令；要再跑先请求并得到允许。';
-
-function aliases(from: number, to: number): string {
-  return Array.from({ length: to - from + 1 }, (_, index) => `#${String(from + index)}`).join('、');
-}
-
-/** The whole required review part, one literal (the optional `- #n = …` lines excluded). */
-export const REQUIRED_REVIEW_BLOCK = [
-  REVIEW_TITLE,
-  '- 共 32 条（#1–#32），另有 0 条没有列出；各条的结论和依据见上文“核对结论”，可能被略去。',
-  '- 处置：换个稳妥的跑法：不要跑原命令，照下面的方案原样跑（卡上选的）；附言：' + '稳'.repeat(60) + '…（已截断）。',
-  `- 作用对象：${aliases(1, 32)}。`,
-  `- 方案 #1，目录 .：\n  ${APPROVED_COMMAND.replace(/\r\n|\n/g, '\n  ')}`,
-  `- 平台条目 ${aliases(2, 32)}：结果查不清，重做前先核实。`,
-  NOT_LISTED,
-  SENTENCE,
-].join('\n');
 
 /** Extracts the required block from a rendered brief, ignoring optional conclusion lines. */
 export function requiredReviewBlock(text: string): string {

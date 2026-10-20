@@ -135,7 +135,7 @@ export function renderNodeLinkGraph(
 }
 
 
-/** Adopted formal architecture. `catalog === null` is a real historical gap. */
+/** Adopted formal architecture. */
 export function renderAdoptedGraph(result: ReadResult<ArchitectureRevision>, display?: WorkbenchGraphDisplay): string {
   if (result.status === 'rejected') return rejectionPanel(result);
   if (result.status === 'not_found') return renderGap('architecture/read', '没有已采用的架构 baseline');
@@ -146,8 +146,6 @@ export function renderAdoptedGraph(result: ReadResult<ArchitectureRevision>, dis
       + `revision ${escapeHtml(revision.baseline.revision)} `
       + `digest ${escapeHtml(revision.baseline.contentDigest.slice(0, 12))}</p>`)
     + `</header>`;
-  if (revision.catalog === null) return `<section class="panel" data-graph="adopted">${header}`
-    + `<p class="gap">该 baseline 早于 catalog，未记录模块边</p></section>`;
   const modules = revision.catalog.catalog.modules;
   const dependencies = revision.catalog.catalog.dependencies;
   const graph = renderNodeLinkGraph(

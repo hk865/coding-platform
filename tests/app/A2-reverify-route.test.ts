@@ -20,58 +20,26 @@
  * is `invalid`, never a Host failure.
  */
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PLATFORM_TOKEN_PLACEHOLDER } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
 import type {
-  WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowStepReceipt,
+  WorkflowStepReceipt,
 } from '../../src/business/workflow/contracts.js';
-import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
+import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { RoundSnapshot } from '../../src/contracts/verification.js';
 import type { ReverifyOutcomeV1 } from '../../src/core/work-graph/model/evidence-contracts.js';
 import {
-  AG2B_GOAL_REF, AG2B_RESULT_FILE, AG2B_RESULT_TEXT, AG2B_SCOPE, AG2B_WORK_TASK_ID, cleanupAG2b, corePost, graphWrite, plain,
-  seedAG2bWorkGraph, startAG2bHost, type AG2bHost,
+  AG2B_RESULT_FILE, AG2B_RESULT_TEXT, AG2B_SCOPE, cleanupAG2b, corePost, graphWrite,
+  seedAG2bWorkGraph, startAG2bHost,
 } from '../helpers/AG2b-collaboration-fixture.js';
+import {
+  cleanupRestart, driveWorkflow, post, publicDirectory, selectWork, workRow,
+} from '../helpers/A2-restart-fixture.js';
 
-const temporary: string[] = [];
 afterEach(async () => {
   await cleanupAG2b();
-  for (const directory of temporary.splice(0)) await rm(directory, { recursive: true, force: true });
+  await cleanupRestart();
 });
-
-async function post<T>(host: AG2bHost, suffix: string, body: unknown): Promise<T> {
-  const response = await corePost(host.base, suffix, host.token, body);
-  expect(response.status, suffix).toBe(200);
-  return await response.json() as T;
-}
-
-/** Drive `workflow/advance` (Task level) until it settles, stopping before the automatic `requeue_task` (C8). */
-async function driveWorkflow(host: AG2bHost, flowId: string): Promise<{ state: string; receipts: WorkflowStepReceipt[] }> {
-  let input: WorkflowAdvanceInput = { schemaVersion: 1, goalRef: AG2B_GOAL_REF, flowId, sessionHint: null, kind: 'select_work',
-    taskId: AG2B_WORK_TASK_ID };
-  const receipts: WorkflowStepReceipt[] = [];
-  for (let guard = 0; guard < 32; guard += 1) {
-    const result: WorkflowAdvanceResult = await post<WorkflowAdvanceResult>(host, 'workflow/advance', plain(AG2B_SCOPE, input));
-    if (result.status !== 'ready') throw new Error(`the Workflow call was not ready: ${JSON.stringify(result)}`);
-    if (result.value.receipt !== null) receipts.push(result.value.receipt);
-    if (result.value.state === 'completed' || result.value.next === null) return { state: result.value.state, receipts };
-    input = result.value.next;
-    if (input.kind === 'perform' && input.operation.kind === 'requeue_task') return { state: 'stopped', receipts };
-  }
-  throw new Error('the Workflow did not settle');
-}
-
-async function workRow(host: AG2bHost): Promise<Record<string, unknown>> {
-  const graph = await post<ReadResult<{ tasks: Array<{ ref: { taskId: string } } & Record<string, unknown>> }>>(
-    host, 'tasks/query', plain(AG2B_SCOPE, { goalRef: AG2B_GOAL_REF }));
-  if (graph.status !== 'ready') throw new Error(`the task graph must be readable: ${JSON.stringify(graph)}`);
-  const row = graph.value.tasks.find(candidate => candidate.ref.taskId === AG2B_WORK_TASK_ID);
-  if (row === undefined) throw new Error('the work Task must be in the graph');
-  return row;
-}
 
 function refusalPin(round: RoundSnapshot, revision: number) {
   return { ref: { aggregateType: 'TaskReworkRefusal', projectId: round.ref.projectId, goalId: round.ref.goalId,
@@ -79,15 +47,15 @@ function refusalPin(round: RoundSnapshot, revision: number) {
 }
 
 it('verification/reverify: a FAIL head is refused source_unchanged, then after the fix its successor completes the Goal', async () => {
-  const publicDir = await mkdtemp(join(tmpdir(), 'a2-reverify-public-'));
-  temporary.push(publicDir);
-  await writeFile(join(publicDir, 'index.html'),
-    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+  const publicDir = await publicDirectory();
   const host = await startAG2bHost(publicDir, { replies: [{ kind: 'text', text: 'A2 reverify: an answer without the file' }] });
   try {
     await seedAG2bWorkGraph(host);
     // Run 1 ends with text only; the registered check fails; the Host stops before the automatic requeue.
-    const first = await driveWorkflow(host, 'a2-reverify-route-1');
+    const firstReceipts: WorkflowStepReceipt[] = [];
+    const firstSteps = await driveWorkflow(host, selectWork('a2-reverify-route-1'),
+      { stopBefore: 'requeue_task', receipts: firstReceipts });
+    const first = { state: firstSteps.at(-1)!.next === null ? firstSteps.at(-1)!.state : 'stopped', receipts: firstReceipts };
     expect(first.state).toBe('stopped');
     const finalize = first.receipts.find(receipt => receipt.kind === 'finalize_checks');
     if (finalize?.kind !== 'finalize_checks' || finalize.result.status !== 'committed') throw new Error('the round must finalize');
@@ -136,7 +104,10 @@ it('verification/reverify: a FAIL head is refused source_unchanged, then after t
     }
 
     // The Workflow runs the successor's check on the same Run and completes the Task and the Goal.
-    const second = await driveWorkflow(host, 'a2-reverify-route-2');
+    const secondReceipts: WorkflowStepReceipt[] = [];
+    const secondSteps = await driveWorkflow(host, selectWork('a2-reverify-route-2'),
+      { stopBefore: 'requeue_task', receipts: secondReceipts });
+    const second = { state: secondSteps.at(-1)!.state, receipts: secondReceipts };
     expect(second.state).toBe('completed');
     expect(second.receipts.find(receipt => receipt.kind === 'finalize_checks')).toMatchObject({
       result: { status: 'committed', value: { outcome: 'PASS', snapshot: { ref: r2.ref } } } });

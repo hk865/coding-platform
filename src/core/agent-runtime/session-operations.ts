@@ -92,9 +92,8 @@ type HistoryBinding = {
   principal: string;
 };
 
-/** `lower` is the inclusive first position of the page's frozen range; a legacy
- * cursor without it is accepted only for a head read (`lower === 1`). */
-type HistoryCursor = HistoryBinding & { upper: number; position: number; lower: number | null };
+/** `lower` is the inclusive first position of the page's frozen range. */
+type HistoryCursor = HistoryBinding & { upper: number; position: number; lower: number };
 
 type CreateSessionValue = {
   workspace: WorkspaceScope;
@@ -211,14 +210,14 @@ function decodeHistoryCursor(raw: string): HistoryCursor | null {
   if (typeof principal !== 'string' || principal.length === 0) return null;
   if (!Number.isSafeInteger(upper) || (upper as number) < 0) return null;
   if (!Number.isSafeInteger(position) || (position as number) < 0) return null;
-  if (lower !== undefined && lower !== null && (!Number.isSafeInteger(lower) || (lower as number) < 1)) return null;
+  if (!Number.isSafeInteger(lower) || (lower as number) < 1) return null;
   return {
     platformRef: { projectId, sessionId },
     adapterId,
     kernelSessionId,
     principal,
     upper: upper as number,
-    lower: lower === undefined || lower === null ? null : lower as number,
+    lower: lower as number,
     position: position as number,
   };
 }
@@ -402,7 +401,7 @@ async function readBoundedHistory(
     return rejected('invalid', 'the history range does not match the mapped Kernel Session mapping');
   }
 
-  // A legacy throughCursor freezes an upper bound but never carries a lower.
+  // A throughCursor freezes an upper bound; its lower is not used here.
   let throughUpper: number | null = null;
   if (input.throughCursor !== null) {
     const through = decodeHistoryCursor(input.throughCursor);
@@ -427,9 +426,9 @@ async function readBoundedHistory(
     if (!after || !cursorMatches(after, binding)) {
       return rejected('invalid', 'afterCursor is not a valid cursor for this Session mapping');
     }
-    const cursorLower = after.lower ?? 1;
+    const cursorLower = after.lower;
     if (range === undefined) {
-      // A legacy head cursor has no lower; a ranged cursor must keep its range.
+      // A head cursor has lower 1; a ranged cursor must keep its range.
       if (cursorLower !== 1) return rejected('invalid', 'a ranged cursor requires the same explicit range');
     } else if (range.startPosition !== cursorLower
       || range.throughPosition !== after.upper
@@ -597,8 +596,8 @@ export function createSessionOperations(deps: {
             role: value.role,
             recommendedRefs: value.recommendedRefs ?? [],
             initialLinks: value.initialLinks ?? [],
-            // §2.2: absent keeps the historical key set (normalized to `new`);
-            // a continuation/handoff/readonly_copy carries its predecessor.
+            // §2.2: a missing key normalizes to `new`; a continuation, handoff
+            // or readonly_copy carries its predecessor.
             ...(value.provenance === undefined ? {} : { provenance: value.provenance }),
           },
           meta: value.meta,
@@ -632,7 +631,7 @@ export function createSessionOperations(deps: {
         return rejected('unavailable', 'the persisted operation has no usable Kernel store pin');
       }
       const resolvedStore = kernelStores.byAdapterId(pinned.adapterId);
-      if (!resolvedStore || 'expectedSessionId' in resolvedStore) {
+      if (!resolvedStore) {
         return rejected('unsupported', 'the pinned Kernel store instance is not registered as a current store');
       }
       if (resolvedStore.storeKey !== pinned.storeKey) {
@@ -785,12 +784,7 @@ export function createSessionOperations(deps: {
       if (!resolved) {
         return rejected('unavailable', 'the mapped Kernel adapter is not registered by the trusted Host');
       }
-      const legacyMatch = kernelStores.legacy(kernel.adapterId, kernel.kernelSessionId);
-      if ('expectedSessionId' in resolved) {
-        if (!legacyMatch) {
-          return rejected('unavailable', 'the trusted legacy locator does not match the mapped Kernel Session');
-        }
-      } else if (resolved.workspace.projectId !== ctxProjectId || resolved.workspace.workspaceId !== ctxWorkspaceId) {
+      if (resolved.workspace.projectId !== ctxProjectId || resolved.workspace.workspaceId !== ctxWorkspaceId) {
         return rejected('unavailable', 'the mapped Kernel store belongs to another workspace');
       }
 
@@ -811,9 +805,7 @@ export function createSessionOperations(deps: {
           binding, limit: value.limit, afterCursor: value.afterCursor,
           throughCursor: value.throughCursor, range, signal,
         });
-        return legacyMatch
-          ? await kernelStores.withLegacyReader(kernel.adapterId, kernel.kernelSessionId, read)
-          : await kernelStores.withStore(kernel.adapterId, read);
+        return await kernelStores.withStore(kernel.adapterId, read);
       } catch (error) {
         return mapHistoryFailure(error, signal);
       }
@@ -899,8 +891,7 @@ export function createSessionHistoryCursorOwner(deps: {
   const fixedPrincipal = principalBinding({ kind: 'host', actor: RUNTIME_HISTORY_PRINCIPAL_ACTOR });
   if (fixedPrincipal === null) throw new Error('the runtime history principal cannot be canonicalized');
 
-  /** Read through the Session's own Kernel mapping; a legacy locator stays a
-   * read-only reader and never opens a replacement database. */
+  /** Read through the Session's own Kernel mapping. */
   async function withSessionReader<T>(
     session: SessionRecord,
     signal: AbortSignal,
@@ -909,12 +900,6 @@ export function createSessionHistoryCursorOwner(deps: {
     const location = kernelStores.byAdapterId(session.kernel.adapterId);
     if (!location) return { ok: false, rejection: rejected('unavailable', 'the mapped Kernel adapter is not registered') };
     try {
-      if ('expectedSessionId' in location) {
-        if (!kernelStores.legacy(session.kernel.adapterId, session.kernel.kernelSessionId)) {
-          return { ok: false, rejection: rejected('unavailable', 'the legacy Kernel locator does not match the mapped Session') };
-        }
-        return { ok: true, value: await kernelStores.withLegacyReader(session.kernel.adapterId, session.kernel.kernelSessionId, use) };
-      }
       return { ok: true, value: await kernelStores.withStore(session.kernel.adapterId, use) };
     } catch (error) {
       return { ok: false, rejection: mapHistoryFailure(error, signal) };
@@ -1024,9 +1009,6 @@ export function createSessionHistoryCursorOwner(deps: {
       if (location === null) {
         return { status: 'unsupported', reason: 'the Session Kernel store is not registered by this Host' };
       }
-      if ('expectedSessionId' in location) {
-        return { status: 'unsupported', reason: 'the Session Kernel store is legacy or another adapter' };
-      }
       try {
         return await kernelStores.withStore(session.kernel.adapterId, async (store) =>
           await readFn(store, { sessionId: session.kernel.kernelSessionId, kernelRunId }));
@@ -1042,10 +1024,6 @@ export function createSessionHistoryCursorOwner(deps: {
       if (signalAborted(signal)) return verdict('cancelled', 'the probe was cancelled');
       const location = kernelStores.byAdapterId(session.kernel.adapterId);
       if (!location) return verdict('host_config', 'the mapped Kernel adapter is not registered by this Host');
-      const legacy = 'expectedSessionId' in location;
-      if (legacy && !kernelStores.legacy(session.kernel.adapterId, session.kernel.kernelSessionId)) {
-        return verdict('host_config', 'the legacy Kernel locator does not match the mapped Session');
-      }
       try {
         if (await kernelDatabaseState(location.databasePath) === 'missing') {
           return verdict('missing', 'the mapped Kernel database file is missing');
@@ -1059,9 +1037,7 @@ export function createSessionHistoryCursorOwner(deps: {
         return verdict('ready', 'the Kernel session head and its original session.created are readable', header.activeRunId ?? null);
       };
       try {
-        return legacy
-          ? await kernelStores.withLegacyReader(session.kernel.adapterId, session.kernel.kernelSessionId, use)
-          : await kernelStores.withStore(session.kernel.adapterId, use);
+        return await kernelStores.withStore(session.kernel.adapterId, use);
       } catch (error) {
         if (signalAborted(signal)) return verdict('cancelled', 'the probe was cancelled');
         const message = error instanceof Error ? error.message : String(error);

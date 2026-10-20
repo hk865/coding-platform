@@ -15,26 +15,20 @@
  *   an answer to the revision-1 card is `revision_conflict`.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { join } from 'node:path';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
-import { ag2bWorkspaceBindings, cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
+import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
 import { preparedOf, redrivePolicy } from './support/common.js';
 import { preparedBriefOf } from './support/brief.js';
 import { continuationBriefDigest, renderContinuationBriefZh } from '../../src/contracts/continuation-brief.js';
-import { driveReviewUntil } from './support/review-work-root.js';
-import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { driveReviewUntil, openMissingReadReviewRoot } from './support/review-work-root.js';
+import { crashOneCommand } from './support/review-card-round.js';
 import { goalControlled } from './support/control.js';
-import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { answer as postAnswer, cleanupRestart } from '../helpers/A2-restart-fixture.js';
-import { createTargetPlatform } from '../../src/composition/create-platform.js';
-import { createWorkbenchRuntimeHostBindings, type WorkbenchRuntimeConfiguration } from '../../src/app/runtime-configuration.js';
-import { sha256Hex, canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import {
-  AG2B_AT, AG2B_CONSUMER_ID, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING,
-  AG2B_WORK_TASK_ID, graphWrite, permissionRevision, plain,
+  AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
-import type { Platform } from './harness.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { DecisionSelectionV1, DecisionAnnotationV1 } from '../../src/contracts/goal-decisions.js';
@@ -44,21 +38,8 @@ import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-revie
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 const seams = vi.hoisted(() => ({ shellSeam: undefined as unknown }));
@@ -83,66 +64,14 @@ function reviewOf(h: HostScenario, runRef: RunRef): Promise<ReadResult<UnknownCa
   return h.post<ReadResult<UnknownCallReviewV1>>('unknown-call-reviews/read', plain(AG2B_SCOPE, { runRef }));
 }
 
-async function crashOneCommand(h: HostScenario, label: string): Promise<RunRef> {
-  shellSeam.arm();
-  const modelA = createScriptedModel([{ kind: 'calls', calls: [
-    { callId: `${label}-shell`, name: 'shell', args: { command: `${label} runs a program` } }] }]);
-  const rootA = await openShellWorkRoot(h, modelA);
-  let runningA: Promise<unknown> | null = null;
-  let preparedA: ReturnType<typeof preparedOf>;
-  try {
-    const startA = await prepareOn(rootA, h.select(`${label}-a`, AG2B_WORK_TASK_ID));
-    preparedA = preparedOf(startA);
-    runningA = rootA.runtime.startRun(hostCtx(), { prepared: preparedA, consumerId: AG2B_CONSUMER_ID,
-      requestId: `${label}-a-start` });
-    await shellSeam.waitForCall();
-    await h.restart({ crash: true });
-  } finally {
-    shellSeam.release();
-    await runningA?.catch(() => undefined);
-    await rootA.close();
-  }
-  return preparedA.claim.runRef;
-}
 
-async function openMissingReadReviewRoot(h: HostScenario): Promise<Platform> {
-  const configuration: WorkbenchRuntimeConfiguration = {
-    schemaVersion: 1,
-    bindings: [{
-      id: 'k3-17-missing-read-binding', label: 'K3-17 missing-read review binding',
-      scope: AG2B_SCOPE, role: AG2B_WORK_ROLE,
-      configurationRevision: 'k3-17-missing-read@1',
-      model: { revision: 'k3-17-missing-read-model@1', provider: 'deepseek', model: 'k3-17-scripted',
-        secretEnvironmentVariable: 'K3_17_MISSING_READ_SECRET' },
-      grant: {
-        budget: AG2B_RUNTIME_BUDGET,
-        hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex('K3-17 missing-read instruction') },
-        tools: ['shell', 'run_readonly_command'],
-        writeScope: [],
-        skills: { resourceRoot: h.root, enabledIds: [] },
-        systemInstruction: 'K3-17 missing-read instruction', deniedPrefixes: [], processSandboxOptions: {},
-        materialBasis: null, readonlyCommandAccess: 'all_except_denied' as const,
-      },
-    }],
-    queryProfiles: [],
-  };
-  const runtime = createWorkbenchRuntimeHostBindings(configuration, { secretSource: { get: () => undefined } });
-  return await createTargetPlatform({
-    storage: { kind: 'sqlite', directory: h.database },
-    workspace: ag2bWorkspaceBindings(h.root, { value: 1 }, permissionRevision(h.stepActor(), AG2B_SCOPE, ['.'])),
-    now: () => AG2B_AT,
-    kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
-      databasePath: join(h.database, 'kernel.sqlite') }] },
-    runtime,
-    hostInstance: { hostInstanceId: 'wp2-scenario-host', lease: 'owned' },
-    workflow: { consumerId: AG2B_CONSUMER_ID, bindings: [{ workspace: AG2B_SCOPE, sessionRole: AG2B_WORK_ROLE,
-      roleBinding: AG2B_WORK_ROLE_BINDING, budget: { tokenBudget: 1_000_000, deadline: null } }] },
-  });
-}
 
 async function settleKeyUnavailable(h: HostScenario, label: string): Promise<RunRef> {
-  const origin = await crashOneCommand(h, label);
-  const reviewRoot = await openMissingReadReviewRoot(h);
+  const crashed = await crashOneCommand(h, { callId: `${label}-shell`, select: `${label}-a`,
+    requestId: `${label}-a-start`, shellArgs: { command: `${label} runs a program` } });
+  await crashed.release();
+  const origin = crashed.runRef;
+  const reviewRoot = await openMissingReadReviewRoot(h, { label, hostInstanceId: 'wp2-scenario-host' });
   try {
     const toSettle = await driveReviewUntil(reviewRoot, h.select(`${label}-settle`, AG2B_WORK_TASK_ID),
       performs('settle_review'));

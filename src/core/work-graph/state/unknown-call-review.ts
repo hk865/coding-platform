@@ -33,8 +33,6 @@ import { accept, reject, unreachable, type Rejected, type Transition } from './t
 
 /** The whole serialised record may never exceed 512 KiB (L7). */
 export const UNKNOWN_CALL_REVIEW_MAX_BYTES = 524_288;
-/** The worst-case reserve R for the must-write parts of a settled/decided record (L7). */
-export const UNKNOWN_CALL_REVIEW_RESERVED_BYTES = 365_536;
 /** The creation budget B = 512 KiB - R; optional model text is admitted only at or under it (L7, M3). */
 export const UNKNOWN_CALL_REVIEW_CREATION_BUDGET_BYTES = 158_720;
 /** A record holds at most 8 rounds, even though the "two free slots" rule leaves the cap unused (L9). */
@@ -125,8 +123,6 @@ export type UnknownCallReviewEventV1 =
     }
   | { kind: 'hold_applied'; answeredRevision: number; text: string | null }
   | { kind: 'hold_released' };
-
-export type UnknownCallReviewEvent = UnknownCallReviewEventV1;
 
 /**
  * The service supplies every guard fact the table needs; the machine reads no

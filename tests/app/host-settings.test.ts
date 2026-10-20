@@ -24,9 +24,6 @@ import { fileURLToPath } from 'node:url';
 import { createLocalWorkbenchHost, type LocalWorkbenchHost, type LocalWorkbenchHostOptions } from '../../src/app/host.js';
 import {
   createHostRuntimeResolverRegistry,
-  createHostSettings,
-  type HostSettingsAssembly,
-  type HostSettingsWorkspaceFacts,
   validateSettingsBaseUrl,
   type HostSettingsModelDefinition,
 } from '../../src/app/host-settings.js';
@@ -56,7 +53,8 @@ import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
-import type { QueryRunRef } from '../../src/contracts/query-job.js';
+import type { QueryJobAnswerRef, QueryRunRef } from '../../src/contracts/query-job.js';
+import { createScriptedModel, type ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import type {
   QueryRuntimeConfigurationInput,
   ResolvedRuntimeConfiguration,
@@ -431,10 +429,12 @@ const HOST_QUERY_ROLE_BINDING = {
 };
 const HOST_RUNTIME_BUDGET = { ...DEFAULT_RUNTIME_BUDGET, maxRequests: 8, maxToolCalls: 8, timeoutMs: 30_000 };
 
-function controlledHostProvider() {
+function controlledHostProvider(replies?: readonly ScriptedReply[]) {
   const createCalls: { provider: string; model: string; baseUrl: string | undefined; apiKey: string | undefined }[] = [];
   const secretReads: string[] = [];
-  const client = { async *stream() { throw new Error('the Host settings test never streams a model'); } } as unknown as kernel.ModelClientPort;
+  const client = replies === undefined
+    ? ({ async *stream() { throw new Error('the Host settings test never streams a model'); } } as unknown as kernel.ModelClientPort)
+    : createScriptedModel(replies).client;
   const definition = {
     id: 'deepseek' as const,
     secretEnvironmentVariable: HOST_SECRET_VAR,
@@ -483,7 +483,8 @@ function hostRuntimeConfiguration(): WorkbenchRuntimeConfiguration {
 /** Drive the real public submit -> claim -> prepare path for one scope and
  * return the prepared result; the caller asserts which client the controlled
  * provider built. */
-async function prepareHostQuery(started: Started, scope: CoreScope, suffix: string): Promise<unknown> {
+async function prepareHostQuery(started: Started, scope: CoreScope, suffix: string,
+  kind: 'semantic_query' | 'initial_coordination' = 'semantic_query'): Promise<unknown> {
   const registration = await (await corePost(started.base, 'workspaces/registration', started.token, scope, scope))
     .json() as ReadResult<{ project: { revision: number }; workspace: { revision: number } }>;
   if (registration.status !== 'ready') throw new Error(`registration was not ready: ${JSON.stringify(registration)}`);
@@ -524,7 +525,7 @@ async function prepareHostQuery(started: Started, scope: CoreScope, suffix: stri
     schemaVersion: 1, intentId: queryJobId, projectId: scope.projectId, workspaceId: scope.workspaceId,
     goalId, question: 'Which model does this workspace use?', focusTaskRefs: [],
     budget: profile.budget, multiTurn: { maxRounds: 1 }, correlationId: `host-settings-corr-${suffix}`,
-    execution: { kind: 'semantic_query', roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget },
+    execution: { kind, roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget },
   };
   const submitted = await coreGraphPost(started.base, 'queries/submit', started.token, scope,
     { queryJobId, runId, intent }, `host-settings-submit-${suffix}`,
@@ -829,67 +830,170 @@ const checkBody = (checkId: string, command: string) => ({
 const answerRefForScope = (scope: CoreScope, suffix: string) => ({
   aggregateType: 'QueryJobAnswer' as const, ...scope, queryJobId: `job-${suffix}`, answerId: `answer-${suffix}`,
 });
+/** The scripted model's v2 plan answer carrying the optional `setup.checks` proposal. */
+const planAnswer = (checks: ReturnType<typeof checkBody>[]) => JSON.stringify({
+  schemaVersion: 2, kind: 'plan', summary: 'Initial plan with the suggested checks',
+  plan: { schemaVersion: 2, stages: [], tasks: [], obligations: [],
+    taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } },
+  setup: { checks },
+});
+
+/** A real Query Run in `scope` (submit, claim, prepare through `prepareHostQuery`,
+ * then `queries/start`) answers with the next scripted plan reply; the saved
+ * Answer ref is the one `queries/start` returns. */
+async function saveInitialPlanAnswer(started: Started, scope: CoreScope, suffix: string): Promise<QueryJobAnswerRef> {
+  const prepared = await prepareHostQuery(started, scope, suffix, 'initial_coordination');
+  const body = await (await corePost(started.base, 'queries/start', started.token, scope,
+    { prepared, consumerId: `host-settings-${suffix}`, requestId: `host-settings-start-${suffix}` }))
+    .json() as ReadResult<{ answer?: { ref: QueryJobAnswerRef } }>;
+  if (body.status !== 'ready' || body.value.answer === undefined)
+    throw new Error(`the Query start did not record an answer: ${JSON.stringify(body)}`);
+  return body.value.answer.ref;
+}
+
+async function readSettingsSnapshot(started: Started): Promise<HostSettingsSnapshot> {
+  return expectReady(await (await settingsPost(started.base, 'snapshot', started.token, {}))
+    .json() as SettingsResponse<HostSettingsSnapshot>);
+}
 
 describe('HOST settings workspace check approval (R6 cold-start)', () => {
   it('uses authoritative saved proposal facts, persists checks per scope and keeps command grants', async () => {
+    const checksA = [checkBody('c-a', 'node --test a')];
+    const checksB = [checkBody('c-b', 'node --test b')];
+    const provider = controlledHostProvider([
+      { kind: 'text', text: planAnswer(checksA) },
+      { kind: 'text', text: planAnswer(checksB) },
+    ]);
     const database = await mkdtemp(join(tmpdir(), 'host-settings-checks-db-'));
     temporary.push(database);
-    const facts: HostSettingsWorkspaceFacts[] = [];
-    const reads: { scope: CoreScope; answerRef: ReturnType<typeof answerRefForScope> }[] = [];
-    const proposals = new Map<string, { answerRef: ReturnType<typeof answerRefForScope>; answerDigest: string; checks: ReturnType<typeof checkBody>[] }>();
-    const assembly: HostSettingsAssembly = {
-      listWorkspaces: () => facts,
-      listProjectIds: () => ['checks-project'],
-      secretConfigured: () => false,
-      bootstrap: () => ({}) as BootstrapResponse, // not consumed by these direct settings assertions
-      async openWorkspace(request) {
-        let fact = facts.find(item => item.root === request.path);
-        if (fact === undefined) {
-          fact = { scope: { projectId: 'checks-project', workspaceId: request.workspaceId ?? `workspace-${facts.length}` },
-            name: request.name ?? 'checks', root: request.path, workspaceRevision: 1, modelId: null,
-            writeAllowed: request.writeAllowed, commandsAllowed: request.commandsAllowed };
-          facts.push(fact);
-        }
-        return { status: 'ready', value: { scope: fact.scope } };
-      },
-      async readCheckProposal(scope, answerRef) {
-        reads.push({ scope: structuredClone(scope), answerRef: structuredClone(answerRef) });
-        const saved = proposals.get(answerRef.answerId);
-        if (saved === undefined || JSON.stringify(saved.answerRef) !== JSON.stringify(answerRef)
-          || answerRef.projectId !== scope.projectId || answerRef.workspaceId !== scope.workspaceId) {
-          return { status: 'rejected', code: 'not_found', reason: 'saved Answer not found in this scope' };
-        }
-        return { status: 'ready', value: structuredClone(saved) };
-      },
-    };
-    const options = { settingsDirectory: join(database, 'settings'), assembly };
-    const callbacks = { onConfigurationChanged() {} };
-    const settings = await createHostSettings(options, callbacks);
-    const opened = [];
-    for (const commandsAllowed of [true, true, false]) {
-      const dir = await mkdtemp(join(tmpdir(), 'checks-source-')); temporary.push(dir);
-      opened.push(expectReady(await settings.call('workspaces/open', { path: dir, writeAllowed: true, commandsAllowed })));
+    const settingsDirectory = join(database, 'settings');
+    const kernelStores = { entries: [{ adapterId: 'host-settings-checks-kernel',
+      storeKey: 'host-settings-checks-kernel-store', workspace: STARTUP_SCOPE,
+      databasePath: join(database, 'kernel.sqlite') }] };
+    const started = await startHost({
+      database, settingsDirectory, runtimeConfiguration: hostRuntimeConfiguration(), runtimeProvider: provider, kernelStores,
+    });
+    let reopened: Started | undefined;
+    try {
+      const opened: OpenValue[] = [];
+      for (const commandsAllowed of [true, true, false]) {
+        const dir = await mkdtemp(join(tmpdir(), 'checks-source-')); temporary.push(dir);
+        opened.push(expectReady(await (await settingsPost(started.base, 'workspaces/open', started.token,
+          { path: dir, writeAllowed: true, commandsAllowed })).json() as SettingsResponse<OpenValue>));
+      }
+      const [a, b, locked] = opened;
+      if (a === undefined || b === undefined || locked === undefined) throw Error('missing workspace fixture');
+
+      // The startup model is the catalog's own model; selecting it for the two
+      // scopes publishes their trusted runtime profiles through the real settings path.
+      const initial = expectReady(await (await settingsPost(started.base, 'snapshot', started.token, {}))
+        .json() as SettingsResponse<HostSettingsSnapshot>);
+      const model = initial.models.find(entry => entry.model === 'startup-model');
+      if (model === undefined) throw new Error('the startup model is missing from the catalog');
+      for (const scope of [a.scope, b.scope]) {
+        expect((await settingsPost(started.base, 'models/select', started.token, { scope, modelId: model.id })).status)
+          .toBe(200);
+      }
+
+      // A real Query Run writes the saved Answer; its checks are the model's
+      // suggestion and become trusted only by the explicit approval below.
+      const answerA = await saveInitialPlanAnswer(started, a.scope, 'a');
+      const answerB = await saveInitialPlanAnswer(started, b.scope, 'b');
+
+      const first = expectReady(await (await settingsPost(started.base, 'checks/approve', started.token,
+        { scope: a.scope, answerRef: answerA, checks: checksA })).json() as SettingsResponse<HostSettingsSnapshot>);
+      expect(first.workspaces.find(item => item.scope.workspaceId === a.scope.workspaceId)?.checks).toEqual(checksA);
+      const second = expectReady(await (await settingsPost(started.base, 'checks/approve', started.token,
+        { scope: b.scope, answerRef: answerB, checks: checksB })).json() as SettingsResponse<HostSettingsSnapshot>);
+      expect(second.workspaces.find(item => item.scope.workspaceId === a.scope.workspaceId)?.checks).toEqual(checksA);
+      expect(second.workspaces.find(item => item.scope.workspaceId === b.scope.workspaceId)?.checks).toEqual(checksB);
+
+      await started.host.close();
+      reopened = await startHost({
+        database, settingsDirectory, runtimeConfiguration: hostRuntimeConfiguration(), runtimeProvider: provider, kernelStores,
+      });
+      const restored = expectReady(await (await settingsPost(reopened.base, 'snapshot', reopened.token, {}))
+        .json() as SettingsResponse<HostSettingsSnapshot>);
+      expect(restored.workspaces.find(item => item.scope.workspaceId === a.scope.workspaceId)?.checks).toEqual(checksA);
+      expect(restored.workspaces.find(item => item.scope.workspaceId === b.scope.workspaceId)?.checks).toEqual(checksB);
+      // The command grants that the approval required stay as the person opened them.
+      expect(restored.workspaces.find(item => item.scope.workspaceId === a.scope.workspaceId)?.commandsAllowed).toBe(true);
+      expect(restored.workspaces.find(item => item.scope.workspaceId === b.scope.workspaceId)?.commandsAllowed).toBe(true);
+      expect(restored.workspaces.find(item => item.scope.workspaceId === locked.scope.workspaceId)?.commandsAllowed).toBe(false);
+    } finally {
+      await reopened?.host.close().catch(() => { /* already closed */ });
+      await started.host.close().catch(() => { /* already closed */ });
     }
-    const [a, b, locked] = opened;
-    if (a === undefined || b === undefined || locked === undefined) throw Error('missing workspace fixture');
-    const save = (scope: CoreScope, suffix: string) => {
-      const saved = { answerRef: answerRefForScope(scope, suffix), answerDigest: `saved-digest-${suffix}`,
-        checks: [checkBody(`c-${suffix}`, `node --test ${suffix}`)] };
-      proposals.set(saved.answerRef.answerId, saved);
-      return { scope, answerRef: saved.answerRef, checks: saved.checks };
-    };
-    const inputA = save(a.scope, 'a'), inputB = save(b.scope, 'b');
-    const first = expectReady(await settings.call('checks/approve', inputA));
-    expect(reads).toContainEqual({ scope: a.scope, answerRef: inputA.answerRef });
-    expect(first.workspaces.find(item => item.scope.workspaceId === a.scope.workspaceId)?.checks).toEqual(inputA.checks);
-    const second = expectReady(await settings.call('checks/approve', inputB));
-    expect(second.workspaces.find(item => item.scope.workspaceId === a.scope.workspaceId)?.checks).toEqual(inputA.checks);
-    expect(second.workspaces.find(item => item.scope.workspaceId === b.scope.workspaceId)?.checks).toEqual(inputB.checks);
-    expect(await settings.call('checks/approve', { ...inputA, answerRef: answerRefForScope(a.scope, 'missing') })).toMatchObject({ status: 'rejected', code: 'not_found' });
-    expect(await settings.call('checks/approve', save(locked.scope, 'locked'))).toMatchObject({ status: 'rejected' });
-    const reopened = await createHostSettings(options, callbacks);
-    const restored = expectReady(await reopened.call('snapshot', {}));
-    expect(restored.workspaces.find(item => item.scope.workspaceId === a.scope.workspaceId)?.checks).toEqual(inputA.checks);
-    expect(restored.workspaces.find(item => item.scope.workspaceId === b.scope.workspaceId)?.checks).toEqual(inputB.checks);
+  });
+});
+
+describe('rejects: HOST settings workspace check approval (R6 cold-start)', () => {
+  /** One sqlite Host with the scripted plan replies; one workspace per
+   * `commandsAllowed` flag opened with the write grant through `workspaces/open`,
+   * and the catalog's startup model selected for each scope (`models/select`). */
+  async function approvalWorld(prefix: string, commandGrants: readonly boolean[], replies?: readonly ScriptedReply[]) {
+    const database = await mkdtemp(join(tmpdir(), `${prefix}-db-`));
+    temporary.push(database);
+    const started = await startHost({
+      database, settingsDirectory: join(database, 'settings'),
+      runtimeConfiguration: hostRuntimeConfiguration(), runtimeProvider: controlledHostProvider(replies),
+      kernelStores: { entries: [{ adapterId: `${prefix}-kernel`, storeKey: `${prefix}-kernel-store`,
+        workspace: STARTUP_SCOPE, databasePath: join(database, 'kernel.sqlite') }] },
+    });
+    try {
+      const opened: OpenValue[] = [];
+      for (const commandsAllowed of commandGrants) {
+        const dir = await mkdtemp(join(tmpdir(), `${prefix}-source-`)); temporary.push(dir);
+        opened.push(expectReady(await (await settingsPost(started.base, 'workspaces/open', started.token,
+          { path: dir, writeAllowed: true, commandsAllowed })).json() as SettingsResponse<OpenValue>));
+      }
+      const model = (await readSettingsSnapshot(started)).models.find(entry => entry.model === 'startup-model');
+      if (model === undefined) throw new Error('the startup model is missing from the catalog');
+      for (const { scope } of opened) {
+        expect((await settingsPost(started.base, 'models/select', started.token, { scope, modelId: model.id })).status)
+          .toBe(200);
+      }
+      return { started, opened };
+    } catch (error) {
+      await started.host.close().catch(() => { /* already closed */ });
+      throw error;
+    }
+  }
+
+  it('refuses an Answer ref that no Query saved in a granted workspace (not_found) and changes no setting', async () => {
+    const { started, opened: [granted] } = await approvalWorld('host-settings-checks-missing', [true]);
+    try {
+      if (granted === undefined) throw Error('missing workspace fixture');
+      const before = await readSettingsSnapshot(started);
+      // The one error: no Query saved this Answer. The workspace carries the
+      // write and command grant, and the ref is a complete one in its scope.
+      expect(await (await settingsPost(started.base, 'checks/approve', started.token,
+        { scope: granted.scope, answerRef: answerRefForScope(granted.scope, 'missing'),
+          checks: [checkBody('c-missing', 'node --test missing')] })).json())
+        .toMatchObject({ status: 'rejected', code: 'not_found' });
+      expect(await readSettingsSnapshot(started)).toEqual(before);
+    } finally {
+      await started.host.close().catch(() => { /* already closed */ });
+    }
+  });
+
+  it('refuses the saved Answer\'s own checks in a workspace without the command grant (forbidden) and changes no setting', async () => {
+    const checksLocked = [checkBody('c-locked', 'node --test locked')];
+    const { started, opened: [locked] } = await approvalWorld('host-settings-checks-locked', [false],
+      [{ kind: 'text', text: planAnswer(checksLocked) }]);
+    try {
+      if (locked === undefined) throw Error('missing workspace fixture');
+      // A real Query in the locked scope saves the Answer that proposes `checksLocked`.
+      const answerLocked = await saveInitialPlanAnswer(started, locked.scope, 'locked');
+      const before = await readSettingsSnapshot(started);
+      // The one error: the workspace was opened without the command grant. The
+      // Answer is real, in this scope, and the checks are exactly its proposal.
+      expect(await (await settingsPost(started.base, 'checks/approve', started.token,
+        { scope: locked.scope, answerRef: answerLocked, checks: checksLocked })).json())
+        .toMatchObject({ status: 'rejected', code: 'forbidden' });
+      expect(await readSettingsSnapshot(started)).toEqual(before);
+    } finally {
+      await started.host.close().catch(() => { /* already closed */ });
+    }
   });
 });

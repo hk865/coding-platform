@@ -29,6 +29,7 @@ async function fixture() {
     kernel, bound: { configuration: { revision: 'local-r4c', provider: 'deepseek',
       model: 'local-continuity-fixture', baseUrl: 'http://127.0.0.1' }, client },
     root, databasePath, sessionId: SESSION_ID, input, budget,
+    taskBudget: { tokenBudget: null, deadline: null },
     meter: new ModelBudget(budget, async () => {}, {
       count: () => ({ tokens: 100, method: 'model_tokenizer', tokenizer: 'labelled-r4c-fixture' }),
     }),

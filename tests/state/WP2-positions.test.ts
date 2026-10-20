@@ -58,6 +58,7 @@ function sessionRecordOf(overrides: Partial<SessionRecord> = {}): SessionRecord 
     ref: SESSION_REF, revision: REVISION, kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-1' },
     lifecycle: 'active', health: 'available', role: ROLE, workspaceId: WORKSPACE, lastExecutionRef: null,
     occupancy: null, historyCursor: 'cursor-old', createdAt: '2026-10-01T00:00:00.000Z', archivedAt: null,
+    provenance: { schemaVersion: 1, kind: 'new' },
     ...overrides,
   };
 }
@@ -73,7 +74,7 @@ function heldRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
 function messageInput(overrides: Partial<Parameters<typeof createSessionMessageRecord>[0]> = {}) {
   return {
     ref: MESSAGE_REF, sender: WORK_RUN_SENDER, recipient: RECIPIENT, bodyRef: BODY, sourceRef: SOURCE,
-    createdAt: '2026-10-01T00:00:00.000Z', replyMode: null, intent: null, needsReply: true, waitAfterSend: false,
+    createdAt: '2026-10-01T00:00:00.000Z', intent: null, needsReply: true, waitAfterSend: false,
     ...overrides,
   };
 }

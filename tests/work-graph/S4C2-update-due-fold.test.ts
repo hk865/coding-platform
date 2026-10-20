@@ -20,7 +20,7 @@ const AFTER = '2026-10-02T00:00:00.000Z';
 const LATER = '2026-10-03T00:00:00.000Z';
 
 const PLAN: PlanRevisionSnapshot = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   ref: { aggregateType: 'PlanRevision', projectId: 's4c2', planId: 'plan-1' },
   revision: 1,
   goalRef: { aggregateType: 'Goal', projectId: 's4c2', goalId: 'g1' },

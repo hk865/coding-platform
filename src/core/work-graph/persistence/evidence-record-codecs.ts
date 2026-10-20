@@ -5,7 +5,7 @@
  *  - the immutable persisted `VerificationRoundSnapshot@1`;
  *  - the immutable `EvidenceSnapshot@1` (created once at revision 1);
  *  - the per-task `TaskEvidenceIndexSnapshot@1` (revision == evidence count);
- *  - the five discriminated round/Evidence replay events, each carrying the
+ *  - the discriminated round replay events, each carrying the
  *    ORIGINAL returned value of its operation so a receipt replay restores the
  *    original value/cursor instead of re-deriving it from the current Round.
  *
@@ -13,10 +13,10 @@
  * The validators are pure and closed: they never start I/O, never fake
  * `decoded`, and never accept arbitrary JSON.
  *
- * A.2 (spec §9.1, C5): a round may carry `chain` (shape-checked; legacy rounds
- * without it stay readable) and a check `incompleteCause`; four events
- * (interrupted, abandoned, report booked, reverified) and the gate-chain and
- * open-round lookups are registered with the original ones.
+ * A.2 (spec §9.1, C5): a round carries `chain` (shape-checked) and a check
+ * `incompleteCause`; four events (interrupted, abandoned, report booked,
+ * reverified) and the gate-chain and open-round lookups are registered with
+ * the original ones.
  */
 import type {
     DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
@@ -52,7 +52,6 @@ export const VERIFICATION_ROUND_OPENED_EVENT_TYPE = 'VerificationRoundOpened' as
 export const VERIFICATION_CHECK_BEGUN_EVENT_TYPE = 'VerificationCheckBegun' as const;
 export const VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE = 'VerificationCheckResultRecorded' as const;
 export const VERIFICATION_ROUND_FINALIZED_EVENT_TYPE = 'VerificationRoundFinalized' as const;
-export const EVIDENCE_ADMITTED_EVENT_TYPE = 'EvidenceAdmitted' as const;
 /** A.2 check reconciliation and successor-round events (spec §9.2; VR-04, VR-13, VD-6, VR-14). */
 export const VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE = 'VerificationCheckInterrupted' as const;
 export const VERIFICATION_CHECK_ABANDONED_EVENT_TYPE = 'VerificationCheckAbandoned' as const;
@@ -93,7 +92,6 @@ export type VerificationRoundEvent =
     | (EvidenceEventBase & { eventType: typeof VERIFICATION_CHECK_BEGUN_EVENT_TYPE; result: CheckExecutionTicket })
     | (EvidenceEventBase & { eventType: typeof VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE; result: RoundSnapshot })
     | (EvidenceEventBase & { eventType: typeof VERIFICATION_ROUND_FINALIZED_EVENT_TYPE; result: FinalizedChecks })
-    | (EvidenceEventBase & { eventType: typeof EVIDENCE_ADMITTED_EVENT_TYPE; result: EvidenceSnapshot })
     /** VR-04 (reconcile, with the reconciling `hostInstanceId`) and VR-13 (`ticket_invalid`, no Host instance). */
     | (EvidenceEventBase & {
         eventType: typeof VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE;
@@ -119,7 +117,6 @@ export const VERIFICATION_ROUND_EVENT_TYPES: readonly VerificationRoundEvent['ev
     VERIFICATION_CHECK_BEGUN_EVENT_TYPE,
     VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE,
     VERIFICATION_ROUND_FINALIZED_EVENT_TYPE,
-    EVIDENCE_ADMITTED_EVENT_TYPE,
     VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE,
     VERIFICATION_CHECK_ABANDONED_EVENT_TYPE,
     VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
@@ -321,9 +318,7 @@ function roundSnapshotProblem(value: unknown): string | null {
     if (value['finalizedAt'] !== undefined && value['status'] !== 'finalized') {
         return 'VerificationRoundSnapshot.finalizedAt is only allowed on a finalized round';
     }
-    // Absent = legacy slot-less chain root (ordinal 1); every A.2 round carries it.
-    if (value['chain'] !== undefined) return roundChainProblem(value['chain'], value['ref'] as UnknownRecord);
-    return null;
+    return roundChainProblem(value['chain'], value['ref'] as UnknownRecord);
 }
 
 function roundRecordProblem(record: EncodedRecord): string | null {
@@ -334,6 +329,11 @@ function roundRecordProblem(record: EncodedRecord): string | null {
     if (body === null) return 'VerificationRoundSnapshot is not a JSON object';
     const problem = roundSnapshotProblem(body);
     if (problem !== null) return problem;
+    // A finalized round always records its finalization instant: VR-07 writes
+    // `finalizedAt` on the stored record (the public DTO omits it).
+    if (body['status'] === 'finalized' && body['finalizedAt'] === undefined) {
+        return 'VerificationRoundSnapshot.finalizedAt is required on a finalized round';
+    }
     if (canonicalOf(body['ref']) !== record.refKey) return 'VerificationRound ref is not the outer canonical ref_key';
     if (body['revision'] !== record.revision) return 'VerificationRound revision disagrees with the encoded record';
     return null;
@@ -433,7 +433,7 @@ function indexRecordProblem(record: EncodedRecord): string | null {
     if (refProblem(body['ref'], 'TaskEvidenceIndex', ['projectId', 'goalId', 'taskId']) !== null) return 'TaskEvidenceIndex ref is incomplete';
     if (body['schemaVersion'] !== 1) return 'TaskEvidenceIndexSnapshot schemaVersion must be 1';
     if (!Array.isArray(body['evidenceIds']) || !body['evidenceIds'].every(nonEmpty)) return 'TaskEvidenceIndex evidenceIds must be non-empty strings';
-    if (!isSafeInteger(body['revision']) || body['revision'] !== body['evidenceIds'].length) {
+    if (!isSafeInteger(body['revision'], 1) || body['revision'] !== body['evidenceIds'].length) {
         return 'TaskEvidenceIndex revision must equal its evidence count';
     }
     if (body['revision'] !== record.revision) return 'TaskEvidenceIndex revision disagrees with the encoded record';
@@ -717,11 +717,9 @@ export const VERIFICATION_ROUND_BY_STATUS_LOOKUP = 'VerificationRoundByStatus' a
 
 /**
  * Slice 2A L4: the ordered reverify index (system/member rechecks by commit
- * position) and its plain-equality legacy group (`since` absent), both on the
- * SAME `VerificationRound` aggregate codec.
+ * position) on the `VerificationRound` aggregate codec.
  */
 export const S2A_ROUND_REVERIFY_LOOKUP = 's2a-round-reverify';
-export const S2A_ROUND_REVERIFY_LEGACY_LOOKUP = 's2a-round-reverify-legacy';
 export const S2A_ROUND_REVERIFY_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
     {
         name: S2A_ROUND_REVERIFY_LOOKUP,
@@ -729,23 +727,14 @@ export const S2A_ROUND_REVERIFY_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
         paths: ['ref.projectId', 'ref.workspaceId', 'chain.reverify.actorClass'],
         orderBy: { path: 'since' },
     },
-    {
-        name: S2A_ROUND_REVERIFY_LEGACY_LOOKUP,
-        aggregateType: 'VerificationRound',
-        paths: ['ref.projectId', 'ref.workspaceId', 'chain.reverify.actorClass', 'since'],
-    },
 ];
 
 /**
- * Slice 2B L14: the four round indexes by Goal. `since` orders the calendar's
- * round starts; `finalizedAt` (L14 end) orders the finalized rounds; the two
- * legacy groups read a field the record never carried as `null`, exactly like
- * the 2A L4 old-style groups.
+ * Slice 2B L14: the two round indexes by Goal. `since` orders the calendar's
+ * round starts; `finalizedAt` (L14 end) orders the finalized rounds.
  */
 export const S2B_ROUND_BY_GOAL_LOOKUP = 's2b-round-by-goal';
-export const S2B_ROUND_BY_GOAL_LEGACY_LOOKUP = 's2b-round-by-goal-legacy';
 export const S2B_ROUND_BY_GOAL_FINALIZED_LOOKUP = 's2b-round-by-goal-finalized';
-export const S2B_ROUND_BY_GOAL_UNFINALIZED_LOOKUP = 's2b-round-by-goal-unfinalized';
 export const S2B_ROUND_BY_GOAL_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
     {
         name: S2B_ROUND_BY_GOAL_LOOKUP,
@@ -754,20 +743,10 @@ export const S2B_ROUND_BY_GOAL_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
         orderBy: { path: 'since' },
     },
     {
-        name: S2B_ROUND_BY_GOAL_LEGACY_LOOKUP,
-        aggregateType: 'VerificationRound',
-        paths: ['ref.projectId', 'ref.workspaceId', 'ref.goalId', 'since'],
-    },
-    {
         name: S2B_ROUND_BY_GOAL_FINALIZED_LOOKUP,
         aggregateType: 'VerificationRound',
         paths: ['ref.projectId', 'ref.workspaceId', 'ref.goalId'],
         orderBy: { path: 'finalizedAt' },
-    },
-    {
-        name: S2B_ROUND_BY_GOAL_UNFINALIZED_LOOKUP,
-        aggregateType: 'VerificationRound',
-        paths: ['ref.projectId', 'ref.workspaceId', 'ref.goalId', 'finalizedAt'],
     },
 ];
 

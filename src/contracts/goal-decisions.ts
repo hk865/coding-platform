@@ -47,9 +47,7 @@ export type NoticeCategoryV1 =
   | 'member_notice' | 'second_expiry' | 'handoff' | 'note_review'
   | 'undelivered_reply' | 'automatic_rework' | 'continuation';
 
-export type NoticePositionV1 =
-  | { kind: 'legacy'; occurredAt: string; itemKey: string }
-  | { kind: 'commit'; cursor: CommitCursor; itemKey: string };
+export type NoticePositionV1 = { kind: 'commit'; cursor: CommitCursor; itemKey: string };
 
 export type WorkspaceDecisionSettingsV1 = {
   schemaVersion: 1;

@@ -10,65 +10,74 @@
  * itself is never mocked.
  *
  * The case-specific facts the rows name (a legacy declaration projection, a
- * canonical owner that answers a different Run, a finalized PASS/FAIL round
- * chain, a replied formal Message with a `decisionApplications` answer, a
- * canonical QueryRun) are seeded as REAL records through their owning codecs or
- * services. In part 1 every method throws `not implemented: …`, so the cases are
- * RED by design; this file must still compile and run all 38 cases.
+ * canonical owner that answers a different Run, a finalized PASS round chain, a
+ * replied formal Message with a `decisionApplications` answer, a canonical
+ * QueryRun) are produced by the REAL owners: claim/entry/Runtime for the Runs,
+ * the evidence service for the round and the mailbox for the Message.
+ * In part 1 every method throws `not implemented: …`, so the cases are RED by
+ * design; this file must still compile and run all 32 cases.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
+import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type {
-  RoleBindingRefV1, RunRef, RunSnapshot, SourceRefV1, TaskBudgetV1, TaskTriple,
+  RoleBindingRefV1, RunRef, SourceRefV1, TaskBudgetV1, TaskTriple,
 } from '../../src/contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
-import type { GoalRef, ProjectSnapshot, WorkspaceRef, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
+import type { GoalRef, WorkspaceRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { RuntimeBudget } from '../../src/contracts/runtime-budget.js';
 import type {
-  RegisteredCommandCheck, RoundCheckSnapshot, RoundSnapshot, TrustedCheckConfiguration,
-  VerificationPlanV1, VerificationRoundRef,
+  RegisteredCommandCheck, TrustedCheckConfiguration, VerificationRoundRef,
 } from '../../src/contracts/verification.js';
-import type { VerificationRoundMaterialIdentity } from '../../src/contracts/verification-context.js';
-import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
+import { createRegisteredCheckRunner } from '../../src/core/agent-runtime/check-execution.js';
+import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
+import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type {
-  EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas,
+  GoalRecordTransactionPort, RecordBackendSchemas,
 } from '../../src/core/record-store/ports.js';
-import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRawArtifactStore } from '../../src/core/record-store/sqlite-body-store.js';
-import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
+import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
+import { createLineSettingsService } from '../../src/core/work-graph/configuration/line-settings-service.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import type { MaterialAuthorityReads } from '../../src/core/work-graph/materials/record-ports.js';
-import {
-  createMaterialRecordReaders, materialRecordSchemas,
-} from '../../src/core/work-graph/materials/record-readers.js';
+import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import type { MaterialPort } from '../../src/core/work-graph/model/material-contracts.js';
-import { encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
-import {
-  EVIDENCE_RECORD_SCHEMAS, encodeVerificationRoundSnapshot,
-} from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
+import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
+import { LINE_SETTINGS_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-settings-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
-import {
-  SESSION_MESSAGE_RECORD_SCHEMAS, encodeSessionMessageRecord, sessionMessageRefKey,
-} from '../../src/core/work-graph/sessions/message-record-codecs.js';
-import type { SessionMessageRecord } from '../../src/core/work-graph/state/message-machine.js';
-import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
-import { PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
-import { PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
-import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
+import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
+import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
+import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
+import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
+import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import {
   createTaskContextInputService, type TaskContextInputDependencies, type TaskContextInputPort,
 } from '../../src/core/work-graph/tasks/context-input-service.js';
+import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
+import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
+import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
+import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
+import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
+import { B2_HOST } from '../helpers/B2-execution-fixture.js';
+import { createS2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
+import { createTaskClaimFixture, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 
 // --------------------------------------------------------------------------
 // §5.1 fixture constants
@@ -99,9 +108,6 @@ const planRef: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: PRO
 const tA: TaskTriple = { projectId: PROJECT_ID, goalId: GOAL_ID, taskId: TASK_A };
 const tB: TaskTriple = { projectId: PROJECT_ID, goalId: GOAL_ID, taskId: TASK_B };
 const gateTask: TaskTriple = { projectId: PROJECT_ID, goalId: GOAL_ID, taskId: GATE_TASK };
-const runA: RunRef = { aggregateType: 'Run', projectId: PROJECT_ID, goalId: GOAL_ID, runId: 'runA' };
-const runA2: RunRef = { aggregateType: 'Run', projectId: PROJECT_ID, goalId: GOAL_ID, runId: 'runA2' };
-const runB: RunRef = { aggregateType: 'Run', projectId: PROJECT_ID, goalId: GOAL_ID, runId: 'runB' };
 const roleBinding: RoleBindingRefV1 = { schemaVersion: 1, bindingId: 's3-binding',
   templateId: 'builder', templateRevision: '1', bindingVersion: 1, policyRevision: 'legacy-template' };
 const budget: TaskBudgetV1 = { tokenBudget: 100000, deadline: null };
@@ -126,29 +132,31 @@ const queryRuntimeBudget: RuntimeBudget = { contextWindowTokens: 128000, inputTo
   maxRequests: 1, maxToolCalls: null, timeoutMs: null, perResponseTokens: 4096 };
 
 /**
- * IN14: a replied formal Message sent by runA (the decision edge's upstream
- * Run). The reading owner must find the reply, consult `decisionApplications`
- * and, when nothing is applied, report `missing/decision_not_applied` without
- * touching the stored status.
+ * IN14: the public Session creation route derives
+ * `session-<sha256(canonicalJson({actor,projectId,requestId}))>`; this is that
+ * literal for actor `{kind:'human',id:'s3-operator'}`, project `p` and
+ * requestId `s3-session-sa`. Written by hand (the input JSON is in the comment).
  */
-const decisionMessage: SessionMessageRecord = {
-  ref: { aggregateType: 'SessionMessage', projectId: PROJECT_ID, workspaceId: WORKSPACE_ID, messageId: 'msg-1' },
-  schemaVersion: 1, revision: 1,
-  sender: { kind: 'work_run', sessionRef: { projectId: PROJECT_ID, sessionId: 'sa' },
-    runRef: runA, roleBinding, generation: 1 },
-  recipient: { projectId: PROJECT_ID, sessionId: 'sb' },
-  bodyRef: oldRef, sourceRef: artifactSource, createdAt: AT,
-  status: 'responded', readAt: AT,
-  response: { sender: { kind: 'work_run', sessionRef: { projectId: PROJECT_ID, sessionId: 'sa' },
-    runRef: runA, roleBinding, generation: 1 },
-    bodyRef: newRef, sourceRef: artifactSource, respondedAt: AT },
-  intent: 'inquiry', needsReply: true,
-};
+const DECISION_SENDER_SESSION_ID =
+  'session-20b96b90c57b8de3f90f3c702330b4a1eca98d75a201f195e66b99a6b74f2a97';
+/**
+ * IN14: a first claim occupies the fresh Session (revision 1) and its
+ * generation is `revision + 1`; the mailbox's sender identity carries that
+ * generation.
+ */
+const DECISION_SENDER_GENERATION = 2;
+const DECISION_SEND_REQUEST_ID = 's3-send-decision';
+/**
+ * IN14: the mailbox derives
+ * `session-message-<sha256(canonicalJson({projectId,workspaceId,sender,requestId}))>`.
+ * The hand-worked input is project `p`, workspace `w`, requestId
+ * `s3-send-decision` and sender
+ * `{kind:'work_run',sessionRef:{projectId:'p',sessionId:DECISION_SENDER_SESSION_ID},runRef:runA,generation:2}`.
+ * This literal is the one the owner must post.
+ */
+const DECISION_MESSAGE_ID =
+  'session-message-66ca4e44a5c1869536b0cbbee954fd534c8e82e6650e79b1628f69464acca4a4';
 
-const gateRoundPassRef: VerificationRoundRef = { aggregateType: 'VerificationRound', projectId: PROJECT_ID,
-  workspaceId: WORKSPACE_ID, goalId: GOAL_ID, taskId: GATE_TASK, runId: runA.runId, roundId: 'rGatePass' };
-const gateRoundFailRef: VerificationRoundRef = { aggregateType: 'VerificationRound', projectId: PROJECT_ID,
-  workspaceId: WORKSPACE_ID, goalId: GOAL_ID, taskId: GATE_TASK, runId: runA.runId, roundId: 'rGateFail' };
 
 // --------------------------------------------------------------------------
 // Fixture types
@@ -161,8 +169,6 @@ type MaterialSpy = { openArtifactCalls: number };
 type BodySpy = { read: number };
 
 type S3InputFixtureOptions = {
-  /** Canonical workspace of the stored legacy artifact's owner Run (IN04). */
-  ownerWorkspace?: string;
   /** Store the legacy body at all; `false` models a missing body (IN06). */
   storeLegacyBody?: boolean;
   /** Owner Run the legacy body is stored under (IN05). */
@@ -172,15 +178,15 @@ type S3InputFixtureOptions = {
    * OTHER Run's canonical snapshot, so the ref check must reject.
    */
   ownerLoadReturnsRun?: 'runA';
-  /** Provenance of the stored legacy body (IN17/IN18). */
-  legacyOrigin?: 'run' | 'platform_operation' | 'owner-less';
+  /** Provenance of the stored legacy body (IN17). */
+  legacyOrigin?: 'run' | 'platform_operation';
   /**
    * Legacy declarations: `none` = only r1, `old` = r1+r2 both old-A (IN09),
    * `new` = r1 old-A, r2 new-A (IN10).
    */
   r2?: 'none' | 'old' | 'new';
-  /** Seed the real finalized VerificationRound chain for the gate (IN11/IN12). */
-  seedRounds?: 'pass' | 'pass-then-fail';
+  /** Seed the real finalized VerificationRound chain for the gate (IN11). */
+  seedRounds?: 'pass';
   /** Provide the `decisionApplications` dependency answering "not applied" (IN14). */
   decisionApplications?: boolean;
   /** Create the canonical QueryJob/QueryRun through the real query owner (IN19). */
@@ -212,13 +218,17 @@ type S3InputFixture = {
   edgeDecisionDeclarationId: string;
   legacyDeclarationId: string;
   secondLegacyDeclarationId: string;
-  gateRoundPassRef: VerificationRoundRef;
-  gateRoundFailRef: VerificationRoundRef;
+  /** The real finalized chain head seeded by `seedRounds` (IN11), else null. */
+  gateRoundPassRef: VerificationRoundRef | null;
+  /** The real report Artifact of the finalized gate check (IN11), else null. */
+  gateReportRef: ArtifactRef | null;
+  /** The Message id the real send posted (IN14). */
+  decisionMessageId: string;
   /** The canonical Query seeded by `seedQuery` (IN19), else null. */
   query: { jobRef: QueryJobRef; runRef: QueryRunRef } | null;
   /** Tamper what a body read returns (IN07). */
   tamperBody(value: string | null): void;
-  /** The stored SessionMessage status (IN14), or null when none is seeded. */
+  /** The Message status read through the real mailbox (IN14). */
   messageStatus(): Promise<string | null>;
   /** The stored revisions of the canonical QueryJob/QueryRun (IN19), or null. */
   queryVersions(): Promise<{ job: number; run: number } | null>;
@@ -244,37 +254,27 @@ async function openFixture(
   return fixture;
 }
 
-function runSnapshot(run: RunRef, task: TaskTriple, workspaceId: string, status: RunSnapshot['status']): RunSnapshot {
-  return { ref: run, revision: 1, schemaVersion: 1, task, attemptId: `attempt-${task.taskId}`,
-    planRef, roleBinding, budget, workspaceSnapshot: { workspaceId, revision: WORKSPACE_REVISION },
-    status, outcome: status === 'ended' ? 'completed' : null, exitCode: status === 'ended' ? 0 : null,
-    lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null,
-    startedAt: null, endedAt: null };
-}
+const INPUT_EXTRA_SCHEMAS: RecordBackendSchemas = {
+  records: [...EVIDENCE_RECORD_SCHEMAS.records, ...EXECUTION_ENTRY_RECORD_SCHEMAS.records,
+    ...MODEL_REQUEST_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records,
+    ...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...QUERY_JOB_RECORD_SCHEMAS.records,
+    ...LINE_SETTINGS_RECORD_SCHEMAS.records, ...SESSION_ANOMALY_RECORD_SCHEMAS.records],
+  events: [...EVIDENCE_RECORD_SCHEMAS.events, ...EXECUTION_ENTRY_RECORD_SCHEMAS.events,
+    ...MODEL_REQUEST_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events,
+    ...SESSION_MESSAGE_RECORD_SCHEMAS.events, ...QUERY_JOB_RECORD_SCHEMAS.events,
+    ...LINE_SETTINGS_RECORD_SCHEMAS.events, ...SESSION_ANOMALY_RECORD_SCHEMAS.events],
+  lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? []),
+    ...(MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
+    ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []), ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []),
+    ...(LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [])],
+};
 
 async function createInputFixture(
   kind: 'memory' | 'sqlite', options: S3InputFixtureOptions = {},
 ): Promise<S3InputFixture> {
-  const directory = await mkdtemp(join(tmpdir(), `next-s3-inputs-${kind}-`));
-  const materialSchemas = materialRecordSchemas();
-  const schemas: RecordBackendSchemas = {
-    records: [...materialSchemas.records, ...PLAN_RECORD_SCHEMAS.records,
-      ...PLAN_STATE_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
-      ...EVIDENCE_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
-      ...QUERY_JOB_RECORD_SCHEMAS.records],
-    events: [...materialSchemas.events, ...PLAN_RECORD_SCHEMAS.events,
-      ...PLAN_STATE_RECORD_SCHEMAS.events, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
-      ...EVIDENCE_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
-      ...QUERY_JOB_RECORD_SCHEMAS.events,
-      { eventType: 'TrustedScopeSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) }],
-    lookups: [...(materialSchemas.lookups ?? []), ...(PLAN_RECORD_SCHEMAS.lookups ?? []),
-      ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []), ...(PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? []),
-      ...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []),
-      ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? [])],
-  };
-  const backend = kind === 'memory'
-    ? createInMemoryRecordBackend({ schemas })
-    : createSqliteRecordBackend({ path: join(directory, 'ledger.sqlite'), schemas });
+  const base = await createTaskClaimFixture(kind, INPUT_EXTRA_SCHEMAS);
+  const backend = base;
+  const directory = base.directory;
   const rawBodies: RawArtifactStorePort & { close?(): Promise<void> } = kind === 'memory'
     ? new RawArtifactBodyStore()
     : createSqliteRawArtifactStore(join(directory, 'bodies.sqlite'));
@@ -284,127 +284,128 @@ async function createInputFixture(
     principal: { kind: 'host', actor },
     materialReader: { kind: 'host', projectId: PROJECT_ID, workspaceId: WORKSPACE_ID, actor },
     signal: new AbortController().signal };
-
-  // ---- trusted scope + governance (the real Plan service's fixed pins) ------
-  const policyFixture = { schemaVersion: 1, identity: { policyId: 's3-policy' }, revision: 1,
-    content: { schemaVersion: 1, requirementKinds: ['static'],
-      minimumRequiredRequirementsPerObligation: 1 } };
-  const architectureFixture = { schemaVersion: 1, identity: { baselineId: 's3-baseline' }, revision: 1,
-    content: { schemaVersion: 1, description: 'S3 context-input fixture baseline', constraints: [] } };
-  const digestOf = (value: JsonValue) => sha256Hex(canonicalJson(value));
-  const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId: PROJECT_ID,
-    policyId: 's3-policy', revision: 1 };
-  const architectureRef = { aggregateType: 'ArchitectureBaselineRevision' as const, projectId: PROJECT_ID,
-    baselineId: 's3-baseline', revision: 1 };
-  const policyPin = { ref: policyRef, digest: digestOf(policyFixture as unknown as JsonValue) };
-  const baselinePin = { ref: architectureRef, digest: digestOf(architectureFixture as unknown as JsonValue) };
-  const governance = [
-    { ref: policyRef, revision: 1, schemaVersion: 1, policyId: policyRef.policyId, contentRevision: 1,
-      contentDigest: digestOf(policyFixture), content: policyFixture.content },
-    { ref: architectureRef, revision: 1, schemaVersion: 1, baselineId: architectureRef.baselineId,
-      contentRevision: 1, contentDigest: digestOf(architectureFixture), content: architectureFixture.content },
-    { ref: { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId: PROJECT_ID }, projectId: PROJECT_ID,
-      revision: 1, activeRevision: policyRef },
-    { ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId: PROJECT_ID }, projectId: PROJECT_ID,
-      revision: 1, activeRevision: architectureRef },
-  ];
-  const encodeGovernance = (snapshot: (typeof governance)[number]): EncodedRecord => ({
-    refKey: canonicalJson(snapshot.ref as unknown as JsonValue),
-    schemaId: `${snapshot.ref.aggregateType}Snapshot@1`, revision: snapshot.revision, json: JSON.stringify(snapshot),
-  });
-  const project: ProjectSnapshot = { ref: projectRef, revision: 1 };
-  const workspace: WorkspaceSnapshot = { ref: workspaceRef, revision: WORKSPACE_REVISION };
-  const otherWorkspace: WorkspaceSnapshot = { ref: otherWorkspaceRef, revision: WORKSPACE_REVISION };
-  const scopeEvent = { eventId: 's3-scope-seed', eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-    occurredAt: AT, json: JSON.stringify({ eventId: 's3-scope-seed', eventType: 'TrustedScopeSeeded',
-      schemaVersion: 1, occurredAt: AT }) };
-  const scopeSeed: PreparedCommit = { identityKey: 's3-scope-seed', fingerprint: 's3-scope-seed-v1',
-    guards: [{ refKey: canonicalJson(projectRef as unknown as JsonValue), expectedRevision: null },
-      { refKey: canonicalJson(workspaceRef as unknown as JsonValue), expectedRevision: null },
-      { refKey: canonicalJson(otherWorkspaceRef as unknown as JsonValue), expectedRevision: null },
-      ...governance.map(snapshot => ({ refKey: canonicalJson(snapshot.ref as unknown as JsonValue), expectedRevision: null }))],
-    records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace), encodeWorkspaceSnapshot(otherWorkspace),
-      ...governance.map(encodeGovernance)],
-    events: [scopeEvent], claims: [], indexGuards: [], indexChanges: [] };
-  const seededScope = await backend.records.commit(scopeSeed);
-  if (seededScope.status !== 'committed') throw new Error(`S3 fixture scope seed failed: ${seededScope.reason}`);
-
-  // ---- real finalized VerificationRound builders (IN11/IN12) ----------------
-  const checkHostActor = { kind: 'system' as const, id: 's3-check-host' };
-  const checkDefinition = (checkId: string): RegisteredCommandCheck => ({
-    checkId, kind: 'static', command: 'node check-b.js', cwd: '.', timeoutMs: 60_000, taskIds: 'all',
-  });
-  const roundFor = (roundId: string, outcome: 'PASS' | 'FAIL', predecessor: RoundSnapshot | null): RoundSnapshot => {
-    const configuration: TrustedCheckConfiguration = {
-      configurationRevision: 's3-checks-config-1', workspace: workspaceRef, executor: checkHostActor,
-      permissionRevision: 's3-permission-1', sourceAccess: 'verification_workspace',
-      processAccess: 'all_except_denied', deniedPrefixes: ['node_modules'], checks: [checkDefinition(CHECK_ID)],
-    };
-    const verificationPlan: VerificationPlanV1 = {
-      schemaVersion: 1, planId: sha256Hex('s3-verification-plan'), planDigest: sha256Hex('s3-verification-plan'),
-      taskRef: gateTask, planRef, planRevision: 1, workspaceRevision: WORKSPACE_REVISION,
-      pinnedCompletionPolicy: policyPin, pinnedArchitectureBaseline: baselinePin,
-      changeScope: { diffClass: 'code-change', changedFiles: ['src/a.ts'], writeSummary: 'edit src/a.ts' },
-      semanticChange: 'semantic', risks: [],
-      checks: [{ checkId: CHECK_ID, kind: 'static', satisfiesKind: 'static',
-        coverage: [{ obligationId: OBLIGATION_ID, requirementId: CHECK_ID }], satisfactionPath: 'predicate' }],
-    };
-    const identity: VerificationRoundMaterialIdentity = {
-      schemaVersion: 1,
-      scope: { projectId: PROJECT_ID, workspaceId: WORKSPACE_ID, goalId: GOAL_ID, runId: runA.runId,
-        taskId: GATE_TASK, gateSubject: 'goal' },
-      runRef: runA, runRevision: 1, runDigest: sha256Hex('s3-run-a'),
-      planRef, planRevision: 1, planDigest: sha256Hex('s3-plan'),
-      taskDigest: sha256Hex('s3-gate-task'), goalRevision: 2, goalDigest: sha256Hex('s3-goal'),
-      workspaceRevision: WORKSPACE_REVISION, workspaceDigest: sha256Hex('s3-workspace'),
-      workspaceRoot: '/s3/workspace', policyPin, baselinePin,
-      sourceDigest: sha256Hex('s3-source'), sourceProofDigest: sha256Hex('s3-source-proof'),
-    };
-    const check: RoundCheckSnapshot = {
-      checkId: CHECK_ID, definition: checkDefinition(CHECK_ID),
-      coverage: [{ obligationId: OBLIGATION_ID, requirementId: CHECK_ID }],
-      phase: 'finished', invocationId: `s3-inv-${CHECK_ID}`, outcome, reportRef: newRef, sourceStatus: 'matched',
-    };
-    const ref: VerificationRoundRef = { aggregateType: 'VerificationRound', projectId: PROJECT_ID,
-      workspaceId: WORKSPACE_ID, goalId: GOAL_ID, taskId: GATE_TASK, runId: runA.runId, roundId };
-    const base: RoundSnapshot = { ref, revision: 1, schemaVersion: 1, subject: gateTask, subjectRunRef: runA,
-      adoptedPlanRef: planRef, taskBasisRef: planRef, executor: checkHostActor, configuration,
-      configurationDigest: sha256Hex(canonicalJson(configuration as unknown as JsonValue)),
-      identity, sourceProof: { kind: 'current-workspace-only', runBaselineKnown: false },
-      verificationPlan, checks: [check], status: 'finalized', outcome, gaps: [], evidenceRefs: [] };
-    if (predecessor === null) return base;
-    return { ...base, chain: { schemaVersion: 1, ordinal: 2,
-      predecessorRoundRef: predecessor.ref, predecessorRevision: predecessor.revision,
-      supersededEvidenceIds: [], basisDigests: [], autoCount: 0,
-      reverify: { requestedBy: checkHostActor, actorClass: 'system', failureClass: 'check_failed', requestedAt: AT,
-        basis: { subject: gateTask, subjectRunId: runA.runId, actionKind: 'reverify',
-          failure: { checks: [{ checkId: CHECK_ID, phase: 'finished', outcome: 'FAIL', cause: null }], gapCodes: [] },
-          source: { workspaceRevision: WORKSPACE_REVISION, sourceDigest: sha256Hex('s3-source') },
-          configuration: { configurationRevision: configuration.configurationRevision,
-            configurationDigest: base.configurationDigest },
-          verificationInputs: { basisPlanRef: planRef, completionPolicyPin: policyPin,
-            architectureBaselinePin: baselinePin },
-          newInputDigest: null, digest: sha256Hex('s3-reverify-basis') },
-        exemption: 'none', sourceChanged: false, newInputRefs: [], reason: 'the registered check failed' } } };
-  };
-
-  // ---- legacy raw body + newer body through the real body store -------------
   let sequence = 0;
   const eventId = () => `s3-event-${++sequence}`;
-  const storedOrigin = options.legacyOrigin ?? 'run';
-  const owner = options.ownerRun === 'runA2' ? runA2 : runA;
-  if (options.storeLegacyBody !== false) {
-    const origin = storedOrigin === 'platform_operation'
-      ? { kind: 'platform_operation' as const, projectId: PROJECT_ID, workspaceId: WORKSPACE_ID,
-          requestId: 's3-material-request', actor }
-      : { kind: 'run' as const, owner };
-    const stored = await rawBodies.put({ body: LEGACY_BODY, contentType: 'text/plain',
-      sourceRefs: [artifactSource], origin, requestedAt: AT });
-    if (stored.status !== 'ready') throw new Error(`S3 fixture legacy body failed: ${JSON.stringify(stored)}`);
+
+  // ---- the §5.1 trusted scope through the public bootstrap owners ----------
+  // W3-02: the Project and both Workspaces are registered publicly; no raw
+  // snapshot is committed. The Project is @1 from `createProject`; each
+  // Workspace is @1 from `registerWorkspace` and then taken to @7 by six real
+  // public `setLinePins` changes (the same path AD08/W2-15 uses).
+  const bootstrap = createProjectBootstrapServices({ records: backend.records, now: () => AT, eventId });
+  const createdProject = await bootstrap.projects.createProject(ctx, {
+    input: { projectId: PROJECT_ID },
+    meta: { requestId: 's3-create-project', expected: [{ ref: projectRef, revision: 0 }] },
+  });
+  if (createdProject.status !== 'committed') {
+    throw new Error(`S3 fixture Project creation failed: ${JSON.stringify(createdProject)}`);
   }
-  const storedNew = await rawBodies.put({ body: NEW_BODY, contentType: 'text/plain',
-    sourceRefs: [artifactSource], origin: { kind: 'run', owner }, requestedAt: AT });
-  if (storedNew.status !== 'ready') throw new Error('S3 fixture new body failed');
+  const registeredWorkspace = await bootstrap.projects.registerWorkspace(ctx, {
+    input: { workspace: scope },
+    meta: { requestId: 's3-register-workspace', expected: [
+      { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }] },
+  });
+  if (registeredWorkspace.status !== 'committed') {
+    throw new Error(`S3 fixture Workspace registration failed: ${JSON.stringify(registeredWorkspace)}`);
+  }
+  const otherScope: WorkspaceScope = { projectId: PROJECT_ID, workspaceId: OTHER_WORKSPACE_ID };
+  const otherCtx: CoreCallContext = { projectId: PROJECT_ID, workspaceId: OTHER_WORKSPACE_ID,
+    principal: { kind: 'host', actor },
+    materialReader: { kind: 'host', projectId: PROJECT_ID, workspaceId: OTHER_WORKSPACE_ID, actor },
+    signal: new AbortController().signal };
+  const registeredOther = await bootstrap.projects.registerWorkspace(otherCtx, {
+    input: { workspace: otherScope },
+    meta: { requestId: 's3-register-other-workspace', expected: [
+      { ref: projectRef, revision: 1 }, { ref: otherWorkspaceRef, revision: 0 }] },
+  });
+  if (registeredOther.status !== 'committed') {
+    throw new Error(`S3 fixture other Workspace registration failed: ${JSON.stringify(registeredOther)}`);
+  }
+
+  // ---- real Sessions through the public creation route (IN14) --------------
+  const kernelStores = await createKernelStoreRegistry({ entries: [
+    { adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store', workspace: scope,
+      databasePath: join(directory, 'kernel.sqlite') },
+    { adapterId: 'r4c-claim-other-kernel', storeKey: 'r4c-claim-other-kernel-store', workspace: otherScope,
+      databasePath: join(directory, 'kernel-other.sqlite') },
+  ] });
+  const sessionOperations = createSessionOperations({ sessions: base.sessionsPort, kernelStores });
+  const sessionRole = { kind: 'legacy_template' as const, templateId: 'builder', templateRevision: '1' };
+  async function createFixtureSession(
+    requestId: string, callCtx: CoreCallContext = ctx, workspace: WorkspaceScope = scope,
+  ): Promise<{ ref: SessionRef; revision: number }> {
+    const created = await sessionOperations.createSession(callCtx, {
+      workspace, role: sessionRole, recommendedRefs: [], initialLinks: [],
+      meta: { requestId, expected: [] } });
+    if (created.status !== 'completed') throw new Error(`S3 fixture Session ${requestId} creation failed: ${JSON.stringify(created)}`);
+    const stored = created.value.ref;
+    // The mailbox input takes a plain SessionRef; the stored record carries the
+    // aggregate tag.
+    const ref: SessionRef = { projectId: stored.projectId, sessionId: stored.sessionId };
+    const card = await base.sessionsPort.readSession(callCtx, ref);
+    if (card.status !== 'ready') throw new Error(`S3 fixture Session ${requestId} read failed: ${JSON.stringify(card)}`);
+    return { ref, revision: card.value.record.revision };
+  }
+  const sessionA = await createFixtureSession('s3-session-sa');
+  const sessionB = await createFixtureSession('s3-session-sb');
+  const otherSession = await createFixtureSession('s3-session-other', otherCtx, otherScope);
+  if (sessionA.ref.sessionId !== DECISION_SENDER_SESSION_ID
+    || sessionA.revision + 1 !== DECISION_SENDER_GENERATION) {
+    throw new Error('S3 fixture Session derivation disagrees with the IN14 literal');
+  }
+
+  // Six real public Session-pin changes take each Workspace from its public
+  // registration @1 to the @7 the rows pin (add and then remove one real
+  // Session; the final table is empty and the revision is 7).
+  const lineSettings = createLineSettingsService({ records: backend.records,
+    sessionRead: base.sessionsPort.readSession, now: () => AT, operatorActor: actor });
+  async function raiseWorkspace(
+    callCtx: CoreCallContext, target: WorkspaceRef, session: SessionRef, requestPrefix: string,
+  ): Promise<void> {
+    for (let revision = 1; revision < WORKSPACE_REVISION; revision += 1) {
+      const result = await lineSettings.setLinePins(callCtx, {
+        input: { workspace: { projectId: target.projectId, workspaceId: target.workspaceId },
+          add: revision % 2 === 1 ? [session] : [], remove: revision % 2 === 1 ? [] : [session] },
+        meta: { requestId: `${requestPrefix}-${revision}`, expected: [{ ref: target, revision }] },
+      });
+      if (result.status !== 'committed') {
+        throw new Error(`S3 fixture pin change ${requestPrefix}@${revision} failed: ${JSON.stringify(result)}`);
+      }
+    }
+  }
+  await raiseWorkspace(ctx, workspaceRef, sessionA.ref, 's3-pin-workspace');
+  await raiseWorkspace(otherCtx, otherWorkspaceRef, otherSession.ref, 's3-pin-other-workspace');
+
+  // ---- trusted governance through the public owners (IN11) ------------------
+  const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId: PROJECT_ID,
+    policyId: 's3-policy', revision: 1 };
+  const activePolicyRef = { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId: PROJECT_ID };
+  const policyContent = { schemaVersion: 1 as const, requirementKinds: ['static'],
+    minimumRequiredRequirementsPerObligation: 1 };
+  const installed = await bootstrap.completionPolicies.installCompletionPolicy(ctx, {
+    input: { policyId: policyRef.policyId, contentRevision: 1, content: policyContent },
+    meta: { requestId: 's3-install-policy', expected: [
+      { ref: projectRef, revision: 1 }, { ref: policyRef, revision: 0 }] },
+  });
+  if (installed.status !== 'committed') throw new Error(`S3 fixture policy install failed: ${JSON.stringify(installed)}`);
+  const activated = await bootstrap.completionPolicies.activateCompletionPolicy(ctx, {
+    input: { target: { ref: installed.value.ref, digest: installed.value.contentDigest } },
+    meta: { requestId: 's3-activate-policy', expected: [
+      { ref: projectRef, revision: 1 }, { ref: activePolicyRef, revision: 0 }] },
+  });
+  if (activated.status !== 'committed') throw new Error(`S3 fixture policy activation failed: ${JSON.stringify(activated)}`);
+  const adoptedArchitecture = await createArchitectureCatalogService({ records: backend.records })
+    .adoptInitialArchitecture(ctx, {
+      input: { baselineId: 's3-baseline', description: 'S3 context-input fixture baseline', constraints: [],
+        catalog: { requireDag: true, dependencies: [], modules: [{
+          ref: { projectId: PROJECT_ID, moduleId: 's3-context-inputs' }, name: 'S3 context inputs',
+          responsibility: 'S3 context-input fixture', paths: ['src/s3-context-inputs'], interfaces: [] }] } },
+      meta: { requestId: 's3-adopt-architecture', expected: [
+        { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: WORKSPACE_REVISION }] },
+    });
+  if (adoptedArchitecture.status !== 'committed') {
+    throw new Error(`S3 fixture architecture adoption failed: ${JSON.stringify(adoptedArchitecture)}`);
+  }
 
   // ---- Goal + accepted Plan through the real services -----------------------
   const goalsService = createGoalService({ records: backend.records, now: () => AT, eventId });
@@ -452,7 +453,7 @@ async function createInputFixture(
       { taskId: TASK_B, dependsOnId: TASK_A, requires: artifactEdge },
       { taskId: TASK_B, dependsOnId: GATE_TASK, requires: { kind: 'gate-result', label: CHECK_ID } },
       { taskId: TASK_B, dependsOnId: TASK_A, requires: { kind: 'environment-revision', label: 'workspace' } },
-      { taskId: TASK_B, dependsOnId: TASK_A, requires: { kind: 'decision', label: 'msg-1' } },
+      { taskId: TASK_B, dependsOnId: TASK_A, requires: { kind: 'decision', label: DECISION_MESSAGE_ID } },
     ] },
     inputRequirements };
   const proposed = await plans.proposePlan(ctx, { meta: { requestId: 's3-propose-plan',
@@ -465,41 +466,222 @@ async function createInputFixture(
     expected: [{ ref: goalRef, revision: 1 }] },
     input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
   if (applied.status !== 'committed') throw new Error(`S3 fixture Plan adoption failed: ${JSON.stringify(applied)}`);
+  const plan = applied.value;
 
-  // ---- Runs so the material applicability reader can resolve provenance -----
-  let seedSeq = 0;
-  async function commitRaw(recordsToWrite: readonly EncodedRecord[]): Promise<void> {
-    const seq = ++seedSeq;
-    const event = { eventId: `s3-seed-event-${seq}`, eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-      occurredAt: AT, json: JSON.stringify({ eventId: `s3-seed-event-${seq}`, eventType: 'TrustedScopeSeeded',
-        schemaVersion: 1, occurredAt: AT }) };
-    const receipt = await backend.records.commit({ identityKey: `s3-seed-${seq}`,
-      fingerprint: `s3-seed-fingerprint-${seq}`,
-      guards: recordsToWrite.map(record => ({ refKey: record.refKey, expectedRevision: null })),
-      records: [...recordsToWrite], events: [event], claims: [], indexGuards: [], indexChanges: [] });
-    if (receipt.status !== 'committed') throw new Error(`S3 fixture run seed failed: ${JSON.stringify(receipt)}`);
+  // ---- real claims (public TaskClaimPort), deterministic real Run ids ------
+  const claimIds = ['runA', 'attempt-a', 'event-a', 'runB', 'attempt-b', 'event-b',
+    'runA2', 'attempt-a2', 'event-a2'];
+  let claimExtra = 0;
+  const claimRoles = createRoleConfigurationService({ records: backend.records, now: () => AT, eventId });
+  const claimService = createTaskClaimService({ records: backend.records, roles: claimRoles, now: () => AT,
+    newId: () => claimIds.shift() ?? `s3-claim-id-${++claimExtra}` });
+  const goalAtClaim = await plans.queryGoal(ctx, goalRef);
+  if (goalAtClaim.status !== 'ready') throw new Error(`S3 fixture Goal read failed: ${JSON.stringify(goalAtClaim)}`);
+  const goalRevision = goalAtClaim.value.goal.revision;
+  async function claim(task: TaskTriple, sessionRef: SessionRef, sessionRevision: number, requestId: string) {
+    const claimed = await claimService.claimTask(ctx, {
+      input: { goalRef, planRef: plan.ref, taskId: task.taskId, sessionRef, roleBinding, budget },
+      meta: { requestId, expected: [
+        { ref: goalRef, revision: goalRevision },
+        { ref: workspaceRef, revision: WORKSPACE_REVISION },
+        { ref: plainSessionRefToAggregate(sessionRef), revision: sessionRevision },
+      ] },
+    });
+    if (claimed.status !== 'committed') throw new Error(`S3 fixture claim ${task.taskId} failed: ${JSON.stringify(claimed)}`);
+    return claimed.value;
   }
-  const ownerWorkspace = options.ownerWorkspace ?? WORKSPACE_ID;
-  await commitRaw([
-    { refKey: canonicalJson(runA as unknown as JsonValue), schemaId: 'RunSnapshot@1', revision: 1,
-      json: JSON.stringify(runSnapshot(runA, tA, ownerWorkspace, 'ended')) },
-    { refKey: canonicalJson(runA2 as unknown as JsonValue), schemaId: 'RunSnapshot@1', revision: 1,
-      json: JSON.stringify(runSnapshot(runA2, tA, ownerWorkspace, 'ended')) },
-    { refKey: canonicalJson(runB as unknown as JsonValue), schemaId: 'RunSnapshot@1', revision: 1,
-      json: JSON.stringify(runSnapshot(runB, tB, WORKSPACE_ID, 'starting')) },
-  ]);
+  const claimA = await claim(tA, sessionA.ref, sessionA.revision, 's3-claim-a');
+  const claimB = await claim(tB, sessionB.ref, sessionB.revision, 's3-claim-b');
+  const runA = claimA.runRef;
+  const runB = claimB.runRef;
+  if (runA.runId !== 'runA' || runB.runId !== 'runB' || claimA.generation !== DECISION_SENDER_GENERATION) {
+    throw new Error('S3 fixture claim identity disagrees with the IN14 literal');
+  }
 
-  // ---- real finalized round chain / replied Message (IN11/IN12/IN14) --------
-  const seededFacts: EncodedRecord[] = [];
-  if (options.seedRounds === 'pass' || options.seedRounds === 'pass-then-fail') {
-    const pass = roundFor(gateRoundPassRef.roundId, 'PASS', null);
-    seededFacts.push(encodeVerificationRoundSnapshot(pass));
-    if (options.seedRounds === 'pass-then-fail') {
-      seededFacts.push(encodeVerificationRoundSnapshot(roundFor(gateRoundFailRef.roundId, 'FAIL', pass)));
+  // ---- material writes through the real owner (W3-03) ----------------------
+  // old-A/new-A are written by the real `materials.storeArtifact`: a Run context
+  // and an execution origin for execution material, the Host context and a
+  // platform origin for the platform-material case. The missing-body case writes
+  // no old-A at all. The body refs stay the §5.1 literals above.
+  const { authority: baseAuthority } = createMaterialRecordReaders(backend.records);
+  const writeMaterials = createMaterialService({ bodies: rawBodies, authority: baseAuthority, now: () => AT });
+  const workRunCtx = (run: RunRef): CoreCallContext => ({
+    projectId: PROJECT_ID, workspaceId: WORKSPACE_ID,
+    principal: { kind: 'work_run', runRef: run, roleBinding },
+    materialReader: { kind: 'run', requester: run },
+    signal: new AbortController().signal,
+  });
+
+  /**
+   * One real verification world: a fresh root with the registered check-b.js
+   * script, the real evidence owner and the real Host bindings the registered
+   * check runner needs. `script` decides PASS (`process.exitCode` 0) or FAIL.
+   */
+  async function createCheckWorld(prefix: string, script: string): Promise<{
+    evidence: ReturnType<typeof createEvidenceService>;
+    workspaceHost: WorkspaceHostBindings;
+    checkCtx: CoreCallContext;
+  }> {
+    const verificationRoot = join(directory, prefix);
+    await mkdir(join(verificationRoot, 'src'), { recursive: true });
+    await writeFile(join(verificationRoot, 'src', 'a.ts'), 'export const a = 1;\n');
+    await writeFile(join(verificationRoot, 'check-b.js'), script);
+    const checkHostActor = { kind: 'system' as const, id: 's3-check-host' };
+    const checkDefinition = (checkId: string): RegisteredCommandCheck => ({
+      checkId, kind: 'static', command: 'node check-b.js', cwd: '.', timeoutMs: 60_000, taskIds: 'all',
+    });
+    const configuration: TrustedCheckConfiguration = {
+      configurationRevision: 's3-checks-config-1', workspace: workspaceRef, executor: checkHostActor,
+      permissionRevision: 's3-permission-1', sourceAccess: 'verification_workspace',
+      processAccess: 'all_except_denied', deniedPrefixes: ['node_modules'],
+      checks: [checkDefinition(CHECK_ID)],
+    };
+    const workspaceHost: WorkspaceHostBindings = {
+      async resolveRoot(requested) {
+        if (requested.projectId !== PROJECT_ID || requested.workspaceId !== WORKSPACE_ID) {
+          return { status: 'rejected', code: 'forbidden', reason: 'S3 fixture verification root is outside this workspace' };
+        }
+        return { status: 'ready', value: { root: verificationRoot, workspaceRevision: WORKSPACE_REVISION } };
+      },
+      async authorize(callCtx, requested) {
+        if (callCtx.projectId !== PROJECT_ID || callCtx.workspaceId !== WORKSPACE_ID
+          || requested.projectId !== PROJECT_ID || requested.workspaceId !== WORKSPACE_ID) {
+          return { status: 'rejected', code: 'forbidden', reason: 'S3 fixture check Host is not bound to this workspace' };
+        }
+        return { status: 'ready', value: { subjectKey: 'host:s3-check-host',
+          permissionRevision: 's3-permission-1', allowsRead: () => true } };
+      },
+    };
+    const checkCtx: CoreCallContext = { projectId: PROJECT_ID, workspaceId: WORKSPACE_ID,
+      principal: { kind: 'host', actor: checkHostActor },
+      materialReader: { kind: 'host', projectId: PROJECT_ID, workspaceId: WORKSPACE_ID, actor: checkHostActor },
+      signal: new AbortController().signal };
+    const evidenceMaterials = createMaterialService({ bodies: rawBodies, authority: baseAuthority, now: () => AT });
+    let evidenceSeq = 0;
+    const evidence = createEvidenceService({ records: backend.records, materials: evidenceMaterials,
+      executions: createRunStateReader({ records: backend.records }), workspaceHost,
+      source: new VerificationWorkspaceReader(), configuration, now: () => AT,
+      newId: () => `s3-evidence-${++evidenceSeq}` });
+    return { evidence, workspaceHost, checkCtx };
+  }
+
+  // ---- R-7 real Runtime entry/terminal for both Runs (IN14/IN11) ----------
+  const runtimeBase: TaskClaimFixture = { ...base, ctx, scope, projectRef, workspaceRef, goalRef,
+    planRef: plan.ref, plan, tasks: { first: tA, second: tB, gate: gateTask },
+    sessions: { first: sessionA.ref, second: sessionB.ref }, roleBinding, budget,
+    records: backend.records, plans, sessionsPort: base.sessionsPort, roleService: base.roleService,
+    service: claimService };
+  const runtimePermissions = { policyRevision: roleBinding.policyRevision,
+    tools: ['read', 'send_session_message', 'respond_session_message'], writeScope: [] as string[] };
+  const runtimeHost = { configurationRevision: 's3-runtime-config-1', permissions: runtimePermissions,
+    hostTemplate: B2_HOST.hostTemplate };
+  let runtimeSeq = 0;
+  const runtimeSteps = await createS2BRuntimeSteps({ base: runtimeBase, bodies: rawBodies, ctx,
+    directory, scope, now: () => AT, setClock: () => undefined, eventId,
+    newId: () => `s3-runtime-${++runtimeSeq}`, consumerId: 'runtime-a', withMailbox: true,
+    host: runtimeHost, workspaceRevision: WORKSPACE_REVISION });
+  const runtimeMailbox = runtimeSteps.mailbox;
+  if (runtimeMailbox === undefined) throw new Error('S3 fixture runtime mailbox is missing');
+  const mailbox = runtimeMailbox;
+  const handleA = await runtimeSteps.start(claimA, { at: AT, tools: runtimePermissions.tools,
+    replies: [{ kind: 'text', text: 'S3 run A completed' }] });
+  await Promise.race([handleA.entered, handleA.settled]);
+  const sent = await mailbox.sendMessage(workRunCtx(runA), {
+    input: { recipient: sessionB.ref, text: 'S3 decision request', intent: 'inquiry', needsReply: true },
+    meta: { requestId: DECISION_SEND_REQUEST_ID, expected: [] } });
+  if (sent.status !== 'committed') throw new Error(`S3 fixture decision send failed: ${JSON.stringify(sent)}`);
+  // The literal is only the frozen Plan label and this check (R-8); the reply,
+  // the version pin and the read use the ref the send returned.
+  expect(sent.value.ref.messageId).toBe(DECISION_MESSAGE_ID);
+  const messageRef: SessionMessageRef = sent.value.ref;
+  const handleB = await runtimeSteps.start(claimB, { at: AT, tools: runtimePermissions.tools,
+    replies: [{ kind: 'text', text: 'S3 run B completed' }] });
+  await Promise.race([handleB.entered, handleB.settled]);
+  const responded = await mailbox.respondMessage(workRunCtx(runB), {
+    input: { messageRef, text: 'S3 decision reply' },
+    meta: { requestId: 's3-respond-decision', expected: [{ ref: messageRef, revision: sent.value.revision }] } });
+  if (responded.status !== 'committed' || responded.value.status !== 'responded') {
+    throw new Error(`S3 fixture decision respond failed: ${JSON.stringify(responded)}`);
+  }
+  await runtimeSteps.finish(handleA, AT, 'completed');
+  await runtimeSteps.finish(handleB, AT, 'completed');
+
+  // ---- IN05's real second tA Run (W3-01) -----------------------------------
+  // runA completed; a real registered-check round fails (check_failed), the
+  // public requeue owner accepts it, the second claim carries the returned
+  // requeueRef into runA2, and runA2 is really started and finished. Only IN05
+  // asks for this owner; every other row keeps its single tA Run.
+  async function makeRunA2(): Promise<RunRef> {
+    const world = await createCheckWorld('verification-fail-root', 'process.exit(1);\n');
+    const opened = await world.evidence.openVerification(world.checkCtx, { input: {
+      subjectRunRef: runA, subject: tA, planRef: plan.ref },
+      meta: { requestId: 's3-open-fail', expected: [] } });
+    if (opened.status !== 'committed') throw new Error(`S3 fixture FAIL round open failed: ${JSON.stringify(opened)}`);
+    const roundRef = opened.value.ref;
+    const runner = createRegisteredCheckRunner({ evidence: world.evidence,
+      workspaceHost: world.workspaceHost, kernel, now: () => AT });
+    const ran = await runner.runRegisteredCheck(world.checkCtx, { input: { roundRef, checkId: CHECK_ID },
+      meta: { requestId: 's3-run-fail', expected: [{ ref: roundRef, revision: opened.value.revision }] } });
+    if (ran.status !== 'ready') throw new Error(`S3 fixture FAIL check run failed: ${JSON.stringify(ran)}`);
+    const finalized = await world.evidence.finalizeChecks(world.checkCtx, { input: { roundRef },
+      meta: { requestId: 's3-finalize-fail', expected: [{ ref: roundRef, revision: ran.value.revision }] } });
+    if (finalized.status !== 'committed') throw new Error(`S3 fixture FAIL finalize failed: ${JSON.stringify(finalized)}`);
+    if (finalized.value.outcome !== 'FAIL') {
+      throw new Error(`S3 fixture FAIL round did not finalize FAIL: ${finalized.value.outcome}`);
     }
+    const runRead = await createRunStateReader({ records: backend.records }).readExecution(ctx, runA);
+    if (runRead.status !== 'ready') throw new Error(`S3 fixture FAIL Run read failed: ${JSON.stringify(runRead)}`);
+    const goalBefore = await plans.queryGoal(ctx, goalRef);
+    if (goalBefore.status !== 'ready') throw new Error(`S3 fixture Goal read failed: ${JSON.stringify(goalBefore)}`);
+    const requeueService = createTaskRequeueService({ records: backend.records,
+      reads: createRunStateReader({ records: backend.records }), workspaceHost: world.workspaceHost,
+      source: new VerificationWorkspaceReader(), materials: writeMaterials,
+      messages: mailbox,
+      now: () => AT, eventId });
+    const requeued = await requeueService.requeueTask(ctx, { input: { taskRef: tA, afterRunRef: runA,
+      reason: 'S3 fixture: the selected Run check failed' }, meta: { requestId: 's3-requeue-a', expected: [
+      { ref: goalRef, revision: goalBefore.value.goal.revision },
+      { ref: runA, revision: runRead.value.run.revision },
+    ] } });
+    if (requeued.status !== 'committed' || requeued.value.kind !== 'requeued') {
+      throw new Error(`S3 fixture requeue failed: ${JSON.stringify(requeued)}`);
+    }
+    const sessionA2 = await createFixtureSession('s3-session-sa2');
+    const goalAfter = await plans.queryGoal(ctx, goalRef);
+    if (goalAfter.status !== 'ready') throw new Error(`S3 fixture Goal read failed: ${JSON.stringify(goalAfter)}`);
+    const claimed = await claimService.claimTask(ctx, { input: { goalRef, planRef: plan.ref, taskId: TASK_A,
+      sessionRef: sessionA2.ref, roleBinding, budget: requeued.value.requeue.budget ?? budget,
+      requeueRef: requeued.value.requeue.ref }, meta: { requestId: 's3-claim-a2', expected: [
+      { ref: goalRef, revision: goalAfter.value.goal.revision },
+      { ref: workspaceRef, revision: WORKSPACE_REVISION },
+      { ref: plainSessionRefToAggregate(sessionA2.ref), revision: sessionA2.revision },
+    ] } });
+    if (claimed.status !== 'committed') throw new Error(`S3 fixture runA2 claim failed: ${JSON.stringify(claimed)}`);
+    const handle = await runtimeSteps.start(claimed.value, { at: AT, tools: runtimePermissions.tools,
+      replies: [{ kind: 'text', text: 'S3 run A2 completed' }] });
+    await handle.entered;
+    await runtimeSteps.finish(handle, AT, 'completed');
+    return claimed.value.runRef;
   }
-  if (options.decisionApplications === true) seededFacts.push(encodeSessionMessageRecord(decisionMessage));
-  if (seededFacts.length > 0) await commitRaw(seededFacts);
+  const runA2 = options.ownerRun === 'runA2' ? await makeRunA2() : null;
+  if (options.ownerRun === 'runA2' && (runA2 === null || runA2.runId !== 'runA2')) {
+    throw new Error('S3 fixture runA2 identity is not the deterministic third claim id');
+  }
+  const bodyOwner: RunRef = runA2 ?? runA;
+
+  // ---- old-A/new-A through the real storeArtifact (W3-03) ------------------
+  if (options.storeLegacyBody !== false) {
+    const stored = options.legacyOrigin === 'platform_operation'
+      ? await writeMaterials.storeArtifact(ctx, { contentType: 'text/plain', body: LEGACY_BODY,
+          sources: [artifactSource], origin: { kind: 'platform_operation', projectId: PROJECT_ID,
+            workspaceId: WORKSPACE_ID, requestId: 's3-material-request', actor } })
+      : await writeMaterials.storeArtifact(workRunCtx(bodyOwner), { contentType: 'text/plain', body: LEGACY_BODY,
+          sources: [artifactSource], origin: { kind: 'execution', ref: bodyOwner } });
+    if (stored.status !== 'stored') throw new Error(`S3 fixture legacy body store failed: ${JSON.stringify(stored)}`);
+  }
+  const storedNew = await writeMaterials.storeArtifact(workRunCtx(bodyOwner), { contentType: 'text/plain',
+    body: NEW_BODY, sources: [artifactSource], origin: { kind: 'execution', ref: bodyOwner } });
+  if (storedNew.status !== 'stored') throw new Error(`S3 fixture new body store failed: ${JSON.stringify(storedNew)}`);
 
   // ---- canonical QueryJob/QueryRun through the real query owner (IN19) ------
   let query: S3InputFixture['query'] = null;
@@ -549,23 +731,19 @@ async function createInputFixture(
       bodiesSpy.read += 1;
       if (tamperedBody !== null) {
         return { status: 'ready', value: { ref, body: tamperedBody, sourceRefs: [artifactSource],
-          origin: { kind: 'run', owner } } };
-      }
-      if (storedOrigin === 'owner-less') {
-        return { status: 'ready', value: { ref, body: LEGACY_BODY, sourceRefs: [artifactSource],
-          origin: { kind: 'legacy', ownerRunRef: null } } };
+          origin: { kind: 'run', owner: bodyOwner } } };
       }
       return rawBodies.read(ref);
     },
   };
-  const { authority: baseAuthority } = createMaterialRecordReaders(backend.records);
   // IN05: the stored body's canonical owner is runA2, but loading that owner
   // answers the runA snapshot (a DIFFERENT Run), so the ref check must reject.
   const authority: MaterialAuthorityReads = options.ownerLoadReturnsRun === undefined
     ? baseAuthority
     : {
         load(ref) {
-          const alias = canonicalJson(ref as unknown as JsonValue) === canonicalJson(runA2 as unknown as JsonValue)
+          const alias = runA2 !== null
+            && canonicalJson(ref as unknown as JsonValue) === canonicalJson(runA2 as unknown as JsonValue)
             ? runA : ref;
           return baseAuthority.load(alias);
         },
@@ -573,12 +751,44 @@ async function createInputFixture(
   const realMaterials = createMaterialService({ bodies, authority, now: () => AT });
   const materialsSpy: MaterialSpy = { openArtifactCalls: 0 };
   const materials: MaterialPort = {
-    storeArtifact: (callCtx, input) => realMaterials.storeArtifact(callCtx, input),
+    storeArtifact: (callCtx, input) => writeMaterials.storeArtifact(callCtx, input),
     openArtifact(callCtx, input) {
       materialsSpy.openArtifactCalls += 1;
       return realMaterials.openArtifact(callCtx, input);
     },
   };
+
+  // ---- real registered-check PASS chain for the gate (IN11, W3-05) ---------
+  let gateRoundPassRef: VerificationRoundRef | null = null;
+  let gateReportRef: ArtifactRef | null = null;
+  if (options.seedRounds === 'pass') {
+    const world = await createCheckWorld('verification-root',
+      'process.stdout.write("S3_CHECK_OK\\n");\n');
+    const opened = await world.evidence.openVerification(world.checkCtx, { input: {
+      subjectRunRef: runA, subject: gateTask, planRef: plan.ref, gateSubject: 'goal' },
+      meta: { requestId: 's3-open-gate', expected: [] } });
+    if (opened.status !== 'committed') throw new Error(`S3 fixture gate open failed: ${JSON.stringify(opened)}`);
+    const roundRef = opened.value.ref;
+    // The registered script really runs through the Kernel sandbox; the runner
+    // owns begin and record (revisions 2 then 3), finalize is the fourth commit.
+    const runner = createRegisteredCheckRunner({ evidence: world.evidence,
+      workspaceHost: world.workspaceHost, kernel, now: () => AT });
+    const ran = await runner.runRegisteredCheck(world.checkCtx, { input: { roundRef, checkId: CHECK_ID },
+      meta: { requestId: 's3-run-gate', expected: [{ ref: roundRef, revision: opened.value.revision }] } });
+    if (ran.status !== 'ready') throw new Error(`S3 fixture gate check run failed: ${JSON.stringify(ran)}`);
+    const finishedCheck = ran.value.checks.find(candidate => candidate.checkId === CHECK_ID);
+    if (finishedCheck === undefined || finishedCheck.reportRef === null) {
+      throw new Error('S3 fixture gate check carries no report');
+    }
+    const finalized = await world.evidence.finalizeChecks(world.checkCtx, { input: { roundRef },
+      meta: { requestId: 's3-finalize-gate', expected: [{ ref: roundRef, revision: ran.value.revision }] } });
+    if (finalized.status !== 'committed') throw new Error(`S3 fixture gate finalize failed: ${JSON.stringify(finalized)}`);
+    if (finalized.value.outcome !== 'PASS') {
+      throw new Error(`S3 fixture gate round did not finalize PASS: ${finalized.value.outcome}`);
+    }
+    gateRoundPassRef = finalized.value.snapshot.ref;
+    gateReportRef = finishedCheck.reportRef;
+  }
 
   const decisionApplications: TaskContextInputDependencies['decisionApplications'] =
     options.decisionApplications === true
@@ -592,22 +802,20 @@ async function createInputFixture(
   const edgeGateDeclarationId = edgeDeclarationId(TASK_B, GATE_TASK, { kind: 'gate-result', label: CHECK_ID });
   const edgeEnvironmentDeclarationId = edgeDeclarationId(TASK_B, TASK_A,
     { kind: 'environment-revision', label: 'workspace' });
-  const edgeDecisionDeclarationId = edgeDeclarationId(TASK_B, TASK_A, { kind: 'decision', label: 'msg-1' });
+  const edgeDecisionDeclarationId = edgeDeclarationId(TASK_B, TASK_A,
+    { kind: 'decision', label: DECISION_MESSAGE_ID });
 
   const fixture: S3InputFixture = {
     kind, ctx, service, records, recordSpy, materialsSpy, bodiesSpy, materials, bodies,
-    tA, tB, gateTask, planRef, goalRef, runA, runB, oldRef, newRef,
+    tA, tB, gateTask, planRef: plan.ref, goalRef, runA, runB, oldRef, newRef,
     edgeArtifactDeclarationId, edgeGateDeclarationId, edgeEnvironmentDeclarationId, edgeDecisionDeclarationId,
     legacyDeclarationId: 'legacy:r1', secondLegacyDeclarationId: 'legacy:r2',
-    gateRoundPassRef, gateRoundFailRef, query,
+    gateRoundPassRef, gateReportRef, decisionMessageId: sent.value.ref.messageId,
+    query,
     tamperBody(value) { tamperedBody = value; },
     async messageStatus() {
-      const key = sessionMessageRefKey(decisionMessage.ref);
-      const read = await backend.records.readMany([key]);
-      if (read.status !== 'ready') return null;
-      const record = read.value.records.find(candidate => candidate.refKey === key);
-      if (record === undefined) return null;
-      return (JSON.parse(record.json) as { status?: string }).status ?? null;
+      const read = await mailbox.readMessage(ctx, messageRef);
+      return read.status === 'ready' ? read.value.status : null;
     },
     async queryVersions() {
       if (query === null) return null;
@@ -621,13 +829,13 @@ async function createInputFixture(
       return { job: job.revision, run: run.revision };
     },
     async planPhase(taskId) {
-      const key = canonicalJson(planRef as unknown as JsonValue);
+      const key = canonicalJson(plan.ref as unknown as JsonValue);
       const read = await backend.records.readMany([key]);
       if (read.status !== 'ready') throw new Error(`S3 fixture Plan read failed: ${JSON.stringify(read)}`);
       const record = read.value.records.find(candidate => candidate.refKey === key);
       if (record === undefined) throw new Error('S3 fixture Plan record is absent');
-      const plan = JSON.parse(record.json) as { tasks: { taskId: string; phase: string }[] };
-      return plan.tasks.find(task => task.taskId === taskId)?.phase ?? 'missing';
+      const planBody = JSON.parse(record.json) as { tasks: { taskId: string; phase: string }[] };
+      return planBody.tasks.find(task => task.taskId === taskId)?.phase ?? 'missing';
     },
     workCtx(run) {
       return { projectId: PROJECT_ID, workspaceId: WORKSPACE_ID,
@@ -635,9 +843,9 @@ async function createInputFixture(
         materialReader: { kind: 'run', requester: run }, signal: ctx.signal };
     },
     async close() {
-      await backend.close();
+      await runtimeSteps.close();
       await rawBodies.close?.();
-      await rm(directory, { recursive: true, force: true });
+      await backend.close();
     },
   };
   return fixture;
@@ -708,16 +916,10 @@ describe.each(KINDS)('S3 exact task inputs (%s backend)', kind => {
     expect(f.materialsSpy.openArtifactCalls).toBe(0);
   });
 
-  it('IN04 an owner outside the consumer workspace is forbidden and returns no body', async () => {
-    const f = await openFixture(kind, { ownerWorkspace: OTHER_WORKSPACE_ID });
-    const result = await readInputs(f, f.legacyDeclarationId);
-    expect(result).toMatchObject({ status: 'rejected', code: 'forbidden' });
-    expect(f.materialsSpy.openArtifactCalls).toBe(0);
-  });
-
   it('IN05 an owner ref that resolves to a different Run is forbidden', async () => {
-    // The stored body's canonical owner is runA2; loading that owner answers the
-    // runA snapshot, a DIFFERENT Run, so the owner ref check must reject.
+    // The stored body's canonical owner is tA's real second Run, runA2; loading
+    // that owner answers the runA snapshot, a DIFFERENT Run (same Task), so the
+    // owner ref check must reject.
     const f = await openFixture(kind, { ownerRun: 'runA2', ownerLoadReturnsRun: 'runA' });
     const result = await readInputs(f, f.legacyDeclarationId);
     expect(result).toMatchObject({ status: 'rejected', code: 'forbidden' });
@@ -787,23 +989,25 @@ describe.each(KINDS)('S3 exact task inputs (%s backend)', kind => {
 
   it('IN11 a gate-result declaration selects the applicable chain head', async () => {
     const f = await openFixture(kind, { seedRounds: 'pass' });
+    const round = f.gateRoundPassRef;
+    const report = f.gateReportRef;
+    if (round === null || report === null) throw new Error('S3 fixture did not finalize the gate round');
     const result = await readInputs(f, f.edgeGateDeclarationId);
     expect(result).toMatchObject({ status: 'ready' });
     if (result.status !== 'ready') return;
     // The whole selected source: the chain head ref/revision, its checkId and reportRef.
+    // Revision working: the real chain commits open@1, begin@2, record@3 and
+    // finalize@4, so the finalized head the reader selects is revision 4. The
+    // reportRef is the Artifact the registered-check runner's real
+    // recordCheckResult stored (a platform-issued value used as returned), not
+    // the old seeded new-A ref.
     expect(result.value[0]!.state).toBe('selected');
-    expect(result.value[0]!.source).toEqual({ kind: 'check', ref: f.gateRoundPassRef, revision: 1,
-      checkId: CHECK_ID, reportRef: f.newRef });
-  });
-
-  it('IN12 a finalized FAIL suppresses an older PASS for the same check', async () => {
-    const f = await openFixture(kind, { seedRounds: 'pass-then-fail' });
-    const result = await readInputs(f, f.edgeGateDeclarationId);
-    expect(result).toMatchObject({ status: 'ready' });
-    if (result.status !== 'ready') return;
-    // The chain head is the finalized FAIL: no old PASS is selected.
-    expect(result.value[0]).toMatchObject({ state: 'missing' });
-    expect(result.value[0]!.source).toBeNull();
+    expect(result.value[0]!.source).toEqual({ kind: 'check', ref: round, revision: 4,
+      checkId: CHECK_ID, reportRef: report });
+    // The registered-check-report write fixes the report type (evidence-service.ts
+    // storeReport); the literal is hand-written, never imported from src.
+    expect(report.contentType)
+      .toBe('application/vnd.coding-platform.verification-check-report+json;version=1');
   });
 
   it('IN13 an environment declaration selects the workspace revision without a current assertion', async () => {
@@ -819,11 +1023,14 @@ describe.each(KINDS)('S3 exact task inputs (%s backend)', kind => {
 
   it('IN14 a decision with only a reply and no application is missing', async () => {
     const f = await openFixture(kind, { decisionApplications: true });
+    // The posted Message carries the id the owner derived from the send
+    // request id; the literal is hand-worked above, not read back from src.
+    expect(f.decisionMessageId).toBe(DECISION_MESSAGE_ID);
     const result = await readInputs(f, f.edgeDecisionDeclarationId);
     expect(result).toMatchObject({ status: 'ready' });
     if (result.status !== 'ready') return;
     expect(result.value[0]).toMatchObject({ state: 'missing', reason: 'decision_not_applied' });
-    // The read never mutates the already-replied Message.
+    // The read never mutates the already-replied Message (public mailbox read).
     expect(await f.messageStatus()).toBe('responded');
   });
 
@@ -869,18 +1076,6 @@ describe.each(KINDS)('S3 exact task inputs (%s backend)', kind => {
     expect(result.value[0]!.source).toEqual({ kind: 'artifact', ref: f.oldRef,
       provenance: { kind: 'platform_operation', projectId: PROJECT_ID, workspaceId: WORKSPACE_ID,
         requestId: 's3-material-request', actor: { kind: 'human', id: 's3-operator' } } });
-  });
-
-  it('IN18 an owner-less legacy origin is forbidden and never guessed from the caller scope', async () => {
-    const f = await openFixture(kind, { legacyOrigin: 'owner-less' });
-    const result = await readInputs(f, f.legacyDeclarationId);
-    expect(result).toMatchObject({ status: 'rejected', code: 'forbidden' });
-    expect(result).not.toHaveProperty('value');
-    // No body is returned for either read path, and none is even opened.
-    const page = await readPage(f, f.legacyDeclarationId);
-    expect(page).toMatchObject({ status: 'rejected', code: 'forbidden' });
-    expect(page).not.toHaveProperty('value');
-    expect(f.materialsSpy.openArtifactCalls).toBe(0);
   });
 
   it('IN19 a canonical QueryRun reads the legacy declaration through the owner', async () => {

@@ -448,14 +448,14 @@ it('A7 unsupported controls answer explicitly: a Query has no control, an unknow
   await assertInvariants(h, 'unsupported controls refused');
 }, 120_000);
 
-it('A7 yielded wait: the yielded terminal keeps the queued steer (no terminal_without_cancel); after a real reply the continuation claim consumes the wait, and the yielded Run takes no control (RD-8)', async () => {
+it('A7 yielded wait: the yielded terminal keeps the queued steer (no terminal_without_cancel); after a real reply the continuation claim consumes the wait, and the yielded Run takes no control (RD-8, RUN-14)', async () => {
   const STEER_TEXT = 'A7 steer sent while the wait was being sent';
   const REPLY_TEXT = 'A7 reply: the module marker is AG2B_ISOLATED_SOURCE';
   let h: HostScenario | undefined;
   let recipient: SessionRef | undefined;
   let steer: SubmittedControl | undefined;
   const send = { callId: 'a7-wait-send', name: 'send_session_message',
-    args: { recipient: {}, text: 'A7 question: which marker does src/module.ts export?', replyMode: 'wait' } as Record<string, unknown> };
+    args: { recipient: {}, text: 'A7 question: which marker does src/module.ts export?', intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const scenario = await openHostScenario({ check: 'pass', automation: NO_REDRIVE, script: {
     replies: [{ kind: 'calls', calls: [send] }, { kind: 'text', text: 'A7 continuation: the reply was read' }],
     queryReplies: [{ kind: 'text', text: REPLY_TEXT }],
@@ -493,6 +493,10 @@ it('A7 yielded wait: the yielded terminal keeps the queued steer (no terminal_wi
   expect(unfence.intent).toMatchObject({ status: 'queued', revision: 1 });
   expect(await readControl(scenario.host, fence.intent.ref)).toMatchObject({ status: 'superseded', revision: 2,
     observation: { origin: 'platform_superseded', kind: 'superseded_by_newer', detail: { supersededBy: unfence.intent.ref } } });
+  // Moved from A2-control-service (RUN-14): the real resume supersedes the queued
+  // wait-window pause and the Run's returned pointer is that resume intent.
+  expect((await readExecution(scenario.host, yieldedRef)).run.controlState)
+    .toEqual({ intentRef: unfence.intent.ref, desiredState: 'running' });
   expect(await scenario.taskRow()).toMatchObject({ effectivePhase: 'ready' });
   await assertInvariants(scenario, 'the wait fence is resumed');
 

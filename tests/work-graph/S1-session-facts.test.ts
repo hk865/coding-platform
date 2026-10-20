@@ -1,9 +1,7 @@
 /** Slice 1 §5.3: Session facts, with real Work/message/Query histories. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
-import type { QueryRunRef, QueryRunSnapshot } from '../../src/contracts/query-job.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
-import { encodeQueryRunSnapshotRecord } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
@@ -167,25 +165,6 @@ describe.each(['memory', 'sqlite'] as const)('S1 Session facts reader (%s)', kin
     }
     expect(f.history.modelAuthorization).toHaveBeenCalledTimes(0);
     expect(f.history.modelAttempt).toHaveBeenCalledTimes(0);
-  });
-
-  it('SV53 an old Query pointer without executionState locates one Query and preserves the Work wait', async () => {
-    const f = await open(kind);
-    const message = await f.history.wait(false);
-    const ref: QueryRunRef = { aggregateType: 'QueryRun', ...f.base.scope, queryJobId: 'old-query', runId: 'old-query-run' };
-    const old: QueryRunSnapshot = { ref, revision: 1, schemaVersion: 1, run: { schemaVersion: 1,
-      queryJobRef: { aggregateType: 'QueryJob', ...f.base.scope, queryJobId: ref.queryJobId }, runId: ref.runId,
-      status: 'pending', startedAt: null, endedAt: null, outcome: null } };
-    const seeded = await f.base.commitRaw([encodeQueryRunSnapshotRecord(old)]);
-    if (seeded.status !== 'committed') throw new Error(`legacy Query seed: ${JSON.stringify(seeded)}`);
-    await f.base.overwriteSession(f.b2.claim.sessionRef, record => ({ ...record, lastExecutionRef: ref }));
-    const value = ready(await f.facts.readSessionFacts(f.base.ctx, f.b2.claim.sessionRef));
-    expect(value.latestWork).toEqual(f.b2.claim);
-    expect(value.wait).toEqual({ runRef: f.b2.claim.runRef, messageRef: message.ref, task: f.b2.claim.task });
-    const queries = ready(await f.facts.listSessionQueries(f.base.ctx, { sessionRef: f.b2.claim.sessionRef, page: { limit: 100 } }));
-    expect(queries.items).toEqual([old]);
-    expect(queries.items[0]?.run.executionState).toBeUndefined();
-    expect(queries.nextCursor).toBeNull();
   });
 });
 

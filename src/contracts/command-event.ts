@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 /**
  * Command/Event Interface — Goal create slice, versioned baseline for goal/bootstrap.
  * Authority: dev_docs/interfaces/command-event.md (slice types, v1).

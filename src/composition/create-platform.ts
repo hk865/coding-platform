@@ -134,7 +134,6 @@ import { createToolCommitLookup } from './tool-commit-lookup.js';
 import type {
   UnknownCallReviewV1, WorkspaceBaselineV1, WorkspaceCaptureV1,
 } from '../contracts/unknown-call-review.js';
-import { createLegacySessionProvenanceReader } from '../core/work-graph/tasks/session-provenance-facts.js';
 import { SLICE1_LOOKUP_INDEXES } from '../core/work-graph/model/session-facts-contracts.js';
 import { createKernelStoreRegistry } from '../core/agent-runtime/kernel-store-locator.js';
 import { createSessionHistoryCursorOwner, createSessionOperations } from '../core/agent-runtime/session-operations.js';
@@ -584,9 +583,6 @@ function createAuthorizeQueryConfiguration(host: RuntimeHostBindings): Authorize
       return { status: 'rejected', code: 'incomplete', reason: 'the QueryRun has no persisted execution state to authorize' };
     }
     const execution = input.job.job.intent.execution;
-    if (execution === undefined) {
-      return { status: 'rejected', code: 'unsupported', reason: 'the QueryJob has no explicit read-only execution binding' };
-    }
     const configured = await host.resolveQueryConfiguration(ctx, {
       queryRunRef: input.run.ref,
       sessionRef: executionState.sessionRef,
@@ -801,11 +797,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       recognize: commandRecognizer,
       now, eventId: randomUUID,
     });
-    // Slice 1 E14 (§2.2): the SAME legacy-provenance reader reaches the Session
-    // directory and maintenance's provenance backfill, never a second instance.
-    const legacyProvenance = createLegacySessionProvenanceReader(backend.records, sessionFacts, bodies);
-    const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records,
-      legacyProvenance });
+    const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records });
     // Wiring 2 I-2 (§2.1, L1/L3): the formal duties adapter reads the Session's
     // own fixed role. The legacy half is the exact five platform templates and
     // their versions, injected here so `configuration/` never imports Runtime.
@@ -816,10 +808,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         return role.templateId === template.templateId && role.templateRevision === template.templateRevision;
       });
     const messageDuties = createMessageDutiesFactsAdapter({ roles: roleService, sessions: sessionDirectory, legacyDuty });
-    // Slice 1 (spec §3.3): the Host-only legacy provenance backfill entry. Its
-    // member is read here, in the assembly, so the public port member and the
-    // directory's implementation are part of the production graph.
-    const backfillSessionProvenance = sessionDirectory.backfillSessionProvenance!.bind(sessionDirectory);
     // The public mailbox is real even without a model Host binding; internal
     // calls use the raw service so an in-flight operation is never rejected by
     // the public tracked wrapper after close has already begun. It is built
@@ -842,10 +830,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       records: backend.records, roles: roleService, bodies,
       authorizeConfiguration: createAuthorizeQueryConfiguration(options.runtime),
       now, eventId: randomUUID, sessionFacts,
-      // Slice 1 N3 (§3.4 S:630): the SAME hoisted legacy-provenance reader the
-      // Session directory and the Workflow use judges a legacy Query claim; a
-      // second instance would derive a different provenance/guard set.
-      legacyProvenance,
       ...(hostInstance === undefined ? {} : { hostInstance }),
     });
     const queryJobs = createQueryJobService({
@@ -898,10 +882,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // the message body/persist facade is the mailbox's single write owner.
     // Slice 4C-2 U6: the note-card decision port is built only after the note
     // service (whose `applyNoteDecision` it delegates to), but the early message
-    // sources and the Workflow's `decisionSources` must already carry the SAME
-    // port. This holder forwards to the later-bound implementation, so neither
-    // the message service nor the Workflow needs a second source-facts owner and
-    // the file order is unchanged.
+    // sources must already carry the SAME port. This holder forwards to the
+    // later-bound implementation, so the message service needs no second
+    // source-facts owner and the file order is unchanged.
     let boundNoteDecisionSource: NoteDecisionSourcePort | null = null;
     const noteDecisionSourcePort: NoteDecisionSourcePort = {
       readNoteDecisions: (ctx, input) => boundNoteDecisionSource === null
@@ -1270,14 +1253,12 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       linkSessionWork: (...args) => trackedCall(() => sessionLifecycle.linkSessionWork(...args), unavailable),
       archiveSession: (...args) => trackedCall(() => sessionLifecycle.archiveSession(...args), unavailable),
       reactivateSession: (...args) => trackedCall(() => sessionLifecycle.reactivateSession(...args), unavailable),
-      // Slice 1 (spec §3.3): the archive request/receipt/step entries and the
-      // Host-only legacy provenance backfill. The low-level public
-      // `sessions/archive` signature/return is unchanged.
+      // Slice 1 (spec §3.3): the archive request/receipt/step entries. The
+      // low-level public `sessions/archive` signature/return is unchanged.
       requestSessionArchive: (...args) => trackedCall(() => sessionLifecycle.requestSessionArchive(...args), unavailable),
       readSessionArchiveRequestReceipt: (...args) => trackedCall(() => sessionLifecycle.readSessionArchiveRequestReceipt(...args), unavailable),
       finishSessionArchive: (...args) => trackedCall(() => sessionLifecycle.finishSessionArchive(...args), unavailable),
       releaseSessionArchiveRequest: (...args) => trackedCall(() => sessionLifecycle.releaseSessionArchiveRequest(...args), unavailable),
-      backfillSessionProvenance: (...args) => trackedCall(() => backfillSessionProvenance(...args), unavailable),
     };
     const executions: ExecutionReadPort & ExecutionHistoryWritePort
       & Required<Pick<ExecutionReadPort, 'listExecutions'>> = {
@@ -1831,10 +1812,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // Slice 1 (L-g): every new Workflow archive/maintenance time comes from
       // this injected clock, the SAME one the rest of the platform runs on.
       now,
-      // Slice 1 E2/E14: the trusted terminal-time basis and the legacy
-      // provenance reader; both are the narrow ports the owners already use.
+      // Slice 1 E2: the trusted terminal-time basis the owner already uses.
       responsibilityBasis,
-      legacyProvenance,
       // The trusted Host callback, when installed, always wins. Otherwise the
       // resolver reads the Session's own fixed role facts and, only when neither
       // the pinned RoleSpec nor the legacy platform template names a duty, falls
@@ -1875,7 +1854,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       goalSettings: rawGoalSettings,
       decisionMessages: rawDecisionMessages,
       decisionReads: rawDecisionReads,
-      decisionSources,
       decisionDuties: messageDuties,
       goalExecutedFiles,
       applicationReceipt,
@@ -2143,7 +2121,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         record.run.status === 'ended' && record.run.outcome === 'outcome_unknown', 'Run');
       if (admitted !== null) return admitted;
       const auth = record.run.executionAuthorization;
-      const kernel = auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2 ? auth.kernel : null;
+      const kernel = auth !== undefined ? auth.kernel : null;
       const facts = kernel === null
         ? { ok: true as const, kernelTurnOpen: false, inputsConfirmed: null,
             draft: await readUnknownCallReviewDraft({ lookupToolCommit: toolCommitLookup, captureWorkspace }, ctx, { record,

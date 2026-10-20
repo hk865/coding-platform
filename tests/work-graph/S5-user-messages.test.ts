@@ -5,13 +5,8 @@ import type { SessionMessage } from '../../src/core/work-graph/model/communicati
 import type { DecisionAnnotationV1, DecisionSelectionV1, DecisionSourceV1, UserDecisionBodyV1 } from '../../src/contracts/goal-decisions.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import type { PlatformDutyV1 } from '../../src/contracts/platform-duty.js';
-import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
-import { makeCommitCursor, seqOfCommitCursor } from '../../src/contracts/ledger.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
-import {
-  encodeSessionMessageRecord, encodeSessionMessageSentEvent, sessionMessageFromEvent,
-  SESSION_MESSAGE_CONTENT_TYPE,
-} from '../../src/core/work-graph/sessions/message-record-codecs.js';
+import { sessionMessageFromEvent } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { synchronizeB2Commits } from '../helpers/B2-execution-fixture.js';
 import {
   GOAL_B, GOAL_REVISION, PLAN_B1, T, openS5DecisionFixture,
@@ -78,12 +73,6 @@ async function expectMessageEvent(f: S5DecisionFixture, cursor: Parameters<S5Rec
   expect(located.value.event.eventType).toBe(type);
   const decoded = sessionMessageFromEvent(located.value.event);
   expect(decoded).toEqual({ status: 'decoded', value: message });
-}
-
-function expectNoNewFields(value: object) {
-  for (const field of ['goalRef', 'decision', 'application', 'since', 'noticeAutomationCap']) {
-    expect(Object.prototype.hasOwnProperty.call(value, field)).toBe(false);
-  }
 }
 
 describe.each(['memory', 'sqlite'] as const)('S5 user messages %s', kind => {
@@ -272,76 +261,6 @@ describe.each(['memory', 'sqlite'] as const)('S5 user messages %s', kind => {
       .toMatchObject({ status: 'rejected', code: 'invalid' });
     expect(ready(await h.readStoredMessage())).toEqual(storedBefore);
     expect(await h.f.storeSnapshot()).toEqual(before);
-  });
-
-  it('UM12 a genuinely old absent-field Session message keeps its frozen ack DTO/receipt and origin absence', async () => {
-    const h = await harness(kind);
-    const userBefore = await h.f.userMessagesByGoal('B');
-    const claimsBefore = (await h.f.storeSnapshot()).claims;
-    const sender = { kind: 'host' as const, actor: h.f.operatorActor };
-    const sendIdentity = { projectId: 'P', workspaceId: 'W', sender, requestId: 'um12-old-send' };
-    const sendIdentityKey = 'session-message-send:' + sha256Hex(canonicalJson({ operation: 'send', ...sendIdentity }));
-    const ref = { aggregateType: 'SessionMessage' as const, projectId: 'P', workspaceId: 'W',
-      messageId: 'session-message-' + sha256Hex(canonicalJson(sendIdentity)) };
-    const sourceRef = { kind: 'workspace' as const, refId: 'W', revision: '3' };
-    const body = await h.f.bodies.put({ contentType: SESSION_MESSAGE_CONTENT_TYPE,
-      body: canonicalJson({ schemaVersion: 1, projectId: 'P', workspaceId: 'W', messageId: ref.messageId,
-        part: 'message', sender, text: 'old session mail' }), sourceRefs: [sourceRef],
-      origin: { kind: 'platform_operation', projectId: 'P', workspaceId: 'W', actor: h.f.operatorActor,
-        requestId: 'session-message-body:' + sha256Hex(`${sendIdentityKey}|message`) }, requestedAt: T });
-    expect(body.status).toBe('ready');
-    if (body.status !== 'ready') throw new Error('old body seed failed');
-    // This is the complete pre-slice-5 wire shape, without defaulted optional fields.
-    const oldPending: SessionMessage = { ref, schemaVersion: 1, revision: 1, sender,
-      recipient: h.f.sessionS, bodyRef: body.value.ref, sourceRef: body.value.ref.source,
-      createdAt: T, status: 'pending', readAt: null, response: null };
-    const oldSent = encodeSessionMessageSentEvent({ eventId: sha256Hex(`${sendIdentityKey}|sent`), eventType: 'SessionMessageSent',
-      schemaVersion: 1, occurredAt: T, projectId: 'P', workspaceId: 'W', requestId: 'um12-old-send', actor: sender, message: oldPending });
-    const seeded = await h.f.seedCommit([encodeSessionMessageRecord(oldPending)], { events: [oldSent] });
-    expect(seeded.status).toBe('committed');
-    expect(sessionMessageFromEvent(oldSent)).toEqual({ status: 'decoded', value: oldPending });
-    // Rebase onto slice 1 (lead): an old Message reads with the slice-1 §2.9 defaults.
-    expect(ready(await h.mailbox.readMessage(h.f.ctx, ref))).toEqual({ ...oldPending, replyHandler: null, archiveWaitDisposition: null });
-    expectNoNewFields(JSON.parse(await storedJson(h.f, ref)));
-    const before = await h.f.storeSnapshot();
-    if (before.lastCursor === null) throw new Error('seeded ledger has no cursor');
-    const expectedCursor = makeCommitCursor(seqOfCommitCursor(before.lastCursor) + 1);
-    // Rebase onto slice 1 (lead): the ack writes the decoded Message, which carries the
-    // slice-1 §2.9 read defaults; no slice-5 field is added (expectNoNewFields).
-    const oldAckDto: SessionMessage = { ref, schemaVersion: 1, revision: 2, sender,
-      recipient: h.f.sessionS, bodyRef: body.value.ref, sourceRef: body.value.ref.source,
-      createdAt: T, status: 'read', readAt: T, response: null, replyHandler: null, archiveWaitDisposition: null };
-    const ackRequest = { input: { messageRef: ref }, meta: h.meta('um12-ack', [{ ref, revision: 1 }]) };
-    const acked = await h.mailbox.ackMessage(h.work, ackRequest);
-    expect(acked).toEqual({ status: 'committed', value: oldAckDto, cursor: expectedCursor, replayed: false });
-    const result = committed(acked);
-    expectNoNewFields(result.value);
-    const ackSender = { kind: 'work_run' as const, sessionRef: h.f.sessionS,
-      runRef: h.f.runRA.ref, generation: h.f.claimRA.generation };
-    const ackIdentityKey = 'session-message-ack:' + sha256Hex(canonicalJson({
-      operation: 'ack', projectId: 'P', workspaceId: 'W', sender: ackSender, requestId: 'um12-ack',
-    }));
-    const fingerprint = sha256Hex(canonicalJson({ operation: 'ack', projectId: 'P', workspaceId: 'W',
-      sender: ackSender, payload: { messageRef: ref }, expected: [{ ref, revision: 1 }] }));
-    const receipt = await h.f.records.lookupCommit({ identityKey: ackIdentityKey, fingerprint });
-    expect(receipt).toEqual({ status: 'ready', value: { status: 'committed', replayed: true, identityKey: ackIdentityKey,
-      cursor: expectedCursor, eventIds: [sha256Hex(`${ackIdentityKey}|read`)], versions: [{ refKey: refKey(ref), revision: 2 }] } });
-    const rawAfter = await storedJson(h.f, ref);
-    expect(JSON.parse(rawAfter)).toStrictEqual(oldAckDto);
-    expectNoNewFields(JSON.parse(rawAfter));
-    await expectMessageEvent(h.f, expectedCursor, 'SessionMessageRead', oldAckDto);
-    const after = await h.f.storeSnapshot();
-    expect(after.recordCount).toBe(before.recordCount);
-    expect(after.eventCount - before.eventCount).toBe(1);
-    expect(after.claims).toEqual(claimsBefore);
-    const allocations = { ...h.f.allocationCounts };
-    const replay = await h.mailbox.ackMessage(h.work, ackRequest);
-    expect(replay).toEqual({ status: 'committed', value: oldAckDto, cursor: expectedCursor, replayed: true });
-    expectNoNewFields(committed(replay).value);
-    expect(h.f.allocationCounts).toEqual(allocations);
-    expect(await h.f.storeSnapshot()).toEqual(after);
-    expect(await storedJson(h.f, ref)).toBe(rawAfter);
-    expect(await h.f.userMessagesByGoal('B')).toEqual(userBefore);
   });
 
   it('UM13 status buckets move on answer and stay correct after reopening the same SQLite file', async () => {

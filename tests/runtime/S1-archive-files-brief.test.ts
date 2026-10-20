@@ -4,12 +4,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
-import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { ArchiveStepRefV1 } from '../../src/contracts/core/session-archive.js';
 import type { ArchiveRequeueOriginV1, SessionAnomalyAnchorV1 } from '../../src/contracts/session-anomaly.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
-import { continuationBriefDigest, continuationBriefMarker, renderContinuationBriefZh } from '../../src/contracts/continuation-brief.js';
-import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { continuationBriefDigest, renderContinuationBriefZh } from '../../src/contracts/continuation-brief.js';
 import { createArchiveChangedFilesReader } from '../../src/core/agent-runtime/session-anomaly-facts.js';
 import { loadPreparedManifest } from '../../src/core/agent-runtime/execution-preparation.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
@@ -201,32 +199,6 @@ describe('S1 archive changed files and brief anomaly section', () => {
     expect(f.captures).toEqual([f.base.directory]);
   });
 
-  it('IT04 loading a frozen old manifest keeps the exact marker, digest and text with no new section', async () => {
-    const bodies = new RawArtifactBodyStore();
-    const manifest = JSON.parse(OLD_MANIFEST_JSON) as PreparedTaskManifestV1;
-    const stored = await bodies.put({ body: OLD_MANIFEST_JSON, contentType: 'application/vnd.coding-platform.task-execution-manifest+json;version=1',
-      sourceRefs: [{ kind: 'workspace', refId: 'w', revision: '1' }], origin: { kind: 'run', owner: manifest.claim.runRef }, requestedAt: t0 });
-    if (stored.status !== 'ready') throw new Error(`old manifest: ${JSON.stringify(stored)}`);
-    const prepared: PreparedTaskExecution = { kind: 'task', claim: manifest.claim,
-      envelope: { schemaVersion: 1, envelopeId: 'old-envelope', projectId: 'p', workspaceId: 'w', goalId: 'g', taskId: 'A',
-        runRef: manifest.claim.runRef, attemptRef: manifest.claim.attemptRef, planRef: manifest.claim.planRef,
-        roleBinding: manifest.roleBinding, workspaceSnapshot: manifest.workspaceSnapshot, permissions: manifest.permissions,
-        budget: manifest.budget, sourceRefs: [], bundleRef: stored.value.ref },
-      inputBinding: { schemaVersion: 1, inputDigest: manifest.inputDigest, manifestDigest: stored.value.ref.digest,
-        materialAccessRefs: [], deliveryRefs: [], continuationBriefDigest: OLD_DIGEST } };
-    const loaded = ready(await loadPreparedManifest(bodies, prepared)).manifest;
-    expect(loaded.input).toBe(OLD_INPUT);
-    expect(loaded.continuationBrief?.anomalies).toBeUndefined();
-    expect(continuationBriefDigest(loaded.continuationBrief!)).toBe(OLD_DIGEST);
-    expect(continuationBriefMarker(OLD_DIGEST)).toBe(OLD_MARKER);
-    expect(renderContinuationBriefZh(loaded.continuationBrief!, OLD_DIGEST)).toBe(OLD_TEXT);
-    expect(loaded.inputDigest).toBe(sha256Hex(OLD_INPUT));
-    const bytes = await bodies.read(stored.value.ref);
-    if (bytes.status !== 'ready') throw new Error('the frozen manifest disappeared');
-    expect(bytes.value.body).toBe(OLD_MANIFEST_JSON);
-    expect(OLD_MANIFEST_JSON).not.toContain('anomalies');
-  });
-
   it('IT05 nine distinct stopped Runs assemble the earliest eight anchors and leave the ninth unpicked', async () => {
     const { f, prepared, successor, anchors } = await briefRow(9);
     expect(new Set(anchors.map(anchor => key(anchor.runRef))).size).toBe(9);
@@ -244,10 +216,3 @@ describe('S1 archive changed files and brief anomaly section', () => {
     expect(text).toContain(LAST_SENTENCE);
   }, 120_000);
 });
-
-// Frozen pre-S1 encodings: no current encoder/renderer constructs the oracle.
-const OLD_DIGEST = "b0f9f0fc3a288e284475470606a59710b732b65bff1c61f7cfd669ba54976797";
-const OLD_MARKER = "[continuation-brief v1 sha256:b0f9f0fc3a288e284475470606a59710b732b65bff1c61f7cfd669ba54976797]";
-const OLD_TEXT = "## 接续说明\n[continuation-brief v1 sha256:b0f9f0fc3a288e284475470606a59710b732b65bff1c61f7cfd669ba54976797]\n这是任务 A 的接续执行（返工）：第 1 次重新入队，失败类别：执行失败，发起方：人工。\n接续方式：在新的 Session D 中继续，没有上一次的对话历史。\n\n### 上一次执行\n- 执行 r0（Session S）依据执行记录以 crashed 结束。\n\n### 停在哪里\n- 执行记录无法读取，停在哪里无法确定。\n\n### 工具调用\n- 执行记录无法读取，工具调用无法确定。\n\n### 重新入队\n- 原因（人工）：old retry\n- 没有新输入。\n\n### 工作区\n- 上一次执行经工具改动的文件：无法确定。\n- 上一次执行结束（时间未知）到本次执行开始之间：无法从持久记录确定是否有改动。\n- 未提交的改动无法读取。\n\n### 继续之前\n- 文件可能已经变化，编辑前先重新读取。\n- “结果未知”的工具调用可能已经产生副作用，重做之前先核实当前状态。\n- “没有执行”的工具调用没有产生结果，需要时重新发起。\n- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。";
-const OLD_INPUT = "OLD INPUT\n\n## 接续说明\n[continuation-brief v1 sha256:b0f9f0fc3a288e284475470606a59710b732b65bff1c61f7cfd669ba54976797]\n这是任务 A 的接续执行（返工）：第 1 次重新入队，失败类别：执行失败，发起方：人工。\n接续方式：在新的 Session D 中继续，没有上一次的对话历史。\n\n### 上一次执行\n- 执行 r0（Session S）依据执行记录以 crashed 结束。\n\n### 停在哪里\n- 执行记录无法读取，停在哪里无法确定。\n\n### 工具调用\n- 执行记录无法读取，工具调用无法确定。\n\n### 重新入队\n- 原因（人工）：old retry\n- 没有新输入。\n\n### 工作区\n- 上一次执行经工具改动的文件：无法确定。\n- 上一次执行结束（时间未知）到本次执行开始之间：无法从持久记录确定是否有改动。\n- 未提交的改动无法读取。\n\n### 继续之前\n- 文件可能已经变化，编辑前先重新读取。\n- “结果未知”的工具调用可能已经产生副作用，重做之前先核实当前状态。\n- “没有执行”的工具调用没有产生结果，需要时重新发起。\n- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。";
-const OLD_MANIFEST_JSON = "{\"schemaVersion\":1,\"kind\":\"task_execution\",\"claim\":{\"task\":{\"projectId\":\"p\",\"goalId\":\"g\",\"taskId\":\"A\"},\"planRef\":{\"aggregateType\":\"PlanRevision\",\"projectId\":\"p\",\"planId\":\"plan\"},\"workspaceId\":\"w\",\"sessionRef\":{\"projectId\":\"p\",\"sessionId\":\"D\"},\"sessionRevision\":2,\"generation\":2,\"runRef\":{\"aggregateType\":\"Run\",\"projectId\":\"p\",\"goalId\":\"g\",\"runId\":\"r1\"},\"attemptRef\":{\"aggregateType\":\"TaskAttempt\",\"projectId\":\"p\",\"goalId\":\"g\",\"taskId\":\"A\",\"attemptId\":\"a1\"},\"outboxRef\":{\"aggregateType\":\"DispatchOutboxEntry\",\"projectId\":\"p\",\"goalId\":\"g\",\"taskId\":\"A\",\"attemptId\":\"a1\"},\"claimedAt\":\"2026-10-08T00:00:00.000Z\"},\"role\":{\"status\":\"absent\",\"roleId\":\"builder\",\"reason\":\"old legacy binding\"},\"hostTemplate\":{\"templateId\":\"builder\",\"revision\":\"1\",\"digest\":\"e7a141b085ae7286ec1c757580704ae9c2d4348df66f33d23d296ef66ab7ab8a\"},\"roleBinding\":{\"schemaVersion\":1,\"bindingId\":\"old-builder\",\"templateId\":\"builder\",\"templateRevision\":\"1\",\"bindingVersion\":1,\"policyRevision\":\"legacy-template\"},\"hostConfigurationRevision\":\"old-host@1\",\"sessionRole\":{\"kind\":\"legacy_template\",\"templateId\":\"builder\",\"templateRevision\":\"1\"},\"workspaceSnapshot\":{\"workspaceId\":\"w\",\"revision\":1},\"permissions\":{\"policyRevision\":\"legacy-template\",\"tools\":[\"read\"],\"writeScope\":[]},\"budget\":{\"tokenBudget\":100000,\"deadline\":null},\"selectedTaskInputs\":[],\"materialBasis\":null,\"materialAccessRefs\":[],\"additionalMaterialRefs\":[],\"deliveryRefs\":[],\"sourceRefs\":[],\"continuationBrief\":{\"schemaVersion\":1,\"runRef\":{\"aggregateType\":\"Run\",\"projectId\":\"p\",\"goalId\":\"g\",\"runId\":\"r1\"},\"task\":{\"projectId\":\"p\",\"goalId\":\"g\",\"taskId\":\"A\"},\"requeueRef\":{\"aggregateType\":\"TaskRequeue\",\"projectId\":\"p\",\"goalId\":\"g\",\"taskId\":\"A\",\"afterRunId\":\"r0\"},\"mode\":\"rework\",\"failureClass\":\"run_failed\",\"trigger\":{\"actorClass\":\"human\",\"goalResume\":false,\"requeueNumber\":1,\"autoRework\":null,\"earlierRequeues\":[]},\"previous\":{\"runRef\":{\"aggregateType\":\"Run\",\"projectId\":\"p\",\"goalId\":\"g\",\"runId\":\"r0\"},\"attemptRef\":{\"aggregateType\":\"TaskAttempt\",\"projectId\":\"p\",\"goalId\":\"g\",\"taskId\":\"A\",\"attemptId\":\"a0\"},\"sessionRef\":{\"projectId\":\"p\",\"sessionId\":\"S\"},\"outcome\":\"crashed\",\"origin\":\"observed\",\"interruption\":null,\"cancelledBy\":null,\"error\":null,\"limit\":null,\"budget\":null,\"wait\":null,\"unacceptedSteers\":[],\"endedAt\":null},\"factsFrom\":{\"runRef\":{\"aggregateType\":\"Run\",\"projectId\":\"p\",\"goalId\":\"g\",\"runId\":\"r0\"},\"hops\":0,\"truncated\":false},\"stoppedAt\":{\"kernel\":\"unavailable\",\"reason\":null,\"turnStatus\":null,\"lastPosition\":null,\"lastToolGroup\":null,\"lastAssistant\":null,\"window\":null},\"toolCalls\":{\"confirmed\":[],\"notExecuted\":[],\"unknown\":[],\"confirmedOmitted\":0,\"notExecutedOmitted\":0,\"unknownOmitted\":0},\"acceptedInputs\":{\"steers\":[],\"steersOmitted\":0,\"messages\":[],\"messagesOmitted\":0},\"checks\":null,\"requeue\":{\"reason\":{\"text\":\"old retry\",\"truncated\":false},\"reasonAuthor\":\"human\",\"newInputs\":[]},\"workspace\":{\"selfChanged\":{\"status\":\"unavailable\",\"confirmed\":[],\"possible\":[],\"omitted\":0},\"checkpoints\":[],\"segments\":[],\"unobserved\":{\"from\":\"previous_run_end\",\"to\":null,\"previousEndedAt\":null},\"uncommitted\":{\"status\":\"unavailable\",\"baseCommit\":null,\"paths\":[],\"omitted\":0,\"reason\":null}},\"session\":{\"continuity\":\"other_session\",\"sessionRef\":{\"projectId\":\"p\",\"sessionId\":\"D\"},\"seededFrom\":null,\"boundaryPosition\":null},\"standingInstructionVersion\":1},\"input\":\"OLD INPUT\\n\\n## 接续说明\\n[continuation-brief v1 sha256:b0f9f0fc3a288e284475470606a59710b732b65bff1c61f7cfd669ba54976797]\\n这是任务 A 的接续执行（返工）：第 1 次重新入队，失败类别：执行失败，发起方：人工。\\n接续方式：在新的 Session D 中继续，没有上一次的对话历史。\\n\\n### 上一次执行\\n- 执行 r0（Session S）依据执行记录以 crashed 结束。\\n\\n### 停在哪里\\n- 执行记录无法读取，停在哪里无法确定。\\n\\n### 工具调用\\n- 执行记录无法读取，工具调用无法确定。\\n\\n### 重新入队\\n- 原因（人工）：old retry\\n- 没有新输入。\\n\\n### 工作区\\n- 上一次执行经工具改动的文件：无法确定。\\n- 上一次执行结束（时间未知）到本次执行开始之间：无法从持久记录确定是否有改动。\\n- 未提交的改动无法读取。\\n\\n### 继续之前\\n- 文件可能已经变化，编辑前先重新读取。\\n- “结果未知”的工具调用可能已经产生副作用，重做之前先核实当前状态。\\n- “没有执行”的工具调用没有产生结果，需要时重新发起。\\n- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。\",\"inputDigest\":\"871a3cf6c8e9a92404aec18a5ac3620b7aa94e5566e8a055f64341e7654c65fc\"}";

@@ -18,17 +18,24 @@
  * proves the Host writes the epoch, runs the automatic window, and writes
  * nothing without the instance lease.
  */
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { createActivityReadModel } from '../../src/core/work-graph/views/activity-read-model.js';
 import { createLocalWorkbenchHost } from '../../src/app/host.js';
-import { openS2BActivityFixture, WORK_TASK_IDS, type S2BActivityFixture } from '../helpers/S2B-activity-fixture.js';
+import { acquireHostInstanceLease } from '../../src/app/host-instance-lease.js';
+import { openS2BActivityFixture, resetActivityBackfillGate, WORK_TASK_IDS, type S2BActivityFixture } from '../helpers/S2B-activity-fixture.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
+
+vi.mock('../../src/business/workflow/activity-backfill.js', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  const { activityBackfillGateModule } = await import('../helpers/S2B-activity-fixture.js');
+  return activityBackfillGateModule(actual);
+});
 
 const DAY = 86_400_000;
 const T0 = Date.parse('2026-10-20T00:00:00.000Z');
@@ -55,15 +62,6 @@ function readModelOver(records: unknown, now: () => string): Reads {
   return createActivityReadModel({ records: records as never, now });
 }
 
-async function until(check: () => Promise<boolean>, label: string, timeoutMs = 20_000): Promise<void> {
-  const started = Date.now();
-  for (;;) {
-    if (await check()) return;
-    if (Date.now() - started > timeoutMs) throw new Error(`timed out waiting for ${label}`);
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
-}
-
 describe('S2B Group B — Host backfill wiring (BE3)', () => {
   it('2B-16 the leased Host records the epoch before reconcile and auto-backfills only the last 14 days', async () => {
     fixture = await openS2BActivityFixture('sqlite');
@@ -77,6 +75,7 @@ describe('S2B Group B — Host backfill wiring (BE3)', () => {
 
     const scope: WorkspaceScope = { projectId: f.b2.base.scope.projectId, workspaceId: f.b2.base.scope.workspaceId };
     let now = at(0);
+    const backfillCompleted = resetActivityBackfillGate();
     host = await createLocalWorkbenchHost({
       storage: { kind: 'sqlite', directory },
       actor: { kind: 'human', id: 's2b-host-operator' },
@@ -98,12 +97,7 @@ describe('S2B Group B — Host backfill wiring (BE3)', () => {
 
     // The background automatic backfill turns the two in-range Runs into explicit
     // records; the two older Runs stay `not_backfilled`.
-    await until(async () => {
-      const read = await reads.readRunActivities(f.ctx, { runRefs: [r2, r13, r15, r30] });
-      if (read.status !== 'ready') return false;
-      const byId = new Map(read.value.map(view => [(view.runRef as RunRef).runId, view]));
-      return byId.get(r2.runId)?.recordedBy === 'backfill' && byId.get(r13.runId)?.recordedBy === 'backfill';
-    }, 'the automatic 14-day backfill');
+    await backfillCompleted;
     const after = await reads.readRunActivities(f.ctx, { runRefs: [r2, r13, r15, r30] });
     expect(after.status).toBe('ready');
     if (after.status !== 'ready') return;
@@ -143,9 +137,7 @@ describe('S2B Group B — Host backfill wiring (BE3)', () => {
     const directory = f.b2.base.directory;
     await f.b2.base.closeBackend();
     // A live peer holds the local lock: this Host serves reads and owner writes only.
-    await writeFile(join(directory, 'host-instance.lock'), JSON.stringify({
-      pid: process.pid, hostInstanceId: 's2b-other-host', startedAt: at(0),
-    }));
+    await acquireHostInstanceLease({ directory, now: () => at(0) });
 
     const scope: WorkspaceScope = { projectId: f.b2.base.scope.projectId, workspaceId: f.b2.base.scope.workspaceId };
     host = await createLocalWorkbenchHost({

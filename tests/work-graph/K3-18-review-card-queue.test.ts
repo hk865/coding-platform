@@ -9,19 +9,16 @@
  * binding lacks `read`, so `settle_review{review_unavailable}` emits the card).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { join } from 'node:path';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
-import { ag2bWorkspaceBindings, cleanupScenarios, HostScenario, hostCtx, performs } from '../scenarios/harness.js';
-import { preparedOf, redrivePolicy } from '../scenarios/support/common.js';
-import { driveReviewUntil } from '../scenarios/support/review-work-root.js';
-import { openShellWorkRoot, prepareOn } from '../scenarios/support/shell-work-root.js';
+import { cleanupScenarios, HostScenario, hostCtx, performs } from '../scenarios/harness.js';
+import { redrivePolicy } from '../scenarios/support/common.js';
+import { driveReviewUntil, openMissingReadReviewRoot } from '../scenarios/support/review-work-root.js';
+import { crashOneCommand } from '../scenarios/support/review-card-round.js';
 import { display, goalControlled } from '../scenarios/support/control.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { cleanupRestart } from '../helpers/A2-restart-fixture.js';
-import { createTargetPlatform } from '../../src/composition/create-platform.js';
-import { createWorkbenchRuntimeHostBindings, type WorkbenchRuntimeConfiguration } from '../../src/app/runtime-configuration.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
@@ -39,10 +36,8 @@ import { openRealRunHarness } from '../helpers/K3-35-continuation-fixture.js';
 import { mixedEditSeam, releaseMixedSeams, type MixedSeam } from '../helpers/K3-mixed-seams.js';
 import { GOAL_B, PLAN_B2, T as FIXTURE_T, WORKSPACE_SCOPE } from '../helpers/S5-decision-fixture.js';
 import {
-  AG2B_AT, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING,
-  AG2B_WORK_TASK_ID, graphWrite, permissionRevision, plain,
+  AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
-import type { Platform } from '../scenarios/harness.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import { readReviewTargetDigests } from '../../src/core/work-graph/tasks/unknown-call-review-target-digests.js';
@@ -104,66 +99,14 @@ function reviewOf(h: HostScenario, runRef: RunRef): Promise<ReadResult<UnknownCa
   return h.post<ReadResult<UnknownCallReviewV1>>('unknown-call-reviews/read', plain(AG2B_SCOPE, { runRef }));
 }
 
-async function crashOneCommand(h: HostScenario, label: string): Promise<RunRef> {
-  shellSeam.arm();
-  const modelA = createScriptedModel([{ kind: 'calls', calls: [
-    { callId: `${label}-shell`, name: 'shell', args: { command: `${label} runs a program` } }] }]);
-  const rootA = await openShellWorkRoot(h, modelA);
-  let runningA: Promise<unknown> | null = null;
-  let preparedA: ReturnType<typeof preparedOf>;
-  try {
-    const startA = await prepareOn(rootA, h.select(`${label}-a`, AG2B_WORK_TASK_ID));
-    preparedA = preparedOf(startA);
-    runningA = rootA.runtime.startRun(hostCtx(), { prepared: preparedA, consumerId: AG2B_CONSUMER_ID,
-      requestId: `${label}-a-start` });
-    await shellSeam.waitForCall();
-    await h.restart({ crash: true });
-  } finally {
-    shellSeam.release();
-    await runningA?.catch(() => undefined);
-    await rootA.close();
-  }
-  return preparedA.claim.runRef;
-}
 
-async function openMissingReadReviewRoot(h: HostScenario): Promise<Platform> {
-  const configuration: WorkbenchRuntimeConfiguration = {
-    schemaVersion: 1,
-    bindings: [{
-      id: 'k3-17-missing-read-binding', label: 'K3-17 missing-read review binding',
-      scope: AG2B_SCOPE, role: AG2B_WORK_ROLE,
-      configurationRevision: 'k3-17-missing-read@1',
-      model: { revision: 'k3-17-missing-read-model@1', provider: 'deepseek', model: 'k3-17-scripted',
-        secretEnvironmentVariable: 'K3_17_MISSING_READ_SECRET' },
-      grant: {
-        budget: AG2B_RUNTIME_BUDGET,
-        hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex('K3-17 missing-read instruction') },
-        tools: ['shell', 'run_readonly_command'],
-        writeScope: [],
-        skills: { resourceRoot: h.root, enabledIds: [] },
-        systemInstruction: 'K3-17 missing-read instruction', deniedPrefixes: [], processSandboxOptions: {},
-        materialBasis: null, readonlyCommandAccess: 'all_except_denied' as const,
-      },
-    }],
-    queryProfiles: [],
-  };
-  const runtime = createWorkbenchRuntimeHostBindings(configuration, { secretSource: { get: () => undefined } });
-  return await createTargetPlatform({
-    storage: { kind: 'sqlite', directory: h.database },
-    workspace: ag2bWorkspaceBindings(h.root, { value: 1 }, permissionRevision(h.stepActor(), AG2B_SCOPE, ['.'])),
-    now: () => AG2B_AT,
-    kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
-      databasePath: join(h.database, 'kernel.sqlite') }] },
-    runtime,
-    hostInstance: { hostInstanceId: 'wp2-scenario-host', lease: 'owned' },
-    workflow: { consumerId: AG2B_CONSUMER_ID, bindings: [{ workspace: AG2B_SCOPE, sessionRole: AG2B_WORK_ROLE,
-      roleBinding: AG2B_WORK_ROLE_BINDING, budget: { tokenBudget: 1_000_000, deadline: null } }] },
-  });
-}
 
 async function settleKeyUnavailable(h: HostScenario, label: string): Promise<RunRef> {
-  const origin = await crashOneCommand(h, label);
-  const reviewRoot = await openMissingReadReviewRoot(h);
+  const crashed = await crashOneCommand(h, { callId: `${label}-shell`, select: `${label}-a`,
+    requestId: `${label}-a-start`, shellArgs: { command: `${label} runs a program` } });
+  await crashed.release();
+  const origin = crashed.runRef;
+  const reviewRoot = await openMissingReadReviewRoot(h, { label, hostInstanceId: 'wp2-scenario-host' });
   try {
     const toSettle = await driveReviewUntil(reviewRoot, h.select(`${label}-settle`, AG2B_WORK_TASK_ID),
       performs('settle_review'));

@@ -163,12 +163,6 @@ describe.each(['memory', 'sqlite'] as const)('2C-31 line reads through the route
     await fixture.close();
   });
 
-  it('2C-31 (d) lines/list returns exactly the LE3 WorkLineReadPort value', async () => {
-    const direct = await fixture.reader.listWorkLines(fixture.ctx, { workspace: fixture.base.scope });
-    const routed = await routeList(bindings, fixture.ctx, fixture.base.scope);
-    expect(routed).toEqual(direct);
-  });
-
   it('2C-31 (e) a storage read failure is an error code, not an empty ready line list', async () => {
     const failingBindings = createPlatformCoreRouteBindings({
       ...composed, workLines: fixture.readerWith(failingReads(fixture.records)),
@@ -296,19 +290,19 @@ describe.each(['memory', 'sqlite'] as const)('2C-31 D1 through the routes (%s)',
     await fixture.close();
   });
 
-  it('2C-31 (h) the routes return exactly the LE3 results over the 14-Session D1 dataset', async () => {
+  it('2C-31 (h) the routes return exactly the LE3 results over the 13-Session D1 dataset', async () => {
     // lines/list
     const directList = await fixture.reader.listWorkLines(fixture.ctx, { workspace: fixture.base.scope });
     expect(await routeList(bindings, fixture.ctx, fixture.base.scope)).toEqual(directList);
 
-    // lines/archived (one page holds all three archived heads of D1)
+    // lines/archived (one page holds both archived heads of D1)
     const directArchived = await fixture.reader.listArchivedLines(fixture.ctx,
       { workspace: fixture.base.scope, page: { limit: 100 } });
     expect(await routeArchived(bindings, fixture.ctx, fixture.base.scope, 100)).toEqual(directArchived);
 
-    // lines/read for every D1 Session (heads, predecessors, copies and the legacy L).
+    // lines/read for every D1 Session (heads, predecessors and copies).
     const sessions: SessionRef[] = [d1.a, d1.b, d1.c, d1.d, d1.e, d1.f1, d1.f2,
-      d1.g, d1.gCopy, d1.h, d1.i, d1.j, d1.k, d1.l];
+      d1.g, d1.gCopy, d1.h, d1.i, d1.j, d1.k];
     for (const key of sessions) {
       const direct = await fixture.reader.readWorkLine(fixture.ctx, { workspace: fixture.base.scope, key });
       expect(await routeRead(bindings, fixture.ctx, fixture.base.scope, key)).toEqual(direct);

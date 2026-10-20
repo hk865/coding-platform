@@ -1,8 +1,7 @@
 /**
  * VerificationRound, round-check and TaskEvidenceIndex machines
  * (docs/refactor/STATE-MACHINES-SPEC.md §9, rows VR-01..VR-15 without VR-06,
- * deleted in A.2 step 5.6 (GAP-24, see below), and VR-08, deleted with
- * `submitEvidence` (decision 34); forbidden
+ * deleted in A.2 step 5.6 (GAP-24, see below); forbidden
  * transitions §9.4; round chain helpers VD-5, VD-12..VD-15; D-2 fold).
  *
  * The owner is `evidence/evidence-service.ts` (and, for the check rows,
@@ -91,19 +90,17 @@ export type VerificationRoundEventType =
   | 'VerificationCheckResultRecorded'
   | 'VerificationCheckInterrupted'
   | 'VerificationCheckAbandoned'
-  /** Written only by VR-08, deleted with `submitEvidence` (decision 34); kept so stored rounds still decode. */
-  | 'EvidenceAdmitted'
   | 'VerificationRoundFinalized'
   | 'VerificationRoundReverified';
 
-/** A legacy round without `chain` is a slot-less chain root (§9.1). */
+/** The round's stored chain ordinal (§9.1). */
 export function roundOrdinalOf(round: Pick<RoundSnapshot, 'chain'>): number {
-  return round.chain?.ordinal ?? 1;
+  return round.chain.ordinal;
 }
 
-/** Finalized and not a clean PASS: FAIL, INCONCLUSIVE, or a legacy PASS with gaps (VD-4). */
-export function isFinalizedNonPass(round: Pick<RoundSnapshot, 'status' | 'outcome' | 'gaps'>): boolean {
-  return round.status === 'finalized' && (round.outcome !== 'PASS' || round.gaps.length > 0);
+/** Finalized and not a clean PASS: FAIL or INCONCLUSIVE (VD-4). */
+export function isFinalizedNonPass(round: Pick<RoundSnapshot, 'status' | 'outcome'>): boolean {
+  return round.status === 'finalized' && round.outcome !== 'PASS';
 }
 
 /** The ordinal-1 chain every round opened through VR-01 writes from step 5.3 on (C5). */
@@ -475,8 +472,7 @@ export type RoundChainHeadV1 =
  * VD-14: the one head of a subject's chain. Valid when every round names the
  * same subject (ref minus roundId), ordinals are 1..n and unique, ordinal 1 has
  * no predecessor, and round k>1 names round k−1 as predecessor while k−1 is
- * finalized non-PASS (so only the head can be open). A legacy round without
- * `chain` is a slot-less root (ordinal 1); two of them are two roots.
+ * finalized non-PASS (so only the head can be open).
  */
 export function roundChainHead(rounds: readonly RoundSnapshot[]): RoundChainHeadV1 {
   const first = rounds[0];
@@ -504,7 +500,7 @@ export function roundChainHead(rounds: readonly RoundSnapshot[]): RoundChainHead
   for (let ordinal = 1; ordinal <= rounds.length; ordinal += 1) {
     const round = byOrdinal.get(ordinal);
     if (round === undefined) return { kind: 'invalid', reason: `the chain has no round with ordinal ${ordinal}` };
-    const predecessorRef = round.chain?.predecessorRoundRef ?? null;
+    const predecessorRef = round.chain.predecessorRoundRef;
     const predecessor = chain[ordinal - 2];
     if (predecessor === undefined) {
       if (predecessorRef !== null) return { kind: 'invalid', reason: `chain root ${round.ref.roundId} names a predecessor` };
@@ -524,10 +520,10 @@ export function roundChainHead(rounds: readonly RoundSnapshot[]): RoundChainHead
 /**
  * VD-5: the evidence a requeue or a successor round supersedes: the head's
  * cumulative `chain.supersededEvidenceIds` (ancestors first), then the head's
- * own `evidenceRefs`. A legacy head contributes only its own ids.
+ * own `evidenceRefs`.
  */
 export function chainEvidenceIds(head: Pick<RoundSnapshot, 'chain' | 'evidenceRefs'>): string[] {
-  return distinct([...(head.chain?.supersededEvidenceIds ?? []), ...head.evidenceRefs.map((ref) => ref.evidenceId)]);
+  return distinct([...head.chain.supersededEvidenceIds, ...head.evidenceRefs.map((ref) => ref.evidenceId)]);
 }
 
 /** VR-09 / VD-5: the union of the ids every TaskRequeue of the Task stored (L-3), first occurrence order. */
@@ -537,7 +533,7 @@ export function evidenceSupersededByRequeue(requeues: readonly Pick<TaskRequeueS
 
 export type ReverifyFailureClass = Extract<ReworkFailureClass, 'check_failed' | 'check_incomplete'>;
 
-/** C2/VD-12: FAIL → `check_failed`; INCONCLUSIVE or a legacy PASS with gaps → `check_incomplete`; else null. */
+/** C2/VD-12: FAIL → `check_failed`; INCONCLUSIVE → `check_incomplete`; else null. */
 export function reverifyFailureClass(head: Pick<RoundSnapshot, 'status' | 'outcome' | 'gaps'>): ReverifyFailureClass | null {
   if (!isFinalizedNonPass(head)) return null;
   return head.outcome === 'FAIL' ? 'check_failed' : 'check_incomplete';
@@ -549,7 +545,7 @@ export function reverifyFailureClass(head: Pick<RoundSnapshot, 'status' | 'outco
  *   `host_restart`, and the gap codes are ⊆ {`interrupted_check`};
  * - `not_started`: every non-PASS cause ∈ {`host_restart`, `not_started`}, at
  *   least one `not_started`, gap codes ⊆ {`interrupted_check`};
- * - otherwise `none` (a legacy check has no cause and reads null).
+ * - otherwise `none`.
  */
 export function reverifyExemption(predecessor: Pick<RoundSnapshot, 'checks' | 'gaps'>): ReverifyExemption {
   return reverifyExemptionOfFacts(roundFailureFacts(predecessor));
@@ -587,7 +583,7 @@ export function successorAutoCount(previousAutoCount: number, actorClass: Rework
  * Host-interruption exemption keeps the count. VR-14 (`reverifyCapRefusal`), AV-7a and GV-6 ask it.
  */
 export function reverifyCapExceeded(head: Pick<RoundSnapshot, 'chain' | 'checks' | 'gaps'>, limit: number): boolean {
-  return (head.chain?.autoCount ?? 0) + 1 > limit && reverifyExemption(head) !== 'host_interruption';
+  return head.chain.autoCount + 1 > limit && reverifyExemption(head) !== 'host_interruption';
 }
 
 /** I-20: the head is round `ROUND_CHAIN_MAX` of its chain and has no successor (VR-14, AV-7b, GV-7). */
@@ -642,14 +638,14 @@ export function buildSuccessorRound(input: SuccessorRoundInputV1): RoundSnapshot
     throw new Error(`round ${predecessor.ref.roundId} is at the chain limit ${ROUND_CHAIN_MAX} and has no successor`);
   }
   const exemption = reverifyExemption(predecessor);
-  const autoCount = successorAutoCount(predecessor.chain?.autoCount ?? 0, reverify.actorClass, exemption);
+  const autoCount = successorAutoCount(predecessor.chain.autoCount, reverify.actorClass, exemption);
   const chain: RoundChainV1 = {
     schemaVersion: 1,
     ordinal,
     predecessorRoundRef: { ...predecessor.ref },
     predecessorRevision: predecessor.revision,
     supersededEvidenceIds: chainEvidenceIds(predecessor),
-    basisDigests: [...(predecessor.chain?.basisDigests ?? []), reverify.basis.digest],
+    basisDigests: [...predecessor.chain.basisDigests, reverify.basis.digest],
     autoCount,
     reverify: {
       requestedBy: reverify.requestedBy,
@@ -713,7 +709,7 @@ export function roundTaskSignal(rounds: readonly RoundSnapshot[]): RoundTaskSign
   const ordinal = roundOrdinalOf(head);
   switch (head.status) {
     case 'open':
-      return { kind: 'open', head, ordinal, predecessorRoundRef: head.chain?.predecessorRoundRef ?? null,
+      return { kind: 'open', head, ordinal, predecessorRoundRef: head.chain.predecessorRoundRef,
         interruptedCheckIds: head.checks.filter((check) => check.phase === 'interrupted').map((check) => check.checkId).sort(),
         unsettled: head.checks.some((check) => check.phase === 'pending' || check.phase === 'executing') };
     case 'finalized': break;
@@ -726,10 +722,7 @@ export function roundTaskSignal(rounds: readonly RoundSnapshot[]): RoundTaskSign
     case 'INCONCLUSIVE':
     case null:
       return { kind: 'inconclusive', head, ordinal, gapCodes: roundFailureFacts(head).gapCodes, legacyPassWithGaps: false };
-    case 'PASS':
-      return head.gaps.length > 0
-        ? { kind: 'inconclusive', head, ordinal, gapCodes: roundFailureFacts(head).gapCodes, legacyPassWithGaps: true }
-        : { kind: 'pass', head, ordinal };
+    case 'PASS': return { kind: 'pass', head, ordinal };
     default: return unreachable(head.outcome, 'round outcome');
   }
 }
@@ -1033,7 +1026,7 @@ export function taskEvidenceIndexRefOf(round: Pick<RoundSnapshot, 'ref'>): TaskE
     taskId: round.ref.taskId };
 }
 
-/** The index as read: `exists` separates a missing row from a stored (legacy) @0 row. */
+/** The index as read: `exists` separates a missing row from a stored row. */
 export type TaskEvidenceIndexReadV1 = {
   ref: TaskEvidenceIndexRef;
   exists: boolean;
@@ -1047,9 +1040,8 @@ export type TaskEvidenceIndexWrite =
 
 /**
  * VR-10..VR-12: revision = stored ids + appended. A missing row is guarded
- * absent (`null`, VR-10); a stored row, a legacy @0 row included, at its stored
- * revision, which the append repairs (VR-11, decided by `exists`, never by
- * `revision === 0`). Zero appended ids write nothing and create no @0 row
+ * absent (`null`, VR-10); a stored row at its stored revision (VR-11, decided
+ * by `exists`, never by `revision === 0`). Zero appended ids write nothing
  * (VR-12).
  */
 export function nextTaskEvidenceIndex(current: TaskEvidenceIndexReadV1, appended: readonly string[]): TaskEvidenceIndexWrite {
@@ -1220,7 +1212,7 @@ function roundSubjectRunProblem(run: Pick<RunSnapshot, 'status' | 'outcome' | 'r
 
 /**
  * VD-1/VD-15 after the chain lookup: a subject has at most one chain. Any
- * existing chain (a legacy slot-less root included; for a gate, on any
+ * existing chain (for a gate, on any
  * producer) refuses a second root as `busy` (the owner adds the head pin); a
  * chain `roundChainHead` cannot judge is `incomplete`. The next round on the
  * subject is a successor (VR-14).
@@ -1367,7 +1359,7 @@ export function transitionRound(state: RoundSnapshot | null, event: RoundEvent, 
  * VR-09 (D-3, C5, VD-5): the round side of a requeue of the afterRun's chain
  * head. The head stays finalized and is not written; the requeue commit guards
  * it as read and holds the subject slot with a same-owner claim
- * (`headKey → headKey`; a legacy slot-less root `null → null`), because VR-14
+ * (`headKey → headKey`), because VR-14
  * never writes its predecessor: a successor round committed after the requeue
  * read moves the slot, so the two commit at most once. Its evidence is
  * superseded by the TaskRequeue (`chainEvidenceIds`), not here.
@@ -1387,11 +1379,11 @@ function roundOnTaskRequeued(state: RoundSnapshot | null): RoundTransition {
 }
 
 /**
- * The subject slot held by the head as read (`headKey → headKey`, a legacy slot-less root `null → null`):
+ * The subject slot held by the head as read (`headKey → headKey`):
  * VR-09 and a reverify refusal; VR-14 moves `nextOwner` to its successor.
  */
 function heldSlotClaim(head: RoundSnapshot): RoundSlotClaimV1 {
-  const owner = head.chain === undefined ? null : roundSlotOwner(head.ref);
+  const owner = roundSlotOwner(head.ref);
   return { claimKey: roundSlotKey(roundSlotSubjectOf(head)), expectedOwner: owner, nextOwner: owner };
 }
 
@@ -1460,7 +1452,7 @@ export function reverifyCapRefusal(predecessor: RoundSnapshot, actorClass: Rewor
   autoReworkLimit: number): ReverifyRefusalV1 | null {
   const failureClass = reverifyFailureClass(predecessor);
   if (failureClass === null || actorClass === 'human' || !reverifyCapExceeded(predecessor, autoReworkLimit)) return null;
-  const autoCount = successorAutoCount(predecessor.chain?.autoCount ?? 0, actorClass, reverifyExemption(predecessor));
+  const autoCount = successorAutoCount(predecessor.chain.autoCount, actorClass, reverifyExemption(predecessor));
   return { code: 'auto_rework_cap_reached', failureClass, basisDigest: null, source: null, configurationRevision: null,
     reason: `auto rework cap reached: automatic reverify ${autoCount} of round ${predecessor.ref.roundId} exceeds the cap ${autoReworkLimit}` };
 }
@@ -1492,7 +1484,7 @@ export function reverifyPolicyRefusal(predecessor: RoundSnapshot, successor: Rou
     return { code: 'source_unchanged', failureClass, ...captured, configurationRevision: null,
       reason: `source unchanged: the workspace is the source round ${predecessor.ref.roundId} checked; change the work first` };
   }
-  const matched = exemption === 'none' ? (predecessor.chain?.basisDigests ?? []).indexOf(basis.digest) : -1;
+  const matched = exemption === 'none' ? predecessor.chain.basisDigests.indexOf(basis.digest) : -1;
   if (matched >= 0) {
     return { code: 'no_new_basis', failureClass, ...captured, configurationRevision: build.configuration.configurationRevision,
       reason: `no new basis: same failure, source and configuration as the reverify that opened round ${matched + 2} `
@@ -1505,8 +1497,8 @@ export function reverifyPolicyRefusal(predecessor: RoundSnapshot, successor: Rou
  * VR-14/VR-15 (C5): either the successor @1 of the finalized non-PASS head
  * (`buildSuccessorRound`: ordinal + 1, the chain linked to the predecessor,
  * the configured executor), with the slot moved from the head to the
- * successor (a legacy slot-less head: `null → successor`) and the predecessor
- * guarded as read, never written; or a committed policy refusal (TASK-28)
+ * successor and the predecessor guarded as read, never written; or a
+ * committed policy refusal (TASK-28)
  * with the predecessor and its slot held by the same owner, so a refusal and
  * a successor (or a requeue, VR-09) commit at most once. The refusal pin, the
  * new inputs and the capture are the owner's steps between the calls.

@@ -18,10 +18,9 @@ import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { WorkspaceSandbox, type ToolCall, type ToolResult } from '../../vendor/coding-agent/dist/public-api.js';
 import {
-  GOAL_B, PLAN_B1, T, WORKSPACE_SCOPE,
+  GOAL_B, PLAN_B1, T, WORKSPACE_SCOPE, openS5DecisionFixture,
   type S5DecisionFixture, type S5FixtureKind, type S5Records,
 } from '../helpers/S5-decision-fixture.js';
-import { openS5RuntimeFixture } from '../helpers/S5R2-d-support.js';
 import { decoded, goalAt, keyOf, messageAt, owners, pin } from '../helpers/S5-application-support.js';
 import { committed, modelRequests, ready, realOwners, workContext } from '../helpers/S5-user-message-support.js';
 
@@ -65,7 +64,8 @@ function futureDraft(f: S5DecisionFixture): PlanRevisionDraft {
 }
 
 async function harness(kind: S5FixtureKind) {
-  const f = await openS5RuntimeFixture(kind, { duties: ['adviser'] });
+  const f = await openS5DecisionFixture(kind, { duties: ['adviser'],
+    preEntryTools: ['propose_future_plan', 'apply_future_plan'] });
   fixtures.push(f);
   // Armed only for R2D03's retry, and only for the saved answer's record read.
   const fault = { answerKey: '', armed: false, hits: 0 };

@@ -37,33 +37,9 @@ async function writeGoalNote(f: S4BNoteCheckFixture, ctx: CoreCallContext, topic
   return f.inner.write(ctx, draft({ topic, anchor: { kind: 'goal', goalId } }), null);
 }
 
-describe('S4C DS-07 project understanding visibility', () => {
-  it.each(['memory', 'sqlite'] as const)(
-    'DS-07 %s: a g2 work Run sees the accepted project understanding in both find and lookup',
-    async kind => {
-      const f = await createS4BNoteCheckFixture(kind);
-      try {
-        const understanding = await writeProjectUnderstanding(f);
-        const extra = await createS4BExtraGoal(f, 's4c-ds07-goal-2');
-        const g2Run = await extra.claimRun('s4c-ds07-g2', 't1', 'executor');
-        const g2 = extra.workCtx(g2Run, 'executor');
-        const found = await f.memory.memoryFind(g2, { v: 1, op: 'find', anchor: { kind: 'project' },
-          limit: 20, cursor: null });
-        expect(found.status).toBe('ready');
-        if (found.status !== 'ready') return;
-        expect(found.value.items.map(item => item.noteId)).toContain(understanding);
-        const looked = await f.memory.memoryLookup(g2, { v: 1, op: 'lookup', anchor: { kind: 'project' },
-          limit: 20, cursor: null });
-        expect(looked.status).toBe('ready');
-        if (looked.status !== 'ready') return;
-        expect(looked.value.items.map(item => item.noteId)).toContain(understanding);
-      } finally { await f.close(); }
-    });
-});
-
 describe('S4C PU-02 project understanding read side', () => {
   it.each(['memory', 'sqlite'] as const)(
-    'PU-02 %s: a g2 work Run lookup {kind:project} returns the pointer, currentEligible true, crossGoal false, and it takes no goal quota',
+    'PU-02 + DS-07 %s: a g2 work Run lookup {kind:project} returns the pointer, currentEligible true, crossGoal false, and it takes no goal quota; find sees it',
     async kind => {
       // goalQuota 2: if the project understanding counted toward g1, the second
       // g1 goal note would be quota-pending.
@@ -94,6 +70,14 @@ describe('S4C PU-02 project understanding read side', () => {
         expect(item!.currentEligible).toBe(true);
         expect(item!.crossGoal).toBe(false);
         expect(item!.storedState).toBe('accepted');
+
+        // DS-07's find half: the same g2 Run sees the understanding through
+        // the public find read on the project anchor.
+        const found = await f.memory.memoryFind(g2, { v: 1, op: 'find', anchor: { kind: 'project' },
+          limit: 20, cursor: null });
+        expect(found.status).toBe('ready');
+        if (found.status !== 'ready') return;
+        expect(found.value.items.map(item => item.noteId)).toContain(understanding);
 
         // It is not on g1's goal anchor.
         const goalLookup = await f.memory.memoryLookup(g2, { v: 1, op: 'lookup',

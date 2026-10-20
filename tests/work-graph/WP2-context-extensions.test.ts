@@ -28,18 +28,18 @@ import type {
   GoalSettingsPort,
 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { ContextReadRequestV1 } from '../../src/core/work-graph/model/graph-context-contracts.js';
-import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { SessionPage } from '../../src/core/work-graph/model/session-contracts.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
-import { createExecutedFilesStub } from '../helpers/executed-files-stub.js';
+import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
-import type { SessionAnomalyPort } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
+import { createSessionAnomalyService, type SessionAnomalyPort } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
+import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createContextExtensionsReader } from '../../src/core/work-graph/views/context-extensions.js';
 import { createDecisionReadModel, createGoalCauseCardSource } from '../../src/core/work-graph/views/decision-read-model.js';
@@ -206,7 +206,8 @@ function realDecisionQueue(f: S5DecisionFixture,
     cardSources: [...cardSources],
     noticeSources: [],
     conflicts: createGoalConflictAssembler({ records: f.records,
-      catalog: createArchitectureCatalogService({ records: f.records }), executedFiles: createExecutedFilesStub() }),
+      catalog: createArchitectureCatalogService({ records: f.records }),
+      executedFiles: createGoalExecutedFilesReader({ records: f.records }) }),
     positions: createNoticePositionComparator(),
     displayTokens: createNoticeDisplayToken(new Uint8Array(32).fill(2)),
   });
@@ -251,6 +252,8 @@ const F07_CANDIDATE_COUNT = 100;
 type DeferredDecisionHarness = {
   f: S5DecisionFixture;
   queue: DecisionReadPort;
+  /** W2b-22: the real SessionAnomaly reader over the same world's records. */
+  anomalies: SessionAnomalyPort;
   goalRef: GoalRef;
   candidateProposalIds: string[];
 };
@@ -259,14 +262,19 @@ type DeferredDecisionHarness = {
  * A Goal whose required work Task is deferred through the real Plan writers
  * (`createGoalService` + `createPlanService`), so its Goal display carries
  * `required_task_deferred` and the real goal-decision reader prepares a real
- * Task-linked `goal_cause` card. Then 100 real `candidate_v2` PlanProposal
- * records with literal proposal ids are committed through the frozen fixture's
- * real codec/commit (`seedCandidateProposal`, the same technique the frozen S5
- * world uses for its U1/U2 candidates), so the real queue's 100-per-page window
- * puts that Task card on its second (tail) page.
+ * Task-linked `goal_cause` card. Then 100 real `candidate_v2` proposals are
+ * submitted through the public `plans.proposePlan` owner (each with its own
+ * real request id); the returned proposal ids are sorted before the literal
+ * row keys are built, so the real queue's 100-per-page window puts that Task
+ * card on its second (tail) page.
+ *
+ * W2b-21: the world is the S5 fixture's real path: its Sessions come from the
+ * production Session operation owner and its running Run RA is entered by the
+ * shared real Runtime, so no Session, Kernel identity or entered fact is
+ * handwritten under this row.
  */
-async function openDeferredDecisionHarness(): Promise<DeferredDecisionHarness> {
-  const f = await openS5DecisionFixture('memory');
+async function openDeferredDecisionHarness(kind: 'memory' | 'sqlite'): Promise<DeferredDecisionHarness> {
+  const f = await openS5DecisionFixture(kind, { realRuntime: true });
   closers.push(() => f.close());
   const goalRef: GoalRef = { aggregateType: 'Goal', projectId: GOAL_B.projectId, goalId: F07_GOAL_ID };
   const planRef: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: GOAL_B.projectId, planId: F07_PLAN_ID };
@@ -306,21 +314,36 @@ async function openDeferredDecisionHarness(): Promise<DeferredDecisionHarness> {
     meta: { requestId: 'f07-deferred-apply', expected: [{ ref: goalRef, revision: 1 }] } });
   if (applied.status !== 'committed') throw new Error(`F07 deferred Plan adoption: ${JSON.stringify(applied)}`);
 
+  const settings = createGoalSettingsService({ records: f.records, now: f.now, newId: f.newId,
+    operatorActor: f.operatorActor });
+  const current = await settings.readGoalSettings(f.ctx, { goalRef });
+  if (current.status !== 'ready') throw new Error(`F07 deferred Goal read: ${JSON.stringify(current)}`);
+  // Adoption incremented the Goal; every proposed candidate is guarded by that
+  // same current Goal pin (a proposal does not write the Goal itself).
+  const goalRevision = current.value.goal.revision;
+
   const candidateProposalIds: string[] = [];
   for (let index = 0; index < F07_CANDIDATE_COUNT; index += 1) {
-    const proposalId = `wp2-f07-candidate-${String(index).padStart(3, '0')}`;
-    candidateProposalIds.push(proposalId);
-    const proposal: PlanProposal = { kind: 'candidate_v2',
-      ref: { aggregateType: 'PlanProposal', projectId: GOAL_B.projectId, workspaceId: WORKSPACE.workspaceId,
-        proposalId },
-      revision: 1, schemaVersion: 2, goalRef, basedOn: planRef, draft,
-      reason: { text: `F07 filler ${String(index)}`, sources: [] },
-      status: 'candidate', issues: [], requestRef: null };
-    await f.seedCandidateProposal(proposal);
+    const requestId = `f07-candidate-${String(index).padStart(3, '0')}`;
+    const proposal = await plans.proposePlan(f.ctx, { input: { goalRef, basedOn: planRef, draft,
+      reason: { text: `F07 filler ${String(index)}`, sources: [] } },
+      meta: { requestId, expected: [{ ref: goalRef, revision: goalRevision }] } });
+    if (proposal.status !== 'committed' || proposal.value.issues.length > 0) {
+      throw new Error(`F07 candidate proposal ${requestId}: ${JSON.stringify(proposal)}`);
+    }
+    candidateProposalIds.push(proposal.value.ref.proposalId);
   }
+  // The real queue picks the pending candidate by its canonical ref key and the
+  // provider sorts the L5 rows by key, so the literal expectation order is the
+  // sorted returned proposal-id order, never the submission order.
+  candidateProposalIds.sort();
 
   const goalCauseReader = createGoalDecisionCauseReader({ records: f.records, plans });
-  return { f, goalRef, candidateProposalIds,
+  // W2b-22: the provider's anomaly read goes to the real SessionAnomaly owner of
+  // this same world (its Session facts over the same records), not a double.
+  const anomalies = createSessionAnomalyService({ records: f.records, lookups: f.records,
+    sessionFacts: createSessionFactsService({ records: f.records }), now: f.now });
+  return { f, goalRef, candidateProposalIds, anomalies,
     queue: realDecisionQueue(f, [createGoalCauseCardSource(goalCauseReader)]) };
 }
 
@@ -399,44 +422,52 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     expect(rows).not.toContain(rowKey);
   });
 
-  it('F07 follows the real page boundary and keeps the named tail Task card under focus', async () => {
-    const h = await openDeferredDecisionHarness();
-    const read = createContextExtensionsReader({ anomalies: anomalyDouble(), hostActor: HOST_ACTOR, decisions: h.queue });
+  it.each(['memory', 'sqlite'] as const)('F07 %s follows the real page boundary and keeps the named tail Task card under focus', async kind => {
+    const h = await openDeferredDecisionHarness(kind);
+    const read = createContextExtensionsReader({ anomalies: h.anomalies, hostActor: HOST_ACTOR, decisions: h.queue });
     const request = (focusTaskIds: string[]): ContextReadRequestV1 => ({ goalRef: h.goalRef, focusTaskIds });
 
     // The literal expected row order. The real queue served two pages: the 100
     // candidate cards, then the Task-linked goal_cause card (the named tail Task
-    // card). The provider sorts the merged rows by key, so the three
-    // not_available hint rows come first, then the goal_cause row, then the 100
-    // candidate rows in their literal proposal id order. Every identity is
-    // constructed from the fixture's literal values or the creating command's
-    // own inputs; nothing is read back from the queue.
+    // card). Every row key is written out from the spec format below; the only
+    // values taken from the platform are the proposal ids the real `proposePlan`
+    // returned, used as returned. Nothing is read back from the queue.
+    //
+    // Spec: a card row's key is 'decision:' + card.cardKey and the merged rows are
+    // sorted by key in character-code order (wiring-2 §4.3 items 4 and 6, L5);
+    // the card key is the source identity (slice-5 §4.1), written as canonical
+    // JSON: object keys in UTF-16 code-unit order, no whitespace (slice-5 §2:
+    // the full ref's canonical JSON is the key). So:
+    //   GoalRef      {"aggregateType":"Goal","goalId":"wp2-f07-deferred-goal","projectId":"P"}
+    //   proposal     {"aggregateType":"PlanProposal","projectId":"P","proposalId":<id>,"workspaceId":"W"}
+    //   goal_cause   {"affected":[<pins>],"code":<code>,"goalRef":<GoalRef>,"kind":"goal_cause"}
+    //   candidate    {"goalRef":<GoalRef>,"kind":"candidate","proposalRef":<proposal>}
+    //   a pin        {"ref":<ref>,"revision":<n>}
+    // The deferred Task's pin is the L5 Task designation
+    // {aggregateType:'Task',projectId,goalId,taskId}@0. The 100 candidates also
+    // make the smallest proposal id the Goal's pending proposal, so the real
+    // display reader adds its Goal-level change_pending cause, pinned at that
+    // proposal's first revision, 1.
+    // Order: 'n' (0x6E) < '{' (0x7B), so the three hint rows come first;
+    // '{"affected"' < '{"goalRef"', so both goal_cause rows precede the candidates;
+    // 'PlanProposal' < 'Task' ('P' < 'T'), so change_pending precedes
+    // required_task_deferred; the candidate keys differ only in the proposal id,
+    // so they follow the sorted proposal ids.
     const hintRowKeys = [
       'decision:not_available:message_release',
       'decision:not_available:note_review',
       'decision:not_available:planning_question',
     ];
-    const deferredTaskPin: VersionPin = {
-      ref: { aggregateType: 'Task', projectId: GOAL_B.projectId, goalId: h.goalRef.goalId,
-        taskId: F07_DEFERRED_TASK_ID } as unknown as VersionPin['ref'],
-      revision: 0,
-    };
-    const goalCauseRowKey = `decision:${decisionSourceKey({ kind: 'goal_cause', goalRef: h.goalRef,
-      code: 'required_task_deferred', affected: [deferredTaskPin] })}`;
-    // The 100 candidates also make the smallest one the Goal's pending proposal,
-    // so the real display reader adds its Goal-level change_pending cause card.
-    const pendingProposalPin: VersionPin = {
-      ref: { aggregateType: 'PlanProposal', projectId: GOAL_B.projectId, workspaceId: WORKSPACE.workspaceId,
-        proposalId: h.candidateProposalIds[0]! } as unknown as VersionPin['ref'],
-      revision: 1,
-    };
-    const pendingGoalCauseRowKey = `decision:${decisionSourceKey({ kind: 'goal_cause', goalRef: h.goalRef,
-      code: 'change_pending', affected: [pendingProposalPin] })}`;
-    const candidateRowKeys = h.candidateProposalIds.map(proposalId => `decision:${decisionSourceKey({
-      kind: 'candidate', goalRef: h.goalRef,
-      proposalRef: { aggregateType: 'PlanProposal', projectId: GOAL_B.projectId,
-        workspaceId: WORKSPACE.workspaceId, proposalId },
-    })}`);
+    const goalJson = '{"aggregateType":"Goal","goalId":"wp2-f07-deferred-goal","projectId":"P"}';
+    const proposalJson = (proposalId: string): string =>
+      `{"aggregateType":"PlanProposal","projectId":"P","proposalId":"${proposalId}","workspaceId":"W"}`;
+    const goalCauseRowKey = 'decision:{"affected":[{"ref":{"aggregateType":"Task","goalId":"wp2-f07-deferred-goal",'
+      + '"projectId":"P","taskId":"wp2-f07-deferred-work"},"revision":0}],"code":"required_task_deferred",'
+      + `"goalRef":${goalJson},"kind":"goal_cause"}`;
+    const pendingGoalCauseRowKey = `decision:{"affected":[{"ref":${proposalJson(h.candidateProposalIds[0]!)},"revision":1}],`
+      + `"code":"change_pending","goalRef":${goalJson},"kind":"goal_cause"}`;
+    const candidateRowKeys = h.candidateProposalIds.map(proposalId =>
+      `decision:{"goalRef":${goalJson},"kind":"candidate","proposalRef":${proposalJson(proposalId)}}`);
     const goalLevelRowKeys = [...hintRowKeys, pendingGoalCauseRowKey, ...candidateRowKeys];
     const allRowKeys = [...hintRowKeys, pendingGoalCauseRowKey, goalCauseRowKey, ...candidateRowKeys];
 

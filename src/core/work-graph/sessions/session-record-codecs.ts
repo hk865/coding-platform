@@ -657,11 +657,11 @@ function checkSessionOperationBody(body: UnknownRecord): Problem {
     if (refProject !== plannedValue['projectId']) {
       return 'operation ref project disagrees with the planned Session project';
     }
-    if ('provenance' in action && action['provenance'] !== undefined && action['provenance'] !== null) {
-      const provenance = checkSessionProvenance(action['provenance'], refProject as string,
-        plannedValue['sessionId'] as string);
-      if (provenance !== null) return `operation provenance: ${provenance}`;
-    }
+    const actionProvenance = action['provenance'];
+    if (actionProvenance === undefined || actionProvenance === null) return 'operation provenance is required';
+    const provenance = checkSessionProvenance(actionProvenance, refProject as string,
+      plannedValue['sessionId'] as string);
+    if (provenance !== null) return `operation provenance: ${provenance}`;
   }
   const refs = action['recommendedRefs'];
   if (!Array.isArray(refs)) return 'operation recommendedRefs must be an array';
@@ -733,11 +733,10 @@ export function checkSessionBody(body: UnknownRecord, requireBoundUnavailableSin
     if (execution !== null) return execution;
   }
   const refValue = body['ref'] as UnknownRecord;
-  if (body['provenance'] !== undefined && body['provenance'] !== null) {
-    const provenance = checkSessionProvenance(body['provenance'], refValue['projectId'] as string,
-      refValue['sessionId'] as string);
-    if (provenance !== null) return `session provenance: ${provenance}`;
-  }
+  if (!('provenance' in body) || body['provenance'] === null) return 'session record requires provenance';
+  const provenance = checkSessionProvenance(body['provenance'], refValue['projectId'] as string,
+    refValue['sessionId'] as string);
+  if (provenance !== null) return `session provenance: ${provenance}`;
   if (body['archiveRequest'] !== undefined && body['archiveRequest'] !== null) {
     const archiveRequest = checkSessionArchiveRequest(body['archiveRequest'], refValue['projectId'] as string);
     if (archiveRequest !== null) return `session archiveRequest: ${archiveRequest}`;
@@ -1023,11 +1022,7 @@ export function decodeSessionRecord(record: EncodedRecord): DecodeResult<Session
   if (checked.status !== 'decoded') return checked;
   const body = parseObject(record.json);
   if (body === null) return invalid('Session record json is not an object');
-  // R2 exception: the frozen S1 test `S1-codecs-indexes` SV01 and
-  // `S1-dispatch-guards` SV58 assert an explicit `null` on a decoded old record,
-  // so this codec keeps the §2.9 null default instead of leaving the key absent.
   return { status: 'decoded', value: { ...(body as unknown as SessionRecord),
-    provenance: (body['provenance'] as SessionRecord['provenance'] | undefined) ?? null,
     archiveRequest: (body['archiveRequest'] as SessionRecord['archiveRequest'] | undefined) ?? null } };
 }
 

@@ -10,13 +10,16 @@
  * input); no store, platform, Host, Workflow, Runtime or stub port is imported.
  */
 import { describe, expect, it } from 'vitest';
-import { renderContinuationBriefZh } from '../../src/contracts/continuation-brief.js';
+import { continuationBriefDigest, renderContinuationBriefZh } from '../../src/contracts/continuation-brief.js';
 import { baseBrief } from '../helpers/K3-continuation-pure-fixture.js';
 
 describe('K3-15 (二) F-039: a brief without blocked commands keeps the complete old bytes', () => {
   it('renders the fixed pre-B3 text, including the marker and the ending', () => {
-    const text: string = renderContinuationBriefZh(
-      baseBrief(), 'a3a9706587bb68975b7a35962c82aa4c961ef75116ff189d11a7ce3e0580a9d6');
+    const brief = baseBrief();
+    const digest: string = continuationBriefDigest(brief);
+    // The digest the note test computed from the same brief, pinned as a literal.
+    expect(digest).toBe('a3a9706587bb68975b7a35962c82aa4c961ef75116ff189d11a7ce3e0580a9d6');
+    const text: string = renderContinuationBriefZh(brief, digest);
     expect(text).toBe(
   [
   '## 接续说明',
@@ -52,6 +55,8 @@ describe('K3-15 (二) F-039: a brief without blocked commands keeps the complete
   '- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。',
 ].join('\n')
     );
+    // The explicit null spelling behaves exactly like the absent field.
+    expect(renderContinuationBriefZh({ ...brief, unknownCallReview: null }, digest)).toBe(text);
     expect(text).not.toContain('平台拦下原命令；要再跑先请求并得到允许。');
     expect(text).not.toContain('### 被拦的命令');
   });

@@ -17,9 +17,11 @@
  *   real `RunControlPort`;
  * - `restartedHost` reconciles RUN-24 while `countingOff.off` makes the end
  *   carry no `activity` and the tally reader answer `retry_later`;
- * - K part A's public `closeOpenTurn` closes A's Turn with `run.interrupted`;
- *   the real Session health owner clears `kernel_turn_open`; Run B is claimed
- *   into the same Session and runs 5 real `read` tools through the real Runtime;
+ * - a real human `TaskRequeue` authorizes the continuation (RUN-24), then the
+ *   real Runtime's public `closeOpenTurn` closes A's Turn with `run.interrupted`
+ *   and writes the Session health through the injected `turnClosure`; Run B is
+ *   claimed into the same Session and runs 5 real `read` tools through the real
+ *   Runtime;
  * - the automatic backfill is `createActivityBackfill` with `maxPages: 1` over
  *   the real Runtime `countRunActivity`.
  *
@@ -28,24 +30,25 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { join } from 'node:path';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
-import type { RuntimeExecutionDependencies, RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
+import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { HostInstanceFacts } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
-import { createSessionHistoryCursorOwner } from '../../src/core/agent-runtime/session-operations.js';
-import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
-import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createRunActivityService } from '../../src/core/work-graph/tasks/run-activity-service.js';
 import { createSessionHealthService } from '../../src/core/work-graph/sessions/session-health.js';
-import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { createActivityBackfill } from '../../src/business/workflow/activity-backfill.js';
+import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
+import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
+import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import { B2_AT, createRuntimeHostDouble } from '../helpers/B2-runtime-fixture.js';
+import { deferred } from '../helpers/A2-restart-fixture.js';
 import { createS2BRuntimeStoreFixture, type S2BRuntimeStoreFixture } from '../helpers/S2B-runtime-store-fixture.js';
 import { restartedHost } from '../helpers/S2B-runtime-tools-support.js';
+import { controlsOn, withTool } from '../helpers/S2B-be2-reconcile-support.js';
 import { S2B_SLOW_TIMEOUT_MS } from '../helpers/S2B-be1-platform-fixture.js';
 import {
-  closeOpenTurn, toolSchema as z, type ToolCall, type ToolDefinition, type ToolResult,
+  toolSchema as z, type ToolCall, type ToolDefinition, type ToolResult,
 } from '../../vendor/coding-agent/dist/public-api.js';
 
 /**
@@ -78,11 +81,6 @@ const BACKFILL_AT = '2026-09-27T00:00:00.000Z';
 const A_CALLS = 96;
 const B_CALLS = 5;
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((settle) => { resolve = settle; });
-  return { promise, resolve };
-}
 
 function success(callId: string): ToolResult {
   return { schemaVersion: 1, callId, status: 'success', output: [{ kind: 'text', text: 's2b-41 ok' }],
@@ -103,26 +101,6 @@ function parallelBlockingTool(name: string, entered: () => void, release: Promis
       return success(call.callId);
     } },
   };
-}
-
-function withTool(kernel: RuntimeExecutionDependencies['kernel'], tool: ToolDefinition): RuntimeExecutionDependencies['kernel'] {
-  return {
-    ...kernel,
-    runCodingAgent: (options) => kernel.runCodingAgent({ ...options,
-      config: { ...options.config, tools: { ...options.config.tools, enabledNames: [...options.config.tools.enabledNames, tool.name] } },
-      additionalTools: (workspace) => [...(options.additionalTools?.(workspace) ?? []), tool] }),
-  };
-}
-
-function controlsOn(fx: S2BRuntimeStoreFixture) {
-  let seq = 0;
-  return createRunControlService({
-    records: fx.claimFixture.records,
-    authority: createMaterialRecordReaders(fx.claimFixture.records).authority,
-    reads: createRunStateReader({ records: fx.claimFixture.records }),
-    now: () => B2_AT,
-    eventId: () => `s2b-41-control-event-${++seq}`,
-  });
 }
 
 it('2B-41 (BE3): the automatic backfill bounds A by its own closed Turn, excludes B, and is not capacity', async () => {
@@ -210,26 +188,58 @@ it('2B-41 (BE3): the automatic backfill bounds A by its own closed Turn, exclude
     if (missed.status !== 'ready') return;
     expect(missed.value[0]).toMatchObject({ status: 'unknown', reason: 'not_recorded', error: true, recordedBy: null });
 
-    // K part A closes A's dangling Kernel Turn; the health owner clears it.
+    // RUN-24 authorization: the person's continuation is a real TaskRequeue
+    // over the same store (the Runtime refuses a paused closure without it).
+    const goalRead = await fx.deps.plans.queryGoal(fx.ctx, { aggregateType: 'Goal',
+      projectId: fx.scope.projectId, goalId: fx.claim.runRef.goalId });
+    if (goalRead.status !== 'ready') throw new Error('the S2B 2B-41 Goal is not readable');
     const closedRun = await second.deps.executions.readExecution(fx.ctx, fx.claim.runRef);
     if (closedRun.status !== 'ready') throw new Error('Run A is not readable after RUN-24');
-    const locator = closedRun.value.run.executionHistory;
-    if (locator === undefined) throw new Error('Run A must keep its position record');
-    const closed = await fx.deps.kernelStores.withStore(locator.kernel.adapterId, async (store) => {
-      const header = await store.get(locator.kernel.kernelSessionId, { signal: fx.ctx.signal });
-      return closeOpenTurn(store, { sessionId: locator.kernel.kernelSessionId, kernelRunId: locator.kernel.runId,
-        expectedRevision: header.revision, at: A_CLOSE_AT });
+    let requeueSeq = 0;
+    const sourceReader = new VerificationWorkspaceReader();
+    // The requeue's message reads go to the real mailbox owner over the same store and readers.
+    let mailboxSeq = 0;
+    const mailbox = createSessionMailbox({ records: fx.records, sessions: fx.deps.sessions,
+      executions: fx.deps.executions, roles: fx.deps.roles, materials: fx.deps.materials,
+      systemActor: { kind: 'system', id: 's2b-41-mailbox' }, now: () => A_CLOSE_AT,
+      newId: () => `s2b-41-mailbox-${++mailboxSeq}` });
+    const requeueService = createTaskRequeueService({
+      records: fx.records,
+      reads: fx.deps.executions,
+      workspaceHost: fx.deps.workspaceHost,
+      source: { captureDigest: (root) => sourceReader.captureDigest(root) },
+      materials: fx.deps.materials,
+      messages: { readMessage: mailbox.readMessage },
+      now: () => A_CLOSE_AT,
+      eventId: () => `s2b-41-requeue-event-${++requeueSeq}`,
     });
-    expect(closed).toMatchObject({ status: 'closed' });
-    const owner = createSessionHistoryCursorOwner({ kernelStores: fx.deps.kernelStores });
-    const sessionRead = await fx.claimFixture.sessionsPort.readSession(fx.ctx, fx.claim.sessionRef);
-    if (sessionRead.status !== 'ready') throw new Error('the S2B 2B-41 Session is not readable');
-    const probe = await owner.probe({ session: sessionRead.value.record, signal: fx.ctx.signal });
+    const queued = await requeueService.requeueTask(fx.ctx, {
+      input: { taskRef: { projectId: fx.scope.projectId, goalId: fx.claim.runRef.goalId,
+        taskId: fx.claimFixture.tasks.first.taskId }, afterRunRef: fx.claim.runRef,
+      reason: 'S2B 2B-41: the person continues the paused Run' },
+      meta: { requestId: 's2b-41-a-requeue', expected: [
+        { ref: { aggregateType: 'Goal', projectId: fx.scope.projectId, goalId: fx.claim.runRef.goalId },
+          revision: goalRead.value.goal.revision },
+        { ref: fx.claim.runRef, revision: closedRun.value.run.revision },
+      ] },
+    });
+    expect(queued).toMatchObject({ status: 'committed', value: { kind: 'requeued' } });
+    if (queued.status !== 'committed' || queued.value.kind !== 'requeued') {
+      throw new Error('the human continuation requeue must commit');
+    }
+
+    // The real Runtime closes A's dangling Kernel Turn (K part A) and writes the
+    // Session health itself, under the restarted Host's owned lease.
+    fx.setNow(A_CLOSE_AT);
     const healthService = createSessionHealthService({ records: fx.records, hostInstance: HOST_2,
       now: () => A_CLOSE_AT, eventId: () => 's2b-41-health-event' });
-    const health = await healthService.recordSessionHealth(fx.ctx, { sessionRef: fx.claim.sessionRef,
-      probe: { verdict: 'ready', activeRunId: probe.activeRunId } });
-    expect(health).toMatchObject({ status: 'observed' });
+    const closingRuntime = createAgentRuntime({ ...second.deps,
+      turnClosure: { lease: 'owned', recordSessionHealth: healthService.recordSessionHealth } });
+    const close = closingRuntime.port.closeOpenTurn;
+    if (close === undefined) throw new Error('the S2B 2B-41 Runtime must publish closeOpenTurn');
+    const closed = await close(fx.ctx, { sessionRef: fx.claim.sessionRef, afterRunRef: fx.claim.runRef,
+      requeueRef: queued.value.requeue.ref });
+    expect(closed).toMatchObject({ status: 'closed', health: 'available' });
 
     // Run B runs afterwards in the SAME Session (counting on) and calls 5 reads.
     const bRequest = await fx.claimFixture.buildRequest({ input: {

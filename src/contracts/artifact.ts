@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 /** Content-addressed immutable bodies. WorkGraph material access checks integrity and exact
  * read authorization; storing or reading a body never establishes business truth. */
 import { createHash } from "node:crypto";

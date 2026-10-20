@@ -27,6 +27,13 @@ function general(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
 }
 const idOf = (result: { status: string }): string => (result as unknown as { noteId: string }).noteId;
 
+/** The public read of one note's stored state, used for the unchanged checks. */
+async function storedState(f: S4ANoteFixture, noteId: string): Promise<string> {
+  const read = await f.platform.notes.readNote(f.ctx(), { noteId });
+  if (read.status !== 'ready') throw new Error(`note ${noteId} is not readable: ${JSON.stringify(read)}`);
+  return read.value.storedState;
+}
+
 type BlockingSeam = { arm(noteId: string): void };
 
 /** The real fixture over a `readMany`-wrapped backend; inert until `arm`. */
@@ -85,6 +92,18 @@ describe('RW-8 order: a verdict carrying a resolution never reads a relation tar
         expectedVersion: 1, expectedPointerRevision: null, verdict: 'review', resolution: 'coexist', reason: null });
       expect(refused).toMatchObject({ status: 'rejected', code: 'invalid', reason: 'resolution_not_applicable' });
     } finally { await f.close(); }
+
+    // T1-050 (source S4C-note-protection RW-8 review): an ACCEPTED subject is
+    // still refused, and the public read shows it unchanged.
+    const accepted = await createS4ANoteFixture(kind);
+    try {
+      const note = await accepted.write(accepted.ctx(), general({ topic: 'rw8-review', anchor: FILE_A }), null);
+      const refused = await accepted.platform.notes.reviewNote(accepted.ctx(), { commandId: 'rw8-review',
+        noteId: idOf(note), expectedVersion: 1, expectedPointerRevision: null, verdict: 'review',
+        resolution: 'supersede', reason: null });
+      expect(refused).toMatchObject({ status: 'rejected', code: 'invalid', reason: 'resolution_not_applicable' });
+      expect(await storedState(accepted, idOf(note))).toBe('accepted');
+    } finally { await accepted.close(); }
   });
 
   it.each(KINDS)('RW-8 order reject %s: resolution_not_applicable even when the target read fails', async kind => {
@@ -95,5 +114,19 @@ describe('RW-8 order: a verdict carrying a resolution never reads a relation tar
         expectedVersion: 1, expectedPointerRevision: null, verdict: 'reject', resolution: 'supersede', reason: null });
       expect(refused).toMatchObject({ status: 'rejected', code: 'invalid', reason: 'resolution_not_applicable' });
     } finally { await f.close(); }
+
+    // T1-050 (source S4C-note-protection RW-8 reject): a PENDING subject is
+    // still refused, and the public read shows it unchanged.
+    const pending = await createS4ANoteFixture(kind, { goalQuota: 0 });
+    try {
+      const note = await pending.write(pending.workCtx(await pending.claimRun('rw8-reject')),
+        general({ topic: 'rw8-reject', anchor: FILE_A }), 's4a-goal');
+      expect(note).toMatchObject({ status: 'pending_review' });
+      const refused = await pending.platform.notes.reviewNote(pending.ctx(), { commandId: 'rw8-reject',
+        noteId: idOf(note), expectedVersion: 1, expectedPointerRevision: null, verdict: 'reject',
+        resolution: 'coexist', reason: '不收' });
+      expect(refused).toMatchObject({ status: 'rejected', code: 'invalid', reason: 'resolution_not_applicable' });
+      expect(await storedState(pending, idOf(note))).toBe('pending_review');
+    } finally { await pending.close(); }
   });
 });

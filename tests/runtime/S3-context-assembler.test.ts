@@ -4,9 +4,11 @@
  *
  * The pure formatting/budget rows (CA01, CA02, CA05–CA08, CA12) reach
  * `renderContext`/`renderContinuationBriefZh` directly. The prepare/binding rows
- * (CA03, CA04, CA15) reach the assembler through the real preparation service
- * `createExecutionPreparation(deps, assembler)`, whose dependencies are narrow
- * doubles for what the row does not test. The remaining assembler rows
+ * (CA03, CA04, CA15) run on the real WP2 memory composition root (T2-034): the
+ * public Project/Workspace/policy/architecture/Goal/Plan set-up, the Session
+ * `runtime.createSession` creates, the real claim, and the public
+ * `runtime.prepareExecution`/`runtime.startRun`. Their counters are delegating
+ * wrappers that return the real result unchanged. The remaining assembler rows
  * (CA09–CA11, CA13, CA14) reach the assembler entry the row names with the
  * §5.1 execution record, role resolution, Host configuration, permissions, and
  * narrow `graphContext`/`taskInputs` ports.
@@ -16,7 +18,7 @@
  * assembler a stub, so the assembler rows are red with
  * `not implemented: …`; that is the expected part-1 state.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -34,17 +36,16 @@ import type {
   ContextExtensionsV1, InputDeclarationV1, InputSelectionV1, TaskInputPageV1,
 } from '../../src/contracts/graph-context.js';
 import type { GoalRef, GoalSnapshot, WorkspaceRef, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
-import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
+import type { NoteDraftV1 } from '../../src/contracts/note.js';
+import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { RoleSpecContentV1, RoleSpecRevisionRef } from '../../src/contracts/role-spec.js';
 import type { RoleSpecResolutionV1 } from '../../src/contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import type { ContextAssemblerDependencies } from '../../src/core/agent-runtime/context-assembler.js';
 import { INITIAL_COORDINATION_RESPONSE_GUIDE } from '../../src/core/agent-runtime/query-preparation.js';
 import type { ResolvedRuntimeConfiguration } from '../../src/core/agent-runtime/execution-contracts.js';
-import type { ExecutionPreparationDependencies } from '../../src/core/agent-runtime/execution-preparation.js';
-import { createExecutionPreparation } from '../../src/core/agent-runtime/execution-preparation.js';
-import type { RawArtifactPut, RawArtifactRecord, RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
-import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
+import type { RawArtifactPut, RawArtifactRecord } from '../../src/core/record-store/body-ports.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import type { StoreResult } from '../../src/core/record-store/ports.js';
 import type { TaskClaimOutbox } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { TaskContextInputPort } from '../../src/core/work-graph/model/context-input-contracts.js';
@@ -52,9 +53,7 @@ import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execut
 import type { GraphContextFactsV1, GraphContextReadPort } from '../../src/core/work-graph/model/graph-context-contracts.js';
 import type { MaterialPort } from '../../src/core/work-graph/model/material-contracts.js';
 import type { QueryPreparationFacts } from '../../src/core/work-graph/queries/contracts.js';
-import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
-import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
-import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createWP2Platform, preparedBundle, type WP2PlatformFixture } from '../helpers/WP2-platform-support.js';
 import {
   CONTEXT_FORMAT_VERSION, CONTEXT_SECTION_HEADERS, CONTEXT_SECTION_ORDER, QUERY_CONTEXT_PRELUDE,
   WORK_CONTEXT_PRELUDE, createContextAssembler, renderAttentionChanges, renderContext,
@@ -79,7 +78,6 @@ const TASK_A: TaskTriple = { projectId: 'p', goalId: 'g', taskId: 'tA' };
 const TASK_B: TaskTriple = { projectId: 'p', goalId: 'g', taskId: 'tB' };
 const TASK_F: TaskTriple = { projectId: 'p', goalId: 'g', taskId: 'tF' };
 const RUN_A_REF: RunRef = { aggregateType: 'Run', projectId: 'p', goalId: 'g', runId: 'runA' };
-const RUN_B_REF: RunRef = { aggregateType: 'Run', projectId: 'p', goalId: 'g', runId: 'runB' };
 
 /** §5.1: legacy artifact body `old-A`, digests/size derived from the body. */
 const OLD_A: ArtifactRef = {
@@ -99,7 +97,7 @@ const CA_PERMISSIONS: TaskEnvelopeV1['permissions'] = {
 
 const GOAL_SNAPSHOT: GoalSnapshot = {
   ref: GOAL_REF, workspaceRef: WORKSPACE_REF, objective: 'Ship platform', desiredState: 'active',
-  activePlanRevision: PLAN_REF, revision: 1,
+  desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: PLAN_REF, revision: 1,
 };
 const WORKSPACE_SNAPSHOT: WorkspaceSnapshot = { ref: WORKSPACE_REF, revision: 7 };
 
@@ -241,6 +239,7 @@ function taskRecord(input: {
     kernel: { adapterId: 's3-ca-kernel', kernelSessionId: `ks-${input.sessionId}` },
     lifecycle: 'active', health: 'available', role: SESSION_ROLE, workspaceId: 'w',
     lastExecutionRef: null, occupancy: null, historyCursor: null, createdAt: AT, archivedAt: null,
+    provenance: { schemaVersion: 1, kind: 'new' },
   };
   return { run, attempt, outbox, plan: input.plan, session, lease: null, readThrough: null };
 }
@@ -318,10 +317,8 @@ function materialDouble(): MaterialPort {
 
 function bodyStore() {
   const records = new Map<string, RawArtifactRecord>();
-  let puts = 0;
   return {
     async put(input: RawArtifactPut): Promise<StoreResult<{ ref: ArtifactRef; replayed: boolean }>> {
-      puts += 1;
       const fallbackSource: SourceRefV1 = { kind: 'workspace', refId: 'w', revision: '7' };
       const ref: ArtifactRef = {
         kind: 'artifact', contentType: input.contentType, digest: artifactBodyDigest(input.body),
@@ -338,8 +335,6 @@ function bodyStore() {
         ? { status: 'rejected', code: 'not_found', reason: `no body for ${ref.digest}` }
         : { status: 'ready', value: record };
     },
-    putCount: (): number => puts,
-    size: (): number => records.size,
   };
 }
 
@@ -356,81 +351,90 @@ function assemblerBase(): ContextAssemblerDependencies {
 function assemblerWith(deps: {
   graphContext?: GraphContextReadPort;
   taskInputs?: TaskContextInputPort;
-  unknownCallReviews?: ReturnType<typeof createUnknownCallReviewService>;
 } = {}) {
   const base = assemblerBase();
   return createContextAssembler({
     ...base,
     ...(deps.graphContext === undefined ? {} : { graphContext: deps.graphContext }),
     ...(deps.taskInputs === undefined ? {} : { taskInputs: deps.taskInputs }),
-    ...(deps.unknownCallReviews === undefined ? {} : { unknownCallReviews: deps.unknownCallReviews }),
   });
 }
 
-/** CA03/CA04/CA15: the required Task-review reader is the production owner over
- * one empty real in-memory record store; every backend opened here is closed. */
-const reviewBackends: ReturnType<typeof createInMemoryRecordBackend>[] = [];
-afterEach(async () => {
-  for (const backend of reviewBackends.splice(0)) await backend.close();
-});
+// -------------------------------------------------------------------------- //
+// CA03/CA04/CA15: the real WP2 memory platform (T2-034).                      //
+// -------------------------------------------------------------------------- //
 
 type ReadCounts = { graph: number; inputs: number; brief: number };
 
 /**
- * CA03/CA04/CA15: the real preparation service on narrow owner doubles. The
- * `execution` record is the §5.1 fact; `graphContext`/`taskInputs` are counting
- * ports so a bound prepare is provably rehydrated without any reread.
+ * A3: counting wrappers on the platform's one `graphContext`/`taskInputs`
+ * owners, the same objects the Runtime's assembler reads through. Each wrapper
+ * counts the call and returns the real result unchanged.
  */
-function preparationHarness(options: {
-  record?: TaskExecutionRecord;
-  graphContext?: GraphContextReadPort;
-  taskInputs?: TaskContextInputPort;
-} = {}) {
-  const record = options.record ?? workRecord();
-  const bodies = bodyStore();
+function countReads(f: WP2PlatformFixture): ReadCounts {
   const counts: ReadCounts = { graph: 0, inputs: 0, brief: 0 };
-  const facts: { current: GraphContextFactsV1 } = { current: graphFacts() };
-  const graphContext: GraphContextReadPort = options.graphContext ?? {
-    async readContextFacts() {
-      counts.graph += 1;
-      return { status: 'ready', value: structuredClone(facts.current) };
-    },
-    async lookGraph() { return { status: 'not_found' }; },
-    async findGraph() { return { status: 'not_found' }; },
-    async readAttentionFacts() { counts.brief += 1; return { status: 'not_found' }; },
+  const graph = f.platform.graphContext;
+  const readContextFacts = graph.readContextFacts.bind(graph);
+  const readAttentionFacts = graph.readAttentionFacts.bind(graph);
+  graph.readContextFacts = (...args) => { counts.graph += 1; return readContextFacts(...args); };
+  graph.readAttentionFacts = (...args) => { counts.brief += 1; return readAttentionFacts(...args); };
+  const inputs = f.platform.taskInputs;
+  const readTaskInputs = inputs.readTaskInputs.bind(inputs);
+  const readTaskInputPage = inputs.readTaskInputPage.bind(inputs);
+  inputs.readTaskInputs = (...args) => { counts.inputs += 1; return readTaskInputs(...args); };
+  inputs.readTaskInputPage = (...args) => { counts.inputs += 1; return readTaskInputPage(...args); };
+  return counts;
+}
+
+/**
+ * A3: a delegating counter on the platform's real memory body store. Every
+ * `put` runs the real store and returns its result unchanged; the counter only
+ * keeps the requests.
+ */
+function countBodyPuts(): { puts(): RawArtifactPut[]; restore(): void } {
+  const spy = vi.spyOn(RawArtifactBodyStore.prototype, 'put');
+  return { puts: () => spy.mock.calls.map(([input]) => input), restore: () => { spy.mockRestore(); } };
+}
+
+/** CA04: a Goal understanding note, written through the public note owner. */
+function goalUnderstandingDraft(goalId: string, conclusion: string): NoteDraftV1 {
+  return {
+    anchor: { kind: 'goal', goalId }, extraAnchors: [], facts: [], basisFiles: [], structural: false, replaces: [],
+    contradicts: [], coexistWith: [], kind: 'understanding', topic: 'understanding', conclusion,
+    sections: { status: 's', decided: 'd', open: 'o', next: 'n', risks: 'r' },
   };
-  const taskInputs: TaskContextInputPort = options.taskInputs ?? {
-    async readTaskInputs() { counts.inputs += 1; return { status: 'ready', value: [] }; },
-    async readTaskInputPage() { counts.inputs += 1; return { status: 'not_found' }; },
+}
+
+/**
+ * CA04: a real successor Plan through the public propose/apply owners. The
+ * draft is the accepted Plan the public Run read returned, plus one later
+ * `plan_only` Task, so adopting it moves the Goal's active plan pointer.
+ */
+async function adoptSuccessorPlan(f: WP2PlatformFixture, plan: PlanRevisionSnapshot): Promise<PlanRevisionRef> {
+  const goal = await f.platform.plans.queryGoal(f.ctx, f.goalRef);
+  if (goal.status !== 'ready') throw new Error(`CA04 Goal read: ${JSON.stringify(goal)}`);
+  const draft: PlanRevisionDraft = {
+    schemaVersion: 2, planId: 'ca04-successor-plan', planRevision: plan.planRevision + 1, goalId: f.goalRef.goalId,
+    stages: structuredClone(plan.stages),
+    tasks: [...structuredClone(plan.tasks), { taskId: 'ca04-later', title: 'CA04 later work', requirementLevel: 'required',
+      taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'plan_only' }],
+    assignments: structuredClone(plan.assignments ?? []), obligations: structuredClone(plan.obligations),
+    taskHierarchy: structuredClone(plan.taskHierarchy), executionDag: structuredClone(plan.executionDag),
+    taskRelations: structuredClone(plan.taskRelations ?? []),
+    inputRequirements: structuredClone(plan.inputRequirements ?? []),
   };
-  // Rework 10 package R: the required Task-review reader is the production
-  // owner over a real (empty) in-memory record store, read by a real Run reader
-  // (an empty page, never a hand-returned result).
-  const reviewBackend = createInMemoryRecordBackend({ schemas: UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS });
-  reviewBackends.push(reviewBackend);
-  const unknownCallReviews = createUnknownCallReviewService({
-    records: reviewBackend.records,
-    reads: createRunStateReader({ records: reviewBackend.records }),
-    now: () => AT,
-    eventId: () => 's3-ca-review',
-  });
-  const assembler = assemblerWith({ graphContext, taskInputs, unknownCallReviews });
-  const deps: ExecutionPreparationDependencies = {
-    executions: { readExecution: async () => ({ status: 'ready', value: record }) },
-    roles: { resolveRoleBindingFacts: async () => ({ result: { status: 'ready', value: roleResolution() }, guards: [] }) },
-    bodies,
-    host: { resolveConfiguration: async () => ({ status: 'ready', value: runtimeConfiguration() }) },
-    now: () => AT,
-    newId: () => 's3-ca-id',
-    unknownCallReviews,
-    graphContext,
-    taskInputs,
-    // Item 2: this assembly prepare never reads the Task closure; fail closed
-    // if it ever does (never an absent → open default).
-    readTaskClosure: async () => ({ status: 'rejected' as const, code: 'unavailable' as const,
-      reason: 'this test does not read the Task closure' }),
-  };
-  return { record, bodies, counts, facts, assembler, preparation: createExecutionPreparation(deps, assembler) };
+  const expected = [{ ref: f.goalRef, revision: goal.value.goal.revision }];
+  const proposed = await f.platform.plans.proposePlan(f.ctx, {
+    input: { goalRef: f.goalRef, basedOn: plan.ref, draft, reason: { text: 'CA04 successor plan', sources: [] } },
+    meta: { requestId: 'ca04-propose', expected } });
+  if (proposed.status !== 'committed' || proposed.value.issues.length > 0) {
+    throw new Error(`CA04 successor proposal: ${JSON.stringify(proposed)}`);
+  }
+  const applied = await f.platform.plans.applyPlanChange(f.ctx, {
+    input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] },
+    meta: { requestId: 'ca04-apply', expected } });
+  if (applied.status !== 'committed') throw new Error(`CA04 successor adoption: ${JSON.stringify(applied)}`);
+  return applied.value.ref;
 }
 
 /** Narrows a `ReadResult` to its ready branch for the prepare rows. */
@@ -592,28 +596,6 @@ function queryFacts(): QueryPreparationFacts {
   };
 }
 
-/** CA15: only the injected extension reader throws; the surrounding facts are valid. */
-function extensionsThrowingGraphContext(): GraphContextReadPort {
-  const extensionsReader = async (): Promise<ContextExtensionsV1> => {
-    throw new Error('extensions corrupt');
-  };
-  return {
-    async readContextFacts() {
-      const surrounding = graphFacts();
-      try {
-        const extensions = await extensionsReader();
-        return { status: 'ready', value: { ...surrounding, extensions } };
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        return { status: 'rejected', code: 'unavailable', reason: `the extension projection failed: ${reason}` };
-      }
-    },
-    async lookGraph() { return { status: 'not_found' }; },
-    async findGraph() { return { status: 'not_found' }; },
-    async readAttentionFacts() { return { status: 'not_found' }; },
-  };
-}
-
 describe('S3 context assembler CA01-CA15', () => {
   it('CA01 renders the fixed work prelude and all seven sections byte for byte', () => {
     const result = renderContext({
@@ -644,40 +626,73 @@ describe('S3 context assembler CA01-CA15', () => {
   });
 
   it('CA03 two unbound preparations of the same facts share bytes and ArtifactRefs', async () => {
-    const harness = preparationHarness();
-    const first = ready(await harness.preparation.prepare(CTX, { runRef: RUN_B_REF, requestId: 'ca03-first' })).value;
-    const second = ready(await harness.preparation.prepare(CTX, { runRef: RUN_B_REF, requestId: 'ca03-second' })).value;
-    expect(second.inputBinding.inputDigest).toBe(first.inputBinding.inputDigest);
-    expect(second.envelope.bundleRef).toEqual(first.envelope.bundleRef);
-    expect(second.envelope.bundleRef.digest).toBe(first.envelope.bundleRef.digest);
-    // The identical manifest is the same content-addressed body, never a second body.
-    expect(harness.bodies.size()).toBe(1);
+    const f = await createWP2Platform({ kind: 'memory', duty: 'secretary', ownedHost: true });
+    const bodies = countBodyPuts();
+    try {
+      const first = (await preparedBundle(f, f.runRef!, 'ca03-first')).prepared;
+      const second = (await preparedBundle(f, f.runRef!, 'ca03-second')).prepared;
+      expect(second.inputBinding.inputDigest).toBe(first.inputBinding.inputDigest);
+      expect(second.envelope.bundleRef).toEqual(first.envelope.bundleRef);
+      expect(second.envelope.bundleRef.digest).toBe(first.envelope.bundleRef.digest);
+      // The identical manifest is the same content-addressed body, never a second
+      // body: the two prepares asked the real body store for exactly 1 distinct
+      // manifest body (the manifest is the put whose content type the returned
+      // bundleRef carries).
+      const manifests = bodies.puts().filter(input => input.contentType === first.envelope.bundleRef.contentType);
+      expect(new Set(manifests.map(input => input.body)).size).toBe(1);
+    } finally {
+      bodies.restore();
+      await f.close();
+    }
   });
 
   it('CA04 a bound context ignores changed Goal/notes and never rereads graph or inputs', async () => {
-    const harness = preparationHarness();
-    const first = ready(await harness.preparation.prepare(CTX, { runRef: RUN_B_REF, requestId: 'ca04-first' })).value;
-    // The entry owner binds the Prepared value; the Run now carries its inputBinding.
-    harness.record.run = { ...harness.record.run, inputBinding: first.inputBinding, envelope: first.envelope };
-    // Both upsteam facts change after the bind.
-    harness.facts.current.goal = { ...harness.facts.current.goal, objective: 'Changed objective after bind' };
-    harness.facts.current.extensions = {
-      ...harness.facts.current.extensions,
-      notes: {
-        availability: 'available',
-        understanding: { rows: [], norms: [], normsOmitted: 0 },
-        general: [{ anchorKey: 'task:tB', noteId: 'n1', version: 1, kind: 'convention',
-          conclusion: 'changed note', freshness: 'fresh', label: 'changed note' }],
-      },
-    };
-    harness.counts.graph = 0;
-    harness.counts.inputs = 0;
-    harness.counts.brief = 0;
-    const second = ready(await harness.preparation.prepare(CTX, { runRef: RUN_B_REF, requestId: 'ca04-second' })).value;
-    expect(second).toEqual(first);
-    expect(harness.counts.graph).toBe(0);
-    expect(harness.counts.inputs).toBe(0);
-    expect(harness.counts.brief).toBe(0);
+    // The real start is cancelled right after its Run entry-authorization
+    // commit (the C-03/W-02 path), so the Run stays `starting` with the bound input.
+    const controller = new AbortController();
+    let armed = false;
+    const f = await createWP2Platform({ kind: 'memory', duty: 'secretary', allowAnyRun: true, ownedHost: true,
+      onCommit: notice => {
+        if (armed && notice.aggregates.some(aggregate => aggregate.aggregateType === 'Run')) controller.abort();
+      } });
+    try {
+      const counts = countReads(f);
+      const first = (await preparedBundle(f, f.runRef!, 'ca04-first')).prepared;
+      // The counter is live: the unbound assembly read the graph through it.
+      expect(counts.graph).toBeGreaterThan(0);
+      armed = true;
+      const started = await f.platform.runtime.startRun({ ...f.ctx, signal: controller.signal },
+        { prepared: first, consumerId: 'ca04-driver', requestId: 'ca04-start' });
+      expect(started).toMatchObject({ status: 'rejected', code: 'cancelled' });
+      // The entry owner bound the Prepared value; the Run now carries its inputBinding.
+      const bound = await f.platform.executions.readExecution(f.ctx, f.runRef!);
+      if (bound.status !== 'ready') throw new Error(`CA04 bound run read: ${JSON.stringify(bound)}`);
+      expect(bound.value.run).toMatchObject({ status: 'starting', inputBinding: first.inputBinding });
+
+      // Both upstream facts change after the bind: a real successor Plan moves
+      // the Goal's plan pointer, and a real note write adds a Goal note.
+      const successor = await adoptSuccessorPlan(f, bound.value.plan);
+      expect(await f.platform.plans.queryGoal(f.ctx, f.goalRef))
+        .toMatchObject({ status: 'ready', value: { goal: { activePlanRevision: successor } } });
+      const note = await f.platform.notes.writeNote(f.ctx, { commandId: 'ca04-note',
+        note: goalUnderstandingDraft(f.goalRef.goalId, 'changed understanding after bind'),
+        expectedPointerRevision: null, goalId: f.goalRef.goalId });
+      expect(note.status).toBe('accepted');
+
+      counts.graph = 0;
+      counts.inputs = 0;
+      counts.brief = 0;
+      const second = (await preparedBundle(f, f.runRef!, 'ca04-second')).prepared;
+      expect(second).toEqual(first);
+      // This world declares no inputs; input reads inside the graph read go
+      // through the raw owner and are counted in `counts.graph`; `counts.inputs`
+      // only guards a direct page read by the assembler.
+      expect(counts.graph).toBe(0);
+      expect(counts.inputs).toBe(0);
+      expect(counts.brief).toBe(0);
+    } finally {
+      await f.close();
+    }
   });
 
   it('CA05 obligations, acceptance and the brief are never cut even past 4096 bytes', () => {
@@ -852,9 +867,17 @@ describe('S3 context assembler CA01-CA15', () => {
   });
 
   it('CA15 a throwing extension reader rejects unavailable instead of an empty array', async () => {
-    const harness = preparationHarness({ graphContext: extensionsThrowingGraphContext() });
-    const result = await harness.preparation.prepare(CTX, { runRef: RUN_B_REF, requestId: 'ca15' });
-    expect(result).toMatchObject({ status: 'rejected', code: 'unavailable' });
-    expect(harness.bodies.putCount()).toBe(0);
+    // A2: the installed Goal-settings extension source (the real production
+    // service the composition creates) throws on its read; nothing else changes.
+    const f = await createWP2Platform({ kind: 'memory', duty: 'secretary', ownedHost: true, failGoalSettingsRead: true });
+    const bodies = countBodyPuts();
+    try {
+      const result = await f.platform.runtime.prepareExecution(f.ctx, { runRef: f.runRef!, requestId: 'ca15' });
+      expect(result).toMatchObject({ status: 'rejected', code: 'unavailable' });
+      expect(bodies.puts()).toHaveLength(0);
+    } finally {
+      bodies.restore();
+      await f.close();
+    }
   });
 });

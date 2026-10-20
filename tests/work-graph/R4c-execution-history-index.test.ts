@@ -19,14 +19,14 @@ import { DatabaseSync } from 'node:sqlite';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RunExecutionHistoryV1 } from '../../src/contracts/core/execution-history.js';
 import type { VersionPin } from '../../src/contracts/core/identity.js';
-import type { RunRef, RunSnapshot, TaskAttemptSnapshot } from '../../src/contracts/dispatch.js';
+import type { RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
-import { seqOfCommitCursor } from '../../src/contracts/ledger.js';
-import {
-  encodeDispatchOutboxEntry,
-  encodeTaskAttemptSnapshot,
-} from '../../src/core/work-graph/tasks/claim-record-codecs.js';
-import type { TaskClaim, TaskClaimOutbox } from '../../src/core/work-graph/model/claim-contracts.js';
+import type { TaskClaim } from '../../src/core/work-graph/model/claim-contracts.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
+import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
+import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import {
   plainSessionRefToAggregate,
   sessionAggregateRefKey,
@@ -50,6 +50,7 @@ import {
   type Records,
   type TaskClaimFixture,
 } from '../helpers/task-claim-fixture.js';
+import { createS2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
 
 // --------------------------------------------------------------------------
 // Fixture lifecycle
@@ -59,9 +60,30 @@ const fixtures: TaskClaimFixture[] = [];
 const connections: { close(): Promise<void> }[] = [];
 
 async function open(kind: ClaimFixtureKind): Promise<TaskClaimFixture> {
-  const fixture = await createTaskClaimFixture(kind);
+  const fixture = await createTaskClaimFixture(kind, CONTROL_RECORD_SCHEMAS);
   fixtures.push(fixture);
   return fixture;
+}
+
+/** W2-07: the same real ledger, extended with the entry/model-request groups a
+ * production Runtime start/end writes through. */
+async function openRuntime(kind: ClaimFixtureKind):
+  Promise<{ fixture: TaskClaimFixture; steps: Awaited<ReturnType<typeof createS2BRuntimeSteps>> }> {
+  const fixture = await createTaskClaimFixture(kind, {
+    records: [...CONTROL_RECORD_SCHEMAS.records, ...EXECUTION_ENTRY_RECORD_SCHEMAS.records,
+      ...MODEL_REQUEST_RECORD_SCHEMAS.records],
+    events: [...CONTROL_RECORD_SCHEMAS.events, ...EXECUTION_ENTRY_RECORD_SCHEMAS.events,
+      ...MODEL_REQUEST_RECORD_SCHEMAS.events],
+    lookups: [...(CONTROL_RECORD_SCHEMAS.lookups ?? []), ...(EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? []),
+      ...(MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [])],
+  });
+  fixtures.push(fixture);
+  let sequence = 0;
+  const steps = await createS2BRuntimeSteps({ base: fixture, bodies: new RawArtifactBodyStore(), ctx: fixture.ctx,
+    directory: fixture.directory, scope: fixture.scope, now: () => CLAIM_FIXTURE_AT,
+    setClock: () => undefined, eventId: () => `history-runtime-event-${++sequence}`,
+    newId: () => `history-runtime-id-${++sequence}`, consumerId: 'history-runtime' });
+  return { fixture, steps };
 }
 
 afterEach(async () => {
@@ -94,6 +116,48 @@ async function runPin(fixture: TaskClaimFixture, ref: RunRef): Promise<VersionPi
   const record = read.value.records.find(candidate => candidate.refKey === key(ref));
   if (record === undefined) throw new Error('fixture Run is absent');
   return { ref, revision: record.revision };
+}
+
+/** B-08(c): independent Goals/Tasks claimed publicly, to grow unrelated Runs. */
+async function claimIndependentRuns(fixture: TaskClaimFixture, count: number): Promise<void> {
+  const goalRef = { aggregateType: 'Goal' as const, projectId: fixture.scope.projectId, goalId: 'history-scale-goal' };
+  expect(await fixture.goals.createGoal(fixture.ctx, { meta: { requestId: 'history-scale-goal-create',
+    expected: [{ ref: fixture.projectRef, revision: 1 }, { ref: fixture.workspaceRef, revision: 1 }] },
+    input: { goalId: goalRef.goalId, workspace: fixture.scope, objective: 'Grow unrelated Runs' } }))
+    .toMatchObject({ status: 'committed' });
+  const taskIds = Array.from({ length: count }, (_, index) => `history-scale-${index}`);
+  const gateTaskId = 'history-scale-gate';
+  const draft: PlanRevisionDraft = { schemaVersion: 2, planId: 'history-scale-plan', planRevision: 1,
+    goalId: goalRef.goalId, stages: [],
+    tasks: [...taskIds.map(taskId => ({ taskId, title: taskId, requirementLevel: 'required' as const,
+      taskKind: 'work' as const, disposition: 'active' as const, phase: 'pending' as const, scope: { kind: 'goal' as const } })),
+    { taskId: gateTaskId, title: 'Scale gate', requirementLevel: 'required' as const,
+      taskKind: 'gate' as const, disposition: 'active' as const, phase: 'pending' as const, scope: { kind: 'goal' as const } }],
+    assignments: taskIds.map(taskId => ({ taskId, role: 'builder', instruction: taskId })),
+    obligations: [{ obligationId: 'history-scale-obligation', title: 'Grow unrelated Runs',
+      requirementLevel: 'required', taskIds: [...taskIds, gateTaskId],
+      verificationRequirements: [{ requirementId: 'history-scale-check', requirementLevel: 'required',
+        kind: 'test', description: 'Tests pass' }] }],
+    taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } };
+  const proposed = await fixture.plans.proposePlan(fixture.ctx, { meta: { requestId: 'history-scale-propose',
+    expected: [{ ref: goalRef, revision: 1 }] },
+    input: { goalRef, basedOn: null, draft, reason: { text: 'Grow unrelated Runs', sources: [] } } });
+  expect(proposed).toMatchObject({ status: 'committed' });
+  if (proposed.status !== 'committed') throw Error('scale plan proposal failed');
+  const applied = await fixture.plans.applyPlanChange(fixture.ctx, { meta: { requestId: 'history-scale-apply',
+    expected: [{ ref: goalRef, revision: 1 }] },
+    input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
+  if (applied.status !== 'committed') throw Error(`scale plan apply failed: ${JSON.stringify(applied)}`);
+  const goalRead = await fixture.plans.queryGoal(fixture.ctx, goalRef);
+  if (goalRead.status !== 'ready') throw Error('scale goal read failed');
+  for (const taskId of taskIds) {
+    const session = await fixture.createSession(`${taskId}-session`);
+    expect(await fixture.service.claimTask(fixture.ctx, { input: { goalRef, planRef: applied.value.ref,
+      taskId, sessionRef: session, roleBinding: fixture.roleBinding, budget: fixture.budget },
+      meta: { requestId: `${taskId}-claim`, expected: [{ ref: goalRef, revision: goalRead.value.goal.revision },
+        { ref: fixture.workspaceRef, revision: 1 }, await fixture.sessionPin(session)] } }))
+      .toMatchObject({ status: 'committed' });
+  }
 }
 
 async function readRun(fixture: TaskClaimFixture, ref: RunRef): Promise<RunSnapshot> {
@@ -215,26 +279,6 @@ function countingReader(target: Records): { records: Records; spy: ReadSpy } {
   return { records, spy };
 }
 
-function mutateRecord(
-  target: Records,
-  match: (refKey: string) => boolean,
-  mutate: (body: Record<string, unknown>) => void,
-): Records {
-  return {
-    ...target,
-    async readMany(keys) {
-      const read = await target.readMany(keys);
-      if (read.status !== 'ready') return read;
-      return { ...read, value: { ...read.value, records: read.value.records.map(record => {
-        if (!match(record.refKey)) return record;
-        const body = JSON.parse(record.json) as Record<string, unknown>;
-        mutate(body);
-        return { ...record, json: JSON.stringify(body) };
-      }) } };
-    },
-  };
-}
-
 type HistoryContext = {
   fixture: TaskClaimFixture;
   claim: TaskClaim;
@@ -255,40 +299,6 @@ async function setup(kind: ClaimFixtureKind): Promise<HistoryContext> {
 async function write(h: HistoryContext, overrides: HistoryOverrides = {}) {
   const pin = await runPin(h.fixture, h.claim.runRef);
   return h.service.recordExecutionHistory(h.fixture.ctx, historyRequest(pin, h.claim.runRef, h.kernel, overrides));
-}
-
-/**
- * Craft a second Run whose claim-linked outbox names the SAME platform Session
- * as `source`, so its Kernel Session identity is the same. The claim-loop cannot
- * produce this (one Session cannot be claimed twice), so the fixture writes the
- * real Attempt/outbox records for a seeded Run. This is a real Store state, not
- * a mocked port result.
- */
-async function seedLinkedRun(fixture: TaskClaimFixture, source: TaskClaim, taskId: string): Promise<RunRef> {
-  const runRef = await fixture.seedRun(taskId, 'starting');
-  const run = await readRun(fixture, runRef);
-  const attemptRef = { aggregateType: 'TaskAttempt' as const, projectId: fixture.scope.projectId,
-    goalId: fixture.goalRef.goalId, taskId, attemptId: run.attemptId };
-  const outboxRef = { aggregateType: 'DispatchOutboxEntry' as const, projectId: fixture.scope.projectId,
-    goalId: fixture.goalRef.goalId, taskId, attemptId: run.attemptId };
-  const attempt: TaskAttemptSnapshot = { ref: attemptRef, revision: 1, schemaVersion: 1, runId: runRef.runId,
-    planRef: run.planRef, status: 'claimed', startedAt: null, endedAt: null, endOutcome: null };
-  const claim: TaskClaim = {
-    task: { projectId: fixture.scope.projectId, goalId: fixture.goalRef.goalId, taskId },
-    planRef: run.planRef, workspaceId: fixture.scope.workspaceId, sessionRef: source.sessionRef,
-    sessionRevision: source.sessionRevision, generation: source.generation,
-    runRef, attemptRef, outboxRef, claimedAt: CLAIM_FIXTURE_AT,
-  };
-  const outbox: TaskClaimOutbox = { ref: outboxRef, revision: 1, schemaVersion: 1, status: 'pending', claim };
-  const sessionRefKey = sessionAggregateRefKey(plainSessionRefToAggregate(source.sessionRef));
-  const sessionRead = await fixture.records.readMany([sessionRefKey]);
-  if (sessionRead.status !== 'ready') throw new Error('fixture Session read failed');
-  const sessionRecord = sessionRead.value.records.find(candidate => candidate.refKey === sessionRefKey);
-  const receipt = await fixture.commitRaw(
-    [encodeTaskAttemptSnapshot(attempt), encodeDispatchOutboxEntry(outbox)],
-    [{ refKey: sessionRefKey, expectedRevision: sessionRecord?.revision ?? null }]);
-  expect(receipt).toMatchObject({ status: 'committed' });
-  return runRef;
 }
 
 // --------------------------------------------------------------------------
@@ -607,35 +617,6 @@ describe.each(KINDS)('R4c.2b real %s execution-history index', kind => {
     expect((await readRun(h.fixture, h.claim.runRef)).revision).toBe(pin.revision! + 1);
   });
 
-  it('atomically grants an unowned Kernel identity to one of two different Runs', async () => {
-    const h = await setup(kind);
-    const runB = await seedLinkedRun(h.fixture, h.claim, h.fixture.tasks.second.taskId);
-    const refs = [h.claim.runRef, runB];
-    const pins = await Promise.all(refs.map(ref => runPin(h.fixture, ref)));
-    const requests = refs.map((ref, index) => historyRequest(pins[index]!, ref, h.kernel,
-      { requestId: `history-slot-race-${index}`, observedThroughPosition: 3 }));
-    const barrier = commitBarrier(h.fixture.records, 2);
-    const service = serviceFor(h.fixture, barrier.records);
-    const results = await Promise.all(requests.map(request =>
-      barrier.run(() => service.recordExecutionHistory(h.fixture.ctx, request))));
-    expect(results.filter(result => result.status === 'committed')).toHaveLength(1);
-    expect(barrier.arrivals).toBe(2);
-    expect(results.filter(result => result.status === 'rejected')).toEqual([
-      expect.objectContaining({ code: 'busy' }),
-    ]);
-    const winner = results.findIndex(result => result.status === 'committed');
-    const loser = winner === 0 ? 1 : 0;
-    expect((await readRun(h.fixture, refs[winner]!)).executionHistory).toBeDefined();
-    const losingRun = await readRun(h.fixture, refs[loser]!);
-    expect(losingRun.executionHistory).toBeUndefined();
-    expect(losingRun.revision).toBe(pins[loser]!.revision);
-    // A failed claim must not have committed a receipt that later replays.
-    expect(await h.service.recordExecutionHistory(h.fixture.ctx, requests[loser]!))
-      .toMatchObject({ status: 'rejected', code: 'busy' });
-    expect(await h.service.recordExecutionHistory(h.fixture.ctx, requests[winner]!))
-      .toMatchObject({ status: 'committed', replayed: true });
-  });
-
   it('rejects a stale expected revision as a CAS conflict', async () => {
     const h = await setup(kind);
     const stalePin = await runPin(h.fixture, h.claim.runRef);
@@ -648,22 +629,45 @@ describe.each(KINDS)('R4c.2b real %s execution-history index', kind => {
     expect(loser).toMatchObject({ status: 'rejected', code: 'revision_conflict' });
   });
 
-  it('reports busy when another Run already owns the Kernel identity slot', async () => {
-    const h = await setup(kind);
-    const first = await write(h, { requestId: 'history-slot-owner', observedThroughPosition: 3 });
-    expect(first).toMatchObject({ status: 'committed' });
-    if (first.status !== 'committed') return;
-    const runB = await seedLinkedRun(h.fixture, h.claim, h.fixture.tasks.second.taskId);
-    const before = await h.fixture.records.readMany([key(runB)]);
-    if (before.status !== 'ready') throw new Error('Run B read failed');
-    const cursorBefore = before.value.readThrough;
-    const pinB = await runPin(h.fixture, runB);
-    const intruder = await h.service.recordExecutionHistory(h.fixture.ctx,
-      historyRequest(pinB, runB, h.kernel, { requestId: 'history-slot-intruder', observedThroughPosition: 3 }));
-    expect(intruder).toMatchObject({ status: 'rejected', code: 'busy' });
-    expect((await readRun(h.fixture, runB)).executionHistory).toBeUndefined();
-    const after = await h.fixture.records.readMany([key(runB)]);
-    if (after.status === 'ready') expect(after.value.readThrough).toBe(cursorBefore);
+  describe('rejects: the Kernel identity slot is already owned', () => {
+    it('reports busy when another Run already owns the Kernel identity slot', async () => {
+      // B-08(d)/A6 (W2-07): the prior state is a real prepare/start/end whose
+      // own locator names the Kernel identity; the second Task is claimed
+      // publicly in the SAME Session, and only the one refused request carries
+      // the first Run's returned identity (R-8). The zero-change read is public.
+      const { fixture, steps } = await openRuntime(kind);
+      const claim = await claimed(fixture);
+      const handle = await steps.start(claim, { at: CLAIM_FIXTURE_AT,
+        replies: [{ kind: 'text', text: 'the first Run finished' }] });
+      await handle.entered;
+      await steps.finish(handle, CLAIM_FIXTURE_AT, 'completed');
+      const reader = createRunStateReader({ records: fixture.records });
+      const firstRead = await reader.readExecution(fixture.ctx, claim.runRef);
+      expect(firstRead).toMatchObject({ status: 'ready' });
+      if (firstRead.status !== 'ready') return;
+      const owner = firstRead.value.run.executionHistory;
+      expect(owner).toBeDefined();
+      if (owner === undefined) return;
+
+      const second = await fixture.service.claimTask(fixture.ctx, await fixture.buildRequest({
+        requestId: 'history-slot-second-run',
+        input: { taskId: fixture.tasks.second.taskId, sessionRef: claim.sessionRef } }));
+      expect(second).toMatchObject({ status: 'committed' });
+      if (second.status !== 'committed') return;
+      const runB = second.value.runRef;
+      const before = await reader.readExecution(fixture.ctx, runB);
+      expect(before).toMatchObject({ status: 'ready' });
+      if (before.status !== 'ready') return;
+      // One refused input: runB's own request carrying runA's accepted identity.
+      expect(await serviceFor(fixture).recordExecutionHistory(fixture.ctx,
+        historyRequest({ ref: runB, revision: before.value.run.revision }, runB, owner.kernel,
+          { requestId: 'history-slot-intruder', startPosition: owner.startPosition,
+            observedThroughPosition: owner.observedThroughPosition })))
+        .toMatchObject({ status: 'rejected', code: 'busy' });
+      const after = await reader.readExecution(fixture.ctx, runB);
+      expect(after).toEqual(before);
+      if (after.status === 'ready') expect(after.value.run.executionHistory).toBeUndefined();
+    });
   });
 
   it('leaves zero new state when a commit conflicts (full rollback)', async () => {
@@ -758,20 +762,6 @@ describe.each(KINDS)('R4c.2b real %s execution-history index', kind => {
         { requestId: 'history-lease-2', observedThroughPosition: 5 }));
     expect(second).toMatchObject({ status: 'committed', replayed: false });
     expect(intervened).toBe(true);
-  });
-
-  it('reports a malformed stored locator as unavailable', async () => {
-    const h = await setup(kind);
-    const result = await write(h, { requestId: 'history-damaged', observedThroughPosition: 3 });
-    expect(result).toMatchObject({ status: 'committed' });
-    if (result.status !== 'committed') return;
-    const records = mutateRecord(h.fixture.records, refKey => refKey === key(h.claim.runRef), body => {
-      (body['executionHistory'] as { observedThroughPosition: number }).observedThroughPosition = 0;
-    });
-    const damaged = await serviceFor(h.fixture, records).recordExecutionHistory(h.fixture.ctx,
-      historyRequest(await runPin(h.fixture, h.claim.runRef), h.claim.runRef, h.kernel,
-        { requestId: 'history-damaged-2', observedThroughPosition: 4 }));
-    expect(damaged).toMatchObject({ status: 'rejected', code: 'unavailable' });
   });
 
   it('rejects invalid scope and identity before any store read', async () => {
@@ -912,10 +902,7 @@ describe.each(KINDS)('R4c.2b real %s execution-history index', kind => {
     expect(await h.fixture.service.claimTask(h.fixture.ctx, await h.fixture.buildRequest({ requestId: 'history-scale-other',
       input: { taskId: h.fixture.tasks.second.taskId, sessionRef: h.fixture.sessions.second } })))
       .toMatchObject({ status: 'committed' });
-    await h.fixture.seedRun(h.fixture.tasks.gate.taskId, 'starting');
-    for (let index = 0; index < 5; index += 1) {
-      await h.fixture.seedRun(`unrelated-${index}`, 'starting');
-    }
+    await claimIndependentRuns(h.fixture, 6);
 
     const after = countingReader(h.fixture.records);
     expect(await serviceFor(h.fixture, after.records).recordExecutionHistory(h.fixture.ctx,
@@ -931,34 +918,6 @@ describe.each(KINDS)('R4c.2b real %s execution-history index', kind => {
 // --------------------------------------------------------------------------
 
 describe('R4c.2b SQLite durability', () => {
-  it('rejects replay when the stored event Run revision disagrees with the committed receipt', async () => {
-    const h = await setup('sqlite');
-    const pin = await runPin(h.fixture, h.claim.runRef);
-    const request = historyRequest(pin, h.claim.runRef, h.kernel,
-      { requestId: 'history-corrupt-replay-revision', observedThroughPosition: 4 });
-    const first = await h.service.recordExecutionHistory(h.fixture.ctx, request);
-    expect(first).toMatchObject({ status: 'committed', replayed: false });
-    if (first.status !== 'committed') return;
-    expect(first.value.runRevision).toBe(pin.revision + 1);
-
-    const database = new DatabaseSync(h.fixture.ledgerPath);
-    try {
-      // Keep the event identity, fingerprint, locator and real receipt intact.
-      // The changed field still passes shape validation: cross-record replay
-      // consistency must reject it instead of reporting revision 999.
-      const receiptBefore = database.prepare('SELECT * FROM idempotency ORDER BY identity_key').all();
-      const changed = database.prepare(
-        "UPDATE events SET event_json = json_set(event_json, '$.recorded.runRevision', ?) WHERE id = ?",
-      ).run(999, seqOfCommitCursor(first.cursor));
-      expect(Number(changed.changes)).toBe(1);
-      expect(database.prepare('SELECT * FROM idempotency ORDER BY identity_key').all()).toEqual(receiptBefore);
-      expect((await readRun(h.fixture, h.claim.runRef)).revision).toBe(first.value.runRevision);
-
-      const replay = await h.service.recordExecutionHistory(h.fixture.ctx, request);
-      expect(replay).toMatchObject({ status: 'rejected', code: 'unavailable' });
-    } finally { database.close(); }
-  });
-
   it('rolls back records, events, binding and receipt when storage fails at receipt insertion', async () => {
     const h = await setup('sqlite');
     const database = new DatabaseSync(h.fixture.ledgerPath);

@@ -18,7 +18,6 @@ import {
   type ModelRequest,
   type Run,
   type RunLimits,
-  type RunState,
   type ToolCall,
   type ToolExecutorPort,
   type ToolGroupBarrier,
@@ -141,10 +140,6 @@ export function runLimits(maxModelRequests = 8): RunLimits {
     maxCostUsdMicros: null,
     deadlineMs: null,
   };
-}
-
-export function isYielded(state: RunState): boolean {
-  return state.status === 'yielded';
 }
 
 /** A real runner over the frozen public entry; the caller supplies the barrier. */

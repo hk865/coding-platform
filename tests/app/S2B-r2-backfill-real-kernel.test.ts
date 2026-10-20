@@ -20,16 +20,14 @@
  * No real model, no network. Runs are read-only Scripted Kernel turns.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
-import type { ReadResult } from '../../src/contracts/core/results.js';
-import type { RunActivityViewV1 } from '../../src/core/work-graph/views/activity-read-model.js';
 import type { LocalWorkbenchHost } from '../../src/app/host.js';
 import { CORE_API_PREFIX, PLATFORM_TOKEN_HEADER } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
 import {
   openKernelBackfillRuns, startKernelBackfillHost, type KernelBackfillFixture,
 } from '../helpers/S2B-r2-backfill-kernel-support.js';
+import { resetActivityBackfillGate, viewOf } from '../helpers/S2B-activity-fixture.js';
+import { readPageToken } from '../helpers/AG2b-collaboration-fixture.js';
 
 /** §7 counting-off double: while `off`, end commits carry no `activity` and the reader retries. */
 const countingOff = vi.hoisted(() => ({ off: false }));
@@ -40,6 +38,11 @@ vi.mock('../../src/core/agent-runtime/run-activity-tally.js', async (importOrigi
 vi.mock('../../src/core/agent-runtime/run-activity-reader.js', async (importOriginal) => {
   const { countingOffReaderModule } = await import('../helpers/S2B-counting-off-support.js');
   return countingOffReaderModule(await importOriginal<Record<string, unknown>>(), countingOff);
+});
+vi.mock('../../src/business/workflow/activity-backfill.js', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  const { activityBackfillGateModule } = await import('../helpers/S2B-activity-fixture.js');
+  return activityBackfillGateModule(actual);
 });
 
 const DAY = 86_400_000;
@@ -54,30 +57,6 @@ afterEach(async () => {
   await fixture?.fx.close().catch(() => undefined);
   host = null; fixture = null;
 });
-
-async function until(check: () => Promise<boolean>, label: string, timeoutMs = 30_000): Promise<void> {
-  const started = Date.now();
-  for (;;) {
-    if (await check()) return;
-    if (Date.now() - started > timeoutMs) throw new Error(`timed out waiting for ${label}`);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-}
-
-function viewOf(read: ReadResult<RunActivityViewV1[]>, runId: string) {
-  if (read.status !== 'ready') throw new Error(`the activity read was not ready: ${JSON.stringify(read)}`);
-  const found = read.value.find((view) => (view.runRef as RunRef).runId === runId);
-  if (found === undefined) throw new Error(`no activity view for ${runId}`);
-  return found;
-}
-
-/** The Host page's temporary bearer token, read through the real static page. */
-async function readPageToken(base: string): Promise<string> {
-  const html = await (await fetch(base)).text();
-  const match = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
-  if (match?.[1] === undefined) throw new Error('the Host page did not expose the runtime token meta');
-  return match[1];
-}
 
 /** POST one `activity/backfill` request to the leased Host and return its body. */
 async function postActivityBackfill(
@@ -106,13 +85,11 @@ describe('S2B round-2 Group B — real Kernel history backfill (BE3)', () => {
     expect(before.value.map((view) => view.status)).toEqual(['unknown', 'unknown']);
 
     countingOff.off = false;
+    const backfillCompleted = resetActivityBackfillGate();
     host = await startKernelBackfillHost(f, () => at(0));
     expect(host.reconcile.lease).toBe('owned');
 
-    await until(async () => {
-      const read = await f.reads().readRunActivities(f.fx.ctx, { runRefs: [recent.ref] });
-      return read.status === 'ready' && read.value[0]?.recordedBy === 'backfill';
-    }, 'the automatic 14-day backfill over real Kernel history');
+    await backfillCompleted;
 
     const after = await f.reads().readRunActivities(f.fx.ctx, { runRefs: [recent.ref, old.ref] });
     expect(after.status).toBe('ready');

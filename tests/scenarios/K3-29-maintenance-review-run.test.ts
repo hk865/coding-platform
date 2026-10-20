@@ -22,7 +22,7 @@ import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.j
 import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
 import { preparedOf, readCall, redrivePolicy } from './support/common.js';
 import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
-import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
+import { crashOneCommand } from './support/review-card-round.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { cleanupRestart, goalControlPins, readExecution, submitControl } from '../helpers/A2-restart-fixture.js';
@@ -37,21 +37,8 @@ import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-revie
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 // --- The shell seam (the original work call in flight) --------------------
@@ -85,49 +72,15 @@ Promise<WriteResult<UnknownCallReviewV1>> {
     { reviewRef: review.ref, text: null }, requestId, [{ ref: review.ref, revision: review.revision }]));
 }
 
-type Crashed = {
-  prepared: ReturnType<typeof preparedOf>;
-  /** Releases the original Run's blocked call and closes its root (after the flow). */
-  release(): Promise<void>;
-};
-
-/** RUN-25: a `shell` call in flight is closed by the crash restart, leaving the Session `kernel_turn_open`. */
-async function crashShellRun(h: HostScenario, label: string): Promise<Crashed> {
-  shellSeam.arm();
-  const modelA = createScriptedModel([{ kind: 'calls', calls: [
-    { callId: `${label}-shell`, name: 'shell', args: { command: `${label} runs a program` } }] }]);
-  const rootA = await openShellWorkRoot(h, modelA);
-  let runningA: Promise<unknown> | null = null;
-  let released = false;
-  try {
-    const startA = await prepareOn(rootA, h.select(`${label}-a`, AG2B_WORK_TASK_ID));
-    const preparedA = preparedOf(startA);
-    runningA = rootA.runtime.startRun(hostCtx(), { prepared: preparedA, consumerId: AG2B_CONSUMER_ID,
-      requestId: `${label}-a-start` });
-    await shellSeam.waitForCall();
-    const report = await h.restart({ crash: true });
-    expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
-      { ref: JSON.stringify(preparedA.claim.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
-        autoCleanup: { applied: true } }] } });
-    return { prepared: preparedA, async release() {
-      if (released) return;
-      released = true;
-      shellSeam.release();
-      await runningA?.catch(() => undefined);
-      await rootA.close();
-    } };
-  } catch (error) {
-    shellSeam.release();
-    await runningA?.catch(() => undefined);
-    await rootA.close();
-    throw error;
-  }
-}
 
 describe('K3-29 maintenance (L27): a retired line whose latest Run is a review-purpose Run', () => {
   it('K3-29 maintenance RUN-25: the start-up maintenance closes the takeover-unresolved dangling Turn; the Session is available, not archived', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const crashed = await crashShellRun(h, 'k3-29-maint-25');
+    const crashed = await crashOneCommand(h, { callId: 'k3-29-maint-25-shell', select: 'k3-29-maint-25-a',
+      requestId: 'k3-29-maint-25-a-start', shellArgs: { command: 'k3-29-maint-25 runs a program' } });
+    expect(crashed.report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+      { ref: JSON.stringify(crashed.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+        autoCleanup: { applied: true } }] } });
     try {
       const created = await reviewOf(h, crashed.prepared.claim.runRef);
       expect(created).toMatchObject({ status: 'ready', value: { status: 'pending_review', activeRound: null } });
@@ -154,7 +107,11 @@ describe('K3-29 maintenance (L27): a retired line whose latest Run is a review-p
 
   it('K3-29 maintenance RUN-24: a paused review-purpose round is not covered by the ordinary pause fence; maintenance closes it and the Session is available, not archived', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const crashed = await crashShellRun(h, 'k3-29-maint-24');
+    const crashed = await crashOneCommand(h, { callId: 'k3-29-maint-24-shell', select: 'k3-29-maint-24-a',
+      requestId: 'k3-29-maint-24-a-start', shellArgs: { command: 'k3-29-maint-24 runs a program' } });
+    expect(crashed.report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+      { ref: JSON.stringify(crashed.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+        autoCleanup: { applied: true } }] } });
     let round: RunRef | null = null;
     let pauseRef: ControlIntentRef | null = null;
     const model = createScriptedModel([readCall('k3-29-maint-24')], async () => {
@@ -205,7 +162,11 @@ describe('K3-29 maintenance (L27): a retired line whose latest Run is a review-p
 
   it('K3-29 maintenance RUN-25 (paused Goal): a pending record with no review claim left to run does not defer the maintenance close', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const crashed = await crashShellRun(h, 'k3-29-maint-25p');
+    const crashed = await crashOneCommand(h, { callId: 'k3-29-maint-25p-shell', select: 'k3-29-maint-25p-a',
+      requestId: 'k3-29-maint-25p-a-start', shellArgs: { command: 'k3-29-maint-25p runs a program' } });
+    expect(crashed.report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+      { ref: JSON.stringify(crashed.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+        autoCleanup: { applied: true } }] } });
     try {
       const created = await reviewOf(h, crashed.prepared.claim.runRef);
       expect(created).toMatchObject({ status: 'ready', value: { status: 'pending_review', activeRound: null } });

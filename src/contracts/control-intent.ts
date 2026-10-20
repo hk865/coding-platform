@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 import type { ActorRef } from "./command-event.js";
 import type { RunExecutionHistoryV1 } from "./core/execution-history.js";
 import type { RunOutcome, RunRef } from "./dispatch.js";

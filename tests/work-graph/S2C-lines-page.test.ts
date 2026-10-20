@@ -18,8 +18,7 @@ import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { LineExecutionItemV1 } from '../../src/contracts/work-line.js';
 import { openLineFixture, commitBeforeLookupOrdered, type LineFixture, type LineGoal } from '../helpers/S2C-L-line-support.js';
 import { completedEvent } from '../helpers/S2C-L-runs-support.js';
-import { encodeQueryRunSnapshotRecord, S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP } from '../../src/core/work-graph/queries/query-record-codecs.js';
-import type { QueryRunRef, QueryRunSnapshot } from '../../src/contracts/query-job.js';
+import { S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP } from '../../src/core/work-graph/queries/query-record-codecs.js';
 
 function ready<T>(result: ReadResult<T>): T {
   if (result.status !== 'ready') throw new Error(`expected ready, got ${JSON.stringify(result)}`);
@@ -389,34 +388,5 @@ describe.each(['memory', 'sqlite'] as const)('2C-18 line page sections (%s)', (k
     expect(copies.items[0]?.copy).toEqual(consultation.copy);
     expect(copies.items[0]?.lifecycle).toBe('active');
     expect(copies.items[0]?.messageRef.aggregateType).toBe('SessionMessage');
-  });
-
-  it('2C-18 executions list only the indexed Work claims and QueryRuns on a legacy Session', async () => {
-    const f = await lineFixture();
-    const goal = await f.addGoal('g18legacy', [{ taskId: 'w', title: 'Legacy W task' }]);
-    const l = await f.createLegacySession('s18-legacy');
-    const at = '2026-01-03T00:00:00.000Z';
-    const w = await f.claimWith('w', l, { goal, now: () => at, newId: () => 's2c-l-legacy-w' });
-    await f.runs.enter(w.claim, at);
-    await f.runs.recordResult(w.claim, completedEvent(w.claim, 'legacy-w'));
-
-    // The §7 storage-boundary exception: a valid old QueryRun without executionState.
-    // A real Query cannot be claimed on a null-provenance Session (the service
-    // refuses `legacy_provenance_ambiguous`), so the session's real indexed
-    // execution is the Work claim; the old Query is not a candidate.
-    const legacyQueryRef: QueryRunRef = { aggregateType: 'QueryRun', projectId: f.base.scope.projectId,
-      workspaceId: f.base.scope.workspaceId, queryJobId: 'legacy-qjob', runId: 'legacy-qrun' };
-    const legacyQuery: QueryRunSnapshot = { ref: legacyQueryRef, revision: 1, schemaVersion: 1,
-      run: { schemaVersion: 1, queryJobRef: { aggregateType: 'QueryJob', projectId: f.base.scope.projectId,
-        workspaceId: f.base.scope.workspaceId, queryJobId: 'legacy-qjob' }, runId: 'legacy-qrun',
-        status: 'pending', startedAt: null, endedAt: null, outcome: null } };
-    const committed = await f.base.commitRaw([encodeQueryRunSnapshotRecord(legacyQuery)]);
-    if (committed.status !== 'committed') throw new Error(`legacy Query commit failed: ${JSON.stringify(committed)}`);
-
-    const page = ready(await f.reader.readWorkLinePage(f.ctx, { workspace: f.base.scope, key: l,
-      section: 'executions', page: { limit: 10 } }));
-    if (page.section !== 'executions') throw new Error('expected the executions section');
-    expect(page.scope).toBe('indexed');
-    expect(page.items.map(itemKey)).toEqual([`execution:w@${at}`]);
   });
 });

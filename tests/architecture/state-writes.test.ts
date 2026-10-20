@@ -72,7 +72,7 @@ const ATTEMPT_USE = 'state/attempt-machine.ts newTaskAttemptRecord or transition
 const OUTBOX_USE = 'state/attempt-machine.ts newDispatchOutboxRecord or transitionDispatchOutbox';
 const SESSION_USE = 'state/session-availability.ts createSessionRecord, occupySessionRecord, releaseSessionRecord, '
   + 'archiveSessionRecord, reactivateSessionRecord, observeSessionHealthRecord, requestSessionArchiveRecord, '
-  + 'releaseSessionArchiveRequestRecord, backfillSessionProvenanceRecord or bindSessionUnavailableCursor';
+  + 'releaseSessionArchiveRequestRecord or bindSessionUnavailableCursor';
 const ROUND_USE = 'state/verification-machine.ts buildOpenedRound, withCheckPhase, buildFinalizedRound or buildSuccessorRound';
 const MESSAGE_USE = 'state/message-machine.ts createSessionMessageRecord, nextSessionMessageRecord or bindMessageResponseCursor';
 const MESSAGE_FIELDS = ['status', 'readAt', 'response', 'acceptedInputs', 'consultationDerivation',
@@ -143,8 +143,6 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
     fields: ['status', 'requestRef', 'notAdopted'], use: PROPOSAL_USE },
   { file: 'src/core/work-graph/state/plan-machine.ts', name: 'CandidatePlanProposal', kind: 'record',
     fields: ['status', 'requestRef', 'notAdopted'], use: PROPOSAL_USE },
-  { file: 'src/core/work-graph/state/plan-machine.ts', name: 'LegacyPlanProposal', kind: 'record',
-    fields: ['status'], use: PROPOSAL_USE },
   { file: 'src/contracts/query-job.ts', name: 'QueryRunV1', kind: 'record',
     fields: ['status', 'endedAt', 'outcome'], use: QUERY_USE },
   { file: 'src/contracts/query-job.ts', name: 'QueryExecutionStateV1', kind: 'record',
@@ -194,7 +192,7 @@ const ALLOWED_DECODERS: readonly { file: string; functions: readonly string[] }[
   { file: 'tasks/completion-record-codecs.ts', functions: ['decodeGoalPhaseSnapshot', 'completionEventFromEvent'] },
   { file: 'tasks/session-anomaly-codecs.ts', functions: ['decodeSessionAnomalyAnchor', 'sessionAnomalyRecordedEventFromEvent'] },
   { file: 'sessions/lifecycle-record-codecs.ts', functions: ['sessionArchiveChangedEventFromEvent',
-    'sessionProvenanceBackfilledEventFromEvent', 'sessionResponsibilityChangedEventFromEvent'] },
+    'sessionResponsibilityChangedEventFromEvent'] },
   { file: 'persistence/plan-record-codecs.ts', functions: ['decodePlanProposalRecord', 'decodePlanRevisionSnapshot',
     'decodePlanProposalRecordedEvent', 'decodePlanRevisionAcceptedEvent'] },
   { file: 'sessions/session-record-codecs.ts', functions: ['decodeSessionRecord', 'decodeSessionOperationRecord',

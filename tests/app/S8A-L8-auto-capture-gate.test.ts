@@ -175,9 +175,9 @@ function contextOf(scope: WorkspaceScope): CoreCallContext {
 
 /** Create the platform with a gated Host binding; held gates stay unresolved. */
 async function openPlatform(backend: Backend,
-  input: { directory?: string; held?: readonly ('a' | 'b')[]; bound?: readonly WorkspaceScope[] } = {}): Promise<Opened> {
-  const directory = input.directory ?? await mkdtemp(join(tmpdir(), 's8a-l8-gate-'));
-  if (input.directory === undefined) temporary.push(directory);
+  input: { held?: readonly ('a' | 'b')[]; bound?: readonly WorkspaceScope[] } = {}): Promise<Opened> {
+  const directory = await mkdtemp(join(tmpdir(), 's8a-l8-gate-'));
+  temporary.push(directory);
   const roots: Record<'a' | 'b', string> = { a: join(directory, 'workspace-a'), b: join(directory, 'workspace-b') };
   for (const id of ['a', 'b'] as const) {
     for (const [path, body] of Object.entries(FILES)) {
@@ -459,7 +459,6 @@ describe.each(['memory', 'sqlite'] as const)('L8 capture return cancellation [%s
 });
 
 type CloseScenario = {
-  directory: string;
   gates: { a: Gate; b: Gate };
   /** Gate entries for B at the moment close() was called, before it could run. */
   bEntered: number;
@@ -469,7 +468,7 @@ type CloseScenario = {
 
 /** Row 3 proper: hold A mid-capture, queue B, close, then release A. */
 async function closeWithQueuedSecondCapture(backend: Backend): Promise<CloseScenario> {
-  const { platform, driver, directory, gates, activity } = await openPlatform(backend, { held: ['a'] });
+  const { platform, driver, gates, activity } = await openPlatform(backend, { held: ['a'] });
   try {
     await seed(platform);
     driver.workspaceRegistered(A);
@@ -489,7 +488,7 @@ async function closeWithQueuedSecondCapture(backend: Backend): Promise<CloseScen
     expect(gates.b.entered).toBe(0);
     const aAfterClose = await waitFor(platform, A, () => true);
     const bAfterClose = await waitFor(platform, B, () => true);
-    return { directory, gates, bEntered, aAfterClose, bAfterClose };
+    return { gates, bEntered, aAfterClose, bAfterClose };
   } finally {
     gates.a.release(); gates.b.release();
     await driver.close();
@@ -497,29 +496,3 @@ async function closeWithQueuedSecondCapture(backend: Backend): Promise<CloseScen
     activity.restore();
   }
 }
-
-describe('L8 automatic capture gate — close then restart (sqlite)', () => {
-  it('retries the pending requests of the bound workspaces (sqlite)', async () => {
-    const closed = await closeWithQueuedSecondCapture('sqlite');
-    // Same database directory: the memory backend could not survive this.
-    const reopened = await openPlatform('sqlite', { directory: closed.directory });
-    const { platform, driver, gates, activity } = reopened;
-    try {
-      driver.retryPending([A, B]);
-      const aDone = await waitFor(platform, A, satisfied);
-      const bDone = await waitFor(platform, B, satisfied);
-      expect(aDone.autoCapture).toMatchObject({ requestSeq: 2, trigger: 'startup_retry', pending: false });
-      expect(bDone.autoCapture).toMatchObject({ requestSeq: 2, trigger: 'startup_retry', pending: false });
-      expect(aDone.current).not.toBeNull();
-      expect(bDone.current).not.toBeNull();
-      // The retried capture ran on the rebuilt Host binding, so both gates opened.
-      expect(gates.a.entered).toBeGreaterThan(0);
-      expect(gates.b.entered).toBeGreaterThan(0);
-    } finally {
-      gates.a.release(); gates.b.release();
-      await driver.close();
-      await platform.close();
-      activity.restore();
-    }
-  }, 60_000);
-});

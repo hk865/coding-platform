@@ -788,7 +788,7 @@ export function hostLeaseOf(
 /** The V2 entry binding's consumer and generation; `null` without one. */
 function runCtxEntry(run: RunSnapshot): { consumerId: string; entryGeneration: number } | null {
   const auth = run.executionAuthorization;
-  return auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2
+  return auth !== undefined
     ? { consumerId: auth.consumerId, entryGeneration: auth.generation } : null;
 }
 
@@ -970,10 +970,8 @@ function legacyTemplateDutyOf(role: RoleConfigurationRef): PlatformDutyV1 | unde
  * The rendered continuation brief of a saved manifest, or null when the manifest
  * carries none. Only a continuation/handoff binding names a continuation section.
  */
-function continuationSuffixOf(
-  manifest: PreparedTaskManifestV1, binding: ContextAssemblyBindingV1 | undefined,
-): string | null {
-  if (binding === undefined || manifest.continuationBrief === undefined) return null;
+function continuationSuffixOf(manifest: PreparedTaskManifestV1): string | null {
+  if (manifest.continuationBrief === undefined) return null;
   return renderContinuationBriefZh(manifest.continuationBrief, continuationBriefDigest(manifest.continuationBrief));
 }
 
@@ -987,7 +985,6 @@ function continuationSuffixOf(
  */
 function inputDeclarationsOf(plan: PlanRevisionSnapshot, consumer: TaskTriple): InputDeclarationV1[] {
   const declarations: InputDeclarationV1[] = [];
-  if (plan.schemaVersion !== 2) return declarations;
   for (const requirement of plan.inputRequirements ?? []) {
     if (requirement.consumerTaskId !== consumer.taskId) continue;
     declarations.push({
@@ -1058,11 +1055,10 @@ function contextConsumptionProblem(input: {
     binding,
     text: input.manifest.input,
     selectedTaskInputs: input.manifest.selectedTaskInputs,
-    continuationSuffix: continuationSuffixOf(input.manifest, binding),
+    continuationSuffix: continuationSuffixOf(input.manifest),
     reviewSuffix,
   });
   if (assemblyProblem !== null) return assemblyProblem;
-  if (binding === undefined) return null;
   // §3.2 G-CTX: the saved call scope (the manifest's continuation brief fixes a
   // continuation call) and duty must agree with the canonical Run facts.
   // Only a duty the Role or the Session's versioned template fixes is compared; otherwise the
@@ -1125,8 +1121,7 @@ function contextConsumptionProblem(input: {
  * the claimed Run (`conflicting guards`). Every other record source stays guarded;
  * the shown Goal content is compared instead (wiring 1 W1-CTX-01).
  */
-function contextConsumptionGuards(binding: ContextAssemblyBindingV1 | undefined, faceRunRef: RunRef): readonly RecordGuard[] {
-  if (binding === undefined) return [];
+function contextConsumptionGuards(binding: ContextAssemblyBindingV1, faceRunRef: RunRef): readonly RecordGuard[] {
   const faceRunKey = refKeyOf(faceRunRef);
   const guards: RecordGuard[] = [];
   const add = (ref: object, revision: number): void => {

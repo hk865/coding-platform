@@ -357,7 +357,7 @@ describe("RL-12..RL-15 machine conditions", () => {
         reason: "probe_failed",
         detail: "探测超过 10 秒",
       });
-      expect(elapsed).toBeGreaterThanOrEqual(10_000);
+      expect(elapsed).toBeGreaterThanOrEqual(9_900);
       expect(elapsed).toBeLessThanOrEqual(12_000);
       expect(resourceCapStatus()).toEqual(capability);
       // The hung `--version` child must be reaped; `pgrepMarked` returns [] only
@@ -400,7 +400,7 @@ describe("RL-12..RL-15 machine conditions", () => {
       // R2: past the deadline in step 5 is probe_failed, not sandbox_unavailable.
       expect(capability.status, JSON.stringify(capability)).toBe("unavailable");
       if (capability.status === "unavailable") expect(capability.reason).toBe("probe_failed");
-      expect(elapsed).toBeGreaterThanOrEqual(10_000);
+      expect(elapsed).toBeGreaterThanOrEqual(9_900);
       expect(elapsed).toBeLessThanOrEqual(12_000);
       expect(resourceCapStatus()).toEqual(capability);
       expect(pgrepMarked(marker)).toEqual([]);

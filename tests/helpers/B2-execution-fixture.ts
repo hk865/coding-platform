@@ -11,7 +11,7 @@
  * entry service is unsupported, so target assertions are expected RED.
  */
 import { expect } from 'vitest';
-import { CLAIM_FIXTURE_AT, createTaskClaimFixture, type TaskClaimFixture, type ClaimFixtureKind } from './task-claim-fixture.js';
+import { CLAIM_FIXTURE_AT, createTaskClaimFixture, preparationHost, prepareTaskForReal, type TaskClaimFixture, type ClaimFixtureKind } from './task-claim-fixture.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { VersionPin } from '../../src/contracts/core/identity.js';
@@ -43,23 +43,23 @@ import { createModelCallService } from '../../src/core/work-graph/tasks/model-ca
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 
 export const B2_AT = CLAIM_FIXTURE_AT;
-export const B2_INPUT = 'Implement A using the accepted task and plan contract.';
+const B2_INPUT = 'Implement A using the accepted task and plan contract.';
 export const B2_HOST = {
   configurationRevision: 'b2-host-config-1',
   permissions: { policyRevision: 'legacy-template', tools: ['read'], writeScope: [] as string[] },
   hostTemplate: { templateId: 'builder', revision: '1', digest: artifactBodyDigest('trusted builder template revision 1') },
 };
 export type B2Records = TaskClaimFixture['records'];
-export type B2Ports = { entry: ExecutionEntryPort; model: ModelRequestPort };
+type B2Ports = { entry: ExecutionEntryPort; model: ModelRequestPort };
 export type B2Admitted = { prepared: PreparedTaskExecution; permit: TaskEntryPermit };
-export type B2TerminalObservation = TaskResultObservation & {
+type B2TerminalObservation = TaskResultObservation & {
   kernelSource: NonNullable<TaskResultObservation['kernelSource']>;
   completedHistoryBoundary: CompletedHistoryBoundary;
   history: ObservedExecutionHistory;
 };
 
 
-export type B2PreparedOptions = {
+type B2PreparedOptions = {
   claim?: TaskClaim;
   input?: string;
   role?: RoleSpecResolutionV1;
@@ -67,8 +67,8 @@ export type B2PreparedOptions = {
   permissions?: TaskEnvelopeV1['permissions'];
 };
 
-export type B2ExecutionFixture = {
-  base: TaskClaimFixture;
+export type B2ExecutionFixture<Base extends TaskClaimFixture = TaskClaimFixture> = {
+  base: Base;
   ctx: CoreCallContext;
   claim: TaskClaim;
   secondClaim: TaskClaim;
@@ -101,18 +101,31 @@ export type B2ExecutionFixture = {
   close(): Promise<void>;
 };
 
-export async function createB2ExecutionFixture(
+export type B2ExecutionOptions<Base extends TaskClaimFixture = TaskClaimFixture> = {
+  /** The clock every real owner (and the fixture's own facts) uses; default `B2_AT`. */
+  clock?: () => string;
+  /** The claim fixture the execution fixture layers over; default the shared fixture. */
+  baseFactory?: (kind: ClaimFixtureKind, additionalSchemas: RecordBackendSchemas) => Promise<Base>;
+  /** Give every claim after the first its own Kernel run/turn identity. */
+  perClaimKernelIdentity?: boolean;
+};
+
+export async function createB2ExecutionFixture<Base extends TaskClaimFixture = TaskClaimFixture>(
   kind: ClaimFixtureKind = 'memory',
   additionalSchemas: RecordBackendSchemas = { records: [], events: [] },
-): Promise<B2ExecutionFixture> {
-  const base = await createTaskClaimFixture(kind, {
+  options: B2ExecutionOptions<Base> = {},
+): Promise<B2ExecutionFixture<Base>> {
+  const schemas: RecordBackendSchemas = {
     records: [...EXECUTION_ENTRY_RECORD_SCHEMAS.records, ...MODEL_REQUEST_RECORD_SCHEMAS.records,
       ...additionalSchemas.records],
     events: [...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...MODEL_REQUEST_RECORD_SCHEMAS.events,
       ...additionalSchemas.events],
     lookups: [...EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? [], ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...(additionalSchemas.lookups ?? [])],
-  });
+  };
+  const base = options.baseFactory === undefined
+    ? await createTaskClaimFixture(kind, schemas) as Base
+    : await options.baseFactory(kind, schemas);
   const claimed = await base.service.claimTask(base.ctx, await base.buildRequest());
   if (claimed.status !== 'committed') throw new Error(`B2 fixture claim failed: ${JSON.stringify(claimed)}`);
   const claim = claimed.value;
@@ -135,7 +148,7 @@ export async function createB2ExecutionFixture(
     input: { goalId: goal2Ref.goalId, workspace: base.scope, objective: 'B2 second independent run' } });
   if (createdGoal2.status !== 'committed') throw new Error(`B2 fixture goal2 failed: ${JSON.stringify(createdGoal2)}`);
   const plan2Ref: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: base.scope.projectId, planId: 'b2-second-plan' };
-  const draft2: PlanRevisionDraft = { schemaVersion: 1, planId: plan2Ref.planId, planRevision: 1, goalId: goal2Ref.goalId, stages: [],
+  const draft2: PlanRevisionDraft = { schemaVersion: 2, planId: plan2Ref.planId, planRevision: 1, goalId: goal2Ref.goalId, stages: [],
     tasks: [
       { taskId: 'b2-second-task', title: 'B2 second task', requirementLevel: 'required', taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
       { taskId: 'b2-second-gate', title: 'B2 second gate', requirementLevel: 'required', taskKind: 'gate', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
@@ -168,7 +181,7 @@ export async function createB2ExecutionFixture(
   const secondClaim = claimed2.value;
 
   let seq = 0;
-  const now = () => B2_AT;
+  const now = options.clock ?? (() => B2_AT);
   const eventId = () => `b2-event-${++seq}`;
   const roles = createRoleConfigurationService({ records: base.records, now, eventId });
   const bodies = new RawArtifactBodyStore();
@@ -199,40 +212,32 @@ export async function createB2ExecutionFixture(
 
   async function buildPrepared(options: B2PreparedOptions = {}): Promise<PreparedTaskExecution> {
     const targetClaim = options.claim ?? claim;
-    const target = await read(targetClaim);
-    const input = options.input ?? B2_INPUT;
-    const inputDigest = artifactBodyDigest(input);
     const permissions = options.permissions ?? structuredClone(B2_HOST.permissions);
-    const roleFacts = await roles.resolveRoleBindingFacts(base.ctx, { roleBinding: target.run.roleBinding, declaredPermissions: permissions });
-    if (roleFacts.result.status !== 'ready') throw Error('real role fixture could not resolve');
-    const role = options.role ?? roleFacts.result.value;
-    const hostTemplate = options.hostTemplate === undefined ? structuredClone(B2_HOST.hostTemplate) : options.hostTemplate;
-    const workspaceSnapshot = { workspaceId: targetClaim.workspaceId, revision: 1 };
-    const manifest: PreparedTaskManifestV1 = {
-      schemaVersion: 1, kind: 'task_execution', claim: targetClaim, role, hostTemplate,
-      roleBinding: base.roleBinding, hostConfigurationRevision: 'b2-host-config-1',
-      sessionRole: target.session.role,
-      workspaceSnapshot, permissions, budget: base.budget, selectedTaskInputs: [],
-      materialBasis: null, materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [],
-      sourceRefs: [], input, inputDigest,
-    };
+    const real = await prepareTaskForReal(base, {
+      bodies, runRef: targetClaim.runRef, now, requestId: `b2-real-prepare-${++seq}`,
+      directory: base.directory, scope: base.scope,
+      host: preparationHost({
+        configurationRevision: B2_HOST.configurationRevision,
+        permissions,
+        hostTemplate: B2_HOST.hostTemplate,
+        budget: { contextWindowTokens: 128000, inputTokens: null, outputTokens: null,
+          maxRequests: 8, maxToolCalls: 8, timeoutMs: null, perResponseTokens: 512 },
+      }),
+    });
+    if (options.role === undefined && options.hostTemplate === undefined) return real.prepared;
+    // A6 refused input: tamper the REAL manifest body (never build its binding).
+    const manifest = { ...real.manifest,
+      ...(options.role === undefined ? {} : { role: options.role }),
+      ...(options.hostTemplate === undefined ? {} : { hostTemplate: options.hostTemplate }) };
     const manifestJson = JSON.stringify(manifest);
     const stored = await bodies.put({ body: manifestJson,
       contentType: 'application/vnd.coding-platform.task-execution-manifest+json;version=1',
-      sourceRefs: [{ kind: 'workspace', refId: targetClaim.workspaceId, revision: String(workspaceSnapshot.revision) }],
+      sourceRefs: manifest.sourceRefs,
       origin: { kind: 'run', owner: targetClaim.runRef }, requestedAt: now() });
-    if (stored.status !== 'ready') throw new Error(`B2 fixture manifest store failed: ${JSON.stringify(stored)}`);
-    const envelope: TaskEnvelopeV1 = {
-      schemaVersion: 1, envelopeId: 'b2-envelope-1', projectId: targetClaim.task.projectId,
-      workspaceId: targetClaim.workspaceId, goalId: targetClaim.task.goalId, taskId: targetClaim.task.taskId,
-      runRef: targetClaim.runRef, attemptRef: targetClaim.attemptRef, planRef: targetClaim.planRef,
-      roleBinding: base.roleBinding, workspaceSnapshot, permissions, budget: base.budget,
-      sourceRefs: [], bundleRef: stored.value.ref,
-    };
-    const inputBinding: PreparedTaskExecution['inputBinding'] = {
-      schemaVersion: 1, inputDigest, manifestDigest: artifactBodyDigest(manifestJson), materialAccessRefs: [],
-      deliveryRefs: [] };
-    return { kind: 'task', claim: targetClaim, envelope, inputBinding };
+    if (stored.status !== 'ready') throw new Error(`B2 tampered manifest store failed: ${JSON.stringify(stored)}`);
+    return { ...real.prepared,
+      envelope: { ...real.prepared.envelope, bundleRef: stored.value.ref },
+      inputBinding: { ...real.prepared.inputBinding, manifestDigest: stored.value.ref.digest } };
   }
   function permit(overrides: Partial<TaskEntryPermit> = {}): TaskEntryPermit {
     return { claim, consumerId: 'runtime-a', entryGeneration: 1, authorizationRevision: 1, inputDigest: artifactBodyDigest(B2_INPUT), ...overrides };
@@ -247,7 +252,7 @@ export async function createB2ExecutionFixture(
   }
   function terminalEvent(overrides: Partial<RuntimeEventV1> = {}): RuntimeEventV1 {
     return { eventType: 'run_completed', schemaVersion: 1, eventId: 'b2-runtime-complete',
-      runRef: claim.runRef, sequence: 2, occurredAt: B2_AT, payload: { kind: 'completed', exitCode: 0 }, ...overrides };
+      runRef: claim.runRef, sequence: 2, occurredAt: now(), payload: { kind: 'completed', exitCode: 0 }, ...overrides };
   }
   function completedBoundary(position = 4): CompletedHistoryBoundary {
     return { source: { ...kernel, position }, cursor: 'b2-trusted-runtime-completed-boundary-4' };
@@ -283,7 +288,10 @@ export async function createB2ExecutionFixture(
   async function kernelFor(target: TaskClaim): Promise<KernelExecutionBinding> {
     const current = await read(target);
     return { ...kernel, adapterId: current.session.kernel.adapterId,
-      kernelSessionId: current.session.kernel.kernelSessionId };
+      kernelSessionId: current.session.kernel.kernelSessionId,
+      ...(options.perClaimKernelIdentity === true && target.runRef.runId !== claim.runRef.runId ? {
+        runId: `fx3-kernel-${target.runRef.runId}`, turnId: `fx3-turn-${target.runRef.runId}`,
+      } : {}) };
   }
   async function start(options: { prepared?: PreparedTaskExecution; ports?: B2Ports } = {}): Promise<B2Admitted> {
     const admitted = await authorize(options);
@@ -298,7 +306,7 @@ export async function createB2ExecutionFixture(
     const started = await start(options);
     const boundKernel = await kernelFor(started.prepared.claim);
     const p = options.ports ?? { entry, model };
-    const result = await p.entry.recordExecutionEntered(base.ctx, { input: { permit: started.permit, enteredAt: B2_AT,
+    const result = await p.entry.recordExecutionEntered(base.ctx, { input: { permit: started.permit, enteredAt: now(),
       kernelSource: { ...boundKernel, position: 3 }, history: { ...observedHistory(3), kernel: boundKernel } },
       meta: { requestId: `b2-formal-entered-${++seq}`, expected: [await pin(started.prepared.claim)] } });
     expect(result, 'formal entered prerequisite').toMatchObject({ status: 'committed', value: { status: 'running' } });

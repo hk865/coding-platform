@@ -30,50 +30,30 @@
  *   - the timeline read through `createTaskStateTimeline` (live store and any
  *     caller-supplied records port for fault/cap rows).
  *
- * The only direct storage-boundary writes this file keeps are the ones L-fixtures
- * names or that a public flow genuinely cannot produce in this fixture:
- *   (a) the §7 legacy round shapes: a round JSON whose top-level `since` is
- *       absent, and a finalized round whose top-level `finalizedAt` is absent
- *       (committed with the real production encoder + commit-time validation);
- *   (b) a `yielded` Run: a real yielded terminal needs a durable wait message
- *       and the mailbox/continuation flow (RD-3), which is outside this read
- *       fixture; and the second Run of that test, because the real claim
- *       service refuses a first claim when a Run already exists and the only
- *       legal successor is a continuation that names that wait message;
- *   (c) a pause/resume observation dated BEFORE the Run entered (2B-32 fold
- *       order (a)); `recordControlObservation` requires the Run's saved V2
- *       entry history, so the observation cannot be produced by the public
- *       control flow.
- * Every direct write uses the real production encoder and commit-time schema
- * validation.
+ * Every Run is a real claim, prepared and started by the production Runtime
+ * through the shared `S2B-runtime-steps-fixture.ts`; a yielded Run comes from
+ * the scripted model calling the real `send_session_message`, and its
+ * continuation is a real `claimTask` with the saved `consumedWait`. This file
+ * writes no Run, event or activity fact at the storage boundary.
  *
- * Nothing here calls a model or touches the network.
+ * Nothing here touches the network.
  */
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
 import type { ArchiveStepRefV1, RequestSessionArchiveInput } from '../../src/contracts/core/session-archive.js';
-import type { PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
-import { continuationBriefDigest, renderContinuationBriefZh } from '../../src/contracts/continuation-brief.js';
-import { assembleAnomalySection, assembleContinuationBrief } from '../../src/core/agent-runtime/continuation-brief-assembly.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { ControlObservationV1, ControlIntentRef } from '../../src/contracts/control-intent.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
-import type { ExecutionAuthorizationV2, RunOutcome, RunRef, RunSnapshot, RuntimeEventV1 } from '../../src/contracts/dispatch.js';
+import type { ConsumedWaitV1, ExecutionAuthorizationV2, RunOutcome, RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../src/contracts/plan.js';
 import type { RoundSnapshot, CheckProcessObservation, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskRequeueRef } from '../../src/contracts/task-requeue.js';
-import { completionPolicyContentDigest } from '../../src/contracts/governance.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
-import type { EncodedRecord, RecordBackendSchemas, RecordGuard, StoreCommitReceipt } from '../../src/core/record-store/ports.js';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { ClaimTaskInput, RequeueTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
-import type {
-  ExecutionEntryPort, AuthorizeConfiguration, KernelExecutionBinding, TaskResultObservation,
-} from '../../src/core/work-graph/model/execution-entry-contracts.js';
-import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
-import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
@@ -84,21 +64,20 @@ import { createSessionLifecycleService } from '../../src/core/work-graph/session
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
-import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
-import { EVIDENCE_RECORD_SCHEMAS, encodeVerificationRoundSnapshot } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
-import { CONTROL_RECORD_SCHEMAS, encodeControlIntentSnapshot } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
+import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import {
   createTaskStateTimeline, type TaskStateTimelinePageV1, type TaskTimelineReadPort,
 } from '../../src/core/work-graph/views/task-state-timeline.js';
-import {
-  B2_HOST, createB2ExecutionFixture, type B2ExecutionFixture,
-} from './B2-execution-fixture.js';
+import { createB2ExecutionFixture, type B2ExecutionFixture } from './B2-execution-fixture.js';
+import { createS2BRuntimeSteps, type S2BRunHandle } from './S2B-runtime-steps-fixture.js';
 import type { ClaimFixtureKind } from './task-claim-fixture.js';
 
 /** One slow timeline file may take up to 1,800 s (spec §7 / L-fixtures). */
@@ -111,14 +90,14 @@ const HOST_INSTANCE = { hostInstanceId: 's2b-timeline-host', lease: 'owned' as c
 const TIMELINE_SCHEMAS: RecordBackendSchemas = {
   records: [...EVIDENCE_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records,
     ...SESSION_ANOMALY_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records,
-    ...COMPLETION_RECORD_SCHEMAS.records],
+    ...COMPLETION_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records],
   events: [...EVIDENCE_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events,
     ...SESSION_ANOMALY_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
     ...COMPLETION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
-    ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
+    ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events],
   lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
     ...(SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? []), ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? []),
-    ...(COMPLETION_RECORD_SCHEMAS.lookups ?? [])],
+    ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [])],
 };
 
 export type S2BSeedRunInput = {
@@ -127,13 +106,15 @@ export type S2BSeedRunInput = {
   outcome: RunOutcome | null; status?: RunSnapshot['status']; attemptId?: string;
   /** When set, a `crashed` Run with a paused-interrupted `interrupted_clean` reconciliation. */
   pausedInterrupted?: boolean;
+  /** A real continuation after a yielded Run: the saved wait message and reply. */
+  consumedWait?: ConsumedWaitV1;
 };
 
 export type S2BSeedRoundInput = {
   runRef: RunRef; roundId: string;
-  /** `eventAt(since)` reads this instant; omitted = a legacy round without `since`. */
-  sinceAt?: string | undefined;
-  /** VR-07 finalisation; omitted = an open or pre-2B round. */
+  /** `eventAt(since)` reads this instant. */
+  sinceAt: string;
+  /** VR-07 finalisation; omitted = an open round. */
   finalizedAt?: string | undefined;
   outcome?: RoundSnapshot['outcome'];
   status?: RoundSnapshot['status'];
@@ -159,6 +140,13 @@ export type S2BTimelineFixture = {
   /** The Goal's desired state through the real `setGoalControl` (GOAL-04..06). */
   setGoalDesiredState(goalRef: GoalRef, desiredState: 'active' | 'paused' | 'cancelled'): Promise<void>;
   seedRun(input: S2BSeedRunInput): Promise<RunRef>;
+  /** The real scripted yield -> formal reply -> consumedWait continuation. */
+  seedYieldedPair(input: {
+    goalRef: GoalRef; yieldTaskId: string; replyTaskId: string;
+    yieldStartedAt: string; yieldedAt: string;
+    replyStartedAt: string; replyEndedAt: string;
+    resumeStartedAt: string; resumeEndedAt: string;
+  }): Promise<void>;
   seedRequeue(input: { runRef: RunRef; requestedAt: string }): Promise<void>;
   seedControl(input: { runRef: RunRef; kind: 'pause' | 'resume'; observedAt: string }): Promise<void>;
   seedAnomaly(input: { runRef: RunRef; recordedAt: string }): Promise<void>;
@@ -168,10 +156,6 @@ export type S2BTimelineFixture = {
   timelineWith(records: S2BTimelineFixture['records'], readRecordCap?: number): TaskTimelineReadPort;
   close(): Promise<void>;
 };
-
-function runRefOf(goalRef: GoalRef, runId: string): RunRef {
-  return { aggregateType: 'Run', projectId: goalRef.projectId, goalId: goalRef.goalId, runId };
-}
 
 /** A next v2 draft from the current accepted Plan (test-side only; no product logic). */
 function draftOf(plan: PlanRevisionSnapshot, planId: string): PlanRevisionDraft {
@@ -205,22 +189,10 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
   const authority = createMaterialRecordReaders(baseRecords).authority;
   const materials = createMaterialService({ bodies: b2.bodies, authority, now });
 
-  const authorizeConfiguration: AuthorizeConfiguration = async (authorizeCtx, input) => {
-    if (authorizeCtx.projectId !== b2.base.scope.projectId || authorizeCtx.workspaceId !== b2.base.scope.workspaceId
-      || input.configurationRevision !== B2_HOST.configurationRevision
-      || canonicalJson(input.permissions) !== canonicalJson(B2_HOST.permissions)
-      || canonicalJson(input.hostTemplate) !== canonicalJson(B2_HOST.hostTemplate)) {
-      return { status: 'rejected', code: 'forbidden',
-        reason: 'the S2B timeline fixture Host does not authorize this configuration' };
-    }
-    return { status: 'ready', value: structuredClone(B2_HOST) };
-  };
-
-  const entry: ExecutionEntryPort = createExecutionEntryService({
-    records: baseRecords, reads: runReads,
-    roles: createRoleConfigurationService({ records: baseRecords, now, eventId }),
-    bodies: b2.bodies, authorizeConfiguration, now, eventId, newId,
-  });
+  const steps = await createS2BRuntimeSteps({ base: b2.base, bodies: b2.bodies, ctx: b2.ctx,
+    directory: b2.base.directory, scope: b2.base.scope, now,
+    setClock: (at) => { clock = at; }, eventId, newId, consumerId: 's2b-timeline-runtime',
+    withMailbox: true });
   const controls = createRunControlService({ records: baseRecords, authority, reads: runReads, now, eventId });
   const reconcile = createRunReconcileService({ records: baseRecords, reads: runReads, hostInstance: HOST_INSTANCE, now, eventId });
   const requeues = createTaskRequeueService({
@@ -291,30 +263,7 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
    * accepted `S2B-track-fixture.ts`.
    */
   async function installStaticCompletionPolicy(): Promise<void> {
-    const bootstrap = createProjectBootstrapServices({ records: baseRecords, now, eventId });
-    const projectRevision = await readRevision(b2.base.projectRef);
-    const policyId = 's2b-timeline-policy';
-    const content = { schemaVersion: 1 as const, requirementKinds: ['static'],
-      minimumRequiredRequirementsPerObligation: 1 };
-    const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId: b2.base.scope.projectId,
-      policyId, revision: 1 };
-    const installed = await bootstrap.completionPolicies.installCompletionPolicy(ctx, {
-      input: { policyId, contentRevision: 1, content },
-      meta: { requestId: requestId('install-policy'), expected: [
-        { ref: b2.base.projectRef, revision: projectRevision }, { ref: policyRef, revision: 0 },
-      ] },
-    });
-    if (installed.status !== 'committed') throw new Error(`S2B policy install failed: ${JSON.stringify(installed)}`);
-    const activeRef = { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId: b2.base.scope.projectId };
-    const activeRevision = await readRevision(activeRef);
-    const activated = await bootstrap.completionPolicies.activateCompletionPolicy(ctx, {
-      input: { target: { ref: policyRef, digest: completionPolicyContentDigest({ schemaVersion: 1, policyId,
-        contentRevision: 1, content }) } },
-      meta: { requestId: requestId('activate-policy'), expected: [
-        { ref: b2.base.projectRef, revision: projectRevision }, { ref: activeRef, revision: activeRevision },
-      ] },
-    });
-    if (activated.status !== 'committed') throw new Error(`S2B policy activate failed: ${JSON.stringify(activated)}`);
+    await steps.installStaticCompletionPolicy('s2b-timeline-policy');
   }
 
   async function createGoal(input: { goalId: string; workTaskIds: readonly string[] }): Promise<GoalRef> {
@@ -423,7 +372,7 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
   }
 
   async function claimTask(goalRef: GoalRef, taskId: string, sessionRef: SessionRef,
-    requeueRef?: TaskRequeueRef): Promise<TaskClaim> {
+    requeueRef?: TaskRequeueRef, consumedWait?: ConsumedWaitV1): Promise<TaskClaim> {
     const goalRead = await plans.queryGoal(ctx, goalRef);
     if (goalRead.status !== 'ready' || goalRead.value.goal.activePlanRevision === null) {
       throw new Error(`S2B timeline claim Goal read failed: ${JSON.stringify(goalRead)}`);
@@ -431,7 +380,8 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
     const request: GraphWrite<ClaimTaskInput> = {
       input: { goalRef, planRef: goalRead.value.goal.activePlanRevision, taskId, sessionRef,
         roleBinding: b2.base.roleBinding, budget: b2.base.budget,
-        ...(requeueRef === undefined ? {} : { requeueRef }) },
+        ...(requeueRef === undefined ? {} : { requeueRef }),
+        ...(consumedWait === undefined ? {} : { consumedWait }) },
       meta: { requestId: requestId('claim'), expected: [
         { ref: goalRef, revision: goalRead.value.goal.revision },
         { ref: b2.base.workspaceRef, revision: await readRevision(b2.base.workspaceRef) },
@@ -443,102 +393,15 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
     return claimed.value;
   }
 
-  async function enter(claim: TaskClaim, at: string): Promise<void> {
-    clock = at;
-    const prepared = await b2.buildPrepared({ claim });
-    // C3 (RUN-02): a requeue Run enters with its continuation brief bound.
-    const current = await runOf(claim.runRef);
-    if (current.requeueRef !== undefined) {
-      const basisRead = await runReads.readContinuationBasis?.(ctx, { runRef: claim.runRef });
-      if (basisRead === undefined || basisRead.status !== 'ready') {
-        throw new Error(`the S2B timeline continuation basis is unavailable: ${JSON.stringify(basisRead)}`);
-      }
-      const basis = basisRead.value;
-      const pending = basis.pendingAnomalies ?? [];
-      const anomalies = pending.length === 0 ? null : assembleAnomalySection(pending);
-      const brief = assembleContinuationBrief({ basis, factsRecord: basis.previous, factsHops: 0, factsTruncated: false,
-        turn: { kernel: 'unavailable', reason: 'the S2B timeline fixture has no prior Kernel store' },
-        workspace: { briefCheckpoint: { kind: 'brief', at: clock, workspaceRevision: 1,
-          sourceDigest: null, unavailableReason: 'not captured in this fixture' },
-          uncommitted: { status: 'unavailable', baseCommit: null, paths: [], omitted: 0,
-            reason: 'not captured in this fixture' } }, claimSessionRef: claim.sessionRef, anomalies });
-      const digest = continuationBriefDigest(brief);
-      const body = await b2.bodies.read(prepared.envelope.bundleRef);
-      if (body.status !== 'ready') throw new Error(`the S2B timeline manifest read failed: ${JSON.stringify(body)}`);
-      const manifest = JSON.parse(body.value.body) as PreparedTaskManifestV1;
-      manifest.continuationBrief = brief;
-      manifest.input += `\n\n${renderContinuationBriefZh(brief, digest)}`;
-      manifest.inputDigest = sha256Hex(manifest.input);
-      const json = JSON.stringify(manifest);
-      const stored = await b2.bodies.put({ body: json, contentType: body.value.ref.contentType,
-        sourceRefs: body.value.sourceRefs, origin: { kind: 'run', owner: claim.runRef }, requestedAt: clock });
-      if (stored.status !== 'ready') throw new Error(`the S2B timeline manifest store failed: ${JSON.stringify(stored)}`);
-      prepared.envelope.bundleRef = stored.value.ref;
-      prepared.inputBinding = { ...prepared.inputBinding, inputDigest: manifest.inputDigest, manifestDigest: sha256Hex(json),
-        continuationBriefDigest: digest,
-        ...(brief.anomalies === undefined ? {} : { anomalyAnchorRefs: brief.anomalies.anchors.map((anchor) => anchor.ref) }) };
-    }
-    const sessionKernel = await b2.kernelFor(claim);
-    const kernel: KernelExecutionBinding = { ...sessionKernel,
-      runId: `${claim.runRef.runId}-kernel`, turnId: `${claim.runRef.runId}-turn` };
-    const authorized = await entry.authorizeRuntimeEntry(ctx, {
-      input: { prepared, consumerId: 's2b-timeline-runtime' },
-      meta: { requestId: requestId('authorize'), expected: [await runPin(claim.runRef)] },
-    });
-    if (authorized.status !== 'committed') throw new Error(`S2B timeline authorize failed: ${JSON.stringify(authorized)}`);
-    const begun = await entry.beginRuntimeEntry(ctx, {
-      input: { permit: authorized.value, kernel },
-      meta: { requestId: requestId('begin'), expected: [await runPin(claim.runRef)] },
-    });
-    if (begun.status !== 'committed') throw new Error(`S2B timeline begin failed: ${JSON.stringify(begun)}`);
-    const entered = await entry.recordExecutionEntered(ctx, {
-      input: { permit: { ...authorized.value, authorizationRevision: begun.value.authorization.revision },
-        enteredAt: at, kernelSource: { ...kernel, position: 3 },
-        history: { kernel, startPosition: 2, observedThroughPosition: 3, endPosition: null } },
-      meta: { requestId: requestId('entered'), expected: [await runPin(claim.runRef)] },
-    });
-    if (entered.status !== 'committed') throw new Error(`S2B timeline entered failed: ${JSON.stringify(entered)}`);
-  }
-
-  function terminalEvent(run: RunSnapshot, at: string, outcome: RunOutcome): RuntimeEventV1 {
-    const base = { schemaVersion: 1 as const, eventId: eventId(), runRef: run.ref,
-      sequence: run.lastEventSeq + 1, occurredAt: at };
-    switch (outcome) {
-      case 'completed':
-        return { ...base, eventType: 'run_completed', payload: { kind: 'completed', exitCode: 0 } };
-      case 'cancelled':
-        return { ...base, eventType: 'run_cancelled', payload: { kind: 'cancelled', reason: 'S2B timeline cancel' } };
-      case 'budget_exhausted':
-        return { ...base, eventType: 'run_budget_exhausted', payload: { kind: 'budget_exhausted', exhaustedAt: at } };
-      case 'crashed':
-        return { ...base, eventType: 'run_crashed', payload: { kind: 'crashed', error: 'S2B timeline crash' } };
-      default:
-        throw new Error(`the S2B timeline fixture has no real terminal event for ${outcome}`);
-    }
-  }
-
-  async function end(claim: TaskClaim, at: string, outcome: RunOutcome): Promise<void> {
-    clock = at;
-    const run = await runOf(claim.runRef);
-    const authorization = run.executionAuthorization as ExecutionAuthorizationV2 | undefined;
-    const history = run.executionHistory;
-    if (authorization === undefined || !('schemaVersion' in authorization) || authorization.schemaVersion !== 2
-      || history === undefined || history === null) {
-      throw new Error('the S2B timeline end requires an entered V2 Run');
-    }
-    const position = history.observedThroughPosition + 1;
-    const source = { ...history.kernel, position };
-    const observation: TaskResultObservation = {
-      claim, entry: { consumerId: authorization.consumerId, entryGeneration: authorization.generation },
-      event: terminalEvent(run, at, outcome), kernelSource: source,
-      completedHistoryBoundary: { source, cursor: `s2b-boundary-${run.ref.runId}-${String(position)}` },
-      history: { kernel: history.kernel, startPosition: history.startPosition,
-        observedThroughPosition: position, endPosition: position },
-    };
-    const result = await entry.recordRunResult(ctx, {
-      input: observation, meta: { requestId: requestId('end'), expected: [await runPin(claim.runRef)] },
-    });
-    if (result.status !== 'committed') throw new Error(`S2B timeline end failed: ${JSON.stringify(result)}`);
+  async function startRun(claim: TaskClaim, input: S2BSeedRunInput): Promise<S2BRunHandle> {
+    const handle = await steps.start(claim, { at: input.startedAt!,
+      replies: input.outcome === 'budget_exhausted'
+        ? [{ kind: 'calls', calls: [{ callId: `s2b-timeline-budget-${claim.runRef.runId}`,
+          name: 'read', args: { path: 'b2-read.txt' } }] }]
+        : [{ kind: 'text', text: 'S2B timeline Run finished' }],
+      ...(input.outcome === 'budget_exhausted' ? { budget: { maxRequests: 1, maxToolCalls: 1 } } : {}) });
+    await handle.entered;
+    return handle;
   }
 
   /** RUN-24: the pointer pause, then the real `interrupted_clean` reconcile. */
@@ -575,109 +438,6 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
   // Storage-boundary fallbacks (documented in the header)
   // ------------------------------------------------------------------------
 
-  async function commitRecords(recordsToWrite: readonly EncodedRecord[],
-    options: { guards?: readonly RecordGuard[]; occurredAt?: string;
-      bindings?: readonly { refKey: string; field: 'since' }[] } = {}): Promise<StoreCommitReceipt> {
-    const sequence = ++seq;
-    const at = options.occurredAt ?? clock;
-    const event = { eventId: `s2b-timeline-event-${sequence}`, eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: at,
-      json: JSON.stringify({ eventId: `s2b-timeline-event-${sequence}`, eventType: 'TrustedScopeSeeded',
-        schemaVersion: 1, occurredAt: at }) };
-    const explicit = new Set((options.guards ?? []).map((guard) => guard.refKey));
-    const guards = [...(options.guards ?? []),
-      ...recordsToWrite.filter((record) => !explicit.has(record.refKey))
-        .map((record) => ({ refKey: record.refKey, expectedRevision: null }))];
-    const result = await baseRecords.commit({
-      identityKey: `s2b-timeline-${sequence}`, fingerprint: `s2b-timeline-${sequence}`,
-      guards, records: [...recordsToWrite], claims: [], indexGuards: [], indexChanges: [], events: [event],
-      ...(options.bindings === undefined ? {} : { commitCursorBindings: [...options.bindings] }),
-    });
-    if (result.status !== 'committed') throw new Error(`S2B timeline seed commit failed: ${JSON.stringify(result)}`);
-    return result;
-  }
-
-  /** Deviation (b): a `yielded` Run (and its successor) needs the RD-3 mailbox flow. */
-  async function seedRunRaw(input: S2BSeedRunInput): Promise<RunRef> {
-    const ref = runRefOf(input.goalRef, input.runId);
-    const pausedIntentRef = input.pausedInterrupted === true
-      ? { aggregateType: 'ControlIntent' as const, projectId: ref.projectId, workspaceId: b2.base.scope.workspaceId,
-          intentId: `${input.runId}-paused` }
-      : null;
-    const snapshot: RunSnapshot = {
-      ref, revision: 1, schemaVersion: 1,
-      task: { projectId: ref.projectId, goalId: ref.goalId, taskId: input.taskId },
-      attemptId: input.attemptId ?? `${input.runId}-attempt`,
-      planRef: input.planRef, roleBinding: b2.base.roleBinding, budget: b2.base.budget,
-      workspaceSnapshot: { workspaceId: b2.base.scope.workspaceId, revision: 1 },
-      status: input.status ?? 'ended', outcome: input.outcome, exitCode: null,
-      lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null,
-      startedAt: input.startedAt, endedAt: input.endedAt,
-      ...(input.pausedInterrupted === true ? {
-        reconciliation: {
-          status: 'done' as const, recordedAt: input.endedAt ?? clock, basis: { kind: 'live_clean' as const },
-          observation: {
-            kind: 'interrupted_clean' as const,
-            event: { eventType: 'run_crashed' as const, schemaVersion: 1 as const, eventId: `${input.runId}-crash`,
-              runRef: ref, sequence: 1, occurredAt: input.endedAt ?? clock, payload: { kind: 'crashed' as const, error: 'host restart' } },
-            lastPosition: 3, kernelPaused: true, pausedIntentRef,
-          },
-        },
-      } : {}),
-    };
-    const record: EncodedRecord = { refKey: canonicalJson(ref as unknown as JsonValue),
-      schemaId: 'RunSnapshot@1', revision: 1, json: JSON.stringify(snapshot) };
-    await commitRecords([record]);
-    return ref;
-  }
-
-  /** Deviation (c): a control observation dated before the Run entered. */
-  async function seedControlRaw(input: { runRef: RunRef; kind: 'pause' | 'resume'; observedAt: string }): Promise<void> {
-    const { runRef, kind, observedAt } = input;
-    const snapshot = {
-      schemaVersion: 1,
-      ref: { aggregateType: 'ControlIntent', projectId: runRef.projectId, workspaceId: b2.base.scope.workspaceId,
-        intentId: `${runRef.runId}-${kind}-${observedAt}` },
-      runRef, kind, desiredState: kind === 'pause' ? 'paused' : 'running', reason: null,
-      requestedAt: observedAt, requestedBy: OPERATOR, revision: 2, status: 'applied',
-      observation: { schemaVersion: 1, origin: 'platform_not_entered',
-        kind: kind === 'pause' ? 'paused' : 'resumed', runRevision: 2, detail: { entryPhase: 'none' }, observedAt },
-    };
-    await commitRecords([encodeControlIntentSnapshot(snapshot as never)]);
-  }
-
-  /** §7 legacy round shape: no top-level `since` (and optionally no `finalizedAt`). */
-  async function seedRoundRaw(input: S2BSeedRoundInput): Promise<void> {
-    const runRef = input.runRef;
-    const runKey = canonicalJson(runRef as unknown as JsonValue);
-    const runRead = await baseRecords.readMany([runKey]);
-    if (runRead.status !== 'ready') throw new Error(`S2B timeline Run read failed: ${JSON.stringify(runRead)}`);
-    const runRecord = runRead.value.records.find((candidate) => candidate.refKey === runKey);
-    if (runRecord === undefined) throw new Error(`S2B timeline Run ${runRef.runId} is missing`);
-    const parsedRun = JSON.parse(runRecord.json) as { task: { projectId: string; goalId: string; taskId: string };
-      planRef: PlanRevisionRef };
-    const triple = parsedRun.task;
-    const ref = { aggregateType: 'VerificationRound' as const, projectId: triple.projectId,
-      workspaceId: b2.base.scope.workspaceId, goalId: triple.goalId, taskId: triple.taskId, runId: runRef.runId,
-      roundId: input.roundId };
-    const snapshot = {
-      ref, revision: 1, schemaVersion: 1, subject: triple,
-      subjectRunRef: runRef, adoptedPlanRef: parsedRun.planRef, taskBasisRef: parsedRun.planRef,
-      executor: OPERATOR, configuration: {}, configurationDigest: sha256Hex('s2b-timeline-config'),
-      identity: {}, sourceProof: {}, verificationPlan: {}, checks: [],
-      status: input.status ?? 'finalized', outcome: input.outcome ?? null, gaps: [], evidenceRefs: [],
-    } as unknown as RoundSnapshot;
-    const origin = {
-      ...(input.sinceAt === undefined ? {} : { since: null }),
-      ...(input.finalizedAt === undefined ? {} : { finalizedAt: input.finalizedAt }),
-    };
-    const encoded = encodeVerificationRoundSnapshot(snapshot, origin);
-    const bindings = input.sinceAt === undefined ? undefined : [{ refKey: encoded.refKey, field: 'since' as const }];
-    await commitRecords([encoded], {
-      occurredAt: input.sinceAt ?? clock,
-      ...(bindings === undefined ? {} : { bindings }),
-    });
-  }
-
   // ------------------------------------------------------------------------
   // Public seed surface
   // ------------------------------------------------------------------------
@@ -690,42 +450,111 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
    * real control flow can record pause/resume observations (`submitControl`
    * refuses an already ended Run). Every later seed/read flushes the end first.
    */
-  const pendingEnds: { claim: TaskClaim; at: string; outcome: RunOutcome }[] = [];
+  const pendingEnds: { handle: S2BRunHandle; at: string; kind: 'completed' | 'crashed' | 'cancelled' | 'budget_exhausted' }[] = [];
+
+  function finishKind(outcome: RunOutcome): 'completed' | 'crashed' | 'cancelled' | 'budget_exhausted' {
+    switch (outcome) {
+      case 'completed': return 'completed';
+      case 'crashed': return 'crashed';
+      case 'cancelled': return 'cancelled';
+      case 'budget_exhausted': return 'budget_exhausted';
+      default: throw new Error(`the S2B timeline fixture has no real terminal for ${outcome}`);
+    }
+  }
 
   async function flushEnds(): Promise<void> {
-    for (const pending of pendingEnds.splice(0)) await end(pending.claim, pending.at, pending.outcome);
+    for (const pending of pendingEnds.splice(0)) await steps.finish(pending.handle, pending.at, pending.kind);
   }
 
   async function seedRun(input: S2BSeedRunInput): Promise<RunRef> {
     await flushEnds();
-    // Deviation (b): a yielded terminal requires the RD-3 durable wait message.
     if (input.outcome === 'yielded') {
-      const ref = await seedRunRaw(input);
-      runsForTask.set(input.taskId, (runsForTask.get(input.taskId) ?? 0) + 1);
-      return ref;
+      throw new Error('a yielded Run must be produced by the real scripted mailbox flow (seedYieldedPair)');
     }
     const prior = runsForTask.get(input.taskId) ?? 0;
     const requeueRef = pendingRequeue.get(input.taskId);
-    if (prior > 0 && requeueRef === undefined) {
-      // Deviation (b): a real first claim is refused once a Run exists and the
-      // only legal successor is a continuation that names a wait message.
-      const ref = await seedRunRaw(input);
-      runsForTask.set(input.taskId, prior + 1);
-      return ref;
+    if (prior > 0 && requeueRef === undefined && input.consumedWait === undefined) {
+      throw new Error('a later Run of the same Task needs a real requeue or a saved continuation wait');
     }
     const session = await newSession();
-    const claim = await claimTask(input.goalRef, input.taskId, session, requeueRef);
+    const claim = await claimTask(input.goalRef, input.taskId, session, requeueRef, input.consumedWait);
     runsForTask.set(input.taskId, prior + 1);
     pendingRequeue.delete(input.taskId);
     runSession.set(claim.runRef.runId, session);
     if (input.startedAt === null) return claim.runRef;
-    await enter(claim, input.startedAt);
+    const handle = await startRun(claim, input);
     if (input.pausedInterrupted === true) await pauseInterrupted(claim, input.endedAt ?? clock);
     else if (input.outcome === 'outcome_unknown') await reconcileUnknown(claim, input.endedAt ?? clock);
     else if (input.endedAt !== null && input.outcome !== null) {
-      pendingEnds.push({ claim, at: input.endedAt, outcome: input.outcome });
+      pendingEnds.push({ handle, at: input.endedAt, kind: finishKind(input.outcome) });
     }
     return claim.runRef;
+  }
+
+  /**
+   * TP-094: the real RD-3 yielded Run. The scripted model calls the real
+   * `send_session_message` with a durable wait; the Runtime itself books the
+   * yielded terminal. A second real Run (another Task) writes the formal reply
+   * through the real `respond_session_message` tool, and the continuation is a
+   * real claim carrying the saved message and response.
+   */
+  async function seedYieldedPair(input: {
+    goalRef: GoalRef; yieldTaskId: string; replyTaskId: string;
+    yieldStartedAt: string; yieldedAt: string;
+    replyStartedAt: string; replyEndedAt: string;
+    resumeStartedAt: string; resumeEndedAt: string;
+  }): Promise<void> {
+    const mailbox = steps.mailbox;
+    if (mailbox === undefined) throw new Error('the S2B timeline yielded flow needs the real Session mailbox');
+    const yieldSession = await newSession();
+    const replySession = await newSession();
+    const yieldClaim = await claimTask(input.goalRef, input.yieldTaskId, yieldSession);
+    runsForTask.set(input.yieldTaskId, 1);
+    const yieldHandle = await steps.start(yieldClaim, { at: input.yieldStartedAt,
+      tools: ['send_session_message'],
+      replies: [
+        { kind: 'calls', calls: [{ callId: 's2b-timeline-yield-send', name: 'send_session_message',
+          args: { recipient: replySession, text: 'Which file should this work use?', intent: 'inquiry',
+            needsReply: true, waitAfterSend: true } }] },
+        { kind: 'text', text: 'the inquiry is durably saved' },
+      ] });
+    await yieldHandle.entered;
+    clock = input.yieldedAt;
+    yieldHandle.release();
+    await yieldHandle.settled;
+    const yielded = await runOf(yieldClaim.runRef);
+    if (yielded.status !== 'ended' || yielded.outcome !== 'yielded' || yielded.continuation === undefined) {
+      throw new Error(`the S2B timeline Run did not yield: ${JSON.stringify(yielded)}`);
+    }
+    const messageRef = yielded.continuation.messageRef;
+    const message = await mailbox.readMessage(ctx, messageRef);
+    if (message.status !== 'ready') throw new Error(`the saved wait message is unreadable: ${JSON.stringify(message)}`);
+    const replyClaim = await claimTask(input.goalRef, input.replyTaskId, replySession);
+    runsForTask.set(input.replyTaskId, 1);
+    const replyHandle = await steps.start(replyClaim, { at: input.replyStartedAt,
+      tools: ['respond_session_message'],
+      replies: [
+        { kind: 'calls', calls: [{ callId: 's2b-timeline-reply', name: 'respond_session_message',
+          args: { messageRef, expectedRevision: message.value.revision, text: 'Use result.txt.' } }] },
+        { kind: 'text', text: 'the formal reply is saved' },
+      ] });
+    await replyHandle.entered;
+    clock = input.replyEndedAt;
+    replyHandle.release();
+    await replyHandle.settled;
+    const replied = await mailbox.readMessage(ctx, messageRef);
+    if (replied.status !== 'ready' || replied.value.response === null) {
+      throw new Error(`the formal reply is absent: ${JSON.stringify(replied)}`);
+    }
+    const continuationClaim = await claimTask(input.goalRef, input.yieldTaskId, yieldSession, undefined,
+      { runRef: yieldClaim.runRef, messageRef, responseRef: replied.value.response.bodyRef });
+    runsForTask.set(input.yieldTaskId, 2);
+    const resumeHandle = await steps.start(continuationClaim, { at: input.resumeStartedAt,
+      replies: [{ kind: 'text', text: 'the continuation is done' }] });
+    await resumeHandle.entered;
+    clock = input.resumeEndedAt;
+    resumeHandle.release();
+    await resumeHandle.settled;
   }
 
   async function seedRequeue(input: { runRef: RunRef; requestedAt: string }): Promise<void> {
@@ -779,11 +608,6 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
   }
 
   async function seedControl(input: { runRef: RunRef; kind: 'pause' | 'resume'; observedAt: string }): Promise<void> {
-    const run = await runOf(input.runRef);
-    if (run.startedAt === null || input.observedAt < run.startedAt) {
-      // Deviation (c): the observation precedes entry.
-      return await seedControlRaw(input);
-    }
     await submitAndObserve(input.runRef, input.kind, input.observedAt);
   }
 
@@ -821,8 +645,6 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
 
   async function seedRound(input: S2BSeedRoundInput): Promise<void> {
     await flushEnds();
-    // The §7 legacy shapes (no `since`) stay at the storage boundary.
-    if (input.sinceAt === undefined) return await seedRoundRaw(input);
     const run = await runOf(input.runRef);
     const goalRef: GoalRef = { aggregateType: 'Goal', projectId: run.task.projectId, goalId: run.task.goalId };
     const planRef = await activePlanRef(goalRef);
@@ -879,8 +701,8 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
 
   return {
     kind, b2, ctx, records, setClock, clock: () => clock, createGoal, activePlanRef, adoptVersion,
-    setGoalDesiredState, seedRun, seedRequeue, seedControl, seedAnomaly, seedRound,
+    setGoalDesiredState, seedRun, seedYieldedPair, seedRequeue, seedControl, seedAnomaly, seedRound,
     timeline, timelineWith,
-    close: () => b2.close(),
+    close: async () => { await steps.close(); await b2.close(); },
   };
 }

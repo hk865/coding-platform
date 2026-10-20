@@ -60,9 +60,9 @@ async function sourceExecutions(h: HostScenario, session: SessionRef) {
 it('IT20 (wait transfer, answered copy, retired reply): the original question is unchanged and consumed once; the answered copy is archived; a different retired line with no continuation shows exactly one undelivered reply source and is never auto-forwarded; reads and refreshes add no model call', async () => {
   const commits: ScenarioCommit[] = [];
   const sendLine1 = { callId: 'it20-line1-send', name: 'send_session_message',
-    args: { recipient: {}, text: QUESTION, replyMode: 'wait' } as Record<string, unknown> };
+    args: { recipient: {}, text: QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const sendLine3 = { callId: 'it20-line3-send', name: 'send_session_message',
-    args: { recipient: {}, text: QUESTION, replyMode: 'wait' } as Record<string, unknown> };
+    args: { recipient: {}, text: QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const h = await openHostScenario({ automation: NO_REDRIVE, check: 'pass',
     workIds: [AG2B_WORK_TASK_ID, SECOND_TASK_ID], script: {
       replies: [{ kind: 'calls', calls: [sendLine1] }, { kind: 'text', text: 'D used the transferred reply' },
@@ -78,7 +78,8 @@ it('IT20 (wait transfer, answered copy, retired reply): the original question is
   const line1 = await yieldWait(h, 'it20-line1', AG2B_WORK_TASK_ID, WORK_TARGET, sendLine1);
   const original = await message(h, line1.messageRef);
   expect(original.status).toBe('pending');
-  expect(original.replyMode).toBe('wait');
+  expect({ intent: original.intent, needsReply: original.needsReply, waitAfterSend: original.waitAfterSend })
+    .toEqual({ intent: 'inquiry', needsReply: true, waitAfterSend: true });
   expect(original.sender).toMatchObject({ kind: 'work_run', sessionRef: line1.sessionRef });
   expect(original.recipient).toEqual(line1.member);
   const D = (await createAG2bSession(h.host, 'it20-handler', AG2B_WORK_ROLE)).sessionRef;
@@ -115,8 +116,10 @@ it('IT20 (wait transfer, answered copy, retired reply): the original question is
     { inputId: deriveSessionInputId(line1.messageRef, 'response'), executionRef: dRun }]);
   const accepted = acceptedMessageInputs(h.database).filter(a => a.messageId === line1.messageRef.messageId && a.part === 'response');
   expect(accepted.map(a => a.text)).toEqual([REPLY]);
-  expect({ sender: consumed.sender, recipient: consumed.recipient, bodyRef: consumed.bodyRef, replyMode: consumed.replyMode })
-    .toEqual({ sender: original.sender, recipient: original.recipient, bodyRef: original.bodyRef, replyMode: original.replyMode });
+  expect({ sender: consumed.sender, recipient: consumed.recipient, bodyRef: consumed.bodyRef,
+    intent: consumed.intent, needsReply: consumed.needsReply, waitAfterSend: consumed.waitAfterSend })
+    .toEqual({ sender: original.sender, recipient: original.recipient, bodyRef: original.bodyRef,
+      intent: original.intent, needsReply: original.needsReply, waitAfterSend: original.waitAfterSend });
   expect(ready(await platform.messages.readMessageBody(hostCtx(), { messageRef: line1.messageRef, part: 'message' })).text).toBe(QUESTION);
   expect(await sourceExecutions(h, line1.sessionRef)).toEqual({ work: [line1.runRef], query: [] });
 

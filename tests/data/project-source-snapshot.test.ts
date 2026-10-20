@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import type { ProjectSourceAccess } from '../../src/core/workspace/project-source-index.js';
+import type { ProjectSourceAccess } from '../../src/core/workspace/project-source-snapshot.js';
 import { captureObservationSource, captureProjectSource } from '../../src/core/workspace/project-source-snapshot.js';
 
 const signal = () => new AbortController().signal;

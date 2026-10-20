@@ -39,8 +39,6 @@ export type S4C2NoteCardFixtureKind = S4ANoteScopeFixtureKind;
 
 export const S4C2_GOAL_ANCHOR: NoteAnchorV1 = { kind: 'goal', goalId: 's4a-goal' };
 export const S4C2_PROJECT_ANCHOR: NoteAnchorV1 = { kind: 'project' };
-export const S4C2_FILE_A: NoteAnchorV1 = { kind: 'file', path: 'src/a/x.ts' };
-export const S4C2_FILE_B: NoteAnchorV1 = { kind: 'file', path: 'src/b/y.ts' };
 /** A module anchor with no region scribe, so the real project scribe manages it. */
 export function moduleAnchor(moduleId: string): NoteAnchorV1 {
   return { kind: 'module', moduleId };

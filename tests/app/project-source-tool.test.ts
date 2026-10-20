@@ -16,7 +16,6 @@ import type { RuntimeSourceCaptureAccess } from '../../src/core/agent-runtime/so
 import { createWorkspaceAccessFactory, type WorkspaceAccessFactory } from '../../src/core/workspace/access.js';
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../../src/core/workspace/workspace-tools.js';
 import type { CaptureSummary, SourceCoverage, SourcePage, WorkspaceCaptureLimits, WorkspaceResult } from '../../src/core/workspace/ports.js';
-import { ProjectSourceIndex, type ProjectSourcePage } from '../../src/core/workspace/project-source-index.js';
 import { TypeScriptSourceAnalyzer } from '../../src/core/workspace/typescript-source-query.js';
 import { createExplorationTools, type SourceToolOptions } from '../../src/core/agent-runtime/exploration-tools.js';
 
@@ -119,13 +118,11 @@ async function fixture(source = imports(4), limits: Partial<WorkspaceCaptureLimi
     close: () => core.close(),
   };
   const groups: ReturnType<typeof createExplorationTools>[] = [];
-  const oracles: ProjectSourceIndex[] = [];
   cleanups.push(async () => {
     try {
       await Promise.all(groups.map(group => group.close()));
     } finally {
       try { await runtime.close(); } finally {
-        for (const oracle of oracles) oracle.dispose();
         await rm(root, { recursive: true, force: true });
       }
     }
@@ -141,20 +138,21 @@ async function fixture(source = imports(4), limits: Partial<WorkspaceCaptureLimi
     };
     return { ...handle, run, source: (args: Record<string, unknown>, signal?: AbortSignal) => run('project_source', args, signal) };
   }
-  function legacyOracle() {
-    const index = new ProjectSourceIndex({ allowed: () => true, sourceIdentity,
-      read: (path, bytes) => sandbox.read(path, bytes), inventory: signal => sandbox.listFiles(60000, { signal }) });
-    oracles.push(index);
-    return index;
-  }
   const work = () => ({ inventories: count.inventories, reads: count.reads, identities: count.identities });
-  return { root, files, write, sandbox, workspace, state, count, context, core, runtime, group, legacyOracle, work };
+  return { root, files, write, sandbox, workspace, state, count, context, core, runtime, group, work };
 }
 
 it('serves 401 import relations through three real tool pages after just two observations and one imports analysis', async () => {
   const f = await fixture(imports(401));
   const analyses = vi.spyOn(TypeScriptSourceAnalyzer.prototype, 'analyze');
   const g = f.group();
+  // The frozen tool keeps the base registration values: `read_only`,
+  // `workspace_read`, 60000 ms and 65536 bytes (the spec's literals).
+  expect(g.tools.map(tool => tool.name)).toContain('project_source');
+  expect(g.tools.map(tool => tool.name)).not.toContain('project_index');
+  expect(g.tools.find(tool => tool.name === 'project_source')).toMatchObject({
+    effectClass: 'read_only', requiredCapabilities: ['workspace_read'],
+    defaultTimeoutMs: 60000, outputLimitBytes: 65_536 });
   const captured = success<ModelCapture>(await g.source({ action: 'capture' }));
   expect(f.work()).toEqual({ inventories: 2, reads: 2 * f.files.size, identities: 2 });
   expect(captured.ref).toMatchObject({ projectId: f.workspace.projectId, workspaceId: f.workspace.workspaceId, workspaceRevision: 1 });
@@ -261,27 +259,6 @@ it('enforces Reviewer-style guards for nested query paths and prefixes without r
     expect((await g.source({ action: 'query', capture, query, cursor: null, limit: 1 })).status).toBe('error');
   }
   expect(calls).not.toHaveBeenCalled();
-});
-
-it('publishes one TS project protocol per trusted mode while retaining the full old wire and live stale checks', async () => {
-  const f = await fixture(imports(3));
-  const frozen = f.group(), legacy = f.group({ projectSource: { mode: 'legacy_live' } }), implicit = f.group({});
-  const names = (group: typeof frozen) => group.tools.map(tool => tool.name);
-  expect(names(frozen)).toContain('project_source'); expect(names(frozen)).not.toContain('project_index');
-  expect(names(legacy)).toContain('project_index'); expect(names(legacy)).not.toContain('project_source');
-  expect(names(implicit)).toEqual(names(legacy));
-  const definition = frozen.tools.find(tool => tool.name === 'project_source')!;
-  expect(definition).toMatchObject({ effectClass: 'read_only', requiredCapabilities: ['workspace_read'], defaultTimeoutMs: 60000, outputLimitBytes: 64 * 1024 });
-  const oracle = f.legacyOracle(), query = { operation: 'imports' as const, offset: 0, limit: 1 };
-  const first = json<ProjectSourcePage>(await legacy.run('project_index', query));
-  expect(first).toEqual(await oracle.query(query));
-  const next = { ...query, offset: 1, expectedSnapshot: first.snapshot };
-  expect(json(await legacy.run('project_index', next))).toEqual(await oracle.query(next));
-  await f.write('a.ts', 'export const replacement = 1;');
-  const stale = json(await legacy.run('project_index', next));
-  expect(stale).toMatchObject({ status: 'stale' });
-  expect(stale).toEqual(await oracle.query(next));
-  expect(f.count.opens).toBe(0); // legacy is genuinely separate, not silently reinterpreted capture paging
 });
 
 it('bounds model metadata explicitly while internal capture material keeps full Unicode values and exact lists', async () => {

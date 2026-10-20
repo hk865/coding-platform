@@ -36,7 +36,6 @@ import type { DecisionActionsPort } from '../../src/business/workflow/decision-a
 import {
   createCommandRerunRequestApplicationAdapter, createDecisionActions, type DecisionApplicationAdapter,
 } from '../../src/business/workflow/decision-actions.js';
-import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
 import type { KernelCommandFactV1 } from '../../src/core/work-graph/model/kernel-command-read-contracts.js';
 import type { SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
@@ -476,8 +475,6 @@ export async function openK3BlockedReviewServices(
     now: clock,
     eventId: () => `k3-blocked-review-${String(++sequence)}`,
   });
-  const sources = createDecisionSourceFacts({ records: world.fixture.records,
-    plans: world.fixture.b2.base.plans, unknownCallReviews: reviews });
   const goalSettings = createGoalSettingsService({ records: world.fixture.records, now: clock,
     newId: () => `k3-blocked-decision-${String(++sequence)}`, operatorActor: world.fixture.operatorActor });
   const reviewAdapter: DecisionApplicationAdapter = {
@@ -496,7 +493,6 @@ export async function openK3BlockedReviewServices(
       readDecisionAnswer: world.decisions.readDecisionAnswer.bind(world.decisions),
       recordDecisionApplication: world.decisions.recordDecisionApplication.bind(world.decisions),
     },
-    decisionSources: sources,
     applicationReceipt: world.applicationReceipt,
     decisionApplications: { unknown_call_review: reviewAdapter,
       command_rerun_request: createCommandRerunRequestApplicationAdapter(world.commandRerun) },

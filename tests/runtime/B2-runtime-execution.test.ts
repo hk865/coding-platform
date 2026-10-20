@@ -230,7 +230,7 @@ describe('B2 Runtime execution target contract (RED until implementation)', () =
     await fx.runtime.port.startRun(fx.ctx, { prepared: first.value, consumerId: 'b2-driver-first', requestId: 'start-first' });
 
     const secondRequest = await fx.claimFixture.buildRequest({
-      input: { taskId: fx.claimFixture.tasks.second.taskId, sessionRef: fx.claimFixture.sessions.first },
+      input: { taskId: fx.claimFixture.tasks.second.taskId, sessionRef: fx.claim.sessionRef },
       requestId: 'b2-second-claim',
     });
     const secondClaim = await fx.claimFixture.service.claimTask(fx.ctx, secondRequest);
@@ -257,8 +257,8 @@ describe('B2 persistent task budget boundary', () => {
     );
     expect(mapped.maxTotalTokens).toBe(1_234);
     expect(mapped.deadlineMs).toBe(30_000);
-    // Absent task budget and absent relative timeout both stay null.
-    const absent = kernelRunLimits({ ...DEFAULT_RUNTIME_BUDGET, timeoutMs: null });
+    // Null task budget and absent relative timeout both stay null.
+    const absent = kernelRunLimits({ ...DEFAULT_RUNTIME_BUDGET, timeoutMs: null }, { tokenBudget: null, deadline: null });
     expect(absent.maxTotalTokens).toBeNull();
     expect(absent.deadlineMs).toBeNull();
   });
@@ -502,7 +502,7 @@ it('enters a second genuine Turn after more than 200 persisted Session records',
   const endPosition=ended.value.run.executionHistory?.endPosition;
   expect(endPosition).toBeGreaterThan(200);
   const claim=await fx.claimFixture.service.claimTask(fx.ctx,await fx.claimFixture.buildRequest({
-    input:{taskId:fx.claimFixture.tasks.second.taskId,sessionRef:fx.claimFixture.sessions.first,budget:{tokenBudget:100000,deadline:null}},
+    input:{taskId:fx.claimFixture.tasks.second.taskId,sessionRef:fx.claim.sessionRef,budget:{tokenBudget:100000,deadline:null}},
     requestId:'long-history-second-claim',
   }));
   expect(claim.status).toBe('committed');if(claim.status!=='committed')return;

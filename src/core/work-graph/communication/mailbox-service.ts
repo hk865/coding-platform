@@ -177,7 +177,8 @@ function dedupeGuards(guards: readonly RecordGuard[]): RecordGuard[] {
 
 /**
  * SPEC §2.5: a later update copies the original wire origin (`since`), never
- * re-binds it. An old record without `since` stays without one (no backfill).
+ * re-binds it. Every current writer binds `since` at creation, so a record
+ * without one is damaged, never silently re-encoded without a position.
  */
 async function preservedNoticeOrigin(records: SessionMailboxDependencies['records'], refKey: string): Promise<
   { ok: true; value: NoticeOriginWireV1 } | { ok: false; rejection: CoreRejection }> {
@@ -194,8 +195,10 @@ async function preservedNoticeOrigin(records: SessionMailboxDependencies['record
   if (decoded.status !== 'decoded') {
     return { ok: false, rejection: reject('unavailable', `the notice origin is damaged: ${decoded.reason}`) };
   }
-  const origin: NoticeOriginWireV1 = {};
-  if (decoded.value.since !== undefined) origin.since = decoded.value.since;
+  if (decoded.value.since === undefined) {
+    return { ok: false, rejection: reject('unavailable', 'the notice origin has no stored creation position') };
+  }
+  const origin: NoticeOriginWireV1 = { since: decoded.value.since };
   if (decoded.value.noticeAutomationCap !== undefined) origin.noticeAutomationCap = decoded.value.noticeAutomationCap;
   return { ok: true, value: origin };
 }
@@ -607,8 +610,8 @@ function consultationBindingOf(job: QueryJobSnapshot, run: QueryRunSnapshot, mes
   binding: QueryAnswerBinding; answererSession: SessionRef | null;
 } {
   const execution = job.job.intent.execution;
-  const consultation = execution?.consultation;
-  if (execution === undefined || execution.kind !== 'semantic_query' || consultation === undefined) {
+  const consultation = execution.consultation;
+  if (execution.kind !== 'semantic_query' || consultation === undefined) {
     return { binding: 'not_consultation', answererSession: null };
   }
   if (canonicalOf(consultation.messageRef) !== canonicalOf(messageRef)) return { binding: 'other_message', answererSession: null };
@@ -1292,7 +1295,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     }
     if (manifest.inputDigest !== inputBinding.inputDigest) return reject('forbidden', 'the saved manifest input digest disagrees with the Run input binding');
     const authorization = run.executionAuthorization;
-    if (authorization === undefined || authorization === null || !('schemaVersion' in authorization) || authorization.schemaVersion !== 2) {
+    if (authorization === undefined) {
       return reject('forbidden', 'a new mailbox action requires a B2 V2 execution authorization');
     }
     if (manifest.inputDigest !== authorization.inputDigest) return reject('forbidden', 'the saved manifest input digest disagrees with the Run entry binding');
@@ -1352,7 +1355,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       return { ok: false, rejection: reject('forbidden', 'the claim does not match the Run, attempt and Session') };
     }
     const authorization = run.executionAuthorization;
-    if (authorization === undefined || authorization === null || !('schemaVersion' in authorization) || authorization.schemaVersion !== 2) {
+    if (authorization === undefined) {
       return { ok: false, rejection: reject('forbidden', 'a new mailbox action requires a B2 V2 execution authorization') };
     }
     if (authorization.phase !== 'entered' || authorization.sessionGeneration !== claim.generation) {
@@ -2031,7 +2034,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
 
   // ---- sendMessage --------------------------------------------------------
 
-  async function sendMessage(ctx: CoreCallContext, request: GraphWrite<{ recipient: SessionRef; text: string; replyMode?: 'wait'; intent?: 'notify' | 'inquiry' | 'action_request'; needsReply?: boolean; waitAfterSend?: boolean }>): Promise<WriteResult<SessionMessage>> {
+  async function sendMessage(ctx: CoreCallContext, request: GraphWrite<{ recipient: SessionRef; text: string; intent?: 'notify' | 'inquiry' | 'action_request'; needsReply?: boolean; waitAfterSend?: boolean }>): Promise<WriteResult<SessionMessage>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before validation');
@@ -2046,11 +2049,6 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (projectRejection !== null) return projectRejection;
     const text = normalizeText(raw['text']);
     if (!text.ok) return text.rejection;
-    const replyMode = raw['replyMode'];
-    if (replyMode !== undefined && replyMode !== 'wait') {
-      return reject('invalid', 'the send replyMode must be omitted or wait');
-    }
-    // Normalize the legacy `replyMode='wait'` into the explicit intent fields.
     // Omitted fields keep the exact historical fire-and-forget fingerprint.
     const intent = raw['intent'];
     if (intent !== undefined && intent !== 'notify' && intent !== 'inquiry' && intent !== 'action_request') {
@@ -2064,11 +2062,10 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (explicitWaitAfterSend !== undefined && typeof explicitWaitAfterSend !== 'boolean') {
       return reject('invalid', 'the send waitAfterSend must be a boolean');
     }
-    const legacyWait = replyMode === 'wait';
-    const waitAfterSend = explicitWaitAfterSend === true || (explicitWaitAfterSend === undefined && legacyWait);
-    const needsReply = explicitNeedsReply === true || (explicitNeedsReply === undefined && (legacyWait || waitAfterSend));
+    const waitAfterSend = explicitWaitAfterSend === true;
+    const needsReply = explicitNeedsReply === true || (explicitNeedsReply === undefined && waitAfterSend);
     const sendFlags: NonNullable<MessageGuardContext['sendFlags']> = {
-      needsReply, waitAfterSend, replyMode: replyMode ?? null, pinCount: write.expected.length,
+      needsReply, waitAfterSend, pinCount: write.expected.length,
     };
     const flagRejection = guardRejection(messageSendFlagsProblem(sendFlags));
     if (flagRejection !== null) return flagRejection;
@@ -2088,11 +2085,10 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const senderIdentity = senderIdentityOf(sender);
     const identityKey = identityKeyOf('send', owned, senderIdentity, write.requestId);
     // The reply expectation is part of the request identity ONLY when it is
-    // explicitly present: an omitted replyMode keeps the exact historical
+    // explicitly present: an omitted field keeps the exact historical
     // fingerprint, so every existing fire-and-forget send replays unchanged.
     const fingerprint = fingerprintOf('send', owned, senderIdentity,
       { recipient, text: text.text,
-        ...(replyMode === undefined ? {} : { replyMode }),
         ...(intent === undefined ? {} : { intent }),
         ...(explicitNeedsReply === undefined ? {} : { needsReply: explicitNeedsReply }),
         ...(explicitWaitAfterSend === undefined ? {} : { waitAfterSend: explicitWaitAfterSend }) }, write.expected);
@@ -2144,7 +2140,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       body: { messageRef, text: text.text, answerSource: null },
       record: (createdAt, bodyRef) => createSessionMessageRecord({
         ref: messageRef, sender, recipient, bodyRef, sourceRef: bodyRef.source, createdAt,
-        replyMode: replyMode ?? null, intent: intent ?? null, needsReply, waitAfterSend,
+        intent: intent ?? null, needsReply, waitAfterSend,
       }),
     });
   }
@@ -2787,7 +2783,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         actualSession = { projectId: runFacts.record.outbox.claim.sessionRef.projectId, sessionId: runFacts.record.outbox.claim.sessionRef.sessionId };
         const authorization = runFacts.record.run.executionAuthorization;
         actualKernel = runFacts.record.run.executionHistory?.kernel
-          ?? (authorization !== undefined && 'schemaVersion' in authorization && authorization.schemaVersion === 2 ? authorization.kernel : null);
+          ?? (authorization !== undefined ? authorization.kernel : null);
       } else {
         if (executionRef['workspaceId'] !== owned.workspaceId) return reject('forbidden', 'Query execution is outside the workspace');
         const queryFacts = await loadQueryRun(owned, executionRef as unknown as QueryRunRef);
@@ -3298,15 +3294,20 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       if ((message.acceptedInputs ?? []).some((entry) => entry.part === 'response')) continue;
       const unavailableSince = sourceDecoded.value.unavailableSince;
       const responseSince = message.responseSince;
-      // Spec §2.3/L7: forward each stored position for EVERY qualifying original
-      // work_run message, whatever the reply sender (Work reply, Query Answer,
-      // user answer); a legacy record that lacks one keeps the DTO without it.
+      // Spec §2.3/L7: a retired source and a replied work_run message always
+      // carry their bound positions; a missing one is damaged, never a DTO
+      // without the field.
+      if (unavailableSince === undefined || unavailableSince === null) {
+        return reject('unavailable', 'an undelivered-reply source Session has no entry position');
+      }
+      if (responseSince === undefined || responseSince === null) {
+        return reject('unavailable', 'an undelivered-reply message has no reply position');
+      }
       items.push({
         kind: 'retired_reply', messageRef: message.ref, sourceSessionRef: sessionRef,
         responseRef: response.bodyRef, respondedAt: response.respondedAt,
         hasContinuation, requiresUserRecipient: !hasContinuation,
-        ...(unavailableSince !== undefined && unavailableSince !== null ? { unavailableSince } : {}),
-        ...(responseSince !== undefined && responseSince !== null ? { responseSince } : {}),
+        unavailableSince, responseSince,
       });
     }
     const nextCursor = pageResult.value.next === null ? null : encodeReplyCursor({
@@ -3491,7 +3492,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const userRecipient: MessageRecipient = { kind: 'user', projectId: owned.projectId, workspaceId: owned.workspaceId };
     const { decided, ctx: messageCtx } = judge(owned.principal, null, { type: 'message_sent' }, {
       recipientScope: 'same_workspace',
-      sendFlags: { needsReply, waitAfterSend, replyMode: null, pinCount: 0 },
+      sendFlags: { needsReply, waitAfterSend, pinCount: 0 },
       userSend: { goalScopeMatches: true, dutiesAllowSend, decisionParamsValid: true },
       workRunAuthorization: authorized === null ? null : authorized.ok ? 'ok' : authorized.rejection,
     });
@@ -3514,7 +3515,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       extraGuards,
       record: (createdAt, bodyRef) => createSessionMessageRecord({
         ref: messageRef, sender, recipient: userRecipient, bodyRef, sourceRef: bodyRef.source, createdAt,
-        replyMode: null, intent, needsReply, waitAfterSend,
+        intent, needsReply, waitAfterSend,
         goalRef: structuredClone(goalRef),
         ...(decisionMetadata === null ? {} : { decision: decisionMetadata }),
       }),
@@ -3566,7 +3567,6 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
           expected = request.meta.expected;
           payload = {
             recipient: request.input.recipient, text: request.input.text,
-            ...(request.input.replyMode === undefined ? {} : { replyMode: request.input.replyMode }),
             ...(request.input.intent === undefined ? {} : { intent: request.input.intent }),
             ...(request.input.needsReply === undefined ? {} : { needsReply: request.input.needsReply }),
             ...(request.input.waitAfterSend === undefined ? {} : { waitAfterSend: request.input.waitAfterSend }),

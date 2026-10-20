@@ -184,7 +184,6 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       }
       if (state.phase !== 'prepared') return rejected('incomplete', 'the QueryRun has not been prepared');
       const execution = record.job.job.intent.execution;
-      if (execution === undefined) return rejected('unsupported', 'startQuery requires an explicit read-only execution binding');
       if (signal.aborted) return rejected('cancelled', 'the Query start was cancelled before the Host configuration read');
 
       if (deps.host.resolveQueryConfiguration === undefined) {
@@ -310,7 +309,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         return rejected('source_stale', 'the workspace revision moved since the QueryRun was prepared');
       }
       const location = deps.kernelStores.byAdapterId(record.session.kernel.adapterId);
-      if (!location || 'expectedSessionId' in location) return rejected('unsupported', 'the prepared Query Session is not mapped to a current Kernel store');
+      if (!location) return rejected('unsupported', 'the prepared Query Session is not mapped to a current Kernel store');
       if (!nonEmpty(location.databasePath)) return rejected('unsupported', 'the mapped Kernel store has no database path');
 
       let sourceTools: SourceToolOptions | undefined;

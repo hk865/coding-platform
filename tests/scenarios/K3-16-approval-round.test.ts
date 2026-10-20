@@ -20,15 +20,14 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
-import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
-import { answerCard, needsDecisionCard, queueOf, reviewOf } from './support/review-card-round.js';
+import { cleanupScenarios, HostScenario, performs } from './harness.js';
+import { answerCard, needsDecisionCard, proposalRound, queueOf, reviewOf } from './support/review-card-round.js';
 import { preparedOf, redrivePolicy } from './support/common.js';
 import { preparedBriefOf } from './support/brief.js';
-import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { cleanupRestart } from '../helpers/A2-restart-fixture.js';
-import { AG2B_CONSUMER_ID, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
 import {
   continuationBriefDigest, renderContinuationBriefZh,
@@ -43,21 +42,8 @@ import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-gr
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 // The blocking `shell` stand-in (K3 §5.1): keeps the call in flight until the crash.
@@ -122,18 +108,13 @@ describe('K3-16 the real approval round and its continuation', () => {
         args: { item: 1, command: NEW_COMMAND, cwd: '.', rationale: 'run the tests serially instead' } }] },
       { kind: 'text', text: 'k3-16 approval proposal round finished' },
     ]);
-    const proposalRoot = await openReviewWorkRoot(h, proposalModel);
+    const round = await proposalRound(h, { model: proposalModel, select: 'k3-16-approval-e2e-proposal',
+      requestId: 'k3-16-approval-e2e-proposal-start' });
     try {
-      const stop = await driveReviewUntil(proposalRoot,
-        h.select('k3-16-approval-e2e-proposal', AG2B_WORK_TASK_ID), performs('start'));
-      const prepared = preparedOf(stop.stopped);
-      expect(prepared.envelope.permissions.tools)
-        .toEqual(['read', 'run_readonly_command', 'propose_safer_method']);
-      const started = await proposalRoot.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID,
-        requestId: 'k3-16-approval-e2e-proposal-start' });
+      const started = await round.start();
       expect(started).toMatchObject({ status: 'ready' });
     } finally {
-      await proposalRoot.close();
+      await round.close();
     }
 
     const settled = await h.advance(h.select('k3-16-approval-e2e-settle', AG2B_WORK_TASK_ID),

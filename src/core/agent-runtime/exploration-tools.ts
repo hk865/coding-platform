@@ -3,7 +3,6 @@ import { execFile } from 'node:child_process';
 import { extname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { SourceIndex } from '../../core/workspace/source-index.js';
-import { ProjectSourceIndex } from '../../core/workspace/project-source-index.js';
 import { PythonSourceIndex } from '../../core/workspace/python-source-index.js';
 import { CppSourceIndex } from '../../core/workspace/cpp-source-index.js';
 import type { RuntimeSourceCaptureAccess } from './source-tool-ports.js';
@@ -65,16 +64,14 @@ export type SourceToolOptions = {
   includeReadSource?: boolean;
   /**
    * Trusted assembly mode. `frozen` registers `project_source` over the Host-bound capture
-   * capability and never constructs the legacy live `ProjectSourceIndex`; `legacy_live`
-   * (also the default for existing direct callers) keeps the original `project_index` wire
-   * and semantics. The model cannot choose or switch this mode.
+   * capability. The model cannot choose or switch this mode.
    *
    * `access` keeps the existing object form. The resolver form is the B1 first-use seam: it is
    * invoked only after argument/path/current validation and before dispatch, so no Context/root
    * placeholder is fabricated. `runObservedModel` still owns opening/closing the shared source;
    * this tool group never opens or closes it.
    */
-  projectSource?: { mode: 'legacy_live' } | { mode: 'frozen'; access: RuntimeSourceCaptureAccess | (() => Promise<RuntimeSourceCaptureAccess>) };
+  projectSource?: { mode: 'frozen'; access: RuntimeSourceCaptureAccess | (() => Promise<RuntimeSourceCaptureAccess>) };
   /**
    * L13/8D trusted analyzer resources forwarded to the Python and C/C++ indexes:
    * `directory` is the Python analyzers archive directory, `pythonPath` the system
@@ -93,7 +90,7 @@ export type ExplorationToolsHandle = {
 /**
  * One model loop's exploration tool group. `close` refuses new handlers, cancels and waits for
  * this group's in-flight handlers, then disposes exactly the resources this group created
- * (legacy TS/Python indexes and the lightweight syntax cache), attempting every disposal before
+ * (the Python language index and the lightweight syntax cache), attempting every disposal before
  * reporting a failure. It is idempotent and never closes a capture access: that capability is
  * owned and closed by the run loop that created it. `CppSourceIndex` exposes no lifecycle handle,
  * so none is fabricated for it.
@@ -111,13 +108,6 @@ export function createExplorationTools(workspace: WorkspaceSandbox, options: Sou
   const sourceIdentity = options.sourceIdentity ?? (async () => ({ workspace: workspace.identity, commit: null }));
   const sourceIndex = new SourceIndex({ read, allowed: visible });
   const frozenAccess = options.projectSource?.mode === 'frozen' ? options.projectSource.access : undefined;
-  let projectIndex: ProjectSourceIndex | undefined;
-  if (frozenAccess === undefined) {
-    projectIndex = new ProjectSourceIndex({ read, allowed: visible,
-      inventory: signal => workspace.listFiles(60000, { signal }),
-      sourceIdentity });
-    disposables.push(projectIndex);
-  }
   const pythonIndex = new PythonSourceIndex({ read, allowed: visible,
     inventory: signal => workspace.listFiles(60000, { signal }),
     sourceIdentity }, {
@@ -171,10 +161,8 @@ export function createExplorationTools(workspace: WorkspaceSandbox, options: Sou
       }}
     };
   }
-  const projectTool: ToolDefinition = frozenAccess !== undefined
-    ? createProjectSourceTool({ access: frozenAccess, requireVisible,
-      ...(options.assertCurrent ? { assertCurrent: options.assertCurrent } : {}) })
-    : {...tool('project_index','Query the readable TS/JS project using tsconfig/jsconfig and installed in-workspace dependencies. Operations: symbols, definitions, references, imports, static call candidates. Returns snapshot/commit, content digests, locations, unresolved relations and incremental changes. Configs are parsed as data; plugins never execute. Use expectedSnapshot when paging. This is the live compatibility path: every page re-reads and re-analyses current sources. Prefer project_source for multi-page TS/JS retrieval over one frozen capture. Use python_index or cpp_index for the separate Python and C/C++ capabilities. In an observation, file-level edges come from a static TS/JS import scan of syntax only: runtime-only links are not edges, and git-ignored files are absent.',z.object({operation:z.enum(['symbols','definitions','references','imports','calls']),configPath:safePath.optional(),prefix:safePath.optional(),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),offset:z.number().int().min(0).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>projectIndex!.query(args as unknown as import('../../core/workspace/project-source-index.js').ProjectSourceQuery,signal)),defaultTimeoutMs:60000};
+  const projectTools: ToolDefinition[] = frozenAccess === undefined ? [] : [createProjectSourceTool({ access: frozenAccess, requireVisible,
+    ...(options.assertCurrent ? { assertCurrent: options.assertCurrent } : {}) })];
   const definitions: ToolDefinition[] = [
     ...(options.includeReadSource ? [tool('read_source','Read a bounded source range within the pinned candidate source. Paths excluded from the candidate are unavailable. Returns the full-file digest and exact line range; use further ranges when truncated.',z.object({path:safePath,startLine:z.number().int().positive().default(1),maxLines:z.number().int().min(1).max(500).default(150)}).strict(),async args=>{
       const file=await read(args['path'] as string,maxBytes);
@@ -183,9 +171,9 @@ export function createExplorationTools(workspace: WorkspaceSandbox, options: Sou
       const selected=lines.slice(startLine-1,startLine-1+maxLines);
       return {materialId:'source:'+file.path,path:file.path,sourceDigest:digest(file.content),revision:file.revision,startLine,endLine:startLine+selected.length-1,totalLines:lines.length,content:selected.join('\n'),truncated:startLine-1+selected.length<lines.length};
     })] : []),
-    {...tool('cpp_index','Query C/C++ project symbols, definitions, references, includes and static call candidates with libclang 18 and a required compile_commands.json. Compiler commands never execute; unknown flags and external include paths return explicit gaps. Only permission-filtered workspace files are exposed through a redirect-only VFS. One-based UTF-16 coordinates, source digests and analyzer identity accompany partial semantic results. In an observation, file-level edges come from a static C/C++ include scan only: runtime-only links are not edges, while system headers and git-ignored files are unresolved or absent. C/C++ is read for one target platform (x86_64-pc-linux-gnu when the database names none).',z.object({operation:z.enum(['symbols','definitions','references','imports','calls']),configPath:safePath.optional(),prefix:safePath.optional(),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),offset:z.number().int().min(0).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>cppIndex.query(args as unknown as import('../../core/workspace/project-source-index.js').ProjectSourceQuery,signal)),defaultTimeoutMs:60000},
-    {...tool('python_index','Query readable Python project symbols, definitions, references, imports and static call candidates using Jedi on an isolated source snapshot. Includes source digests, commit and unresolved relations. Workspace pyrightconfig.json, pyproject.toml and setup.cfg import roots and readable .py/.pyi dependencies are parsed as data. Source and config changes invalidate results. Project code never executes; external interpreter environments and complete dynamic call graphs are not covered. In an observation, file-level edges come from a static Python import scan only: runtime-only links are not edges, while the standard library, external packages and git-ignored files are unresolved or absent.',z.object({operation:z.enum(['symbols','definitions','references','imports','calls']),configPath:safePath.optional(),prefix:safePath.optional(),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),offset:z.number().int().min(0).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>pythonIndex.query(args as unknown as import('../../core/workspace/project-source-index.js').ProjectSourceQuery,signal)),defaultTimeoutMs:60000},
-    projectTool,
+    {...tool('cpp_index','Query C/C++ project symbols, definitions, references, includes and static call candidates with libclang 18 and a required compile_commands.json. Compiler commands never execute; unknown flags and external include paths return explicit gaps. Only permission-filtered workspace files are exposed through a redirect-only VFS. One-based UTF-16 coordinates, source digests and analyzer identity accompany partial semantic results. In an observation, file-level edges come from a static C/C++ include scan only: runtime-only links are not edges, while system headers and git-ignored files are unresolved or absent. C/C++ is read for one target platform (x86_64-pc-linux-gnu when the database names none).',z.object({operation:z.enum(['symbols','definitions','references','imports','calls']),configPath:safePath.optional(),prefix:safePath.optional(),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),offset:z.number().int().min(0).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>cppIndex.query(args as unknown as import('../../core/workspace/project-source-snapshot.js').ProjectSourceQuery,signal)),defaultTimeoutMs:60000},
+    {...tool('python_index','Query readable Python project symbols, definitions, references, imports and static call candidates using Jedi on an isolated source snapshot. Includes source digests, commit and unresolved relations. Workspace pyrightconfig.json, pyproject.toml and setup.cfg import roots and readable .py/.pyi dependencies are parsed as data. Source and config changes invalidate results. Project code never executes; external interpreter environments and complete dynamic call graphs are not covered. In an observation, file-level edges come from a static Python import scan only: runtime-only links are not edges, while the standard library, external packages and git-ignored files are unresolved or absent.',z.object({operation:z.enum(['symbols','definitions','references','imports','calls']),configPath:safePath.optional(),prefix:safePath.optional(),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),offset:z.number().int().min(0).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>pythonIndex.query(args as unknown as import('../../core/workspace/project-source-snapshot.js').ProjectSourceQuery,signal)),defaultTimeoutMs:60000},
+    ...projectTools,
     tool('code_index','Query TS/JS declarations, definitions or semantic references within explicit readable files. Coordinates are one-based UTF-16. Returns source digests and partial coverage; no project config or external dependencies. Not a complete call graph. Use source_excerpt with a returned digest to fetch material.',z.object({paths:z.array(safePath).min(1).max(64),operation:z.enum(['symbols','definitions','references']),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>sourceIndex.query(args as unknown as import('../../core/workspace/source-index.js').SourceQuery,signal)),
     tool('source_excerpt','Read a bounded source range at an exact content digest from code_index or symbols. Returns stale if content changed; never silently substitutes newer source.',z.object({path:safePath,expectedDigest:z.string().regex(/^[a-f0-9]{64}$/),startLine:z.number().int().positive(),endLine:z.number().int().positive()}).strict(),async args=>sourceIndex.excerpt(args['path'] as string,args['expectedDigest'] as string,args['startLine'] as number,args['endLine'] as number)),
     tool('list_files','List readable workspace file paths with bounded pagination. Includes installed/generated files; skips denied paths and symbolic links. No source execution.',z.object({prefix:safePath.describe('Workspace-relative directory to enumerate recursively, not a file. Omit or use a single dot for the workspace root.').optional(),offset:z.number().int().min(0).max(20000).default(0),limit:z.number().int().min(1).max(300).default(100)}).strict(),async(args,signal)=>{

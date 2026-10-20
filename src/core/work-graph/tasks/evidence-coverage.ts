@@ -61,7 +61,7 @@ function definitionsFor(plan: PlanRevisionSnapshot): ReadonlyMap<string, FrozenT
     return buildFrozenTaskDefinitions({
         tasks: plan.tasks,
         assignments: revisionAssignments(plan),
-        inputRequirements: plan.schemaVersion === 2 ? plan.inputRequirements ?? [] : [],
+        inputRequirements: plan.inputRequirements ?? [],
         obligations: plan.obligations,
     });
 }

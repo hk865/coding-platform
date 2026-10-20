@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import type { ProjectSourceAccess } from '../../src/core/workspace/project-source-index.js';
+import type { ProjectSourceAccess } from '../../src/core/workspace/project-source-snapshot.js';
 import { captureProjectSource } from '../../src/core/workspace/project-source-snapshot.js';
 import { TypeScriptSourceAnalyzer } from '../../src/core/workspace/typescript-source-query.js';
 

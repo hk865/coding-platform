@@ -201,7 +201,7 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
   await committed('goal', await platform.goals.createGoal(ctx, { meta: { requestId: 's4a-goal',
     expected: [{ ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 }] },
     input: { goalId: goalRef.goalId, workspace: scope, objective: 'S4A note goal' } }));
-  const draft: PlanRevisionDraft = { schemaVersion: 1, planId: planRef.planId, planRevision: 1, goalId: goalRef.goalId,
+  const draft: PlanRevisionDraft = { schemaVersion: 2, planId: planRef.planId, planRevision: 1, goalId: goalRef.goalId,
     stages: [{ stageId: 's1', title: 'Stage one' }],
     tasks: [
       { taskId: 't1', stageId: 's1', title: 'Work one', requirementLevel: 'required', taskKind: 'work',

@@ -92,17 +92,6 @@ describe('Host setting automation (C8)', () => {
     expect(stored).not.toHaveProperty('automation');
   });
 
-  it('a stored policy is read as stored and survives the next save', async () => {
-    const automation: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false };
-    const dir = await settingsDirectory({ ...LEGACY_FILE, automation });
-    const { settings, pushed } = await open(dir);
-    expect(pushed.at(-1)?.automation).toEqual(automation);
-    expect((await settings.call('models/save', saveModel)).status).toBe('ready');
-    expect((await storedFile(dir))['automation']).toEqual(automation);
-    const reopened = await open(dir);
-    expect(reopened.pushed.at(-1)?.automation).toEqual(automation);
-  });
-
   it.each([
     ['a limit above 10', { schemaVersion: 1, autoReworkLimit: 11, resumeOnStartup: true }],
     ['a negative limit', { schemaVersion: 1, autoReworkLimit: -1, resumeOnStartup: true }],
@@ -122,30 +111,55 @@ describe('Host setting automation (C8)', () => {
 });
 
 describe('automation/save (C8, LA-6; A.2 step 5.8)', () => {
-  it('stores the whole policy, pushes it to the Host and publishes it; a reopened Host reads it back', async () => {
-    const dir = await settingsDirectory(LEGACY_FILE);
-    const { settings, pushed } = await open(dir);
-    const before = pushed.length;
-    const saved = await settings.call('automation/save', { autoReworkLimit: 5, resumeOnStartup: false });
-    const policy: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 5, resumeOnStartup: false };
-    // RL L13: resourceCaps is always published; its content is RL-40's.
-    expect(saved).toEqual({ status: 'ready', value: { models: [], workspaces: [], automation: policy, resourceCaps:
-      expect.objectContaining({ memoryMaxMiB: null, tasksMax: null }) } });
-    expect(pushed).toHaveLength(before + 1);
-    expect(pushed.at(-1)?.automation).toEqual(policy);
-    expect((await storedFile(dir))['automation']).toEqual(policy);
-    // Another setting's save keeps the stored policy.
-    expect((await settings.call('models/save', saveModel)).status).toBe('ready');
-    expect((await storedFile(dir))['automation']).toEqual(policy);
-    expect(pushed.at(-1)?.automation).toEqual(policy);
-    const reopened = await open(dir);
-    expect(reopened.pushed.at(-1)?.automation).toEqual(policy);
-    expect(await reopened.settings.call('snapshot', {})).toMatchObject({ status: 'ready', value: { automation: policy } });
-    // The bounds are inclusive: 0 (no counted automatic requeue) and 10.
-    for (const autoReworkLimit of [0, 10]) {
-      expect(await settings.call('automation/save', { autoReworkLimit, resumeOnStartup: true }))
-        .toMatchObject({ status: 'ready', value: { automation: { schemaVersion: 1, autoReworkLimit, resumeOnStartup: true } } });
-    }
+  it.each([
+    ['no stored policy', undefined],
+    ['a stored zero/false policy', { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false } as TaskAutomationPolicyV1],
+  ] as [string, TaskAutomationPolicyV1 | undefined][])(
+    'stores the whole policy, pushes it to the Host and publishes it; a reopened Host reads it back (%s)',
+    async (_label, stored) => {
+      const dir = await settingsDirectory(stored === undefined ? LEGACY_FILE : { ...LEGACY_FILE, automation: stored });
+      let opened = await open(dir);
+      let expectedModels: unknown[] = [];
+      if (stored !== undefined) {
+        // T3-004 (was "a stored policy is read as stored and survives the next save", w2-base :95-104):
+        // the stored zero/false policy is read at start-up, another setting's save (models/save)
+        // leaves it in the file, and a reopened Host reads it back.
+        expect(opened.pushed.at(-1)?.automation).toEqual(stored);
+        const modelSaved = await opened.settings.call('models/save', saveModel);
+        expect(modelSaved.status).toBe('ready');
+        expect((await storedFile(dir))['automation']).toEqual(stored);
+        opened = await open(dir);
+        expect(opened.pushed.at(-1)?.automation).toEqual(stored);
+        // The saved model is published from now on (publicModel): saveModel's fields, baseUrl ''
+        // (none given), credentialConfigured false (no apiKey, no secret env). Its id is issued by
+        // the save, so it is taken as the models/save result returned it.
+        const issuedId = modelSaved.status === 'ready' ? modelSaved.value.models[0]?.id : undefined;
+        expect(issuedId).toEqual(expect.any(String));
+        expectedModels = [{ id: issuedId, label: 'Model A', provider: 'openai', model: 'model-a', baseUrl: '',
+          credentialConfigured: false }];
+      }
+      const { settings, pushed } = opened;
+      const before = pushed.length;
+      const saved = await settings.call('automation/save', { autoReworkLimit: 5, resumeOnStartup: false });
+      const policy: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 5, resumeOnStartup: false };
+      // RL L13: resourceCaps is always published; its content is RL-40's.
+      expect(saved).toEqual({ status: 'ready', value: { models: expectedModels, workspaces: [], automation: policy,
+        resourceCaps: expect.objectContaining({ memoryMaxMiB: null, tasksMax: null }) } });
+      expect(pushed).toHaveLength(before + 1);
+      expect(pushed.at(-1)?.automation).toEqual(policy);
+      expect((await storedFile(dir))['automation']).toEqual(policy);
+      // Another setting's save keeps the stored policy.
+      expect((await settings.call('models/save', saveModel)).status).toBe('ready');
+      expect((await storedFile(dir))['automation']).toEqual(policy);
+      expect(pushed.at(-1)?.automation).toEqual(policy);
+      const reopened = await open(dir);
+      expect(reopened.pushed.at(-1)?.automation).toEqual(policy);
+      expect(await reopened.settings.call('snapshot', {})).toMatchObject({ status: 'ready', value: { automation: policy } });
+      // The bounds are inclusive: 0 (no counted automatic requeue) and 10.
+      for (const autoReworkLimit of [0, 10]) {
+        expect(await settings.call('automation/save', { autoReworkLimit, resumeOnStartup: true }))
+          .toMatchObject({ status: 'ready', value: { automation: { schemaVersion: 1, autoReworkLimit, resumeOnStartup: true } } });
+      }
   });
 
   it.each([

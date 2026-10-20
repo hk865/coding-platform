@@ -9,8 +9,6 @@ import type { ArchiveStepRefV1, RequestSessionArchiveInput, SessionArchiveReques
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
-import { continuationBriefDigest, renderContinuationBriefZh } from '../../src/contracts/continuation-brief.js';
-import { assembleAnomalySection, assembleContinuationBrief } from '../../src/core/agent-runtime/continuation-brief-assembly.js';
 import { createRuntimeControlCoordinator } from '../../src/core/agent-runtime/execution-control.js';
 import { terminalEventOf } from '../../src/core/agent-runtime/execution-observation.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
@@ -183,27 +181,6 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
       if (basis.requeue.archiveOrigin?.kind === 'execution') {
         expect(basis.pendingAnomalies?.map(anchor => anchor.ref)).toContainEqual(basis.requeue.archiveOrigin.anchorRef);
       }
-      const pending = basis.pendingAnomalies ?? [];
-      const anomalies = pending.length === 0 ? null : assembleAnomalySection(pending);
-      const brief = assembleContinuationBrief({ basis, factsRecord: basis.previous, factsHops: 0, factsTruncated: false,
-        turn: { kernel: 'unavailable', reason: 'B2 observation fixture has no prior Kernel store' },
-        workspace: { briefCheckpoint: { kind: 'brief', at: now(), workspaceRevision: 1,
-          sourceDigest: null, unavailableReason: 'not captured in this service fixture' },
-          uncommitted: { status: 'unavailable', baseCommit: null, paths: [], omitted: 0,
-            reason: 'not captured in this service fixture' } }, claimSessionRef: claim.sessionRef, anomalies });
-      const digest = continuationBriefDigest(brief);
-      const body = ready(await b2.bodies.read(prepared.envelope.bundleRef));
-      const manifest = JSON.parse(body.body) as PreparedTaskManifestV1;
-      manifest.continuationBrief = brief;
-      manifest.input += `\n\n${renderContinuationBriefZh(brief, digest)}`;
-      manifest.inputDigest = sha256Hex(manifest.input);
-      const json = JSON.stringify(manifest);
-      const stored = ready(await b2.bodies.put({ body: json, contentType: body.ref.contentType,
-        sourceRefs: body.sourceRefs, origin: { kind: 'run', owner: claim.runRef }, requestedAt: now() }));
-      prepared.envelope.bundleRef = stored.ref;
-      prepared.inputBinding = { ...prepared.inputBinding, inputDigest: manifest.inputDigest,
-        manifestDigest: sha256Hex(json), continuationBriefDigest: digest,
-        ...(brief.anomalies ? { anomalyAnchorRefs: brief.anomalies.anchors.map(anchor => anchor.ref) } : {}) };
     }
     const kernel: KernelExecutionBinding = { adapterId: facts.session.kernel.adapterId,
       kernelSessionId: facts.session.kernel.kernelSessionId, runId: `kernel-${claim.runRef.runId}`, turnId: `turn-${claim.runRef.runId}` };

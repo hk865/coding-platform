@@ -267,7 +267,6 @@ function dispositionPointsOf(
   const untimed: UntimedPoint[] = [];
   const seen = new Set<string>();
   for (const plan of plans) {
-    if (plan.schemaVersion !== 2) continue;
     for (const entry of plan.dispositionRecord?.entries ?? []) {
       if (entry.taskId !== task.taskId) continue;
       const setInKey = planRevisionRefKey(entry.setIn);
@@ -396,27 +395,12 @@ async function readTaskPoints(
   // Per round: check_start (`since` via `eventAt`) / check_end (`finalizedAt`).
   for (const entry of rounds) {
     const { round } = entry;
-    const legacyFinalized = round.status === 'finalized' && entry.finalizedAt === null;
-    if (legacyFinalized) {
-      // Pre-2B finalized rounds: BOTH points are untimed and no `verifying` segment opens.
-      untimed.push({ kind: 'check_start', source: round.ref });
-      untimed.push({ kind: 'check_end', source: round.ref });
-      continue;
-    }
-    if (entry.since === null) {
-      untimed.push({ kind: 'check_start', source: round.ref });
-    } else {
-      const at = await records.eventAt(entry.since);
-      if (at.status !== 'ready') throw at;
-      budget.spend(1);
-      points.push({ kind: 'check_start', at: at.value.event.occurredAt, source: round.ref });
-    }
+    const at = await records.eventAt(entry.since!);
+    if (at.status !== 'ready') throw at;
+    budget.spend(1);
+    points.push({ kind: 'check_start', at: at.value.event.occurredAt, source: round.ref });
     if (round.status === 'finalized') {
-      if (entry.finalizedAt === null) {
-        untimed.push({ kind: 'check_end', source: round.ref });
-      } else {
-        points.push({ kind: 'check_end', at: entry.finalizedAt, source: round.ref, roundOutcome: round.outcome });
-      }
+      points.push({ kind: 'check_end', at: entry.finalizedAt!, source: round.ref, roundOutcome: round.outcome });
     }
   }
 

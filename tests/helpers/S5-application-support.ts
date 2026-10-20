@@ -19,7 +19,7 @@ import type { SessionMailboxDependencies } from '../../src/core/work-graph/model
 import { decodeGoalSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { decodeSessionMessageRecord } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
-import { createExecutedFilesStub } from './executed-files-stub.js';
+import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
@@ -32,7 +32,7 @@ import { createDecisionReadModel, createGoalCauseCardSource, createPlanningQuest
 import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice-display-token.js';
 import { createNoticePositionComparator } from '../../src/core/work-graph/views/notice-position.js';
-import { GOAL_B, OPERATOR, WORKSPACE_SCOPE, type S5DecisionFixture, type S5OrderedRecords, type S5Records } from './S5-decision-fixture.js';
+import { asS5OrderedRecords, GOAL_B, OPERATOR, WORKSPACE_SCOPE, type S5DecisionFixture, type S5Records } from './S5-decision-fixture.js';
 
 export const keyOf = (ref: object): string => canonicalJson(ref as JsonValue);
 export const pin = (ref: VersionPin['ref'], revision: number): VersionPin => ({ ref, revision });
@@ -99,14 +99,18 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
   const planDeps = { records, materials, initialPlanning: { bodies }, now: f.now, eventId: f.newId };
   const plans = createPlanService(planDeps);
   const causes = createGoalDecisionCauseReader({ records, plans });
+  // The real ordered port forwarded through the same records the test wraps
+  // (faults and counters still apply); the executed-files reader and the
+  // automatic-rework source both read through it.
+  const orderedRecords = asS5OrderedRecords(records);
   // The production composition's source wiring. Message/candidate projection must
   // be implemented by the production reader; this helper never manufactures cards.
   const reads = createDecisionReadModel({ records,
     cardSources: [createGoalCauseCardSource(causes), createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans }))],
-    // Slice 2A P8: the runtime records port carries the ordered lookup; restore
-    // the type for the automatic-rework source.
-    noticeSources: [createAutomaticReworkNoticeSource({ records: records as S5OrderedRecords })],
-    conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }), executedFiles: createExecutedFilesStub() }),
+    noticeSources: [createAutomaticReworkNoticeSource({ records: orderedRecords })],
+    conflicts: createGoalConflictAssembler({ records: orderedRecords,
+      catalog: createArchitectureCatalogService({ records: orderedRecords }),
+      executedFiles: createGoalExecutedFilesReader({ records: orderedRecords }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
   });
   return { decisions, plans, causes, reads,

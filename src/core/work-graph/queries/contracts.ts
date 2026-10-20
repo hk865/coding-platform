@@ -40,7 +40,7 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from '../model/configuration-contracts.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
-import type { LegacySessionProvenancePort, SessionFactsPort } from '../model/session-facts-contracts.js';
+import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 
 /** The exact pending pair a submit records: both ids are independent identities. */
@@ -223,14 +223,6 @@ export type QueryExecutionDependencies = {
    * claim keeps its old behaviour.
    */
   sessionFacts?: SessionFactsPort;
-  /**
-   * Slice 1 §3.4 S:630 (N3): the trusted legacy-provenance derivation, reached
-   * through the narrow model port so a legacy Session's Query claim can be
-   * judged with the same proven provenance and guards as the Work claim. The
-   * composition fills the same instance as the Session directory. Optional:
-   * without it a legacy Session keeps the L1 `incomplete` refusal.
-   */
-  legacyProvenance?: LegacySessionProvenancePort;
 };
 
 /**

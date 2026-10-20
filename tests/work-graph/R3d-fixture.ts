@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
-import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import { createSqliteRawArtifactStore } from '../../src/core/record-store/sqlite-body-store.js';
@@ -15,7 +16,7 @@ import type { GoalRecordTransactionPort, RecordBackendSchemas } from '../../src/
 import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../../src/core/work-graph/architecture/architecture-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
-import { GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createWorkspaceAccessFactory } from '../../src/core/workspace/access.js';
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../../src/core/workspace/workspace-tools.js';
@@ -37,6 +38,9 @@ const schemas: RecordBackendSchemas = {
     ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
     ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
+    ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events,
+    // R3d-observed-boundaries injects this unrelated ledger event to prove the
+    // capture's exact scope guards do not stale on an unrelated append.
     { eventType: 'TrustedArchitectureScopeSeeded', schemaVersion: 1,
       validate: event => ({ status: 'decoded', value: event }) }],
   lookups: [...(OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.lookups ?? []),
@@ -76,19 +80,25 @@ export async function fixture(kind: 'memory' | 'sqlite') {
     createSqliteRecordBackend({ path: ledgerPath, schemas });
   let bodies: RawArtifactStorePort & { close?: () => Promise<void> } = kind === 'memory'
     ? new RawArtifactBodyStore() : createSqliteRawArtifactStore(bodyPath);
-  const project: ProjectSnapshot = { ref: { aggregateType: 'Project', projectId }, revision: 1 };
-  const workspaceRecord: WorkspaceSnapshot = { ref: workspaceRef, revision: 1 };
-  const event = { eventId: 'architecture-scope-seed', eventType: 'TrustedArchitectureScopeSeeded',
-    schemaVersion: 1, occurredAt: '2026-09-24T00:00:00.000Z',
-    json: JSON.stringify({ eventId: 'architecture-scope-seed', eventType: 'TrustedArchitectureScopeSeeded',
-      schemaVersion: 1, occurredAt: '2026-09-24T00:00:00.000Z' }) };
-  const seeded = await backend.records.commit({ identityKey: 'architecture-scope-seed',
-    fingerprint: 'architecture-scope-seed', guards: [
-      { refKey: canonicalRefKey(project.ref), expectedRevision: null },
-      { refKey: canonicalRefKey(workspaceRecord.ref), expectedRevision: null },
-    ], records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspaceRecord)],
-    events: [event], claims: [], indexChanges: [], indexGuards: [] });
-  if (seeded.status !== 'committed') throw new Error(`scope seed failed: ${seeded.reason}`);
+  // Scope facts through the real public bootstrap writers, never a raw
+  // PreparedCommit: createProject writes Project@1, registerWorkspace writes
+  // Workspace@1 after reading that exact Project.
+  let bootstrapSequence = 0;
+  const bootstrap = createProjectBootstrapServices({ records: backend.records,
+    now: () => '2026-09-24T00:00:00.000Z', eventId: () => `r3d-bootstrap-${++bootstrapSequence}` });
+  const created = await bootstrap.projects.createProject(context, {
+    input: { projectId },
+    meta: { requestId: 'r3d-create-project', expected: [
+      { ref: { aggregateType: 'Project', projectId }, revision: 0 },
+    ] } });
+  if (created.status !== 'committed') throw new Error(`Project creation failed: ${JSON.stringify(created)}`);
+  const registered = await bootstrap.projects.registerWorkspace(context, {
+    input: { workspace },
+    meta: { requestId: 'r3d-register-workspace', expected: [
+      { ref: created.value.ref, revision: created.value.revision },
+      { ref: workspaceRef, revision: 0 },
+    ] } });
+  if (registered.status !== 'committed') throw new Error(`Workspace registration failed: ${JSON.stringify(registered)}`);
   const deps = () => ({ workspace: handle.tools, access, bodies,
     records: backend.records as GoalRecordTransactionPort & RecordLookupPort,
     source: { provider: 'typescript' as const, configPath: 'tsconfig.json' } });

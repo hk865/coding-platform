@@ -1,14 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { DatabaseSync } from 'node:sqlite';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
 import { artifactBodyDigest, artifactBodySize } from '../../src/contracts/artifact.js';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SourceRefV1 } from '../../src/contracts/dispatch.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
-import { createSqliteRawArtifactStore } from '../../src/core/record-store/sqlite-body-store.js';
 import type { MaterialOrigin, RawArtifactPut, RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import type { MaterialAuthorityReads } from '../../src/core/work-graph/materials/applicability.js';
@@ -20,8 +15,6 @@ const ownerInput = (owner = runA, revision = 'first'): RawArtifactPut => ({
   body: 'shared material', contentType: 'text/plain', sourceRefs: [source(revision)],
   origin: { kind: 'run', owner }, requestedAt: '2026-09-24T00:00:00Z',
 });
-const directories: string[] = [];
-afterEach(async () => { for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }); });
 const hostContext = (projectId = 'project-a', workspaceId = 'workspace', actorId = 'local-gui'): CoreCallContext => {
   const actor = { kind: 'human' as const, id: actorId };
   return { projectId, workspaceId, principal: { kind: 'host', actor },
@@ -60,50 +53,6 @@ it('keeps the first owner, source and ref on duplicate memory puts without leaki
   expect(await store.read(first.value.ref)).toMatchObject({ status: 'ready', value: { sourceRefs: [source('first')] } });
 });
 
-it('reopens the original artifacts table and reads legacy first-owner provenance', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'r3b-body-'));
-  directories.push(directory);
-  const path = join(directory, 'artifacts.sqlite');
-  const old = new DatabaseSync(path);
-  old.exec('CREATE TABLE artifacts (key TEXT PRIMARY KEY, record TEXT NOT NULL)');
-  const body = 'legacy body';
-  const ref: ArtifactRef = { kind: 'artifact', contentType: 'text/plain', digest: artifactBodyDigest(body),
-    sizeBytes: artifactBodySize(body), source: source('legacy') };
-  old.prepare('INSERT INTO artifacts (key, record) VALUES (?, ?)').run(
-    `text/plain|${ref.digest}|${ref.sizeBytes}`, JSON.stringify({ ref, body, sourceRefs: [source('legacy')], ownerRunRef: runA }));
-  old.close();
-  const store = createSqliteRawArtifactStore(path);
-  try {
-    expect(await store.read(ref)).toMatchObject({ status: 'ready', value: {
-      ref, body, origin: { kind: 'legacy', ownerRunRef: runA },
-    } });
-    const replay = await store.put({ ...ownerInput(runB, 'new'), body });
-    expect(replay).toMatchObject({ status: 'ready', value: { ref, replayed: true } });
-  } finally { await store.close(); }
-  const reopened = createSqliteRawArtifactStore(path);
-  try { expect(await reopened.read(ref)).toMatchObject({ status: 'ready', value: { body, origin: { kind: 'legacy' } } }); }
-  finally { await reopened.close(); }
-});
-
-it('rejects newly forged legacy origins and reports damaged SQLite bodies as corrupt', async () => {
-  const store = new RawArtifactBodyStore();
-  expect(await store.put({ ...ownerInput(), origin: { kind: 'legacy', ownerRunRef: runA } } as unknown as RawArtifactPut))
-    .toMatchObject({ status: 'rejected', code: 'invalid' });
-  const directory = await mkdtemp(join(tmpdir(), 'r3b-corrupt-'));
-  directories.push(directory);
-  const path = join(directory, 'artifacts.sqlite');
-  const sqlite = createSqliteRawArtifactStore(path);
-  const stored = await sqlite.put(ownerInput());
-  expect(stored.status).toBe('ready');
-  await sqlite.close();
-  if (stored.status !== 'ready') return;
-  const db = new DatabaseSync(path);
-  db.prepare('UPDATE artifacts SET record = ?').run(JSON.stringify({ ref: stored.value.ref, body: 'tampered', sourceRefs: [source('first')], ownerRunRef: runA }));
-  db.close();
-  const reopened = createSqliteRawArtifactStore(path);
-  try { expect(await reopened.read(stored.value.ref)).toMatchObject({ status: 'rejected', code: 'corrupt' }); }
-  finally { await reopened.close(); }
-});
 });
 
 describe('R3b WorkGraph material contract', () => {
@@ -146,13 +95,6 @@ it('keeps Host current reads from asserting unverified currentness', async () =>
   const service = createMaterialService({ bodies, authority, now: () => '2026-09-24T00:00:00Z' });
   expect(await service.openArtifact(hostContext(), { ref, usage: 'current' }))
     .toMatchObject({ status: 'rejected', code: 'source_stale' });
-});
-
-it('does not infer a Host-readable scope from a legacy record without an owner', async () => {
-  const { bodies, ref } = readyBody({ kind: 'legacy', ownerRunRef: null });
-  const service = createMaterialService({ bodies, authority, now: () => '2026-09-24T00:00:00Z' });
-  expect(await service.openArtifact(hostContext(), { ref, usage: 'historical_explanation' }))
-    .toMatchObject({ status: 'rejected', code: 'forbidden' });
 });
 
 });

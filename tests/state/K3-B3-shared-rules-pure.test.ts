@@ -112,6 +112,7 @@ describe('F-081 the state transition owns the declared-form business cap', () =>
       cardMatches: true, taskActive: true, sameRun: true });
     expect(ninth.ok).toBe(false);
     if (ninth.ok) throw new Error('the ninth form was accepted');
+    expect(ninth.reason).toBe('guard_failed');
     expect(ninth.code).toBe('capacity');
     expect(ninth.detail).toBe('a request holds at most 8 declared forms');
   });

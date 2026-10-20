@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 /** Persisted references, snapshots and cursor helpers required by the target.
  * Formats originate in the reference ledger; no old service interface is exported here. */
 import type { CommitCursor } from "./command-event.js";
@@ -14,7 +13,7 @@ import type { GoalPhaseRef } from "./goal-phase.js";
 import type { WorkContextRef } from "./context-continuity.js";
 import type { ControlIntentRef } from "./control-intent.js";
 import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from "./query-job.js";
-import type { PlanProposalSnapshot, UserDecisionSnapshot } from "./goal-change.js";
+import type { UserDecisionSnapshot } from "./goal-change.js";
 import type { MaterialAccessGrantRef } from "./material-access.js";
 import type { SessionMessageRef } from "./core/session-message.js";
 import type { SessionRef } from "./core/identity.js";
@@ -42,7 +41,7 @@ export type GoalRef = {
     projectId: string;
     goalId: string;
 };
-export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | WorkspaceRef | GoalRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | WorkContextRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | PlanProposalSnapshot["ref"] | UserDecisionSnapshot["ref"] | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | WorkParticipationRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef | SessionAnomalyAnchorRef | RunActivityRef | ActivityRecordingRef | NoteHeadRef | NoteVersionRef | CurrentPointerRef | UnknownCallReviewRef | CommandRerunRequestRef;
+export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | WorkspaceRef | GoalRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | WorkContextRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | { aggregateType: "PlanProposal"; projectId: string; workspaceId: string; proposalId: string } | UserDecisionSnapshot["ref"] | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | WorkParticipationRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef | SessionAnomalyAnchorRef | RunActivityRef | ActivityRecordingRef | NoteHeadRef | NoteVersionRef | CurrentPointerRef | UnknownCallReviewRef | CommandRerunRequestRef;
 export type ProjectSnapshot = {
     ref: ProjectRef;
     revision: number;
@@ -73,16 +72,14 @@ export type GoalSnapshot = {
     desiredState: GoalDesiredState;
     /**
      * Goal revision of the latest desired-state change (1 at creation); the
-     * fan-out epoch. Plan adoption never changes it. Absent on records written
-     * before A.2, which read as 1.
+     * fan-out epoch. Plan adoption never changes it.
      */
-    desiredStateRevision?: number;
+    desiredStateRevision: number;
     /**
      * Host actor of the latest desired-state change; null at creation. Plan
-     * adoption never changes it (GOAL-05, LA-7). Absent on records written
-     * before A.2, which decode as null.
+     * adoption never changes it (GOAL-05, LA-7).
      */
-    desiredStateRequestedBy?: ActorRef | null;
+    desiredStateRequestedBy: ActorRef | null;
     /** null after GoalCreated@1; a PlanRevisionRef once a plan is accepted (applyPlanChange). */
     activePlanRevision: PlanRevisionRef | null;
     /** 1 at creation; 2+ after an accepted plan revision. */

@@ -27,6 +27,7 @@ import { afterEach, expect, it } from 'vitest';
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import { createSessionHistoryCursorOwner } from '../../src/core/agent-runtime/session-operations.js';
 import { createS2BRuntimeStoreFixture, type S2BRuntimeStoreFixture } from '../helpers/S2B-runtime-store-fixture.js';
+import { deferred } from '../helpers/A2-restart-fixture.js';
 import { blockingTool } from '../helpers/S2B-runtime-tools-support.js';
 import {
   BE2_HOST_1, BE2_HOST_2, be2ExtraSchemas, calendarOf, controlsOn, prepare, restartHost, submitControl,
@@ -38,11 +39,6 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.close();
 });
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((settle) => { resolve = settle; });
-  return { promise, resolve };
-}
 
 it('2B-11 (RUN-19): a crash during a model call (no terminal, nothing in flight) is counted with countedThroughTurnEnd false', async () => {
   const entered = deferred();

@@ -13,8 +13,13 @@
  *    `SessionLifecyclePort.linkSessionWork`, and Runs through the real
  *    `TaskClaimPort`.
  *  - The executed-files port is the only injected dependency (L15).
+ *  - On demand only (`openRuntimeLine`, W2b-08): a line driven through the
+ *    real Session operations, the real Runtime (`createS2BRuntimeSteps`), a
+ *    Host restart with the production start-up classifier, the real
+ *    `sessions/archive-line` composition and the real `tasks/requeue` owner.
+ *    A fixture that never opens one is built exactly as before.
  */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -22,6 +27,7 @@ import type { ModuleRef, SessionRef, WorkLinkRelation, WorkLinkTarget, Workspace
 import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { RoleBindingRefV1, RunRef, RuntimeEventV1, TaskBudgetV1, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { ArchiveStepRefV1 } from '../../src/contracts/core/session-archive.js';
+import type { ControlIntentRef } from '../../src/contracts/control-intent.js';
 import type { GoalRef, ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
@@ -34,11 +40,14 @@ import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-co
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
-import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS, readGoal } from '../../src/core/work-graph/tasks/plan-readers.js';
+import {
+  PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS, createSessionResponsibilityBasisReader, readGoal,
+} from '../../src/core/work-graph/tasks/plan-readers.js';
 import { SESSION_RECORD_SCHEMAS, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
+import { RUN_ACTIVITY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/run-activity-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
@@ -59,6 +68,12 @@ import { createGoalService } from '../../src/core/work-graph/tasks/task-service.
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
+import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
+import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
+import { createSessionArchiveService, type ArchiveLineInput, type ArchiveLineResultV1 } from '../../src/business/workflow/session-archive.js';
+import type { RunReconcileReport } from '../../src/core/agent-runtime/run-reconcile.js';
+import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createSessionAnomalyService, type SessionAnomalyPort } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
@@ -80,6 +95,8 @@ import type { SessionDutyReadPort, WorkLineReadPort } from '../../src/core/work-
 import type { ClaimFixtureKind } from './task-claim-fixture.js';
 import type { TaskClaimFixture } from './task-claim-fixture.js';
 import { createRunSupport, type RunSupport } from './S2C-L-runs-support.js';
+import { createS2BRuntimeSteps, type S2BRunHandle } from './S2B-runtime-steps-fixture.js';
+import type { ScriptedReply } from './B2-runtime-fixture.js';
 
 export const D_AT = '2026-10-01T00:00:00.000Z';
 
@@ -88,6 +105,31 @@ export type ExecutedFilesFacts = {
   files: ExecutedFileV1[];
   possiblyIncomplete: boolean;
   sourceCursor: CommitCursor | null;
+};
+
+/**
+ * W2b-08 (2C-28): one line driven along the real path, over the node
+ * fixture's records. Every fact comes from a public owner or the Runtime:
+ * the Session from the Session operations owner (admission, Kernel Session,
+ * registration), the Run entry and the safe-point pause from the real Runtime
+ * and Kernel, the takeover from the production start-up classifier, the
+ * anchor from the archive composition, the continuation from `tasks/requeue`.
+ */
+export type NodeRuntimeLine = {
+  /** The real Session operations owner (`createSession`). */
+  createSession(requestId: string): Promise<SessionRef>;
+  /** Start a claimed Run through the real Runtime; the scripted model is held at its A3 gate. */
+  start(claim: TaskClaim, replies: readonly ScriptedReply[]): Promise<S2BRunHandle>;
+  /** A person's pause, delivered to the live Run: the Kernel stops at its next safe point. */
+  pauseAtSafePoint(handle: S2BRunHandle): Promise<ControlIntentRef>;
+  /** A Host restart under another Host instance: the start-up classifier books what the Kernel proves. */
+  restart(runRef: RunRef, hostInstanceId: string): Promise<RunReconcileReport>;
+  /** The person's archive through the real `sessions/archive-line` composition (`archiveLine`). */
+  archiveLine(session: SessionRef, tasks: ArchiveLineInput['tasks'], requestId: string): Promise<ArchiveLineResultV1>;
+  /** The person's 继续 through the real `tasks/requeue` owner (real Workspace source digest). */
+  requeue(taskId: string, afterRunRef: RunRef, requestId: string): Promise<WriteResult<TaskRequeueOutcomeV1>>;
+  /** The Task's covering requeue, as the public Task graph reads it. */
+  requeueRefOf(taskId: string): Promise<TaskRequeueRef>;
 };
 
 export type NodeFixture = {
@@ -123,7 +165,7 @@ export type NodeFixture = {
   lifecycle: ReturnType<typeof createSessionLifecycleService>;
   createSession(requestId: string, role?: { kind: 'legacy_template'; templateId: string; templateRevision: string }): Promise<SessionRef>;
   link(session: SessionRef, task: TaskTriple, relation: WorkLinkRelation, active: boolean): Promise<void>;
-  claim(taskId: string, session: SessionRef): Promise<TaskClaim>;
+  claim(taskId: string, session: SessionRef, requeueRef?: TaskRequeueRef): Promise<TaskClaim>;
   claimQuery(session: SessionRef, goalRef: GoalRef, suffix: string): Promise<QueryRunRef>;
   /**
    * 2C-30 (review item 7a): one real, ended Run of one Task through public
@@ -132,10 +174,21 @@ export type NodeFixture = {
    * hand-written `RunSnapshot`. `requeueRef` covers a reused Task.
    */
   endRun(taskId: string, session: SessionRef, requeueRef?: TaskRequeueRef): Promise<RunRef>;
+  /** W2b-08: open a line on the real Runtime/Host path (see `NodeRuntimeLine`); needs `{ runtimeLine: true }`. */
+  openRuntimeLine(): Promise<NodeRuntimeLine>;
   close(): Promise<void>;
 };
 
-function schemas(): RecordBackendSchemas {
+/** Options of `openNodeFixture`; absent, the fixture is built exactly as before. */
+export type NodeFixtureOptions = {
+  /**
+   * W2b-08: also register the record schemas the real Runtime/Host path of
+   * `openRuntimeLine` writes (the start-up reconcile's `RunActivity`).
+   */
+  runtimeLine?: boolean;
+};
+
+function schemas(extra: RecordBackendSchemas = { records: [], events: [] }): RecordBackendSchemas {
   return {
     records: [...materialRecordSchemas().records, ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records,
@@ -143,7 +196,7 @@ function schemas(): RecordBackendSchemas {
       ...ARCHITECTURE_CATALOG_SCHEMAS.records, ...TASK_CLAIM_RECORD_SCHEMAS.records, ...ROLE_RECORD_SCHEMAS.records,
       ...QUERY_JOB_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records,
       ...MODEL_REQUEST_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
-      ...EVIDENCE_RECORD_SCHEMAS.records, ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records],
+      ...EVIDENCE_RECORD_SCHEMAS.records, ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records, ...extra.records],
     events: [...materialRecordSchemas().events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events, ...SESSION_ANOMALY_RECORD_SCHEMAS.events,
@@ -155,7 +208,7 @@ function schemas(): RecordBackendSchemas {
       // The real execution-entry/result replay events (records empty: Run/Attempt/
       // Outbox/Session are registered by their owning modules), so the fixture can
       // drive a claimed Run to `ended` through the real `ExecutionEntryPort`.
-      ...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events],
+      ...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events, ...extra.events],
     lookups: [...SESSION_RECORD_SCHEMAS.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [], ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [],
@@ -164,16 +217,20 @@ function schemas(): RecordBackendSchemas {
       ...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...COMPLETION_RECORD_SCHEMAS.lookups ?? [],
       ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [], ...SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [],
       ...EVIDENCE_RECORD_SCHEMAS.lookups ?? [], ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
-      ...(materialRecordSchemas().lookups ?? [])],
+      ...(materialRecordSchemas().lookups ?? []), ...(extra.lookups ?? [])],
   };
 }
 
-export async function openNodeFixture(kind: ClaimFixtureKind): Promise<NodeFixture> {
+export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtureOptions = {}): Promise<NodeFixture> {
   const directory = await mkdtemp(join(tmpdir(), `s2c-d-node-${kind}-`));
   const ledgerPath = join(directory, 'ledger.sqlite');
+  // The `RunActivityRecorded` event is already registered with the execution-entry events.
+  const extraSchemas = options.runtimeLine === true
+    ? { records: RUN_ACTIVITY_RECORD_SCHEMAS.records, events: [], lookups: RUN_ACTIVITY_RECORD_SCHEMAS.lookups ?? [] }
+    : undefined;
   const backend = kind === 'memory'
-    ? createInMemoryRecordBackend({ schemas: schemas() })
-    : createSqliteRecordBackend({ path: ledgerPath, schemas: schemas() });
+    ? createInMemoryRecordBackend({ schemas: schemas(extraSchemas) })
+    : createSqliteRecordBackend({ path: ledgerPath, schemas: schemas(extraSchemas) });
 
   const projectId = 's2c-d-project';
   const workspaceId = 's2c-d-workspace';
@@ -266,7 +323,7 @@ export async function openNodeFixture(kind: ClaimFixtureKind): Promise<NodeFixtu
     { taskId: 'gate-goal', title: 'Goal gate', requirementLevel: 'required', taskKind: 'gate',
       disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
   ];
-  const draft: PlanRevisionDraft = { schemaVersion: 1, planId: planRef.planId, planRevision: 1, goalId: goalRef.goalId,
+  const draft: PlanRevisionDraft = { schemaVersion: 2, planId: planRef.planId, planRevision: 1, goalId: goalRef.goalId,
     stages: [{ stageId: 'stage-1', title: 'Stage 1' }, { stageId: 'stage-2', title: 'Stage 2' }],
     tasks: tasksList,
     assignments: tasksList.filter((entry) => entry.taskKind === 'work').map((entry) => ({ taskId: entry.taskId, role: 'builder', instruction: entry.title })),
@@ -506,12 +563,117 @@ export async function openNodeFixture(kind: ClaimFixtureKind): Promise<NodeFixtu
     return claimed.runRef;
   }
 
+  /** The Runtime lines this fixture opened; each is closed (its held Runs settled) before the backend. */
+  const runtimeLines: Array<() => Promise<void>> = [];
+
+  /**
+   * W2b-08 (2C-28): a line on the real Runtime/Host path, built only when a
+   * test asks for it. The Kernel store registration is the Host's start-up
+   * configuration for this Workspace, the same one the real preparation reads
+   * (`prepareTaskForReal`) and the Runtime steps default to.
+   */
+  async function openRuntimeLine(): Promise<NodeRuntimeLine> {
+    if (options.runtimeLine !== true) throw new Error('S2C-D: open the fixture with { runtimeLine: true } to open a Runtime line');
+    let lineSeq = 0;
+    const lineEventId = () => `s2c-d-line-event-${++lineSeq}`;
+    const lineNewId = () => `s2c-d-line-id-${++lineSeq}`;
+    const lineKernelStores = await createKernelStoreRegistry({ entries: [{ adapterId: 'r4c-claim-kernel',
+      storeKey: 'r4c-claim-kernel-store', workspace: scope, databasePath: join(directory, 'kernel.sqlite') }] });
+    const sessionOperations = createSessionOperations({ sessions, kernelStores: lineKernelStores });
+    // One real file in the Workspace root for the scripted model's read tool call.
+    await writeFile(join(directory, 's2c-d-line-read.txt'), 'S2C-D line workspace file\n');
+    const lineBodies = new RawArtifactBodyStore();
+    const steps = await createS2BRuntimeSteps({
+      base: { ...runBase, directory, service: claims } as unknown as TaskClaimFixture,
+      bodies: lineBodies, ctx, directory, scope, now, setClock: () => undefined,
+      eventId: lineEventId, newId: lineNewId, consumerId: 's2c-d-line-runtime', kernelStores: lineKernelStores,
+    });
+    runtimeLines.push(() => steps.close());
+    const executions = createRunStateReader({ records: backend.records });
+    const materials = createMaterialService({ bodies: lineBodies,
+      authority: createMaterialRecordReaders(backend.records).authority, now });
+    const mailbox = createSessionMailbox({ records: backend.records, sessions, executions,
+      roles: createRoleConfigurationService({ records: backend.records, now, eventId: lineEventId }), materials,
+      systemActor: { kind: 'system', id: 's2c-d-line' }, now, newId: lineEventId });
+    const requeues = createTaskRequeueService({
+      records: backend.records, reads: executions,
+      workspaceHost: { async resolveRoot(requested: WorkspaceScope) {
+        return requested.projectId === scope.projectId && requested.workspaceId === scope.workspaceId
+          ? { status: 'ready' as const, value: { root: directory, workspaceRevision: 1 } }
+          : { status: 'rejected' as const, code: 'forbidden' as const, reason: 'S2C-D line: unknown Workspace' };
+      } },
+      source: new VerificationWorkspaceReader(), materials,
+      messages: { readMessage: mailbox.readMessage.bind(mailbox) },
+      now, eventId: lineEventId,
+    });
+    const archive = createSessionArchiveService({
+      sessionLifecycle: lifecycle, sessionFacts: createSessionFactsService({ records: backend.records }),
+      responsibilities: createSessionResponsibilityService({ records: backend.records, lookups: backend.records,
+        basis: createSessionResponsibilityBasisReader(backend.records), now }),
+      sessionAnomalies: anomalies, controls: steps.controls, plans, executions, sessions, messages: mailbox,
+      claims: { ...claims, requeueTask: requeues.requeueTask, readTaskRequeue: requeues.readTaskRequeue },
+      runtime: steps.runtime.port, now,
+    });
+
+    async function createLineSession(requestId: string): Promise<SessionRef> {
+      const created = await sessionOperations.createSession(ctx, { workspace: scope, role: defaultRole,
+        recommendedRefs: [], initialLinks: [], meta: { requestId: `admit-${requestId}`, expected: [] } });
+      if (created.status !== 'completed') throw new Error(`S2C-D line Session creation failed: ${JSON.stringify(created)}`);
+      return { projectId: created.value.ref.projectId, sessionId: created.value.ref.sessionId };
+    }
+
+    async function archiveLine(session: SessionRef, archiveTasks: ArchiveLineInput['tasks'],
+      requestId: string): Promise<ArchiveLineResultV1> {
+      const card = await sessions.readSession(ctx, session);
+      if (card.status !== 'ready') throw new Error(`S2C-D line Session read failed: ${JSON.stringify(card)}`);
+      const result = await archive.archiveLine(ctx, {
+        input: { sessionRef: session, reason: 'S2C-D: the person archives the line', tasks: archiveTasks, wait: null },
+        meta: { requestId, expected: [{ ref: card.value.record.ref, revision: card.value.record.revision }] } });
+      if (result.status !== 'ready') throw new Error(`S2C-D line archive failed: ${JSON.stringify(result)}`);
+      return result.value;
+    }
+
+    async function requeueLine(taskId: string, afterRunRef: RunRef,
+      requestId: string): Promise<WriteResult<TaskRequeueOutcomeV1>> {
+      const task = tasks[taskId];
+      if (task === undefined) throw new Error(`S2C-D line requeue: unknown task ${taskId}`);
+      const goalRead = await plans.queryGoal(ctx, goalRef);
+      if (goalRead.status !== 'ready') throw new Error('S2C-D line requeue Goal read failed');
+      const run = await executions.readExecution(ctx, afterRunRef);
+      if (run.status !== 'ready') throw new Error(`S2C-D line requeue Run read failed: ${JSON.stringify(run)}`);
+      return requeues.requeueTask(ctx, { input: { taskRef: task, afterRunRef, reason: 'S2C-D: the person continues the Task' },
+        meta: { requestId, expected: [{ ref: goalRef, revision: goalRead.value.goal.revision },
+          { ref: afterRunRef, revision: run.value.run.revision }] } });
+    }
+
+    async function requeueRefOf(taskId: string): Promise<TaskRequeueRef> {
+      const graph = await plans.queryTaskGraph(ctx, { goalRef });
+      if (graph.status !== 'ready') throw new Error(`S2C-D line Task graph read failed: ${JSON.stringify(graph)}`);
+      const row = graph.value.tasks.find((candidate) => candidate.ref.taskId === taskId);
+      if (row?.requeueRef === undefined || row.requeueRef === null) {
+        throw new Error(`S2C-D line: the Task ${taskId} has no covering requeue`);
+      }
+      return row.requeueRef;
+    }
+
+    return {
+      createSession: createLineSession,
+      start: (claimed, replies) => steps.start(claimed, { at: D_AT, replies }),
+      pauseAtSafePoint: (handle) => steps.pauseAtSafePoint(handle, D_AT),
+      restart: (runRef, hostInstanceId) => steps.restartAndReconcile(runRef, hostInstanceId),
+      archiveLine, requeue: requeueLine, requeueRefOf,
+    };
+  }
+
   return {
     kind, directory, records, ctx, scope, projectRef, workspaceRef, goalRef, planRef, tasks,
     moduleRef: (moduleId) => ({ projectId, moduleId }),
     goals, plans, catalog, anomalies, claims, runs, sessions, lifecycle, createSession, link, claim, endRun, claimQuery,
-    writeAnchor, setGoalDesired, completedRunEvent, requeue,
-    close: async () => { await backend.close(); await rm(directory, { recursive: true, force: true }); },
+    writeAnchor, setGoalDesired, completedRunEvent, requeue, openRuntimeLine,
+    close: async () => {
+      for (const closeLine of runtimeLines.splice(0)) await closeLine();
+      await backend.close(); await rm(directory, { recursive: true, force: true });
+    },
   };
 }
 
@@ -624,15 +786,6 @@ export function failingRunRead(records: WorkLineStore, runKey: string): WorkLine
       }
       return records.readMany(refKeys);
     } };
-}
-
-/** A stub anomaly port that reports `incomplete` (2C-28's partial count). */
-export function incompleteAnomalies(): SessionAnomalyPort {
-  return {
-    async recordSessionAnomaly() { return { status: 'rejected', code: 'unsupported', reason: 'stub' }; },
-    async listSessionAnomalies() { return { status: 'rejected', code: 'incomplete', reason: 'anomaly read capped' }; },
-    async readTaskArchiveState() { return { status: 'rejected', code: 'incomplete', reason: 'anomaly read capped' }; },
-  };
 }
 
 export type { TaskClaim, EncodedRecord, StoreCommitReceipt };

@@ -7,8 +7,9 @@
  * start/end over §5.1's shell stand-in, RUN-20/RUN-22 over the real draft),
  * settled, then answered `skip_as_done` through the real `resolveDecision` so ②
  * writes the real `blockedCommands`. The owner under test is the production
- * `createCommandRerunRequestService`; the Task-closure reader is a documented
- * test seam (the same one the composition injects from `readTaskClosure`).
+ * `createCommandRerunRequestService`; the Task-closure reader is the real
+ * `readTaskClosure` (the same one the composition injects), wrapped only to
+ * fail once as allowed fault injection.
  * F-021: its recognizer is the production one over the REAL workspace reader;
  * one row requests a script form that only the real `package.json` expansion
  * can match.
@@ -39,11 +40,12 @@ import {
   createCommandRerunRequestApplicationAdapter, createDecisionActions,
 } from '../../src/business/workflow/decision-actions.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
+import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import {
   createK3PendingReview, readK3ReviewCard, settleK3Review,
 } from '../helpers/K3-proposal-round.js';
-import { openK3ReviewCardWorld, type K3ReviewCardWorld } from '../helpers/K3-review-card-fixture.js';
+import { openK3ReviewCardWorld, setK3TaskDisposition, type K3ReviewCardWorld } from '../helpers/K3-review-card-fixture.js';
 import { openRealWorkspace } from '../helpers/K3-real-workspace.js';
 import { T, WORKSPACE_SCOPE } from '../helpers/S5-decision-fixture.js';
 
@@ -70,7 +72,7 @@ type World = {
   service: CommandRerunRequestService; workCtx: CoreCallContext; hostCtx: CoreCallContext;
   /** The production decision coordinator wired to THIS world's counted/faulted CRR owner. */
   decisionActions: ReturnType<typeof createDecisionActions>;
-  counts: { commits: number }; setClosed(value: boolean): void;
+  counts: { commits: number }; setDisposition(disposition: 'active' | 'cancelled'): Promise<void>;
   failNextCommit(): void; failClosure(): void;
   /** F-069: the NEXT `listTaskReviews` returns this fault; later calls use the real pager. */
   failNextReview(fault: ReviewFault): void;
@@ -114,7 +116,6 @@ async function openCrr(kind: 'memory' | 'sqlite', options: { command?: string; f
   const run = runRead.value.run;
   const counts = { commits: 0 };
   const faults = { commit: 0, closure: 0, review: [] as ReviewFault[] };
-  const active = { closed: false };
   const records = {
     readMany: (keys: readonly string[]) => base.readMany(keys),
     lookupCommit: (input: Parameters<GoalRecordTransactionPort['lookupCommit']>[0]) => base.lookupCommit(input),
@@ -149,14 +150,12 @@ async function openCrr(kind: 'memory' | 'sqlite', options: { command?: string; f
         cursor = page.value.nextCursor;
       }
     },
-    readTaskClosure: async (): Promise<ReadResult<{ closed: boolean;
-      cause: 'satisfied' | 'cancelled' | 'superseded' | null }>> => {
+    readTaskClosure: async (_ctx, task) => {
       if (faults.closure > 0) {
         faults.closure -= 1;
         return { status: 'rejected', code: 'unavailable', reason: 'injected closure read failure' };
       }
-      return { status: 'ready', value: { closed: active.closed,
-        cause: active.closed ? 'satisfied' : null } };
+      return readTaskClosure(base, { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId);
     },
     // F-021: the production recognizer over the REAL workspace reader.
     recognize: createCommandRecognizer({ readWorkspace: workspace }),
@@ -182,7 +181,7 @@ async function openCrr(kind: 'memory' | 'sqlite', options: { command?: string; f
   return {
     world, record, task: record.task, run, service, workCtx, hostCtx: world.fixture.ctx,
     decisionActions, counts,
-    setClosed: (value: boolean) => { active.closed = value; },
+    setDisposition: (disposition: 'active' | 'cancelled') => setK3TaskDisposition(world, record.task.taskId, disposition),
     failNextCommit: () => { faults.commit += 1; },
     failClosure: () => { faults.closure += 1; },
     failNextReview: (fault: ReviewFault) => { faults.review.push(fault); },
@@ -428,7 +427,7 @@ describe.each(['memory', 'sqlite'] as const)('B2-09 / rework 1 item 4: closed de
   it('readRequest derives closed without persisting while the Task is closed', async () => {
     const world = await openCrr(kind);
     const created = commit(await request(world, {}));
-    world.setClosed(true);
+    await world.setDisposition('cancelled');
     expect(await world.service.readRequest(world.hostCtx, { ref: created.value.request.ref }))
       .toMatchObject({ status: 'ready', value: { revision: 1, state: 'closed' } });
     expect(world.counts.commits).toBe(1);
@@ -445,12 +444,25 @@ describe.each(['memory', 'sqlite'] as const)('B2-09 / rework 1 item 4: closed de
   it('the next applyAnswer persists closed and returns busy', async () => {
     const world = await openCrr(kind);
     const created = commit(await request(world, {}));
-    world.setClosed(true);
+    // The operator answers the real card while the Task is open; the answer
+    // commits on its own (①). A close before ② is what the next apply meets.
+    const source = await cardSourceOf(world, created.value.request.ref);
+    const answered = await world.world.decisions.answerDecision(world.hostCtx, {
+      input: { source, selection: { kind: 'option', optionId: 'allow_rerun' }, text: '', annotations: [] },
+      meta: { requestId: 'b2-09-saved-answer', expected: source.pins },
+    });
+    expect(answered.status).toBe('committed');
+    if (answered.status !== 'committed') return;
+    // The close is a real Plan disposition change, not a fixture flag.
+    await world.setDisposition('cancelled');
     const before = world.counts.commits;
-    expect(await answer(world, created.value.request.ref, 'allow_rerun', 1))
-      .toMatchObject({ status: 'rejected', code: 'busy' });
+    expect(await world.decisionActions.advanceReviewDisposition(world.hostCtx, {
+      input: { source, selection: { kind: 'option', optionId: 'allow_rerun' },
+        decisionMessageRef: answered.value.ref },
+      meta: { requestId: 'b2-09-apply-closed', expected: source.pins },
+    })).toMatchObject({ status: 'ready', value: { action: { status: 'rejected', code: 'busy' } } });
     expect(world.counts.commits).toBe(before + 1);
-    world.setClosed(false);
+    await world.setDisposition('active');
     expect(await world.service.readRequest(world.hostCtx, { ref: created.value.request.ref }))
       .toMatchObject({ status: 'ready', value: { revision: 2, state: 'closed' } });
   }, 120_000);
@@ -458,7 +470,7 @@ describe.each(['memory', 'sqlite'] as const)('B2-09 / rework 1 item 4: closed de
   it('the next requestRerun persists closed and returns busy', async () => {
     const world = await openCrr(kind);
     commit(await request(world, {}));
-    world.setClosed(true);
+    await world.setDisposition('cancelled');
     const before = world.counts.commits;
     expect(await request(world, { command: 'echo k3-fixture' }))
       .toMatchObject({ status: 'rejected', code: 'busy' });
@@ -469,7 +481,7 @@ describe.each(['memory', 'sqlite'] as const)('B2-09 / rework 1 item 4: closed de
     const world = await openCrr(kind);
     const created = commit(await request(world, {}));
     await answer(world, created.value.request.ref, 'allow_rerun', 1);
-    world.setClosed(true);
+    await world.setDisposition('cancelled');
     const before = world.counts.commits;
     expect(await world.service.consumeAllowance(world.workCtx, {
       input: { requestRef: created.value.request.ref, usedBy: { runId: world.record.runRef.runId, callId: 'closed-call' } },
@@ -481,7 +493,7 @@ describe.each(['memory', 'sqlite'] as const)('B2-09 / rework 1 item 4: closed de
   it('listRequests task form returns pending items as closed', async () => {
     const world = await openCrr(kind);
     const created = commit(await request(world, {}));
-    world.setClosed(true);
+    await world.setDisposition('cancelled');
     const page = await world.service.listRequests(world.hostCtx, {
       workspace: { projectId: 'P', workspaceId: WORKSPACE_SCOPE.workspaceId },
       filter: { goalId: world.task.goalId, taskId: world.task.taskId }, page: { limit: 200 },

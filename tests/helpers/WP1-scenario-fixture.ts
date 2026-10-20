@@ -73,8 +73,8 @@ import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from './AG2b-coll
 import { readControl, submitControl } from './A2-restart-fixture.js';
 import { installS1ScenarioClock, ledgerCounts, ready } from './S1-runtime-scenario-fixture.js';
 
-export type ScenarioStepValue = Extract<WorkflowAdvanceResult, { status: 'ready' }>['value'];
-export type ScenarioDrive = {
+type ScenarioStepValue = Extract<WorkflowAdvanceResult, { status: 'ready' }>['value'];
+type ScenarioDrive = {
   inputs: WorkflowAdvanceInput[];
   /** Every perform sent, in order; string so future W operations require no helper edit. */
   performedKinds: string[];
@@ -84,13 +84,13 @@ export type ScenarioDrive = {
   reason: string | null;
   next: WorkflowAdvanceInput | null;
 };
-export type ArchiveRequestObservation = {
+type ArchiveRequestObservation = {
   cursor: CommitCursor;
   requestId: string;
   mode: SessionArchiveRequestV1['mode'];
   request: SessionArchiveRequestV1;
 };
-export type ScenarioObservations = {
+type ScenarioObservations = {
   harness: HostScenario;
   platform: Platform;
   ctx: CoreCallContext;
@@ -111,14 +111,15 @@ export type ScenarioObservations = {
   readArchiveState(): ReturnType<SessionAnomalyPort['readTaskArchiveState']>;
   counts(): { files: ScenarioCounts; ledger: ReturnType<typeof ledgerCounts> };
 };
-export type PausedInterruptedScenario = ScenarioObservations & {
+type PausedInterruptedScenario = ScenarioObservations & {
   pause: SubmittedControl;
   pauseBeforeRestart: Awaited<ReturnType<typeof readControl>>;
   reconciled: TaskExecutionRecord;
   clickContinue(): Promise<WriteResult<TaskRequeueOutcomeV1>>;
+  advanceUntilClaimed(): Promise<ScenarioDrive>;
   advanceToEnd(): Promise<ScenarioDrive>;
 };
-export type PreparedScenario = {
+type PreparedScenario = {
   drive: ScenarioDrive;
   prepared: PreparedTaskExecution;
   manifest: PreparedTaskManifestV1;
@@ -128,7 +129,7 @@ export type PreparedScenario = {
   runRef: RunRef;
   next: WorkflowAdvanceInput;
 };
-export type ArchivedLineScenario = ScenarioObservations & {
+type ArchivedLineScenario = ScenarioObservations & {
   A: SessionAnomalyAnchorV1;
   beforeArchiveAnchors: SessionAnomalyAnchorV1[];
   archiveRequest: GraphWrite<ArchiveLineInput>;
@@ -170,8 +171,8 @@ async function checkStep(h: HostScenario, input: WorkflowAdvanceInput, value: Sc
 
 /** No step-kind switch: W steps pass through the real route just like old ones. */
 async function drive(h: HostScenario, first: WorkflowAdvanceInput,
-  stopBefore?: (input: WorkflowAdvanceInput) => boolean): Promise<ScenarioDrive> {
-  const trace: ScenarioDrive = { inputs: [], performedKinds: [], steps: [], receipts: [],
+  stopBefore?: (input: WorkflowAdvanceInput) => boolean, carry?: ScenarioDrive): Promise<ScenarioDrive> {
+  const trace: ScenarioDrive = carry ?? { inputs: [], performedKinds: [], steps: [], receipts: [],
     state: 'bounded', reason: null, next: first };
   let input = first;
   for (let index = 0; index < 60; index += 1) {
@@ -286,6 +287,7 @@ export async function openPausedInterruptedScenario(): Promise<PausedInterrupted
   // Exercise maintenance while the original pause fence still holds, without continuing T.
   const fenced = await drive(h, h.select('wp1-sc01-paused', AG2B_WORK_TASK_ID));
   if (fenced.state !== 'waiting') throw new Error(`SC01: paused selection did not wait: ${JSON.stringify(fenced)}`);
+  let claimed: ScenarioDrive | undefined;
   return { ...base, pause, pauseBeforeRestart, reconciled,
     clickContinue: async () => {
       const body = await requeueBodyOf(h.host, runRef, 'wp1-sc01-continue', '继续');
@@ -293,8 +295,19 @@ export async function openPausedInterruptedScenario(): Promise<PausedInterrupted
       await assertInvariants(h, 'SC01: human continue', stepOf(h, 'task_requeued', 'SC01 continue'));
       return result;
     },
+    // K-W KA-07: stop after the continuation re-claim commits, before its start.
+    advanceUntilClaimed: async () => {
+      claimed = await drive(h, h.select('wp1-sc01-claim'), performs('start'));
+      return claimed;
+    },
     // Goal-level selection runs work, stage and Goal gates without a second model Run.
-    advanceToEnd: () => drive(h, h.select('wp1-sc01-finish')),
+    advanceToEnd: async () => {
+      const carry = claimed;
+      claimed = undefined;
+      if (carry === undefined) return drive(h, h.select('wp1-sc01-finish'));
+      if (carry.next === null) throw new Error('SC01: the drive did not stop before start');
+      return drive(h, carry.next, undefined, carry);
+    },
   };
 }
 

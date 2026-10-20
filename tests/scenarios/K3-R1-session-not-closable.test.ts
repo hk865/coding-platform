@@ -72,7 +72,7 @@ describe('K3 R1 session_not_closable (K3-21 G7)', () => {
       const lock = lockLedgerAfter(h.database, 'SessionMessageSent', { kernelStore: true });
       const model = createScriptedModel([{ kind: 'calls', calls: [{ callId: 'k3-21-nc-send', name: 'send_session_message',
         args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: 'k3-21-nc question',
-          replyMode: 'wait' } }] }]);
+          intent: 'inquiry', needsReply: true, waitAfterSend: true } }] }]);
       const root = await openWorkRoot(h, model, lock.observer);
       try {
         await root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID, requestId: 'k3-21-nc-start' });

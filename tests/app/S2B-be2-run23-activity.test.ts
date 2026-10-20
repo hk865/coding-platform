@@ -22,6 +22,7 @@ import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import type { RuntimeExecutionDependencies } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { ToolCall, ToolResult } from '../../vendor/coding-agent/dist/public-api.js';
 import { createS2BRuntimeStoreFixture, type S2BRuntimeStoreFixture } from '../helpers/S2B-runtime-store-fixture.js';
+import { deferred } from '../helpers/A2-restart-fixture.js';
 import { controlledTool } from '../helpers/S2B-runtime-tools-support.js';
 import {
   BE2_HOST_1, BE2_HOST_2, be2ExtraSchemas, controlsOn, prepare, restartHost, submitControl, viewOf, withTool,
@@ -32,11 +33,6 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.close();
 });
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((settle) => { resolve = settle; });
-  return { promise, resolve };
-}
 
 function successResult(callId: string): ToolResult {
   return { schemaVersion: 1, callId, status: 'success', output: [{ kind: 'text', text: 'controlled tool completed' }],

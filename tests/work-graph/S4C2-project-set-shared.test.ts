@@ -26,6 +26,10 @@ import * as readModelModule from '../../src/core/work-graph/notes/note-read-mode
 const PROJECT = 's4a-project';
 const GOAL = 's4a-goal';
 const KINDS: readonly S4ANoteFixtureKind[] = ['memory', 'sqlite'];
+/** T1-055: the work (includeInputs: true) and query (false) material reads. */
+// `includeInputs: true` is the work material, `false` the query material; the third value only names the row.
+const MATERIAL_READS = KINDS.flatMap(kind => [true, false].map(includeInputs =>
+  [kind, includeInputs, includeInputs ? 'work' : 'query'] as const));
 
 // The literal header the seed must render: `renderNoteHeader` of a reviewed
 // convention on the project anchor.
@@ -157,7 +161,7 @@ function literalHeader(seeded: Seeded): {
   };
 }
 
-it.each(KINDS)('item 3 %s: the Goal-card work material reads the project set once (5, not 10)', async kind => {
+it.each(MATERIAL_READS)('item 3 %s: the Goal-card material reads the project set once (5, not 10) (includeInputs: %s, the %s material)', async (kind, includeInputs) => {
   const { f, state, model } = await createCounted(kind);
   try {
     const seeded = await seedProject(f);
@@ -173,7 +177,7 @@ it.each(KINDS)('item 3 %s: the Goal-card work material reads the project set onc
     state.project = 0;
     state.other = 0;
     const assembly = await f.platform.graphContext.readContextFacts(f.ctx(), {
-      goalRef: f.goalRef, planRef: f.planRef, focusTaskIds: ['t1'], includeInputs: true,
+      goalRef: f.goalRef, planRef: f.planRef, focusTaskIds: ['t1'], includeInputs,
     });
     expect(assembly.status).toBe('ready');
     if (assembly.status !== 'ready') return;
@@ -184,40 +188,6 @@ it.each(KINDS)('item 3 %s: the Goal-card work material reads the project set onc
     const notes = assembly.value.extensions.notes;
     const projectRow = notes.understanding.rows.find(row => row.scope === 'project');
     expect(projectRow).toBeDefined();
-    expect(projectRow!.version).toBe(1);
-    expect(projectRow!.status.pointer).toMatchObject({ noteId: seeded.understandingId, revision: 1 });
-    expect(notes.understanding.norms).toHaveLength(1);
-    expect(notes.understanding.norms[0]).toMatchObject({ noteId: seeded.normId, version: 2,
-      label: NORM_HEADER });
-  } finally {
-    await f.close();
-  }
-});
-
-it.each(KINDS)('item 3 %s: the Goal-card query material reads the project set once (5, not 10)', async kind => {
-  const { f, state, model } = await createCounted(kind);
-  try {
-    const seeded = await seedProject(f);
-    const real = model.readMemoryMaterial;
-    model.readMemoryMaterial = async (ctx, input) => {
-      state.active = true;
-      try {
-        return await real.call(model, ctx, input);
-      } finally {
-        state.active = false;
-      }
-    };
-    state.project = 0;
-    state.other = 0;
-    const assembly = await f.platform.graphContext.readContextFacts(f.ctx(), {
-      goalRef: f.goalRef, planRef: f.planRef, focusTaskIds: ['t1'], includeInputs: false,
-    });
-    expect(assembly.status).toBe('ready');
-    if (assembly.status !== 'ready') return;
-    // Same hand arithmetic as the work case: one shared set = 5, today 10.
-    expect(state.project).toBe(5);
-    const notes = assembly.value.extensions.notes;
-    const projectRow = notes.understanding.rows.find(row => row.scope === 'project');
     expect(projectRow!.version).toBe(1);
     expect(projectRow!.status.pointer).toMatchObject({ noteId: seeded.understandingId, revision: 1 });
     expect(notes.understanding.norms).toHaveLength(1);

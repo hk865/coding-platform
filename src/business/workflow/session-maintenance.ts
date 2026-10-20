@@ -73,9 +73,7 @@ export type SessionMaintenanceDependencies = Pick<WorkflowDependencies,
   // R1 (L-g, S:597): every new time maintenance supplies comes from the clock.
   | 'now'
   // E2 (§4.2 S:827): the trusted terminal Task-time basis for an old close event.
-  | 'responsibilityBasis'
-  // E14 (§2.2 S:190, S:628): the legacy-provenance reader the directory also uses.
-  | 'legacyProvenance'> & {
+  | 'responsibilityBasis'> & {
     sessions?: WorkflowDependencies['sessions'];
     plans?: WorkflowDependencies['plans'];
     claims?: WorkflowDependencies['claims'];
@@ -345,7 +343,7 @@ export function createSessionMaintenanceService(
       return { kind: 'unsupported', reason: 'the original message of the copy is not readable' };
     }
     const message = read.value;
-    const asksReply = message.intent === 'inquiry' || message.needsReply === true || message.replyMode === 'wait';
+    const asksReply = message.intent === 'inquiry' || message.needsReply === true;
     if (asksReply) {
       // Attachment: the formal answer is associated with the original message.
       const sender = message.response?.sender;
@@ -360,41 +358,6 @@ export function createSessionMaintenanceService(
     const accepted = (message.acceptedInputs ?? []).some((entry) => entry.part === 'message'
       && answered.some((query) => canonical(entry.executionRef) === canonical(query.ref)));
     return accepted ? { kind: 'answered' } : { kind: 'not_confirmed' };
-  }
-
-  /**
-   * E14 (§2.2 S:190 / §3.4 S:628): resolve one legacy-provenance Session of the
-   * current maintenance page by deriving the trusted basis and committing it
-   * through the directory's one-time `backfillSessionProvenance`. A `null`
-   * result means the provenance is still unresolved; the retired branch then
-   * refuses to conclude "no continuation".
-   */
-  async function backfillLegacyProvenance(
-    ctx: CoreCallContext, sessions: WorkflowDependencies['sessions'],
-    sessionRef: SessionRef, record: SessionRecord,
-  ): Promise<SessionRecord | null> {
-    if ((record.provenance ?? null) !== null) return record;
-    if (deps.legacyProvenance === undefined) return null;
-    const backfill = sessions.backfillSessionProvenance;
-    if (backfill === undefined) return null;
-    try {
-      const derived = await deps.legacyProvenance.deriveLegacySessionProvenance(ctx, sessionRef);
-      if (derived.status !== 'ready') return null;
-      const written = await backfill.call(sessions, ctx, {
-        input: { sessionRef, provenance: derived.value.provenance, basis: derived.value.basis },
-        meta: {
-          requestId: `s1-maintenance-provenance:${sessionRef.projectId}:${sessionRef.sessionId}`,
-          expected: [{ ref: record.ref, revision: record.revision }],
-        },
-      });
-      if (written.status !== 'committed') return null;
-      // Re-read so the following due/disposal decision uses the recorded
-      // provenance and the bumped revision.
-      const card = await sessions.readSession(ctx, sessionRef);
-      return card.status === 'ready' ? card.value.record : written.value;
-    } catch {
-      return null;
-    }
   }
 
   /**
@@ -601,21 +564,8 @@ export function createSessionMaintenanceService(
       const failures: { sessionRef: SessionRef; rejection: CoreRejection }[] = [];
       const now = deps.now?.() ?? new Date().toISOString();
 
-      // E14 (§2.2 S:190): backfill the legacy provenance of the CURRENT page
-      // before any line decision. `legacyPending` and the retired branch below
-      // must never read an unchecked old Session as "no continuation".
-      const resolvedRecords = new Map<string, SessionRecord>();
       for (const card of found.value.items) {
-        if ((card.record.provenance ?? null) !== null) continue;
-        const pageRef: SessionRef = { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId };
-        try {
-          const resolved = await backfillLegacyProvenance(automation, sessions, pageRef, card.record);
-          if (resolved !== null) resolvedRecords.set(`${pageRef.projectId}/${pageRef.sessionId}`, resolved);
-        } catch { /* unresolved; the retired branch refuses to conclude below */ }
-      }
-
-      for (const card of found.value.items) {
-        let record = resolvedRecords.get(`${card.record.ref.projectId}/${card.record.ref.sessionId}`) ?? card.record;
+        let record = card.record;
         let links: readonly SessionWorkLink[] = card.links;
         const sessionRef: SessionRef = { projectId: record.ref.projectId, sessionId: record.ref.sessionId };
         try {
@@ -692,14 +642,6 @@ export function createSessionMaintenanceService(
               if (record.healthConclusion === 'kernel_turn_open' && facts.wait === null
                 && (openResponsibleLinks(record, links).length === 0
                   || !(await platformCleanInterruption(automation, facts.latestWork)))) continue;
-              // E14 (§2.2 S:190): while the workspace still has unchecked
-              // provenance-null Sessions, or this line's own legacy provenance
-              // could not be resolved, the absence of a continuation is unproven.
-              if (facts.legacyPending || (record.provenance ?? null) === null) {
-                failures.push({ sessionRef, rejection: reject('incomplete',
-                  'the legacy provenance of this line is unresolved; the absence of a continuation cannot be proven') });
-                continue;
-              }
               mode = 'retired';
               reason = 'the Session is retired with no continuation';
             }

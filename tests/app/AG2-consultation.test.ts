@@ -24,13 +24,12 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createLocalWorkbenchHost, type LocalWorkbenchHost } from '../../src/app/host.js';
-import { loadWorkbenchCliConfig } from '../../src/app/main.js';
-import { ProviderRegistry, type ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
+import type { LocalWorkbenchHost } from '../../src/app/host.js';
+import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import { createScriptedModel, type ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { WorkbenchRuntimeConfiguration } from '../../src/app/runtime-configuration.js';
@@ -57,7 +56,7 @@ import {
   type SessionRecord,
   type SessionRef,
 } from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { cleanupAG2b, startCliHost } from '../helpers/AG2b-collaboration-fixture.js';
 
 const projectDir = resolve(fileURLToPath(new URL('../../', import.meta.url)));
 const at = '2026-09-28T00:00:00.000Z';
@@ -95,6 +94,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const directory of temporary.splice(0)) await rm(directory, { recursive: true, force: true });
+  await cleanupAG2b();
 });
 
 type Started = {
@@ -113,78 +113,51 @@ type StartOverrides = {
  * controlled Kernel provider. The vendor Skill root and the real instruction
  * digest are the trusted startup facts; nothing here is request input. */
 async function startConsultationHost(overrides: StartOverrides = {}): Promise<Started> {
-  const root = overrides.root ?? await mkdtemp(join(tmpdir(), 'ag2-consultation-ws-'));
-  const database = overrides.database ?? await mkdtemp(join(tmpdir(), 'ag2-consultation-db-'));
-  const configDir = await mkdtemp(join(tmpdir(), 'ag2-consultation-config-'));
-  if (overrides.root === undefined) temporary.push(root);
-  if (overrides.database === undefined) temporary.push(database);
-  temporary.push(configDir);
-  await mkdir(join(root, 'src'), { recursive: true });
-  await writeFile(join(root, 'src', 'module.ts'), 'export const ag2Marker = "AG2_CONSULTATION_SOURCE";\n');
-  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({
-    compilerOptions: { target: 'ES2022', module: 'ESNext', strict: true }, include: ['src/**/*.ts'],
-  }));
   const skillsRoot = fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url));
-  const scripted = createScriptedModel(overrides.replies ?? [], overrides.beforeReply);
-  const registry = new ProviderRegistry().register({
-    id: 'deepseek', secretEnvironmentVariable: SECRET_VAR, defaultBaseUrl: 'https://invalid.test',
-    capabilities: { streaming: true, toolCalls: true, usage: true },
-    create: () => scripted.client,
-  });
-  const runtime: WorkbenchRuntimeConfiguration = {
-    schemaVersion: 1,
-    bindings: [{
-      id: 'ag2-query-binding', label: 'AG2 query runtime', scope, role: SESSION_ROLE,
-      configurationRevision: 'ag2-query-host@1',
-      model: { revision: 'ag2-query-model@1', provider: 'deepseek', model: 'ag2-scripted-query', secretEnvironmentVariable: SECRET_VAR },
-      grant: {
-        budget: RUNTIME_BUDGET,
-        hostTemplate: { templateId: 'advisor', revision: '1', digest: sha256Hex(QUERY_INSTRUCTION) },
-        tools: ['read', 'project_source'], writeScope: [], skills: { resourceRoot: skillsRoot, enabledIds: [] },
-        systemInstruction: QUERY_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
-      },
-    }],
-    queryProfiles: [{
-      id: 'ag2-consult', label: 'AG2 read-only consultation', scope, runtimeBindingId: 'ag2-query-binding',
-      sessionRole: SESSION_ROLE, roleBinding: QUERY_ROLE_BINDING, runtimeBudget: RUNTIME_BUDGET,
-      budget: QUERY_BUDGET, consumerId: CONSUMER_ID,
-    }],
-  };
+  const bindings: WorkbenchRuntimeConfiguration['bindings'] = [{
+    id: 'ag2-query-binding', label: 'AG2 query runtime', scope, role: SESSION_ROLE,
+    configurationRevision: 'ag2-query-host@1',
+    model: { revision: 'ag2-query-model@1', provider: 'deepseek', model: 'ag2-scripted-query', secretEnvironmentVariable: SECRET_VAR },
+    grant: {
+      budget: RUNTIME_BUDGET,
+      hostTemplate: { templateId: 'advisor', revision: '1', digest: sha256Hex(QUERY_INSTRUCTION) },
+      tools: ['read', 'project_source'], writeScope: [], skills: { resourceRoot: skillsRoot, enabledIds: [] },
+      systemInstruction: QUERY_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+    },
+  }];
+  const queryProfiles: WorkbenchRuntimeConfiguration['queryProfiles'] = [{
+    id: 'ag2-consult', label: 'AG2 read-only consultation', scope, runtimeBindingId: 'ag2-query-binding',
+    sessionRole: SESSION_ROLE, roleBinding: QUERY_ROLE_BINDING, runtimeBudget: RUNTIME_BUDGET,
+    budget: QUERY_BUDGET, consumerId: CONSUMER_ID,
+  }];
   const workflow: WorkflowHostConfiguration = {
     consumerId: CONSUMER_ID,
     bindings: [{ workspace: scope, sessionRole: SESSION_ROLE, roleBinding: QUERY_ROLE_BINDING,
       budget: { tokenBudget: 100000, deadline: null } }],
   };
-  const configPath = join(configDir, 'workbench.json');
-  await writeFile(configPath, JSON.stringify({
-    sqliteDirectory: database,
-    actor: { kind: 'human', id: 'ag2-operator' },
-    workspaces: [{ scope, name: 'AG2 consultation workspace', root, workspaceRevision: 1, readPrefixes: ['src'] }],
-    architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },
-    kernelStores: { entries: [{ adapterId: 'ag2-kernel', storeKey: 'ag2-kernel-store', workspace: scope,
-      databasePath: join(database, 'kernel.sqlite') }] },
-    runtime,
-    workflow,
-  }));
-  const loaded = await loadWorkbenchCliConfig(configPath);
-  const host = await createLocalWorkbenchHost({
-    ...loaded,
+  const started = await startCliHost({
     publicDir,
-    now: () => at,
-    runtimeProvider: { registry, secretSource: { get: (name: string) => name === SECRET_VAR ? SECRET_VALUE : undefined } },
+    tempPrefix: 'ag2-consultation',
+    ...(overrides.root === undefined ? {} : { root: overrides.root }),
+    ...(overrides.database === undefined ? {} : { database: overrides.database }),
+    scope, actor: { kind: 'human', id: 'ag2-operator' }, at,
+    workspaceName: 'AG2 consultation workspace',
+    files: {
+      'src/module.ts': 'export const ag2Marker = "AG2_CONSULTATION_SOURCE";\n',
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: { target: 'ES2022', module: 'ESNext', strict: true }, include: ['src/**/*.ts'],
+      }),
+    },
+    readPrefixes: ['src'], bindings, queryProfiles, workflow,
+    kernelStore: { adapterId: 'ag2-kernel', storeKey: 'ag2-kernel-store' },
+    secret: { variable: SECRET_VAR, value: SECRET_VALUE },
+    replies: overrides.replies ?? [],
+    ...(overrides.beforeReply === undefined ? {} : { beforeReply: overrides.beforeReply }),
+    // The consultation chain's single controlled model is the primary scripted client.
+    queryModel: () => false,
   });
-  const address = await host.listen();
-  const token = await readPageToken(address.url);
-  return { host, base: address.url, token, root, database, scripted };
-}
-
-async function readPageToken(base: string): Promise<string> {
-  const response = await fetch(base);
-  expect(response.status).toBe(200);
-  const html = await response.text();
-  const match = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
-  if (match?.[1] === undefined) throw new Error('the page did not expose the runtime token meta');
-  return match[1];
+  return { host: started.host, base: started.base, token: started.token, root: started.root,
+    database: started.database, scripted: started.scripted };
 }
 
 const coreUrl = (base: string, suffix: string): string => new URL(CORE_API_PREFIX + suffix, base).toString();

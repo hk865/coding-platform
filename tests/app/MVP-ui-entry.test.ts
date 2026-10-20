@@ -28,7 +28,7 @@ import type { GoalRef, WorkspaceRef } from '../../src/contracts/ledger.js';
 import { renderArchitectureContainment } from '../../src/ui/views.js';
 import type { ArchitectureRevision } from '../../src/core/work-graph/architecture/catalog-contracts.js';
 import {
-  DISPLAY_PREFERENCE_V1_KEY, createScopeDisplayStore,
+  createScopeDisplayStore,
   DIRECTORY_INVENTORY_PAGE_SIZE, ensureDirectory, showMoreDirectoryInventory,
 } from '../../src/ui/main.js';
 import type {
@@ -219,8 +219,7 @@ describe('MVP UI containment without a declared tree', () => {
 
 // Stage-one red contract for the scope display-identity preference. Each scope
 // must keep its OWN display ids so a second browser tab saving scope B cannot
-// erase scope A; the legacy v1 record migrates only its explicit `scopeKey`.
-// A restore re-reads the original Goal/Session through the formal owner reads
+// erase scope A. A restore re-reads the original Goal/Session through the formal owner reads
 // (not a chat/DTO store) and a slow response can never overwrite a later user
 // choice. Both cases are EXPECTED RED until Stage 2 implements the seam.
 describe('MVP UI scope display preference', () => {
@@ -236,7 +235,7 @@ describe('MVP UI scope display preference', () => {
   const scopeA: CoreScope = { projectId: 'scope-preference-project', workspaceId: 'workspace-a' };
   const scopeB: CoreScope = { projectId: 'scope-preference-project', workspaceId: 'workspace-b' };
 
-  it('keeps display ids per scope and migrates only the explicit v1 scopeKey', () => {
+  it('keeps display ids per scope', () => {
     const sharedStorage = memoryStorage();
     const store = createScopeDisplayStore(sharedStorage);
     const otherTab = createScopeDisplayStore(sharedStorage);
@@ -257,20 +256,6 @@ describe('MVP UI scope display preference', () => {
     const global = store.readGlobal();
     expect(global).toEqual({ lastScopeKey: JSON.stringify([scopeB.projectId, scopeB.workspaceId]), theme: 'dark' });
     expect(JSON.stringify(global)).not.toContain('goal-a');
-
-    // The legacy v1 record migrates ONLY the scope named by its explicit scopeKey,
-    // and its lastscope/theme migrate into the separate global key.
-    const legacy = memoryStorage();
-    legacy.set(DISPLAY_PREFERENCE_V1_KEY, JSON.stringify({
-      scopeKey: JSON.stringify([scopeA.projectId, scopeA.workspaceId]),
-      goalId: 'legacy-goal', sessionId: 'legacy-session', mainSessionId: 'legacy-main', theme: 'dark',
-    }));
-    const migrated = createScopeDisplayStore(legacy);
-    expect(migrated.load(scopeA)).toEqual({ goalId: 'legacy-goal', sessionId: 'legacy-session', mainSessionId: 'legacy-main' });
-    expect(migrated.load(scopeB)).toEqual({ goalId: null, sessionId: null, mainSessionId: null });
-    // Old ids landed on exactly ONE scope key; B got nothing.
-    expect(legacy.keys().filter(key => key !== DISPLAY_PREFERENCE_V1_KEY)).toHaveLength(1);
-    expect(migrated.readGlobal()).toEqual({ lastScopeKey: JSON.stringify([scopeA.projectId, scopeA.workspaceId]), theme: 'dark' });
   });
 
   it('restores the original Goal/Session facts from formal reads and lets no slow read overwrite a later choice', async () => {

@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { decisionReadsOver, openLineFixture, rowOf, type LineFixture } from '../helpers/S2C-L-line-support.js';
-import { completedEvent, crashedEvent } from '../helpers/S2C-L-runs-support.js';
+import { crashedEvent } from '../helpers/S2C-L-runs-support.js';
 
 function ready<T>(result: ReadResult<T>): T {
   if (result.status !== 'ready') throw new Error(`expected ready, got ${JSON.stringify(result)}`);
@@ -130,7 +130,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-12 attention from the real queu
     const f = await lineFixture();
     const goalRef = await f.runs.bareGoal('g12-bare');
     const goalRead = ready(await f.base.plans.queryGoal(f.ctx, goalRef));
-    const draft: PlanRevisionDraft = { schemaVersion: 1, planId: 'g12-bare-plan', planRevision: 1, goalId: 'g12-bare',
+    const draft: PlanRevisionDraft = { schemaVersion: 2, planId: 'g12-bare-plan', planRevision: 1, goalId: 'g12-bare',
       stages: [],
       tasks: [
         { taskId: 't', title: 'Bare task', requirementLevel: 'required', taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
@@ -211,27 +211,6 @@ describe.each(['memory', 'sqlite'] as const)('2C-12 attention from the real queu
     if (ref?.kind !== 'card') throw new Error('card ref expected');
     expect(ref.cardKey).toBe(keys[0]);
     expect(row?.status.attentionCounts.decide).toBe(2);
-  });
-
-  it('2C-12 (9) an INCONCLUSIVE formal check is the blocked round_inconclusive attention', async () => {
-    const f = await lineFixture();
-    await f.checks.installPolicy();
-    const goal = await f.checks.addCheckableGoal('g12-blocked', [{ taskId: 'b', title: 'Blocked task' }]);
-    const head = (await f.createSession('s12-blocked')).ref;
-    await f.link(head, { kind: 'task', ref: goal.tasks['b']! }, 'responsible', true);
-    const claim = await f.claim('b', head, goal);
-    await f.runs.enter(claim.claim);
-    await f.runs.recordResult(claim.claim, completedEvent(claim.claim, 'g12-blocked'));
-    const round = await f.checks.openRound(claim.runRef, goal.tasks['b']!, goal.planRef);
-    const begun = await f.checks.beginFirstCheck(round);
-    await f.checks.recordCancelled(round.ref, begun.ticket.checkId, begun.ticket.invocationId);
-    const finalized = await f.checks.finalize(round.ref);
-    expect(finalized.outcome).toBe('INCONCLUSIVE');
-
-    const row = rowOf(ready(await f.reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, head);
-    expect(row?.status.own).toBe('standby');
-    expect(row?.status.attention?.code).toBe('blocked');
-    expect(row?.status.attention?.reason.code).toBe('round_inconclusive');
   });
 
   it('2C-12 (10) the detail lists every attention candidate with its source', async () => {

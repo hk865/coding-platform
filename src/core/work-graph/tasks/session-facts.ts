@@ -21,7 +21,7 @@ import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
-import type { QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
+import type { QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort, LookupValue } from '../../record-store/lookup-ports.js';
 import { validateQueryRunSnapshot } from '../materials/record-readers.js';
@@ -65,16 +65,9 @@ function invalid(reason: string): CoreRejection { return { status: 'rejected', c
 type PageKind = 'executions' | 'queries' | 'successors';
 type FactsPageCursor = {
   v: 1; kind: PageKind; projectId: string; workspaceId: string; sessionId: string; after: string;
-  /** Queries only: the supplementary `lastExecutionRef` locator was already merged. */
-  pointerDone?: boolean;
 };
 function encodeFactsCursor(cursor: FactsPageCursor): string {
   return FACTS_CURSOR_PREFIX + Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
-}
-function compareCanonicalKeys(left: string, right: string): number {
-  // The lookup backends order by UTF-8 byte order (SQLite BINARY); the opaque
-  // cursor must resume the merged stream with the same comparator.
-  return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
 }
 function decodeFactsCursor(raw: unknown): FactsPageCursor | null {
   if (typeof raw !== 'string') return null;
@@ -84,8 +77,7 @@ function decodeFactsCursor(raw: unknown): FactsPageCursor | null {
     if (!isRecord(parsed) || parsed['v'] !== 1
       || (parsed['kind'] !== 'executions' && parsed['kind'] !== 'queries' && parsed['kind'] !== 'successors')
       || !nonEmpty(parsed['projectId']) || !nonEmpty(parsed['workspaceId']) || !nonEmpty(parsed['sessionId'])
-      || !nonEmpty(parsed['after'])
-      || (parsed['pointerDone'] !== undefined && typeof parsed['pointerDone'] !== 'boolean')) {
+      || !nonEmpty(parsed['after'])) {
       return null;
     }
     return parsed as unknown as FactsPageCursor;
@@ -392,7 +384,6 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
     const page = input?.page;
     if (!isRecord(page) || !validLimit(page['limit'])) return invalid(`page.limit must be an integer between 1 and ${EXTERNAL_MAX_LIMIT}`);
     let after: string | undefined;
-    let pointerDone = false;
     if (page['cursor'] !== undefined) {
       const decoded = decodeFactsCursor(page['cursor'] as string);
       if (decoded === null || decoded.kind !== 'queries' || decoded.projectId !== scope.projectId
@@ -400,7 +391,6 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
         return invalid('the page cursor belongs to another scope, Session or query kind');
       }
       after = decoded.after;
-      pointerDone = decoded.pointerDone === true;
     }
     const sessionRead = await readSessionRecord(scope);
     if (sessionRead.status !== 'ready') return sessionRead.rejection;
@@ -414,30 +404,14 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
     }
     if (result.status !== 'ready') return unavailable(`${result.code}: ${result.reason}`);
     const keys = result.value.records.map(record => record.refKey);
-    // §2.8: the existing exact `lastExecutionRef` pointer is a supplementary
-    // locator for an old QueryRun without `executionState` (which has no index
-    // entry). It is merged with the indexed page by full ref; the opaque cursor
-    // carries the last emitted ref so the merged stream never repeats the
-    // pointer on a later page and never exceeds `limit`.
-    const pointer = sessionRead.session.lastExecutionRef;
-    const pointerRef: QueryRunRef | null = pointer !== null && pointer.aggregateType === 'QueryRun'
-      && pointer.projectId === scope.projectId && pointer.workspaceId === scope.workspaceId ? pointer : null;
-    const pointerKey = pointerRef === null ? null : refKeyOf(pointerRef);
-    const pointerActive = pointerKey !== null && !pointerDone
-      && (after === undefined || compareCanonicalKeys(pointerKey, after) > 0);
-    const candidates = [...keys];
-    if (pointerActive && pointerKey !== null && !candidates.includes(pointerKey)) candidates.push(pointerKey);
-    candidates.sort(compareCanonicalKeys);
-    const pageKeys = candidates.slice(0, page['limit']);
-    const hasMore = pageKeys.length < candidates.length || result.value.next !== null;
+    const pageKeys = keys.slice(0, page['limit']);
+    const hasMore = result.value.next !== null;
     if (pageKeys.length === 0 && hasMore) {
       // A page with no emittable ref cannot advance the opaque cursor; refuse
       // rather than loop or silently report an absent Query.
       return incomplete(`session_facts_page_limit: the QueryRun window of Session ${scope.sessionId} did not advance`);
     }
     const lastEmitted = pageKeys.length > 0 ? pageKeys[pageKeys.length - 1] : after;
-    const pointerDoneNext = pointerKey !== null && (pointerDone || pageKeys.includes(pointerKey)
-      || (lastEmitted !== undefined && compareCanonicalKeys(pointerKey, lastEmitted) <= 0));
     let read;
     try {
       read = await records.readMany(pageKeys);
@@ -450,7 +424,6 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
     for (const key of pageKeys) {
       const record = present.get(key);
       if (record === undefined) {
-        if (key === pointerKey) continue;
         return incomplete(`session_facts_page_limit: QueryRun ${key} was not confirmed by the canonical read`);
       }
       const validated = validateQueryRunSnapshot(record);
@@ -466,14 +439,14 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
       }
       const state = snapshot.run.executionState;
       const sessionMatch = state !== undefined && state.sessionRef.sessionId === scope.sessionId;
-      if (!sessionMatch && key !== pointerKey) {
+      if (!sessionMatch) {
         return unavailable(`the QueryRun ${key} does not belong to Session ${scope.sessionId}`);
       }
       entries.push(snapshot);
     }
     const nextCursor = hasMore && lastEmitted !== undefined ? encodeFactsCursor({
       v: 1, kind: 'queries', projectId: scope.projectId, workspaceId: scope.workspaceId,
-      sessionId: scope.sessionId, after: lastEmitted, ...(pointerDoneNext ? { pointerDone: true } : {}),
+      sessionId: scope.sessionId, after: lastEmitted,
     }) : null;
     return { status: 'ready', value: {
       items: entries, nextCursor,

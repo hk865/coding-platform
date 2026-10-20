@@ -114,13 +114,9 @@ const HEAD_KEYS: readonly string[] = [...BODY_KEYS, 'ref', 'noteId', 'version', 
   'anchorKey4', 'createdAt', 'since', 'revision'];
 const VERSION_KEYS: readonly string[] = [...BODY_KEYS, 'ref', 'noteId', 'version', 'state', 'goalId', 'source',
   'reviewReasons', 'change', 'at', 'since', 'revision', 'noticeClass'];
-/** 4C-2: the note classes a `NoteVersion` may carry; absent decodes as null. */
+/** 4C-2: the note classes a `NoteVersion` may carry; `null` is the explicit absence. */
 const NOTICE_CLASSES: readonly string[] = ['user_affected', 'structural', 'scribe_result'];
 
-/** An absent `noticeClass` decodes as the explicit null of an old NoteVersion. */
-function withNoticeClass(body: UnknownRecord): UnknownRecord {
-  return body['noticeClass'] === undefined ? { ...body, noticeClass: null } : body;
-}
 function isCursorOrNull(value: unknown): boolean {
   return value === null || (typeof value === 'string' && /^c\d{10}$/.test(value));
 }
@@ -365,6 +361,7 @@ function noteHeadBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null', r
 
 function noteVersionBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null', requireEnvelopeRevision: boolean): string | null {
   if (!hasOnlyKeys(body, VERSION_KEYS)) return 'NoteVersion record carries unknown fields';
+  if (!Object.prototype.hasOwnProperty.call(body, 'noticeClass')) return 'NoteVersion noticeClass is required';
   const ref = body['ref'];
   if (!isRecord(ref) || ref['aggregateType'] !== 'NoteVersion' || !nonEmpty(ref['projectId']) || !nonEmpty(ref['noteId'])
     || !isPos(ref['version']) || !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'noteId', 'version'])) {
@@ -384,10 +381,10 @@ function noteVersionBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null'
   if (source !== null) return source;
   const reasons = reviewReasonsProblem(body['reviewReasons'], 'NoteVersion reviewReasons');
   if (reasons !== null) return reasons;
-  // 4C-2: absent on old versions (decoded as null); a present value must be one
-  // of the three classes, `null` is also accepted as the explicit absence.
+  // 4C-2: a present value must be one of the three classes, `null` is also
+  // accepted as the explicit absence.
   const noticeClass = body['noticeClass'];
-  if (noticeClass !== undefined && noticeClass !== null && !NOTICE_CLASSES.includes(noticeClass as string)) {
+  if (noticeClass !== null && !NOTICE_CLASSES.includes(noticeClass as string)) {
     return 'NoteVersion noticeClass is not recognized';
   }
   const change = body['change'];
@@ -469,7 +466,7 @@ export function decodeNoteVersionSnapshot(record: EncodedRecord): DecodeResult<N
   if (body['revision'] !== record.revision) return invalid('NoteVersion record revision disagrees with its revision');
   const problem = noteVersionBodyProblem(body, 'bound', true);
   if (problem !== null) return invalid(`NoteVersion record payload is invalid: ${problem}`);
-  return { status: 'decoded', value: withNoticeClass(body) as unknown as NoteVersionSnapshot };
+  return { status: 'decoded', value: body as unknown as NoteVersionSnapshot };
 }
 
 export function encodeCurrentPointerSnapshot(snapshot: CurrentPointerSnapshot): EncodedRecord {
@@ -581,7 +578,6 @@ export function noteWrittenEventFromEvent(event: EncodedDomainEvent): DecodeResu
   if (headProblem !== null) return invalid(`NoteWritten head is invalid: ${headProblem}`);
   const versionProblem = noteVersionBodyProblem(version, 'null', false);
   if (versionProblem !== null) return invalid(`NoteWritten version is invalid: ${versionProblem}`);
-  body['version'] = withNoticeClass(version);
   if ((head['ref'] as UnknownRecord)['projectId'] !== body['projectId']) {
     return invalid('NoteWritten head scope disagrees with the event');
   }
@@ -609,18 +605,19 @@ DecodeResult<NoteDispositionChangedEventV1> {
   if (headProblem !== null) return invalid(`NoteDispositionChanged head is invalid: ${headProblem}`);
   const versionProblem = noteVersionBodyProblem(version, 'null', false);
   if (versionProblem !== null) return invalid(`NoteDispositionChanged version is invalid: ${versionProblem}`);
-  body['version'] = withNoticeClass(version);
+  if (!Object.prototype.hasOwnProperty.call(body, 'actor')) return invalid('NoteDispositionChanged actor is required');
+  if (!Object.prototype.hasOwnProperty.call(body, 'proof')) return invalid('NoteDispositionChanged proof is required');
   if (body['acknowledgementRef'] !== null) {
     const acknowledgement = sessionMessageRefProblem(body['acknowledgementRef']);
     if (acknowledgement !== null) return invalid(`NoteDispositionChanged ${acknowledgement}`);
   }
   const actor = body['actor'];
-  if (actor !== undefined && actor !== null) {
+  if (actor !== null) {
     const actorIssue = actorRefProblem(actor, 'actor');
     if (actorIssue !== null) return invalid(`NoteDispositionChanged ${actorIssue}`);
   }
   const proof = body['proof'];
-  if (proof !== undefined && proof !== null) {
+  if (proof !== null) {
     const proofIssue = decisionChangeProofProblem(proof);
     if (proofIssue !== null) return invalid(`NoteDispositionChanged ${proofIssue}`);
     // The book: acknowledgementRef equals proof.acknowledgementRef when the proof is present.
@@ -629,8 +626,6 @@ DecodeResult<NoteDispositionChangedEventV1> {
       return invalid('NoteDispositionChanged acknowledgementRef disagrees with proof.acknowledgementRef');
     }
   }
-  body['actor'] = actor ?? null;
-  body['proof'] = proof ?? null;
   return { status: 'decoded', value: body as unknown as NoteDispositionChangedEventV1 };
 }
 

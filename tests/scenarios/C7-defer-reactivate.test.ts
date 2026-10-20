@@ -412,7 +412,7 @@ it('C7 TASK-19 inside the window of the selected Run\'s control (Host, commit ba
   const T = AG2B_WORK_TASK_ID;
   let recipient: SessionRef | undefined;
   const send = { callId: 'c7-wait-send', name: 'send_session_message',
-    args: { recipient: {}, text: 'C7 question: a reply nobody sends', replyMode: 'wait' } as Record<string, unknown> };
+    args: { recipient: {}, text: 'C7 question: a reply nobody sends', intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const h: HostScenario = await openHostScenario({ check: 'pass', script: { replies: [{ kind: 'calls', calls: [send] }],
     duringReply: async (index) => {
       if (index === 0 && recipient !== undefined) send.args['recipient'] = { projectId: recipient.projectId, sessionId: recipient.sessionId };

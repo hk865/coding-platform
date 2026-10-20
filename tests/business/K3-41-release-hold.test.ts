@@ -6,10 +6,11 @@
  * record), directly holds it, then clicks "continue" (`release-hold`). Because
  * the original Run's rework fence is human, the route calls `releaseHold` and
  * then the same operator's human `requeueTask` (afterRun R), and the next drive
- * claims exactly one continuation. (三) reproduces the crash boundary by making
- * the requeue step fail once (the Goal paused): the record is already
- * `released`, no TaskRequeue exists, and the re-click replays `releaseHold` and
- * performs the one requeue.
+ * claims exactly one continuation. (三) parameterizes the two preconditions of
+ * that window: a real Host crash after the `releaseHold` commit and before the
+ * requeue, and a Goal pause that makes the requeue `busy` until the Goal
+ * resumes. In both the record is already `released`, the same request replays
+ * `releaseHold`, and exactly one requeue/continuation is committed.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
@@ -303,55 +304,6 @@ it('K3-41 (二) memory/sqlite Host: release-hold on a human-stopped Run releases
   }
 }, 300_000);
 
-it('K3-41 (三) memory/sqlite Host: a crash between the two steps leaves `released` and no requeue; the re-click replays and requeues exactly once', async () => {
-  const { host, runRef, held, inv } = await pausedAttestedAndHeld('three');
-  try {
-    // The crash window modelled without a process death: the Goal is paused, so
-    // `releaseHold` commits but the human requeue is refused. The durable state
-    // is the L29 row 13 state: record `released`, Task at AV-4, no TaskRequeue.
-    const paused = await post<WriteResult<GoalControlOutcomeV1>>(host, 'goals/control', graphWrite(AG2B_SCOPE,
-      { goalRef: AG2B_GOAL_REF, control: 'pause', reason: 'hold the continuation for the crash window' },
-      'k3-41-goal-pause', await goalControlPins(host)));
-    expect(paused, JSON.stringify(paused)).toMatchObject({ status: 'committed' });
-
-    const first = await post<WriteResult<{ hold: WriteResult<UnknownCallReviewV1>;
-      requeue: WriteResult<{ kind: string }> | null }>>(host, 'unknown-call-reviews/release-hold',
-    graphWrite(AG2B_SCOPE, { reviewRef: held.ref }, RELEASE, [{ ref: held.ref, revision: held.revision }]));
-    expect(first, JSON.stringify(first)).toMatchObject({ status: 'committed', value: {
-      hold: { status: 'committed', value: { disposition: { hold: 'released' } } },
-      requeue: { status: 'rejected', code: 'busy' } } });
-    const releasedRecord = await readReview(host, runRef);
-    expect(releasedRecord).toMatchObject({ status: 'resolved', activeRound: null, disposition: { hold: 'released' } });
-
-    // Resume the Goal and click release-hold again with the SAME request: the
-    // owner replays its receipt and the human requeue now commits.
-    const resumed = await post<WriteResult<GoalControlOutcomeV1>>(host, 'goals/control', graphWrite(AG2B_SCOPE,
-      { goalRef: AG2B_GOAL_REF, control: 'resume', reason: 'resume for the re-click' },
-      'k3-41-goal-resume', await goalControlPins(host)));
-    expect(resumed, JSON.stringify(resumed)).toMatchObject({ status: 'committed' });
-    const replay = await post<WriteResult<{ hold: WriteResult<UnknownCallReviewV1>;
-      requeue: WriteResult<{ kind: string }> | null }>>(host, 'unknown-call-reviews/release-hold',
-    graphWrite(AG2B_SCOPE, { reviewRef: releasedRecord.ref }, RELEASE,
-      [{ ref: releasedRecord.ref, revision: releasedRecord.revision }]));
-    expect(replay, JSON.stringify(replay)).toMatchObject({ status: 'committed', value: {
-      hold: { status: 'committed', replayed: true, value: { revision: releasedRecord.revision } },
-      requeue: { status: 'committed', value: { kind: 'requeued' } } } });
-
-    const continuation = await driveChecked(host, inv, selectWork('k3-41-three-continue', true), { stopBefore: 'open_checks' });
-    expect(continuation.next?.kind === 'perform' ? continuation.next.operation.kind : null,
-      'the drive stops after the one continuation Run').toBe('open_checks');
-    const row = await workRow(host);
-    if (row.execution === null || row.execution.runId === runRef.runId) {
-      throw new Error('the re-clicked human requeue must have been claimed as the continuation Run');
-    }
-    // Only one continuation Run exists: the original Run stays the one ended
-    // Run and the drive selected exactly its one successor.
-    expect((await readExecution(host, runRef)).run.status).toBe('ended');
-  } finally {
-    await host.host.close();
-  }
-}, 300_000);
-
 // ---------------------------------------------------------------------------
 // F-044: the real crash boundary of release-hold on the old SQLite Host.
 // The gate below is a wrapper around the real commit: it is entered AFTER the
@@ -361,7 +313,10 @@ it('K3-41 (三) memory/sqlite Host: a crash between the two steps leaves `releas
 // fixture; a Goal pause no longer stands in for it.
 // ---------------------------------------------------------------------------
 
-it('K3-41 (三) SQLite Host: a real crash after the releaseHold commit and before the requeue replays the same request and claims exactly one continuation', async () => {
+it.each([
+  ['a real crash after the releaseHold commit and before the requeue replays the same request and claims exactly one continuation', 'crash'],
+  ['a Goal pause that makes the requeue busy until the Goal resumes replays the same request and claims exactly one continuation', 'goal-pause'],
+])('K3-41 (三) SQLite Host: %s', async (_description, precondition) => {
   let armed = false;
   let reachedResolve!: () => void;
   const reached = new Promise<void>((resolve) => { reachedResolve = resolve; });
@@ -385,9 +340,9 @@ it('K3-41 (三) SQLite Host: a real crash after the releaseHold commit and befor
   let restored = false;
   let aside: Awaited<ReturnType<typeof moveKernelAside>> | null = null;
   try {
-    const precondition = await crashedShellReviewRun(h);
-    const prepared = precondition.prepared;
-    aside = precondition.aside;
+    const setup = await crashedShellReviewRun(h);
+    const prepared = setup.prepared;
+    aside = setup.aside;
     const unknown = await readExecution(h.host, prepared.claim.runRef);
     // The human pause survives the crash reconcile: RUN-20 books `unknown`, so
     // the person's attestation (RUN-22) is what creates the review record.
@@ -413,43 +368,69 @@ it('K3-41 (三) SQLite Host: a real crash after the releaseHold commit and befor
     const releaseBody = graphWrite(AG2B_SCOPE, { reviewRef: heldRecord.value.ref }, RELEASE,
       [{ ref: heldRecord.value.ref, revision: heldRecord.value.revision }]);
 
-    // The old Host's releaseHold commit lands and the gate holds before the
-    // human requeue; the request stays in flight on the Host that is abandoned.
-    armed = true;
-    oldRequest = h.post('unknown-call-reviews/release-hold', releaseBody);
-    await reached;
-    expect(hits, 'the gate held exactly the release-hold commit').toBe(1);
-    const durable = await readReview(h.host, prepared.claim.runRef);
-    expect(durable).toMatchObject({ status: 'resolved', activeRound: null, disposition: { hold: 'released' } });
-    expect(durable.revision).toBe(heldRecord.value.revision + 1);
+    let releasedRevision: number | null = null;
+    if (precondition === 'goal-pause') {
+      // Goal paused: the hold commits, the human requeue is refused `busy`.
+      const paused = await h.post<WriteResult<GoalControlOutcomeV1>>('goals/control', graphWrite(AG2B_SCOPE,
+        { goalRef: AG2B_GOAL_REF, control: 'pause', reason: 'hold the continuation for the crash window' },
+        'k3-41-goal-pause', await goalControlPins(h.host)));
+      expect(paused, JSON.stringify(paused)).toMatchObject({ status: 'committed' });
+      const first = await h.post<WriteResult<{ hold: WriteResult<UnknownCallReviewV1>;
+        requeue: WriteResult<{ kind: string }> | null }>>('unknown-call-reviews/release-hold', releaseBody);
+      expect(first, JSON.stringify(first)).toMatchObject({ status: 'committed', value: {
+        hold: { status: 'committed', value: { disposition: { hold: 'released' } } },
+        requeue: { status: 'rejected', code: 'busy' } } });
+      const releasedRecord = await readReview(h.host, prepared.claim.runRef);
+      expect(releasedRecord).toMatchObject({ status: 'resolved', activeRound: null, disposition: { hold: 'released' } });
+      releasedRevision = releasedRecord.revision;
+      // Resume the Goal: the re-click below replays the hold and the human
+      // requeue now commits.
+      const resumed = await h.post<WriteResult<GoalControlOutcomeV1>>('goals/control', graphWrite(AG2B_SCOPE,
+        { goalRef: AG2B_GOAL_REF, control: 'resume', reason: 'resume for the re-click' },
+        'k3-41-goal-resume', await goalControlPins(h.host)));
+      expect(resumed, JSON.stringify(resumed)).toMatchObject({ status: 'committed' });
+    } else {
+      // The old Host's releaseHold commit lands and the gate holds before the
+      // human requeue; the request stays in flight on the Host that is abandoned.
+      armed = true;
+      oldRequest = h.post('unknown-call-reviews/release-hold', releaseBody);
+      await reached;
+      expect(hits, 'the gate held exactly the release-hold commit').toBe(1);
+      const durable = await readReview(h.host, prepared.claim.runRef);
+      expect(durable).toMatchObject({ status: 'resolved', activeRound: null, disposition: { hold: 'released' } });
+      expect(durable.revision).toBe(heldRecord.value.revision + 1);
 
-    // The old Host is abandoned at that boundary; the new Host starts on the
-    // SAME SQLite database and runs its real startup reconcile. Its wrapper is
-    // not the gate (dropCommitGate restored the factories).
-    h.dropCommitGate();
-    const report = await h.restart({ crash: true, invariants: false });
-    expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03' });
-    // The startup reconcile alone creates no continuation.
-    expect(await readReview(h.host, prepared.claim.runRef)).toEqual(durable);
-    expect((await h.taskRow()).rework?.entries ?? [], 'no requeue before the replayed click').toHaveLength(0);
+      // The old Host is abandoned at that boundary; the new Host starts on the
+      // SAME SQLite database and runs its real startup reconcile. Its wrapper is
+      // not the gate (dropCommitGate restored the factories).
+      h.dropCommitGate();
+      const report = await h.restart({ crash: true, invariants: false });
+      expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03' });
+      // The startup reconcile alone creates no continuation.
+      expect(await readReview(h.host, prepared.claim.runRef)).toEqual(durable);
+      expect((await h.taskRow()).rework?.entries ?? [], 'no requeue before the replayed click').toHaveLength(0);
+    }
 
-    // The SAME release-hold request on the new Host: the hold receipt replays
-    // and the one human requeue commits.
+    // The SAME release-hold request on the new/resumed Host: the hold receipt
+    // replays and the one human requeue commits.
     const replay = await h.post<WriteResult<{ hold: WriteResult<UnknownCallReviewV1>;
       requeue: WriteResult<{ kind: string }> | null }>>('unknown-call-reviews/release-hold', releaseBody);
     expect(replay, JSON.stringify(replay)).toMatchObject({ status: 'committed', value: {
       hold: { status: 'committed', replayed: true, value: { disposition: { hold: 'released' } } },
       requeue: { status: 'committed', replayed: false, value: { kind: 'requeued' } } } });
     if (replay.status !== 'committed' || replay.value.requeue === null) throw new Error('the replay must requeue');
+    if (releasedRevision !== null) {
+      expect(replay).toMatchObject({ value: { hold: { value: { revision: releasedRevision } } } });
+    }
 
     // Exactly one continuation Run is claimed from that one requeue.
-    const continuation = await h.advance(h.select('k3-41-crash-continue'),
-      { stopBefore: performs('open_checks') });
+    const continuation = await h.advance(h.select('k3-41-crash-continue'), { stopBefore: performs('open_checks') });
     expect(continuation.next?.kind === 'perform' ? continuation.next.operation.kind : null,
       'the drive stops after the one continuation Run').toBe('open_checks');
     const row = await h.taskRow();
     expect(row.rework?.entries ?? [], 'exactly one continuation').toHaveLength(1);
     expect(row.execution?.runId).not.toBe(prepared.claim.runRef.runId);
+    expect((await readExecution(h.host, prepared.claim.runRef)).run.status).toBe('ended');
 
     // A second click of the same request replays both steps and adds nothing.
     const again = await h.post<WriteResult<{ hold: WriteResult<UnknownCallReviewV1>;

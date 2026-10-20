@@ -304,10 +304,10 @@ function sameOptionalJson(left: unknown, right: unknown): boolean {
 }
 
 function sourceInputs(plan: PlanRevisionSnapshot): readonly TaskInputRequirementV2[] {
-  return plan.schemaVersion === 2 ? plan.inputRequirements ?? [] : [];
+  return plan.inputRequirements ?? [];
 }
 function draftInputs(plan: PlanRevisionDraft): readonly TaskInputRequirementV2[] {
-  return plan.schemaVersion === 2 ? plan.inputRequirements ?? [] : [];
+  return plan.inputRequirements ?? [];
 }
 function definitionIndex(plan: PlanRevisionSnapshot): ReadonlyMap<string, FrozenTaskDefinition> {
   return buildFrozenTaskDefinitions({ tasks: plan.tasks, assignments: revisionAssignments(plan),

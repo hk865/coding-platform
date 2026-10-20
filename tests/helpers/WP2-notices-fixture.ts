@@ -3,7 +3,6 @@
 import { expect, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
-import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { DecisionNoticeSourcePort, DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
@@ -14,7 +13,7 @@ import type { AuthorizeConfiguration } from '../../src/core/work-graph/model/exe
 import type { QueryEntryIdentity } from '../../src/core/work-graph/queries/contracts.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../src/contracts/ledger.js';
 import { consultationQueryRefs, type QueryJobAnswerV1, type QueryJobRef, type QueryRunRef } from '../../src/contracts/query-job.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import * as memoryBackend from '../../src/core/record-store/in-memory-record-store.js';
 import * as sqliteBackend from '../../src/core/record-store/sqlite-record-store.js';
 import { DECISION_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
@@ -32,12 +31,13 @@ import { createMaterialRecordReaders } from '../../src/core/work-graph/materials
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
-import { createQueryExecution, QUERY_MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/queries/query-execution.js';
+import { createQueryExecution } from '../../src/core/work-graph/queries/query-execution.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { decodeSessionRecord } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { kernelSessionClaimKey } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createArchiveServiceFixture, committed, ready, key, type ArchiveServiceFixture } from './S1-archive-service-fixture.js';
 import { B2_HOST } from './B2-execution-fixture.js';
+import { preparationHost, prepareQueryForReal } from './task-claim-fixture.js';
 
 export { committed, ready, key };
 export type NoticeSourceFactory = (deps: { records: DecisionReadRecordsPort;
@@ -193,18 +193,11 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
     committed(await owner.claimQuery(ctx, { input: { queryRunRef, sessionRef }, meta: { requestId: f.id(),
       expected: [await f.pin(queryJobRef), await f.pin(queryRunRef), await f.sessionPin(sessionRef)] } }));
     const facts = ready(await owner.readPreparationFacts(ctx, queryRunRef));
-    const state = facts.record.run.run.executionState;
-    if (!state) throw new Error('real Query claim has no execution state');
-    const manifest: PreparedQueryManifestV1 = { schemaVersion: 1, kind: 'query_execution', queryRunRef, sessionRef,
-      sessionGeneration: state.sessionGeneration, roleBinding: state.roleBinding, sessionRole: state.role, role: state.roleResolution,
-      hostTemplate: host.hostTemplate, hostConfigurationRevision: host.configurationRevision,
-      goal: { ref: facts.goal.ref, revision: facts.goal.revision }, workspace: { ref: facts.workspace.ref, revision: facts.workspace.revision },
-      focusPlan: facts.focusPlan ? { ref: facts.focusPlan.ref, revision: facts.focusPlan.revision } : null,
-      permissions: host.permissions, runtimeBudget: budget, budget: { tokenBudget: null, deadline: null }, sourceRefs: [], input: question, inputDigest: sha256Hex(question) };
-    const body = ready(await b2.bodies.put({ body: JSON.stringify(manifest), contentType: QUERY_MANIFEST_CONTENT_TYPE,
-      sourceRefs: [], origin: { kind: 'run', owner: queryRunRef }, requestedAt: f.now() }));
-    const prepared = { queryRunRef, bundleRef: body.ref, inputDigest: manifest.inputDigest };
-    committed(await owner.bindPreparedQuery(ctx, { input: { prepared }, meta: { requestId: f.id(), expected: [await f.pin(queryRunRef), await f.sessionPin(sessionRef)] } }));
+    const prepared = (await prepareQueryForReal({ records, ctx }, {
+      bodies: b2.bodies, queryRunRef, queryExecution: owner, now: f.now, requestId: f.id(),
+      host: preparationHost({ configurationRevision: host.configurationRevision, permissions: host.permissions,
+        hostTemplate: host.hostTemplate, budget }),
+    })).prepared;
     const kernel = { ...facts.record.session.kernel, runId: f.id(), turnId: f.id() };
     const ticket = committed(await owner.beginQueryEntry(ctx, { input: { prepared, consumerId: f.id(), kernel }, meta: { requestId: f.id(),
       expected: [await f.pin(queryJobRef), await f.pin(queryRunRef), await f.sessionPin(sessionRef)] } })).value;

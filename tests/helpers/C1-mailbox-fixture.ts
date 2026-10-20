@@ -1,10 +1,9 @@
-/** One real ledger for claims, Session, Role facts and mailbox. Running is a domain seed, never an entered-producer claim. */
+/** One real ledger for claims, Session, Role facts and mailbox. Running/entered facts come from the real Runtime start. */
 import { join } from 'node:path';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef } from '../../src/contracts/core/identity.js';
 import type { SessionRecord } from '../../src/contracts/core/session.js';
-import type { ExecutionAuthorizationV2 } from '../../src/contracts/dispatch.js';
 import type { PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { GoalRecordTransactionPort } from '../../src/core/record-store/ports.js';
 import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
@@ -27,9 +26,11 @@ import { createSessionMailbox } from '../../src/core/work-graph/communication/ma
 import type { SessionMailboxDependencies, SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import type { AuthorizeConfiguration } from '../../src/core/work-graph/model/execution-entry-contracts.js';
-import { MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/tasks/execution-entry-service.js';
+import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
+import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import { SESSION_MAILBOX_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { createTaskClaimFixture, type ClaimFixtureKind, type TaskClaimFixture } from './task-claim-fixture.js';
+import { createS2BRuntimeSteps } from './S2B-runtime-steps-fixture.js';
 import type { TaskClaim } from '../../src/core/work-graph/model/claim-contracts.js';
 
 export const AT = '2026-09-26T00:00:00.000Z';
@@ -88,7 +89,14 @@ export function envelopeFor(run: RunSnapshot, tools: string[] = [...SESSION_MAIL
 }
 
 export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness> {
-  const fixture = await createTaskClaimFixture(kind, { ...SESSION_MESSAGE_RECORD_SCHEMAS, events: [...SESSION_MESSAGE_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events], lookups: SESSION_MESSAGE_RECORD_SCHEMAS.records.length ? SESSION_MESSAGE_LOOKUP_INDEXES : [] });
+  const fixture = await createTaskClaimFixture(kind, {
+    records: [...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...EXECUTION_ENTRY_RECORD_SCHEMAS.records,
+      ...MODEL_REQUEST_RECORD_SCHEMAS.records],
+    events: [...SESSION_MESSAGE_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
+      ...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...MODEL_REQUEST_RECORD_SCHEMAS.events],
+    lookups: [...(SESSION_MESSAGE_RECORD_SCHEMAS.records.length ? SESSION_MESSAGE_LOOKUP_INDEXES : []),
+      ...EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? [], ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? []],
+  });
   const claimResult = await fixture.service.claimTask(fixture.ctx, await fixture.buildRequest({ requestId: 'c1-claim' }));
   if (claimResult.status !== 'committed') throw new Error(`C1 fixture claim failed: ${JSON.stringify(claimResult)}`);
   const claim = claimResult.value;
@@ -97,38 +105,27 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
   const busySession: SessionRef = { projectId: claim.sessionRef.projectId, sessionId: claim.sessionRef.sessionId };
   const idleSession: SessionRef = { projectId: fixture.sessions.second.projectId, sessionId: fixture.sessions.second.sessionId };
   const runKey = key(claim.runRef);
-  const base = await fixture.records.readMany([runKey]);
-  if (base.status !== 'ready' || !base.value.records[0]) throw Error('Missing real claimed Run');
-  const baseRun = JSON.parse(base.value.records[0].json) as RunSnapshot;
-  // Explicit domain-rule seed ONLY. This does not exercise the Runtime entered producer.
-  let currentRun: RunSnapshot = { ...baseRun, revision: baseRun.revision + 1, status: 'running', startedAt: AT,
-    envelope: envelopeFor(baseRun), executionAuthorization: { schemaVersion: 2, generation: 1,
-      sessionGeneration: claim.generation, revision: 3, consumerId: 'c1-domain-driver', inputDigest: 'f'.repeat(64),
-      phase: 'entered', kernel: { adapterId: 'r4c-claim-kernel', kernelSessionId: 'r4c-claim-kernel-session-session-first',
-        runId: 'c1-domain-kernel-run', turnId: 'c1-domain-turn' } } };
-  const seeded = await fixture.commitRaw([{ refKey: runKey, schemaId: 'RunSnapshot@1', revision: currentRun.revision, json: JSON.stringify(currentRun) }], [{refKey: runKey, expectedRevision: baseRun.revision}]);
-  if (seeded.status !== 'committed') throw Error(`C1 running domain seed failed: ${JSON.stringify(seeded)}`);
   const backend = { records: fixture.records, close: () => fixture.closeBackend() };
   const seedEvents = (suffix: string) => [{eventId: `c1-${suffix}`, eventType:'TrustedScopeSeeded', schemaVersion:1, occurredAt: AT, json:JSON.stringify({eventId:`c1-${suffix}`,eventType:'TrustedScopeSeeded',schemaVersion:1,occurredAt:AT})}];
   const now = () => AT;
   let eventSeq = 0;
   const eventId = () => `c1-message-event-${++eventSeq}`;
+  const newId = () => `c1-id-${++eventSeq}`;
   let writeSeq = 0;
-  const reads = createMaterialRecordReaders(backend.records);
   const bodyPath = join(fixture.directory, 'c1-bodies.sqlite');
   let bodies = kind === 'sqlite' ? createSqliteRawArtifactStore(bodyPath) : new RawArtifactBodyStore();
-  const materials = createMaterialService({ bodies: {put: input => bodies.put(input), read: ref => bodies.read(ref)}, authority: reads.authority, now });
-  // C2 migration: the old fixture carried a fake `'f'.repeat(64)` digest. The
-  // fresh Host admission needs the real prepared manifest body and a real Host
-  // binding, so store the manifest through the same body store and pin it in the
-  // seeded Run envelope.
+  const materialReads = createMaterialRecordReaders(backend.records);
+  const materials = createMaterialService({ bodies, authority: materialReads.authority, now });
+  const executions = createRunStateReader({ records: backend.records, bodies });
+  // The trusted Host grant, the same one the entry owner re-checks.
   const c1HostTemplate: PreparedTaskManifestV1['hostTemplate'] = { templateId: 'builder', revision: '1', digest: sha256Hex('c1-mailbox-fixture-trusted-host-template') };
   const c1SessionRole: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' };
   const c1ConfigurationRevision = 'c1-mailbox-host-config@1';
-  const c1HostPermissions = structuredClone(envelopeFor(currentRun).permissions);
+  const c1HostPermissions = { policyRevision: fixture.roleBinding.policyRevision,
+    tools: [...SESSION_MAILBOX_TOOL_NAMES], writeScope: [] as string[] };
   const sameJson = (left: unknown, right: unknown): boolean => canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue);
   const authorizeConfiguration: AuthorizeConfiguration = async (ctx, input) => {
-    if (ctx.projectId !== busySession.projectId || ctx.workspaceId !== currentRun.workspaceSnapshot.workspaceId
+    if (ctx.projectId !== busySession.projectId || ctx.workspaceId !== claim.workspaceId
       || !sameJson(input.sessionRole, c1SessionRole) || !sameJson(input.hostTemplate, c1HostTemplate)
       || !sameJson(input.run.ref, claim.runRef) || !sameJson(input.permissions, c1HostPermissions)
       || input.configurationRevision !== c1ConfigurationRevision) {
@@ -137,34 +134,22 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
     return { status: 'ready', value: { configurationRevision: input.configurationRevision,
       permissions: structuredClone(c1HostPermissions), hostTemplate: structuredClone(c1HostTemplate) } };
   };
-  const c1ManifestInput = 'C1 mailbox fixture prepared manifest input';
-  const c1ManifestInputDigest = sha256Hex(c1ManifestInput);
-  const c1Manifest: PreparedTaskManifestV1 = {
-    schemaVersion: 1, kind: 'task_execution', claim, role: { status: 'absent', roleId: 'builder', reason: 'legacy template has no installed role spec' },
-    hostTemplate: c1HostTemplate, roleBinding: currentRun.roleBinding, hostConfigurationRevision: c1ConfigurationRevision,
-    sessionRole: c1SessionRole, workspaceSnapshot: currentRun.workspaceSnapshot,
-    permissions: envelopeFor(currentRun).permissions, budget: currentRun.budget, selectedTaskInputs: [], materialBasis: null,
-    materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [],
-    sourceRefs: [{ kind: 'workspace', refId: currentRun.workspaceSnapshot.workspaceId, revision: '1' }],
-    input: c1ManifestInput, inputDigest: c1ManifestInputDigest,
-  };
-  const storedManifest = await bodies.put({ body: JSON.stringify(c1Manifest), contentType: MANIFEST_CONTENT_TYPE,
-    sourceRefs: c1Manifest.sourceRefs, origin: { kind: 'run', owner: claim.runRef }, requestedAt: AT });
-  if (storedManifest.status !== 'ready') throw new Error(`C1 prepared manifest store failed: ${JSON.stringify(storedManifest)}`);
-  {
-    const nextRevision = currentRun.revision + 1;
-    const nextRun: RunSnapshot = { ...currentRun, revision: nextRevision,
-      envelope: { ...(currentRun.envelope as NonNullable<RunSnapshot['envelope']>), bundleRef: storedManifest.value.ref },
-      // The seeded entered facts stay self-consistent: the exact manifest is the
-      // Run input binding and the V2 authorization input digest.
-      inputBinding: { schemaVersion: 1, inputDigest: c1ManifestInputDigest, manifestDigest: storedManifest.value.ref.digest,
-        materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [] },
-      executionAuthorization: { ...(currentRun.executionAuthorization as ExecutionAuthorizationV2), inputDigest: c1ManifestInputDigest } };
-    const reseeded = await fixture.commitRaw([{ refKey: runKey, schemaId: 'RunSnapshot@1', revision: nextRevision, json: JSON.stringify(nextRun) }],
-      [{ refKey: runKey, expectedRevision: currentRun.revision }]);
-    if (reseeded.status !== 'committed') throw new Error(`C1 prepared manifest Run seed failed: ${JSON.stringify(reseeded)}`);
-    currentRun = nextRun;
-  }
+  // TP-081: the running/entered facts come from the real Runtime prepare and
+  // start over this fixture's own stores. The scripted model's first request is
+  // held at an A3 gate, so the Run stays running/entered while the mailbox rows
+  // below exercise it; the held request is released as a crash at close.
+  const steps = await createS2BRuntimeSteps({ base: fixture, bodies, ctx: fixture.ctx,
+    directory: fixture.directory, scope: fixture.scope, now, setClock: () => undefined,
+    eventId, newId, consumerId: 'c1-runtime', withMailbox: true,
+    host: { configurationRevision: c1ConfigurationRevision,
+      permissions: c1HostPermissions, hostTemplate: c1HostTemplate } });
+  const handle = await steps.start(claim, { at: AT,
+    replies: [{ kind: 'text', text: 'C1 mailbox fixture held request' }],
+    tools: [...SESSION_MAILBOX_TOOL_NAMES] });
+  await handle.entered;
+  const started = await executions.readExecution(fixture.ctx, claim.runRef);
+  if (started.status !== 'ready') throw Error(`C1 execution read failed: ${JSON.stringify(started)}`);
+  let currentRun: RunSnapshot = started.value.run;
   function makeMailbox(records: C1Records = backend.records, materialPort = materials,
     admission: SessionMailboxDependencies['runtimeAdmission'] | null | undefined = undefined): SessionMailboxPort {
     const runtimeAdmission = admission === undefined ? { bodies, authorizeConfiguration } : admission;
@@ -219,6 +204,7 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
       if (committed.status !== 'committed') throw new Error(`C1 Session rewrite failed: ${JSON.stringify(committed)}`);
     },
     async close() {
+      await steps.close();
       await secondary?.close();
       if ('close' in bodies) await bodies.close();
       await backend.close();

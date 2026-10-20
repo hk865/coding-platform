@@ -38,7 +38,6 @@ import {
   renderQueryAnswer,
   renderObservedGraph,
   renderSessionDetail,
-  renderSessionHistoryTimeline,
   renderSessionSummary,
   renderTaskGraph,
   renderTaskStructure,
@@ -54,16 +53,13 @@ import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { Disposition, Phase, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
-import type { SessionRecord as KernelSessionRecord } from '../../vendor/coding-agent/dist/public-api.js';
 import type {
   ArtifactRecord,
   BootstrapExecution,
   CoreScope,
   InitialPlanningGoalInputResult,
   MessageBody,
-  Page,
   SessionCard,
-  SessionHistoryEntry,
   SessionMessage,
   QueryJobAnswerSnapshot,
   SessionPage,
@@ -192,6 +188,7 @@ describe('pure DTO presentation', () => {
       historyCursor: null,
       createdAt: '2026-09-26T00:00:00.000Z',
       archivedAt: null,
+      provenance: { schemaVersion: 1, kind: 'new' },
     };
     const card: SessionCard = { record, availability: 'busy', links: [], recommendationReasons: [] };
     const page: ReadResult<SessionPage<SessionCard>> = {
@@ -295,77 +292,11 @@ describe('pure DTO presentation', () => {
     expect(archived.composerDraft).toEqual({ state: 'draft_snapshot', text: '', references: [] });
   });
 
-  // R6 UI-layout skeleton (phase-2 target): real-shape original history in
-  // order, task hierarchy separate from execution dependencies, and navigation
-  // through the exact WorkLinkTarget ref. The first red is missing user content
-  // in the honest timeline placeholder; later phase-2 assertions are unreached.
-  it('projects real original history in order and keeps task hierarchy separate from execution dependencies and real work links', () => {
+  // R6 UI-layout skeleton: the task hierarchy view is separate from the
+  // execution dependency view, and work links navigate through the exact
+  // WorkLinkTarget ref.
+  it('keeps task hierarchy separate from execution dependencies and real work links', () => {
     const sessionRef: SessionRef = { projectId: 'p', sessionId: 'session-1' };
-    // These are display inputs, not seeded durable facts. Type-check known
-    // records against the frozen Kernel's public record shape; unknown remains raw.
-    const kernel = (record: KernelSessionRecord): string => JSON.stringify(record);
-    const recordMeta = (recordId: string, position: number) => ({ schemaVersion: 1 as const,
-      recordId, sessionId: sessionRef.sessionId, position,
-      recordedAt: '2026-09-26T00:00:00.000Z', checksum: '0'.repeat(64) });
-    const eventMeta = (sequence: number) => ({ schemaVersion: 1 as const,
-      eventId: `event-${sequence}`, runId: 'run-1', turnId: 'turn-1', sequence,
-      occurredAt: '2026-09-26T00:00:00.000Z', elapsedMs: sequence });
-    const history: ReadResult<Page<SessionHistoryEntry>> = {
-      status: 'ready',
-      value: {
-        basis: { kind: 'session', ref: sessionRef, cursor: 'kernhist1.basis' },
-        nextCursor: 'kernhist1.next',
-        items: [
-          { recordId: 'turn:turn-1', cursor: 'kernhist1.1', recordedAt: '2026-09-26T00:00:00.000Z', kind: 'turn_started',
-            source: { adapterId: 'kernel-adapter', kernelSessionId: 'session-1', position: 1 },
-            body: { encoding: 'kernel_session_record_json', text: kernel({ ...recordMeta('turn:turn-1', 1), recordType: 'turn.started',
-              payload: { run: { schemaVersion: 1, runId: 'run-1', createdAt: '2026-09-26T00:00:00.000Z',
-                turn: { turnId: 'turn-1', userMessage: { schemaVersion: 1, messageId: 'msg-1', role: 'user', content: '请修复构建' } } },
-                config: { modelConfigId: 'model-1', limits: { maxModelRequests: 1, maxToolCalls: 1,
-                  maxInputTokens: null, maxOutputTokens: null, maxTotalTokens: null, maxCostUsdMicros: null, deadlineMs: null },
-                  enabledToolSchemaDigest: 'tools', policyVersion: '1', sandboxProfileVersion: '1', baseConfigDigest: 'base' },
-                workspace: { identity: 'w', revision: 'r1', reference: '/display-fixture' } } }) } },
-          { recordId: 'agent-event:1', cursor: 'kernhist1.2', recordedAt: '2026-09-26T00:00:01.000Z', kind: 'agent_event',
-            source: { adapterId: 'kernel-adapter', kernelSessionId: 'session-1', position: 2 },
-            body: { encoding: 'kernel_session_record_json', text: kernel({ ...recordMeta('agent-event:1', 2), recordType: 'agent.event',
-              payload: { event: { type: 'assistant.message_completed', meta: eventMeta(1), payload: { requestId: 'req-1',
-                message: { schemaVersion: 1, messageId: 'msg-2', role: 'assistant', content: '已修复', reasoningContent: '检查了测试失败的原因' },
-                toolCalls: [] } } } }) } },
-          { recordId: 'agent-event:2', cursor: 'kernhist1.3', recordedAt: '2026-09-26T00:00:02.000Z', kind: 'agent_event',
-            source: { adapterId: 'kernel-adapter', kernelSessionId: 'session-1', position: 3 },
-            body: { encoding: 'kernel_session_record_json', text: kernel({ ...recordMeta('agent-event:2', 3), recordType: 'agent.event',
-              payload: { event: { type: 'tool.completed', meta: eventMeta(2), payload: { callId: 'call-1', result: { status: 'success',
-                schemaVersion: 1, callId: 'call-1', output: [{ kind: 'text', text: 'exit 0' }],
-                effects: { sideEffect: 'none', changedPaths: [], workspaceRevision: null, artifactRefs: [] } } } } } }) } },
-          { recordId: 'agent-event:3', cursor: 'kernhist1.4', recordedAt: '2026-09-26T00:00:03.000Z', kind: 'agent_event',
-            source: { adapterId: 'kernel-adapter', kernelSessionId: 'session-1', position: 4 },
-            body: { encoding: 'kernel_session_record_json', text: JSON.stringify({ recordType: 'future.unknown', payload: { note: 'unknown' } }) } },
-          { recordId: 'artifact:1', cursor: 'kernhist1.5', recordedAt: '2026-09-26T00:00:04.000Z', kind: 'agent_event',
-            source: { adapterId: 'kernel-adapter', kernelSessionId: 'session-1', position: 5 },
-            body: { kind: 'artifact', contentType: 'text/plain', digest: 'b'.repeat(64), sizeBytes: 12,
-              source: { kind: 'workspace', refId: 'README.md', revision: '1' } } },
-        ],
-      },
-    };
-
-    // PHASE-2 ENTRY: the first unsupported call is the first red of this test.
-    const historyHtml = renderSessionHistoryTimeline(history);
-    expect(historyHtml).toContain('请修复构建'); // turn.started user input
-    expect(historyHtml).toContain('已修复'); // assistant text
-    // User-authorized contract amendment: saved original records are available
-    // through an explicit, initially collapsed raw-history disclosure.
-    const savedRaw = historyHtml.match(/<details\b[^>]*data-history-raw="agent-event:1"[^>]*>[\s\S]*?<\/details>/)?.[0] ?? '';
-    expect(savedRaw).toContain('检查了测试失败的原因');
-    expect(savedRaw).toContain('reasoningContent');
-    expect(savedRaw).not.toMatch(/<details\b[^>]*\sopen(?:[=\s>])/);
-    expect(historyHtml).toContain('exit 0'); // tool result
-    expect(historyHtml).toContain('future.unknown'); // unknown original record stays identifiable and available on demand
-    expect(historyHtml).toContain('data-history="turn:turn-1"'); // recordId preserved
-    expect(historyHtml).toContain('kernhist1.1'); // cursor preserved
-    expect(historyHtml).toContain('position 1'); // source.position preserved
-    expect(historyHtml.indexOf('请修复构建')).toBeLessThan(historyHtml.indexOf('已修复')); // original order
-    expect(historyHtml).toContain('data-history-body="artifact"'); // ArtifactRef is not read as text
-    expect(historyHtml).toContain('正文未读取');
 
     const goalRef: GoalRef = { aggregateType: 'Goal', projectId: 'p', goalId: 'goal-1' };
     const plan: PlanRevisionSnapshot = {

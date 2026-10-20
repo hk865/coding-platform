@@ -40,43 +40,23 @@ import type { ToolCall, ToolDefinition, ToolResult, WorkspaceSandbox, ModelReque
 // Real exact-input owner fixture (§5.1 / §5.3 pattern): the graph tools' input
 // row must forward into the REAL `createTaskContextInputService`, not into a
 // fake that answers by cursor.
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
-import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
+import type { RoleConfigurationRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
+import type { WorkspaceRef } from '../../src/contracts/ledger.js';
 import type {
-  ProjectSnapshot, WorkspaceRef, WorkspaceSnapshot,
-} from '../../src/contracts/ledger.js';
-import type {
-  RoleBindingRefV1, RunSnapshot, SourceRefV1, TaskBudgetV1,
+  RoleBindingRefV1, SourceRefV1, TaskBudgetV1,
 } from '../../src/contracts/dispatch.js';
-import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
-import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
-import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
-import type {
-  EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas,
-} from '../../src/core/record-store/ports.js';
-import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
-import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
-import {
-  createMaterialRecordReaders, materialRecordSchemas,
-} from '../../src/core/work-graph/materials/record-readers.js';
-import type { MaterialPort } from '../../src/core/work-graph/model/material-contracts.js';
-import { encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
-import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
-import {
-  PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS,
-} from '../../src/core/work-graph/tasks/plan-readers.js';
-import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
-import { createTaskContextInputService } from '../../src/core/work-graph/tasks/context-input-service.js';
+import type { InitialPlanningResponseV2 } from '../../src/contracts/initial-planning.js';
 // The real Query runtime seam (R5b pattern) and the driver/RT8 observation seam.
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import type { RecordCommitNotice } from '../../src/composition/commit-observer.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
+import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import type { QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
+import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import {
@@ -117,10 +97,12 @@ vi.mock('../../src/core/agent-runtime/graph-execution-history.js', async (import
 const P = 'p';
 const W = 'w';
 const G = 'g';
-const H = sha256Hex;
 const B = (value: string): number => Buffer.byteLength(value, 'utf8');
 const cursor = (value: string): CommitCursor => value as CommitCursor;
 const signal = (): AbortSignal => new AbortController().signal;
+/** R-19: the converted input rows (GT07/GT08/GT09/GT13) run on both backends. */
+const STORAGE_KINDS = ['memory', 'sqlite'] as const;
+type StorageKind = typeof STORAGE_KINDS[number];
 
 const GOAL_REF: GoalRef = { aggregateType: 'Goal', projectId: P, goalId: G };
 const PLAN_REF: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: P, planId: 'p1' };
@@ -130,8 +112,11 @@ const T_A: TaskTriple = { projectId: P, goalId: G, taskId: 'tA' };
 const T_B: TaskTriple = { projectId: P, goalId: G, taskId: 'tB' };
 const HUMAN = { kind: 'human' as const, id: 'u' };
 
+// SHA-256 of the UTF-8 bytes of 'old-A' (6f 6c 64 2d 41, 5 bytes), lowercase hex,
+// computed outside the product (`printf 'old-A' | sha256sum`).
 const OLD_A: ArtifactRef = {
-  kind: 'artifact', contentType: 'text/plain', digest: H('old-A'), sizeBytes: 5,
+  kind: 'artifact', contentType: 'text/plain',
+  digest: 'dd7a346236273d4fd019c7bf806b00a7eea9d992583b6aed9ed2231cf345f4b7', sizeBytes: 5,
   source: { kind: 'workspace', refId: W, revision: '7' },
 };
 
@@ -461,40 +446,40 @@ describe('S3 graph tools', () => {
     expect(JSON.stringify(outputValue(result))).not.toContain('doc-');
   });
 
-  it('GT07 reports the input page fixed at this look version while using historical usage', async () => {
+  it.each(STORAGE_KINDS)('GT07 reports the input page fixed at this look version while using historical usage (%s)', async storage => {
     // Known part-1 limitation: the §5.3 fixture only carries legacy exact
     // declarations, and part 1 exposes no assembled manifest; this reaches the
     // REAL owner and pins the fixed historical source/usage immutability.
-    const f = await openInputFixture();
+    const f = await openInputFixture(storage);
     try {
-      const { byName } = buildTools({ ports: recordingPorts({ inputs: f.service }) });
+      const { byName } = buildTools({ context: f.workContext(signal()), ports: recordingPorts({ inputs: f.service }) });
       // The first look fixes r1's exact historical source.
-      const prepared = await lookInputPage(byName, f.legacyDeclarationId, null, 2048);
+      const prepared = await lookInputPage(byName, f.planRef, f.legacyDeclarationId, null, 2048);
       expect(prepared.status).toBe('success');
       const fixed = (outputValue(prepared) as { status: 'ready'; value: TaskInputPageV1 }).value;
       expect(fixed.selection.usage).toBe('historical_explanation');
-      expect(fixed.selection.source).toMatchObject({ kind: 'artifact', ref: { digest: H(FX_LEGACY_BODY) } });
+      expect(fixed.selection.source).toMatchObject({ kind: 'artifact', ref: { digest: FX_LEGACY_DIGEST } });
       expect(fixed.body).toBe(FX_LEGACY_BODY);
       // A later formal source (r2) is reported for its own look, and never moves
       // the already-fixed r1 version.
-      const later = await lookInputPage(byName, f.secondLegacyDeclarationId, null, 2048);
+      const later = await lookInputPage(byName, f.planRef, f.secondLegacyDeclarationId, null, 2048);
       expect(later.status).toBe('success');
       const newer = (outputValue(later) as { status: 'ready'; value: TaskInputPageV1 }).value;
       expect(newer.selection.usage).toBe('historical_explanation');
-      expect(newer.selection.source).toMatchObject({ kind: 'artifact', ref: { digest: H(FX_NEW_BODY) } });
-      expect(fixed.selection.source).toMatchObject({ kind: 'artifact', ref: { digest: H(FX_LEGACY_BODY) } });
+      expect(newer.selection.source).toMatchObject({ kind: 'artifact', ref: { digest: FX_NEW_DIGEST } });
+      expect(fixed.selection.source).toMatchObject({ kind: 'artifact', ref: { digest: FX_LEGACY_DIGEST } });
       expect(fixed.body).toBe(FX_LEGACY_BODY);
     } finally { await f.close(); }
   });
 
-  it('GT08 pages A / 中 / B by maxBytes=3 and keeps every page digest at H(A中B)', async () => {
-    const f = await openInputFixture();
+  it.each(STORAGE_KINDS)('GT08 pages A / 中 / B by maxBytes=3 and keeps every page digest at H(A中B) (%s)', async storage => {
+    const f = await openInputFixture(storage);
     try {
       // The REAL input owner is the `inputs` dependency; the adapter must only
       // forward the request and preserve the owner's real cursors and digests.
-      const { byName } = buildTools({ ports: recordingPorts({ inputs: f.service }) });
+      const { byName } = buildTools({ context: f.workContext(signal()), ports: recordingPorts({ inputs: f.service }) });
       const read = async (afterCursor: string | null): Promise<TaskInputPageV1> => {
-        const result = await lookInputPage(byName, f.legacyDeclarationId, afterCursor, 3);
+        const result = await lookInputPage(byName, f.planRef, f.legacyDeclarationId, afterCursor, 3);
         expect(result.status).toBe('success');
         return (outputValue(result) as { status: 'ready'; value: TaskInputPageV1 }).value;
       };
@@ -507,23 +492,23 @@ describe('S3 graph tools', () => {
       expect(third.nextCursor).toBeNull();
       expect(`${first.body}${second.body}${third.body}`).toBe(FX_LEGACY_BODY);
       for (const page of [first, second, third]) {
-        expect(page.selection.source).toMatchObject({ kind: 'artifact', ref: { digest: H(FX_LEGACY_BODY) } });
+        expect(page.selection.source).toMatchObject({ kind: 'artifact', ref: { digest: FX_LEGACY_DIGEST } });
       }
     } finally { await f.close(); }
   });
 
-  it('GT09 rejects continuing r1 with a cursor minted for the r2 declaration and returns no body', async () => {
-    const f = await openInputFixture();
+  it.each(STORAGE_KINDS)('GT09 rejects continuing r1 with a cursor minted for the r2 declaration and returns no body (%s)', async storage => {
+    const f = await openInputFixture(storage);
     try {
-      const { byName } = buildTools({ ports: recordingPorts({ inputs: f.service }) });
+      const { byName } = buildTools({ context: f.workContext(signal()), ports: recordingPorts({ inputs: f.service }) });
       // A real cursor produced by the owner while reading r1 ...
-      const first = await lookInputPage(byName, f.legacyDeclarationId, null, 1);
+      const first = await lookInputPage(byName, f.planRef, f.legacyDeclarationId, null, 1);
       expect(first.status).toBe('success');
       const firstPage = (outputValue(first) as { status: 'ready'; value: TaskInputPageV1 }).value;
       expect(firstPage.body).toBe('A');
       expect(firstPage.nextCursor).not.toBeNull();
       // ... cannot be moved to the r2 declaration.
-      const crossed = await lookInputPage(byName, f.secondLegacyDeclarationId, firstPage.nextCursor, 2048);
+      const crossed = await lookInputPage(byName, f.planRef, f.secondLegacyDeclarationId, firstPage.nextCursor, 2048);
       expect(crossed).toMatchObject({ status: 'error', error: { code: 'execution_failed' } });
       expect(outputValue(crossed)).toMatchObject({ status: 'rejected', code: 'invalid' });
       expect(JSON.stringify(outputValue(crossed))).not.toContain(FX_NEW_BODY);
@@ -601,11 +586,11 @@ describe('S3 graph tools', () => {
     } finally { vi.restoreAllMocks(); await p.close(); }
   });
 
-  it('GT13 rejects a zero-progress maxBytes=1 continuation as capacity, and still reads 中 with the original cursor', async () => {
-    const f = await openInputFixture();
+  it.each(STORAGE_KINDS)('GT13 rejects a zero-progress maxBytes=1 continuation as capacity, and still reads 中 with the original cursor (%s)', async storage => {
+    const f = await openInputFixture(storage);
     try {
-      const { byName } = buildTools({ ports: recordingPorts({ inputs: f.service }) });
-      const first = await lookInputPage(byName, f.legacyDeclarationId, null, 3);
+      const { byName } = buildTools({ context: f.workContext(signal()), ports: recordingPorts({ inputs: f.service }) });
+      const first = await lookInputPage(byName, f.planRef, f.legacyDeclarationId, null, 3);
       expect(first.status).toBe('success');
       const firstPage = (outputValue(first) as { status: 'ready'; value: TaskInputPageV1 }).value;
       expect(firstPage.body).toBe('A');
@@ -613,11 +598,11 @@ describe('S3 graph tools', () => {
       expect(cursor).not.toBeNull();
       // The next character is 中 (3 UTF-8 bytes); maxBytes=1 cannot make progress,
       // so the owner must report capacity instead of an empty page.
-      const capacity = await lookInputPage(byName, f.legacyDeclarationId, cursor, 1);
+      const capacity = await lookInputPage(byName, f.planRef, f.legacyDeclarationId, cursor, 1);
       expect(capacity).toMatchObject({ status: 'error', error: { code: 'execution_failed' } });
       expect(outputValue(capacity)).toMatchObject({ status: 'rejected', code: 'capacity' });
       // The ORIGINAL cursor is still usable with the original maxBytes=3.
-      const resumed = await lookInputPage(byName, f.legacyDeclarationId, cursor, 3);
+      const resumed = await lookInputPage(byName, f.planRef, f.legacyDeclarationId, cursor, 3);
       expect(resumed.status).toBe('success');
       expect((outputValue(resumed) as { status: 'ready'; value: TaskInputPageV1 }).value.body).toBe('中');
     } finally { await f.close(); }
@@ -774,13 +759,14 @@ function calls(ports: ReturnType<typeof recordingPorts>): RecordedCalls {
 /** `look_graph {mode:'input'}` through the real tool definition. */
 async function lookInputPage(
   byName: (name: string) => ToolDefinition,
+  planRef: PlanRevisionRef,
   declarationId: string,
   afterCursor: string | null,
   maxBytes: number,
 ): Promise<ToolResult> {
   return byName('look_graph').handler.execute(
     toolCall('look_graph', `input-${declarationId}-${afterCursor ?? 'start'}-${String(maxBytes)}`, {
-      mode: 'input', consumer: { ...T_B }, planRef: { ...PLAN_REF }, declarationId, afterCursor, maxBytes,
+      mode: 'input', consumer: { ...T_B }, planRef: { ...planRef }, declarationId, afterCursor, maxBytes,
     }),
     { signal: signal() },
   );
@@ -793,8 +779,8 @@ async function lookInputPage(
 /** The declared legacy body of GT08/GT09/GT13: `A中B` (UTF-8 5 bytes, 3 chars). */
 const FX_LEGACY_BODY = 'A中B';
 const FX_NEW_BODY = 'new-A';
-const FX_WORKSPACE_REVISION = 7;
-const FX_PLAN_ID = 'p1';
+/** Both Workspaces are registered by the public owner, whose first write is revision 1. */
+const FX_WORKSPACE_REVISION = 1;
 const FX_STAGE_ID = 's';
 const FX_GATE_TASK = 'gate';
 const FX_OBLIGATION_ID = 'oB';
@@ -804,131 +790,41 @@ const FX_ROLE_BINDING: RoleBindingRefV1 = {
   schemaVersion: 1, bindingId: 's3-input-binding', templateId: 'builder', templateRevision: '1',
   bindingVersion: 1, policyRevision: 'legacy-template',
 };
+const FX_QUERY_ROLE: RoleConfigurationRef = {
+  kind: 'legacy_template', templateId: 'advisor', templateRevision: '1',
+};
+const FX_QUERY_BINDING: RoleBindingRefV1 = {
+  schemaVersion: 1, bindingId: 's3-graph-query-binding', templateId: 'advisor', templateRevision: '1',
+  bindingVersion: 1, policyRevision: 'legacy-template',
+};
 const FX_BUDGET: TaskBudgetV1 = { tokenBudget: 100000, deadline: null };
 const FX_SOURCE: SourceRefV1 = { kind: 'workspace', refId: W, revision: String(FX_WORKSPACE_REVISION) };
+/**
+ * The fixed bodies' digests and sizes, worked outside the product: SHA-256 over
+ * the UTF-8 bytes, lowercase hex (`printf '<bytes>' | sha256sum`).
+ * - FX_LEGACY_BODY 'A中B' = 41 e4 b8 ad 42: 1 + 3 + 1 = 5 bytes;
+ * - FX_NEW_BODY 'new-A' = 6e 65 77 2d 41: 5 bytes.
+ */
+const FX_LEGACY_DIGEST = '6ca8210506b8751de837bfafb4afa21616657eafb51d18826d45b9facd7c8471';
+const FX_NEW_DIGEST = '06133157a11c76d127cd99286b598dab5c491e7177641b2fab06c0e5b5eea0cd';
 const FX_OLD_REF: ArtifactRef = {
-  kind: 'artifact', contentType: 'text/plain', digest: H(FX_LEGACY_BODY), sizeBytes: B(FX_LEGACY_BODY), source: FX_SOURCE,
+  kind: 'artifact', contentType: 'text/plain', digest: FX_LEGACY_DIGEST, sizeBytes: 5, source: FX_SOURCE,
 };
 const FX_NEW_REF: ArtifactRef = {
-  kind: 'artifact', contentType: 'text/plain', digest: H(FX_NEW_BODY), sizeBytes: B(FX_NEW_BODY), source: FX_SOURCE,
+  kind: 'artifact', contentType: 'text/plain', digest: FX_NEW_DIGEST, sizeBytes: 5, source: FX_SOURCE,
 };
-const FX_GATE: TaskTriple = { projectId: P, goalId: G, taskId: FX_GATE_TASK };
 const FX_SCOPE: WorkspaceScope = { projectId: P, workspaceId: W };
 const FX_PROJECT_REF = { aggregateType: 'Project' as const, projectId: P };
 const FX_WORKSPACE_REF: WorkspaceRef = { aggregateType: 'Workspace', projectId: P, workspaceId: W };
 const FX_OTHER_WORKSPACE_REF: WorkspaceRef = { aggregateType: 'Workspace', projectId: P, workspaceId: 'w2' };
 
-type InputRecords = GoalRecordTransactionPort & RecordLookupPort;
-
-type InputFixture = {
-  service: TaskContextInputPort;
-  ctx: CoreCallContext;
-  records: InputRecords;
-  legacyDeclarationId: string;
-  secondLegacyDeclarationId: string;
-  close(): Promise<void>;
-};
-
-function fxRunSnapshot(run: RunRef, task: TaskTriple, workspaceId: string, status: RunSnapshot['status']): RunSnapshot {
-  return { ref: run, revision: 1, schemaVersion: 1, task, attemptId: `attempt-${task.taskId}`,
-    planRef: { ...PLAN_REF }, roleBinding: FX_ROLE_BINDING, budget: FX_BUDGET,
-    workspaceSnapshot: { workspaceId, revision: FX_WORKSPACE_REVISION },
-    status, outcome: status === 'ended' ? 'completed' : null, exitCode: status === 'ended' ? 0 : null,
-    lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null,
-    startedAt: null, endedAt: null };
-}
-
-/**
- * The REAL `createTaskContextInputService` over a real memory RecordStore,
- * real Goal/Plan services and the real content-addressed body store. GT08/09/13
- * therefore exercise the input owner's own paging/cursor/capacity behaviour.
- */
-async function openInputFixture(): Promise<InputFixture> {
-  const directory = await mkdtemp(join(tmpdir(), 'next-s3-graph-inputs-'));
-  const materialSchemas = materialRecordSchemas();
-  const schemas: RecordBackendSchemas = {
-    records: [...materialSchemas.records, ...PLAN_RECORD_SCHEMAS.records,
-      ...PLAN_STATE_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records],
-    events: [...materialSchemas.events, ...PLAN_RECORD_SCHEMAS.events,
-      ...PLAN_STATE_RECORD_SCHEMAS.events, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
-      { eventType: 'TrustedScopeSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) }],
-    lookups: [...(materialSchemas.lookups ?? []), ...(PLAN_RECORD_SCHEMAS.lookups ?? []),
-      ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []), ...(PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [])],
-  };
-  const backend = createInMemoryRecordBackend({ schemas });
-  const rawBodies = new RawArtifactBodyStore();
-  const actor = { kind: 'human' as const, id: 's3-graph-operator' };
-  const ctx: CoreCallContext = { projectId: P, workspaceId: W,
-    principal: { kind: 'host', actor },
-    materialReader: { kind: 'host', projectId: P, workspaceId: W, actor },
-    signal: new AbortController().signal };
-
-  const policyFixture = { schemaVersion: 1, identity: { policyId: 's3-graph-policy' }, revision: 1,
-    content: { schemaVersion: 1, requirementKinds: ['static'], minimumRequiredRequirementsPerObligation: 1 } };
-  const architectureFixture = { schemaVersion: 1, identity: { baselineId: 's3-graph-baseline' }, revision: 1,
-    content: { schemaVersion: 1, description: 'S3 graph-tools input fixture baseline', constraints: [] } };
-  const digestOf = (value: JsonValue): string => H(canonicalJson(value));
-  const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId: P,
-    policyId: 's3-graph-policy', revision: 1 };
-  const architectureRef = { aggregateType: 'ArchitectureBaselineRevision' as const, projectId: P,
-    baselineId: 's3-graph-baseline', revision: 1 };
-  const governance = [
-    { ref: policyRef, revision: 1, schemaVersion: 1, policyId: policyRef.policyId, contentRevision: 1,
-      contentDigest: digestOf(policyFixture), content: policyFixture.content },
-    { ref: architectureRef, revision: 1, schemaVersion: 1, baselineId: architectureRef.baselineId,
-      contentRevision: 1, contentDigest: digestOf(architectureFixture), content: architectureFixture.content },
-    { ref: { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId: P }, projectId: P,
-      revision: 1, activeRevision: policyRef },
-    { ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId: P }, projectId: P,
-      revision: 1, activeRevision: architectureRef },
-  ];
-  const encodeGovernance = (snapshot: (typeof governance)[number]): EncodedRecord => ({
-    refKey: canonicalJson(snapshot.ref as unknown as JsonValue),
-    schemaId: `${snapshot.ref.aggregateType}Snapshot@1`, revision: snapshot.revision, json: JSON.stringify(snapshot),
-  });
-  const project: ProjectSnapshot = { ref: FX_PROJECT_REF, revision: 1 };
-  const workspace: WorkspaceSnapshot = { ref: FX_WORKSPACE_REF, revision: FX_WORKSPACE_REVISION };
-  const otherWorkspace: WorkspaceSnapshot = { ref: FX_OTHER_WORKSPACE_REF, revision: FX_WORKSPACE_REVISION };
-  const scopeEvent = { eventId: 's3-graph-scope-seed', eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-    occurredAt: FX_AT, json: JSON.stringify({ eventId: 's3-graph-scope-seed', eventType: 'TrustedScopeSeeded',
-      schemaVersion: 1, occurredAt: FX_AT }) };
-  const scopeSeed: PreparedCommit = { identityKey: 's3-graph-scope-seed', fingerprint: 's3-graph-scope-seed-v1',
-    guards: [{ refKey: canonicalJson(FX_PROJECT_REF as unknown as JsonValue), expectedRevision: null },
-      { refKey: canonicalJson(FX_WORKSPACE_REF as unknown as JsonValue), expectedRevision: null },
-      { refKey: canonicalJson(FX_OTHER_WORKSPACE_REF as unknown as JsonValue), expectedRevision: null },
-      ...governance.map(snapshot => ({ refKey: canonicalJson(snapshot.ref as unknown as JsonValue), expectedRevision: null }))],
-    records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace), encodeWorkspaceSnapshot(otherWorkspace),
-      ...governance.map(encodeGovernance)],
-    events: [scopeEvent], claims: [], indexGuards: [], indexChanges: [] };
-  const seededScope = await backend.records.commit(scopeSeed);
-  if (seededScope.status !== 'committed') throw new Error(`S3 graph input scope seed failed: ${seededScope.reason}`);
-
-  let sequence = 0;
-  const eventId = (): string => `s3-graph-event-${++sequence}`;
-  const store = async (body: string): Promise<void> => {
-    const stored = await rawBodies.put({ body, contentType: 'text/plain', sourceRefs: [FX_SOURCE],
-      origin: { kind: 'run', owner: { ...RUN_A } }, requestedAt: FX_AT });
-    if (stored.status !== 'ready') throw new Error(`S3 graph input body seed failed: ${JSON.stringify(stored)}`);
-  };
-  await store(FX_LEGACY_BODY);
-  await store(FX_NEW_BODY);
-
-  const goalsService = createGoalService({ records: backend.records, now: () => FX_AT, eventId });
-  const planMaterials: Pick<MaterialPort, 'openArtifact'> = {
-    async openArtifact() {
-      return { status: 'rejected' as const, code: 'unsupported' as const,
-        reason: 'S3 graph-tools fixture reads no artifact for a Plan' };
-    },
-  };
-  const plans = createPlanService({ records: backend.records, materials: planMaterials, now: () => FX_AT, eventId });
-
-  const createdGoal = await goalsService.tasks.createGoal(ctx, { meta: {
-    requestId: 's3-graph-create-goal',
-    expected: [{ ref: FX_PROJECT_REF, revision: 1 }, { ref: FX_WORKSPACE_REF, revision: FX_WORKSPACE_REVISION }] },
-    input: { goalId: G, workspace: FX_SCOPE, objective: 'Ship platform' } });
-  if (createdGoal.status !== 'committed') throw new Error(`S3 graph input Goal creation failed: ${JSON.stringify(createdGoal)}`);
-
-  const draft: PlanRevisionDraft = { schemaVersion: 2 as const, planId: FX_PLAN_ID, planRevision: 1, goalId: G,
+/** The v2 answer the scripted `initial_coordination` Query returns; the Plan
+ * owner derives the identity from the SAVED Job intent and the plan body keeps
+ * the fixed input requirements r1/r2. */
+const FX_PLAN_ANSWER: InitialPlanningResponseV2 = {
+  schemaVersion: 2, kind: 'plan', summary: 'S3 graph-tools input fixture plan',
+  plan: {
+    schemaVersion: 2,
     stages: [{ stageId: FX_STAGE_ID, title: 'Main' }],
     tasks: [
       { taskId: 'tA', stageId: FX_STAGE_ID, title: 'A', requirementLevel: 'required', taskKind: 'work',
@@ -948,59 +844,269 @@ async function openInputFixture(): Promise<InputFixture> {
         description: 'node check-b.js' }] }],
     taskHierarchy: { parentOf: [] },
     executionDag: { dependsOn: [{ taskId: 'tB', dependsOnId: 'tA', requires: { kind: 'artifact', label: 'A.out' } }] },
+    taskRelations: [],
     inputRequirements: [
       { requirementId: 'r1', consumerTaskId: 'tB', kind: 'artifact', artifactRef: FX_OLD_REF },
       { requirementId: 'r2', consumerTaskId: 'tB', kind: 'artifact', artifactRef: FX_NEW_REF },
-    ] };
-  const proposed = await plans.proposePlan(ctx, { meta: { requestId: 's3-graph-propose-plan',
-    expected: [{ ref: GOAL_REF, revision: 1 }] },
-    input: { goalRef: GOAL_REF, basedOn: null, draft, reason: { text: 'Initial S3 graph-tools input fixture plan', sources: [] } } });
-  if (proposed.status !== 'committed' || proposed.value.issues.length > 0) {
-    throw new Error(`S3 graph input Plan proposal failed: ${JSON.stringify(proposed)}`);
-  }
-  const applied = await plans.applyPlanChange(ctx, { meta: { requestId: 's3-graph-apply-plan',
-    expected: [{ ref: GOAL_REF, revision: 1 }] },
-    input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
-  if (applied.status !== 'committed') throw new Error(`S3 graph input Plan adoption failed: ${JSON.stringify(applied)}`);
+    ],
+  },
+};
+const FX_PLAN_ANSWER_TEXT = JSON.stringify(FX_PLAN_ANSWER);
 
-  let seedSeq = 0;
-  async function commitRaw(recordsToWrite: readonly EncodedRecord[]): Promise<void> {
-    const seq = ++seedSeq;
-    const event = { eventId: `s3-graph-seed-event-${seq}`, eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-      occurredAt: FX_AT, json: JSON.stringify({ eventId: `s3-graph-seed-event-${seq}`, eventType: 'TrustedScopeSeeded',
-        schemaVersion: 1, occurredAt: FX_AT }) };
-    const receipt = await backend.records.commit({ identityKey: `s3-graph-seed-${seq}`,
-      fingerprint: `s3-graph-seed-fingerprint-${seq}`,
-      guards: recordsToWrite.map(record => ({ refKey: record.refKey, expectedRevision: null })),
-      records: [...recordsToWrite], events: [event], claims: [], indexGuards: [], indexChanges: [] });
-    if (receipt.status !== 'committed') throw new Error(`S3 graph input run seed failed: ${JSON.stringify(receipt)}`);
-  }
-  await commitRaw([
-    { refKey: canonicalJson(RUN_A as unknown as JsonValue), schemaId: 'RunSnapshot@1', revision: 1,
-      json: JSON.stringify(fxRunSnapshot(RUN_A, T_A, W, 'ended')) },
-    { refKey: canonicalJson(RUN_B as unknown as JsonValue), schemaId: 'RunSnapshot@1', revision: 1,
-      json: JSON.stringify(fxRunSnapshot(RUN_B, T_B, W, 'starting')) },
-  ]);
+type InputFixture = {
+  service: TaskContextInputPort;
+  planRef: PlanRevisionRef;
+  runB: RunRef;
+  workContext(signalValue: AbortSignal): CoreCallContext;
+  legacyDeclarationId: string;
+  secondLegacyDeclarationId: string;
+  close(): Promise<void>;
+};
 
-  const recordSpy = { readMany: 0, lookup: 0, lookupCommit: 0, commit: 0, eventAt: 0 };
-  const records: InputRecords = {
-    readMany(keys) { recordSpy.readMany += 1; return backend.records.readMany(keys); },
-    lookup(request) { recordSpy.lookup += 1; return backend.records.lookup(request); },
-    lookupCommit(input) { recordSpy.lookupCommit += 1; return backend.records.lookupCommit(input); },
-    commit(input) { recordSpy.commit += 1; return backend.records.commit(input); },
-    eventAt(value) { recordSpy.eventAt += 1; return backend.records.eventAt(value); },
+function fxWorkContext(runRef: RunRef, roleBinding: RoleBindingRefV1, signalValue: AbortSignal): CoreCallContext {
+  return { projectId: P, workspaceId: W,
+    principal: { kind: 'work_run', runRef: { ...runRef }, roleBinding: { ...roleBinding } },
+    materialReader: { kind: 'run', requester: { ...runRef } }, signal: signalValue };
+}
+
+/**
+ * The real p/g world of GT07/GT08/GT09/GT13: the public Project/Workspace/
+ * policy/baseline/Goal/Plan owners, a real scripted `initial_coordination`
+ * Query whose SAVED Answer becomes the one adopted Plan, two Runtime Sessions,
+ * two real claims (tA then tB) and the fixed bodies stored by Run A through
+ * `materials.storeArtifact`. The input owner is the composition root's real
+ * `taskInputs`; declaration ids are taken from its real `readTaskInputs`.
+ * The composition root itself registers PROJECT_BOOTSTRAP_RECORD_SCHEMAS and
+ * ARCHITECTURE_CATALOG_SCHEMAS, so this fixture has no hand-written schema seed
+ * and no fake TrustedScopeSeeded event. The platform runs on the memory or the
+ * SQLite backend it is given (R-19).
+ */
+async function openInputFixture(storage: StorageKind): Promise<InputFixture> {
+  const directory = await mkdtemp(join(tmpdir(), 'next-s3-graph-inputs-'));
+  const root = join(directory, 'workspace');
+  await mkdir(root, { recursive: true });
+  const skillsRoot = join(directory, 'skills');
+  await mkdir(skillsRoot, { recursive: true });
+  const hostActor = { kind: 'human' as const, id: 's3-graph-operator' };
+  const hostCtx = (workspaceId = W): CoreCallContext => ({ projectId: P, workspaceId,
+    principal: { kind: 'host', actor: hostActor },
+    materialReader: { kind: 'host', projectId: P, workspaceId, actor: hostActor },
+    signal: new AbortController().signal });
+  const workspaceBindings: WorkspaceHostBindings = {
+    async resolveRoot(requested) {
+      return requested.projectId === P && (requested.workspaceId === W || requested.workspaceId === 'w2')
+        ? { status: 'ready', value: { root, workspaceRevision: FX_WORKSPACE_REVISION } }
+        : { status: 'rejected', code: 'not_found', reason: 'the workspace is not registered in this Host' };
+    },
+    async authorize() {
+      return { status: 'ready', value: { subjectKey: 's3-graph-host',
+        permissionRevision: 's3-graph-grant-1', allowsRead: () => true } };
+    },
   };
-
-  const bodies = rawBodies;
-  const { authority } = createMaterialRecordReaders(backend.records);
-  const materials = createMaterialService({ bodies, authority, now: () => FX_AT });
-  const service = createTaskContextInputService({ records, materials, bodies, hostActor: actor });
-
-  return {
-    service, ctx, records,
-    legacyDeclarationId: 'legacy:r1', secondLegacyDeclarationId: 'legacy:r2',
-    async close() { await backend.close(); await rm(directory, { recursive: true, force: true }); },
+  const queryModel = createScriptedModel([{ kind: 'text', text: FX_PLAN_ANSWER_TEXT }]);
+  const runtime: RuntimeHostBindings = {
+    async resolveConfiguration() {
+      return { status: 'rejected', code: 'unsupported', reason: 'this fixture runs no Work execution' };
+    },
+    async resolveQueryConfiguration() {
+      return { status: 'ready', value: {
+        configurationRevision: 's3-graph-host@1',
+        model: {
+          configuration: { revision: 's3-graph-host@1', provider: 'deepseek',
+            model: 's3-graph-scripted', baseUrl: 'http://127.0.0.1' },
+          client: queryModel.client,
+          inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
+            tokenizer: 's3-graph-fixture-counter' }) },
+        },
+        budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null,
+          maxRequests: 8, maxToolCalls: 8, timeoutMs: 30000, perResponseTokens: 512 },
+        tools: ['read', 'project_source'],
+        writeScope: [],
+        skills: { resourceRoot: skillsRoot, enabledIds: [] },
+        systemInstruction: 'S3 graph-tools input fixture read-only guidance',
+        hostTemplate: { templateId: 'advisor', revision: '1',
+          digest: sha256Hex('S3 graph-tools input fixture read-only guidance') },
+        deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+      } };
+    },
   };
+  const platform = await createTargetPlatform({
+    storage: storage === 'memory' ? { kind: 'memory' as const }
+      : { kind: 'sqlite' as const, directory: join(directory, 'storage') },
+    workspace: workspaceBindings,
+    sourcePolicyFor: async (projectId, workspaceId) => projectId === P && workspaceId === W
+      ? { root, permissionRevision: 's3-graph-grant-1', allowsRead: () => true } : null,
+    runtime,
+    kernelStores: { entries: [{ adapterId: 's3-graph-kernel', storeKey: 's3-graph-kernel-store',
+      workspace: FX_SCOPE, databasePath: join(directory, 'kernel.sqlite') }] },
+    now: () => FX_AT,
+  });
+  try {
+    // ---- public Project/Workspace/policy/baseline chain (revisions are 1) ----
+    const createdProject = await platform.projects.createProject(hostCtx(), {
+      meta: { requestId: 's3-graph-create-project', expected: [{ ref: FX_PROJECT_REF, revision: 0 }] },
+      input: { projectId: P } });
+    if (createdProject.status !== 'committed') throw new Error(`S3 graph input project failed: ${JSON.stringify(createdProject)}`);
+    const registeredWorkspace = await platform.projects.registerWorkspace(hostCtx(), {
+      meta: { requestId: 's3-graph-register-workspace', expected: [
+        { ref: FX_PROJECT_REF, revision: 1 }, { ref: FX_WORKSPACE_REF, revision: 0 }] },
+      input: { workspace: FX_SCOPE } });
+    if (registeredWorkspace.status !== 'committed') throw new Error(`S3 graph input workspace failed: ${JSON.stringify(registeredWorkspace)}`);
+    const registeredOther = await platform.projects.registerWorkspace(hostCtx('w2'), {
+      meta: { requestId: 's3-graph-register-other-workspace', expected: [
+        { ref: FX_PROJECT_REF, revision: 1 }, { ref: FX_OTHER_WORKSPACE_REF, revision: 0 }] },
+      input: { workspace: { projectId: P, workspaceId: 'w2' } } });
+    if (registeredOther.status !== 'committed') throw new Error(`S3 graph input other workspace failed: ${JSON.stringify(registeredOther)}`);
+
+    const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId: P,
+      policyId: 's3-graph-policy', revision: 1 };
+    const installed = await platform.completionPolicies.installCompletionPolicy(hostCtx(), {
+      meta: { requestId: 's3-graph-install-policy', expected: [
+        { ref: FX_PROJECT_REF, revision: 1 }, { ref: policyRef, revision: 0 }] },
+      input: { policyId: policyRef.policyId, contentRevision: 1,
+        content: { schemaVersion: 1, requirementKinds: ['static'], minimumRequiredRequirementsPerObligation: 1 } } });
+    if (installed.status !== 'committed') throw new Error(`S3 graph input policy install failed: ${JSON.stringify(installed)}`);
+    const activated = await platform.completionPolicies.activateCompletionPolicy(hostCtx(), {
+      meta: { requestId: 's3-graph-activate-policy', expected: [
+        { ref: FX_PROJECT_REF, revision: 1 },
+        { ref: { aggregateType: 'ProjectCompletionPolicyActive', projectId: P }, revision: 0 }] },
+      input: { target: { ref: installed.value.ref, digest: installed.value.contentDigest } } });
+    if (activated.status !== 'committed') throw new Error(`S3 graph input policy activation failed: ${JSON.stringify(activated)}`);
+    const architecture = await platform.architecture.adoptInitialArchitecture(hostCtx(), {
+      meta: { requestId: 's3-graph-adopt-architecture', expected: [
+        { ref: FX_PROJECT_REF, revision: 1 }, { ref: FX_WORKSPACE_REF, revision: FX_WORKSPACE_REVISION }] },
+      input: { baselineId: 's3-graph-baseline', description: 'S3 graph-tools input fixture baseline',
+        constraints: [], catalog: { requireDag: true, dependencies: [], modules: [{
+          ref: { projectId: P, moduleId: 's3-graph-module' }, name: 'S3 graph input',
+          responsibility: 'S3 graph-tools input fixture workspace', paths: ['src'], interfaces: [] }] } } });
+    if (architecture.status !== 'committed') throw new Error(`S3 graph input architecture failed: ${JSON.stringify(architecture)}`);
+
+    const createdGoal = await platform.goals.createGoal(hostCtx(), {
+      meta: { requestId: 's3-graph-create-goal', expected: [
+        { ref: FX_PROJECT_REF, revision: 1 }, { ref: FX_WORKSPACE_REF, revision: FX_WORKSPACE_REVISION }] },
+      input: { goalId: G, workspace: FX_SCOPE, objective: 'Ship platform' } });
+    if (createdGoal.status !== 'committed') throw new Error(`S3 graph input Goal creation failed: ${JSON.stringify(createdGoal)}`);
+
+    // ---- one real scripted Query Answer -> proposeInitialPlanFromAnswer -> adopt ----
+    const queryJobRef: QueryJobRef = { aggregateType: 'QueryJob', projectId: P, workspaceId: W,
+      queryJobId: 's3-graph-plan-job' };
+    const queryRunRef: QueryRunRef = { aggregateType: 'QueryRun', projectId: P, workspaceId: W,
+      queryJobId: queryJobRef.queryJobId, runId: 's3-graph-plan-run' };
+    const intent: QueryJobIntentV1 = { schemaVersion: 1, intentId: queryJobRef.queryJobId,
+      projectId: P, workspaceId: W, goalId: G, question: 'Propose the initial plan for this Goal',
+      focusTaskRefs: [], budget: { maxTokens: 4096, deadline: null }, multiTurn: { maxRounds: 1 },
+      correlationId: 's3-graph-plan-correlation',
+      execution: { kind: 'initial_coordination', roleBinding: FX_QUERY_BINDING,
+        runtimeBudget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null,
+          maxRequests: 8, maxToolCalls: 8, timeoutMs: 30000, perResponseTokens: 512 } } };
+    const submitted = await platform.queries.submitQueryJob(hostCtx(), {
+      meta: { requestId: 's3-graph-query-submit', expected: [
+        { ref: FX_PROJECT_REF, revision: 1 }, { ref: FX_WORKSPACE_REF, revision: FX_WORKSPACE_REVISION },
+        { ref: GOAL_REF, revision: 1 }, { ref: queryJobRef, revision: 0 }, { ref: queryRunRef, revision: 0 }] },
+      input: { queryJobId: queryJobRef.queryJobId, runId: queryRunRef.runId, intent } });
+    if (submitted.status !== 'committed') throw new Error(`S3 graph query submit failed: ${JSON.stringify(submitted)}`);
+    const querySession = await platform.runtime.createSession(hostCtx(), {
+      workspace: FX_SCOPE, role: FX_QUERY_ROLE, recommendedRefs: [], initialLinks: [],
+      meta: { requestId: 's3-graph-query-session', expected: [] } });
+    if (querySession.status !== 'completed') throw new Error(`S3 graph query Session failed: ${JSON.stringify(querySession)}`);
+    const claimQuery = await platform.queries.claimQuery(hostCtx(), {
+      meta: { requestId: 's3-graph-query-claim', expected: [
+        { ref: queryJobRef, revision: 1 }, { ref: queryRunRef, revision: 1 },
+        { ref: querySession.value.ref, revision: querySession.value.revision }] },
+      input: { queryRunRef, sessionRef: querySession.value.ref } });
+    if (claimQuery.status !== 'committed') throw new Error(`S3 graph query claim failed: ${JSON.stringify(claimQuery)}`);
+    const preparedQuery = await platform.runtime.prepareQuery(hostCtx(), {
+      queryRunRef, requestId: 's3-graph-query-prepare' });
+    if (preparedQuery.status !== 'ready') throw new Error(`S3 graph query prepare failed: ${JSON.stringify(preparedQuery)}`);
+    const startedQuery = await platform.runtime.startQuery(hostCtx(), {
+      prepared: preparedQuery.value, consumerId: 's3-graph-query-consumer',
+      requestId: 's3-graph-query-start' });
+    if (startedQuery.status !== 'ready') throw new Error(`S3 graph query start failed: ${JSON.stringify(startedQuery)}`);
+    const answerRef = startedQuery.value.answer?.ref;
+    if (answerRef === undefined) throw new Error('the S3 graph query recorded no formal answer');
+    const proposed = await platform.plans.proposeInitialPlanFromAnswer(hostCtx(), {
+      meta: { requestId: 's3-graph-initial-propose', expected: [] },
+      input: { answerRef,
+        reason: { text: 'S3 graph-tools initial plan from the real coordination answer', sources: [] } } });
+    if (proposed.status !== 'committed' || proposed.value.kind !== 'candidate_v2') {
+      throw new Error(`S3 graph initial plan proposal failed: ${JSON.stringify(proposed)}`);
+    }
+    const applied = await platform.plans.applyPlanChange(hostCtx(), {
+      meta: { requestId: 's3-graph-initial-apply', expected: [{ ref: GOAL_REF, revision: 1 }] },
+      input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision,
+        decisionRefs: [] } });
+    if (applied.status !== 'committed') throw new Error(`S3 graph initial plan adoption failed: ${JSON.stringify(applied)}`);
+    const planRef = applied.value.ref;
+
+    // ---- two real Runtime Sessions and the two real claims (tA then tB) ----
+    const workRole: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' };
+    const createSession = async (requestId: string): Promise<{ ref: SessionRef; revision: number }> => {
+      const created = await platform.runtime.createSession(hostCtx(), {
+        workspace: FX_SCOPE, role: workRole, recommendedRefs: [], initialLinks: [],
+        meta: { requestId, expected: [] } });
+      if (created.status !== 'completed') throw new Error(`S3 graph input Session failed: ${JSON.stringify(created)}`);
+      return { ref: created.value.ref, revision: created.value.revision };
+    };
+    const sessionA = await createSession('s3-graph-session-a');
+    const sessionB = await createSession('s3-graph-session-b');
+    const goalRevision = async (): Promise<number> => {
+      const read = await platform.plans.queryGoal(hostCtx(), GOAL_REF);
+      if (read.status !== 'ready') throw new Error(`S3 graph input Goal read failed: ${JSON.stringify(read)}`);
+      return read.value.goal.revision;
+    };
+    const claim = async (taskId: string, session: { ref: SessionRef; revision: number },
+      requestId: string): Promise<RunRef> => {
+      const claimed = await platform.claims.claimTask(hostCtx(), {
+        meta: { requestId, expected: [
+          { ref: GOAL_REF, revision: await goalRevision() },
+          { ref: FX_WORKSPACE_REF, revision: FX_WORKSPACE_REVISION },
+          { ref: plainSessionRefToAggregate(session.ref), revision: session.revision }] },
+        input: { goalRef: GOAL_REF, planRef, taskId, sessionRef: session.ref,
+          roleBinding: FX_ROLE_BINDING, budget: FX_BUDGET } });
+      if (claimed.status !== 'committed') throw new Error(`S3 graph input claim ${taskId} failed: ${JSON.stringify(claimed)}`);
+      return claimed.value.runRef;
+    };
+    const runA = await claim('tA', sessionA, 's3-graph-claim-a');
+    const runB = await claim('tB', sessionB, 's3-graph-claim-b');
+
+    // ---- the fixed bodies are stored by the real Run A material owner ----
+    const runACtx = fxWorkContext(runA, FX_ROLE_BINDING, new AbortController().signal);
+    for (const body of [FX_LEGACY_BODY, FX_NEW_BODY]) {
+      const stored = await platform.materials.storeArtifact(runACtx, {
+        contentType: 'text/plain', body, sources: [FX_SOURCE],
+        origin: { kind: 'execution', ref: runA } });
+      if (stored.status !== 'stored') throw new Error(`S3 graph input body store failed: ${JSON.stringify(stored)}`);
+    }
+
+    // ---- the two declaration ids come from the REAL input owner read ----
+    const readInputs = await platform.taskInputs.readTaskInputs(
+      fxWorkContext(runB, FX_ROLE_BINDING, new AbortController().signal), { consumer: T_B, planRef });
+    if (readInputs.status !== 'ready') throw new Error(`S3 graph input declaration read failed: ${JSON.stringify(readInputs)}`);
+    const declarationIdOf = (label: string): string => {
+      const selected = readInputs.value.find(item => item.declaration.requires.label === label);
+      if (selected === undefined) throw new Error(`the real input owner did not declare ${label}`);
+      return selected.declaration.declarationId;
+    };
+    const legacyDeclarationId = declarationIdOf('r1');
+    const secondLegacyDeclarationId = declarationIdOf('r2');
+
+    return {
+      service: platform.taskInputs,
+      planRef,
+      runB,
+      workContext: (signalValue: AbortSignal) => fxWorkContext(runB, FX_ROLE_BINDING, signalValue),
+      legacyDeclarationId,
+      secondLegacyDeclarationId,
+      async close() {
+        await platform.close();
+        await rm(directory, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    await platform.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 // --------------------------------------------------------------------------

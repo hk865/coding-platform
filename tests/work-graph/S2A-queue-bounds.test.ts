@@ -16,7 +16,7 @@ import { populateGoals } from '../helpers/S5R2-a-support.js';
 const QA04_MEMBER_MESSAGES = 5_001;
 
 /** Hand-computed `change_pending` reason key of the fixture's Goal B (probe-verified literal). */
-const B_CHANGE_PENDING = '{"affected":[{"ref":{"aggregateType":"PlanProposal","projectId":"P","proposalId":"U1","workspaceId":"W"},"revision":1}],'
+const B_CHANGE_PENDING = '{"affected":[{"ref":{"aggregateType":"PlanProposal","projectId":"P","proposalId":"plan-proposal-079880d9c059786361b3a930cb78a292","workspaceId":"W"},"revision":1}],'
   + '"code":"change_pending","goalRef":{"aggregateType":"Goal","goalId":"B","projectId":"P"},"kind":"goal_cause"}';
 
 describe.each(['memory', 'sqlite'] as const)('S2A queue bounds (%s)', (kind) => {

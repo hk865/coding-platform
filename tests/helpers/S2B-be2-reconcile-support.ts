@@ -65,7 +65,7 @@ export function be2ExtraSchemas(): RecordBackendSchemas {
 }
 
 /** The real control service type the Runtime needs (port + observation sink). */
-export type Be2Controls = ReturnType<typeof createRunControlService>;
+type Be2Controls = ReturnType<typeof createRunControlService>;
 
 /** A fresh real control service over the fixture's store (same shape A2/R4/BE1r use). */
 export function controlsOn(fx: S2BRuntimeStoreFixture, now: () => string = () => B2_AT): Be2Controls {
@@ -185,10 +185,10 @@ export function refusingEntry(fx: S2BRuntimeStoreFixture, reason: string): Execu
 }
 
 /** The public coordinates of one Kernel-store `get`. */
-export type Be2KernelGet = { sessionId: string; index: number };
+type Be2KernelGet = { sessionId: string; index: number };
 /** The public coordinates of one Kernel-store `read`. */
-export type Be2KernelRead = { sessionId: string; after: number; limit: number; index: number };
-export type Be2KernelFaultDecision = 'pass' | 'corrupt';
+type Be2KernelRead = { sessionId: string; after: number; limit: number; index: number };
+type Be2KernelFaultDecision = 'pass' | 'corrupt';
 
 /**
  * The Kernel-store probe/read fault seam (spec §7 "Kernel storage-boundary fault

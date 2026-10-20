@@ -16,8 +16,7 @@ import type { FileGraphPageNodeV1, LanguageCoverageV1 } from '../../src/contract
 import type { ArchitectureSourceMapping } from '../../src/contracts/architecture-source.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
-import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
-import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
+import { canonicalJson } from '../../src/contracts/fingerprint.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
@@ -30,8 +29,10 @@ import {
   OBSERVED_ARCHITECTURE_RECORD_SCHEMAS,
 } from '../../src/core/work-graph/architecture/architecture-record-codecs.js';
 import {
-  GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot,
+  GOAL_RECORD_SCHEMAS,
 } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createWorkspaceAccessFactory } from '../../src/core/workspace/access.js';
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../../src/core/workspace/workspace-tools.js';
@@ -90,46 +91,29 @@ async function fixture(
     records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
       ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records],
     events: [...GOAL_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events,
-      ...ARCHITECTURE_CATALOG_SCHEMAS.events,
-      { eventType: 'TrustedArchitectureScopeSeeded', schemaVersion: 1,
-        validate: event => ({ status: 'decoded', value: event }) }],
+      ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
     lookups: [...(OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.lookups ?? []), ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
   };
   const backend = createInMemoryRecordBackend({ schemas });
   const bodies: RawArtifactStorePort = new RawArtifactBodyStore();
-  const workspaceRef = { aggregateType: 'Workspace' as const, ...workspace };
-  const project: ProjectSnapshot = { ref: { aggregateType: 'Project', projectId }, revision: 1 };
-  const workspaceRecord: WorkspaceSnapshot = { ref: workspaceRef, revision: 1 };
-  const seeded = await backend.records.commit({ identityKey: 's8a-seed', fingerprint: 's8a-seed',
-    guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null },
-      { refKey: canonicalRefKey(workspaceRecord.ref), expectedRevision: null }],
-    records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspaceRecord)],
-    events: [{ eventId: 's8a-scope-seed', eventType: 'TrustedArchitectureScopeSeeded', schemaVersion: 1,
-      occurredAt: '2026-10-17T00:00:00.000Z',
-      json: JSON.stringify({ eventId: 's8a-scope-seed', eventType: 'TrustedArchitectureScopeSeeded',
-        schemaVersion: 1, occurredAt: '2026-10-17T00:00:00.000Z' }) }],
-    claims: [], indexChanges: [], indexGuards: [] });
-  if (seeded.status !== 'committed') throw Error('s8a seed failed: ' + seeded.reason);
+  let seedSequence = 0;
+  const bootstrap = createProjectBootstrapServices({ records: backend.records, now: () => '2026-10-17T00:00:00.000Z',
+    eventId: () => 's8a-scope-seed-' + ++seedSequence });
+  const projectRef = { aggregateType: 'Project' as const, projectId };
+  const workspaceRef = { aggregateType: 'Workspace' as const, projectId, workspaceId };
+  const created = await bootstrap.projects.createProject(context, { input: { projectId },
+    meta: { requestId: 's8a-project', expected: [{ ref: projectRef, revision: 0 }] } });
+  if (created.status !== 'committed') throw Error('s8a project seed failed: ' + created.reason);
+  const registered = await bootstrap.projects.registerWorkspace(context, { input: { workspace },
+    meta: { requestId: 's8a-workspace', expected: [
+      { ref: created.value.ref, revision: created.value.revision },
+      { ref: workspaceRef, revision: 0 }] } });
+  if (registered.status !== 'committed') throw Error('s8a workspace seed failed: ' + registered.reason);
   const deps = () => ({ workspace: handle.tools, access, bodies,
     records: backend.records as GoalRecordTransactionPort & RecordLookupPort,
     source: { provider: 'typescript' as const, configPath: null as string | null } });
-  let commitSeq = 0;
   return {
     root, handle, deps,
-    async commit(records: Parameters<GoalRecordTransactionPort['commit']>[0]['records']) {
-      commitSeq += 1;
-      const eventId = 's8a-commit-seed-' + commitSeq;
-      return backend.records.commit({ identityKey: 's8a-commit-' + commitSeq,
-        fingerprint: 's8a-commit-' + commitSeq,
-        guards: records.map(record => ({ refKey: record.refKey, expectedRevision: null })),
-        records, claims: [], indexChanges: [], indexGuards: [],
-        events: [{ eventId, eventType: 'TrustedArchitectureScopeSeeded', schemaVersion: 1,
-          occurredAt: '2026-10-17T00:00:00.000Z',
-          json: JSON.stringify({ eventId, eventType: 'TrustedArchitectureScopeSeeded',
-            schemaVersion: 1, occurredAt: '2026-10-17T00:00:00.000Z' }) }] });
-    },
-    async readRecord(ref: object) { return backend.records.readMany([canonicalJson(ref as JsonValue)]); },
-    async readBody(ref: Parameters<RawArtifactStorePort['read']>[0]) { return bodies.read(ref); },
     async close() { await handle.close(); await backend.close(); await rm(root, { recursive: true, force: true }); },
   };
 }

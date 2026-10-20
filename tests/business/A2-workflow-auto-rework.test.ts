@@ -35,7 +35,6 @@ import type { CoreRejection, WriteResult } from '../../src/contracts/core/result
 import type { RunRef, RunSnapshot, TaskBudgetV1 } from '../../src/contracts/dispatch.js';
 import type { GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { RuntimeTask } from '../../src/contracts/plan.js';
-import type { RoundSnapshot } from '../../src/contracts/verification.js';
 import type { TaskAutomationVerdictV1, TaskFailureFactsV1 } from '../../src/contracts/task-failure.js';
 import { WORKFLOW_AUTOMATION_ACTOR, type TaskRequeueOutcomeV1, type TaskRequeueRef } from '../../src/contracts/task-requeue.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
@@ -51,7 +50,8 @@ const goalRef = { aggregateType: 'Goal' as const, projectId: P, goalId: G };
 const planRef = { aggregateType: 'PlanRevision' as const, projectId: P, planId: 'a2-rework-plan', revision: 1 };
 const BINDING_BUDGET: TaskBudgetV1 = { tokenBudget: 1000, deadline: null };
 const goal: GoalSnapshot = { ref: goalRef, workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: W },
-  objective: 'A2 rework', desiredState: 'active', activePlanRevision: planRef as never, revision: 3 };
+  objective: 'A2 rework', desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
+  activePlanRevision: planRef as never, revision: 3 };
 
 const runRefOf = (taskId: string): RunRef => ({ aggregateType: 'Run', projectId: P, goalId: G, runId: `run-${taskId}` });
 const refusalRefOf = (taskId: string) => ({ aggregateType: 'TaskReworkRefusal' as const, projectId: P, goalId: G, taskId,
@@ -236,29 +236,6 @@ function chainHeadReads(answer: unknown): { evidence: WorkflowDependencies['evid
       return answer as never;
     } } };
 }
-const TASK_PAUSED: TaskAutomationVerdictV1 = { kind: 'stopped', reason: 'task_paused',
-  detail: { fence: 'human_pause', pausedBy: 'human' } };
-
-it('AV-4 (STEP5-FLIPS §14): a fenced Task whose Run completed has its round opened by the selection, and its PASS head completed', async () => {
-  // CTL-06: the operator's pause was superseded by the natural completion; the Task awaits its verification.
-  const fenced = rowOf('work-1', { ...failureOf('work-1', TASK_PAUSED), failureClass: null }, { effectivePhase: 'verifying' });
-  const opened = workflowWith([fenced], { executions: completedRunReads('work-1').executions,
-    evidence: chainHeadReads({ status: 'not_found' }).evidence });
-  expect(await opened.workflow.advanceWork(ctx, selectWork('work-1'))).toEqual({ status: 'ready', value: { state: 'advance',
-    receipt: null, reason: null, next: expect.objectContaining({ kind: 'perform', taskId: 'work-1', operation: {
-      kind: 'open_checks', request: expect.objectContaining({ input: { subjectRunRef: runRefOf('work-1'),
-        subject: { projectId: P, goalId: G, taskId: 'work-1' }, planRef } }) } }) } });
-  // With the head finalized PASS, the same selection completes the Task; nothing is requeued either way.
-  const head = { ref: { aggregateType: 'VerificationRound', projectId: P, roundId: 'a2-rework-round' }, revision: 2,
-    status: 'finalized', outcome: 'PASS', gaps: [], subject: { projectId: P, goalId: G, taskId: 'work-1' } } as unknown as RoundSnapshot;
-  const passed = workflowWith([fenced], { executions: completedRunReads('work-1').executions,
-    evidence: chainHeadReads({ status: 'ready', value: head }).evidence });
-  expect(await passed.workflow.advanceWork(ctx, selectWork('work-1'))).toMatchObject({ status: 'ready', value: {
-    state: 'advance', next: { kind: 'perform', operation: { kind: 'complete_task', request: {
-      input: { taskRef: head.subject, planRef, roundRef: head.ref } } } } } });
-  expect([...opened.calls, ...passed.calls]).toHaveLength(0);
-});
-
 it('§4.3 "stopped", AV-6 (FC-11, P10): a Task on an invalid round chain is skipped without reading its Run or chain; the next Task is reworked', async () => {
   const ambiguous: TaskAutomationVerdictV1 = { kind: 'stopped', reason: 'not_reworkable', detail: { cause: 'round_ambiguous' } };
   const invalid = rowOf('work-1', { ...failureOf('work-1', ambiguous), failureClass: null, notReworkableCause: 'round_ambiguous' },

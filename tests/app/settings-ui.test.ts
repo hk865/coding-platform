@@ -35,7 +35,16 @@ const scopeA: CoreScope = { projectId: 'project-1', workspaceId: 'workspace-1' }
 const scopeB: CoreScope = { projectId: 'project-1', workspaceId: 'workspace-2' };
 const scopeC: CoreScope = { projectId: 'project-2', workspaceId: 'workspace-3' };
 
-const emptySnapshot: HostSettingsSnapshot = { models: [], workspaces: [] };
+const emptySnapshot: HostSettingsSnapshot = {
+  models: [], workspaces: [],
+  automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true },
+  resourceCaps: {
+    memoryMaxMiB: null, tasksMax: null,
+    defaults: { memoryMaxMiB: 6144, tasksMax: 512 },
+    effective: { memoryMaxMiB: 6144, tasksMax: 512 },
+    machine: { status: 'unknown' },
+  },
+};
 const emptyBootstrap: BootstrapResponse = {
   workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] },
 };
@@ -96,6 +105,13 @@ describe('Host settings surface (stage 1, intentionally red)', () => {
         baseUrl: 'https://api.deepseek.com', credentialConfigured: true,
       }],
       workspaces: [],
+      automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true },
+      resourceCaps: {
+        memoryMaxMiB: null, tasksMax: null,
+        defaults: { memoryMaxMiB: 6144, tasksMax: 512 },
+        effective: { memoryMaxMiB: 6144, tasksMax: 512 },
+        machine: { status: 'unknown' },
+      },
     };
     const { calls, controller } = harness(() => ready(snapshot));
     await controller.loadSnapshot();

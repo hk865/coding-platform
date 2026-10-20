@@ -164,8 +164,8 @@ export type SessionMessageRecord = {
    * Wiring package 2 (spec §2.3, L10): the commit cursor of the FIRST saved
    * response. `null` is the pending placeholder written by
    * `nextSessionMessageRecord` on a work_run message's first reply and bound in
-   * the same mailbox commit; it is absent on non-work_run senders and on
-   * messages written before this package.
+   * the same mailbox commit; it is absent on non-work_run senders and on a
+   * work_run message that has never been replied to.
    */
   responseSince?: CommitCursor | null;
   /** Slice 5: the owning Goal; absent/null keeps the historical message shape. */
@@ -174,13 +174,6 @@ export type SessionMessageRecord = {
   decision?: DecisionMessageMetadataV1;
   /** Slice 5: the recorded application of the user's answer, when requirements demanded one. */
   application?: DecisionApplicationV1 | null;
-  /**
-   * Optional explicit reply expectation. ABSENT is the entire historical
-   * fire-and-forget behavior; the ONLY accepted legacy value is `'wait'`, which is
-   * normalized to `needsReply`/`waitAfterSend`. It is persisted with the message
-   * so a reopened Host still sees the original ask.
-   */
-  replyMode?: 'wait';
   /** Explicit communication intent; absent keeps the historical notify default. */
   intent?: SessionMessageIntentV1;
   /** The sender expects a semantic reply (independent of whether it waits now). */
@@ -306,7 +299,7 @@ export type MessageGuardContext = {
   /** message_sent only. */
   recipientScope: 'same_workspace' | 'other_workspace' | 'other_project' | null;
   /** message_sent only: the normalized flags (`mailbox-service.ts:1356-1358`) and the pin count. */
-  sendFlags: { needsReply: boolean; waitAfterSend: boolean; replyMode: 'wait' | null; pinCount: number } | null;
+  sendFlags: { needsReply: boolean; waitAfterSend: boolean; pinCount: number } | null;
   /** ack/respond/derive need exactly one pin naming this message; `revision` is null when not a positive integer. */
   pins: { count: number; matchesMessage: boolean; revision: number | null };
   /**
@@ -1117,7 +1110,6 @@ export type NewSessionMessageInput = {
   sourceRef: SourceRefV1;
   createdAt: string;
   /** Normalized send flags (`mailbox-service.ts:1356-1358`); `null` = omitted. */
-  replyMode: 'wait' | null;
   intent: SessionMessageIntentV1 | null;
   needsReply: boolean;
   waitAfterSend: boolean;
@@ -1199,7 +1191,6 @@ export function createSessionMessageRecord(input: NewSessionMessageInput): Sessi
     status: 'pending',
     readAt: null,
     response: null,
-    ...(input.replyMode === null ? {} : { replyMode: input.replyMode }),
     ...(input.intent === null ? {} : { intent: input.intent }),
     ...(input.needsReply ? { needsReply: true } : {}),
     ...(input.waitAfterSend ? { waitAfterSend: true } : {}),
@@ -1330,8 +1321,8 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
 /**
  * Spec §2.3 P02: the record-store's mechanical commit tail replaces the explicit
  * `null` reply placeholder with the cursor of the commit that saved the first
- * response. It never fills an absent (non-work_run/legacy) or already-bound
- * field, and never parses a cursor.
+ * response. It never fills an absent (non-work_run) or already-bound field, and
+ * never parses a cursor.
  */
 export function bindMessageResponseCursor(message: SessionMessageRecord, cursor: CommitCursor): SessionMessageRecord {
   if (message.responseSince !== null) return message;

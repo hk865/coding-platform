@@ -8,7 +8,6 @@ import type { WorkspaceToolsPort } from '../../src/core/workspace/ports.js';
 import { runObservedModel, type ObservedModelRunOptions } from '../../src/core/agent-runtime/observed-model-run.js';
 import { createExplorationTools } from '../../src/core/agent-runtime/exploration-tools.js';
 import { ModelBudget, DEFAULT_RUNTIME_BUDGET } from '../../src/core/agent-runtime/model-budget.js';
-import { ProjectSourceIndex } from '../../src/core/workspace/project-source-index.js';
 import { PythonSourceIndex } from '../../src/core/workspace/python-source-index.js';
 
 const resources = vi.hoisted(() => ({
@@ -108,6 +107,7 @@ async function fixture(client: kernel.ModelClientPort = finalClient()) {
     },
     root, databasePath: join(storage, 'kernel.sqlite'), sessionId: 'source-tool-lifecycle',
     input: 'Return a short lifecycle test witness.', budget, meter, readOnly: true,
+    taskBudget: { tokenBudget: null, deadline: null },
     signal: new AbortController().signal, deniedPrefixes: [], processSandboxOptions: {}, publish: async () => {},
     projectSource: { mode: 'frozen', open: source.open },
   };
@@ -223,36 +223,32 @@ it.each(['group', 'source'] as const)('reports a %s cleanup failure instead of r
   expect(f.source.close).toHaveBeenCalledTimes(1);
 }, 60_000);
 
-it('closes legacy language services once and refuses new handlers after the tool group closes', async () => {
+it('closes the frozen language index once, refuses new handlers after the tool group closes and leaves the external capture open', async () => {
   const f = await fixture();
   const workspace = await kernel.WorkspaceSandbox.create(f.root);
-  const projectDispose = vi.spyOn(ProjectSourceIndex.prototype, 'dispose');
   const pythonDispose = vi.spyOn(PythonSourceIndex.prototype, 'dispose');
-  const group = createExplorationTools(workspace, { projectSource: { mode: 'legacy_live' } });
-  const project = group.tools.find(tool => tool.name === 'project_index');
-  expect(project).toBeDefined();
+  const group = createExplorationTools(workspace, { projectSource: { mode: 'frozen', access: f.source.access } });
+  const source = group.tools.find(tool => tool.name === 'project_source');
+  expect(source).toBeDefined();
   await group.close();
   await group.close();
-  expect(projectDispose).toHaveBeenCalledTimes(1);
   expect(pythonDispose).toHaveBeenCalledTimes(1);
-  const result = await project!.handler.execute(
-    { schemaVersion: 1, callId: 'after-close', name: 'project_index', arguments: { operation: 'imports' } },
+  const result = await source!.handler.execute(
+    { schemaVersion: 1, callId: 'after-close', name: 'project_source', arguments: { action: 'capture' } },
     { signal: new AbortController().signal },
   );
   expect(result.status).not.toBe('success');
   expect(f.source.close).not.toHaveBeenCalled();
 });
 
-it('reports actual index disposal failure, attempts the other index and keeps close idempotent', async () => {
+it('reports a real language index disposal failure while close stays idempotent and leaves the external capture open', async () => {
   const f = await fixture();
   const workspace = await kernel.WorkspaceSandbox.create(f.root);
-  const failure = new Error('actual TS service disposal failed');
-  const projectDispose = vi.spyOn(ProjectSourceIndex.prototype, 'dispose').mockImplementation(() => { throw failure; });
-  const pythonDispose = vi.spyOn(PythonSourceIndex.prototype, 'dispose');
-  const group = createExplorationTools(workspace, { projectSource: { mode: 'legacy_live' } });
+  const failure = new Error('actual language service disposal failed');
+  const pythonDispose = vi.spyOn(PythonSourceIndex.prototype, 'dispose').mockImplementation(() => { throw failure; });
+  const group = createExplorationTools(workspace, { projectSource: { mode: 'frozen', access: f.source.access } });
   await expect(group.close()).rejects.toThrow(failure.message);
   await expect(group.close()).rejects.toThrow(failure.message);
-  expect(projectDispose).toHaveBeenCalledTimes(1);
   expect(pythonDispose).toHaveBeenCalledTimes(1);
   expect(f.source.close).not.toHaveBeenCalled();
 });
@@ -305,7 +301,7 @@ it('classifies a file used as search prefix and still searches it through explic
   const f = await fixture();
   await writeFile(join(f.root, 'contract.md'), 'original contract\n');
   const workspace = await kernel.WorkspaceSandbox.create(f.root);
-  const group = createExplorationTools(workspace, { projectSource: { mode: 'legacy_live' } });
+  const group = createExplorationTools(workspace, { projectSource: { mode: 'frozen', access: f.source.access } });
   const tool = group.tools.find(tool => tool.name === 'search')!;
   const execute = (args: { query: string; prefix?: string; paths?: string[] }) => tool.handler.execute(
     { schemaVersion: 1, callId: 'prefix-contract', name: 'search', arguments: args },

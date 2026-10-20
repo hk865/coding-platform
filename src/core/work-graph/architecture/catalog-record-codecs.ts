@@ -395,16 +395,11 @@ function validateArchitectureCatalog(record: EncodedRecord): DecodeResult<Encode
   if (record.schemaId !== ARCHITECTURE_CATALOG_SCHEMA_ID) return invalid('expected schemaId ' + ARCHITECTURE_CATALOG_SCHEMA_ID + ', got ' + record.schemaId);
   const parsed = parseObject(record.json, 'ArchitectureCatalog record');
   if (typeof parsed === 'string') return invalid(parsed);
-  // 8A: `since` is optional. Old rows omit it (and read as null); a row written
-  // by the revision path carries it and the commit-cursor binding fills it.
-  const declaresSince = Object.prototype.hasOwnProperty.call(parsed, 'since');
-  const recordKeys = declaresSince
-    ? ['ref', 'revision', 'baselineRef', 'schemaVersion', 'catalog', 'since']
-    : ['ref', 'revision', 'baselineRef', 'schemaVersion', 'catalog'];
+  const recordKeys = ['ref', 'revision', 'baselineRef', 'schemaVersion', 'catalog', 'since'];
   if (!exactKeys(parsed, recordKeys)) {
     return invalid('ArchitectureCatalog record has unknown or missing keys');
   }
-  if (declaresSince && parsed['since'] !== null && !isCommitCursor(parsed['since'])) {
+  if (parsed['since'] !== null && !isCommitCursor(parsed['since'])) {
     return invalid('ArchitectureCatalog since must be a ledger commit cursor');
   }
   const ref = readArchitectureCatalogRef(parsed['ref']);
@@ -456,20 +451,13 @@ function readArchitectureCatalogRecordValue(value: unknown, baselineRef: Archite
   if (!isRecord(value)) {
     return { status: 'rejected', reason: 'ArchitectureCatalog record has unknown or missing keys' };
   }
-  // 8A: `since` is optional; an absent one normalizes to null.
-  const declaresSince = Object.prototype.hasOwnProperty.call(value, 'since');
-  const recordKeys = declaresSince
-    ? ['ref', 'revision', 'baselineRef', 'schemaVersion', 'catalog', 'since']
-    : ['ref', 'revision', 'baselineRef', 'schemaVersion', 'catalog'];
+  const recordKeys = ['ref', 'revision', 'baselineRef', 'schemaVersion', 'catalog', 'since'];
   if (!exactKeys(value, recordKeys)) {
     return { status: 'rejected', reason: 'ArchitectureCatalog record has unknown or missing keys' };
   }
-  let since: CommitCursor | null = null;
-  if (declaresSince) {
-    const rawSince = value['since'];
-    if (rawSince === null) since = null;
-    else if (isCommitCursor(rawSince)) since = rawSince;
-    else return { status: 'rejected', reason: 'ArchitectureCatalog since must be a ledger commit cursor' };
+  const since = value['since'];
+  if (since !== null && !isCommitCursor(since)) {
+    return { status: 'rejected', reason: 'ArchitectureCatalog since must be a ledger commit cursor' };
   }
   const ref = readArchitectureCatalogRef(value['ref']);
   if (ref === null) return { status: 'rejected', reason: 'ArchitectureCatalog record has no complete ref' };
@@ -573,9 +561,7 @@ export function encodeArchitectureCatalogRevisedEvent(event: ArchitectureCatalog
 export function decodeArchitectureCatalogRecord(record: EncodedRecord): DecodeResult<ArchitectureCatalogRecord> {
   const checked = validateArchitectureCatalog(record);
   if (checked.status !== 'decoded') return checked;
-  // 8A: a row written before the binding has no `since` key; it reads as null.
-  const parsed = JSON.parse(record.json) as Omit<ArchitectureCatalogRecord, 'since'> & { since?: CommitCursor | null };
-  return { status: 'decoded', value: { ...parsed, since: parsed.since ?? null } };
+  return { status: 'decoded', value: JSON.parse(record.json) as ArchitectureCatalogRecord };
 }
 
 export function decodeArchitectureCatalogAdoptedEvent(event: EncodedDomainEvent): DecodeResult<ArchitectureCatalogAdoptedEventV1> {

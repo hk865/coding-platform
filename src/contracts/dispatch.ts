@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 import type { PlanRevisionRef } from "./plan.js";
 import type { TaskEnvelopeV1 } from "./task-envelope.js";
 // ------------------------------------------------------------------------ //
@@ -109,11 +108,6 @@ export type RuntimeEventV1 = {
 // ------------------------------------------------------------------------ //
 export type RunStatus = "starting" | "running" | "ended";
 export type RunOutcome = "completed" | "failed" | "cancelled" | "budget_exhausted" | "crashed" | "outcome_unknown" | "yielded";
-export type ExecutionAuthorizationV1 = {
-    generation: number;
-    consumerId: string;
-    phase: 'authorized' | 'entered' | 'revoked' | 'quarantined' | 'settled';
-};
 /**
  * Versioned multi-driver entry authorization. It is the V2 projection stored in
  * the existing `RunSnapshot.executionAuthorization` slot; no separate
@@ -220,7 +214,7 @@ export type RunSnapshot = {
     executionHistory?: import('./core/execution-history.js').RunExecutionHistoryV1;
     reconciliation?: RunReconciliationV1;
     /** Only an unconsumed authorization can be fenced and retried without a new TaskAttempt. */
-    executionAuthorization?: ExecutionAuthorizationV1 | ExecutionAuthorizationV2;
+    executionAuthorization?: ExecutionAuthorizationV2;
     /**
      * K3 (L10): absent means ordinary work. A review round / proposal round Run
      * carries the review record it belongs to and its phase.

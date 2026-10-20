@@ -10,8 +10,6 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
-import type { RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
-import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import {
   countedFacts, openS2BActivityFixture, type S2BActivityFixture,
 } from '../helpers/S2B-activity-fixture.js';
@@ -46,36 +44,6 @@ async function countedQuarter(f: S2BActivityFixture, taskId: string, session: Se
     quarters: [{ at: '2026-10-14T10:00:00.000Z', steps, edits: 0, editsUnknown: 0 }],
   }));
   return run;
-}
-
-/**
- * Seeds the §7 legacy OLD ended Run shape (no history locator, no dispatch
- * claim, so L17 finds no claiming Session) WITHOUT a `RunActivity` record.
- * Committed at the storage boundary in the shape today's Run codec decodes;
- * the fixture's `seedLegacyActivity` is the same shape but writes a record.
- */
-async function seedLegacyRun(
-  f: S2BActivityFixture, taskId: string, startedAt: string, endedAt: string,
-): Promise<RunRef> {
-  const goalRead = await f.b2.base.plans.queryGoal(f.ctx, f.goalRef);
-  if (goalRead.status !== 'ready' || goalRead.value.goal.activePlanRevision === null) {
-    throw new Error('the S2B activity Goal has no accepted plan');
-  }
-  const ref: RunRef = { aggregateType: 'Run', projectId: f.b2.base.scope.projectId,
-    goalId: f.goalRef.goalId, runId: `s2b-test-legacy-${taskId}` };
-  const snapshot: RunSnapshot = {
-    ref, revision: 1, schemaVersion: 1,
-    task: { projectId: f.b2.base.scope.projectId, goalId: f.goalRef.goalId, taskId },
-    attemptId: `s2b-test-legacy-attempt-${taskId}`, planRef: goalRead.value.goal.activePlanRevision,
-    roleBinding: f.b2.base.roleBinding, budget: f.b2.base.budget,
-    workspaceSnapshot: { workspaceId: f.b2.base.scope.workspaceId, revision: 1 },
-    status: 'ended', outcome: 'failed', exitCode: null, lastEventSeq: 0,
-    lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt, endedAt,
-  };
-  const written = await f.b2.base.commitRaw([{ refKey: canonicalJson(ref as unknown as JsonValue),
-    schemaId: 'RunSnapshot@1', revision: 1, json: JSON.stringify(snapshot) }]);
-  if (written.status !== 'committed') throw new Error(`S2B legacy Run seed failed: ${JSON.stringify(written)}`);
-  return ref;
 }
 
 describe.each(['memory', 'sqlite'] as const)('S2B activity calendar tasks (%s)', (kind) => {
@@ -143,7 +111,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B activity calendar tasks (%s)',
     expect(ids).toEqual([...sessions.map((session) => session.sessionId)].sort().slice(0, 10));
   });
 
-  it('2B-26 filters a cell to one line with sessionRefs and counts Runs whose claiming Session is unknown', async () => {
+  it('2B-26 filters a cell to one line with sessionRefs and reports no Session-unknown count unfiltered', async () => {
     const f = await open(kind);
     const sessionA = await f.b2.base.createSession('s2b-line-a');
     const sessionB = await f.b2.base.createSession('s2b-line-b');
@@ -151,57 +119,47 @@ describe.each(['memory', 'sqlite'] as const)('S2B activity calendar tasks (%s)',
 
     await countedQuarter(f, 'work-1', sessionA, 3);
     await countedQuarter(f, 'work-2', sessionB, 2);
-    // An old Run with no locator and no dispatch claim: its record's Session is null.
-    await f.seedLegacyActivity('work-3', '2026-10-14T09:30:00.000Z', '2026-10-14T10:00:00.000Z',
-      countedFacts({ turnStartedAt: '2026-10-14T09:30:00.000Z', lastRecordAt: '2026-10-14T10:00:00.000Z',
-        quarters: [{ at: '2026-10-14T10:00:00.000Z', steps: 7, edits: 0, editsUnknown: 0 }] }));
     f.setClock('2026-10-14T10:30:00.000Z');
 
     const filtered = readyCalendar(await f.readCalendar({ goalRef: f.goalRef, ...UTC_HOURS,
       sessionRefs: [sessionA] }));
     expect(cellAt(filtered, 10).steps).toBe(3);
     expect(cellAt(filtered, 10).sessions).toEqual([sessionA]);
-    expect(filtered.coverage).toMatchObject({ runsCounted: 1, runsSessionUnknown: 1 });
+    expect(filtered.coverage).toMatchObject({ runsCounted: 1, runsSessionUnknown: 0 });
 
     const whole = readyCalendar(await f.readCalendar({ goalRef: f.goalRef, ...UTC_HOURS }));
-    expect(cellAt(whole, 10).steps).toBe(12);
-    expect(whole.coverage).toMatchObject({ runsCounted: 3, runsSessionUnknown: null });
+    expect(cellAt(whole, 10).steps).toBe(5);
+    expect(whole.coverage).toMatchObject({ runsCounted: 2, runsSessionUnknown: null });
   });
 
-  it('2B-26 sessionRefs skips a foreign-line uncounted Run and counts an unresolvable claiming Session', async () => {
+  it('2B-26 sessionRefs skips a foreign-line uncounted Run and reports no unresolvable claiming Session', async () => {
     const f = await open(kind);
     const sessionA = await f.b2.base.createSession('s2b-filter-line-a');
     const sessionB = await f.b2.base.createSession('s2b-filter-line-b');
-    // `since` sits after the legacy Run ends and before the two real Runs end.
+    // `since` sits before the two real Runs end.
     await f.ensureRecording('2026-10-14T09:45:00.000Z');
 
     await countedQuarter(f, 'work-1', sessionA, 3);
     // A foreign line's real Run with no record: uncounted (not_recorded) without
     // the filter, and it marks the 09:00 cell.
     await f.runAndEnd('work-2', sessionB, '2026-10-14T09:50:00.000Z', '2026-10-14T10:00:00.000Z');
-    // An old Run with no locator, no dispatch claim and no record: its claiming
-    // Session cannot be resolved (L17), so it is not_backfilled without the
-    // filter and marks the 09:00 cell too.
-    await seedLegacyRun(f, 'work-3', '2026-10-14T09:20:00.000Z', '2026-10-14T09:30:00.000Z');
     f.setClock('2026-10-14T10:30:00.000Z');
 
     const filtered = readyCalendar(await f.readCalendar({ goalRef: f.goalRef, ...UTC_HOURS,
       sessionRefs: [sessionA] }));
-    // Only line A's Run may count: the foreign Run is skipped entirely and the
-    // unresolvable Run is runsSessionUnknown, neither marking a cell nor joining
-    // the uncounted bucket.
+    // Only line A's Run may count: the foreign Run is skipped entirely, neither
+    // marking a cell nor joining the uncounted bucket.
     expect(cellAt(filtered, 10)).toMatchObject({ steps: 3, uncountedRuns: 0, complete: true });
     expect(cellAt(filtered, 9)).toMatchObject({ uncountedRuns: 0 });
     expect(filtered.coverage).toMatchObject({
-      runsCounted: 1, runsNotEntered: 0, runsUncounted: [], runsUnplaced: 0, runsSessionUnknown: 1,
+      runsCounted: 1, runsNotEntered: 0, runsUncounted: [], runsUnplaced: 0, runsSessionUnknown: 0,
     });
 
     const whole = readyCalendar(await f.readCalendar({ goalRef: f.goalRef, ...UTC_HOURS }));
-    expect(cellAt(whole, 9).uncountedRuns).toBe(2);
+    expect(cellAt(whole, 9).uncountedRuns).toBe(1);
     expect(whole.coverage).toMatchObject({
       runsCounted: 1, runsNotEntered: 0, runsSessionUnknown: null,
       runsUncounted: [
-        { reason: 'not_backfilled', count: 1 },
         { reason: 'not_recorded', count: 1 },
       ],
     });

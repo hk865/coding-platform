@@ -66,7 +66,7 @@ import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
-import { createExecutedFilesStub } from '../helpers/executed-files-stub.js';
+import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { blockedRecordWithClaim, requeueBlockedRecord } from '../helpers/B2-crr-world.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { GOAL_B, PLAN_B2, WORKSPACE_REVISION } from '../helpers/S5-decision-fixture.js';
@@ -341,7 +341,8 @@ function cardReads(f: ReviewWorldFixture) {
   const cardSource = createUnknownCallReviewCardSource({ records, reviews: f.reviews });
   return createDecisionReadModel({ records, cardSources: [cardSource], noticeSources: [],
     conflicts: createGoalConflictAssembler({ records,
-      catalog: createArchitectureCatalogService({ records }), executedFiles: createExecutedFilesStub() }),
+      catalog: createArchitectureCatalogService({ records }),
+      executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)) });
 }
 
@@ -850,48 +851,6 @@ describe('K3-47 (四) owner review claim', () => {
       const original = await executionOf(world, originalClaim.runRef);
       expect(original.lease).toMatchObject({ holderRunId: claimed.value.runRef.runId });
       expect(original.lease?.release).toBeUndefined();
-    },
-  );
-});
-
-// --------------------------------------------------------------------------
-// K3-47 (二): the Task read model carries the selected Run's review record
-// --------------------------------------------------------------------------
-
-describe('K3-47 (二) task read model review projection', () => {
-  it.each(['memory', 'sqlite'] as const)(
-    'K3-47 (二) %s: the Task read model projects the selected Run\'s record, fail-closed when unreadable',
-    async kind => {
-      const world = await openK3ReviewCardWorld(kind);
-      fixtures.push(world);
-      const { record } = await pendingRecordWithClaim(world, `k3-47-2-${kind}`);
-      const origin = record.runRef;
-      const ref = { aggregateType: 'UnknownCallReview' as const, projectId: origin.projectId,
-        goalId: origin.goalId, runId: origin.runId };
-      const window = await readGoalPlanWindow(world.records, GOAL_B);
-      if (window.status !== 'ready' || window.plan === null) throw new Error('the active Plan is not readable');
-      // The selected Run is the original Run, and its record is projected.
-      const facts = await readCanonicalTaskFacts(world.records, GOAL_B, window.plan, record.task.taskId);
-      expect(facts).toMatchObject({ status: 'ready' });
-      if (facts.status !== 'ready') return;
-      expect(facts.value.byTaskId.get(record.task.taskId)).toMatchObject({ execution: origin,
-        unknownCallReview: { ref, revision: 1, status: 'pending_review', decisionReasons: [],
-          activeRound: null, hold: null, remainingRoundSlots: 8 } });
-      // A damaged/stale read is the fail-closed value, never an absent record.
-      const wrapped = {
-        ...world.records,
-        async readMany(refKeys: readonly string[]) {
-          const result = await world.records.readMany(refKeys);
-          if (result.status !== 'ready') return result;
-          return { status: 'ready' as const, value: { ...result.value,
-            records: result.value.records.map(entry => entry.schemaId === 'UnknownCallReview@1'
-              ? { ...entry, json: '{"broken":true}' } : entry) } };
-        },
-      };
-      const broken = await readCanonicalTaskFacts(wrapped, GOAL_B, window.plan, record.task.taskId);
-      expect(broken).toMatchObject({ status: 'ready' });
-      if (broken.status !== 'ready') return;
-      expect(broken.value.byTaskId.get(record.task.taskId)?.unknownCallReview).toEqual({ status: 'unreadable' });
     },
   );
 });

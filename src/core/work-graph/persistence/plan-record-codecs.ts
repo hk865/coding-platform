@@ -1,13 +1,11 @@
 /**
  * Plan/Proposal record codecs: persisted encoding, identity/version checks
- * and the v1/v2 discriminated decode. Domain admission of an initial plan lives
+ * and the current candidate decode. Domain admission of an initial plan lives
  * in `plan-validation.ts`; this file never judges obligations, DAG or assignment.
  *
- * One registration decodes legacy `PlanProposal@1` and candidate `PlanProposal@2`
- * under the SAME aggregate identity (the v1 body has no `goalRef`, so the decode
- * keeps it as the discriminated `legacy_v1` view with `draft: null`; a new draft
- * is never fabricated). The RecordStore selects a codec by aggregateType, so the
- * validator must accept both stored bodies and reject anything else.
+ * One registration decodes the current `PlanProposal@2` candidate body under its
+ * aggregate identity. The RecordStore selects a codec by aggregateType, so the
+ * validator must accept that body and reject anything else.
  *
  * This file performs no I/O: it only checks pure encoding, identity, version and
  * plan structure, and it computes no digest and starts no transaction.
@@ -21,7 +19,6 @@ import {
   invalid, isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty, parseTaggedObject,
   type UnknownRecord,
 } from '../../../contracts/validation/common.js';
-import type { PlanProposalSnapshot } from '../../../contracts/goal-change.js';
 import type {
   ArchitectureBaselineRevisionRef,
   CompletionPolicyRevisionRef,
@@ -519,7 +516,7 @@ function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] 
   if (!isRecord(value)) return ['plan body must be an object'];
   const issues: string[] = [];
   const schemaVersion = value['schemaVersion'];
-  if (schemaVersion !== 1 && schemaVersion !== 2) issues.push('plan schemaVersion must be 1 or 2');
+  if (schemaVersion !== 2) issues.push('plan schemaVersion must be 2');
   if (!nonEmpty(value['planId'])) issues.push('plan planId must be a non-empty string');
   if (!isPositiveRevision(value['planRevision'])) issues.push('plan planRevision must be a positive integer');
   if (requireGoalId && !nonEmpty(value['goalId'])) issues.push('plan goalId must be a non-empty string');
@@ -566,21 +563,10 @@ function structuralPlanIssues(value: unknown, requireGoalId: boolean): string[] 
       if (!nonEmpty(requires['label'])) issues.push(`${path}.requires.label must be a non-empty string`);
     }
   });
-  // A single stable store codec (`PlanRevisionSnapshot@1`) carries explicit
-  // content versions 1|2. v1 is byte-compatible and must not smuggle v2-only
-  // fields; v2 shape is validated here while membership/DAG legality stays in
-  // plan-validation. Unknown versions never decode.
-  if (schemaVersion === 1) {
-    if (value['taskRelations'] !== undefined) issues.push('plan schemaVersion 1 must not carry taskRelations');
-    if (value['inputRequirements'] !== undefined) issues.push('plan schemaVersion 1 must not carry inputRequirements');
-    if (value['taskStateBasis'] !== undefined) issues.push('plan schemaVersion 1 must not carry taskStateBasis');
-    if (value['dispositionRecord'] !== undefined) issues.push('plan schemaVersion 1 must not carry dispositionRecord');
-    // `executionIntent` is a v2-only capability. The parent version branch owns
-    // the ban (not only the enum check) so a v1 body can never smuggle it.
-    if (Array.isArray(tasks) && tasks.some((task) => isRecord(task) && task['executionIntent'] !== undefined)) {
-      issues.push('plan schemaVersion 1 must not carry task executionIntent');
-    }
-  } else if (schemaVersion === 2) {
+  // A single stable store codec (`PlanRevisionSnapshot@1`) carries the current
+  // content version 2; its shape is validated here while membership/DAG legality
+  // stays in plan-validation. Unknown versions never decode.
+  if (schemaVersion === 2) {
     const relations = value['taskRelations'];
     if (relations !== undefined) {
       if (!Array.isArray(relations)) issues.push('plan taskRelations must be an array when present');
@@ -801,20 +787,7 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
     issues.push(...planValidationErrorArrayIssues(value['issues']));
     return issues;
   }
-  // Legacy PlanProposalSnapshot@1: no complete draft exists; keep the original body.
-  if (value['schemaVersion'] !== 1) issues.push('legacy PlanProposal schemaVersion must be 1');
-  if (value['revision'] !== 1) issues.push('legacy PlanProposal revision must be 1');
-  const proposal = value['proposal'];
-  if (!isRecord(proposal)) issues.push('legacy PlanProposal must carry a proposal object');
-  else {
-    if (goalRefFromValue(proposal['sourceGoalRef'], ref.projectId) === null) {
-      issues.push('legacy PlanProposal sourceGoalRef must be a GoalRef in this project');
-    }
-    if (planRevisionRefFromValue(proposal['sourcePlanRef'], ref.projectId) === null) {
-      issues.push('legacy PlanProposal sourcePlanRef must be a PlanRevisionRef in this project');
-    }
-  }
-  if (!nonEmpty(value['recordedAt'])) issues.push('legacy PlanProposal recordedAt must be a non-empty string');
+  issues.push('PlanProposal.kind must be candidate_v2');
   return issues;
 }
 
@@ -989,35 +962,17 @@ function validatePlanRevisionAcceptedEvent(event: EncodedDomainEvent): DecodeRes
   return { status: 'decoded', value: copyEvent(event) };
 }
 
-/** Decodes a stored PlanProposal record into the v1/v2 discriminated view. */
+/** Decodes a stored PlanProposal record into the current candidate view. */
 export function decodePlanProposalRecord(record: EncodedRecord): DecodeResult<PlanProposal> {
   const checked = validatePlanProposalRecord(record);
   if (checked.status !== 'decoded') return checked;
   const parsed = JSON.parse(record.json) as UnknownRecord;
-  if (parsed['kind'] === 'candidate_v2') {
-    // §2.5: the wire-only creation origin (`since`) is NOT part of the
-    // public DTO; `decodePlanProposalOrigin` reads it separately.
-    const wire = { ...parsed };
-    delete wire['since'];
-    delete wire['noticeAutomationCap'];
-    return { status: 'decoded', value: wire as unknown as PlanProposal };
-  }
-  const legacy = parsed as unknown as PlanProposalSnapshot;
-  return {
-    status: 'decoded',
-    value: {
-      kind: 'legacy_v1',
-      ref: legacy.ref,
-      revision: 1,
-      schemaVersion: 1,
-      goalRef: legacy.proposal.sourceGoalRef,
-      basedOn: legacy.proposal.sourcePlanRef,
-      draft: null,
-      legacy,
-      status: 'candidate',
-      issues: [],
-    },
-  };
+  // §2.5: the wire-only creation origin (`since`) is NOT part of the
+  // public DTO; `decodePlanProposalOrigin` reads it separately.
+  const wire = { ...parsed };
+  delete wire['since'];
+  delete wire['noticeAutomationCap'];
+  return { status: 'decoded', value: wire as unknown as PlanProposal };
 }
 
 /**

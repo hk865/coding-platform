@@ -29,9 +29,15 @@ type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
-async function prepared(): Promise<{ fixture: R3eEvidenceFixture; options: TargetPlatformOptions; platform: Platform }> {
+async function prepared(): Promise<{
+  fixture: R3eEvidenceFixture; options: TargetPlatformOptions; platform: Platform; planRef: R3eEvidenceFixture['planRef'];
+}> {
   const fixture = await createR3eEvidenceFixture('sqlite');
   cleanups.push(() => fixture.close());
+  // Adopt an unrelated future-only Plan through the public W1 path while this
+  // fixture's backend is still open; the reopened composition root must see it.
+  const futurePlan = await fixture.adoptUnrelatedFutureEdit('r3e-completion-plan-future', 'r3e-completion-future');
+  const planRef = futurePlan.ref;
   await fixture.b2.base.closeBackend();
   const options: TargetPlatformOptions = {
     storage: { kind: 'sqlite', directory: fixture.b2.base.directory },
@@ -41,7 +47,7 @@ async function prepared(): Promise<{ fixture: R3eEvidenceFixture; options: Targe
   };
   const platform = await createTargetPlatform(options);
   cleanups.push(() => platform.close());
-  return { fixture, options, platform };
+  return { fixture, options, platform, planRef };
 }
 
 /** Run every compiled fixed check through the real sandbox, then finalize. */
@@ -65,18 +71,19 @@ async function executeAndFinalize(platform: Platform, fixture: R3eEvidenceFixtur
 }
 
 it('runs the real registered checks, completes work and goal, and replays the original receipt after reopen', async () => {
-  const { fixture, options, platform } = await prepared();
+  const { fixture, options, platform, planRef } = await prepared();
   const projectId = fixture.scope.projectId;
   const goalId = fixture.goalRef.goalId;
 
-  const workOpened = await platform.evidence.openVerification(fixture.ctx, fixture.openRequest());
-  expect(workOpened, 'the work round opens on the real platform').toMatchObject({ status: 'committed' });
+  const workOpened = await platform.evidence.openVerification(fixture.ctx, fixture.openRequest({ planRef }));
+  expect(workOpened, 'the work round opens on the real platform')
+    .toMatchObject({ status: 'committed', value: { subject: { taskId: R3E_WORK_TASK_ID } } });
   if (workOpened.status !== 'committed') throw Error('work round open did not commit');
   const workRound = await executeAndFinalize(platform, fixture, workOpened.value);
 
   const gateSubject = { ...fixture.subject, taskId: R3E_GATE_TASK_ID };
   const gateOpened = await platform.evidence.openVerification(fixture.ctx,
-    fixture.openRequest({ subject: gateSubject, gateSubject: 'goal' }));
+    fixture.openRequest({ subject: gateSubject, planRef, gateSubject: 'goal' }));
   expect(gateOpened, 'the Goal gate round opens on its own subject').toMatchObject({ status: 'committed' });
   if (gateOpened.status !== 'committed') throw Error('gate round open did not commit');
   expect(gateOpened.value.subject.taskId, 'the gate round keeps its own gate subject').toBe(R3E_GATE_TASK_ID);
@@ -91,7 +98,7 @@ it('runs the real registered checks, completes work and goal, and replays the or
 
   const workReductionRef = { aggregateType: 'TaskReduction' as const, projectId, goalId, taskId: R3E_WORK_TASK_ID };
   const completeWorkRequest = {
-    input: { taskRef: fixture.subject, planRef: fixture.planRef, roundRef: workRound.ref },
+    input: { taskRef: fixture.subject, planRef, roundRef: workRound.ref },
     meta: { requestId: 'r3e-completion-platform-work', expected: [
       { ref: fixture.goalRef, revision: goalAt },
       { ref: workReductionRef, revision: 0 },
@@ -104,7 +111,7 @@ it('runs the real registered checks, completes work and goal, and replays the or
 
   const gateReductionRef = { aggregateType: 'TaskReduction' as const, projectId, goalId, taskId: R3E_GATE_TASK_ID };
   const completedGate = await platform.goals.completeTask(fixture.ctx, {
-    input: { taskRef: gateSubject, planRef: fixture.planRef, roundRef: gateRound.ref },
+    input: { taskRef: gateSubject, planRef, roundRef: gateRound.ref },
     meta: { requestId: 'r3e-completion-platform-gate', expected: [
       { ref: fixture.goalRef, revision: goalAt },
       { ref: gateReductionRef, revision: 0 },
@@ -122,14 +129,17 @@ it('runs the real registered checks, completes work and goal, and replays the or
     ] },
   });
   expect(completedGoal, 'the Goal completion must write the formal COMPLETED phase')
-    .toMatchObject({ status: 'committed', value: { phase: 'COMPLETED' } });
+    .toMatchObject({ status: 'committed', value: { phase: 'COMPLETED', planRef } });
   if (completedGoal.status !== 'committed') throw Error('Goal completion did not commit');
 
-  const graph = await platform.plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.goalRef });
+  const graph = await platform.plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.goalRef, planRef });
   expect(graph, 'the graph reads back').toMatchObject({ status: 'ready' });
   if (graph.status !== 'ready') throw Error('graph read did not succeed');
   expect(graph.value.tasks.find(row => row.ref.taskId === R3E_WORK_TASK_ID)).toMatchObject({ effectivePhase: 'satisfied' });
   expect(graph.value.tasks.find(row => row.ref.taskId === R3E_GATE_TASK_ID)).toMatchObject({ effectivePhase: 'satisfied' });
+  const optionalFuture = graph.value.tasks.find(row => row.ref.taskId === 'r3e-future-intent');
+  expect(optionalFuture, 'the optional future intent stays visible on the graph').toBeDefined();
+  expect(optionalFuture?.definition.executionIntent, 'the future intent stays plan_only').toBe('plan_only');
   expect(graph.value.completion, 'the formal Goal completion is projected').toMatchObject({
     status: 'recorded', snapshot: { phase: 'COMPLETED' }, selectedPlanMatches: true,
   });
@@ -139,7 +149,7 @@ it('runs the real registered checks, completes work and goal, and replays the or
   await platform.close();
   const reopened = await createTargetPlatform(options);
   cleanups.push(() => reopened.close());
-  const reopenedGraph = await reopened.plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.goalRef });
+  const reopenedGraph = await reopened.plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.goalRef, planRef });
   expect(reopenedGraph, 'the completed Goal survives a close/reopen').toMatchObject({
     status: 'ready', value: { completion: { status: 'recorded', snapshot: { phase: 'COMPLETED' } } },
   });

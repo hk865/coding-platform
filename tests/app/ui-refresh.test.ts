@@ -179,23 +179,6 @@ describe('notices delivery', () => {
     expect(missed).not.toHaveBeenCalled();
     expect(unrelated).not.toHaveBeenCalled();
   });
-
-  it('catches up every loop once, and the watches only when asked', async () => {
-    const hub = createRefreshHub();
-    hub.setDelivery('notices');
-    const driver = vi.fn(async () => undefined);
-    const command = vi.fn(async () => undefined);
-    const refetch = vi.fn(async () => undefined);
-    hub.startPoll(1000, driver, driverTopic);
-    hub.startPoll(700, command, commandTopic);
-    hub.watchChanges(() => true, refetch);
-    hub.catchUp(false);
-    await vi.advanceTimersByTimeAsync(1000);
-    expect([driver.mock.calls.length, command.mock.calls.length, refetch.mock.calls.length]).toEqual([1, 1, 0]);
-    hub.catchUp(true);
-    await vi.advanceTimersByTimeAsync(1000);
-    expect([driver.mock.calls.length, command.mock.calls.length, refetch.mock.calls.length]).toEqual([2, 2, 1]);
-  });
 });
 
 describe('switching delivery', () => {

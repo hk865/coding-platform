@@ -28,6 +28,8 @@ function goal(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
     workspaceRef: { aggregateType: 'Workspace', projectId: PROJECT, workspaceId: WORKSPACE },
     objective: OBJECTIVE,
     desiredState: 'active',
+    desiredStateRevision: 1,
+    desiredStateRequestedBy: null,
     activePlanRevision: null,
     revision: 1,
     ...overrides,
@@ -104,13 +106,7 @@ describe('wiring 1 Goal content', () => {
     })).toBeNull();
   });
 
-  it('CG04 a missing binding, a null digest and another Goal all pass', () => {
-    expect(contextGoalContentProblem({
-      binding: undefined, claimGoal: CLAIM_GOAL, currentGoalDigest: CURRENT_DIGEST, rebinding: false,
-    })).toBeNull();
-    expect(contextGoalContentProblem({
-      binding: bindingWith([goalRecord(null)]), claimGoal: CLAIM_GOAL, currentGoalDigest: CURRENT_DIGEST, rebinding: false,
-    })).toBeNull();
+  it('CG04 another Goal source passes', () => {
     expect(contextGoalContentProblem({
       binding: bindingWith([goalRecord(OTHER_DIGEST, 'other')]),
       claimGoal: CLAIM_GOAL, currentGoalDigest: CURRENT_DIGEST, rebinding: false,

@@ -130,6 +130,22 @@ describe('B2-11 expandShellScripts runner forms', () => {
 });
 
 describe('B2-11 expandShellScripts levels and dirs', () => {
+  it('expands the same script name independently in two directories', async () => {
+    const files = {
+      'app/package.json': pkg({ build: 'tsc -p app' }),
+      'other/package.json': pkg({ build: 'tsc -p other' }),
+    };
+    const result = await expand('cd app && npm run build; cd ../other && npm run build', files);
+    expect(result.expansions).toHaveLength(2);
+    expect(result.expansions.map(entry => [entry.action, entry.scriptName, entry.basis])).toEqual([
+      ['npm run build', 'build', { path: 'app/package.json', digest: expect.any(String) }],
+      ['npm run build', 'build', { path: 'other/package.json', digest: expect.any(String) }],
+    ]);
+    expect(result.expansions[0]!.actions).toEqual([{ text: 'tsc -p app', sha256: keyOf(['tsc', '-p', 'app']) }]);
+    expect(result.expansions[1]!.actions).toEqual([{ text: 'tsc -p other', sha256: keyOf(['tsc', '-p', 'other']) }]);
+    expect(result.truncated).toBe(false);
+  });
+
   it('gives each level its own expansion entry with its own basis (two levels)', async () => {
     // Rework 1 item 3: the nested runner is its own `expansions` entry, keyed by
     // its directory, never folded into the outer entry.
@@ -149,6 +165,9 @@ describe('B2-11 expandShellScripts levels and dirs', () => {
       actions: [{ text: 'tool b', sha256: keyOf(['tool', 'b']) }],
       basis: { path: 'sub/package.json' },
     });
+    // Each level's own body is kept verbatim on its own entry.
+    expect(result.expansions[0]).toMatchObject({ scriptText: 'cd sub && npm run inner' });
+    expect(result.expansions[1]).toMatchObject({ scriptText: 'tool b' });
     expect(result.reads).toEqual(['package.json', 'sub/package.json']);
   });
 
@@ -159,7 +178,7 @@ describe('B2-11 expandShellScripts levels and dirs', () => {
     const result = await expand('npm run a', files);
     // a and b are each an entry; b's body names `npm run c`, but c is level 3.
     expect(result.expansions.map(entry => entry.action)).toEqual(['npm run a', 'npm run b']);
-    expect(result.expansions[1]?.actions.map(action => action.text)).toEqual(['npm run c']);
+    expect(result.expansions[1]?.actions).toEqual([{ text: 'npm run c', sha256: keyOf(['npm', 'run', 'c']) }]);
     expect(result.reads).toEqual(['package.json']);
   });
 
@@ -187,14 +206,16 @@ describe('B2-11 expandShellScripts levels and dirs', () => {
 });
 
 describe('B2-11 expandShellScripts basis, dedupe and caps', () => {
-  it('reads one file per distinct directory and at most maxFiles (the rest are absent)', async () => {
-    const files: Files = {};
-    for (const dir of ['a', 'b', 'c', 'd', 'e']) files[`${dir}/package.json`] = pkg({ [dir]: `tool ${dir}` });
+  it('reads at most maxFiles distinct package.json files and marks no expansion for the rest', async () => {
+    const files = {
+      'a/package.json': pkg({ build: 'a' }),
+      'b/package.json': pkg({ build: 'b' }),
+    };
     const result = await expand(
-      'cd a && npm run a; cd ../b && npm run b; cd ../c && npm run c; cd ../d && npm run d; cd ../e && npm run e',
-      files, '.', 4);
-    expect(result.reads).toEqual(['a/package.json', 'b/package.json', 'c/package.json', 'd/package.json']);
-    expect(result.expansions).toHaveLength(4);
+      'cd a && npm run build; cd ../b && npm run build', files, '.', 1);
+    expect(result.reads).toEqual(['a/package.json']);
+    expect(result.expansions).toHaveLength(1);
+    expect(result.expansions[0]!.basis).toMatchObject({ path: 'a/package.json' });
     expect(result.truncated).toBe(true);
   });
 
@@ -211,16 +232,9 @@ describe('B2-11 expandShellScripts basis, dedupe and caps', () => {
     expect(result.expansions).toHaveLength(1);
   });
 
-  it('marks a failed read as unavailable with no actions and never throws', async () => {
-    // The pure input/output case keeps the original hand-written failure reason.
-    const result = await expandWithLiteralReader('npm run build', {});
-    expect(result.expansions).toEqual([{
-      action: 'npm run build', scriptName: 'build', scriptText: '', actions: [],
-      basis: { status: 'unavailable', reason: 'missing package.json' },
-    }]);
-  });
-
   it('keeps the per-entry basis unavailable when the real package.json is moved away', async () => {
+    // F-021: the failed read is the real production reader over a file that was
+    // really removed from the real root.
     const workspace = await openRealWorkspace({ files: { 'package.json': pkg({ build: 'tool a' }) } });
     workspaces.push(workspace);
     await rm(join(workspace.root, 'package.json'));
@@ -230,6 +244,23 @@ describe('B2-11 expandShellScripts basis, dedupe and caps', () => {
       action: 'npm run build', scriptName: 'build', scriptText: '', actions: [],
       basis: { status: 'unavailable' },
     });
+    expect(result.expansions[0]!.basis).toHaveProperty('reason');
+    expect(result.truncated).toBe(false);
+  });
+
+  it('keeps the pure input/output failure shape for an injected read result', async () => {
+    // The original hand-written failure reason, preserved as a pure input case.
+    const parsed = parseShellActionsDetailed('cd app && npm run build');
+    if (parsed.status !== 'parsed') throw new Error(`expected parsed: ${parsed.reason}`);
+    const result = await expandShellScripts({
+      actions: parsed.actions, cwd: '.', maxFiles: 4,
+      readFile: async (path: string) => ({ status: 'unavailable' as const, reason: `no such file: ${path}` }),
+    });
+    expect(result.expansions).toEqual([{
+      action: 'npm run build', scriptName: 'build', scriptText: '', actions: [],
+      basis: { status: 'unavailable', reason: 'no such file: app/package.json' },
+    }]);
+    expect(result.truncated).toBe(false);
   });
 
   it('marks a non-JSON package.json unavailable', async () => {
@@ -238,13 +269,13 @@ describe('B2-11 expandShellScripts basis, dedupe and caps', () => {
     expect(result.expansions[0]?.actions).toEqual([]);
   });
 
-  it('clips scriptText to 2,048 UTF-8 bytes but keys come from the untruncated body', async () => {
-    const command = `tool ${'x'.repeat(3_000)}`;
-    const files = { 'package.json': pkg({ build: command }) };
-    const result = await expand('npm run build', files);
-    const entry = result.expansions[0]!;
-    expect(Buffer.byteLength(entry.scriptText, 'utf8')).toBeLessThanOrEqual(2_048);
-    const words = ['tool', 'x'.repeat(3_000)];
-    expect(entry.actions).toEqual([{ text: words.join(' '), sha256: keyOf(words) }]);
+  it('cuts scriptText to 2,048 bytes and sets the record truncated flag; keys use the full text', async () => {
+    const longWord = 'a'.repeat(3_000);
+    const body = `tool ${longWord}`;
+    const result = await expand('npm run long', { 'package.json': pkg({ long: body }) });
+    expect(result.truncated).toBe(true);
+    expect(Buffer.byteLength(result.expansions[0]!.scriptText, 'utf8')).toBeLessThanOrEqual(2_048);
+    // The comparison key comes from the untruncated body, not the cut display text.
+    expect(result.expansions[0]!.actions).toEqual([{ text: `tool ${longWord}`, sha256: keyOf(['tool', longWord]) }]);
   });
 });

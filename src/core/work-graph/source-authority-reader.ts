@@ -18,9 +18,8 @@
  *    found result must carry the complete requested ref, and the returned
  *    snapshot is an independent copy.
  *
- * This port has no `events` member: Query-origin consumers keep the real
- * `SourceAuthorityReads` event capability. The exact `readQuerySubmission`
- * locator read is the O(1) alternative to scanning events: it re-reads the
+ * This port has no `events` member: the Query consumer resolves the original
+ * initiator through the exact `readQuerySubmission` locator, which re-reads the
  * QueryJob's own locator and uses the Store's exact identity/fingerprint
  * `lookupCommit` -> `eventAt`, never a full-history scan.
  */
@@ -197,9 +196,6 @@ export function createSourceAuthorityReader(deps: SourceSnapshotReadDependencies
       }
       const job: QueryJobSnapshot = decodedJob.value;
       const submission = job.submission;
-      if (submission === undefined) {
-        return { status: 'rejected', code: 'unsupported', reason: 'the QueryJob has no exact submission locator' };
-      }
       let found;
       try {
         found = await deps.records.lookupCommit({ identityKey: submission.identityKey, fingerprint: submission.fingerprint });

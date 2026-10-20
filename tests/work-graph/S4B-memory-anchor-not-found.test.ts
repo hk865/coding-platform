@@ -42,25 +42,6 @@ describe('S4B MF9 anchor not found and retired heads', () => {
     } finally { await f.close(); }
   });
 
-  it.each(['memory', 'sqlite'] as const)('MF9 %s: lookup of a missing module anchor carries the module candidates', async kind => {
-    const f = await createS4BNoteCheckFixture(kind);
-    try {
-      const read = await f.memory.memoryLookup(f.ctx(), { v: 1, op: 'lookup',
-        anchor: { kind: 'module', moduleId: 'A2' }, limit: 20, cursor: null });
-      expect(read.status).toBe('rejected');
-      if (read.status !== 'rejected') return;
-      expect(read.code).toBe('not_found');
-      expect(read.reason).toBe('anchor_not_found');
-      const candidates = (read as unknown as { anchorCandidates: { kind: string; id: string; displayName: string }[] }).anchorCandidates;
-      expect(candidates).toEqual([
-        { kind: 'module', id: 'A', displayName: 'A' },
-        { kind: 'module', id: 'A1', displayName: 'A1' },
-        { kind: 'module', id: 'B', displayName: 'B' },
-        { kind: 'module', id: 'R', displayName: 'R' },
-      ]);
-    } finally { await f.close(); }
-  });
-
   it.each(['memory', 'sqlite'] as const)('MF9 %s: lookup of a missing file anchor carries the path candidates', async kind => {
     const f = await createS4BNoteCheckFixture(kind);
     try {

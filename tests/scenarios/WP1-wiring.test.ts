@@ -46,7 +46,27 @@ afterEach(() => { kernelClosure.supported = true; });
 
 it('SC01 (closing supported; KA-07) human pause + Host restart, continue: the Workflow closes P\'s dangling Kernel Turn and T continues in P in a new Run with no new Session, transfer or archive; T completes satisfied, no anchor', async () => {
   const f = await openPausedInterruptedScenario();
+  // KA-07 (K-W:238): after the restart the paused line still carries the dangling Kernel Turn.
+  expect((await f.readExecution()).session)
+    .toMatchObject({ health: 'unavailable', healthConclusion: 'kernel_turn_open' });
   await f.clickContinue();
+  const claimed = await f.advanceUntilClaimed();
+  expect(claimed.next?.kind === 'perform' ? claimed.next.operation.kind : null, 'the drive stops at the continuation start').toBe('start');
+  const claimedKinds = claimed.receipts.map(receipt => receipt.kind);
+  expect(claimedKinds).toContain('close_open_turn');
+  expect(claimedKinds).not.toContain('create_session');
+  expect(claimedKinds).not.toContain('transfer_responsibility');
+  expect(claimedKinds).not.toContain('archive_predecessor');
+  expect(claimed.receipts.find(receipt => receipt.kind === 'close_open_turn'))
+    .toMatchObject({ result: { status: 'closed', health: 'available' } });
+  // KA-07 (K-W:253): the continuation Run is claimed and occupies P before it starts.
+  const claimedTask = await f.readTask();
+  if (claimedTask.execution === null || claimedTask.execution.runId === f.runRef.runId) {
+    throw new Error('SC01: the continuation Run must be selected before start');
+  }
+  const claimedExecution = await execution(f.harness, claimedTask.execution);
+  expect(claimedExecution.session.ref.sessionId).toBe(f.P.sessionId);
+  expect(claimedExecution.session.occupancy).toMatchObject({ kind: 'execution', executionRef: { runId: claimedTask.execution.runId } });
   const trace = await f.advanceToEnd();
 
   // K L7 (KA2, KA3): the human's TaskRequeue authorizes closing the paused line

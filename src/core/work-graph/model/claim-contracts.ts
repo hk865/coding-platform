@@ -8,7 +8,7 @@ import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import type { WriteResult, ReadResult } from '../../../contracts/core/results.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type {
-  ConsumedWaitV1, DispatchOutboxRef, RoleBindingRefV1, RunRef, TaskAttemptRef, TaskBudgetV1, TaskDispatchStateV2, TaskTriple,
+  ConsumedWaitV1, RoleBindingRefV1, RunRef, TaskAttemptRef, TaskBudgetV1, TaskTriple,
 } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NewBasisInputRefV1 } from '../../../contracts/no-progress.js';
@@ -21,7 +21,7 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
-import type { DispatchStateV1 } from '../state/attempt-machine.js';
+import type { DispatchOutboxRecord } from '../state/attempt-machine.js';
 
 /** Compatibility re-export: the single declaration lives in contracts/core. */
 export type { TaskClaim } from '../../../contracts/core/task-claim.js';
@@ -89,22 +89,7 @@ export type RequeueTaskInput = {
   /** Slice 1 §2.6: present only when this requeue is caused by an archive. */
   archiveOrigin?: ArchiveRequeueOriginV1 | null;
 };
-export type TaskDispatchStateV1 = DispatchStateV1;
-/** The not-entered settlement (AD-2) lives in contracts; re-exported beside V1. */
-export type { TaskDispatchStateV2 } from '../../../contracts/dispatch.js';
-export type TaskClaimOutbox = {
-  ref: DispatchOutboxRef;
-  revision: number;
-  schemaVersion: 1;
-  status: 'pending' | 'entered' | 'settled';
-  /**
-   * Present only for the versioned entered/settled phases. V2 is the
-   * `pending → settled` not-entered settlement (spec §5 AD-2); the outer outbox
-   * `schemaVersion` stays 1.
-   */
-  dispatchState?: TaskDispatchStateV1 | TaskDispatchStateV2;
-  claim: TaskClaim;
-};
+export type TaskClaimOutbox = DispatchOutboxRecord;
 /**
  * E5 (§2.3 S:622, L-d): the already committed `TaskRequeue` of a `(Task,
  * afterRun)` pair with the cursor of its original `TaskRequeued` event, so the

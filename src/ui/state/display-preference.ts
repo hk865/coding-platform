@@ -11,10 +11,6 @@ import { selectedKey, view } from './workbench.js';
 // are global. These are display ids only: never a body, token or owner fact.
 // ---------------------------------------------------------------------------
 
-/** Legacy single-record key; its explicit `scopeKey` is the only scope its ids
- * may migrate to, and it never overwrites an existing v2 record. */
-export const DISPLAY_PREFERENCE_V1_KEY = 'workbench.display-preference.v1';
-
 const DISPLAY_PREFERENCE_V2_SCOPE_PREFIX = 'workbench.display-preference.v2.scope:';
 const DISPLAY_PREFERENCE_V2_GLOBAL_KEY = 'workbench.display-preference.v2.global';
 
@@ -57,7 +53,7 @@ export type ScopeDisplayRestore = {
 export type ScopeDisplayStore = {
   /** Persist ids for the ORIGINAL scope and start a new selection generation. */
   save(origin: CoreScope, ids: ScopeDisplayIds): void;
-  /** Read one scope's ids, migrating an explicit old-v1 scopeKey exactly once. */
+  /** Read one scope's ids. */
   load(scope: CoreScope): ScopeDisplayIds;
   readGlobal(): GlobalDisplayPreference;
   writeGlobal(global: GlobalDisplayPreference): void;
@@ -103,38 +99,20 @@ function readPayloadSessionId(payload: { value: unknown }): string | null {
 export function createScopeDisplayStore(storage: DisplayPreferenceStorage): ScopeDisplayStore {
   const generations = new Map<string, number>();
   const scopeStorageKey = (scope: CoreScope): string => DISPLAY_PREFERENCE_V2_SCOPE_PREFIX + scopeKey(scope);
-  const readLegacy = (): Record<string, unknown> | null => {
-    try {
-      const raw = storage.get(DISPLAY_PREFERENCE_V1_KEY);
-      return raw === null ? null : record(JSON.parse(raw));
-    } catch { return null; }
-  };
   const loadIds = (scope: CoreScope): ScopeDisplayIds => {
-    const key = scopeKey(scope);
     const storageKey = scopeStorageKey(scope);
     try {
       const raw = storage.get(storageKey);
       if (raw !== null) return displayIdsOfRecord(JSON.parse(raw));
-    } catch { /* malformed entry falls back to migration/empty */ }
-    // A scope's old v1 ids migrate ONLY to the scope named by its scopeKey.
-    const legacy = readLegacy();
-    if (legacy === null || legacy.scopeKey !== key) return emptyDisplayIds();
-    const ids = displayIdsOfRecord(legacy);
-    try { storage.set(storageKey, JSON.stringify(ids)); } catch { /* storage disabled */ }
-    return ids;
+    } catch { /* malformed entry falls back to empty */ }
+    return emptyDisplayIds();
   };
   const readGlobal = (): GlobalDisplayPreference => {
     try {
       const raw = storage.get(DISPLAY_PREFERENCE_V2_GLOBAL_KEY);
       if (raw !== null) return displayGlobalOfRecord(JSON.parse(raw));
-    } catch { /* malformed entry falls back to migration/empty */ }
-    // Startup migrates the old v1 lastscope/theme into the global key only.
-    const legacy = readLegacy();
-    const migrated = displayGlobalOfRecord(legacy === null ? {} : { lastScopeKey: legacy.scopeKey, theme: legacy.theme });
-    if (legacy !== null) {
-      try { storage.set(DISPLAY_PREFERENCE_V2_GLOBAL_KEY, JSON.stringify(migrated)); } catch { /* storage disabled */ }
-    }
-    return migrated;
+    } catch { /* malformed entry falls back to empty */ }
+    return displayGlobalOfRecord({});
   };
   return {
     save(origin, ids) {

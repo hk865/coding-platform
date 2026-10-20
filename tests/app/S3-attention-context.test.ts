@@ -301,8 +301,6 @@ describe('S3 attention context', () => {
     let label = 'A.out';
     const scanner = createAttentionScanner({
       workspace: { readWorkspace: () => { throw new Error('unexpected readWorkspace'); } },
-      plans: { queryTaskGraph: () => { throw new Error('unexpected legacy plan read'); } },
-      architecture: { readArchitectureRevision: () => { throw new Error('unexpected legacy architecture read'); } },
       messages: { readInbox: () => { throw new Error('unexpected readInbox'); } },
       readAttentionGraph: async () => ({ status: 'ready', value: attentionFacts(label) }),
     } as never);
@@ -460,17 +458,12 @@ describe('S3 attention context', () => {
   });
 
   it('AT11 keeps the old baseline and sends no full-graph deletion when the graph reader fails', async () => {
-    const legacyCalls: string[] = [];
     const scanner = createAttentionScanner({
-      workspace: { readWorkspace: () => { legacyCalls.push('workspace'); throw new Error('unexpected readWorkspace'); } },
-      plans: { queryTaskGraph: () => { legacyCalls.push('plans'); throw new Error('unexpected legacy plan read'); } },
-      architecture: { readArchitectureRevision: () => { legacyCalls.push('architecture'); throw new Error('unexpected legacy architecture read'); } },
-      messages: { readInbox: () => { legacyCalls.push('messages'); throw new Error('unexpected readInbox'); } },
+      workspace: { readWorkspace: () => { throw new Error('unexpected readWorkspace'); } },
+      messages: { readInbox: () => { throw new Error('unexpected readInbox'); } },
       readAttentionGraph: async () => ({ status: 'rejected', code: 'unavailable', reason: 'graph reader down' }),
     } as never);
     const failing = await scanner.scan(HOST_CTX, scannerScope());
-    // Only the new read is used; the legacy plans/architecture reads never run.
-    expect(legacyCalls).toEqual([]);
     expect(failing.graphUnreadable).toBe(true);
     expect(failing.graph).toBeNull();
     const observer = createAttentionObserver(config({ graph: { minChangedElements: 1, minRatio: 0 } }));

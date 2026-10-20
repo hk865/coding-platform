@@ -723,7 +723,6 @@ async function readCatalog(deps: NodeDetailReaderDeps, ctx: CoreCallContext): Pr
     return read.code === 'not_found' ? { modules: [], containment: { parentOf: [] } } : null;
   }
   if (read.status === 'not_ready') return null;
-  if (read.value.catalog === null) return { modules: [], containment: { parentOf: [] } };
   const adopted = read.value.catalog.catalog;
   return { modules: adopted.modules, containment: adopted.containment ?? { parentOf: [] } };
 }

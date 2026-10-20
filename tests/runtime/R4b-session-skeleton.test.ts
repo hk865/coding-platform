@@ -51,18 +51,6 @@ describe('R4b Session skeleton', () => {
     await expect(createKernelStoreRegistry({ entries: [base, { ...base, adapterId: 'two', storeKey: 'two-key', databasePath: path.join(directory, 'other.sqlite') }] })).rejects.toThrow(/workspace already/);
   });
 
-  it('requires an explicit trusted legacy locator and matching original Kernel Session ID', async () => {
-    const { databasePath } = await location();
-    const registry = await createKernelStoreRegistry({ entries: [], legacyEntries: [{
-      adapterId: 'legacy-run-store', storeKey: 'legacy-key', databasePath, expectedSessionId: 'old-session',
-    }] });
-    expect(registry.forWorkspace({ projectId: 'p', workspaceId: 'w' })).toBeNull();
-    expect(registry.legacy('legacy-run-store', 'other-session')).toBeNull();
-    expect(registry.legacy('legacy-run-store', 'old-session')?.databasePath).toBe(databasePath);
-    await expect(registry.withStore('legacy-run-store', async () => null)).rejects.toThrow(/unregistered/);
-    await expect(registry.withLegacyReader('legacy-run-store', 'other-session', async () => null)).rejects.toThrow(/mismatched/);
-  });
-
   it('keeps identical Kernel Session IDs in separate registered databases distinct', async () => {
     const a = await location();
     const b = await location();

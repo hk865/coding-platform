@@ -158,7 +158,7 @@ function happyCtx(event: EventName, state: MessageMachineState): MessageGuardCon
   const base = baseCtx();
   switch (event) {
     case 'sent':
-      return { ...base, recipientScope: 'same_workspace', sendFlags: { needsReply: false, waitAfterSend: false, replyMode: null, pinCount: 0 } };
+      return { ...base, recipientScope: 'same_workspace', sendFlags: { needsReply: false, waitAfterSend: false, pinCount: 0 } };
     case 'read':
       return { ...base, principal: 'work_run', workRunAuthorization: 'ok', callerIsRecipient: true, pins: pinFor(state) };
     case 'respondText':
@@ -595,11 +595,9 @@ describe('§10.4 forbidden transitions', () => {
     it('the send flag table: only waitAfterSend without needsReply is illegal', () => {
       for (const needsReply of [false, true]) {
         for (const waitAfterSend of [false, true]) {
-          for (const replyMode of [null, 'wait'] as const) {
-            const result = send({ ...happy, sendFlags: { needsReply, waitAfterSend, replyMode, pinCount: 0 } });
-            if (waitAfterSend && !needsReply) expectResult(result, no('illegal', 'invalid'));
-            else expectResult(result, TABLE.absent.sent);
-          }
+          const result = send({ ...happy, sendFlags: { needsReply, waitAfterSend, pinCount: 0 } });
+          if (waitAfterSend && !needsReply) expectResult(result, no('illegal', 'invalid'));
+          else expectResult(result, TABLE.absent.sent);
         }
       }
       expectResult(send({ ...happy, sendFlags: null }), no('illegal', 'invalid'));
@@ -625,7 +623,7 @@ describe('§10.4 forbidden transitions', () => {
     });
 
     it('precedence follows sendMessage: project → flags → pins → principal → admission → workspace → existing record', () => {
-      const badFlags = { needsReply: false, waitAfterSend: true, replyMode: null, pinCount: 2 };
+      const badFlags = { needsReply: false, waitAfterSend: true, pinCount: 2 };
       expect(rejection(send({ ...happy, recipientScope: 'other_project', sendFlags: badFlags })).code).toBe('forbidden');
       expect(rejection(send({ ...happy, sendFlags: badFlags })).detail).toContain('waitAfterSend');
       expect(rejection(send({ ...happy, principal: 'other', sendFlags: { ...happy.sendFlags!, pinCount: 1 } })).code).toBe('invalid');
@@ -812,7 +810,7 @@ describe('request guards the service asks before its receipt lookup', () => {
     const cases: ReadonlyArray<{ flags: typeof flags; detail: string | null }> = [
       { flags: { ...flags, waitAfterSend: true, needsReply: false, pinCount: 1 }, detail: 'waitAfterSend requires needsReply to be true or omitted' },
       { flags: { ...flags, pinCount: 1 }, detail: 'sendSessionMessage must not carry version pins' },
-      { flags: { ...flags, waitAfterSend: true, needsReply: true, replyMode: 'wait' }, detail: null },
+      { flags: { ...flags, waitAfterSend: true, needsReply: true }, detail: null },
       { flags, detail: null },
     ];
     for (const { flags: sendFlags, detail } of cases) {
@@ -892,7 +890,7 @@ describe('request guards the service asks before its receipt lookup', () => {
 function newInput(overrides: Partial<NewSessionMessageInput> = {}): NewSessionMessageInput {
   return {
     ref: MESSAGE_REF, sender: HOST_SENDER, recipient: RECIPIENT, bodyRef: BODY, sourceRef: BODY.source, createdAt: '2026-10-04T00:00:00.000Z',
-    replyMode: null, intent: null, needsReply: false, waitAfterSend: false, ...overrides,
+    intent: null, needsReply: false, waitAfterSend: false, ...overrides,
   };
 }
 
@@ -940,15 +938,15 @@ describe('record constructors', () => {
     expect(messageMachineStateOf(plain)).toEqual(TABLE.absent.sent.ok ? TABLE.absent.sent.next : null);
 
     const waiting = createSessionMessageRecord(newInput({
-      sender: WORK_RUN_SENDER, replyMode: 'wait', intent: 'inquiry', needsReply: true, waitAfterSend: true,
+      sender: WORK_RUN_SENDER, intent: 'inquiry', needsReply: true, waitAfterSend: true,
     }));
-    expect(Object.keys(waiting).slice(11)).toEqual(['replyMode', 'intent', 'needsReply', 'waitAfterSend']);
-    expect(waiting).toMatchObject({ replyMode: 'wait', intent: 'inquiry', needsReply: true, waitAfterSend: true });
+    expect(Object.keys(waiting).slice(11)).toEqual(['intent', 'needsReply', 'waitAfterSend']);
+    expect(waiting).toMatchObject({ intent: 'inquiry', needsReply: true, waitAfterSend: true });
     expect(codecProblem(waiting)).toBeNull();
 
     // needsReply=false / waitAfterSend=false are omitted, not written as false.
     const notify = createSessionMessageRecord(newInput({ intent: 'notify' }));
-    expect('needsReply' in notify || 'waitAfterSend' in notify || 'replyMode' in notify).toBe(false);
+    expect('needsReply' in notify || 'waitAfterSend' in notify).toBe(false);
     expect(() => createSessionMessageRecord(newInput({ waitAfterSend: true }))).toThrow(/needsReply/);
   });
 

@@ -46,7 +46,7 @@ import {
 // A7 pass-through sandbox: the real shell handler is never reached in this row
 // (the K3 shell seam replaces it while the original Run is closed); the real
 // probe answers `available` as a Host with bubblewrap does.
-const sandbox = vi.hoisted(() => ({ available: true as boolean, executeChecks: false as boolean }));
+const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
   const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
@@ -71,7 +71,6 @@ afterEach(async () => {
   for (const release of crashHandles.splice(0)) await release();
   shellSeam.release();
   sandbox.available = true;
-  sandbox.executeChecks = false;
   await cleanupScenarios();
   await cleanupRestart();
 });

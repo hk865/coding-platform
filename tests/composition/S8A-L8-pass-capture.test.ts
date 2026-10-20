@@ -377,32 +377,7 @@ describe.each(BACKENDS)('S8A L8 PASS capture [%s]', backend => {
     await assertPassCapture(fixture, oldCurrent, 2);
   });
 
-  it('row 2: the public finalizeChecks PASS starts one automatic capture', async () => {
-    const fixture = await openEnvironment(backend, `s8a-l8-pass-${backend}-row2`);
-    fixture.driver.workspaceRegistered(fixture.scope);
-    const before = await waitForCapture(fixture, 1);
-    const oldCurrent = before.current!.captureRef;
-
-    // The Workflow ends the real Run and commits the round open; the run itself
-    // is the real Run that the public round belongs to.
-    const opened = await drive(fixture, select(fixture, 's8a-l8-row2-flow'), performs('run_check'));
-    const round = roundFromOpen(opened.receipts);
-    const run = requireReadyCheck(await fixture.platform.checks.runRegisteredCheck(fixture.ctx, {
-      input: { roundRef: round.ref, checkId: CHECK_ID },
-      meta: { requestId: fixture.projectId + '-public-run',
-        expected: [{ ref: round.ref, revision: round.revision }] },
-    }));
-    const finalizeRequest = { input: { roundRef: run.value.ref }, meta: {
-      requestId: fixture.projectId + '-public-finalize',
-      expected: [{ ref: run.value.ref, revision: run.value.revision }] } };
-    const finalized = await fixture.platform.evidence.finalizeChecks(fixture.ctx, finalizeRequest);
-    expect(finalized).toMatchObject({ status: 'committed', replayed: false,
-      value: { outcome: 'PASS', applicable: true } });
-
-    await assertPassCapture(fixture, oldCurrent, 2);
-  });
-
-  it('row 3: the same finalize request replays and changes no capture state', async () => {
+  it('rows 2 and 3: the public finalizeChecks PASS starts one automatic capture, and the same finalize request replays and changes no capture state', async () => {
     const fixture = await openEnvironment(backend, `s8a-l8-pass-${backend}-row3`);
     fixture.driver.workspaceRegistered(fixture.scope);
     const before = await waitForCapture(fixture, 1);

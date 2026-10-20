@@ -12,66 +12,25 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import type { EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import type { GoalRecordTransactionPort, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { RecordCountPort, RecordLookupIndex, RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
+import { commitRow, keyV, keyW, recordSchema, typed } from '../helpers/SP-record-store-support.js';
 import { platformRecordSchemas } from '../state/invariants.js';
 import { NOTE_RECORD_SCHEMAS, S4_NOTE_BY_REVIEW_STATUS_LOOKUP } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
 import { LINE_SETTINGS_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-settings-codecs.js';
 
-const at = '2026-10-16T00:00:00.000Z';
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
-
-type Backend = {
-  records: GoalRecordTransactionPort & RecordLookupPort & RecordCountPort;
-  close(): Promise<void>;
-};
-
-function recordSchema(aggregateType: string) {
-  return {
-    schemaId: `${aggregateType}@1`,
-    aggregateType,
-    validate: (record: EncodedRecord) => {
-      const body: unknown = JSON.parse(record.json);
-      if (typeof body !== 'object' || body === null || !('ref' in body)) {
-        return { status: 'invalid' as const, reason: 'ref missing' };
-      }
-      return { status: 'decoded' as const, value: record };
-    },
-  };
-}
 
 const changedEvents: RecordBackendSchemas['events'] = [
   { eventType: 'Changed', schemaVersion: 1, validate: (value) => ({ status: 'decoded', value }) },
 ];
 
-function event(id: string): EncodedDomainEvent {
-  return {
-    eventId: id, eventType: 'Changed', schemaVersion: 1, occurredAt: at,
-    json: JSON.stringify({ eventId: id, eventType: 'Changed', schemaVersion: 1, occurredAt: at }),
-  };
-}
-
-const keyW = (id: string) => `{"aggregateType":"W","id":${JSON.stringify(id)}}`;
-const keyV = (id: string) => `{"aggregateType":"V","id":${JSON.stringify(id)}}`;
-
-function typed(aggregateType: 'W' | 'V', id: string, body: Record<string, unknown>): EncodedRecord {
-  return {
-    refKey: aggregateType === 'W' ? keyW(id) : keyV(id),
-    schemaId: `${aggregateType}@1`,
-    revision: 1,
-    json: JSON.stringify({ ref: { aggregateType, id }, revision: 1, ...body }),
-  };
-}
-
-function commitRow(backend: Backend, id: string, row: EncodedRecord): Promise<unknown> {
-  const commit: PreparedCommit = {
-    identityKey: id, fingerprint: `fp-${id}`, guards: [{ refKey: row.refKey, expectedRevision: null }],
-    records: [row], events: [event(id)], claims: [], indexGuards: [], indexChanges: [],
-  };
-  return backend.records.commit(commit);
-}
+type Backend = {
+  records: GoalRecordTransactionPort & RecordLookupPort & RecordCountPort;
+  close(): Promise<void>;
+};
 
 async function openSqlite(path: string, schemas: RecordBackendSchemas): Promise<Backend> {
   return createSqliteRecordBackend({ path, schemas }) as unknown as Backend;

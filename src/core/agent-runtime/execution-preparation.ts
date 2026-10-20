@@ -517,8 +517,8 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // measured and the instruction trimmed from the back while over budget.
       const buildManifest = (review: UnknownCallReviewInputV1 | undefined, inputText: string): PreparedTaskManifestV1 => {
         const total = Buffer.byteLength(inputText, 'utf8');
-        const trimsReviewSuffix = review !== undefined && reviewSectionStart !== null && contextAssembly !== undefined;
-        const assembly = contextAssembly === undefined ? undefined : trimsReviewSuffix
+        const trimsReviewSuffix = review !== undefined && reviewSectionStart !== null;
+        const assembly = trimsReviewSuffix
           ? { ...contextAssembly, totalBytes: total,
               sections: contextAssembly.sections.map(section => section.name === 'unknown_call_review'
                 && section.startByte === reviewSectionStart ? { ...section, endByte: total } : section) }
@@ -530,7 +530,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
           workspaceSnapshot: { workspaceId: session.workspaceId, revision: run.workspaceSnapshot.revision },
           permissions, budget: run.budget, selectedTaskInputs, materialBasis: hostConfig.materialBasis,
           materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs,
-          ...(assembly === undefined ? {} : { contextAssembly: assembly }),
+          contextAssembly: assembly,
           ...(brief === null ? {} : { continuationBrief: brief }),
           ...(sessionBasis === undefined ? {} : { sessionBasis }),
           ...(workspaceBaseline === undefined ? {} : { workspaceBaseline }),

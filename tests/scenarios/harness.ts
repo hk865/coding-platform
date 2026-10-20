@@ -623,13 +623,6 @@ export abstract class ScenarioBase {
   /** Holds the reply of work model call `index` (global) until released: the Kernel Turn stays open meanwhile. */
   holdReply(index: number): HeldReply { return this.models.hold(index); }
 
-  /** Kernel session records by `record_type` (every Turn start, message and result the Kernel wrote). */
-  kernelRecords(): { total: number; byType: Record<string, number> } {
-    const rows = readSqlite(join(this.database, 'kernel.sqlite'), database => database.prepare(
-      'SELECT record_type AS type, COUNT(*) AS n FROM session_records GROUP BY record_type').all() as Array<{ type: string; n: number }>, []);
-    const byType = Object.fromEntries(rows.map(row => [row.type, Number(row.n)]));
-    return { total: rows.reduce((sum, row) => sum + Number(row.n), 0), byType };
-  }
   /** Every Kernel session header with a digest of its records, and the checkpoint count. */
   kernelSnapshot(): KernelSnapshot {
     return readSqlite(join(this.database, 'kernel.sqlite'), (database) => {
@@ -1279,11 +1272,6 @@ export class PlatformScenario extends ScenarioBase {
     this.settings.check = check;
     this.settings.checkRevision += 1;
     this.live.registerCheckConfiguration({ configuration: checksConfiguration(this.settings.actor, check, this.settings.checkRevision) });
-  }
-  /** `registerWorkflowBinding` with a new `tokenBudget` (C8-budget, AV-11). */
-  setTokenBudget(tokenBudget: number): void {
-    this.settings.tokenBudget = tokenBudget;
-    this.live.registerWorkflowBinding({ consumerId: AG2B_CONSUMER_ID, binding: workflowBinding(tokenBudget) });
   }
 
   /** Closes the composition root and reopens it on the same files (no start-up reconcile: use host mode), then checks the invariants. */

@@ -29,7 +29,6 @@ import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.
 import { createTaskClaimFixture, CLAIM_FIXTURE_AT, type Records, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 
 type PlanDraftV2 = Extract<PlanRevisionDraft, { schemaVersion: 2 }>;
-type SnapshotV1 = Extract<PlanRevisionSnapshot, { schemaVersion: 1 }>;
 
 function workNode(taskId: string, title: string, executionIntent?: RuntimeTask['executionIntent']): RuntimeTask {
   return { taskId, title, requirementLevel: 'required', taskKind: 'work', disposition: 'active',
@@ -113,10 +112,10 @@ async function proposeAndApply(f: TaskClaimFixture, goalRef: GoalRef, basedOn: P
     input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
 }
 
-it('codec: v2 accepts executionIntent; v1, gate and unknown values are rejected', async () => {
+it('codec: v2 accepts executionIntent; gate and unknown values are rejected', async () => {
   const f = await createTaskClaimFixture('memory');
   try {
-    const base = f.plan as SnapshotV1;
+    const base = f.plan;
     const record = (body: unknown) => ({ refKey: canonicalJson(base.ref as unknown as JsonValue),
       schemaId: 'PlanRevisionSnapshot@1', revision: 1, json: JSON.stringify(body) });
     const v2: PlanRevisionSnapshot = { ...base, schemaVersion: 2, taskRelations: [], inputRequirements: [] };
@@ -127,9 +126,6 @@ it('codec: v2 accepts executionIntent; v1, gate and unknown values are rejected'
     expect(decodePlanRevisionSnapshot(record({ ...v2, tasks: withRawExecutionIntent(v2.tasks, 0, 'sometimes') })))
       .toMatchObject({ status: 'invalid' });
     expect(decodePlanRevisionSnapshot(record(v2))).toMatchObject({ status: 'decoded' });
-    // v1 bans the field in the PARENT version branch, not only the enum.
-    expect(decodePlanRevisionSnapshot(record({ ...base, tasks: withExecutionIntent(base.tasks, 0, 'plan_only') })))
-      .toMatchObject({ status: 'invalid' });
     const gateIndex = base.tasks.findIndex((task) => task.taskKind === 'gate');
     expect(gateIndex).toBeGreaterThanOrEqual(0);
     expect(decodePlanRevisionSnapshot(record({ ...v2, tasks: withExecutionIntent(v2.tasks, gateIndex, 'plan_only') })))

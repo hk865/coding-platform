@@ -8,8 +8,7 @@
  * and `ModelRequestEvidenceRecorded`) so a lost receipt can be restored from
  * the real Store instead of re-deriving the permit from current rows.
  *
- * A historical permit may lack the request pins; such a permit is readable but
- * can never authorize a fresh actual call. No provider ack field is invented:
+ * No provider ack field is invented:
  * the evidence aggregate records the platform-observed attempt, not a
  * provider receipt.
  */
@@ -90,10 +89,10 @@ export function modelRequestPermitProblem(value: unknown): string | null {
   if (!nonEmpty(value['permitId'])) return 'ModelRequestPermit permitId is required';
   const runProblem = runRefProblem(value['runRef']);
   if (runProblem !== null) return runProblem;
-  if (value['requestId'] !== undefined && !nonEmpty(value['requestId'])) return 'ModelRequestPermit requestId must be a non-empty string';
-  if (value['requestDigest'] !== undefined && !isSha256Hex(value['requestDigest'])) return 'ModelRequestPermit requestDigest must be a sha256 hex';
-  if (value['contextInputDigest'] !== undefined && !isSha256Hex(value['contextInputDigest'])) return 'ModelRequestPermit contextInputDigest must be a sha256 hex';
-  if (value['manifestDigest'] !== undefined && !isSha256Hex(value['manifestDigest'])) return 'ModelRequestPermit manifestDigest must be a sha256 hex';
+  if (!nonEmpty(value['requestId'])) return 'ModelRequestPermit requestId must be a non-empty string';
+  if (!isSha256Hex(value['requestDigest'])) return 'ModelRequestPermit requestDigest must be a sha256 hex';
+  if (!isSha256Hex(value['contextInputDigest'])) return 'ModelRequestPermit contextInputDigest must be a sha256 hex';
+  if (!isSha256Hex(value['manifestDigest'])) return 'ModelRequestPermit manifestDigest must be a sha256 hex';
   if (!Array.isArray(value['deliveryRefs'])) return 'ModelRequestPermit deliveryRefs must be an array';
   for (const pin of value['deliveryRefs']) {
     const problem = deliveryPinProblem(pin);

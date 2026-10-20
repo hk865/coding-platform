@@ -4,19 +4,20 @@
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { buildRawTurn, rawInsertRecords } from '../kernel/R4a-legacy-fixtures.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import { GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
+import type { SessionHistoryEntry } from '../../src/core/agent-runtime/session-operations.js';
+import { createR4HistoryWorld } from '../helpers/R4-history-turn-support.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'session-project';
@@ -35,7 +36,7 @@ const creation = (requestId: string) => ({
 const schemas: RecordBackendSchemas = {
   records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
-    { eventType: 'TrustedScopeSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) }],
+    ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
   lookups: SESSION_RECORD_SCHEMAS.lookups ?? [],
 };
 const directories: string[] = [];
@@ -48,17 +49,19 @@ async function open(kind: 'memory' | 'sqlite') {
   const backend = kind === 'memory'
     ? createInMemoryRecordBackend({ schemas })
     : createSqliteRecordBackend({ schemas, path: ledgerPath });
-  const project: ProjectSnapshot = { ref: { aggregateType: 'Project', projectId }, revision: 1 };
-  const workspaceSnapshot: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projectId, workspaceId }, revision: 1 };
-  const seedEvent = { eventId: 'session-scope-seeded', eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-    occurredAt: at, json: JSON.stringify({ eventId: 'session-scope-seeded', eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: at }) };
-  const seed: PreparedCommit = { identityKey: 'session-scope-seed', fingerprint: 'session-scope-seed',
-    guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null },
-      { refKey: canonicalRefKey(workspaceSnapshot.ref), expectedRevision: null }],
-    records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspaceSnapshot)],
-    claims: [], indexGuards: [], indexChanges: [], events: [seedEvent] };
-  const seeded = await backend.records.commit(seed);
-  if (seeded.status !== 'committed') throw new Error(`scope seed failed: ${seeded.reason}`);
+  // The real public bootstrap owns the Project/Workspace snapshot and its event.
+  let bootstrapSeq = 0;
+  const bootstrap = createProjectBootstrapServices({ records: backend.records, now: () => at,
+    eventId: () => `session-bootstrap-${++bootstrapSeq}` });
+  const projectRef = { aggregateType: 'Project' as const, projectId };
+  const workspaceRef = { aggregateType: 'Workspace' as const, projectId, workspaceId };
+  const project = await bootstrap.projects.createProject(ctx, { input: { projectId },
+    meta: { requestId: 'session-create-project', expected: [{ ref: projectRef, revision: 0 }] } });
+  if (project.status !== 'committed') throw new Error(`project bootstrap failed: ${JSON.stringify(project)}`);
+  const registered = await bootstrap.projects.registerWorkspace(ctx, { input: { workspace },
+    meta: { requestId: 'session-register-workspace', expected: [
+      { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }] } });
+  if (registered.status !== 'committed') throw new Error(`workspace bootstrap failed: ${JSON.stringify(registered)}`);
   const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
@@ -172,50 +175,79 @@ describe('R4b SQLite recovery and raw history acceptance', () => {
   });
 
   it('binds raw history continuation to its original adapter, Session and upper record position', async () => {
-    const { backend, runtime, kernelStores } = await open('sqlite');
+    const world = await createR4HistoryWorld();
     try {
-      const a = await runtime.createSession(ctx, { ...creation('page-history-a').input, meta: creation('page-history-a').meta });
-      const b = await runtime.createSession(ctx, { ...creation('page-history-b').input, meta: creation('page-history-b').meta });
-      expect(a.status).toBe('completed');
-      expect(b.status).toBe('completed');
-      if (a.status !== 'completed' || b.status !== 'completed') return;
-      const location = kernelStores.byAdapterId(a.value.kernel.adapterId);
-      if (!location) throw Error('missing Kernel location');
-      rawInsertRecords(location.databasePath, buildRawTurn({ sessionId: a.value.kernel.kernelSessionId,
-        startPosition: 2, runId: 'fixture-run-1', turnId: 'fixture-turn-1', input: 'first' }).records);
-      const first = await runtime.readSessionHistory(ctx, { sessionRef: a.value.ref,
+      // The SAME real Session runs twice; an old page cursor must keep pointing
+      // at the first Run's frozen upper bound after the second Run grows it.
+      const firstRun = await world.run({ text: 'first' });
+      const first = await world.history.readSessionHistory(world.ctx, { sessionRef: firstRun.sessionRef,
         afterCursor: null, throughCursor: null, limit: 2 });
       expect(first.status).toBe('ready');
       if (first.status !== 'ready') return;
       expect(first.value.items).toHaveLength(2);
       expect(first.value.nextCursor).not.toBeNull();
-      rawInsertRecords(location.databasePath, buildRawTurn({ sessionId: a.value.kernel.kernelSessionId,
-        startPosition: 7, runId: 'fixture-run-2', turnId: 'fixture-turn-2', input: 'later' }).records);
-      const continued = await runtime.readSessionHistory(ctx, { sessionRef: a.value.ref,
+      const secondRun = await world.run({ text: 'later' });
+      const continued = await world.history.readSessionHistory(world.ctx, { sessionRef: firstRun.sessionRef,
         afterCursor: first.value.nextCursor, throughCursor: null, limit: 20 });
       expect(continued.status).toBe('ready');
-      if (continued.status === 'ready') expect(continued.value.items.every(item => item.source.position <= 6)).toBe(true);
-      const wrongSession = await runtime.readSessionHistory(ctx, { sessionRef: b.value.ref,
-        afterCursor: first.value.nextCursor, throughCursor: null, limit: 2 });
-      expect(wrongSession.status).toBe('rejected');
-    } finally { await backend.close(); }
+      if (continued.status !== 'ready') return;
+      const items: SessionHistoryEntry[] = [...continued.value.items];
+      let cursor = continued.value.nextCursor;
+      while (cursor !== null) {
+        const page = await world.history.readSessionHistory(world.ctx, { sessionRef: firstRun.sessionRef,
+          afterCursor: cursor, throughCursor: null, limit: 20 });
+        expect(page.status).toBe('ready');
+        if (page.status !== 'ready') return;
+        items.push(...page.value.items);
+        cursor = page.value.nextCursor;
+      }
+      expect(items.length).toBeGreaterThan(0);
+      const belongsTo = (entry: SessionHistoryEntry,
+        identity: typeof firstRun.identity): boolean => {
+        if (!('text' in entry.body)) return false;
+        const record = JSON.parse(entry.body.text) as {
+          recordType: string;
+          payload: { run?: { runId?: string; turn?: { turnId?: string } };
+            event?: { meta?: { runId?: string; turnId?: string } } };
+        };
+        return record.recordType === 'turn.started'
+          ? record.payload.run?.runId === identity.runId && record.payload.run?.turn?.turnId === identity.turnId
+          : record.recordType === 'agent.event'
+            ? record.payload.event?.meta?.runId === identity.runId && record.payload.event?.meta?.turnId === identity.turnId
+            : false;
+      };
+      for (const item of items) {
+        expect({ position: item.source.position, first: belongsTo(item, firstRun.identity),
+          second: belongsTo(item, secondRun.identity) })
+          .toEqual({ position: item.source.position, first: true, second: false });
+      }
+      // The same cursor on another Session is the R-18 row below.
+    } finally { await world.close(); }
   });
 
-  it('rejects missing original Kernel history without returning an empty success page', async () => {
-    const { backend, runtime, kernelStores } = await open('sqlite');
-    try {
-      const created = await runtime.createSession(ctx, { ...creation('missing-history').input,
-        meta: creation('missing-history').meta });
-      expect(created.status).toBe('completed');
-      if (created.status !== 'completed') return;
-      const location = kernelStores.byAdapterId(created.value.kernel.adapterId);
-      if (!location) throw Error('missing Kernel location');
-      const database = new DatabaseSync(location.databasePath);
-      try { database.prepare('DELETE FROM session_records WHERE session_id = ? AND position = 1')
-        .run(created.value.kernel.kernelSessionId); } finally { database.close(); }
-      const missing = await runtime.readSessionHistory(ctx, { sessionRef: created.value.ref,
-        afterCursor: null, throughCursor: null, limit: 10 });
-      expect(missing.status).not.toBe('ready');
-    } finally { await backend.close(); }
+  describe('rejects: a raw history continuation cursor bound to another Session', () => {
+    it('rejects the first Session cursor on the second Session and changes nothing', async () => {
+      const world = await createR4HistoryWorld();
+      try {
+        // Prior state (A1), as in the continuation row above: the first Session runs
+        // twice, its cursor coming from the limit-2 page read in between.
+        const firstRun = await world.run({ text: 'first' });
+        const first = await world.history.readSessionHistory(world.ctx, { sessionRef: firstRun.sessionRef,
+          afterCursor: null, throughCursor: null, limit: 2 });
+        expect(first.status).toBe('ready');
+        if (first.status !== 'ready') return;
+        expect(first.value.nextCursor).not.toBeNull();
+        await world.run({ text: 'later' });
+        // R-18: the public whole-history reads of both mapped Sessions, before and after.
+        const histories = () => Promise.all([world.sessions.first, world.sessions.second].map(sessionRef =>
+          world.history.readSessionHistory(world.ctx, { sessionRef, afterCursor: null, throughCursor: null, limit: 200 })));
+        const before = await histories();
+        expect(before.map(read => read.status)).toEqual(['ready', 'ready']);
+        const wrongSession = await world.history.readSessionHistory(world.ctx, { sessionRef: world.sessions.second,
+          afterCursor: first.value.nextCursor, throughCursor: null, limit: 2 });
+        expect(wrongSession).toMatchObject({ status: 'rejected', code: 'invalid' });
+        expect(await histories()).toEqual(before);
+      } finally { await world.close(); }
+    });
   });
 });

@@ -14,12 +14,14 @@
  * `unsupported`, so the target assertions in the test file are expected RED at
  * that seam, never green via a fabricated admission.
  *
- * Kernel note: the B2 fixture supplies an explicit test Kernel binding
- * (`KernelExecutionBinding`). These domain tests therefore prove only that the
- * WorkGraph domain writer accepted and persisted the entered Run/Session/Lease;
- * they do NOT claim real Kernel consumption. The single real
- * prepare -> entered -> tool -> Plan combination test remains owned by the
- * later composition root, and the SQLite test reuses the same binding.
+ * Kernel note: both Runs are prepared and started through the shared S2B real
+ * Runtime (`port.startRun` with the real Kernel Turn identity and positions),
+ * and a scripted model is held at an A3 gate so each Run stays `entered` until
+ * `finishRun` releases it. These domain tests therefore prove the WorkGraph
+ * facts the formal Runtime wrote; they make no claim about production Kernel
+ * consumption. The single real prepare -> entered -> tool -> Plan combination
+ * test remains owned by the later composition root, and the SQLite test reuses
+ * the same Runtime path.
  *
  * Two independent goals/runs are entered (`claim` and `secondClaim`) so the
  * cross-Run identity scenarios are exercised on real formal facts.
@@ -34,48 +36,43 @@ import {
 } from './task-claim-fixture.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
+import type { VersionPin } from '../../src/contracts/core/identity.js';
 import type { SessionRecord } from '../../src/contracts/core/session.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { RoleBindingRefV1, RunSnapshot, TaskLeaseSnapshot } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
-import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import type { PlanProposal, PlanWriteProvenanceV1 } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { PlanTaskPort } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import type {
-  AuthorizeConfiguration, KernelExecutionBinding,
+  AuthorizeConfiguration,
 } from '../../src/core/work-graph/model/execution-entry-contracts.js';
+import {
+  createS2BRuntimeSteps, type S2BRunHandle, type S2BRuntimeHostGrant, type S2BRuntimeSteps,
+} from './S2B-runtime-steps-fixture.js';
 import type { PlanDelegatedWriteDependencies } from '../../src/core/work-graph/tasks/plan-write-admission.js';
 import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import {
-  decodePlanRevisionSnapshot, encodePlanProposal, encodePlanProposalRecordedEvent,
+  decodePlanRevisionSnapshot,
 } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 
 export type W2PlanDraftV2 = Extract<PlanRevisionDraft, { schemaVersion: 2 }>;
-export type W2Records = Records;
+type W2Records = Records;
 
-/** The scoped Agent attribution id the production branch will derive. */
-export function agentActorIdFor(sessionRef: SessionRef): string {
-  return 'session:' + sha256Hex(canonicalJson(sessionRef as unknown as JsonValue));
-}
 function goalRefOf(claim: TaskClaim): GoalRef {
   return { aggregateType: 'Goal', projectId: claim.task.projectId, goalId: claim.task.goalId };
 }
 
-export type W2AgentProposeRequest = GraphWrite<{
+type W2AgentProposeRequest = GraphWrite<{
   goalRef: GoalRef; basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
   reason: { text: string; sources: [] };
-}>;
-export type W2AgentApplyRequest = GraphWrite<{
-  proposalRef: PlanProposal['ref']; expectedProposalRevision: number; decisionRefs: [];
 }>;
 
 export type W2WhiteboardFixture = {
@@ -123,11 +120,6 @@ export type W2WhiteboardFixture = {
     overrides?: { requestId?: string; expected?: readonly VersionPin[] }): Promise<WriteResult<PlanProposal>>;
   applyAsHost(proposalRef: PlanProposal['ref'], expectedProposalRevision: number,
     overrides?: { requestId?: string; expected?: readonly VersionPin[] }): Promise<WriteResult<PlanRevisionSnapshot>>;
-  /** Seed a real candidate record + event with an Agent submission source. */
-  seedAgentCandidate(input: {
-    claim?: TaskClaim; goalRef?: GoalRef; draft: PlanRevisionDraft; basedOn: PlanRevisionRef;
-    proposalId: string; provenance?: Partial<PlanWriteProvenanceV1>;
-  }): Promise<PlanProposal>;
   provenanceFor(claim?: TaskClaim, overrides?: Partial<PlanWriteProvenanceV1>): Promise<PlanWriteProvenanceV1>;
   finishRun(): Promise<void>;
   close(): Promise<void>;
@@ -169,37 +161,26 @@ export async function createW2WhiteboardFixture(kind: ClaimFixtureKind = 'memory
   };
   const plans = createPlanService({ records, now, eventId, delegatedWrites });
 
-  const entry = createExecutionEntryService({ records, reads, roles, bodies: b2.bodies,
-    authorizeConfiguration, now, eventId, newId: () => `w2-entry-${++seq}` });
-  const prepared = await b2.buildPrepared({ permissions: configuration.permissions });
-  const entered = await b2.enter({ prepared, ports: { entry, model: b2.model } });
+  // Both Runs reach `entered` through the real Runtime: production prepare,
+  // `port.startRun` (authorize / begin / recordExecutionEntered with the real
+  // Kernel identity) and a scripted model held at an A3 gate, so the fixture
+  // keeps them running until `finishRun` releases the gates.
+  const runtimeHost: S2BRuntimeHostGrant = { configurationRevision: B2_HOST.configurationRevision,
+    permissions: configuration.permissions, hostTemplate: B2_HOST.hostTemplate };
+  const runtimeSteps: S2BRuntimeSteps = await createS2BRuntimeSteps({
+    base, bodies: b2.bodies, ctx: base.ctx, directory: base.directory, scope: base.scope,
+    now, setClock: () => undefined, eventId, newId: () => `w2-entry-${++seq}`,
+    consumerId: 'runtime-w2', host: runtimeHost,
+  });
   const claim = b2.claim;
   const secondClaim = b2.secondClaim;
+  const startOptions = { at: B2_AT, replies: [{ kind: 'text' as const, text: 'W2 whiteboard entered Run' }],
+    tools: [...configuration.permissions.tools], writeScope: [...configuration.permissions.writeScope] };
+  const firstHandle: S2BRunHandle = await runtimeSteps.start(claim, startOptions);
+  const secondHandle: S2BRunHandle = await runtimeSteps.start(secondClaim, startOptions);
+  await Promise.all([firstHandle.entered, secondHandle.entered]);
   const initial = await b2.read(claim);
   const run = initial.run;
-  const secondFacts = await b2.read(secondClaim);
-  // Enter the second independent Run through the SAME formal entry writer and W2 Host projection.
-  // `b2.enter` hardcodes the first Run's Kernel identity slot, so the second Run
-  // needs its own real Kernel binding; replicate the identical formal
-  // authorize -> begin -> entered calls with that distinct binding.
-  const preparedSecond = await b2.buildPrepared({ claim: secondClaim, permissions: configuration.permissions });
-  const kernel2: KernelExecutionBinding = { adapterId: secondFacts.session.kernel.adapterId,
-    kernelSessionId: secondFacts.session.kernel.kernelSessionId,
-    runId: 'w2-second-kernel-run', turnId: 'w2-second-kernel-turn' };
-  const authorize2 = await entry.authorizeRuntimeEntry(base.ctx, {
-    input: { prepared: preparedSecond, consumerId: 'runtime-w2-second' },
-    meta: { requestId: 'w2-second-authorize', expected: [await b2.secondRunPin()] } });
-  if (authorize2.status !== 'committed') throw new Error(`W2 fixture second authorize failed: ${JSON.stringify(authorize2)}`);
-  const begin2 = await entry.beginRuntimeEntry(base.ctx, {
-    input: { permit: authorize2.value, kernel: kernel2 },
-    meta: { requestId: 'w2-second-begin', expected: [await b2.secondRunPin()] } });
-  if (begin2.status !== 'committed') throw new Error(`W2 fixture second begin failed: ${JSON.stringify(begin2)}`);
-  const entered2 = await entry.recordExecutionEntered(base.ctx, {
-    input: { permit: { ...authorize2.value, authorizationRevision: begin2.value.authorization.revision },
-      enteredAt: B2_AT, kernelSource: { ...kernel2, position: 3 },
-      history: { kernel: kernel2, startPosition: 2, observedThroughPosition: 3, endPosition: null } },
-    meta: { requestId: 'w2-second-entered', expected: [await b2.secondRunPin()] } });
-  if (entered2.status !== 'committed') throw new Error(`W2 fixture second entered failed: ${JSON.stringify(entered2)}`);
   const secondInitial = await b2.read(secondClaim);
   const secondRun = secondInitial.run;
 
@@ -326,41 +307,9 @@ export async function createW2WhiteboardFixture(kind: ClaimFixtureKind = 'memory
       entryGeneration: auth.generation, authorizationRevision: auth.revision,
       configurationRevision: B2_HOST.configurationRevision, ...overrides };
   }
-  async function seedAgentCandidate(input: {
-    claim?: TaskClaim; goalRef?: GoalRef; draft: PlanRevisionDraft; basedOn: PlanRevisionRef;
-    proposalId: string; provenance?: Partial<PlanWriteProvenanceV1>;
-  }): Promise<PlanProposal> {
-    const target = input.claim ?? claim;
-    const candidateGoal = input.goalRef ?? base.goalRef;
-    const provenance = await provenanceFor(target, input.provenance);
-    const ref = { aggregateType: 'PlanProposal' as const, projectId: base.scope.projectId,
-      workspaceId: base.scope.workspaceId, proposalId: input.proposalId };
-    const candidate: Extract<PlanProposal, { kind: 'candidate_v2' }> = {
-      kind: 'candidate_v2', ref, revision: 1, schemaVersion: 2, goalRef: candidateGoal,
-      basedOn: input.basedOn, draft: input.draft, reason: { text: 'W2 seeded Agent candidate', sources: [] },
-      status: 'candidate', issues: [], submittedBy: provenance,
-    };
-    const event = {
-      eventId: `w2-seed-proposal-${++seq}`, eventType: 'PlanProposalRecorded' as const, schemaVersion: 2 as const,
-      projectId: base.scope.projectId, workspaceId: base.scope.workspaceId,
-      aggregateType: 'PlanProposal' as const, aggregateId: input.proposalId, aggregateRevision: 1,
-      causationId: `w2-seed-command-${seq}`, correlationId: `w2-seed-correlation-${seq}`,
-      idempotencyKey: `w2-seed-proposal-${input.proposalId}`,
-      actor: { kind: 'agent' as const, id: agentActorIdFor(target.sessionRef), runRef: target.runRef },
-      occurredAt: B2_AT, payload: { proposal: candidate },
-    };
-    const committed = await records.commit({
-      identityKey: `w2-seed-proposal-${input.proposalId}`, fingerprint: `w2-seed-proposal-${input.proposalId}-v1`,
-      guards: [{ refKey: canonicalJson(ref as unknown as JsonValue), expectedRevision: null }],
-      records: [encodePlanProposal(candidate)], events: [encodePlanProposalRecordedEvent(event)],
-      claims: [], indexGuards: [], indexChanges: [] });
-    if (committed.status !== 'committed') throw new Error(`w2 seed candidate failed: ${JSON.stringify(committed)}`);
-    return candidate;
-  }
   const goal2Ref = goalRefOf(secondClaim);
 
   // Prove the fixture's own preconditions before any target assertion can run.
-  expect(entered, 'W2 fixture first entered Run prerequisite').toBeTruthy();
   expect(run.status, 'W2 fixture first Run is running').toBe('running');
   const auth = run.executionAuthorization;
   expect(auth && 'schemaVersion' in auth && auth.schemaVersion === 2 && auth.phase,
@@ -387,12 +336,11 @@ export async function createW2WhiteboardFixture(kind: ClaimFixtureKind = 'memory
     sessionPin, goalPin, callerPins,
     futureDraftFor, futureDraft, buildAgentProposeRequest,
     proposeAsWorkRun, proposeAsSecondWorkRun, applyAsWorkRun, proposeAsHost, applyAsHost,
-    seedAgentCandidate, provenanceFor,
+    provenanceFor,
     async finishRun() {
-      const result = await entry.recordRunResult(ctxHost, { input: b2.terminalObservation(entered),
-        meta: { requestId: 'w2-formal-terminal', expected: [await b2.runPin()] } });
-      expect(result, 'formal terminal prerequisite').toMatchObject({ status: 'committed', value: { status: 'ended' } });
+      await runtimeSteps.finish(firstHandle, B2_AT, 'completed');
+      await runtimeSteps.finish(secondHandle, B2_AT, 'completed');
     },
-    close: () => base.close(),
+    close: async () => { await runtimeSteps.close(); await base.close(); },
   };
 }

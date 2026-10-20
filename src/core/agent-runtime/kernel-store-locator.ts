@@ -11,24 +11,13 @@ export type KernelStoreEntry = {
   workspace: WorkspaceScope;
   databasePath: string;
 };
-export type LegacyKernelStoreEntry = {
-  adapterId: string;
-  storeKey: string;
-  databasePath: string;
-  expectedSessionId: string;
-};
 export type KernelStoreLocation = Readonly<KernelStoreEntry>;
-export type LegacyKernelStoreLocation = Readonly<LegacyKernelStoreEntry>;
 
 export interface KernelStoreRegistry {
   forWorkspace(workspace: WorkspaceScope): KernelStoreLocation | null;
-  byAdapterId(adapterId: string): KernelStoreLocation | LegacyKernelStoreLocation | null;
-  /** Explicit, read-only legacy locator. Caller must still verify Kernel data. */
-  legacy(adapterId: string, expectedSessionId: string): LegacyKernelStoreLocation | null;
+  byAdapterId(adapterId: string): KernelStoreLocation | null;
   /** Only current workspace registrations can be used for creation. */
   withStore<T>(adapterId: string, use: (store: SqliteStores) => Promise<T>): Promise<T>;
-  withLegacyReader<T>(adapterId: string, expectedSessionId: string,
-    use: (reader: Pick<SqliteStores, 'get' | 'read'>) => Promise<T>): Promise<T>;
   /**
    * Register ONE additional CURRENT workspace location after startup (a newly
    * opened directory). It performs the SAME canonical database-path and
@@ -56,23 +45,13 @@ async function canonicalDatabasePath(databasePath: string): Promise<string> {
 
 export async function createKernelStoreRegistry(input: {
   entries: readonly KernelStoreEntry[];
-  legacyEntries?: readonly LegacyKernelStoreEntry[];
 }): Promise<KernelStoreRegistry> {
   const current = new Map<string, KernelStoreLocation>();
-  const legacy = new Map<string, LegacyKernelStoreLocation>();
   const workspaceOwners = new Map<string, string>();
   const pathOwners = new Map<string, string>();
 
-  const registerLegacy = (entry: LegacyKernelStoreEntry, databasePath: string): void => {
-    if (current.has(entry.adapterId) || legacy.has(entry.adapterId)) {
-      throw new Error(`duplicate Kernel adapterId ${entry.adapterId}`);
-    }
-    if (!entry.expectedSessionId) throw new Error('legacy Kernel locator requires expectedSessionId');
-    legacy.set(entry.adapterId, Object.freeze({ ...entry, databasePath }));
-  };
-
   const registerCurrentEntry = (entry: KernelStoreEntry, databasePath: string): KernelStoreLocation => {
-    if (current.has(entry.adapterId) || legacy.has(entry.adapterId)) {
+    if (current.has(entry.adapterId)) {
       throw new Error(`duplicate Kernel adapterId ${entry.adapterId}`);
     }
     const prior = pathOwners.get(databasePath);
@@ -87,15 +66,12 @@ export async function createKernelStoreRegistry(input: {
     return location;
   };
 
-  const all = [...input.entries.map(entry => ({ kind: 'current' as const, entry })),
-    ...(input.legacyEntries ?? []).map(entry => ({ kind: 'legacy' as const, entry }))];
-  for (const { kind, entry } of all) {
+  for (const entry of input.entries) {
     if (!entry.adapterId || !entry.storeKey || !path.isAbsolute(entry.databasePath)) {
       throw new Error('Kernel Store registry requires non-empty IDs and an absolute Host database path');
     }
     const databasePath = await canonicalDatabasePath(entry.databasePath);
-    if (kind === 'current') registerCurrentEntry(entry, databasePath);
-    else registerLegacy(entry, databasePath);
+    registerCurrentEntry(entry, databasePath);
   }
 
   return Object.freeze({
@@ -103,36 +79,12 @@ export async function createKernelStoreRegistry(input: {
       const owner = workspaceOwners.get(JSON.stringify([workspace.projectId, workspace.workspaceId]));
       return owner === undefined ? null : current.get(owner) ?? null;
     },
-    byAdapterId(adapterId: string) { return current.get(adapterId) ?? legacy.get(adapterId) ?? null; },
-    legacy(adapterId: string, expectedSessionId: string) {
-      const location = legacy.get(adapterId);
-      return location?.expectedSessionId === expectedSessionId ? location : null;
-    },
+    byAdapterId(adapterId: string) { return current.get(adapterId) ?? null; },
     async withStore<T>(adapterId: string, use: (store: SqliteStores) => Promise<T>): Promise<T> {
       const location = current.get(adapterId);
       if (!location) throw new Error(`unregistered Kernel adapterId ${adapterId}`);
       const store = await SqliteStores.open(location.databasePath);
       try { return await use(store); } finally { await store.close(); }
-    },
-    async withLegacyReader<T>(adapterId: string, expectedSessionId: string,
-      use: (reader: Pick<SqliteStores, 'get' | 'read'>) => Promise<T>): Promise<T> {
-      const location = legacy.get(adapterId);
-      if (!location || location.expectedSessionId !== expectedSessionId) {
-        throw new Error('unregistered or mismatched legacy Kernel Session locator');
-      }
-      const store = await SqliteStores.open(location.databasePath);
-      try {
-        return await use(Object.freeze({
-          get: (sessionId, options) => {
-            if (sessionId !== expectedSessionId) throw new Error('legacy locator Session ID mismatch');
-            return store.get(sessionId, options);
-          },
-          read: (sessionId, afterPosition, limit, options) => {
-            if (sessionId !== expectedSessionId) throw new Error('legacy locator Session ID mismatch');
-            return store.read(sessionId, afterPosition, limit, options);
-          },
-        }));
-      } finally { await store.close(); }
     },
     async registerCurrent(entry: KernelStoreEntry): Promise<KernelStoreLocation> {
       if (!entry.adapterId || !entry.storeKey || !path.isAbsolute(entry.databasePath)) {

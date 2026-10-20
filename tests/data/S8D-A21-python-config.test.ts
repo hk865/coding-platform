@@ -119,7 +119,7 @@ describe.each(BACKENDS)('A-21 Python errors and configuration [%s]', backend => 
         issueCount: 1, complete: false,
       });
       expect(edgePairs(graph)).toEqual([['a.py', 'b.py']]);
-      expect(unresolvedPairs(graph)).toEqual([['d.py', 'c']]);
+      expect(graph.unresolved).toEqual([{ from: 'd.py', specifier: 'c', reason: null }]);
     } finally {
       await f.close();
     }

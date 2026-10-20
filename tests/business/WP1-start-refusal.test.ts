@@ -14,7 +14,7 @@ import { startRefusalWorkflow } from '../helpers/WP1-units-fixture.js';
 describe('wiring 1 start refusal mapping', () => {
   it('WF01 a context_goal_changed start refusal advances to a same-Run prepare', async () => {
     const startResult = { status: 'rejected', code: 'revision_conflict', reason: 'context_goal_changed: x' } as const;
-    const fixture = startRefusalWorkflow(startResult);
+    const fixture = await startRefusalWorkflow(startResult);
     const result = await fixture.workflow.advanceWork(fixture.ctx, fixture.input);
     expect(fixture.calls).toHaveLength(1);
     expect(result).toStrictEqual({
@@ -39,7 +39,7 @@ describe('wiring 1 start refusal mapping', () => {
     const startResult = {
       status: 'rejected', code: 'revision_conflict', reason: 'the Goal changed since the caller read it',
     } as const;
-    const fixture = startRefusalWorkflow(startResult);
+    const fixture = await startRefusalWorkflow(startResult);
     const result = await fixture.workflow.advanceWork(fixture.ctx, fixture.input);
     expect(result).toStrictEqual({
       status: 'ready',

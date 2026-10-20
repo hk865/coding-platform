@@ -436,7 +436,7 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
     return auth === undefined || auth.phase === 'authorized';
   }
 
-  /** Match one replyMode wait to exactly one same-scope/role trusted profile. */
+  /** Match one inquiry wait to exactly one same-scope/role trusted profile. */
   async function consultFor(
     handle: Handle, message: SessionMessage, signal: AbortSignal,
   ): Promise<{ ok: true; profile: WorkbenchQueryProfile } | { ok: false; reason: string }> {
@@ -662,13 +662,13 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
           const needsReply = all.filter(message => message.status !== 'responded'
             && (isSessionRecipient(message.recipient)
               ? message.sender.kind === 'work_run'
-                && (message.intent === 'inquiry' || (message.intent === undefined && message.replyMode === 'wait'))
+                && message.intent === 'inquiry'
               : message.intent === 'decision_request' && message.needsReply === true));
           const waiting = needsReply.filter(message => isSessionRecipient(message.recipient));
           if (needsReply.length === 0) {
             if (manageState && handle.state === 'waiting_for_reply') handle.state = 'running';
           } else {
-            if (manageState && needsReply.some(message => message.waitAfterSend === true || message.replyMode === 'wait'
+            if (manageState && needsReply.some(message => message.waitAfterSend === true
               || !isSessionRecipient(message.recipient))) handle.state = 'waiting_for_reply';
             for (const message of waiting) {
               if (signal.aborted || handle.stopRequested) break;

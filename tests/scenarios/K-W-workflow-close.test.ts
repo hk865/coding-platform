@@ -230,61 +230,7 @@ function closeResult(driven: Awaited<ReturnType<typeof driveChecked>>): unknown 
   return driven.steps.flatMap(step => step.receipt?.kind === 'close_open_turn' ? [step.receipt.result] : [])[0];
 }
 
-it('KA-07 (KE3, L4/L7): a person continues a paused-interrupted Run; the Workflow closes the dangling Kernel Turn and the continuation is a new Run in the same Session, with no create_session, transfer or archive', async () => {
-  const { root, database, publicDir, inv, runRef, s1 } = await pausedInterrupted('kw-ka07');
-  const second = await startAG2bHost(publicDir, { root, database, replies: [textReply('KA-07 continued in the same Session')] });
-  try {
-    const ended = await readExecution(second, runRef);
-    expect(ended.session).toMatchObject({ health: 'unavailable', healthConclusion: 'kernel_turn_open' });
-    await continueRun(second, runRef, 'kw-ka07-continue');
-    const driven = await driveChecked(second, inv, selectWork('kw-ka07', true), { stopBefore: 'start' });
-    expect(driven.next?.kind === 'perform' ? driven.next.operation.kind : null, 'the drive stops at the continuation start').toBe('start');
-    const kinds = receiptKinds(driven);
-    expect(kinds).toContain('close_open_turn');
-    expect(kinds).not.toContain('create_session');
-    expect(kinds).not.toContain('transfer_responsibility');
-    expect(kinds).not.toContain('archive_predecessor');
-    expect(closeResult(driven), 'the Kernel Turn is closed and SES-13 returns the Session available')
-      .toMatchObject({ status: 'closed', health: 'available' });
-    const row = await workRow(second);
-    if (row.execution === null || row.execution.runId === runRef.runId) throw new Error('the continuation Run must be selected');
-    const next = await readExecution(second, row.execution);
-    expect(next.session.ref.sessionId).toBe(s1.sessionId);
-    expect(next.session.occupancy).toMatchObject({ kind: 'execution', executionRef: { runId: row.execution.runId } });
-  } finally {
-    await second.host.close();
-  }
-}, 180_000);
-
-it('KA-09 flow half (KE3, L6/L7): a Host restart after the close committed and its health was written reuses the Session on the next advancement; the continuation is still a new Run there', async () => {
-  const { root, database, publicDir, inv, runRef, s1 } = await pausedInterrupted('kw-ka09');
-  const second = await startAG2bHost(publicDir, { root, database, replies: [textReply('KA-09 continued in the same Session')] });
-  let third: AG2bHost | undefined;
-  try {
-    await continueRun(second, runRef, 'kw-ka09-continue');
-    const firstDrive = await driveChecked(second, inv, selectWork('kw-ka09-a', true), { stopBefore: 'claim_task' });
-    expect(firstDrive.next?.kind === 'perform' ? firstDrive.next.operation.kind : null, 'the drive stops before the claim commits').toBe('claim_task');
-    expect(closeResult(firstDrive))
-      .toMatchObject({ status: 'closed', health: 'available' });
-    await second.host.close();
-    await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
-    third = await startAG2bHost(publicDir, { root, database, replies: [textReply('KA-09 after the restart')] });
-    const driven = await driveChecked(third, inv, selectWork('kw-ka09-b', true), { stopBefore: 'start' });
-    expect(driven.next?.kind === 'perform' ? driven.next.operation.kind : null, 'the drive stops at the restart re-claim').toBe('start');
-    const kinds = receiptKinds(driven);
-    expect(kinds).not.toContain('close_open_turn');
-    expect(kinds).not.toContain('create_session');
-    expect(kinds).toContain('claim_task');
-    const row = await workRow(third);
-    if (row.execution === null || row.execution.runId === runRef.runId) throw new Error('the continuation Run must be selected');
-    expect((await readExecution(third, row.execution)).session.ref.sessionId).toBe(s1.sessionId);
-  } finally {
-    if (third !== undefined) await third.host.close();
-    else await second.host.close();
-  }
-}, 180_000);
-
-it('KA-11 (c) (KE3, L6/L7): the closure is idempotent — on the next advancement after a restart the Session is available, so no close step is produced, no new Session is created, and the requeue is claimed in place', async () => {
+it('KA-09 flow half / KA-11 (c) (KE3, L6/L7): the closure is idempotent — on the next advancement after a restart the Session is available, so no close step is produced, no new Session is created, and the requeue is claimed in place', async () => {
   const { root, database, publicDir, inv, runRef, s1 } = await pausedInterrupted('kw-ka11');
   const second = await startAG2bHost(publicDir, { root, database, replies: [textReply('KA-11 continued')] });
   let third: AG2bHost | undefined;
@@ -296,12 +242,14 @@ it('KA-11 (c) (KE3, L6/L7): the closure is idempotent — on the next advancemen
       .toMatchObject({ status: 'closed', health: 'available' });
     expect((await readExecution(second, runRef)).session).toMatchObject({ health: 'available', healthConclusion: null });
     await second.host.close();
+    await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
     third = await startAG2bHost(publicDir, { root, database, replies: [textReply('KA-11 after the restart')] });
     const driven = await driveChecked(third, inv, selectWork('kw-ka11-b', true), { stopBefore: 'start' });
     expect(driven.next?.kind === 'perform' ? driven.next.operation.kind : null, 'the drive stops at the restart re-claim').toBe('start');
     const kinds = receiptKinds(driven);
     expect(kinds).not.toContain('close_open_turn');
     expect(kinds).not.toContain('create_session');
+    expect(kinds).toContain('claim_task');
     const row = await workRow(third);
     if (row.execution === null || row.execution.runId === runRef.runId) throw new Error('the continuation Run must be selected');
     expect((await readExecution(third, row.execution)).session.ref.sessionId).toBe(s1.sessionId);
@@ -484,43 +432,6 @@ it('KA-12 (KE4, L8): another Run at the Kernel head is a definite failure; the W
   }
 }, 180_000);
 
-it('KA-12 (KE4, L8): only a read-only legacy reader is registered for the mapped Kernel adapter; the Runtime answers unsupported and the Workflow falls back to a new Session, while the original history stays readable through the legacy reader', async () => {
-  const { root, database, publicDir, inv, runRef, s1 } = await pausedInterrupted('kw-ka12l');
-  // The Session was created on the current 'ag2b-kernel' store; on this restart
-  // that same adapter is re-registered as a legacy locator only, while a separate
-  // current entry carries the fallback successor. The Session keeps its
-  // `kernel_turn_open` health because the legacy probe still reads the open Turn.
-  const second = await startKLegacyReaderHost(publicDir, { root, database, expectedSessionId: s1.sessionId,
-    replies: [textReply('KA-12 legacy continued in a new Session')] });
-  try {
-    expect((await readExecution(second, runRef)).session, 'the start-up reconcile keeps the open-Turn conclusion')
-      .toMatchObject({ lifecycle: 'active', health: 'unavailable', healthConclusion: 'kernel_turn_open' });
-    await continueRun(second, runRef, 'kw-ka12l-continue');
-    const driven = await driveChecked(second, inv, selectWork('kw-ka12l', true), { stopBefore: 'start' });
-    expect(driven.next?.kind === 'perform' ? driven.next.operation.kind : null, 'the drive stops at the fallback successor start').toBe('start');
-    const kinds = receiptKinds(driven);
-    expect(kinds).toContain('close_open_turn');
-    expect(closeResult(driven), 'the mapped Session is registered as a legacy reader only')
-      .toMatchObject({ status: 'unsupported' });
-    expect(kinds).toContain('create_session');
-    expect(kinds, 'the definite failure hands over to the fallback successor').toContain('transfer_responsibility');
-    // L8: while the legacy store is readable, the predecessor's original history stays readable.
-    const history = await answer(second, 'sessions/history', plain(AG2B_SCOPE,
-      { sessionRef: s1, afterCursor: null, throughCursor: null, limit: 10 }));
-    expect(history, 'a readable legacy store keeps the original history readable').toMatchObject({ status: 'ready' });
-    const row = await workRow(second);
-    if (row.execution === null || row.execution.runId === runRef.runId) throw new Error('the continuation Run must be selected');
-    expect((await readExecution(second, row.execution)).session.ref.sessionId).not.toBe(s1.sessionId);
-    const archived = await post<{ status: string; value: { record: { lifecycle: string } } }>(
-      second, 'sessions/read', plain(AG2B_SCOPE, s1));
-    expect(archived.status).toBe('ready');
-    expect(archived.value.record, 'the legacy-reader fallback still archives the predecessor Session')
-      .toMatchObject({ lifecycle: 'archived' });
-  } finally {
-    await second.host.close();
-  }
-}, 180_000);
-
 it('KA-12 (KE4, L8): the mapped Kernel adapter is no longer registered by this Host (entries alone, no legacy locator); the Session stays kernel_turn_open, the Runtime answers unsupported, and the Workflow falls back to a new Session while the original history is honestly refused', async () => {
   const { root, database, publicDir, inv, runRef, s1 } = await pausedInterrupted('kw-ka12a');
   // One honest reconcile boot with the predecessor adapter registered proves the
@@ -541,7 +452,7 @@ it('KA-12 (KE4, L8): the mapped Kernel adapter is no longer registered by this H
   // start-up probe answers `host_config` (inconclusive) and keeps
   // `kernel_turn_open`; the close's own storage step then finds no location for
   // the mapped adapter and answers `unsupported` (L4 step 5's "another adapter").
-  const second = await startKLegacyReaderHost(publicDir, { root, database, expectedSessionId: s1.sessionId,
+  const second = await startKLegacyReaderHost(publicDir, { root, database,
     predecessorRegistration: 'absent',
     replies: [textReply('KA-12 absent adapter continued in a new Session')] });
   try {

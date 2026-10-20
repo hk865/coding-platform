@@ -32,7 +32,6 @@ import type { CommandRerunRequestPort } from '../../core/work-graph/model/comman
 import { commandRerunRequestRefOfSource } from '../../core/work-graph/tasks/command-rerun-request-codecs.js';
 import type {
   DecisionMessagePort,
-  DecisionSourceFactsPort,
   GoalExecutedFilesPort,
   GoalSettingsPort,
   MessageDutiesFactsPort,
@@ -82,7 +81,6 @@ export type DecisionActionDependencies = {
   goalSettings?: GoalSettingsPort;
   decisionMessages?: Pick<DecisionMessagePort,
     'answerDecision' | 'readDecisionAnswer' | 'recordDecisionApplication'>;
-  decisionSources?: DecisionSourceFactsPort;
   decisionDuties?: MessageDutiesFactsPort;
   goalExecutedFiles?: GoalExecutedFilesPort;
   /**
@@ -191,8 +189,8 @@ type GoalConflictReplayPort = {
  * §4.5 line 884: the canonical source the committed answer captured
  * (`SessionMessage.response.decision.source`). It carries the exact pins and Goal
  * bases of the original command, so the settings command built from it replays
- * on a retry instead of re-reading current facts. Returns null for any answer
- * that does not carry the slice-5 user-response shape.
+ * on a retry instead of re-reading current facts. Returns null when the answer
+ * does not carry the captured source; the coordinator then refuses it.
  */
 function capturedAnswerSource(message: SessionMessage): DecisionSourceV1 | null {
   const response: unknown = message.response;
@@ -339,13 +337,12 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
 
   /**
    * ② The built-in `goal_conflict` adapter: the pre-4C-2 conflict chain moved
-   * unchanged. It returns the structured settings action (and, on the compat
-   * path, the exact historical state); step ③ records its receipt from the
-   * committed cursor.
+   * unchanged. It returns the structured settings action; step ③ records its
+   * receipt from the committed cursor.
    */
   async function applyGoalConflict(
     ctx: CoreCallContext, answer: SessionMessage, answerRef: SessionMessageRef,
-    source: DecisionSourceV1, selection: DecisionSelectionV1, requestId: string,
+    selection: DecisionSelectionV1, requestId: string,
     goalSettings: GoalSettingsPort,
   ): Promise<ReadResult<DecisionApplicationOutcome>> {
     // Free text / option / non-conflict answers only answer the card in this
@@ -384,31 +381,10 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
         action = replay;
       }
     } else {
-      // Compatibility path for an answer response without the slice-5 captured
-      // source shape: the original current-fact read decides.
-      if (deps.decisionSources === undefined) {
-        return { status: 'ready', value: { action: null, receipt: null, state: 'application_not_recorded' } };
-      }
-      const sourceRead = await deps.decisionSources.readSource(ctx, source);
-      if (sourceRead.status !== 'ready') {
-        const sourceFailure: CoreRejection = sourceRead.status === 'rejected' ? sourceRead
-          : { status: 'rejected', code: sourceRead.status === 'not_found' ? 'not_found' : 'unavailable',
-            reason: 'the decision source of the answer is not readable' };
-        return { status: 'ready', value: {
-          action: sourceFailure, receipt: null, state: 'application_not_recorded' } };
-      }
-      const facts = sourceRead.value;
-      if (facts.goal.desiredState !== 'active') {
-        return { status: 'ready', value: { action: null, receipt: null, state: 'awaiting_resume' } };
-      }
-      const derived = await settingsExpectedPins(goalSettings, ctx, selection, facts.source);
-      if ('status' in derived) {
-        return { status: 'ready', value: { action: derived, receipt: null, state: 'application_not_recorded' } };
-      }
-      action = await goalSettings.resolveGoalConflict(ctx, {
-        input: { source: facts.source, selection, decisionMessageRef: answerRef },
-        meta: { requestId: `${requestId}:settings`, expected: derived.pins },
-      });
+      return { status: 'ready', value: { action: {
+        status: 'rejected', code: 'invalid',
+        reason: 'the decision answer does not carry the captured decision source',
+      }, receipt: null, state: 'application_not_recorded' } };
     }
     return { status: 'ready', value: { action, receipt: null } };
   }
@@ -434,7 +410,7 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
       ...(goalSettings === undefined ? {} : {
         goal_conflict: {
           apply: (adapterCtx: CoreCallContext, adapterInput: Parameters<DecisionApplicationAdapter['apply']>[1]) =>
-            applyGoalConflict(adapterCtx, adapterInput.answer, adapterInput.answerRef, adapterInput.source,
+            applyGoalConflict(adapterCtx, adapterInput.answer, adapterInput.answerRef,
               adapterInput.selection, adapterInput.requestId, goalSettings),
         },
       }),

@@ -13,16 +13,11 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
-import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import type {
-  EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas,
-} from '../../src/core/record-store/ports.js';
-import type {
-  OrderedLookupRequest, RecordOrderedLookupPort, RecordLookupPort,
-} from '../../src/core/record-store/lookup-ports.js';
-
-const at = '2026-10-14T00:00:00.000Z';
+import type { EncodedRecord, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import type { OrderedLookupRequest } from '../../src/core/record-store/lookup-ports.js';
+import {
+  change, keyOf, open as openStore, seed, widget, widgetSchemas as baseWidgetSchemas, type TextBackend,
+} from '../helpers/S4B-text-search-support.js';
 
 const textIndex = { name: 's2a-text-by-group', aggregateType: 'Widget', paths: ['group'], orderBy: { path: 'label' } };
 const integerIndex = {
@@ -30,79 +25,33 @@ const integerIndex = {
 };
 const plainIndex = { name: 's2a-plain-by-group', aggregateType: 'Widget', paths: ['group'] };
 
-const widgetSchemas: RecordBackendSchemas = {
-  records: [{
-    schemaId: 'Widget@1', aggregateType: 'Widget', validate: (record) => {
-      const body: unknown = JSON.parse(record.json);
-      if (typeof body !== 'object' || body === null || !('ref' in body)) {
-        return { status: 'invalid', reason: 'widget ref missing' };
-      }
-      return { status: 'decoded', value: record };
-    },
-  }],
-  events: [{ eventType: 'WidgetChanged', schemaVersion: 1, validate: (event) => ({ status: 'decoded', value: event }) }],
-  lookups: [textIndex, integerIndex, plainIndex],
-};
+// S2A's own three indexes: the shared record/event schemas plus these lookups.
+const widgetSchemas: RecordBackendSchemas = { ...baseWidgetSchemas, lookups: [textIndex, integerIndex, plainIndex] };
 
 function withLookups(lookups: unknown): RecordBackendSchemas {
   return { ...widgetSchemas, lookups: lookups as NonNullable<RecordBackendSchemas['lookups']> };
 }
 
-type Backend = {
-  records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
-  close(): Promise<void>;
-};
-
 const temp: string[] = [];
 afterEach(async () => { for (const dir of temp.splice(0)) await rm(dir, { recursive: true, force: true }); });
 
-/** The canonical refKey of a Widget ref, built here so it is not a product call. */
-function keyOf(projectId: string, widgetId: string): string {
-  return JSON.stringify({ aggregateType: 'Widget', projectId, widgetId });
-}
-
-function widget(projectId: string, widgetId: string, body: Record<string, unknown>): EncodedRecord {
-  const ref = { aggregateType: 'Widget', projectId, widgetId };
-  return {
-    refKey: keyOf(projectId, widgetId), schemaId: 'Widget@1', revision: 1,
-    json: JSON.stringify({ ref, revision: 1, ...body }),
-  };
-}
-
-function event(id: string): EncodedDomainEvent {
-  return {
-    eventId: id, eventType: 'WidgetChanged', schemaVersion: 1, occurredAt: at,
-    json: JSON.stringify({ eventId: id, eventType: 'WidgetChanged', schemaVersion: 1, occurredAt: at }),
-  };
-}
-
-function change(id: string, value: EncodedRecord): PreparedCommit {
-  return {
-    identityKey: id, fingerprint: 'fingerprint-' + id,
-    guards: [{ refKey: value.refKey, expectedRevision: null }],
-    records: [value], events: [event(id)], claims: [], indexGuards: [], indexChanges: [],
-  };
-}
-
+// Every open passes this file's schemas explicitly; the shared open creates the
+// temporary directory, which the wrapper registers for cleanup.
 async function open(
   kind: 'memory' | 'sqlite',
   overrides: { schemas?: RecordBackendSchemas; path?: string } = {},
-): Promise<{ backend: Backend; path?: string }> {
-  if (kind === 'memory') {
-    return { backend: createInMemoryRecordBackend({ schemas: overrides.schemas ?? widgetSchemas }) as unknown as Backend };
-  }
-  const dir = overrides.path ? undefined : await mkdtemp(join(tmpdir(), 's2a-ordered-'));
-  if (dir) temp.push(dir);
-  const path = overrides.path ?? join(dir!, 'records.sqlite');
-  return {
-    backend: createSqliteRecordBackend({ path, schemas: overrides.schemas ?? widgetSchemas }) as unknown as Backend,
-    path,
-  };
+): Promise<{ backend: TextBackend; path?: string }> {
+  const opened = await openStore(kind, {
+    schemas: overrides.schemas ?? widgetSchemas,
+    ...(overrides.path === undefined ? {} : { path: overrides.path }),
+  });
+  if (opened.dir !== undefined) temp.push(opened.dir);
+  return opened;
 }
 
 type Page = { records: string[]; next: { order: string | number; refKey: string } | null };
 
-async function pageThrough(backend: Backend, request: {
+async function pageThrough(backend: TextBackend, request: {
   index: string;
   values: readonly string[];
   direction: 'asc' | 'desc';
@@ -130,19 +79,12 @@ async function pageThrough(backend: Backend, request: {
 
 /** One page's literal identities and cursor, for the continuation cases. */
 async function pageOf(
-  backend: Backend,
+  backend: TextBackend,
   request: OrderedLookupRequest,
 ): Promise<{ records: string[]; next: Page['next'] }> {
   const page = await backend.records.lookupOrdered(request);
   if (page.status !== 'ready') throw new Error(`ordered lookup failed: ${page.reason}`);
   return { records: page.value.records.map((record) => record.refKey), next: page.value.next };
-}
-
-async function seed(backend: Backend, rows: readonly EncodedRecord[], prefix: string): Promise<void> {
-  for (const [position, row] of rows.entries()) {
-    expect(await backend.records.commit(change(`${prefix}-${String(position)}`, row)))
-      .toMatchObject({ status: 'committed' });
-  }
 }
 
 // --------------------------------------------------------------------------

@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 /**
  * Branded opaque value helper (mirrors `Opaque<Value, Brand>` from the
  * Command/Event Interface).

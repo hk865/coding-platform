@@ -1,4 +1,4 @@
-/** Direct Work/Query claim exclusions, spec §5.3 SV39–41/51/52/58. */
+/** Direct Work/Query claim exclusions, spec §5.3 SV39–41/51/52. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { CoreRejection, WriteResult } from '../../src/contracts/core/results.js';
@@ -9,7 +9,7 @@ import { createSessionLifecycleService } from '../../src/core/work-graph/session
 import { createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
 import { commitBarrier } from '../helpers/graph-session-fixture.js';
 import { t0, ready, committed, key, s1Schemas, observeStore, sessionOwners, workHistory,
-  createSession, createLegacySession, plannedSession, pendingQuery } from '../helpers/S1-session-facts-fixture.js';
+  createSession, plannedSession, pendingQuery } from '../helpers/S1-session-facts-fixture.js';
 
 const opened: B2ExecutionFixture[] = [];
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(t0); });
@@ -146,21 +146,5 @@ describe.each(['memory', 'sqlite'] as const)('S1 direct dispatch guards (%s)', k
       meta: { requestId: 'a', expected: [await f.base.sessionPin(session.ref)] } }));
     expect(requested.value.archiveRequest?.requestId).toBe('a');
     await refuseOrdinaryWork(f, session.ref, 'busy');
-  });
-
-  it('SV58 a legacy copy with fixed saved message derivation is forbidden before Query claim', async () => {
-    const f = await open(kind);
-    const child = await createLegacySession(f.base, 'sv58-copy');
-    const message = await f.history.copyMessage(f.b2.secondClaim.sessionRef, child.ref);
-    const query = await pendingQuery(f.b2, 'sv58-query', true, message);
-    const pair = ready(await query.jobs.readQueryJob(f.base.ctx, query.queryJobRef));
-    expect(pair.run.run.status).toBe('pending');
-    expect(pair.run.run.executionState).toBeUndefined();
-    const derived = ready(await f.provenance.deriveLegacySessionProvenance(f.base.ctx, child.ref));
-    expect(derived.provenance).toEqual({ schemaVersion: 1, kind: 'readonly_copy',
-      from: f.b2.secondClaim.sessionRef, messageRef: message.ref });
-    expect(derived.basis).toEqual({ kind: 'consultation', messageRef: message.ref });
-    await refuseOrdinaryWork(f, child.ref, 'forbidden');
-    expect(ready(await f.directory.readSession(f.base.ctx, child.ref)).record.provenance).toBeNull();
   });
 });

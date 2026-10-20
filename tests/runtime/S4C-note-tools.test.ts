@@ -6,7 +6,7 @@
  * The note service's own authority and draft validation have their own tests.
  */
 import { describe, expect, it } from 'vitest';
-import { createNoteTools, NOTE_TOOL_NAMES, recordNoteRequestOf, type NoteToolsConfig } from '../../src/core/agent-runtime/note-tool.js';
+import { createNoteTools, NOTE_TOOL_NAMES, type NoteToolsConfig } from '../../src/core/agent-runtime/note-tool.js';
 import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
@@ -131,13 +131,11 @@ describe('S4C record_note tool', () => {
     expect(result.status).toBe('success');
     expect(writes).toHaveLength(1);
     const input = writes[0]!.input;
-    expect(input.commandId).toBe('cmd-1');
-    expect(input.goalId).toBeNull();
-    expect(input.expectedPointerRevision).toBe(2);
-    expect(input.note).toMatchObject({ kind: 'convention', topic: 'auth flow', conclusion: 'use jwt',
-      anchor: { kind: 'file', path: 'src/a.ts', symbolRequest: { language: 'ts', name: 'f' } },
-      extraAnchors: [{ kind: 'module', moduleId: 'M1' }], basisFiles: ['src/a.ts'],
-      replaces: ['old'], contradicts: [], coexistWith: [], structural: false });
+    expect(input).toStrictEqual({ commandId: 'cmd-1', expectedPointerRevision: 2, goalId: null,
+      note: { kind: 'convention', topic: 'auth flow', conclusion: 'use jwt',
+        anchor: { kind: 'file', path: 'src/a.ts', symbolRequest: { language: 'ts', name: 'f' } },
+        extraAnchors: [{ kind: 'module', moduleId: 'M1' }], facts: [], basisFiles: ['src/a.ts'],
+        structural: false, replaces: ['old'], contradicts: [], coexistWith: [], body: undefined } });
     expect((input.note as { body: string }).body).toBeUndefined();
     expect(writes[0]!.ctx.projectId).toBe(P);
     expect(writes[0]!.ctx.principal).toEqual(config.context.principal);
@@ -155,9 +153,13 @@ describe('S4C record_note tool', () => {
       sections: { status: 's', decided: 'd', open: 'o', next: 'n', risks: 'r' },
     }), { signal: signal() });
     expect(result.status).toBe('success');
-    expect(writes[0]!.input.note).toMatchObject({ kind: 'understanding',
-      sections: { status: 's', decided: 'd', open: 'o', next: 'n', risks: 'r' } });
-    expect('body' in writes[0]!.input.note).toBe(false);
+    const input = writes[0]!.input;
+    expect(input).toStrictEqual({ commandId: 'cmd-1', expectedPointerRevision: null, goalId: null,
+      note: { kind: 'understanding', topic: 'status', conclusion: 'on track',
+        anchor: { kind: 'goal', goalId: G },
+        extraAnchors: [], facts: [], basisFiles: [], structural: false, replaces: [], contradicts: [],
+        coexistWith: [], sections: { status: 's', decided: 'd', open: 'o', next: 'n', risks: 'r' } } });
+    expect('body' in input.note).toBe(false);
   });
 
   it('GTN04 a failed check is { status: unavailable } and never changes the committed write', async () => {
@@ -190,15 +192,32 @@ describe('S4C record_note tool', () => {
       op: 'review', noteId: 'n1', expectedVersion: 3, verdict: 'accept', resolution: 'supersede',
       reason: 'agent contradiction', expectedPointerRevision: 4,
     }), { signal: signal() });
-    expect(reviews[0]!.input).toEqual({ commandId: 'cmd-1', noteId: 'n1', expectedVersion: 3,
+    expect(reviews[0]!.input).toStrictEqual({ commandId: 'cmd-1', noteId: 'n1', expectedVersion: 3,
       expectedPointerRevision: 4, verdict: 'accept', resolution: 'supersede', reason: 'agent contradiction' });
     expect(outputValue(reviewed)).toEqual({ status: 'done', noteId: 'n1', version: 4, state: 'reviewed',
+      receipt: { identityKey: 'i', fingerprint: 'f', cursor: cursor('c1') } });
+    // No trusted pointer revision or reason: both default to null.
+    const plainReview = await definition.handler.execute(toolCall('c5b', {
+      op: 'review', noteId: 'n2', expectedVersion: 1, verdict: 'review',
+    }), { signal: signal() });
+    // No resolution given: the request has no resolution key at all.
+    expect(reviews[1]!.input).toStrictEqual({ commandId: 'cmd-1', noteId: 'n2', expectedVersion: 1,
+      expectedPointerRevision: null, verdict: 'review', reason: null });
+    expect(outputValue(plainReview)).toEqual({ status: 'done', noteId: 'n2', version: 2, state: 'reviewed',
       receipt: { identityKey: 'i', fingerprint: 'f', cursor: cursor('c1') } });
     const withdrawn = await definition.handler.execute(toolCall('c6', {
       op: 'withdraw', noteId: 'n2', expectedVersion: 1, reason: 'obsolete',
     }), { signal: signal() });
-    expect(withdraws[0]!.input).toEqual({ commandId: 'cmd-1', noteId: 'n2', expectedVersion: 1, reason: 'obsolete' });
-    expect(outputValue(withdrawn)).toMatchObject({ status: 'done', state: 'withdrawn' });
+    expect(withdraws[0]!.input).toStrictEqual({ commandId: 'cmd-1', noteId: 'n2', expectedVersion: 1, reason: 'obsolete' });
+    // An omitted reason defaults to null.
+    const noReason = await definition.handler.execute(toolCall('c6b', {
+      op: 'withdraw', noteId: 'n3', expectedVersion: 1,
+    }), { signal: signal() });
+    expect(withdraws[1]!.input).toStrictEqual({ commandId: 'cmd-1', noteId: 'n3', expectedVersion: 1, reason: null });
+    expect(outputValue(noReason)).toEqual({ status: 'done', noteId: 'n3', version: 2, state: 'withdrawn',
+      receipt: { identityKey: 'i', fingerprint: 'f', cursor: cursor('c1') } });
+    expect(outputValue(withdrawn)).toEqual({ status: 'done', noteId: 'n2', version: 2, state: 'withdrawn',
+      receipt: { identityKey: 'i', fingerprint: 'f', cursor: cursor('c1') } });
   });
 
   it('GTN07 a non-scribe review is answered by the service rejection, not a second tool-level check', async () => {
@@ -258,57 +277,5 @@ describe('S4C record_note tool', () => {
     expect(value.write.status).toBe('rejected');
     expect(value.write.reason).toBe('a note requires a body');
     expect(value.check).toEqual({ status: 'unavailable', reason: 'a note requires a body' });
-  });
-});
-
-describe('RW-14 recordNoteRequestOf is the one pure request builder', () => {
-  it('RW-14 write: maps the model args to the writeNote request with the trusted commandId and defaults', () => {
-    const built = recordNoteRequestOf({
-      op: 'write', kind: 'convention', topic: 'auth flow', conclusion: 'use jwt',
-      anchor: { kind: 'file', path: 'src/a.ts' },
-      extraAnchors: [{ kind: 'module', moduleId: 'M1' }], basisFiles: ['src/a.ts'], structural: false,
-      replaces: ['old'], contradicts: [], coexistWith: [], expectedPointerRevision: 2,
-    }, 'cmd-9');
-    expect(built).toStrictEqual({ op: 'write', request: {
-      commandId: 'cmd-9', expectedPointerRevision: 2, goalId: null,
-      note: { kind: 'convention', topic: 'auth flow', conclusion: 'use jwt',
-        anchor: { kind: 'file', path: 'src/a.ts' },
-        extraAnchors: [{ kind: 'module', moduleId: 'M1' }], facts: [], basisFiles: ['src/a.ts'],
-        structural: false, replaces: ['old'], contradicts: [], coexistWith: [], body: undefined },
-    } });
-  });
-
-  it('RW-14 write: an understanding carries sections and no body; absent lists default to empty', () => {
-    const built = recordNoteRequestOf({ op: 'write', kind: 'understanding', topic: 'status',
-      conclusion: 'on track', anchor: { kind: 'goal', goalId: 'g' },
-      sections: { status: 's', decided: 'd', open: 'o', next: 'n', risks: 'r' } }, 'cmd-10');
-    if (built.op !== 'write') throw new Error('expected a write request');
-    expect(built.request).toStrictEqual({ commandId: 'cmd-10', expectedPointerRevision: null, goalId: null,
-      note: { kind: 'understanding', topic: 'status', conclusion: 'on track', anchor: { kind: 'goal', goalId: 'g' },
-        extraAnchors: [], facts: [], basisFiles: [], structural: false, replaces: [], contradicts: [],
-        coexistWith: [], sections: { status: 's', decided: 'd', open: 'o', next: 'n', risks: 'r' } } });
-    expect('body' in built.request.note).toBe(false);
-  });
-
-  it('RW-14 review: maps verdict/resolution/defaults with the trusted commandId', () => {
-    const withResolution = recordNoteRequestOf({ op: 'review', noteId: 'n1', expectedVersion: 3,
-      verdict: 'accept', resolution: 'supersede', reason: 'agent contradiction', expectedPointerRevision: 4 }, 'cmd-11');
-    expect(withResolution).toStrictEqual({ op: 'review', request: { commandId: 'cmd-11', noteId: 'n1',
-      expectedVersion: 3, expectedPointerRevision: 4, verdict: 'accept', resolution: 'supersede',
-      reason: 'agent contradiction' } });
-    const plain = recordNoteRequestOf({ op: 'review', noteId: 'n2', expectedVersion: 1,
-      verdict: 'review' }, 'cmd-12');
-    expect(plain).toStrictEqual({ op: 'review', request: { commandId: 'cmd-12', noteId: 'n2',
-      expectedVersion: 1, expectedPointerRevision: null, verdict: 'review', reason: null } });
-  });
-
-  it('RW-14 withdraw: maps the withdrawNote request with the trusted commandId', () => {
-    const built = recordNoteRequestOf({ op: 'withdraw', noteId: 'n3', expectedVersion: 2,
-      reason: 'obsolete' }, 'cmd-13');
-    expect(built).toStrictEqual({ op: 'withdraw', request: { commandId: 'cmd-13', noteId: 'n3',
-      expectedVersion: 2, reason: 'obsolete' } });
-    const noReason = recordNoteRequestOf({ op: 'withdraw', noteId: 'n4', expectedVersion: 1 }, 'cmd-14');
-    expect(noReason).toStrictEqual({ op: 'withdraw', request: { commandId: 'cmd-14', noteId: 'n4',
-      expectedVersion: 1, reason: null } });
   });
 });

@@ -99,7 +99,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 function isV2Kernel(run: RunSnapshot): KernelExecutionBinding | null {
   const auth = run.executionAuthorization;
-  return auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2 ? auth.kernel : null;
+  return auth !== undefined ? auth.kernel : null;
 }
 
 /** The bounded Kernel window after `afterPosition` through the tail frozen by the first page. */
@@ -261,7 +261,7 @@ async function classifyRun(
   const failed = (row: string, rejection: CoreRejection | string): RunReconcileReport =>
     ({ runRef, row, status: 'failed', reason: typeof rejection === 'string' ? rejection : `${rejection.code}: ${rejection.reason}` });
   const auth = run.executionAuthorization;
-  if (auth === undefined || !('schemaVersion' in auth) || auth.schemaVersion !== 2) {
+  if (auth === undefined) {
     return left('V1/none', 'unsupported: a legacy or never-authorized Run has no Kernel binding to reconcile');
   }
   const unknownOutcome = run.status === 'ended' && run.outcome === 'outcome_unknown';
@@ -512,13 +512,13 @@ function unresolvedCallFactsOf(
 }
 
 // -------------------------------------------------------------------------- //
-// Step 5: queued intents without another end (CTL-08(a)/(d)/(e))             //
+// Step 5: queued intents without another end (CTL-08(d)/(e))                 //
 // -------------------------------------------------------------------------- //
 
 /**
- * §12.1 step 5 for one Run that carries a queued intent and no other
- * reconcile write: a Run that never entered (CTL-08(a)), an unknown end
- * (CTL-08(d)) or an ended Run whose acks a crash lost (CTL-08(e)). For an
+ * §12.1 step 5 for one ended Run that carries a queued intent and no other
+ * reconcile write: an unknown end (CTL-08(d)) or an ended Run whose acks a
+ * crash lost (CTL-08(e)). For an
  * ended, entered Run with a queued steer the Kernel Turn is read, so a steer
  * the Kernel accepted is applied `steered` (as (b)), never superseded; when
  * that Kernel read is not possible the Run is left as recorded.
@@ -530,7 +530,7 @@ export async function reconcileRunControlsAtStartup(
   const { record, hostInstanceId } = input;
   const run = record.run;
   const runRef = run.ref;
-  const row = run.status === 'ended' ? run.outcome === 'outcome_unknown' ? 'W-19' : 'W-16' : 'W-04';
+  const row = run.outcome === 'outcome_unknown' ? 'W-19' : 'W-16';
   let acceptedSteers: AcceptedSteerV1[] = [];
   const kernel = isV2Kernel(run);
   const locator = run.executionHistory;
@@ -544,7 +544,7 @@ export async function reconcileRunControlsAtStartup(
     meta: { requestId: `a2-reconcile-controls:${hostInstanceId}:${runRef.runId}:${String(run.revision)}`,
       expected: [{ ref: runRef, revision: run.revision }] } });
   if (written.status === 'committed') return { runRef, row, status: 'reconciled', reason: 'queued intents settled' };
-  // A refusal on the guards (a paused Goal for a queued resume, another Host's lease) leaves the intents queued.
+  // A refusal on the guards (another Host's lease) leaves the intents queued.
   return { runRef, row, status: written.code === 'busy' ? 'left' : 'failed', reason: `${written.code}: ${written.reason}` };
 }
 
@@ -696,7 +696,7 @@ export async function stopPausedRunInProcess(
   const run = record.run;
   const auth = run.executionAuthorization;
   const locator = run.executionHistory;
-  if (run.status !== 'running' || auth === undefined || !('schemaVersion' in auth) || auth.schemaVersion !== 2
+  if (run.status !== 'running' || auth === undefined
     || auth.kernel === null || locator === undefined) {
     return false;
   }

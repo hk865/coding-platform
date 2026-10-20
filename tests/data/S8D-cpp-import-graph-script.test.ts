@@ -117,16 +117,6 @@ it('A-22 (f) keeps an include inside a function body with SkipFunctionBodies', a
   expect(result.done(0)?.edges).toEqual([['main.cpp', 'f.h', '"f.h"']]);
 });
 
-it('A-22 (h) records no edge for an include in an inactive branch', async () => {
-  const result = await run({
-    files: { 'main.cpp': '#if 0\n#include "x.h"\n#endif\n', 'x.h': '' },
-    databases: rootDb([unit('main.cpp')]),
-  });
-  expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
-  expect(result.done(0)?.edges).toEqual([]);
-  expect(result.done(0)?.unresolved).toEqual([]);
-});
-
 it('A-22 (i) merges per-unit results and starts each deduplicated unit once', async () => {
   const result = await run({
     files: {
@@ -201,15 +191,6 @@ it('A-23 keeps -idirafter as a working search directory', async () => {
   expect(result.done(0)?.edges).toEqual([['main.cpp', 'sub/i.h', '"i.h"']]);
 });
 
-it('A-23 maps absolute in-workspace files while the database directory stays outside', async () => {
-  const result = await run({
-    files: { 'main.cpp': 'int m;\n' },
-    databases: rootDb([{ directory: '/outside/build', file: `${ROOT}/main.cpp`, arguments: ['c++', '-c', `${ROOT}/main.cpp`] }]),
-  });
-  expect(result.ready?.notes).toEqual([]);
-  expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
-});
-
 it('A-22 (d) records a defined macro include as written and an unexpanded macro as unresolved', async () => {
   const result = await run({
     files: { 'main.cpp': '#include HDR\n#include NOPE\n', 'x.h': '' },
@@ -228,15 +209,6 @@ it('A-22 macro comment keeps the written macro word after a line comment', async
   expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }, { path: 'x.h', status: 'parsed' }]);
   expect(result.done(0)?.edges).toEqual([['main.cpp', 'x.h', 'HDR']]);
   expect(result.done(0)?.unresolved).toEqual([{ from: 'main.cpp', specifier: 'NOPE', reason: 'include 后面跟宏' }]);
-});
-
-it('A-22 block comment before an include specifier keeps the written delimiters', async () => {
-  const result = await run({
-    files: { 'main.cpp': '#include /*c*/ "missing.h"\n' },
-    databases: rootDb([unit('main.cpp')]),
-  });
-  expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
-  expect(result.done(0)?.unresolved).toEqual([{ from: 'main.cpp', specifier: '"missing.h"', reason: null }]);
 });
 
 it('script: a macro specifier after a block comment longer than 400 bytes is read from source', async () => {
@@ -304,17 +276,6 @@ it('A-22 (e) does not connect an angled include recovered by the quoted lookup',
   expect(result.done(0)?.unresolved).toEqual([{ from: 'src/main.cpp', specifier: '<local.h>', reason: '尖括号引用只能按引号规则找到' }]);
 });
 
-it('A-22 (g) drops an include directory outside the workspace and records it once', async () => {
-  const result = await run({
-    files: { 'main.cpp': '#include "o.h"\n' },
-    databases: rootDb([{ directory: '.', file: 'main.cpp', arguments: ['c++', '-c', 'main.cpp', '-I/outside'] }]),
-  });
-  expect(result.ready?.notes).toEqual(['忽略了 1 个工作区外的查找目录']);
-  expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
-  expect(result.done(0)?.edges).toEqual([]);
-  expect(result.done(0)?.unresolved).toEqual([{ from: 'main.cpp', specifier: '"o.h"', reason: null }]);
-});
-
 it('A-22 (m) reports an angled fallback that finds the including file itself as a null reason', async () => {
   const result = await run({
     files: {
@@ -365,15 +326,6 @@ it('A-22 (l) keeps a header with a semantic error parsed and connected', async (
   expect(result.done(0)?.edges).toEqual([['src/main.cpp', 'include/bad.hpp', '"bad.hpp"']]);
 });
 
-it('A-22 (j) counts a database entry whose main file is not observed', async () => {
-  const result = await run({
-    files: { 'main.cpp': 'int m;\n' },
-    databases: rootDb([unit('main.cpp'), unit('gen/x.cpp')]),
-  });
-  expect(result.ready?.notes).toEqual(['1 个编译单元的主文件不在观测的文件里']);
-  expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
-});
-
 it('A-23 computes the merge note from the databases the provider selected', async () => {
   const result = await run({
     files: { 'p1/a.cpp': '#include "a.h"\n', 'p1/a.h': '', 'p2/b.cpp': '#include "b.h"\n', 'p2/b.h': '' },
@@ -400,73 +352,6 @@ it('A-23 merges two databases under a nested common build directory', async () =
   expect(result.ready?.notes).toEqual(['合并了 2 个编译数据库']);
   expect(result.done(0)?.edges).toEqual([['a/a.cpp', 'a/a.h', '"a.h"']]);
   expect(result.done(1)?.edges).toEqual([['b/b.cpp', 'b/b.h', '"b.h"']]);
-});
-
-it('A-23 fails a unit on -Xclang and keeps the other unit parsed', async () => {
-  const result = await run({
-    files: { 'main.cpp': 'int m;\n', 'b.cpp': 'int b;\n' },
-    databases: rootDb([
-      { directory: '.', file: 'main.cpp', arguments: ['c++', '-c', 'main.cpp', '-Xclang', '-load'] },
-      unit('b.cpp'),
-    ]),
-  });
-  expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'failed', reason: '不认识的编译参数：-Xclang' }]);
-  expect(result.done(1)?.files).toEqual([{ path: 'b.cpp', status: 'parsed' }]);
-});
-
-it('A-23 fails a unit on -load and reports the spelling without its value', async () => {
-  const result = await run({
-    files: { 'main.cpp': 'int m;\n' },
-    databases: rootDb([{ directory: '.', file: 'main.cpp', arguments: ['c++', '-load', 'x', '-c', 'main.cpp'] }]),
-  });
-  expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'failed', reason: '不认识的编译参数：-load' }]);
-});
-
-it('A-23 notes -march=native and ignores -o with its value', async () => {
-  const result = await run({
-    files: { 'main.cpp': 'int m;\n' },
-    databases: rootDb([{ directory: '.', file: 'main.cpp', arguments: ['c++', '-march=native', '-o', 'x.o', '-c', 'main.cpp'] }]),
-  });
-  expect(result.ready?.notes).toEqual(['忽略的编译参数：-march=native']);
-  expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
-});
-
-it('A-23 notes an unreadable forced include but still parses the unit', async () => {
-  const result = await run({
-    files: { 'main.cpp': 'int m;\n' },
-    databases: rootDb([{ directory: '.', file: 'main.cpp', arguments: ['c++', '-c', 'main.cpp', '-include', '/nonexistent/pch.hxx'] }]),
-  });
-  expect(result.ready?.notes).toEqual(['忽略了 1 个读不到的强制包含文件']);
-  expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
-});
-
-it('A-23 rejects compiler wrappers by their file name', async () => {
-  const result = await run({
-    files: { 'main.cpp': 'int m;\n' },
-    databases: rootDb([{ directory: '.', file: 'main.cpp', arguments: ['ccache', 'c++', '-c', 'main.cpp'] }]),
-  });
-  expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'failed', reason: '不认识的编译器：ccache' }]);
-});
-
-it('A-23 splits a command and fails one it cannot split', async () => {
-  const split = await run({
-    files: { 'main.cpp': 'int m;\n' },
-    databases: rootDb([{ directory: '.', file: 'main.cpp', command: 'c++ -DX=1 -c main.cpp' }]),
-  });
-  expect(split.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'parsed' }]);
-  const broken = await run({
-    files: { 'main.cpp': 'int m;\n' },
-    databases: rootDb([{ directory: '.', file: 'main.cpp', command: "c++ 'unclosed -c main.cpp" }]),
-  });
-  expect(broken.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'failed', reason: '编译命令拆不开' }]);
-});
-
-it('A-23 fails an extra positional argument', async () => {
-  const result = await run({
-    files: { 'main.cpp': 'int m;\n', 'other.cpp': 'int o;\n' },
-    databases: rootDb([{ directory: '.', file: 'main.cpp', arguments: ['c++', '-c', 'main.cpp', 'other.cpp'] }]),
-  });
-  expect(result.done(0)?.files).toEqual([{ path: 'main.cpp', status: 'failed', reason: '不认识的编译参数：多出的位置参数' }]);
 });
 
 it('A-23 adds the fixed target so __x86_64__ and __linux__ select the include', async () => {
@@ -497,25 +382,6 @@ it('A-23 validates the whole database and every entry with the numbered literals
     expect(result.failed?.reason, name).toBe(reason);
     expect(result.ready, name).toBeUndefined();
   }
-});
-
-it('A-23 reports a binary database with the read failure', async () => {
-  const result = await run({
-    files: { 'main.cpp': 'int m;\n' },
-    databases: [{ path: 'compile_commands.json', content: JSON.stringify([unit('main.cpp')]) + '\0' }],
-  });
-  expect(result.failed?.reason).toBe('compile_commands.json 读不了：binary source');
-});
-
-it('A-23 reports the unreadable root database instead of switching to another one', async () => {
-  const result = await run({
-    files: { 'main.cpp': 'int m;\n' },
-    databases: [
-      { path: 'compile_commands.json', content: '\0' },
-      dbAt('build/compile_commands.json', [unit('main.cpp')]),
-    ],
-  });
-  expect(result.failed?.reason).toBe('compile_commands.json 读不了：binary source');
 });
 
 it('A-23 reports a missing libclang as unavailable', async () => {

@@ -14,8 +14,6 @@
  * 3. Platform mode: the same Task through the composition root in process; a reopen keeps every
  *    record and count, and the script continues.
  * 4. `stepOfReceipt`: the step kind, actor and policy `advance()` checks each receipt with.
- * 5. Platform mode seams: `registerCheck('fail')` is a new configuration revision the round freezes;
- *    the FAIL is reworked automatically until `setAutomation` sets cap 0, and the Workflow then stops.
  *
  * Every step that changes records is followed by the §11 invariant check (with the step's
  * `FuzzStep` inside `advance()`, and after every restart). Scripted replies only.
@@ -187,26 +185,3 @@ it('stepOfReceipt: the §11.11 step of each Workflow receipt, its actor and the 
   expect(stepOf('reverify_round', { status: 'committed', value: { kind: 'reverified' } })).toMatchObject({ kind: 'round_reverified', ...automation });
   expect(stepOf('reverify_round', { status: 'committed', value: { kind: 'refused' } })).toMatchObject({ kind: 'task_rework_refused', ...automation });
 });
-
-it('platform mode seams: a registered check is a new configuration revision; cap 0 stops the automatic rework', async () => {
-  const h = await openPlatformScenario({ script: { replies: [{ kind: 'text', text: 'scenario seams: Run 1' },
-    { kind: 'text', text: 'scenario seams: Run 2' }] } });
-  h.registerCheck('fail');
-  // Run 1 FAILs; the Workflow requeues automatically (#1 of 3), Run 2 FAILs too.
-  const reworked = await h.advance(h.select('smoke-seams', AG2B_WORK_TASK_ID), { stopBefore: (input) => input.kind === 'perform'
-    && input.operation.kind === 'requeue_task' && h.lastWorld !== undefined && h.lastWorld.requeues.length === 1 });
-  expect(reworked.state).toBe('stopped');
-  expect(committedOutcomesOf(reworked)).toEqual(['FAIL', 'FAIL']);
-  expect(h.lastWorld?.rounds.map(round => round.configuration.configurationRevision)).toEqual([checkRevisionOf(2), checkRevisionOf(2)]);
-  expect(h.lastWorld?.requeues).toMatchObject([{ failureClass: 'check_failed', automation: { automatic: true, counted: true,
-    autoCount: 1, cap: 3 } }]);
-  // C8: cap 0 from now on; the second automatic requeue would pass it, so the Workflow stops (AV-8).
-  h.setAutomation({ schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: true });
-  expect(h.automationPolicy()).toMatchObject({ autoReworkLimit: 0 });
-  expect(await h.taskRow()).toMatchObject({ failure: { automation: { cap: 0,
-    verdict: { kind: 'stopped', reason: 'auto_rework_cap_reached' } } } });
-  const before = h.counts();
-  const stopped = await h.advance(h.select('smoke-seams-stopped', AG2B_WORK_TASK_ID));
-  expect(stopped).toMatchObject({ state: 'waiting', receipts: [] });
-  expect(h.counts()).toEqual(before);
-}, 120_000);

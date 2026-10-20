@@ -154,12 +154,9 @@ function buildPlanRevisionSnapshot(input: {
   // The record codec is a single stable store family (`PlanRevisionSnapshot@1`);
   // the accepted body carries its own explicit content version and the v2
   // whiteboard/exact-input fields must survive proposal -> snapshot verbatim.
-  if (draft.schemaVersion === 2) {
-    return { ...common, schemaVersion: 2,
-      ...(draft.taskRelations !== undefined ? { taskRelations: draft.taskRelations } : {}),
-      ...(draft.inputRequirements !== undefined ? { inputRequirements: draft.inputRequirements } : {}) };
-  }
-  return { ...common, schemaVersion: 1 };
+  return { ...common, schemaVersion: 2,
+    ...(draft.taskRelations !== undefined ? { taskRelations: draft.taskRelations } : {}),
+    ...(draft.inputRequirements !== undefined ? { inputRequirements: draft.inputRequirements } : {}) };
 }
 
 function planRevisionAcceptedEvent(input: {
@@ -311,7 +308,7 @@ function mergeDispositionRecord(
   adoption: Pick<TaskDispositionChangeV1, 'setIn' | 'proposalRef' | 'reason' | 'actor'>,
 ): TaskDispositionRecordV1 | null {
   const byTask = new Map<string, TaskDispositionChangeV1>();
-  for (const entry of source.schemaVersion === 2 ? source.dispositionRecord?.entries ?? [] : []) byTask.set(entry.taskId, entry);
+  for (const entry of source.dispositionRecord?.entries ?? []) byTask.set(entry.taskId, entry);
   for (const change of changes) {
     byTask.set(change.taskId, { taskId: change.taskId, from: change.from, to: change.to,
       replacedByTaskId: change.replacedByTaskId, traced: change.traced, setIn: adoption.setIn,
@@ -384,7 +381,7 @@ export function compileFuturePlanAdoption(input: FuturePlanAdoptionInput): Futur
     const chosen = changed.has(task.taskId) ? targetAssignmentsById.get(task.taskId) : sourceAssignmentsById.get(task.taskId);
     if (chosen !== undefined) assignments.push(chosen);
   }
-  const sourceInputs = groupInputsByConsumer(source.schemaVersion === 2 ? source.inputRequirements ?? [] : []);
+  const sourceInputs = groupInputsByConsumer(source.inputRequirements ?? []);
   const targetInputs = groupInputsByConsumer(target.inputRequirements ?? []);
   const inputRequirements: TaskInputRequirementV2[] = [];
   for (const task of tasks) {

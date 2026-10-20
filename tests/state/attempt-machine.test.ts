@@ -31,10 +31,10 @@ import {
   transitionDispatchOutbox, transitionTaskLease,
   type AttemptEffect, type AttemptEndFacts, type AttemptEndSource, type AttemptEvent, type AttemptGuardContext,
   type AttemptRunNode,
-  type DispatchOutboxRecord, type DispatchStateV1, type RunEventForAttempt, type TaskLeaseEvent,
+  type DispatchOutboxRecord, type RunEventForAttempt, type TaskLeaseEvent,
 } from '../../src/core/work-graph/state/attempt-machine.js';
 import type { Transition, TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
-import type { TaskClaimOutbox, TaskDispatchStateV1 } from '../../src/core/work-graph/model/claim-contracts.js';
+import type { TaskClaimOutbox } from '../../src/core/work-graph/model/claim-contracts.js';
 
 /**
  * The Outbox counterpart of `attemptNodeOf`/`taskLeaseNodeOf` (moved from
@@ -696,8 +696,6 @@ describe('record constructors and nodes', () => {
   it('project the nodes of §5.1', () => {
     expect([null, ATTEMPT_CLAIMED, ATTEMPT_STARTED, ATTEMPT_ENDED, ATTEMPT_UNKNOWN, ATTEMPT_UNKNOWN_UNSTARTED]
       .map(attemptNodeOf)).toEqual(['absent', 'claimed', 'started', 'ended_known', 'ended_unknown', 'ended_unknown']);
-    // A legacy ended row without endOutcome reads as a known end.
-    expect(attemptNodeOf({ ...ATTEMPT_ENDED, endOutcome: null })).toBe('ended_known');
     expect([null, LEASE_HELD, LEASE_RELEASED].map(taskLeaseNodeOf)).toEqual(['absent', 'held', 'released']);
     expect([null, OUTBOX_PENDING, OUTBOX_ENTERED, OUTBOX_SETTLED].map(dispatchOutboxNodeOf))
       .toEqual(['absent', 'pending', 'entered', 'settled']);
@@ -705,11 +703,7 @@ describe('record constructors and nodes', () => {
   it('DispatchOutboxRecord is the TaskClaimOutbox record of claim-contracts.ts', () => {
     const fromService = (outbox: TaskClaimOutbox): DispatchOutboxRecord => outbox;
     const toService = (outbox: DispatchOutboxRecord): TaskClaimOutbox => outbox;
-    const stateFromService = (state: TaskDispatchStateV1): DispatchStateV1 => state;
-    const stateToService = (state: DispatchStateV1): TaskDispatchStateV1 => state;
     expect(toService(fromService(OUTBOX_SETTLED))).toBe(OUTBOX_SETTLED);
-    const dispatchState = OUTBOX_SETTLED.dispatchState as DispatchStateV1;
-    expect(stateToService(stateFromService(dispatchState))).toBe(dispatchState);
   });
 });
 

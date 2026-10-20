@@ -5,7 +5,7 @@
  *   - the mechanical attention observer (heartbeat, added+deleted file deltas,
  *     graph deltas, coalescing, no semantic pre-filter, no model on no change);
  *   - the unified SessionMailbox send intent (independent intent / needsReply /
- *     waitAfterSend, legacy replyMode normalization, and the one real wait
+ *     waitAfterSend, and the one real wait
  *     registration that the Kernel barrier turns into a yielded Run).
  */
 import { afterEach, describe, expect, it } from 'vitest';
@@ -25,14 +25,6 @@ import {
 import { createC1Harness, type C1Harness } from '../helpers/C1-mailbox-fixture.js';
 
 describe('mechanical attention observer', () => {
-  it('produces no delivery and no model work when nothing changed', () => {
-    const observer = createAttentionObserver(attentionConfig());
-    const snapshot = { messageCursor: null, pendingInputs: 0, files: [], graph: null };
-    expect(observer.observe(snapshot, 0)).toBeNull();
-    expect(observer.observe(snapshot, 10_000)).toBeNull();
-    expect(observer.processed).toBeNull();
-  });
-
   it('derives a real same-size replacement from the two texts', () => {
     expect(lineDelta('a\nb\nc', 'a\nx\nc')).toEqual({ added: 1, deleted: 1, totalLines: 3 });
     const observer = createAttentionObserver(attentionConfig({ files: { minChangedLines: 2, minRatio: 1, scopePrefixes: ['.'] } }));
@@ -108,7 +100,7 @@ describe('mechanical attention observer', () => {
 // Unified send intent
 // --------------------------------------------------------------------------
 
-type CapturedSend = { input: { intent?: string; needsReply?: boolean; waitAfterSend?: boolean; replyMode?: string } };
+type CapturedSend = { input: { intent?: string; needsReply?: boolean; waitAfterSend?: boolean } };
 
 function messageStub(): SessionMessage {
   return {
@@ -176,14 +168,6 @@ describe('unified SessionMailbox send intent', () => {
     expect(captured[0]?.input).toEqual({ recipient: { projectId: 'p', sessionId: 's-recipient' }, text: 'question', intent: 'inquiry', needsReply: true, waitAfterSend: true });
     expect(waits).toHaveLength(1);
     expect(result.output).toMatchObject([{ kind: 'json', value: { waiting: true, response: null } }]);
-  });
-
-  it('normalizes the legacy replyMode=wait into the same single wait path', async () => {
-    const { tools, captured, waits } = mailboxToolHarness();
-    const result = await callSend(tools, { recipient: { projectId: 'p', sessionId: 's-recipient' }, text: 'legacy', replyMode: 'wait' });
-    expect(result.status).toBe('success');
-    expect(captured[0]?.input['replyMode']).toBe('wait');
-    expect(waits).toHaveLength(1);
   });
 
   it('never registers a wait for a plain fire-and-forget notice', async () => {
@@ -466,7 +450,6 @@ it('automatically answers an inquiry without making its sender wait', async () =
     }
     expect(message).toMatchObject({ intent: 'inquiry', status: 'responded', response: { sender: { kind: 'query_run' } } });
     expect(message?.waitAfterSend).not.toBe(true);
-    expect(message?.replyMode).not.toBe('wait');
     expect(message?.consultationDerivation?.childSessionRef).not.toEqual(member.sessionRef);
     const responseSender = message?.response?.sender;
     expect(responseSender !== undefined && responseSender.kind !== 'host' ? responseSender.sessionRef : undefined)

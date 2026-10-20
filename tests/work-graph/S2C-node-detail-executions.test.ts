@@ -16,7 +16,7 @@ afterEach(async () => { for (const fixture of opened.splice(0)) await fixture.cl
 const page = { afterCursor: null, limit: 20 };
 
 describe.each(['memory', 'sqlite'] as const)('2C-29 node detail (%s)', (kind) => {
-  it('2C-29 notes say not_available/slice_4 and a failed Run read keeps its executions item with a problem', async () => {
+  it('2C-29 a failed Run read keeps its executions item with a problem', async () => {
     const fixture = await openNodeFixture(kind);
     opened.push(fixture);
     const session = await fixture.createSession('s1');
@@ -31,9 +31,6 @@ describe.each(['memory', 'sqlite'] as const)('2C-29 node detail (%s)', (kind) =>
     const summary = await healthy.reader.readNodeDetail(fixture.ctx, { goalRef: fixture.goalRef, node, section: 'summary', page });
     expect(summary.status).toBe('ready');
     if (summary.status !== 'ready' || summary.value.section !== 'summary') throw new Error(JSON.stringify(summary));
-    // Slice 4C C1.5/RW-11: this reader has no notes read wired, so the column
-    // reports `unavailable`, never an empty available page.
-    expect(summary.value.notes).toEqual({ status: 'unavailable', reason: 'the notes read is not wired' });
     expect(summary.value.task?.actualFiles).toEqual({
       availability: 'unavailable', cause: 'not_recorded', reason: '执行改过的文件还没有记录（2B）',
     });

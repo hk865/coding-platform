@@ -12,7 +12,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import type { UnknownCallReviewRef, UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import type {
   WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult,
@@ -35,16 +34,15 @@ import { createRoleConfigurationService } from '../../src/core/work-graph/config
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
-import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
-import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import {
-  createK3NeedsDecisionRecord, openK3ReviewCardWorld, K3_REVIEW_TASKS, type K3ReviewCardWorld,
+  adoptReorderedPlan, createDriverSettledWaiter, createK3NeedsDecisionRecord, interceptDispositionCommits,
+  openK3ReviewCardWorld, reviewServiceOver, type K3ReviewCardWorld,
 } from '../helpers/K3-review-card-fixture.js';
 import {
-  GOAL_B, PLAN_B2, WORKSPACE_SCOPE,
+  GOAL_B, WORKSPACE_SCOPE,
 } from '../helpers/S5-decision-fixture.js';
 import { goalAt } from '../helpers/S5-application-support.js';
-import { readCanonicalTaskFacts, readGoalPhase, readGoalPlanWindow } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 
@@ -115,69 +113,14 @@ async function answerCard(world: K3ReviewCardWorld, record: UnknownCallReviewV1,
   return { card, answered };
 }
 
-/**
- * K3-46 item 1 test-only setup: adopt one real Plan revision whose Task order
- * puts the K3 review tasks first, so an ORDINARY advance reaches k3-20-a before
- * the fixture's already-running b-work/b-work-2 Tasks. Order is not part of a
- * Task execution definition; the change still moves the Goal's content basis.
- */
-async function adoptReorderedPlan(world: K3ReviewCardWorld): Promise<void> {
-  const f = world.fixture;
-  const plans = f.b2.base.plans;
-  const goal = await plans.queryGoal(f.ctx, GOAL_B);
-  if (goal.status !== 'ready') throw new Error(`the Goal read failed: ${JSON.stringify(goal)}`);
-  const graph = await plans.queryTaskGraph(f.ctx, { goalRef: GOAL_B });
-  if (graph.status !== 'ready') throw new Error(`the Task graph read failed: ${JSON.stringify(graph)}`);
-  const tasks = graph.value.plan.tasks;
-  const review = tasks.filter(task => (K3_REVIEW_TASKS as readonly string[]).includes(task.taskId));
-  const other = tasks.filter(task => !(K3_REVIEW_TASKS as readonly string[]).includes(task.taskId));
-  const draft: PlanRevisionDraft = {
-    schemaVersion: 2, planId: 'PB3', planRevision: 3, goalId: GOAL_B.goalId,
-    stages: structuredClone(graph.value.plan.stages),
-    tasks: [...review.map(task => ({ ...task })), ...other.map(task => ({ ...task }))],
-    assignments: (graph.value.plan.assignments ?? []).map(entry => ({ ...entry })),
-    obligations: graph.value.plan.obligations.map(obligation => ({ ...obligation,
-      taskIds: [...obligation.taskIds],
-      verificationRequirements: obligation.verificationRequirements.map(requirement => ({ ...requirement })) })),
-    taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [],
-  };
-  const proposed = await plans.proposePlan(f.ctx, { input: { goalRef: GOAL_B, basedOn: PLAN_B2, draft,
-    reason: { text: 'K3-46 reordered Tasks', sources: [] } },
-    meta: { requestId: 'k3-46-reorder-propose', expected: [{ ref: GOAL_B, revision: goal.value.goal.revision }] } });
-  if (proposed.status !== 'committed' || proposed.value.issues.length > 0) {
-    throw new Error(`the K3-46 reordered proposal failed: ${JSON.stringify(proposed)}`);
-  }
-  const applied = await plans.applyPlanChange(f.ctx, { input: {
-    proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] },
-  meta: { requestId: 'k3-46-reorder-apply', expected: [{ ref: GOAL_B, revision: goal.value.goal.revision }] } });
-  if (applied.status !== 'committed') throw new Error(`the K3-46 reordered adoption failed: ${JSON.stringify(applied)}`);
-}
-
 /** The real review owner over `records` (a store-fault wrapper in the item-1/2 races). */
-function reviewServiceOver(world: K3ReviewCardWorld, records: K3ReviewCardWorld['records']) {
-  let sequence = 0;
-  return createUnknownCallReviewService({ records, reads: createRunStateReader({ records }),
-    readAnswerText: async (ctx: CoreCallContext, { source }) => {
-      const read = await world.decisions.readDecisionAnswer(ctx, { source });
-      if (read.status !== 'ready') return read;
-      return { status: 'ready', value: read.value.body === null ? null : read.value.body.text };
-    },
-    taskProjection: async (_ctx, task) => {
-      const goalRef = { aggregateType: 'Goal' as const, projectId: task.projectId, goalId: task.goalId };
-      const window = await readGoalPlanWindow(records, goalRef);
-      if (window.status !== 'ready') return window;
-      if (window.plan === null) return { status: 'rejected', code: 'not_found', reason: 'no active Plan' };
-      return readCanonicalTaskFacts(records, goalRef, window.plan, task.taskId);
-    },
-    now: () => world.fixture.now(), eventId: () => `k3-46-review-${String(++sequence)}` });
-}
-
 function reviewService(world: K3ReviewCardWorld, options: {
   records?: K3ReviewCardWorld['records'];
   countApply?: (count: number) => void;
 } = {}) {
   const records = options.records ?? world.fixture.records;
-  const base = records === world.fixture.records ? world.reviews : reviewServiceOver(world, records);
+  const base = records === world.fixture.records ? world.reviews
+    : reviewServiceOver(world, records, { eventIdPrefix: 'k3-46-review-' });
   if (options.countApply === undefined) return base;
   let calls = 0;
   return { ...base, async applyDisposition(...args: Parameters<typeof base.applyDisposition>) {
@@ -219,14 +162,13 @@ function assemble(world: K3ReviewCardWorld, options: {
     bindings: [{
       workspace: WORKSPACE_SCOPE,
       sessionRole: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
-      roleBinding: f.runRA.roleBinding,
+      roleBinding: f.runRB.roleBinding,
       budget: f.runRA.budget,
     }],
   };
   const plans = createPlanService({ records: f.records, now: f.now, eventId: f.newId });
   const goalSettings = createGoalSettingsService({ records: f.records, now: f.now, newId: f.newId,
     operatorActor: f.operatorActor });
-  const decisionSources = createDecisionSourceFacts({ records: f.records, plans, unknownCallReviews: world.reviews });
   const dependencies: WorkflowDependencies = {
     tasks: createGoalService({ records: f.records, now: f.now, eventId: f.newId }).tasks,
     plans,
@@ -238,7 +180,6 @@ function assemble(world: K3ReviewCardWorld, options: {
     sourceAuthority: createSourceAuthorityReader({ authority }),
     configuration, goalSettings,
     decisionMessages: world.decisions as unknown as NonNullable<WorkflowDependencies['decisionMessages']>,
-    decisionSources,
     unknownCallReviews: reviews,
     applicationReceipt: world.applicationReceipt,
     decisionApplications: { unknown_call_review: {
@@ -258,20 +199,8 @@ function assemble(world: K3ReviewCardWorld, options: {
 function failingDispositionRecords(
   records: K3ReviewCardWorld['records'], reason: string,
 ): K3ReviewCardWorld['records'] {
-  return {
-    ...records,
-    async commit(batch: Parameters<K3ReviewCardWorld['records']['commit']>[0]) {
-      const disposition = batch.events.some((event) => {
-        if (event.eventType !== 'UnknownCallReviewChanged') return false;
-        const body = JSON.parse(event.json) as { change?: unknown };
-        return body.change === 'disposition_applied';
-      });
-      if (disposition) {
-        return { status: 'rejected' as const, code: 'unavailable' as const, reason };
-      }
-      return records.commit(batch);
-    },
-  } as K3ReviewCardWorld['records'];
+  return interceptDispositionCommits(records,
+    async () => ({ status: 'rejected', code: 'unavailable', reason }));
 }
 
 /**
@@ -282,22 +211,11 @@ function failingDispositionRecords(
 function failingDispositionRecordsPerCard(
   records: K3ReviewCardWorld['records'], prefix: string,
 ): K3ReviewCardWorld['records'] {
-  return {
-    ...records,
-    async commit(batch: Parameters<K3ReviewCardWorld['records']['commit']>[0]) {
-      const disposition = batch.events.find((event) => {
-        if (event.eventType !== 'UnknownCallReviewChanged') return false;
-        const body = JSON.parse(event.json) as { change?: unknown };
-        return body.change === 'disposition_applied';
-      });
-      if (disposition !== undefined) {
-        const body = JSON.parse(disposition.json) as { review?: { ref?: { runId?: unknown } } };
-        const runId = typeof body.review?.ref?.runId === 'string' ? body.review.ref.runId : 'an unknown Run';
-        return { status: 'rejected' as const, code: 'unavailable' as const, reason: `${prefix}: ${runId}` };
-      }
-      return records.commit(batch);
-    },
-  } as K3ReviewCardWorld['records'];
+  return interceptDispositionCommits(records, async ({ event }) => {
+    const body = JSON.parse(event.json) as { review?: { ref?: { runId?: unknown } } };
+    const runId = typeof body.review?.ref?.runId === 'string' ? body.review.ref.runId : 'an unknown Run';
+    return { status: 'rejected', code: 'unavailable', reason: `${prefix}: ${runId}` };
+  });
 }
 
 /** The `UnknownCallReview` runIds an apply step's captured pins name. */
@@ -309,22 +227,6 @@ function applyReviewRunIds(input: WorkflowAdvanceInput): string[] {
     if (ref?.aggregateType === 'UnknownCallReview' && typeof ref.runId === 'string') runIds.push(ref.runId);
   }
   return runIds;
-}
-
-/** Wait until the Host driver's handle leaves the active states. */
-async function waitForSettledDriver(
-  driver: ReturnType<typeof createCollaborationDriver>, ctx: CoreCallContext,
-) {
-  const deadline = Date.now() + 10_000;
-  for (;;) {
-    const read = await driver.read(ctx, { goalRef: GOAL_B });
-    if (read.status === 'ready') {
-      const state = read.value.state;
-      if (state === 'waiting' || state === 'completed' || state === 'failed' || state === 'stopped') return read.value;
-    }
-    if (Date.now() > deadline) throw new Error('the K3-46 continuous driver did not settle');
-    await new Promise(resolve => setTimeout(resolve, 5));
-  }
 }
 
 /** A records port that runs the real Goal pause right before the disposition commit (item 2 race). */
@@ -349,24 +251,16 @@ function pausedBeforeDisposition(
       ] },
     });
   };
-  return {
-    ...records,
-    async commit(batch: Parameters<K3ReviewCardWorld['records']['commit']>[0]) {
-      const disposition = batch.events.some((event) => {
-        if (event.eventType !== 'UnknownCallReviewChanged') return false;
-        const body = JSON.parse(event.json) as { change?: unknown };
-        return body.change === 'disposition_applied';
-      });
-      if (!fired && disposition) {
-        fired = true;
-        const paused = await control('pause', 'k3-46-goal-race-pause');
-        expect(paused).toMatchObject({ status: 'committed', value: { desiredState: 'paused' } });
-      }
-      const result = await records.commit(batch);
-      if (result.status !== 'committed' && result.code === 'revision_conflict') onConflict(result.reason);
-      return result;
-    },
-  } as K3ReviewCardWorld['records'];
+  return interceptDispositionCommits(records, async ({ commit }) => {
+    if (!fired) {
+      fired = true;
+      const paused = await control('pause', 'k3-46-goal-race-pause');
+      expect(paused).toMatchObject({ status: 'committed', value: { desiredState: 'paused' } });
+    }
+    const result = await commit();
+    if (result.status !== 'committed' && result.code === 'revision_conflict') onConflict(result.reason);
+    return result;
+  });
 }
 
 function ready(value: WorkflowAdvanceResult) {
@@ -377,6 +271,10 @@ function ready(value: WorkflowAdvanceResult) {
 
 function hasFailedReviewRefs(value: unknown): boolean {
   return Object.prototype.hasOwnProperty.call(value, 'failedReviewRefs');
+}
+
+function hasFailedCardRefs(value: unknown): boolean {
+  return Object.prototype.hasOwnProperty.call(value, 'failedCardRefs');
 }
 
 /**
@@ -421,7 +319,8 @@ describe('K3-46 (一) a refused ② skips that review card in the ordinary advan
     const world = await openK3ReviewCardWorld(kind);
     worlds.push(world);
     const record = await createK3NeedsDecisionRecord(world, 'k3-20-a');
-    await adoptReorderedPlan(world);
+    await adoptReorderedPlan(world, { planId: 'PB3', requestIdPrefix: 'k3-46-reorder',
+      reasonText: 'K3-46 reordered Tasks' });
     await answerCard(world, record, 'k3-46-ordinary-answer');
 
     let applies = 0;
@@ -508,7 +407,8 @@ describe('K3-46 (二) the T02 refusal is told apart from a Goal version race', (
     const record = await createK3NeedsDecisionRecord(world, 'k3-20-a');
     await answerCard(world, record, 'k3-46-t02-answer');
     // Adopt the reordered real Plan revision AFTER the answer captured @PB2.
-    await adoptReorderedPlan(world);
+    await adoptReorderedPlan(world, { planId: 'PB3', requestIdPrefix: 'k3-46-reorder',
+      reasonText: 'K3-46 reordered Tasks' });
 
     const workflow = assemble(world);
     const selected = ready(await workflow.advanceWork(world.fixture.ctx, selectWork('k3-20-a')));
@@ -530,7 +430,8 @@ describe('K3-46 (三) the continuous Host advance carries the failed cards and r
     worlds.push(world);
     const recordA = await createK3NeedsDecisionRecord(world, 'k3-20-a');
     const recordB = await createK3NeedsDecisionRecord(world, 'k3-20-b');
-    await adoptReorderedPlan(world);
+    await adoptReorderedPlan(world, { planId: 'PB3', requestIdPrefix: 'k3-46-reorder',
+      reasonText: 'K3-46 reordered Tasks' });
     await answerCard(world, recordA, 'k3-46-continuous-answer-a');
     await answerCard(world, recordB, 'k3-46-continuous-answer-b');
 
@@ -570,6 +471,7 @@ describe('K3-46 (三) the continuous Host advance carries the failed cards and r
       throw new Error('the K3-46 continuous driver test never calls this dependency');
     };
 
+    const waiter = createDriverSettledWaiter({ failureText: 'the K3-46 continuous driver did not settle' });
     driver = createCollaborationDriver({
       workflow: narrowedWorkflow,
       runtime: unusedDriverPort,
@@ -578,12 +480,13 @@ describe('K3-46 (三) the continuous Host advance carries the failed cards and r
       mailbox: { readMessage: unusedDriverPort, readOutbox: unusedDriverPort },
       controls: unusedDriverPort,
       profiles: [],
+      onChange: waiter.onChange,
     } as unknown as Parameters<typeof createCollaborationDriver>[0]);
 
     try {
       const started = await driver.start(world.fixture.ctx, { advance: selectWork(), queryProfileIds: [] });
       expect(started.status).toBe('ready');
-      const settled = await waitForSettledDriver(driver, world.fixture.ctx);
+      const settled = await waiter.waitForSettledDriver(driver, world.fixture.ctx);
 
       const runIdToTask = new Map([[recordA.ref.runId, 'k3-20-a'], [recordB.ref.runId, 'k3-20-b']]);
       const appliedTasks: string[] = [];
@@ -626,6 +529,9 @@ describe('K3-46 (三) the continuous Host advance carries the failed cards and r
     }
   }, 120_000);
 
+});
+
+describe('rejects: the failed-card set is never a public advance input', () => {
   it.each(['memory', 'sqlite'] as const)('K3-46 (三) (%s) input: every public failedReviewRefs is refused invalid, even a real same-project card', async kind => {
     const world = await openK3ReviewCardWorld(kind);
     worlds.push(world);
@@ -634,27 +540,34 @@ describe('K3-46 (三) the continuous Host advance carries the failed cards and r
 
     // The set is not public input at all: an own key of ANY shape is refused
     // `invalid` and the reason names the key, so the caller learns it can never
-    // be sent. The dangerous shape is the last one: a real card of this project.
-    const publicInputs: unknown[] = [
-      'not-an-array',
-      [{}],
-      [{ aggregateType: 'UnknownCallReview', projectId: 'another-project',
-        goalId: GOAL_B.goalId, runId: 'R1' }],
-      [record.ref],
+    // be sent. The dangerous shape is a real card of this project; the other
+    // field name the frozen Workflow also refuses is `failedCardRefs`.
+    const publicInputs: { key: 'failedReviewRefs' | 'failedCardRefs'; value: unknown }[] = [
+      { key: 'failedReviewRefs', value: 'not-an-array' },
+      { key: 'failedReviewRefs', value: [{}] },
+      { key: 'failedReviewRefs', value: [{ aggregateType: 'UnknownCallReview', projectId: 'another-project',
+        goalId: GOAL_B.goalId, runId: 'R1' }] },
+      { key: 'failedReviewRefs', value: [record.ref] },
+      { key: 'failedReviewRefs', value: [] },
+      { key: 'failedCardRefs', value: [] },
     ];
-    for (const value of publicInputs) {
+    for (const { key, value } of publicInputs) {
       const rejected = await workflow.advanceWork(world.fixture.ctx,
-        { ...selectWork(), failedReviewRefs: value } as unknown as WorkflowAdvanceInput);
+        { ...selectWork(), [key]: value } as unknown as WorkflowAdvanceInput);
       expect(rejected).toMatchObject({ status: 'rejected', code: 'invalid' });
       if (rejected.status !== 'rejected') throw new Error(JSON.stringify(rejected));
-      expect(rejected.reason).toContain('failedReviewRefs');
+      expect(rejected.reason).toContain(key);
     }
-    // Without the key the same public advance still works, and no returned
-    // `next` ever carries the set.
+    // Every refusal left the real card untouched (public read).
+    expect(await world.reviews.readReview(world.fixture.ctx, { ref: record.ref })).toMatchObject({
+      status: 'ready', value: { status: 'needs_decision', revision: record.revision } });
+    // Without either key the same public advance still works, and no returned
+    // `next` ever carries either field name.
     const fresh = await workflow.advanceWork(world.fixture.ctx, selectWork());
     expect(fresh.status).toBe('ready');
     if (fresh.status === 'ready' && fresh.value.next !== null) {
       expect(hasFailedReviewRefs(fresh.value.next)).toBe(false);
+      expect(hasFailedCardRefs(fresh.value.next)).toBe(false);
     }
   }, 120_000);
 });
@@ -694,7 +607,8 @@ describe('K3-46 (三) the public route cannot carry the failed cards', () => {
     worlds.push(world);
     const recordA = await createK3NeedsDecisionRecord(world, 'k3-20-a');
     const recordB = await createK3NeedsDecisionRecord(world, 'k3-20-b');
-    await adoptReorderedPlan(world);
+    await adoptReorderedPlan(world, { planId: 'PB3', requestIdPrefix: 'k3-46-reorder',
+      reasonText: 'K3-46 reordered Tasks' });
     await answerCard(world, recordA, 'k3-46-route-failure-answer-a');
     await answerCard(world, recordB, 'k3-46-route-failure-answer-b');
     const records = failingDispositionRecords(world.fixture.records, 'injected ② commit failure');
@@ -733,7 +647,7 @@ describe('K3-46 (三) the public route cannot carry the failed cards', () => {
     expect(afterB.receipt).toMatchObject({ kind: 'apply_review_disposition' });
     expect(afterB.next).not.toBeNull();
     expect(hasFailedReviewRefs(afterB.next)).toBe(false);
-    expect(afterB.failedReviewRefs).toBeUndefined();
+    expect(afterB).not.toHaveProperty('failedReviewRefs');
     if (afterB.next?.kind !== 'perform') throw new Error(JSON.stringify(afterB.next));
     expect(afterB.next.operation.kind).not.toBe('apply_review_disposition');
   }, 120_000);

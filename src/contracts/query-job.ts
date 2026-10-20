@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 import type { ArtifactRef } from "./artifact.js";
 import type { PreparedQueryManifestV1 } from "./core/prepared-execution.js";
 export type QueryJobRef = {
@@ -145,8 +144,8 @@ export type QueryJobIntentV1 = {
         maxRounds: number;
     };
     correlationId: string;
-    /** Optional real read-only role work. Absence retains the legacy query contract. */
-    execution?: {
+    /** The real read-only role work every current Query carries. */
+    execution: {
         kind: 'semantic_query' | 'initial_coordination' | 'execution_coordination';
         responsePurpose?: import('./memory.js').MemoryPurpose;
         feedback?: import('./execution-feedback.js').FeedbackSource;
@@ -326,9 +325,9 @@ export type QueryJobSubmittedEvent = {
  * the Store's exact identity/fingerprint lookup, so the real actor and the
  * immutable submitted intent can be recovered later without scanning events.
  *
- * It is a location, not an authorization: a caller never supplies it, an absent
- * field on a historical snapshot stays readable, and its presence never by
- * itself grants execution authority.
+ * It is a location, not an authorization: a caller never supplies it, the formal
+ * submit producer writes it into every snapshot after 79-1, and its presence
+ * never by itself grants execution authority.
  */
 export type QuerySubmissionBindingV1 = {
     schemaVersion: 1;
@@ -341,8 +340,8 @@ export type QueryJobSnapshot = {
     revision: number;
     schemaVersion: 1;
     job: QueryJobV1;
-    /** Present only on snapshots written by the formal submit producer. */
-    submission?: QuerySubmissionBindingV1;
+    /** The locator written by the formal submit producer on every snapshot. */
+    submission: QuerySubmissionBindingV1;
 };
 
 // ------------------------------------------------------------------------ //

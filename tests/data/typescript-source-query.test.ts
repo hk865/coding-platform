@@ -1,10 +1,16 @@
 import { afterEach, expect, it } from 'vitest';
-import type { ProjectSourceAccess } from '../../src/core/workspace/project-source-index.js';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { ProjectSourceAccess } from '../../src/core/workspace/project-source-snapshot.js';
 import { captureProjectSource } from '../../src/core/workspace/project-source-snapshot.js';
 import { TypeScriptSourceAnalyzer } from '../../src/core/workspace/typescript-source-query.js';
+import { WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
 
 const analyzers: TypeScriptSourceAnalyzer[] = [];
+const roots: string[] = [];
 afterEach(() => { for (const analyzer of analyzers.splice(0)) analyzer.dispose(); });
+afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 const signal = () => new AbortController().signal;
 function analyzer() {
   const value = new TypeScriptSourceAnalyzer();
@@ -138,4 +144,62 @@ it('rejects a cancelled analysis without preventing later analysis of the same c
   expect(subject.analyze(captured, { operation: 'definitions', path: 'src/use.ts', line: 2, column: 2 }, signal()).results).toEqual([
     expect.objectContaining({ path: 'src/lib.ts' }),
   ]);
+});
+
+it('discovers over 64 sources from real files, honors tsconfig include and aliases, and returns source-bound cross-file results', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'typescript-source-query-'));
+  roots.push(root);
+  await mkdir(join(root, 'src'));
+  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'esnext', module: 'esnext', moduleResolution: 'bundler', paths: { '@lib/*': ['./src/*'] }, plugins: [{ name: 'MUST_NOT_EXECUTE' }] }, include: ['src/**/*.ts'] }));
+  await writeFile(join(root, 'src/a.ts'), 'export function chosen() { return 1; }\n');
+  await writeFile(join(root, 'src/b.ts'), 'import { chosen } from "@lib/a";\nchosen();\n');
+  for (let n = 0; n < 70; n++) await writeFile(join(root, `src/unit${n}.ts`), `export const v${n} = ${n};\n`);
+  await writeFile(join(root, 'excluded.ts'), 'export const excluded = 1;\n');
+  const ws = await WorkspaceSandbox.create(root, { deniedPrefixes: ['private'] });
+  const access: ProjectSourceAccess = { read: (path, bytes) => ws.read(path, bytes), allowed: path => !path.startsWith('private'), inventory: signal => ws.listFiles(10000, { signal }), sourceIdentity: async () => ({ workspace: ws.identity, commit: 'a'.repeat(40) }) };
+  const captured = await captureProjectSource(access, signal());
+  const subject = analyzer();
+  const result = subject.analyze(captured, { operation: 'definitions', path: 'src/b.ts', line: 2, column: 2 }, signal());
+  expect(result.results).toEqual([expect.objectContaining({ path: 'src/a.ts', digest: expect.any(String), symbolId: expect.any(String) })]);
+  expect(result.coverage).toMatchObject({ projectConfiguration: 'tsconfig.json', indexedSourceCount: 72 });
+  const symbols = subject.analyze(captured, { operation: 'symbols' }, signal());
+  expect(symbols.results.some(r => r['path'] === 'src/unit69.ts')).toBe(true);
+  expect(symbols.results.some(r => r['path'] === 'excluded.ts')).toBe(false);
+  expect(subject.analyze(captured, { operation: 'references', path: 'src/a.ts', line: 1, column: 18 }, signal()).results).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'src/b.ts', line: 2 })]));
+  expect(subject.analyze(captured, { operation: 'calls', path: 'src/b.ts' }, signal()).results).toEqual([expect.objectContaining({ resolution: 'static_candidate', target: expect.objectContaining({ path: 'src/a.ts' }) })]);
+});
+
+it('reports incremental changes for a repeat read, an addition, a rename and an edit of real files', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'typescript-source-query-changes-'));
+  roots.push(root);
+  await mkdir(join(root, 'src'));
+  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: { target: 'esnext', module: 'esnext', moduleResolution: 'bundler' },
+    include: ['src/**/*.ts'] }));
+  await writeFile(join(root, 'src/a.ts'), 'export const a = 1;\n');
+  const ws = await WorkspaceSandbox.create(root, { deniedPrefixes: ['private'] });
+  const access: ProjectSourceAccess = { read: (path, bytes) => ws.read(path, bytes),
+    allowed: path => !path.startsWith('private'), inventory: sig => ws.listFiles(10000, { signal: sig }),
+    sourceIdentity: async () => ({ workspace: ws.identity, commit: 'a'.repeat(40) }) };
+  const subject = analyzer();
+  const first = await captureProjectSource(access, signal());
+  subject.analyze(first, { operation: 'symbols' }, signal());
+
+  // A repeat read of the same capture changes nothing.
+  expect(subject.analyze(first, { operation: 'symbols' }, signal()).changes).toMatchObject({ total: 0 });
+
+  await writeFile(join(root, 'src/new.ts'), 'export const fresh = 1;\n');
+  const addedCapture = await captureProjectSource(access, signal());
+  expect(subject.analyze(addedCapture, { operation: 'symbols' }, signal()).changes)
+    .toMatchObject({ added: ['src/new.ts'], total: 1 });
+
+  await rename(join(root, 'src/new.ts'), join(root, 'src/renamed.ts'));
+  const renamedCapture = await captureProjectSource(access, signal());
+  expect(subject.analyze(renamedCapture, { operation: 'symbols' }, signal()).changes)
+    .toMatchObject({ added: ['src/renamed.ts'], deleted: ['src/new.ts'], total: 2 });
+
+  await writeFile(join(root, 'src/a.ts'), 'export const changed = 2;\n');
+  const editedCapture = await captureProjectSource(access, signal());
+  expect(subject.analyze(editedCapture, { operation: 'symbols' }, signal()).changes)
+    .toMatchObject({ modified: ['src/a.ts'], total: 1 });
 });

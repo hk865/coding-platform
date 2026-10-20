@@ -8,9 +8,7 @@ import { isSafeSourcePath, isSourcePath, ProjectSourceFailure, sha256Text, SOURC
  * `TypeScriptSourceAnalyzer` owns the TypeScript Language Service and the AST query
  * implementations. It receives one immutable `ProjectSourceSnapshot` and answers
  * `analyze()` synchronously from that material only: no access port, host, disk,
- * registry, pagination or `expectedSnapshot` reaches this component. The public
- * `ProjectSourceIndex` keeps capture/verification/permission semantics and shapes
- * the wire response from these results.
+ * registry, pagination or `expectedSnapshot` reaches this component.
  */
 
 /** Query surface of the frozen analysis; the original tool fields minus pagination and snapshot pinning. */

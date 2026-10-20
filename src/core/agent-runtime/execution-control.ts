@@ -81,7 +81,7 @@ export type RuntimeControlProof = {
 export type RuntimeControlDecision = { kind: 'continue' } | { kind: 'pause' };
 
 /**
- * The read-only verdict a narrow long-running tool (the replyMode wait) may
+ * The read-only verdict a narrow long-running tool (the wait after send) may
  * observe. It NEVER consumes the intent, associates a handle or aborts a
  * controller; it only lets the tool yield to the original tool-group barrier,
  * which performs the real consuming decision.

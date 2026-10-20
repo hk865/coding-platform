@@ -7,84 +7,28 @@
  * caps (500 kept lines / 64 KiB, one summary line).
  */
 import { afterEach, expect, it } from 'vitest';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { SourceCaptureRef } from '../../src/contracts/core/source.js';
-import type { WorkspaceRef } from '../../src/contracts/ledger.js';
-import { canonicalJson } from '../../src/contracts/fingerprint.js';
-import { createWorkspaceAccessFactory } from '../../src/core/workspace/access.js';
-import type { WorkspaceCaptureLimits, WorkspaceResult } from '../../src/core/workspace/ports.js';
-import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../../src/core/workspace/workspace-tools.js';
+import { DEFAULT_WORKSPACE_LIMITS } from '../../src/core/workspace/workspace-tools.js';
+import { ready, workspaceToolsFixture } from '../helpers/workspace-tools-fixture.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-function ready<T>(result: WorkspaceResult<T>): T {
-  expect(result.status).toBe('ready');
-  if (result.status !== 'ready') throw Error(`${result.code}: ${result.reason}`);
-  return result.value;
-}
-
-const MAPPINGS = [{ id: 'Root', kind: 'module' as const, paths: ['.'] }];
-
-/** A real temporary workspace behind the real permission-filtered access. */
-async function fixture(entries: [string, string][], limits: WorkspaceCaptureLimits = DEFAULT_WORKSPACE_LIMITS) {
-  const root = await mkdtemp(join(tmpdir(), 's8e-a25-'));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
-  const files = new Map(entries);
-  for (const [path, content] of entries) {
-    await mkdir(dirname(join(root, path)), { recursive: true });
-    await writeFile(join(root, path), content);
-  }
-  const workspace: WorkspaceRef = { aggregateType: 'Workspace', projectId: 's8e-a25', workspaceId: 'main' };
-  const workspaceRevision = 1;
-  const actor = { kind: 'human' as const, id: 's8e-a25-reader' };
-  const access = createWorkspaceAccessFactory({
-    resolveRoot: async requested => requested.projectId === workspace.projectId && requested.workspaceId === workspace.workspaceId
-      ? { status: 'ready', value: { root, workspaceRevision } }
-      : { status: 'rejected', code: 'not_found', reason: 'unknown test workspace' },
-    authorize: async (ctx, requested) => {
-      if (requested.projectId !== workspace.projectId || requested.workspaceId !== workspace.workspaceId ||
-          ctx.projectId !== workspace.projectId || ctx.workspaceId !== workspace.workspaceId ||
-          ctx.principal.kind !== 'host' || ctx.principal.actor.id !== actor.id ||
-          ctx.materialReader.kind !== 'host' || ctx.materialReader.projectId !== workspace.projectId ||
-          ctx.materialReader.workspaceId !== workspace.workspaceId || ctx.materialReader.actor.id !== actor.id)
-        return { status: 'rejected', code: 'forbidden', reason: 'no matching explicit test grant' };
-      return { status: 'ready', value: {
-        subjectKey: canonicalJson(['host', actor]), permissionRevision: 's8e-a25-policy-v1',
-        allowsRead: path => files.has(path),
-      } };
-    },
-  });
-  const handle = createWorkspaceTools({ access, now: () => '2026-10-18T00:00:00.000Z', limits });
-  cleanups.push(() => handle.close());
-  const context: CoreCallContext = {
-    projectId: workspace.projectId, workspaceId: workspace.workspaceId,
-    principal: { kind: 'host', actor },
-    materialReader: { kind: 'host', projectId: workspace.projectId, workspaceId: workspace.workspaceId, actor },
-    signal: new AbortController().signal,
-  };
-  const request = { workspace, workspaceRevision, provider: 'typescript' as const };
-  return {
-    handle, context, request,
-    strictCapture: () => handle.tools.captureSourceChanges(context, request),
-    observationCapture: () => handle.tools.captureObservation(context, request),
-    exportCapture: (capture: SourceCaptureRef) => handle.tools.exportCapture(context, capture),
-    architectureSource: (capture: SourceCaptureRef) =>
-      handle.tools.captureArchitectureSource(context, { capture, mappings: MAPPINGS }),
-    fileGraph: (capture: SourceCaptureRef) => handle.tools.captureFileGraph(context, { capture }),
-  };
-}
+const fixture = workspaceToolsFixture({
+  projectId: 's8e-a25',
+  actorId: 's8e-a25-reader',
+  permissionRevision: 's8e-a25-policy-v1',
+  tempPrefix: 's8e-a25-',
+  now: '2026-10-18T00:00:00.000Z',
+  cleanups,
+});
 
 it('A25-1 strict capture keeps the export capacity check (two files, maxQueryResults 1)', async () => {
   const f = await fixture([
     ['a.ts', 'export const a = 1;\n'],
     ['b.ts', 'export const b = 1;\n'],
-  ], { ...DEFAULT_WORKSPACE_LIMITS, maxQueryResults: 1 });
+  ], { limits: { ...DEFAULT_WORKSPACE_LIMITS, maxQueryResults: 1 } });
   const captured = ready(await f.strictCapture());
 
   // Neither file imports anything, so only the file count can exceed the limit.

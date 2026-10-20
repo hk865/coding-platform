@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 /**
  * Temporary source capture identity (CONTRACTS §5). A `SourceCaptureRef` points at a
  * bounded WorkspaceTools capture object: it carries no ArtifactRef and is invalid after

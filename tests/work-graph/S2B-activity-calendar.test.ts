@@ -212,7 +212,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B activity calendar (%s)', (kind
     }
   });
 
-  it('2B-24 attributes begun checks to the round start hour and its task and counts legacy rounds as unplaced', async () => {
+  it('2B-24 attributes begun checks to the round start hour and its task', async () => {
     const f = await open(kind);
     const goalRef = f.goalRef;
     const session = f.b2.base.sessions.second;
@@ -232,14 +232,6 @@ describe.each(['memory', 'sqlite'] as const)('S2B activity calendar (%s)', (kind
     const roundB = await f.openRound(runB, 'work-2');
     await f.beginChecks(roundB, 2);
 
-    // The legacy round has real begun checks but no `since`, so it never enters a cell.
-    const runC = await f.runAndEnd('work-3', session, '2026-10-14T08:00:00.000Z', '2026-10-14T08:30:00.000Z');
-    await f.writeActivity(runC, countedFacts({ turnStartedAt: '2026-10-14T08:00:00.000Z',
-      lastRecordAt: '2026-10-14T08:30:00.000Z', quarters: [] }));
-    f.setClock('2026-10-14T12:00:00.000Z');
-    const legacy = await f.openLegacyRound(runC, 'work-3', 4);
-    expect(legacy.checksBegun).toBe(4);
-
     f.setClock('2026-10-14T13:00:00.000Z');
     const calendar = readyCalendar(await f.readCalendar({
       goalRef, from: '2026-10-14T00:00:00.000Z', to: '2026-10-14T18:00:00.000Z',
@@ -254,10 +246,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B activity calendar (%s)', (kind
       checks: 2, uncountedRuns: 0, inProgressRuns: 0, complete: true,
       tasks: [{ taskId: 'work-2', steps: 0, edits: 0, checks: 2 }], moreTasks: 0,
     });
-    // The legacy round's 4 begun checks are in no cell and counted as unplaced.
-    expect(cellAt(calendar, 8)).toMatchObject({ checks: 0 });
-    expect(calendar.cells.flatMap((cell) => cell.tasks).some((task) => task.taskId === 'work-3')).toBe(false);
-    expect(calendar.coverage).toMatchObject({ checksUnplaced: 4 });
+    expect(calendar.coverage).toMatchObject({ checksUnplaced: 0 });
     expect(calendar.checksAttribution).toBe('round_start');
   });
 

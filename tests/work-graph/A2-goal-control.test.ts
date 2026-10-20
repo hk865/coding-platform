@@ -1,7 +1,7 @@
 /**
  * A.2 step 5.5: `setGoalControl` (docs/refactor/STATE-MACHINES-SPEC.md §2
  * GOAL-04…06, §2.4, D-9, LA-7) and the control fan-out's Goal fence (§2.3),
- * through the public platform ports over the real claim fixture on SQLite.
+ * through the public ports over the real claim fixture on memory and SQLite.
  *
  * - The Goal commit writes the desired state, its epoch (`desiredStateRevision`)
  *   and requester with one `GoalDesiredStateChanged` event; a lost-ack replay
@@ -42,6 +42,7 @@ import { createR3eEvidenceFixture, R3E_GATE_TASK_ID, type R3eEvidenceFixture } f
 import { createTaskClaimFixture, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 
 type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;
+const KINDS = ['memory', 'sqlite'] as const;
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
@@ -96,40 +97,66 @@ async function phasePinOf(platform: Platform, fixture: TaskClaimFixture): Promis
 }
 
 describe('setGoalControl (GOAL-04…06)', () => {
-  it('commits the desired state, its epoch and requester; a replay restores the original snapshot', async () => {
-    const { fixture, platform: first } = await setup();
-    let platform = first;
-    const before = await goalOf(platform, fixture);
+  it.each(KINDS)('%s: commits the desired state, its epoch and requester; a replay restores the original snapshot', async kind => {
+    const fixture = await createTaskClaimFixture(kind, COMPLETION_RECORD_SCHEMAS);
+    cleanups.push(() => fixture.close());
+    let control = fixture.goals;
+    let plans = fixture.plans;
+    let platform: Platform | null = null;
+    if (kind === 'sqlite') {
+      await fixture.closeBackend();
+      platform = await openPlatform(fixture.directory);
+      control = platform.goals;
+      plans = platform.plans;
+    }
+    const readGoal = async () => {
+      const read = await plans.queryGoal(fixture.ctx, fixture.goalRef);
+      if (read.status !== 'ready') throw new Error('the Goal must be readable');
+      return read.value.goal;
+    };
+    const before = await readGoal();
     expect(before).toMatchObject({ desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null });
-    const phasePin = await phasePinOf(platform, fixture);
+    const phasePin = { ref: { aggregateType: 'GoalPhase' as const, projectId: fixture.goalRef.projectId,
+      goalId: fixture.goalRef.goalId }, revision: 0 };
     const pause = request(fixture, 'pause', 'a2-goal-svc-pause', [{ ref: fixture.goalRef, revision: before.revision }, phasePin]);
-    const paused = await platform.goals.setGoalControl(fixture.ctx, pause);
+    const pauseRequester = fixture.ctx.principal.kind === 'host' ? fixture.ctx.principal.actor : null;
+    const paused = await control.setGoalControl(fixture.ctx, pause);
     if (paused.status !== 'committed') throw new Error(`pause: ${JSON.stringify(paused)}`);
-    const operator = fixture.ctx.principal.kind === 'host' ? fixture.ctx.principal.actor : null;
     expect(paused).toMatchObject({ replayed: false, value: { ...before, desiredState: 'paused', revision: before.revision + 1,
-      desiredStateRevision: before.revision + 1, desiredStateRequestedBy: operator } });
-    expect(await goalOf(platform, fixture)).toEqual(paused.value);
+      desiredStateRevision: before.revision + 1, desiredStateRequestedBy: pauseRequester } });
+    expect(await readGoal()).toEqual(paused.value);
 
-    // GOAL-05 with a GoalPhase pin of 0 (none read): not compared for a resume.
-    const resumed = await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'resume', 'a2-goal-svc-resume',
-      [{ ref: fixture.goalRef, revision: paused.value.revision }, { ref: { aggregateType: 'GoalPhase', projectId: fixture.goalRef.projectId,
-        goalId: fixture.goalRef.goalId }, revision: 0 }]));
-    expect(resumed).toMatchObject({ status: 'committed', value: { desiredState: 'active', desiredStateRevision: before.revision + 2 } });
+    // GOAL-05 with a GoalPhase pin of 0 (none read): not compared for a resume. A second operator resumes.
+    const resumeRequester = { kind: 'human' as const, id: 'r4c-claim-operator-2' };
+    const resume = request(fixture, 'resume', 'a2-goal-svc-resume',
+      [{ ref: fixture.goalRef, revision: paused.value.revision }, phasePin]);
+    const resumed = await control.setGoalControl(hostContext(fixture, resumeRequester), resume);
+    if (resumed.status !== 'committed') throw new Error(`resume: ${JSON.stringify(resumed)}`);
+    expect(resumed).toMatchObject({ status: 'committed', value: { desiredState: 'active', desiredStateRevision: before.revision + 2,
+      desiredStateRequestedBy: resumeRequester } });
 
-    // The lost-ack replay returns the ORIGINAL paused snapshot, also after the platform reopens.
-    expect(await platform.goals.setGoalControl(fixture.ctx, pause))
-      .toMatchObject({ status: 'committed', replayed: true, value: paused.value, cursor: paused.cursor });
-    await platform.close();
-    platform = await openPlatform(fixture.directory);
-    expect(await platform.goals.setGoalControl(fixture.ctx, pause))
-      .toMatchObject({ status: 'committed', replayed: true, value: paused.value });
+    // The lost-ack replay returns each ORIGINAL snapshot, requester and receipt, also after the platform reopens.
+    expect(await control.setGoalControl(fixture.ctx, pause)).toMatchObject({ status: 'committed', replayed: true,
+      value: paused.value, cursor: paused.cursor });
+    expect(await control.setGoalControl(hostContext(fixture, resumeRequester), resume)).toMatchObject({ status: 'committed',
+      replayed: true, value: resumed.value, cursor: resumed.cursor });
+    if (platform !== null) {
+      await platform.close();
+      platform = await openPlatform(fixture.directory);
+      control = platform.goals;
+      plans = platform.plans;
+      expect(await control.setGoalControl(fixture.ctx, pause)).toMatchObject({ status: 'committed', replayed: true,
+        value: paused.value, cursor: paused.cursor });
+      expect(await control.setGoalControl(hostContext(fixture, resumeRequester), resume)).toMatchObject({ status: 'committed',
+        replayed: true, value: resumed.value, cursor: resumed.cursor });
+    }
     // The same request with its pins in the other order is the same request (one pin order in the
     // fingerprint, as requeue and reverify sort theirs).
-    expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-goal-svc-pause',
+    expect(await control.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-goal-svc-pause',
       [phasePin, { ref: fixture.goalRef, revision: before.revision }])))
       .toMatchObject({ status: 'committed', replayed: true, value: paused.value });
     // The same identity with other content is not the original request.
-    expect(await platform.goals.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-goal-svc-pause',
+    expect(await control.setGoalControl(fixture.ctx, request(fixture, 'pause', 'a2-goal-svc-pause',
       [{ ref: fixture.goalRef, revision: before.revision }, phasePin], 'another reason'))).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
   });
 

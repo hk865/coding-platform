@@ -1221,7 +1221,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const inbox = await platform.messages.readInbox(ctx, { recipient: entry.sessionRef, page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
       if (inbox.status !== 'ready') return;
       for (const message of inbox.value.items) {
-        const inquiry = message.intent === 'inquiry' || (message.intent === undefined && message.replyMode === 'wait');
+        const inquiry = message.intent === 'inquiry';
         if (message.status === 'responded' || (!inquiry && await inputCompleted(ctx, message))) continue;
         if (!inquiry && (card.value.availability !== 'idle' || card.value.record.occupancy !== null)) continue;
         await platform.workflow.consumeConsultation?.(ctx, {
@@ -1441,10 +1441,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
 
   // L-10: without the instance lease this Host delivers no attention and wakes no consumer (no execution driver).
   const attentionDone: Promise<void> = (attentionScopes.length === 0 && inputConsumers.length === 0 && noteScribeTodos === undefined) || !leaseOwned ? Promise.resolve() : (async () => {
-    const scanner = createAttentionScanner({ workspace: platform.workspace, plans: platform.plans, messages: platform.messages, architecture: platform.architecture,
-      ...(platform.runtime.readAttentionGraph === undefined ? {} : {
-        readAttentionGraph: platform.runtime.readAttentionGraph.bind(platform.runtime),
-      }) });
+    const scanner = createAttentionScanner({ workspace: platform.workspace, messages: platform.messages,
+      readAttentionGraph: platform.runtime.readAttentionGraph.bind(platform.runtime) });
     const entries = attentionScopes.map(scope => ({
       scope, observer: createAttentionObserver(scope.config),
       confirmedSequences: new Map<string, number>(), nextSequence: 0,

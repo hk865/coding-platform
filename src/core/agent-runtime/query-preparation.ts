@@ -259,9 +259,6 @@ export function createQueryPreparation(deps: RuntimeExecutionDependencies, conte
         return rejected('busy', `the QueryRun is not awaiting preparation (phase ${executionState.phase})`);
       }
       const execution = record.job.job.intent.execution;
-      if (execution === undefined) {
-        return rejected('unsupported', 'prepareQuery requires an explicit read-only execution binding');
-      }
       // Idempotent prepare: a run already bound to a manifest returns the exact
       // persisted references instead of storing a second manifest.
       if (executionState.phase === 'prepared') {
@@ -356,7 +353,7 @@ export function createQueryPreparation(deps: RuntimeExecutionDependencies, conte
         budget: { tokenBudget: record.job.job.intent.budget.maxTokens, deadline: record.job.job.intent.budget.deadline },
         sourceRefs,
         ...(sessionBasis === undefined ? {} : { sessionBasis }),
-        ...(contextAssembly === undefined ? {} : { contextAssembly }),
+        contextAssembly,
         input,
         inputDigest,
       };

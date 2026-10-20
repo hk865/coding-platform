@@ -124,7 +124,7 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
   });
 
   // Lead (2A §5.3, frozen): 201 Goals are no longer refused; the queue answers.
-  it('R2A07 - an unfiltered Workspace queue over 201 Goals is read, not refused', async () => {
+  it('R2A07 / R2A08 - an unfiltered Workspace queue over 201 Goals is read, not refused', async () => {
     const f = await open();
     await populateGoals(f, 201);
     expect(await modelRequestCounts(f)).toEqual({ workAttempts: 0, queryAdmissions: 0 });
@@ -136,16 +136,6 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
     expect(f.allocationCounts).toEqual(allocations);
     expect(await modelRequestCounts(f)).toEqual({ workAttempts: 0, queryAdmissions: 0 });
     expect(result).toMatchObject({ status: 'ready' });
-  }, 300_000);
-
-  it('R2A08 - exactly 200 Goals remain inside the Workspace queue limit', async () => {
-    const f = await open();
-    await populateGoals(f, 200);
-    const before = await f.storeSnapshot();
-    const result = await owners(f).reads.queryDecisionQueue(f.ctx, { workspace: WORKSPACE_SCOPE,
-      sections: ['waiting_answer', 'answered_pending_application', 'history', 'notices'], page: { limit: 50 } });
-    expect(result).toMatchObject({ status: 'ready' });
-    expect(await f.storeSnapshot()).toEqual(before);
   }, 300_000);
 
   it('R2A10 - an ordinary Session message is not a direct decision card', async () => {

@@ -8,8 +8,8 @@
  * requeue`) continues it in the SAME Session, and the continuation Run's brief
  * is read through the public `executions/brief` route. Today's platform-window
  * path (`readPositionWindow`) must build that brief and must never consult the
- * Kernel identity seam. The seam is a real `readTurnBounds` wrapped by a call
- * counter (test 1) or absent entirely (test 2). No private assembly helper is
+ * Kernel identity seam. The seam is a real `readTurnBounds` made absent
+ * entirely. No private assembly helper is
  * imported, no Session/Run/requeue record is fabricated, and no database read
  * verifies a business result.
  */
@@ -24,17 +24,17 @@ import {
 
 afterEach(cleanupScenarios);
 
-// D8/M2: the identity seam is a live counter (test 1) or absent (test 2) over
-// the REAL Runtime; a recorded `endPosition` must never reach it.
-const seam = vi.hoisted(() => ({ absent: false, calls: 0 }));
+// D8/M2: the identity seam is made absent over the REAL Runtime. A call would
+// answer `unsupported` and the brief could not be built, so a recorded
+// `endPosition` must never reach it.
+const seam = vi.hoisted(() => ({ absent: false }));
 vi.mock('../../vendor/coding-agent/dist/public-api.js', async importOriginal => {
   const actual = await importOriginal<Record<string, unknown>>();
   const real = actual['readTurnBounds'] as (...args: unknown[]) => unknown;
-  const wrapped = (...args: unknown[]): unknown => { seam.calls += 1; return real(...args); };
   return Object.defineProperty({ ...actual }, 'readTurnBounds', { enumerable: true, configurable: true,
-    get: () => (seam.absent ? undefined : wrapped) });
+    get: () => (seam.absent ? undefined : real) });
 });
-afterEach(() => { seam.absent = false; seam.calls = 0; });
+afterEach(() => { seam.absent = false; });
 
 type Continued = { briefPreviousRunId: string; cancelledRunId: string; briefSessionId: string; previousSessionId: string; continuity: string; endPosition: number };
 
@@ -81,19 +81,15 @@ async function cancelledThenContinued(prefix: string): Promise<Continued> {
 }
 
 describe('D8 a previous Run with a recorded end keeps today\'s position window', () => {
-  it('KA-09 (Runtime, L9/D8): a live readTurnBounds that must not be consulted is never called for a recorded end, and the continuation brief is still built', async () => {
-    const continued = await cancelledThenContinued('krpt-spy');
-    expect(continued.briefPreviousRunId, 'the brief names the previous, ended Run').toBe(continued.cancelledRunId);
-    expect(continued.briefSessionId, 'the continuation stays in the original Session').toBe(continued.previousSessionId);
-    expect(continued.continuity, 'the recorded end is the ordinary same-Session history path').toBe('same_session_history');
-    expect(continued.endPosition).toBeGreaterThan(0);
-    expect(seam.calls, 'a recorded end never consults the identity seam').toBe(0);
-  }, 300_000);
-
   it('KA-09 (Runtime, L9/D8): an absent readTurnBounds is never needed for a recorded end, and the continuation brief is still built', async () => {
     seam.absent = true;
     const continued = await cancelledThenContinued('krpt-absent');
     expect(continued.briefPreviousRunId, 'the brief names the previous, ended Run').not.toBe('');
-    expect(seam.calls, 'an absent seam is never consulted').toBe(0);
+    // The brief is built from the recorded end: it names the cancelled Run, stays in the
+    // original Session on the same-Session history path, and keeps the recorded end position.
+    expect(continued.briefPreviousRunId, 'the brief names the previous, ended Run').toBe(continued.cancelledRunId);
+    expect(continued.briefSessionId, 'the continuation stays in the original Session').toBe(continued.previousSessionId);
+    expect(continued.continuity, 'the recorded end is the ordinary same-Session history path').toBe('same_session_history');
+    expect(continued.endPosition).toBeGreaterThan(0);
   }, 300_000);
 });

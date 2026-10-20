@@ -15,7 +15,7 @@
  *   archive (real anchor owner); claim a different existing Task in the SAME Goal.
  *   graphReader(extensions) injects only the future provider, never a graph double.
  *
- * t0/t1 are the spec clocks. The reused S1 helper fixes r4c-claim-project /
+ * t0 is the spec clock. The reused S1 helper fixes r4c-claim-project /
  * r4c-claim-workspace rather than p/w, and also creates an unused independent
  * second Goal; AN07 deliberately does NOT use its secondClaim as the reader.
  * Date-only fake timers cover existing owners without an injected clock (as in
@@ -89,7 +89,6 @@ import { B2_HOST, createB2ExecutionFixture, workflowForFixture,
   type B2ExecutionFixture, type ClaimFixtureKind, type TaskClaimFixture } from './S1-workflow-archive-fixture.js';
 
 export const t0 = '2026-10-08T00:00:00.000Z';
-export const t1 = '2026-10-09T00:00:00.000Z';
 const now = () => t0;
 const CONSUMER = 'runtime-a';
 const hostActor: GraphContextReaderDependencies['hostActor'] = { kind: 'system', id: 'wp1-ce-context-host' };
@@ -138,14 +137,14 @@ function graphOwners(b2: B2ExecutionFixture) {
   return { executions, materials, inputs, graphReader };
 }
 
-export type GoalPrepared = {
+type GoalPrepared = {
   prepared: PreparedTaskExecution;
   manifest: PreparedTaskManifestV1;
   binding: ContextAssemblyBindingV1;
 };
-export type EntryAuthorization = Awaited<ReturnType<ExecutionEntryPort['authorizeRuntimeEntry']>>;
-export type CommittedEntryAuthorization = Extract<EntryAuthorization, { status: 'committed' }>;
-export type GoalBindingOptions = { goalDigest: string | null; workspaceRevision?: number };
+type EntryAuthorization = Awaited<ReturnType<ExecutionEntryPort['authorizeRuntimeEntry']>>;
+type CommittedEntryAuthorization = Extract<EntryAuthorization, { status: 'committed' }>;
+type GoalBindingOptions = { goalDigest: string | null; workspaceRevision?: number };
 export type GoalContentEntryFixture = GoalPrepared & {
   base: TaskClaimFixture;
   b2: B2ExecutionFixture;
@@ -323,7 +322,7 @@ export async function adoptUnrelatedPlan(fixture: GoalContentEntryFixture): Prom
     scope: { kind: 'goal' }, executionIntent: 'plan_only' }, 'wp1-ce-p2')).ref;
 }
 
-export type RevokedGoalEntry = {
+type RevokedGoalEntry = {
   prepared: PreparedTaskExecution;
   run: RunSnapshot;
   runPin: VersionPin;

@@ -25,7 +25,7 @@ import {
 } from '../../src/app/core-http-types.js';
 import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
 import { HOST_INSTANCE_LOCK_FILE } from '../../src/app/host-instance-lease.js';
-import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
+import type { WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { ControlIntentSnapshotV1, SubmittedControl } from '../../src/contracts/control-intent.js';
 import type { VersionPin } from '../../src/contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
@@ -36,7 +36,7 @@ import type { GoalControlOutcomeV1 } from '../../src/app/goal-fan-out-driver.js'
 import type { QueryJobRecord } from '../../src/core/work-graph/queries/contracts.js';
 import {
   AG2B_GOAL_REF, AG2B_PROJECT_REF, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID,
-  AG2B_WORKSPACE_REF, corePost, graphWrite, plain, seedAG2bWorkGraph, startAG2bHost, type AG2bHost,
+  AG2B_WORKSPACE_REF, corePost, graphWrite, plain, type AG2bHost,
 } from './AG2b-collaboration-fixture.js';
 
 const temporary: string[] = [];
@@ -79,15 +79,25 @@ export const selectWork = (flowId: string, goalLevel = false): WorkflowAdvanceIn
 
 export type AdvanceValue = Extract<WorkflowAdvanceResult, { status: 'ready' }>['value'];
 
-export async function driveWorkflow(host: AG2bHost, input: WorkflowAdvanceInput): Promise<AdvanceValue[]> {
+export type DriveWorkflowOptions = {
+  /** Stop before performing this Workflow operation (e.g. the automatic `requeue_task`). */
+  stopBefore?: string;
+  /** Collect every non-null step receipt, in order. */
+  receipts?: WorkflowStepReceipt[];
+};
+
+export async function driveWorkflow(host: AG2bHost, input: WorkflowAdvanceInput,
+  options: DriveWorkflowOptions = {}): Promise<AdvanceValue[]> {
   const steps: AdvanceValue[] = [];
   let current = input;
   for (let guard = 0; guard < 32; guard += 1) {
     const result = await post<WorkflowAdvanceResult>(host, 'workflow/advance', plain(AG2B_SCOPE, current));
     if (result.status !== 'ready') throw new Error(`the Workflow call was not ready: ${JSON.stringify(result)}`);
     steps.push(result.value);
+    if (options.receipts !== undefined && result.value.receipt !== null) options.receipts.push(result.value.receipt);
     if (result.value.state === 'completed' || result.value.next === null) return steps;
     current = result.value.next;
+    if (options.stopBefore !== undefined && current.kind === 'perform' && current.operation.kind === options.stopBefore) return steps;
   }
   throw new Error('the Workflow did not settle');
 }
@@ -250,75 +260,3 @@ export async function claimQueryOn(host: AG2bHost, session: TaskExecutionRecord[
 
 export type PausedOnClosedHost = { runRef: RunRef; pauseIntentRef: ControlIntentSnapshotV1['ref'];
   oldSession: TaskExecutionRecord['session']; lockPath: string; crashedPid: number };
-
-/**
- * Host 1: the Workflow enters the work Run; during the first model request the
- * operator pauses the Run (`controls/submit`) or the whole Goal (`goals/control`,
- * whose fan-out pauses the Run), so the Kernel Turn pauses at the safe point
- * after the first tool call. Host 1 closes (HL-06 removes its lock) unless
- * `keepOpen`; a stale lock naming an exited process is left, as a crashed Host
- * would leave it.
- */
-export async function pausedRunOnClosedHost(root: string, database: string, publicDir: string, pause: 'run' | 'goal' = 'run',
-  options: { beforeClose?: (host: AG2bHost, runRef: RunRef, pauseIntentRef: ControlIntentSnapshotV1['ref']) => Promise<void> } = {}):
-Promise<PausedOnClosedHost> {
-  let first: AG2bHost | undefined;
-  let pauseSubmitted: WriteResult<SubmittedControl> | undefined;
-  let goalPaused: WriteResult<GoalControlOutcomeV1> | undefined;
-  first = await startAG2bHost(publicDir, { root, database,
-    replies: [{ kind: 'calls', calls: [{ callId: 'a2-restart-read', name: 'read', args: { path: 'src/module.ts' } }] },
-      { kind: 'text', text: 'A2 restart: never reached on the first Host' }],
-    beforeReply: async (_request, index) => {
-      if (index !== 0 || first === undefined) return;
-      const runRef = (await workRow(first)).execution;
-      if (runRef === null) throw new Error('the work Task must have a Run while its Turn calls the model');
-      if (pause === 'goal') {
-        goalPaused = await post<WriteResult<GoalControlOutcomeV1>>(first, 'goals/control', graphWrite(AG2B_SCOPE,
-          { goalRef: AG2B_GOAL_REF, control: 'pause', reason: 'operator pauses the Goal before the restart' }, 'a2-restart-goal-pause',
-          await goalControlPins(first)));
-        return;
-      }
-      const run = (await readExecution(first, runRef)).run;
-      pauseSubmitted = await post<WriteResult<SubmittedControl>>(first, 'controls/submit', graphWrite(AG2B_SCOPE,
-        { runRef, kind: 'pause', reason: 'operator pause before the restart' }, 'a2-restart-pause',
-        [{ ref: runRef, revision: run.revision }]));
-    } });
-  let runRef: RunRef;
-  let pauseIntentRef: ControlIntentSnapshotV1['ref'];
-  let oldSession: TaskExecutionRecord['session'];
-  try {
-    expect(first.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-01',
-      report: { runs: [], queries: [], checks: [], controls: [], redriveGoals: [], problems: [] } });
-    await seedAG2bWorkGraph(first);
-    const steps = await driveWorkflow(first, selectWork('a2-restart-1'));
-    expect(steps.at(-1)).toMatchObject({ state: 'waiting', next: null });
-    expect(first.scripted.calls(), 'the pause landed at the safe point after the first tool call').toBe(1);
-    if (pause === 'goal') {
-      if (goalPaused?.status !== 'committed') throw new Error(`goal pause: ${JSON.stringify(goalPaused)}`);
-      const [fanOut] = goalPaused.value.fanOut.runs;
-      expect(fanOut).toMatchObject({ outcome: 'submitted', reason: null });
-      pauseIntentRef = fanOut!.intentRef!;
-    } else {
-      if (pauseSubmitted?.status !== 'committed') throw new Error(`pause: ${JSON.stringify(pauseSubmitted)}`);
-      pauseIntentRef = pauseSubmitted.value.intent.ref;
-    }
-    const row = await workRow(first);
-    if (row.execution === null) throw new Error('the work Task must select its Run');
-    runRef = row.execution;
-    const paused = await readExecution(first, runRef);
-    expect(paused.run).toMatchObject({ status: 'running', controlState: { intentRef: pauseIntentRef, desiredState: 'paused' } });
-    expect(await post(first, 'controls/read', plain(AG2B_SCOPE, pauseIntentRef))).toMatchObject({ status: 'ready',
-      value: { kind: 'pause', status: 'applied', observation: { kind: 'paused' } } });
-    oldSession = paused.session;
-    expect(oldSession.occupancy).toMatchObject({ kind: 'execution', executionRef: { runId: runRef.runId } });
-    await options.beforeClose?.(first, runRef, pauseIntentRef);
-  } finally {
-    await first.host.close();
-  }
-
-  // HL-06: the closed Host removed its own lock. A crashed Host leaves one naming an exited process.
-  const lockPath = join(database, HOST_INSTANCE_LOCK_FILE);
-  expect(existsSync(lockPath)).toBe(false);
-  const stale = await writeStaleLock(database);
-  return { runRef, pauseIntentRef, oldSession, lockPath, crashedPid: stale.crashedPid };
-}

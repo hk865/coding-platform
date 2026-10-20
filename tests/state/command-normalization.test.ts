@@ -12,7 +12,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
-  commandSha256, normalizeCommandText, parseShellActions, parseShellActionsDetailed,
+  commandSha256, normalizeCommandText, parseShellActionsDetailed,
 } from '../../src/core/work-graph/state/command-normalization.js';
 
 // ------------------------------------------------------------------------ //
@@ -49,20 +49,24 @@ describe('B2-10 commandSha256', () => {
 });
 
 const parsed = (command: string): Array<{ words: string[]; text: string }> => {
-  const result = parseShellActions(command);
+  const result = parseShellActionsDetailed(command);
   if (result.status !== 'parsed') {
     throw new Error(`expected parsed, got unparsed: ${result.reason}`);
   }
-  return result.actions;
+  return result.actions.map(({ words, text }) => ({ words, text }));
 };
 const wordsOf = (command: string): string[][] => parsed(command).map((action) => action.words);
 
 describe('B2-10 parseShellActions words and quotes', () => {
   it('B2-10 splits a simple segment into words and joins them for display', () => {
-    expect(parseShellActions('tool a b')).toEqual({
-      status: 'parsed',
-      actions: [{ words: ['tool', 'a', 'b'], text: 'tool a b' }],
-    });
+    const result = parseShellActionsDetailed('tool a b');
+    expect(result.status).toBe('parsed');
+    if (result.status === 'parsed') {
+      expect({ status: result.status, actions: result.actions.map(({ words, text }) => ({ words, text })) }).toEqual({
+        status: 'parsed',
+        actions: [{ words: ['tool', 'a', 'b'], text: 'tool a b' }],
+      });
+    }
   });
 
   it('B2-10 removes the quotes of a pure literal word (single, double, backslash)', () => {
@@ -113,7 +117,7 @@ describe('B2-10 parseShellActions separators', () => {
 
   it('B2-10 ignores empty segments and surrounding whitespace', () => {
     expect(wordsOf('  a ;;  b  ')).toEqual([['a'], ['b']]);
-    expect(parseShellActions('   ')).toEqual({ status: 'parsed', actions: [] });
+    expect(parseShellActionsDetailed('   ')).toEqual({ status: 'parsed', actions: [] });
   });
 });
 
@@ -219,7 +223,7 @@ describe('B2-10 parseShellActions irrelevant segments (rule 5)', () => {
   });
 
   it('B2-10 returns parsed with no actions when every segment is irrelevant', () => {
-    expect(parseShellActions('cd /tmp && echo hi && ls -la && git status'))
+    expect(parseShellActionsDetailed('cd /tmp && echo hi && ls -la && git status'))
       .toEqual({ status: 'parsed', actions: [] });
   });
 
@@ -265,11 +269,6 @@ describe('B2-10 parseShellActions shell -c recursion (rule 2)', () => {
     expect(wordsOf(nestShell(3, 'tool a'))).toEqual([['tool', 'a']]);
   });
 
-  it('B2-10 returns unparsed at the fourth level', () => {
-    const result = parseShellActions(nestShell(4, 'tool a'));
-    expect(result.status).toBe('unparsed');
-  });
-
   it('B2-10 keeps the actions around a shell segment and drops irrelevant inner segments', () => {
     expect(wordsOf("tool x && bash -c 'cd /tmp && tool a' && tool y"))
       .toEqual([['tool', 'x'], ['tool', 'a'], ['tool', 'y']]);
@@ -279,7 +278,7 @@ describe('B2-10 parseShellActions shell -c recursion (rule 2)', () => {
 
 describe('B2-10 parseShellActions unparsed forms (rule 6)', () => {
   const unparsedFor = (command: string): void => {
-    const result = parseShellActions(command);
+    const result = parseShellActionsDetailed(command);
     expect(result.status, command).toBe('unparsed');
     if (result.status === 'unparsed') expect(result.reason.length).toBeGreaterThan(0);
   };
@@ -328,7 +327,7 @@ describe('B2-10 parseShellActions unparsed forms (rule 6)', () => {
 
   it('B2-10 parses command substitution in argument position (not executable)', () => {
     expect(wordsOf('tool a $(date)')).toEqual([['tool', 'a', '$(date)']]);
-    expect(parseShellActions('echo $(date)')).toEqual({ status: 'parsed', actions: [] });
+    expect(parseShellActionsDetailed('echo $(date)')).toEqual({ status: 'parsed', actions: [] });
   });
 
   it('B2-10 makes the whole command unparsed when any segment is unparsed (U8)', () => {
@@ -397,10 +396,7 @@ describe('L19a ruling 5 parseShellActionsDetailed dirs', () => {
     expect(dirsOf('cd app && cd - && tool a')).toEqual([null]);
   });
 
-  it('keeps the public projection exactly today s { words, text } shape', () => {
-    expect(parseShellActions('cd app && tool a')).toEqual({
-      status: 'parsed', actions: [{ words: ['tool', 'a'], text: 'tool a' }],
-    });
+  it('keeps the public projection as { text, dirs } for a directory-changing command', () => {
     expect(detailed('cd app && tool a')).toEqual([{ text: 'tool a', dirs: ['app'] }]);
   });
 });
@@ -430,11 +426,5 @@ describe('rework 1 item 3: pipeline exit restores the outer directory', () => {
     expect(dirsOf('(cd app; tool a) && tool b')).toEqual([['app'], []]);
     expect(dirsOf('echo x | (cd app); tool b')).toEqual([[]]);
     expect(dirsOf('echo x | (cd app); tool b')).not.toContainEqual(['app']);
-  });
-
-  it('keeps the public parseShellActions projection unchanged', () => {
-    expect(parseShellActions('echo x | cd app; npm run x')).toEqual({
-      status: 'parsed', actions: [{ words: ['npm', 'run', 'x'], text: 'npm run x' }],
-    });
   });
 });

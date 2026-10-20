@@ -1,6 +1,6 @@
 /**
  * Slice 1 (Session facts, corrections and archive) unit rows UT26–UT31,
- * UT43–UT47, UT52, UT53 (spec §5.2).
+ * UT43–UT47 (spec §5.2).
  *
  * Pure state: the Work/Query claim admission of
  * `state/session-availability.ts` (`sessionDispatchAdmissionProblem`, S1-DISPATCH-01/02)
@@ -68,7 +68,7 @@ function sessionRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 function dispatchFacts(overrides: Partial<SessionDispatchGuardV1> = {}): SessionDispatchGuardV1 {
-  return { purpose: 'work', waiting: null, consumedWait: null, readonlyQueryMatches: false, legacyProvenance: null, ...overrides };
+  return { purpose: 'work', waiting: null, consumedWait: null, readonlyQueryMatches: false, ...overrides };
 }
 
 function ctxOf(overrides: Partial<SessionGuardContext> = {}): SessionGuardContext {
@@ -106,15 +106,10 @@ describe('S1-dispatch: the Work/Query claim admission rows (S1-DISPATCH-01/02)',
     expect(record.occupancy).toBeNull();
   });
 
-  it('UT27 a Session waiting on m refuses ordinary Work as busy with no effects', () => {
+  it('UT27/UT28 a Session waiting on m refuses ordinary Work as busy with no effects', () => {
     const record = sessionRecord();
     expectRejection(sessionDispatchAdmissionProblem(record, dispatchFacts({ waiting: WAIT_M })), 'busy');
     expect(record.occupancy).toBeNull();
-  });
-
-  it('UT28 a stored response on m that is not yet consumed is still a wait, not idle', () => {
-    const record = sessionRecord();
-    expectRejection(sessionDispatchAdmissionProblem(record, dispatchFacts({ waiting: WAIT_M, consumedWait: null })), 'busy');
   });
 
   it('UT29 a claim whose consumedWait is exactly the wait on m is admitted and acquires at revision + 1', () => {
@@ -170,17 +165,4 @@ describe('S1-dispatch: the Work/Query claim admission rows (S1-DISPATCH-01/02)',
     expect(record.occupancy).toBeNull();
   });
 
-  it('UT52 a null record provenance with a trusted readonly_copy legacy provenance is forbidden for Work', () => {
-    const record = sessionRecord({ provenance: null });
-    const facts = dispatchFacts({ legacyProvenance: PROVENANCE_COPY });
-    expectRejection(sessionDispatchAdmissionProblem(record, facts), 'forbidden');
-    expect(record.occupancy).toBeNull();
-  });
-
-  it('UT53 a null record provenance with no legacy provenance is incomplete, never treated as new', () => {
-    const record = sessionRecord({ provenance: null });
-    const facts = dispatchFacts({ legacyProvenance: null });
-    expectRejection(sessionDispatchAdmissionProblem(record, facts), 'incomplete');
-    expect(record.occupancy).toBeNull();
-  });
 });

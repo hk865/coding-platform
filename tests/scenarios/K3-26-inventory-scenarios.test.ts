@@ -124,21 +124,8 @@ vi.mock('../../vendor/coding-agent/dist/tools/builtin/read/read-tool.js', async 
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 const seams = vi.hoisted(() => ({ shell: undefined as unknown }));
@@ -272,7 +259,7 @@ describe('K3-26 the attestation inventory through the Host entry', () => {
   it('K3-26 (二): Kernel readable with no unresolved calls -> an empty, resolved inventory', async () => {
     const send = { callId: 'k3-26-two-send', name: 'send_session_message',
       args: { recipient: {} as Record<string, unknown>, text: 'k3-26 (二) a question',
-        replyMode: 'wait' } };
+        intent: 'inquiry', needsReply: true, waitAfterSend: true } };
     const h = await HostScenario.open({ automation: redrivePolicy(false), check: 'pass',
       script: { replies: [{ kind: 'calls', calls: [send] }] } });
     const recipient = (await createAG2bSession(h.host, 'k3-26-two-recipient', AG2B_QUERY_ROLE,

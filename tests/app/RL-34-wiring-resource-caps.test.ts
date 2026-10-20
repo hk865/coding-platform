@@ -18,7 +18,6 @@ import type { HostSettingsPort } from '../../src/app/host-settings-types.js';
 import type { BootstrapResponse } from '../../src/app/core-http-types.js';
 import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-execution.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
-import { createWorkbenchTools } from '../../src/app/workbench-tools.js';
 import { createS2BBe1Platform, type S2BBe1PlatformFixture, type Be1Reply } from '../helpers/S2B-be1-platform-fixture.js';
 import { createRLQueryFixture, rlQueryHostCtx, type RLQueryFixture } from '../helpers/RL-query-fixture.js';
 import { createR3eEvidenceFixture, type R3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
@@ -98,19 +97,6 @@ async function manifestBody(f: S2BBe1PlatformFixture, prepared: PreparedTaskExec
   return JSON.parse(read.value.body) as Record<string, unknown>;
 }
 
-it('RL-34 a saved setting reaches the Work shell and is read as bytes at execute', async () => {
-  const caps = await openCapSettings();
-  await saveCapSettings(caps.settings, 300, 100);
-  rlSandbox.next = () => defaultRLSandboxResult({ resourceCaps: { status: 'none', reason: 'not_configured', text: 'x' } });
-  const f = await workShellFixture([
-    { kind: 'calls', calls: [{ callId: 'rl34-shell', name: 'shell', args: { command: 'echo rl34' } }] },
-    { kind: 'text', text: 'RL-34 shell done' },
-  ]);
-  fixtures.push(f);
-  await f.run('rl34-shell');
-  expect(rlSandbox.currentReads.at(-1)).toEqual(EXPECTED_SAVED);
-});
-
 it('RL-34 a saved setting reaches the Query read-only command', async () => {
   const caps = await openCapSettings();
   await saveCapSettings(caps.settings, 300, 100);
@@ -149,28 +135,6 @@ it('RL-34 a saved setting reaches the registered check', async () => {
   if (opened.status !== 'committed') throw new Error('RL-34 open did not commit');
   await platform.checks.runRegisteredCheck(fixture.ctx, { input: { roundRef: opened.value.ref, checkId: fixture.passCheck.checkId },
     meta: { requestId: 'rl34-check', expected: [{ ref: opened.value.ref, revision: opened.value.revision }] } });
-  expect(rlSandbox.currentReads.at(-1)).toEqual(EXPECTED_SAVED);
-});
-
-it('RL-34 a saved setting reaches the workbench command page', async () => {
-  const caps = await openCapSettings();
-  await saveCapSettings(caps.settings, 300, 100);
-  rlSandbox.next = () => defaultRLSandboxResult({ resourceCaps: { status: 'none', reason: 'not_configured', text: 'x' } });
-  const root = await mkdtemp(join(tmpdir(), 'rl-34-workbench-'));
-  directories.push(root);
-  const handle = createWorkbenchTools({ workspaces: [{ scope: { projectId: 'rl-34-project', workspaceId: 'rl-34-workspace' },
-    root, readPrefixes: ['.'], writePrefixes: ['.'], allowCommands: true }], resourceCaps: caps.source });
-  fixtures.push({ close: () => handle.close() });
-  const context = { projectId: 'rl-34-project', workspaceId: 'rl-34-workspace',
-    principal: { kind: 'host' as const, actor: { kind: 'human' as const, id: 'rl-34-operator' } },
-    materialReader: { kind: 'host' as const, projectId: 'rl-34-project', workspaceId: 'rl-34-workspace', actor: { kind: 'human' as const, id: 'rl-34-operator' } },
-    signal: new AbortController().signal };
-  const started = await handle.tools.startCommand(context, { requestId: 'rl34-workbench', command: 'echo rl34', cwd: '.' });
-  if (started.status !== 'ready') throw new Error('RL-34 workbench start failed');
-  await expect.poll(async () => {
-    const read = await handle.tools.readCommand(context, { commandId: started.value.commandId });
-    return read.status === 'ready' ? read.value.state : 'missing';
-  }, { timeout: 5_000 }).toBe('settled');
   expect(rlSandbox.currentReads.at(-1)).toEqual(EXPECTED_SAVED);
 });
 

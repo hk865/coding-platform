@@ -29,15 +29,15 @@ import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/g
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createGoalConflictAssembler, readGoalFootprint } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { goalConflictFacts } from '../../src/core/work-graph/state/goal-settings-machine.js';
-import { openS5R2CompletionFixture } from '../helpers/S5R2-c-support.js';
 import type { S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
+import { openS5DecisionFixture } from '../helpers/S5-decision-fixture.js';
 import { countedFacts } from '../helpers/S2B-activity-fixture.js';
 
 const fixtures: S5DecisionFixture[] = [];
 afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close(); });
 
 async function open(kind: 'memory' | 'sqlite'): Promise<S5DecisionFixture> {
-  const fixture = await openS5R2CompletionFixture(kind);
+  const fixture = await openS5DecisionFixture(kind, { catalog: 'modules', requirementKind: 'static' });
   fixtures.push(fixture);
   return fixture;
 }

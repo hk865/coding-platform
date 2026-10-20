@@ -25,7 +25,7 @@ import { S2A_SCALE_TIMEOUT_MS } from '../helpers/S2A-queue-fixture.js';
 const EXTRA_RUNS = 5_000;
 
 /** Hand-computed `change_pending` reason key of the fixture's Goal B (literal). */
-const B_CHANGE_PENDING = '{"affected":[{"ref":{"aggregateType":"PlanProposal","projectId":"P","proposalId":"U1","workspaceId":"W"},"revision":1}],'
+const B_CHANGE_PENDING = '{"affected":[{"ref":{"aggregateType":"PlanProposal","projectId":"P","proposalId":"plan-proposal-079880d9c059786361b3a930cb78a292","workspaceId":"W"},"revision":1}],'
   + '"code":"change_pending","goalRef":{"aggregateType":"Goal","goalId":"B","projectId":"P"},"kind":"goal_cause"}';
 
 describe.each(['memory', 'sqlite'] as const)('S2A queue goal runs (%s)', (kind) => {

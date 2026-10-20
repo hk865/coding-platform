@@ -322,9 +322,7 @@ async function restoreRevised(records: GoalRecordTransactionPort, receipt: Commi
   // The event embeds the pre-bind revision (the `since` placeholder is null);
   // the store bound this commit's cursor into the written catalog row. Returning
   // that same cursor keeps a replay result equal to the original write result.
-  const restored = event.revision.catalog === null
-    ? event.revision
-    : { ...event.revision, catalog: { ...event.revision.catalog, since: receipt.cursor } };
+  const restored = { ...event.revision, catalog: { ...event.revision.catalog, since: receipt.cursor } };
   return { status: 'restored', value: restored };
 }
 
@@ -355,7 +353,7 @@ async function recoverConflictByIdentity<T>(records: GoalRecordTransactionPort, 
 // --------------------------------------------------------------------------
 
 export type CurrentCatalogWindow =
-  | { status: 'ready'; baseline: ArchitectureBaselineRevisionSnapshot; catalog: ArchitectureCatalogRecord | null;
+  | { status: 'ready'; baseline: ArchitectureBaselineRevisionSnapshot; catalog: ArchitectureCatalogRecord;
       guards: RecordGuard[]; activeRevision: number }
   | { status: 'not_found' }
   | Rejection;
@@ -393,31 +391,32 @@ export async function readCurrentCatalogWindow(records: GoalRecordTransactionPor
   if (baselineRecord === undefined) return unavailable('the activated architecture baseline is missing');
   const baseline = readArchitectureBaselineSnapshot(parseRecordBody(baselineRecord));
   if (baseline === null) return unavailable('the activated architecture baseline is damaged or digest-inconsistent');
-  let catalog: ArchitectureCatalogRecord | null = null;
   const catalogRecord = byKey.get(catalogKey);
-  if (catalogRecord !== undefined) {
-    const decoded = decodeArchitectureCatalogRecord(catalogRecord);
-    if (decoded.status !== 'decoded') return unavailable('the architecture catalog record is damaged: ' + decoded.reason);
-    if (canonicalJson(decoded.value.baselineRef as unknown as JsonValue) !== canonicalJson(baselineRef as unknown as JsonValue)) {
-      return unavailable('the architecture catalog does not name the active baseline revision');
-    }
-    catalog = decoded.value;
+  if (catalogRecord === undefined) {
+    return unavailable('the architecture catalog record is missing for the active baseline revision');
   }
+  const decoded = decodeArchitectureCatalogRecord(catalogRecord);
+  if (decoded.status !== 'decoded') return unavailable('the architecture catalog record is damaged: ' + decoded.reason);
+  if (canonicalJson(decoded.value.baselineRef as unknown as JsonValue) !== canonicalJson(baselineRef as unknown as JsonValue)) {
+    return unavailable('the architecture catalog does not name the active baseline revision');
+  }
+  const catalog = decoded.value;
   const guards: RecordGuard[] = [
     { refKey: baselineKey, expectedRevision: baselineRecord.revision },
     { refKey: activeKey, expectedRevision: pointer.revision },
-    ...(catalogRecord === undefined ? [] : [{ refKey: catalogKey, expectedRevision: catalogRecord.revision }]),
+    { refKey: catalogKey, expectedRevision: catalogRecord.revision },
   ];
   return { status: 'ready', baseline, catalog, guards, activeRevision: pointer.revision };
 }
 
-/** Reads the optional catalog row for a known baseline revision. A historical
- * baseline with no catalog reads `catalog: null`; a present but damaged or
+/** Reads the catalog row for a known baseline revision. A missing, damaged or
  * mismatched catalog is `unavailable`, never a guessed empty catalog. */
 function readCatalogBesideBaseline(baselineRef: ArchitectureBaselineRevisionRef, catalogKey: string,
-  byKey: Map<string, EncodedRecord>): { status: 'ok'; value: ArchitectureCatalogRecord | null } | { status: 'rejected'; rejection: Rejection } {
+  byKey: Map<string, EncodedRecord>): { status: 'ok'; value: ArchitectureCatalogRecord } | { status: 'rejected'; rejection: Rejection } {
   const catalogRecord = byKey.get(catalogKey);
-  if (catalogRecord === undefined) return { status: 'ok', value: null };
+  if (catalogRecord === undefined) {
+    return { status: 'rejected', rejection: unavailable('the architecture catalog record is missing for the requested baseline revision') };
+  }
   const decoded = decodeArchitectureCatalogRecord(catalogRecord);
   if (decoded.status !== 'decoded') return { status: 'rejected', rejection: unavailable('the architecture catalog record is damaged: ' + decoded.reason) };
   if (canonicalJson(decoded.value.baselineRef as unknown as JsonValue) !== canonicalJson(baselineRef as unknown as JsonValue)) {
@@ -582,8 +581,7 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
    * body, never in a second tree fact.
    *
    * `basedOn` must be the exact current immutable baseline pin (otherwise
-   * `source_stale`); a project with no active baseline is `incomplete` and a
-   * legacy active baseline without a catalog is explicitly `unsupported`. The
+   * `source_stale`); a project with no active baseline is `incomplete`. The
    * request is structurally isolated before the first Store call, an original
    * receipt replays from the original event, and a same-identity race reuses
    * the existing bounded identity recovery.
@@ -651,9 +649,6 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
           receipt => restoreRevised(records, receipt, expectedIdentity));
       }
       return current;
-    }
-    if (current.catalog === null) {
-      return rejected('unsupported', 'the active architecture baseline predates the formal catalog and cannot be revised');
     }
     if (canonicalJson(current.baseline.ref as unknown as JsonValue) !== canonicalJson(basedOn.ref as unknown as JsonValue)
       || current.baseline.contentDigest !== basedOn.digest) {
@@ -817,7 +812,6 @@ export async function readCatalogModuleFacts(records: GoalRecordTransactionPort,
  */
 export function catalogModuleFactsOf(window: CurrentCatalogWindow, moduleId: string): ReadResult<CatalogModuleFacts> {
   if (window.status !== 'ready') return window;
-  if (window.catalog === null) return { status: 'not_found' };
   const module = window.catalog.catalog.modules.find(entry => entry.ref.moduleId === moduleId);
   if (module === undefined) return { status: 'not_found' };
   return { status: 'ready', value: { module, guards: window.guards } };

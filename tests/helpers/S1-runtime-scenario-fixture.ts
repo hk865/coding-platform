@@ -56,7 +56,6 @@ import type { AuthorizeConfiguration } from '../../src/core/work-graph/model/exe
 import type { ArchiveRequeueOriginV1 } from '../../src/contracts/session-anomaly.js';
 
 export const S1_T0 = '2026-10-08T00:00:00.000Z';
-export const S1_T1 = '2026-10-09T00:00:00.000Z';
 
 // Legacy Session creation/lifecycle factories have no now dependency. Freeze
 // Date for those facts only; actual timers and model/safe-point waits stay real.

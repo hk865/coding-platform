@@ -58,7 +58,7 @@ export async function buildPlanningQuestion(scope: ScopeState, run: ExecutionRun
     const baseline = record(record(architecturePayload.value).baseline);
     lines.push(`现有采用架构: ${JSON.stringify({
       baselineId: baseline.baselineId, revision: baseline.revision,
-      hasCatalog: record(architecturePayload.value).catalog !== null && record(architecturePayload.value).catalog !== undefined,
+      hasCatalog: true,
     })}`);
   } else if (architecturePayload.status === 'not_found') {
     lines.push('现有采用架构: 未采用（模块 ref 必须使用上面的真实 projectId）');

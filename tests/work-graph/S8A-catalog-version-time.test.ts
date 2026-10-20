@@ -18,7 +18,7 @@ describe.each(['memory', 'sqlite'] as const)('S8A catalog version time over real
   let fixture: S4ANoteFixture | null = null;
   afterEach(async () => { await fixture?.close(); fixture = null; });
 
-  it('binds the revised record to its event cursor so the list shows that event time and reason', async () => {
+  it('M-10 binds the revised record to its event cursor so the list shows that event time and reason', async () => {
     fixture = await createS4ANoteFixture(kind);
     const f = fixture;
     const ctx = f.ctx();
@@ -56,6 +56,7 @@ describe.each(['memory', 'sqlite'] as const)('S8A catalog version time over real
     if (typeof at !== 'string') throw new Error('the newest catalog version has no bound time');
     expect(t0 <= at && at <= t1).toBe(true);
     expect(newest.reason).toBe('s8a bound reason');
+    expect(newest.reasonLabel).toBe('s8a bound reason');
     // The cursor stays opaque: the public item never carries it.
     expect(JSON.stringify(newest)).not.toContain(String(revised.cursor));
 

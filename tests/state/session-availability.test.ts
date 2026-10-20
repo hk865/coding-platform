@@ -77,7 +77,7 @@ function machineState(desc: StateDesc): Exclude<SessionMachineState, 'absent'> {
         : { kind: 'maintenance' as const, holder: OPERATION, generation: GENERATION };
   return {
     lifecycle: desc.lifecycle, health: desc.health, healthConclusion: desc.conclusion, occupancy, revision: REVISION,
-    provenance: null, archiveRequest: null,
+    provenance: { schemaVersion: 1, kind: 'new' }, archiveRequest: null,
   };
 }
 
@@ -173,12 +173,11 @@ const HEALTH_CTX = ctxOf({ caller: 'reconcile', hostLease: 'owned' });
  */
 const ARCHIVE_GUARD: SessionArchiveGuardV1 = {
   requestMatches: true, choicesValid: true, authorityValid: true, wait: 'not_waiting', retired: false,
-  sourceExecutionStopped: true, stopQueued: false, failedDisposal: false, provenanceBasisValid: true,
+  sourceExecutionStopped: true, stopQueued: false, failedDisposal: false,
 };
 function ordinaryDispatch(purpose: 'work' | 'query'): SessionDispatchGuardV1 {
   return {
     purpose, waiting: null, consumedWait: null, readonlyQueryMatches: false,
-    legacyProvenance: { schemaVersion: 1, kind: 'new' },
   };
 }
 const CASES: readonly Case[] = [
@@ -191,7 +190,6 @@ const CASES: readonly Case[] = [
   { name: 'session_reactivated', event: { kind: 'session_reactivated' }, ctx: ctxOf({ pin: REVISION }) },
   { name: 'archive_requested', event: { kind: 'archive_requested', archive: ARCHIVE_REQUEST }, ctx: ctxOf({ pin: REVISION }) },
   { name: 'archive_request_released', event: { kind: 'archive_request_released', archiveRequestId: 'a' }, ctx: ctxOf({ pin: REVISION }) },
-  { name: 'legacy_provenance_backfilled', event: { kind: 'legacy_provenance_backfilled', provenance: { schemaVersion: 1, kind: 'new' } }, ctx: ctxOf({ pin: REVISION }) },
   {
     name: 'health_observed(available, closed head)', event: { kind: 'health_observed', observed: 'available' },
     ctx: { ...HEALTH_CTX, probe: 'ready', kernelHeader: { activeRunId: null } },
@@ -239,7 +237,7 @@ function expectedFor(desc: StateDesc | 'absent', c: Case): Expected {
     return event.kind === 'session_created'
       ? legal({
         lifecycle: 'active', health: 'available', healthConclusion: null, occupancy: null, revision: 1,
-        provenance: null, archiveRequest: null,
+        provenance: { schemaVersion: 1, kind: 'new' }, archiveRequest: null,
       }, [
         { kind: 'create_session' }, { kind: 'complete_creation_operation' }, { kind: 'write_initial_links' },
         { kind: 'emit_event', eventType: 'SessionCreated' },
@@ -318,19 +316,6 @@ function expectedFor(desc: StateDesc | 'absent', c: Case): Expected {
         { kind: 'emit_event', eventType: 'SessionArchiveRequestReleased' },
       ]);
     }
-    case 'legacy_provenance_backfilled': {
-      // §3.5: the new events refuse incomplete when the owner did not read the archive facts.
-      const archive = c.ctx.archive;
-      if (archive === undefined) return refused('guard_failed', 'incomplete');
-      // S1-SES-02: only a null provenance is backfilled once; an existing value is a revision conflict.
-      if (state.provenance !== undefined && state.provenance !== null) return refused('stale', 'revision_conflict');
-      if (!archive.provenanceBasisValid) return refused('guard_failed', 'incomplete');
-      if (c.ctx.pin !== null && c.ctx.pin !== state.revision) return refused('stale', 'revision_conflict');
-      return legal({ ...state, provenance: event.provenance, revision: REVISION + 1 }, [
-        { kind: 'write_session_provenance', provenance: event.provenance },
-        { kind: 'emit_event', eventType: 'SessionProvenanceBackfilled' },
-      ]);
-    }
     case 'health_observed': {
       if (event.observed === 'recoverable') return refused('illegal', 'unsupported');
       if (desc.lifecycle === 'archived') return refused('illegal', 'invalid');
@@ -380,7 +365,7 @@ describe('transitionSession: every (state, event) combination', () => {
     const allKinds: Record<SessionEvent['kind'], true> = {
       session_created: true, occupancy_acquired: true, occupancy_released: true, session_archived: true,
       session_reactivated: true, health_observed: true, work_linked: true,
-      archive_requested: true, archive_request_released: true, legacy_provenance_backfilled: true,
+      archive_requested: true, archive_request_released: true,
     };
     expect([...kinds].sort()).toEqual(Object.keys(allKinds).sort());
     expect(Object.keys(CAUSES).sort()).toEqual([...SESSION_RELEASE_CAUSES].sort());
@@ -999,6 +984,7 @@ function recordOf(overrides: Partial<SessionRecord> = {}): SessionRecord {
     ref: SESSION_REF, revision: REVISION, kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-1' },
     lifecycle: 'active', health: 'available', role: ROLE, workspaceId: 'w1', lastExecutionRef: null,
     occupancy: null, historyCursor: 'cursor-old', createdAt: '2026-10-01T00:00:00.000Z', archivedAt: null,
+    provenance: { schemaVersion: 1, kind: 'new' },
     ...overrides,
   };
 }
@@ -1018,15 +1004,16 @@ describe('createSessionRecord', () => {
   it('writes today\'s SES-01 literal (same fields, same order, no healthConclusion field)', () => {
     const record = createSessionRecord({
       ref: SESSION_REF, kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-1' }, role: ROLE, workspaceId: 'w1',
-      createdAt: '2026-10-04T00:00:00.000Z',
+      createdAt: '2026-10-04T00:00:00.000Z', provenance: { schemaVersion: 1, kind: 'new' },
     });
     expect(record).toEqual({
       ref: SESSION_REF, revision: 1, kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-1' },
       lifecycle: 'active', health: 'available', role: ROLE, workspaceId: 'w1', lastExecutionRef: null,
       occupancy: null, historyCursor: null, createdAt: '2026-10-04T00:00:00.000Z', archivedAt: null,
+      provenance: { schemaVersion: 1, kind: 'new' },
     });
     expect(Object.keys(record)).toEqual(['ref', 'revision', 'kernel', 'lifecycle', 'health', 'role', 'workspaceId',
-      'lastExecutionRef', 'occupancy', 'historyCursor', 'createdAt', 'archivedAt']);
+      'lastExecutionRef', 'occupancy', 'historyCursor', 'createdAt', 'archivedAt', 'provenance']);
     const created = transitionSession('absent', { kind: 'session_created' }, ctxOf({ creation: CREATION }));
     expect(created.ok && created.next).toEqual(sessionMachineStateOf(record));
   });

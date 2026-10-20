@@ -1,6 +1,6 @@
 /**
- * Slice 2B round-2 R5: the one exact L7 "never entered" predicate. V1
- * authorization and a position record never prove non-entry, and an active
+ * Slice 2B round-2 R5: the one exact L7 "never entered" predicate. A position
+ * record never proves non-entry, and an active
  * `starting`/`running` Run is always incomplete in the executed-files read.
  */
 import { afterEach, describe, expect, it } from 'vitest';
@@ -20,22 +20,6 @@ async function open(kind: 'memory' | 'sqlite'): Promise<S2BActivityFixture> {
 }
 
 describe.each(['memory', 'sqlite'] as const)('S2B round-2 never-entered predicate (%s)', (kind) => {
-  it('R5 a V1 authorization phase authorized does not prove non-entry', async () => {
-    const f = await open(kind);
-    await f.ensureRecording('2026-10-14T00:00:00.000Z');
-    const run = await seedActivityRun(f, {
-      taskId: 'work-1', runId: 's2b-r2-v1-authorized', status: 'ended', outcome: 'cancelled',
-      startedAt: '2026-10-14T09:00:00.000Z', endedAt: '2026-10-14T09:10:00.000Z',
-      authorization: { generation: 1, consumerId: 's2b-r2-v1-consumer', phase: 'authorized' },
-    });
-
-    const result = await f.readModelWith(f.records).readRunActivities(f.ctx, { runRefs: [run] });
-    expect(result.status).toBe('ready');
-    if (result.status !== 'ready') return;
-    expect(result.value[0]).toMatchObject({ status: 'unknown', reason: 'not_recorded', error: true });
-    expect(result.value[0]?.status).not.toBe('not_entered');
-  });
-
   it('R5 a position record does not prove non-entry even under an authorized phase', async () => {
     const f = await open(kind);
     await f.ensureRecording('2026-10-14T00:00:00.000Z');

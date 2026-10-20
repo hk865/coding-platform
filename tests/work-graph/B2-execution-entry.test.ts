@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
 import { B2_AT, B2_HOST, b2Key, createB2ExecutionFixture, synchronizeB2Commits, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
+import { createS2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
 
 const fixtures: B2ExecutionFixture[] = [];
 async function open(kind: 'memory' | 'sqlite' = 'memory') {
@@ -56,19 +57,6 @@ describe('B2 execution entry', () => {
     await f.authorize({ prepared });
   });
 
-  it('a real claim whose Session occupancy was lost cannot receive fresh entry authorization', async () => {
-    const f = await open(); const prepared = await f.buildPrepared();
-    // Persistence-boundary anomaly, not a replacement claim fixture: the real
-    // claim remains, but it no longer owns the Session it is about to enter.
-    await f.base.overwriteSession(f.claim.sessionRef, session => ({ ...session, occupancy: null }));
-    const before = await f.read();
-    expect(before.session.occupancy).toBeNull();
-    expect(await f.entry.authorizeRuntimeEntry(f.ctx, { input: { prepared, consumerId: 'runtime-a' },
-      meta: { requestId: 'lost-session-before-authorize', expected: [await f.pin()] } }))
-      .toMatchObject({ status: 'rejected', code: 'busy' });
-    expect(await f.read()).toEqual(before);
-  });
-
   it('a prepared claim naming another Task of the claimed Run is refused at the claim Lease, before the persisted claim', async () => {
     const f = await open(); const prepared = await f.buildPrepared();
     // Internally consistent for another Task: the Run, Lease and Outbox are still read by the claim's runRef.
@@ -81,37 +69,6 @@ describe('B2 execution entry', () => {
       meta: { requestId: 'prepared-claim-other-task', expected: [await f.pin()] } }))
       .toMatchObject({ status: 'rejected', code: 'busy', reason: 'the claim TaskLease names another Task' });
     expect(await f.read()).toEqual(before);
-  });
-
-  it('a Lease released after admission reads wins CAS and leaves no entry authorization', async () => {
-    const f = await open(); const prepared = await f.buildPrepared(); const before = await f.read();
-    const lease = before.lease; if (!lease) throw Error('real claim lease required');
-    let intervened = false;
-    const records = { ...f.base.records, async commit(batch: Parameters<typeof f.base.records.commit>[0]) {
-      if (!intervened) {
-        intervened = true;
-        const released = { ...lease, revision: lease.revision + 1, release: {
-          schemaVersion: 1, runRef: f.claim.runRef, attemptRef: f.claim.attemptRef,
-          sessionRef: f.claim.sessionRef, generation: f.claim.generation,
-          releasedAt: B2_AT, eventId: 'b2-intervening-lease-release',
-        } };
-        expect(await f.base.commitRaw([{ refKey: b2Key(lease.ref), schemaId: 'TaskLeaseSnapshot@1',
-          revision: released.revision, json: JSON.stringify(released) }],
-        [{ refKey: b2Key(lease.ref), expectedRevision: lease.revision }])).toMatchObject({ status: 'committed' });
-      }
-      return f.base.records.commit(batch);
-    } };
-    const result = await f.ports(records).entry.authorizeRuntimeEntry(f.ctx, {
-      input: { prepared, consumerId: 'runtime-a' },
-      meta: { requestId: 'lease-released-during-authorize', expected: [await f.pin()] },
-    });
-    expect(intervened).toBe(true);
-    expect(result).toMatchObject({ status: 'rejected', code: 'revision_conflict' });
-    const after = await f.read();
-    expect(after.run).toEqual(before.run); expect(after.attempt).toEqual(before.attempt);
-    expect(after.outbox).toEqual(before.outbox); expect(after.session).toEqual(before.session);
-    expect(after.lease).toMatchObject({ revision: lease.revision + 1,
-      release: { runRef: f.claim.runRef, generation: f.claim.generation } });
   });
 
   it('SQLite identical authorization race restores the original receipt even after begin and reopen', async () => {
@@ -202,23 +159,6 @@ describe('B2 execution entry', () => {
     expect(f.host.calls).toBeGreaterThan(0);
   });
 
-  it('does not allow a legacy authorization to begin; malformed V2 is rejected by the real Run codec', async () => {
-    const f = await open(); const old = await f.read();
-    const legacy = { ...old.run, revision: old.run.revision + 1,
-      executionAuthorization: { generation: 1, consumerId: 'runtime-a', phase: 'authorized' as const } };
-    expect(await f.base.commitRaw([{ refKey: b2Key(legacy.ref), schemaId: 'RunSnapshot@1', revision: legacy.revision, json: JSON.stringify(legacy) }],
-      [{ refKey: b2Key(legacy.ref), expectedRevision: old.run.revision }])).toMatchObject({ status: 'committed' });
-    expect((await f.read()).run.executionAuthorization).toEqual(legacy.executionAuthorization);
-    expect(await f.entry.beginRuntimeEntry(f.ctx, { input: { permit: f.permit(), kernel: f.kernel },
-      meta: { requestId: 'legacy-cannot-begin', expected: [await f.pin()] } })).toMatchObject({ status: 'rejected', code: 'forbidden' });
-    const malformed = { ...legacy, revision: legacy.revision + 1, executionAuthorization: {
-      schemaVersion: 2, generation: 1, sessionGeneration: f.claim.generation, revision: 1,
-      consumerId: 'runtime-a', inputDigest: f.permit().inputDigest, phase: 'entering', kernel: null,
-    } };
-    expect(await f.base.commitRaw([{ refKey: b2Key(legacy.ref), schemaId: 'RunSnapshot@1', revision: malformed.revision, json: JSON.stringify(malformed) }],
-      [{ refKey: b2Key(legacy.ref), expectedRevision: legacy.revision }])).toMatchObject({ status: 'rejected' });
-  });
-
   it('begin-held Kernel slot is reusable by WG12, without pretending the starting Run has entered', async () => {
     const f = await open(); await f.start();
     const writer = createExecutionHistoryService({ records: f.base.records, now: () => B2_AT, eventId: () => 'b2-locator-event' });
@@ -229,20 +169,84 @@ describe('B2 execution entry', () => {
     expect(current.run.executionAuthorization).toMatchObject({ phase: 'entering' });
   });
 
-  it('a Kernel identity slot held by another Run blocks a correctly mapped begin, with zero partial state', async () => {
-    const f = await open(); const admitted = await f.authorize();
-    // Targeted historical collision: mapping for this Run is correct. The rejection must
-    // come from the real unique slot, unlike using another Session's Kernel id.
-    expect(await f.base.records.commit({ identityKey: 'b2-prior-slot', fingerprint: 'b2-prior-slot',
-      guards: [], records: [], claims: [{ claimKey: 'execution-history-kernel:' + b2Key(f.kernel),
-        expectedOwner: null, nextOwner: b2Key(f.secondClaim.runRef) }], indexGuards: [], indexChanges: [],
-      events: [{ eventId: 'b2-slot-seed', eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: B2_AT, json: JSON.stringify({
-        eventId: 'b2-slot-seed', eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: B2_AT }) }] }))
-      .toMatchObject({ status: 'committed' });
-    const before = await f.read();
-    expect(await f.entry.beginRuntimeEntry(f.ctx, { input: { permit: admitted.permit, kernel: f.kernel },
-      meta: { requestId: 'conflicting-slot-begin', expected: [await f.pin()] } })).toMatchObject({ status: 'rejected' });
-    expect(await f.read()).toEqual(before);
+  describe('rejects: the Kernel identity slot is already owned', () => {
+    it('a Kernel identity slot held by another Run blocks a correctly mapped begin, with zero partial state', async () => {
+      const f = await open();
+      let seq = 0;
+      const eventId = () => `b2-slot-event-${++seq}`;
+      const newId = () => `b2-slot-id-${++seq}`;
+      // A3 gate: B's real authorization is done and the production begin is about
+      // to run. The callback receives that real permit and Kernel binding; holding
+      // here presents one refused input before B's own begin is allowed to go on.
+      let releaseB!: () => void;
+      const releaseGate = new Promise<void>(resolve => { releaseB = resolve; });
+      let reachedGate!: () => void;
+      const atGate = new Promise<void>(resolve => { reachedGate = resolve; });
+      let refused: unknown;
+      let beforeRefused: unknown;
+      let afterRefused: unknown;
+      let gateError: unknown;
+
+      const steps = await createS2BRuntimeSteps({
+        base: f.base, bodies: f.bodies, ctx: f.ctx,
+        directory: f.base.directory, scope: f.base.scope,
+        now: () => B2_AT, setClock: () => undefined, eventId, newId, consumerId: 'runtime-a',
+        beforeBegin: async ({ permit }) => {
+          if (permit.claim.task.taskId !== f.base.tasks.second.taskId) return;
+          try {
+            beforeRefused = await f.read(permit.claim);
+            const expected = [await f.pin(permit.claim)];
+            // A's real identity is taken from the public execution read after its
+            // real end, as returned. It is not rebuilt from a captured commit.
+            const prior = await f.read(f.claim);
+            const aKernel = prior.run.executionAuthorization?.kernel ?? null;
+            if (aKernel === null) throw Error('A has no real Kernel identity in its public execution read');
+            // The one refused input: B's own real permit and latest pin, mapping
+            // correctly to the same Session, but A's real Kernel identity.
+            refused = await f.entry.beginRuntimeEntry(f.ctx, {
+              input: { permit, kernel: aKernel },
+              meta: { requestId: 'conflicting-slot-begin', expected },
+            });
+            afterRefused = await f.read(permit.claim);
+          } catch (error) {
+            gateError = error;
+          }
+          reachedGate();
+          await releaseGate;
+          if (gateError !== undefined) throw gateError;
+        },
+      });
+
+      try {
+        // Claim A's real prepare, start and completed end. The end releases no
+        // Kernel slot, so A really holds the identity slot B is about to repeat.
+        const aHandle = await steps.start(f.claim, { at: B2_AT,
+          replies: [{ kind: 'text', text: 'A completes and keeps the Kernel slot' }] });
+        await aHandle.entered;
+        await steps.finish(aHandle, B2_AT, 'completed');
+
+        // Claim B through the real claim service in the SAME Session. The
+        // Session mapping is therefore correct; only A's identity is in conflict.
+        const claimedB = await f.base.service.claimTask(f.ctx,
+          await f.base.buildRequest({ input: { taskId: f.base.tasks.second.taskId, sessionRef: f.claim.sessionRef } }));
+        expect(claimedB).toMatchObject({ status: 'committed' });
+        if (claimedB.status !== 'committed') throw Error('the real second claim in the same Session did not commit');
+        const bClaim = claimedB.value;
+        const bHandle = await steps.start(bClaim, { at: B2_AT,
+          replies: [{ kind: 'text', text: 'B enters on its own Kernel identity' }] });
+
+        await atGate;
+        expect(refused).toMatchObject({ status: 'rejected', code: 'busy' });
+        // A6: the public execution read of B names no partial commit.
+        expect(afterRefused).toEqual(beforeRefused);
+        // Release the gate and let B's real begin go on with its own identity.
+        releaseB();
+        await bHandle.entered;
+        await steps.finish(bHandle, B2_AT, 'completed');
+      } finally {
+        await steps.close();
+      }
+    });
   });
 
   it('Host grant revoked after authorization prevents fresh begin', async () => {

@@ -362,17 +362,17 @@ describe('fallback and recovery', () => {
     await vi.advanceTimersByTimeAsync(400);
     expect(refetch).toHaveBeenCalledTimes(1);
     expect(loop.counts()).toEqual([beforeResumed[0]! + 1, beforeResumed[1]! + 1]);
-    const afterReady = loop.counts();
 
     h.last().end();
     await settle();
     await vi.advanceTimersByTimeAsync(1_000);
+    const beforeReset = loop.counts();
     h.last().send('event: reset\nid: c0000000900\ndata: {"cursor":"c0000000900","reason":"cursor_too_old"}\n\n');
     await settle();
     expect(h.connection.status()).toMatchObject({ mode: 'live', cursor: 'c0000000900' });
     await vi.advanceTimersByTimeAsync(400);
     expect(refetch).toHaveBeenCalledTimes(2);
-    expect(loop.counts()[0]).toBeGreaterThan(afterReady[0]!);
+    expect(loop.counts()).toEqual([beforeReset[0]! + 1, beforeReset[1]! + 1]);
 
     // A resume inside the kept window opens with one coalesced change instead of ready.
     h.last().end();

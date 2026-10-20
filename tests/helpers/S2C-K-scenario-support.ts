@@ -15,6 +15,7 @@
  *   `2026-09-28`, so a line finished on the Host clock is past the one-day
  *   executor archive threshold).
  */
+import { expect } from 'vitest';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { WorkLineConversationPageV1, TaskExecutionRecord } from '../../src/app/core-http-types.js';
@@ -22,15 +23,13 @@ import type {
   ArchivedLinePageV1, LineControlKindV1, LineControlV1, LineRowV1, WorkLineDetailV1,
   WorkLineListV1, WorkLineSectionPageV1,
 } from '../../src/contracts/work-line.js';
-import { AG2B_GOAL_REF, AG2B_SCOPE, graphWrite, plain } from './AG2b-collaboration-fixture.js';
-import { hostCtx, type HostScenario } from '../scenarios/harness.js';
+import { AG2B_GOAL_REF, AG2B_SCOPE, plain } from './AG2b-collaboration-fixture.js';
+import { hostCtx, performs, type HostScenario } from '../scenarios/harness.js';
+import { readExecution } from './A2-restart-fixture.js';
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 
 /** `lines/read` can answer the line or name its two branch heads (spec §2). */
 export type LineDetailRead = WorkLineDetailV1 | { kind: 'branched'; heads: SessionRef[] };
-
-/** A `lines/page` answer: one WorkGraph section, or the Host-composed conversation. */
-export type LinePageRead = WorkLineSectionPageV1 | WorkLineConversationPageV1;
 
 /** A page request for `lines/archived` and `lines/page`; `limit` defaults to 100 (the maximum). */
 export type LinePageRequest = { limit?: number; cursor?: string };
@@ -123,11 +122,6 @@ export function requireControl(row: LineRowV1, kind: LineControlKindV1, what = '
 // Session reads
 // ---------------------------------------------------------------------------
 
-/** The SessionRef of a session record/ref shape (projectId + sessionId). */
-export function sessionRefOf(ref: { projectId: string; sessionId: string }): SessionRef {
-  return { projectId: ref.projectId, sessionId: ref.sessionId };
-}
-
 /** `sessions/read` through the live Host (the public Session card). */
 export async function sessionCard(h: HostScenario, ref: SessionRef): Promise<TaskExecutionRecord['session']> {
   const answer = await h.post<ReadResult<{ record: TaskExecutionRecord['session'] }>>('sessions/read', plain(AG2B_SCOPE, ref));
@@ -165,10 +159,28 @@ export async function runMaintenance(h: HostScenario, flowId: string): Promise<E
 }
 
 // ---------------------------------------------------------------------------
-// Writes (the existing routes the line controls submit to)
+// Crash flow shared by the two Kernel-damage scenarios (2C-21 (2), 2C-22)
 // ---------------------------------------------------------------------------
 
-/** A `graph_write` envelope for the existing routes over the AG2b scope. */
-export function lineWrite(input: unknown, requestId: string, expected: unknown[] = []): unknown {
-  return graphWrite(AG2B_SCOPE, input, requestId, expected);
+/**
+ * One crash mid-Turn after the caller's fault callback made the Kernel store
+ * unreadable (`missing`/`damaged`): the Run ends `outcome_unknown` and the
+ * Session retires with that unreadable conclusion.
+ */
+export async function crashedUnknownKernel(h: HostScenario, flowId: string, kernel: 'missing' | 'damaged',
+  fault: () => Promise<unknown> | unknown): Promise<{ runRef: NonNullable<Awaited<ReturnType<HostScenario['taskRow']>>['execution']>; head: string }> {
+  const held = h.holdReply(1);
+  const toStart = await h.advance(h.select(flowId, 'ag2b-work'), { stopBefore: performs('start') });
+  if (toStart.next === null) throw new Error('the Workflow must reach the start');
+  void h.post('workflow/advance', plain(AG2B_SCOPE, toStart.next)).catch(() => undefined);
+  await held.reached;
+  const runRef = (await h.taskRow()).execution;
+  if (runRef === null) throw new Error('the work Run must be selected');
+  const head = (await readExecution(h.host, runRef)).session.ref.sessionId;
+  await fault();
+  await h.restart({ crash: true });
+  const unknown = await readExecution(h.host, runRef);
+  expect(unknown.run).toMatchObject({ status: 'ended', outcome: 'outcome_unknown' });
+  expect(unknown.session).toMatchObject({ health: 'unavailable', healthConclusion: kernel });
+  return { runRef, head };
 }

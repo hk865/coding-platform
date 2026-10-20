@@ -46,7 +46,7 @@ export function isUnenteredReviewRoundForCancellation(run: RunSnapshot, runRef: 
   if (run.startedAt !== null) return false;
   if (run.lastEventSeq !== 0 || run.lastRuntimeEventId !== '' || run.lastFactEventId !== '') return false;
   const auth = run.executionAuthorization;
-  if (auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2) {
+  if (auth !== undefined) {
     if (auth.phase !== 'authorized' && auth.phase !== 'revoked') return false;
   }
   // 'paused' is accepted (M1); only a committed cancel excludes the Run.

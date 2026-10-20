@@ -4,12 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import type { PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import { canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot,
-  GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
@@ -24,16 +25,8 @@ const ctx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host'
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
 const schemas: RecordBackendSchemas = { records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_RECORD_SCHEMAS.events,
-    { eventType: 'ScopeSeeded', schemaVersion: 1,
-      validate: event => ({ status: 'decoded', value: event }) }],
+    ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
   lookups: PLAN_RECORD_SCHEMAS.lookups };
-const seed: PreparedCommit = { identityKey: 'r3c-scope-seed', fingerprint: 'r3c-scope-seed-v1',
-  guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null },
-    { refKey: canonicalRefKey(workspace.ref), expectedRevision: null }],
-  records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace)],
-  events: [{ eventId: 'r3c-scope-event', eventType: 'ScopeSeeded', schemaVersion: 1,
-    occurredAt: at, json: JSON.stringify({ eventId: 'r3c-scope-event', eventType: 'ScopeSeeded', schemaVersion: 1,
-      occurredAt: at }) }], claims: [], indexGuards: [], indexChanges: [] };
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
 
@@ -43,7 +36,19 @@ it.each(['memory', 'sqlite'] as const)('%s: plan reads the Goal created by the r
   const backend = kind === 'memory' ? createInMemoryRecordBackend({ schemas })
     : createSqliteRecordBackend({ path: join(dir!, 'records.sqlite'), schemas });
   try {
-    expect(await backend.records.commit(seed)).toMatchObject({ status: 'committed' });
+    let bootstrapSequence = 0;
+    const bootstrap = createProjectBootstrapServices({ records: backend.records, now: () => at,
+      eventId: () => `r3c-bootstrap-${++bootstrapSequence}` });
+    const createdProject = await bootstrap.projects.createProject(ctx, { input: { projectId },
+      meta: { requestId: 'r3c-create-project', expected: [{ ref: project.ref, revision: 0 }] } });
+    if (createdProject.status !== 'committed') throw Error(`Project creation failed: ${JSON.stringify(createdProject)}`);
+    const registered = await bootstrap.projects.registerWorkspace(ctx, {
+      input: { workspace: { projectId, workspaceId } },
+      meta: { requestId: 'r3c-register-workspace', expected: [
+        { ref: createdProject.value.ref, revision: createdProject.value.revision },
+        { ref: workspace.ref, revision: 0 },
+      ] } });
+    if (registered.status !== 'committed') throw Error(`Workspace registration failed: ${JSON.stringify(registered)}`);
     let sequence = 0;
     const goals = createGoalService({ records: backend.records, now: () => at,
       eventId: () => `r3c-goal-${++sequence}` }).tasks;
@@ -60,7 +65,7 @@ it.each(['memory', 'sqlite'] as const)('%s: plan reads the Goal created by the r
     expect(await plans.readPlanProposal(ctx, { aggregateType: 'PlanProposal', projectId, workspaceId,
       proposalId: 'missing-proposal' })).toMatchObject({ status: 'not_found' });
 
-    const draft: PlanRevisionDraft = { schemaVersion: 1, planId: 'plan-empty', planRevision: 1,
+    const draft: PlanRevisionDraft = { schemaVersion: 2, planId: 'plan-empty', planRevision: 1,
       goalId: 'goal-1', stages: [], tasks: [], obligations: [], assignments: [],
       taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } };
     const proposed = await plans.proposePlan(ctx, { meta: { requestId: 'r3c-propose-empty',

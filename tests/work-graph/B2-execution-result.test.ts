@@ -1,9 +1,20 @@
 /** Result tests begin from real admitted/entered records, never invented permits. */
 import { afterEach, describe, expect, it } from 'vitest';
+import type { RunSnapshot } from '../../src/contracts/dispatch.js';
+import type { WriteResult } from '../../src/contracts/core/results.js';
+import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
+import type { TaskResultObservation } from '../../src/core/work-graph/model/execution-entry-contracts.js';
+import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
+import { createS2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
 import { B2_AT, b2Key, createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
 
 const fixtures: B2ExecutionFixture[] = [];
-async function open(kind: 'memory' | 'sqlite' = 'memory') { const f = await createB2ExecutionFixture(kind); fixtures.push(f); return f; }
+async function open(kind: 'memory' | 'sqlite' = 'memory') {
+  const f = await createB2ExecutionFixture(kind, SESSION_LIFECYCLE_RECORD_SCHEMAS);
+  fixtures.push(f);
+  return f;
+}
 afterEach(async () => { for (const f of fixtures.splice(0)) await f.close(); });
 
 describe('B2 execution result and release', () => {
@@ -22,44 +33,82 @@ describe('B2 execution result and release', () => {
   });
 
   it('one complete Turn atomically ends Run/Attempt/outbox, retains released Lease, advances the boundary and preserves discovery/links', async () => {
-    const f = await open(); const admitted = await f.enter();
-    const current = await f.read();
-    // Retained link fixture; this test is about release preserving an existing
-    // canonical relationship, not proving the independent link writer.
-    const link = { ref: { ...f.claim.sessionRef, aggregateType: 'SessionWorkLink',
-      target: { kind: 'task', ref: f.claim.task }, relation: 'responsible' }, revision: 1, since: current.readThrough, until: null };
-    expect(await f.base.commitRaw([{ refKey: b2Key(link.ref), schemaId: 'SessionWorkLink@1', revision: 1, json: JSON.stringify(link) }]))
-      .toMatchObject({ status: 'committed' });
-    const beforeCard = await f.base.sessionsPort.readSession(f.ctx, f.claim.sessionRef);
-    expect(beforeCard).toMatchObject({ status: 'ready', value: { links: [link] } });
-    const request = { input: f.terminalObservation(admitted), meta: { requestId: 'terminal', expected: [await f.pin()] } };
-    const result = await f.entry.recordRunResult(f.ctx, request);
-    expect(result).toMatchObject({ status: 'committed', replayed: false, value: { status: 'ended', outcome: 'completed', exitCode: 0 } });
-    const ended = await f.read();
-    expect(ended.run.lastEventSeq).toBe(request.input.event.sequence);
-    expect(ended.run.lastRuntimeEventId).toBe(request.input.event.eventId);
-    expect(ended.run.lastFactEventId).not.toBe(current.run.lastFactEventId);
-    expect(ended.run.lastFactEventId).not.toBe('');
-    expect(ended.attempt).toMatchObject({ status: 'ended', endOutcome: 'completed', endedAt: B2_AT });
-    expect(ended.outbox).toMatchObject({ status: 'settled', claim: f.claim, dispatchState: { phase: 'settled', sessionGeneration: f.claim.generation } });
-    expect(ended.lease).toMatchObject({ holderRunId: f.claim.runRef.runId, attemptId: f.claim.attemptRef.attemptId,
-      release: { runRef: f.claim.runRef, attemptRef: f.claim.attemptRef, sessionRef: f.claim.sessionRef, generation: f.claim.generation } });
-    expect(ended.session).toMatchObject({ occupancy: null, lifecycle: 'active', lastExecutionRef: f.claim.runRef,
-      historyCursor: request.input.completedHistoryBoundary.cursor });
-    expect(ended.run.executionHistory).toMatchObject({ startPosition: 2, observedThroughPosition: 4, endPosition: 4 });
-    const card = await f.base.sessionsPort.readSession(f.ctx, f.claim.sessionRef);
-    expect(card).toMatchObject({ status: 'ready', value: { availability: 'idle', links: [link] } });
-    const discovery = await f.base.sessionsPort.findSessions(f.ctx, { workspace: f.base.scope, target: { kind: 'task', ref: f.claim.task }, includeArchived: false, page: { limit: 20 } });
-    expect(discovery.status).toBe('ready');
-    if (discovery.status === 'ready') expect(discovery.value.items.find(c => c.record.ref.sessionId === f.claim.sessionRef.sessionId)?.availability).toBe('idle');
-    const graph = await f.base.plans.queryTaskGraph(f.ctx, { goalRef: f.base.goalRef });
-    expect(graph.status).toBe('ready');
-    if (graph.status === 'ready') expect(graph.value.tasks.find(t => t.ref.taskId === f.claim.task.taskId)?.effectivePhase).toBe('verifying');
-    expect(await f.entry.recordRunResult(f.ctx, request)).toEqual({ ...result, replayed: true });
-    expect(await f.read()).toEqual(ended);
-    expect(await f.entry.recordRunResult(f.ctx, { input: request.input, meta: { requestId: 'duplicate-fact-new-request', expected: [await f.pin()] } }))
-      .toMatchObject({ status: 'rejected' });
-    expect(await f.read()).toEqual(ended);
+    const f = await open();
+    // The entered Run, the link and the terminal Turn all come from the real
+    // Runtime: the scripted model is held at its A3 gate after `startRun` has
+    // recorded the entered fact, so the test can open the real responsible link
+    // at entered and then release the same model reply to produce the complete
+    // Turn. The observer captures the exact terminal request the Runtime commits;
+    // the replay below submits that request, not a hand-built observation.
+    let committed: { request: GraphWrite<TaskResultObservation>; result: WriteResult<RunSnapshot> } | undefined;
+    const steps = await createS2BRuntimeSteps({
+      base: f.base, bodies: f.bodies, ctx: f.ctx, directory: f.base.directory, scope: f.base.scope,
+      now: () => B2_AT, setClock: () => undefined,
+      eventId: () => 'b2-result-event', newId: () => 'b2-result-id', consumerId: 'runtime-a',
+      observeResult: (request, result) => { if (result.status === 'committed') committed = { request, result }; },
+    });
+    try {
+      const handle = await steps.start(f.claim, { at: B2_AT, replies: [{ kind: 'text', text: 'B2 result complete Turn' }] });
+      await handle.entered;
+      const current = await f.read();
+      const startedHistory = current.run.executionHistory;
+      if (startedHistory === undefined) throw Error('the real entered Run must carry its execution history');
+
+      // The real Session lifecycle opens the responsible link at entered; the
+      // returned link is used as-is (its `since` is the real commit cursor).
+      const target = { kind: 'task' as const, ref: f.claim.task };
+      const linkRef = { ...f.claim.sessionRef, aggregateType: 'SessionWorkLink' as const, target, relation: 'responsible' as const };
+      const lifecycle = createSessionLifecycleService({ records: f.base.records, lookups: f.base.records });
+      const linked = await lifecycle.linkSessionWork(f.ctx, {
+        input: { sessionRef: f.claim.sessionRef, target, relation: 'responsible', active: true },
+        meta: { requestId: 'b2-result-link', expected: [
+          await f.base.sessionPin(f.claim.sessionRef), { ref: linkRef, revision: 0 }] } });
+      expect(linked, 'the real link writer commits at entered').toMatchObject({ status: 'committed' });
+      if (linked.status !== 'committed') throw Error('the real link must commit');
+      const link = linked.value;
+      const beforeCard = await f.base.sessionsPort.readSession(f.ctx, f.claim.sessionRef);
+      expect(beforeCard).toMatchObject({ status: 'ready', value: { links: [link] } });
+
+      // Release the held model reply: the Runtime records the real complete Turn.
+      handle.release();
+      await handle.settled;
+      if (committed === undefined) throw Error('the Runtime must commit its terminal result');
+      const { request, result } = committed;
+      const boundary = request.input.completedHistoryBoundary;
+      const history = request.input.history;
+      if (boundary === undefined || boundary === null || history === undefined || history === null) {
+        throw Error('the committed terminal request must carry its completed boundary and history');
+      }
+      expect(result).toMatchObject({ status: 'committed', replayed: false, value: { status: 'ended', outcome: 'completed', exitCode: 0 } });
+      const ended = await f.read();
+      expect(ended.run.lastEventSeq).toBe(request.input.event.sequence);
+      expect(ended.run.lastRuntimeEventId).toBe(request.input.event.eventId);
+      expect(ended.run.lastFactEventId).not.toBe(current.run.lastFactEventId);
+      expect(ended.run.lastFactEventId).not.toBe('');
+      expect(ended.attempt).toMatchObject({ status: 'ended', endOutcome: 'completed', endedAt: B2_AT });
+      expect(ended.outbox).toMatchObject({ status: 'settled', claim: f.claim, dispatchState: { phase: 'settled', sessionGeneration: f.claim.generation } });
+      expect(ended.lease).toMatchObject({ holderRunId: f.claim.runRef.runId, attemptId: f.claim.attemptRef.attemptId,
+        release: { runRef: f.claim.runRef, attemptRef: f.claim.attemptRef, sessionRef: f.claim.sessionRef, generation: f.claim.generation } });
+      expect(ended.session).toMatchObject({ occupancy: null, lifecycle: 'active', lastExecutionRef: f.claim.runRef,
+        historyCursor: boundary.cursor });
+      expect(ended.run.executionHistory).toMatchObject({ startPosition: startedHistory.startPosition,
+        observedThroughPosition: history.observedThroughPosition, endPosition: history.endPosition });
+      const card = await f.base.sessionsPort.readSession(f.ctx, f.claim.sessionRef);
+      expect(card).toMatchObject({ status: 'ready', value: { availability: 'idle', links: [link] } });
+      const discovery = await f.base.sessionsPort.findSessions(f.ctx, { workspace: f.base.scope, target: { kind: 'task', ref: f.claim.task }, includeArchived: false, page: { limit: 20 } });
+      expect(discovery.status).toBe('ready');
+      if (discovery.status === 'ready') expect(discovery.value.items.find(c => c.record.ref.sessionId === f.claim.sessionRef.sessionId)?.availability).toBe('idle');
+      const graph = await f.base.plans.queryTaskGraph(f.ctx, { goalRef: f.base.goalRef });
+      expect(graph.status).toBe('ready');
+      if (graph.status === 'ready') expect(graph.value.tasks.find(t => t.ref.taskId === f.claim.task.taskId)?.effectivePhase).toBe('verifying');
+      expect(await f.entry.recordRunResult(f.ctx, request)).toEqual({ ...result, replayed: true });
+      expect(await f.read()).toEqual(ended);
+      expect(await f.entry.recordRunResult(f.ctx, { input: request.input, meta: { requestId: 'duplicate-fact-new-request', expected: [await f.pin()] } }))
+        .toMatchObject({ status: 'rejected' });
+      expect(await f.read()).toEqual(ended);
+    } finally {
+      await steps.close();
+    }
   });
 
   it('missing completed boundary or a mismatched source retains the actual entered occupancy and history cursor', async () => {

@@ -306,7 +306,6 @@ Promise<{ ok: true; catalog: AdoptedArchitecture; module: ModuleDefinition; cata
     if (read.status === 'rejected' && read.code === 'not_found') return notFound('related_not_found');
     return unavailable(read.status === 'rejected' ? read.reason : 'the catalog read is not ready');
   }
-  if (read.value.catalog === null) return notFound('related_not_found');
   const catalog = read.value.catalog.catalog;
   const module = catalog.modules.find(candidate => candidate.ref.moduleId === moduleId);
   if (module === undefined) return notFound('related_not_found');

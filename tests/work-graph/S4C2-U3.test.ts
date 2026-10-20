@@ -1,110 +1,94 @@
 /**
  * Slice 4C-2 U3 fault row (rework 2): the §3.3 application-receipt proof reader
- * decodes the `NoteDispositionChanged` row of its proof table. The receipt
- * identity is a real committed event, but the reader reads only the formal
- * receipt and the answer's own ref, so a forged acknowledgement is `invalid`.
+ * decodes the `NoteDispositionChanged` row of its proof table. TWO real pending
+ * note cards A and B are built through the S4C2 card fixture. A is answered only
+ * (no application), B is answered and applied through the real coordinator; the
+ * formal `NoteDispositionChanged` write of B carries the real proof whose
+ * `acknowledgementRef` is B's answer. Handing B's real receipt to A's answer is
+ * `invalid`: the reader compares the proof's acknowledgement with this answer.
  *
- * The forged-proof fault row uses the S5 fixture. The second row is the
- * note-specific "ordinary disposition -> incomplete" case (spec L17, book §2.1):
- * a real answered note card, then an ordinary scribe disposition (withdraw — the
- * only ordinary scribe action a structural pending note permits) before the
- * application, through the public entries only, on memory and SQLite. The
- * formal `NoteDispositionChanged` row carries no proof, so the application read
- * is `incomplete` and nothing is recorded.
- *
- * The S5 decision fixture does not register the note schemas, so the real note
- * disposition event is committed to a real in-memory store built with
- * `NOTE_RECORD_SCHEMAS`; the answer message comes from the S5 fixture itself.
+ * The second row is the note-specific "ordinary disposition -> incomplete" case
+ * (spec L17, book §2.1): a real answered note card, then an ordinary scribe
+ * disposition (withdraw — the only ordinary scribe action a structural pending
+ * note permits) before the application, through the public entries only, on
+ * memory and SQLite. The formal `NoteDispositionChanged` row carries no proof,
+ * so the application read is `incomplete` and nothing is recorded.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../src/contracts/core/session-message.js';
-import type { DecisionChangeProofV1 } from '../../src/contracts/goal-decisions.js';
-import type { EncodedDomainEvent } from '../../src/core/record-store/ports.js';
-import { createInMemoryRecordBackend, type InMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
-import {
-  NOTE_RECORD_SCHEMAS, encodeNoteDispositionChangedEvent, type NoteDispositionChangedEventV1,
-} from '../../src/core/work-graph/persistence/note-record-codecs.js';
-import { readApplicationReceiptFacts } from '../../src/core/work-graph/communication/decision-application.js';
-import {
-  OPERATOR, PROJECT_ID, WORKSPACE_ID, T, openS5DecisionFixture, type S5DecisionFixture,
-} from '../helpers/S5-decision-fixture.js';
 import {
   createS4C2NoteCardFixture, understandingNote,
   type S4C2NoteCardFixture, type S4C2NoteCardFixtureKind,
 } from '../helpers/S4C2-note-card-fixture.js';
 
 const KINDS: readonly S4C2NoteCardFixtureKind[] = ['memory', 'sqlite'];
-const fixtures: S5DecisionFixture[] = [];
 const noteFixtures: S4C2NoteCardFixture[] = [];
-const backends: InMemoryRecordBackend[] = [];
 afterEach(async () => {
-  for (const f of fixtures.splice(0)) await f.close();
   for (const f of noteFixtures.splice(0)) await f.close();
-  for (const b of backends.splice(0)) await b.close();
 });
 
-/** A minimal, decodable NoteHead/NoteVersion pair for a `NoteDispositionChanged`. */
-function noteDispositionEvent(input: {
-  eventId: string; acknowledgementRef: SessionMessageRef | null; proof: DecisionChangeProofV1 | null;
-}): EncodedDomainEvent {
-  const body = {
-    kind: 'convention', topic: 'topic', topicKey: 'topic', conclusion: 'conclusion', body: 'body',
-    anchor: { kind: 'project' }, extraAnchors: [], facts: [],
-    basis: { planRevision: null, catalogRevision: null, files: [] },
-    structural: false, replaces: [], contradicts: [], coexistWith: [],
-  };
-  const head = { ...body, ref: { aggregateType: 'NoteHead', projectId: PROJECT_ID, noteId: 'note-1' },
-    noteId: 'note-1', version: 1, state: 'reviewed', goalId: null, source: { kind: 'platform' },
-    stagedRunKey: null, reviewReasons: [], confirmedByUser: false, anchorKey0: 'project', anchorKey1: null,
-    anchorKey2: null, anchorKey3: null, anchorKey4: null, createdAt: T, since: null };
-  const version = { ...body, ref: { aggregateType: 'NoteVersion', projectId: PROJECT_ID, noteId: 'note-1',
-    version: 1 }, noteId: 'note-1', version: 1, state: 'reviewed', goalId: null, source: { kind: 'platform' },
-    reviewReasons: [], noticeClass: null,
-    change: { kind: 'review', by: { kind: 'platform' }, reason: null, decisionMessageRef: null },
-    at: T, since: null };
-  return encodeNoteDispositionChangedEvent({
-    eventId: input.eventId, schemaVersion: 1, occurredAt: T, eventType: 'NoteDispositionChanged',
-    projectId: PROJECT_ID, workspaceId: WORKSPACE_ID, head, version,
-    acknowledgementRef: input.acknowledgementRef, actor: OPERATOR, proof: input.proof,
-  } as unknown as NoteDispositionChangedEventV1);
-}
-
-async function commitNoteEvent(event: EncodedDomainEvent, identityKey: string):
-Promise<{ records: InMemoryRecordBackend['records']; receipt: DecisionApplicationReceiptV1 }> {
-  const backend = createInMemoryRecordBackend({ schemas: NOTE_RECORD_SCHEMAS });
-  backends.push(backend);
-  const fingerprint = identityKey.padEnd(64, '0');
-  const committed = await backend.records.commit({
-    identityKey, fingerprint, guards: [], records: [], claims: [],
-    indexGuards: [], indexChanges: [], events: [event],
-  });
-  if (committed.status !== 'committed') {
-    throw new Error(`note disposition commit failed: ${JSON.stringify(committed)}`);
-  }
-  expect(committed.eventIds).toEqual([event.eventId]);
-  return { records: backend.records, receipt: { identityKey, fingerprint, cursor: committed.cursor } };
-}
-
-async function readFacts(f: S5DecisionFixture, event: EncodedDomainEvent, identityKey: string) {
-  const { records, receipt } = await commitNoteEvent(event, identityKey);
-  const read = readApplicationReceiptFacts(records);
-  const ctx: CoreCallContext = f.ctx;
-  return { result: await read(ctx, { answer: f.messages.answered, receipt }), receipt };
-}
-
-describe('S4C2 U3 NoteDispositionChanged proof row', () => {
+describe('rejects: S4C2 U3 NoteDispositionChanged proof row (another answer\'s receipt)', () => {
   it('rejects a forged proof whose acknowledgementRef names another answer as invalid', async () => {
-    const f = await openS5DecisionFixture('memory');
-    fixtures.push(f);
-    const otherAnswer = f.messages.decision.ref;
-    expect(otherAnswer).not.toEqual(f.messages.answered.ref);
-    const proof: DecisionChangeProofV1 = {
-      acknowledgementRef: otherAnswer, capturedPins: [], changes: [], basisRebases: [],
-    };
-    const event = noteDispositionEvent({ eventId: 'note-event-forged', acknowledgementRef: otherAnswer, proof });
-    const { result } = await readFacts(f, event, 'note-forged');
-    expect(result).toMatchObject({ status: 'rejected', code: 'invalid' });
+    const f = await createS4C2NoteCardFixture('memory');
+    noteFixtures.push(f);
+    // (1) TWO real pending structural understanding cards, A in g1 and B in g2,
+    //     each written by that Goal's real executor Run through the notes owner.
+    const noteA = await f.writeAgent(f.executor,
+      understandingNote({ structural: true, conclusion: 'card A' }), f.goalRef.goalId);
+    expect(noteA).toMatchObject({ status: 'pending_review', reasons: ['structural'] });
+    const noteAId = (noteA as unknown as { noteId: string }).noteId;
+    const cardA = await f.cardOf(noteAId);
+    expect(cardA).not.toBeNull();
+    expect(cardA!.options.map(option => option.id)).toEqual(['accept', 'reject']);
+
+    const noteB = await f.writeAgent(f.executor2,
+      understandingNote({ structural: true, conclusion: 'card B', anchor: { kind: 'goal', goalId: f.goal2Ref.goalId } }),
+      f.goal2Ref.goalId);
+    expect(noteB).toMatchObject({ status: 'pending_review', reasons: ['structural'] });
+    const noteBId = (noteB as unknown as { noteId: string }).noteId;
+    const cardB = await f.cardOf(noteBId);
+    expect(cardB).not.toBeNull();
+    expect(cardB!.options.map(option => option.id)).toEqual(['accept', 'reject']);
+
+    // (2) A is answered ONLY through the public answer entry: answered, pending
+    //     application, with no formal disposition receipt yet.
+    const answeredA = await f.platform.decisionMessages.answerDecision(f.ctx(), {
+      input: { source: cardA!.source, selection: { kind: 'option', optionId: 'accept' }, text: '', annotations: [] },
+      meta: { requestId: 's4c2-u3-answer-a', expected: cardA!.source.pins },
+    });
+    expect(answeredA.status).toBe('committed');
+    if (answeredA.status !== 'committed') throw new Error(`card A was not answered: ${JSON.stringify(answeredA)}`);
+    const answerA = answeredA.value;
+    const beforeA = await f.readCard(noteAId);
+    expect(beforeA).toMatchObject({ state: 'answered_pending_application', application: null,
+      answerMessageRef: answerA.ref });
+
+    // (3) B is answered and applied by the REAL coordinator. Its formal
+    //     `NoteDispositionChanged` write returns the receipt whose proof names
+    //     B's own answer — nothing is built or forged here.
+    const resolvedB = await f.resolve(cardB!, 'accept', 's4c2-u3-answer-b');
+    expect(resolvedB).toMatchObject({ status: 'ready', value: {
+      state: 'applied', answer: { status: 'committed' },
+      action: { status: 'done', noteId: noteBId, state: 'accepted' },
+      application: { status: 'committed' } } });
+    if (resolvedB.status !== 'ready') throw new Error(`card B was not resolved: ${JSON.stringify(resolvedB)}`);
+    const actionB = resolvedB.value.action;
+    if (actionB === null || actionB.status !== 'done') {
+      throw new Error(`card B had no formal disposition receipt: ${JSON.stringify(actionB)}`);
+    }
+    expect(actionB.receipt).toMatchObject({ identityKey: expect.any(String), fingerprint: expect.any(String),
+      cursor: expect.any(String) });
+
+    // (4) Handing A's answer the real receipt of B is `invalid`: the proof's
+    //     acknowledgementRef names B's answer, not this one.
+    const recorded = await f.platform.decisionMessages.recordDecisionApplication(f.ctx(), {
+      input: { messageRef: answerA.ref, receipt: actionB.receipt },
+      meta: { requestId: 's4c2-u3-cross-application',
+        expected: [{ ref: answerA.ref, revision: answerA.revision }] },
+    });
+    expect(recorded).toMatchObject({ status: 'rejected', code: 'invalid' });
+
+    // A's public read is unchanged: still answered, pending application.
+    expect(await f.readCard(noteAId)).toEqual(beforeA);
   });
 });
 

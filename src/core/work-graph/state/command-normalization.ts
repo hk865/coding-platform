@@ -3,20 +3,16 @@
 // helper comes from the fingerprint contract.
 import { sha256Hex } from '../../../contracts/fingerprint.js';
 
-/** An action found by `parseShellActions`: the words keep their boundaries; `text` is display only. */
+/** An action found by `parseShellActionsDetailed`: the words keep their boundaries; `text` is display only. */
 export interface ShellAction {
   words: string[];
   text: string;
 }
 
-export type ShellActionsResult =
-  | { status: 'parsed'; actions: ShellAction[] }
-  | { status: 'unparsed'; reason: string };
-
 /**
  * L19a ruling 5: the detailed parse carries, per action, the static `cd <path>`
  * paths before it at the same level (in order), or `null` once a `cd` before it
- * was not static. The public `parseShellActions` returns today's projection.
+ * was not static.
  */
 export interface ShellActionDetailed extends ShellAction {
   dirs: string[] | null;
@@ -520,18 +516,8 @@ function parseLevel(input: string, depth: number, inherited: string[] | null): L
 /**
  * L19a rules 1-6. Static parse; never expands scripts (that is B2-11/R4).
  * Returns only the actions found; the whole-text fallback is B2-01's.
- */
-export function parseShellActions(command: string): ShellActionsResult {
-  const result = parseLevel(command, 0, []);
-  return result.ok
-    ? { status: 'parsed', actions: result.actions.map(({ words, text }) => ({ words, text })) }
-    : { status: 'unparsed', reason: result.reason };
-}
-
-/**
- * L19a ruling 5: the same parse plus each action's `dirs` (the static `cd`
- * paths before it, or `null` once one was not static). The public
- * `parseShellActions` projection above stays exactly as it was (B2-10).
+ * L19a ruling 5: each action's `dirs` are the static `cd` paths before it,
+ * or `null` once one was not static (B2-10).
  */
 export function parseShellActionsDetailed(command: string): ShellActionsDetailedResult {
   const result = parseLevel(command, 0, []);

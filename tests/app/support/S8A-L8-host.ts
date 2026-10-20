@@ -29,7 +29,7 @@ import * as inMemoryRecordStore from '../../../src/core/record-store/in-memory-r
 import type { InMemoryRecordBackend } from '../../../src/core/record-store/in-memory-record-store.js';
 
 export type Backend = 'memory' | 'sqlite';
-export type Started = { host: LocalWorkbenchHost; base: string; token: string };
+type Started = { host: LocalWorkbenchHost; base: string; token: string };
 
 const temporary: string[] = [];
 let publicDirectoryPath = '';
@@ -55,7 +55,7 @@ export async function cleanupTemporary(): Promise<void> {
   for (const directory of temporary.splice(0)) await rm(directory, { recursive: true, force: true });
 }
 
-export const delay = (ms: number): Promise<void> => new Promise(resolve => { setTimeout(resolve, ms); });
+const delay = (ms: number): Promise<void> => new Promise(resolve => { setTimeout(resolve, ms); });
 
 export const scopeOf = (projectId: string, workspaceId: string): CoreScope => ({ projectId, workspaceId });
 export const projectRef = (scope: CoreScope) => ({ aggregateType: 'Project' as const, projectId: scope.projectId });
@@ -174,7 +174,7 @@ export const graphWrite = (scope: CoreScope, input: unknown, requestId: string, 
   ({ scope, request: { input, meta: { requestId, expected } } });
 export const plain = (scope: CoreScope, input: unknown) => ({ scope, input });
 
-export type StateReply = { status: 'ready'; value: ArchitectureObservationStateV1 }
+type StateReply = { status: 'ready'; value: ArchitectureObservationStateV1 }
   | { status: 'rejected'; code: string; reason: string };
 
 export async function observationState(base: string, token: string, scope: CoreScope): Promise<StateReply> {
@@ -292,7 +292,7 @@ export const completed = (state: ArchitectureObservationStateV1): boolean =>
   state.current !== null && state.autoCapture !== null && state.autoCapture.pending === false;
 
 /** One real `workspace.captureObservation` call seen by the gate, in call order. */
-export type CaptureGateEntry = { workspaceId: string; signal: AbortSignal };
+type CaptureGateEntry = { workspaceId: string; signal: AbortSignal };
 export type CaptureGate = {
   entries: CaptureGateEntry[];
   /** Resolves with the first real entry for the workspace (or its recorded entry). */

@@ -26,6 +26,7 @@ import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import { createSessionHistoryCursorOwner } from '../../src/core/agent-runtime/session-operations.js';
 import { readReviewDraftAtEntry } from '../../src/core/agent-runtime/run-reconcile.js';
 import { createS2BRuntimeStoreFixture, type S2BRuntimeStoreFixture } from '../helpers/S2B-runtime-store-fixture.js';
+import { deferred } from '../helpers/A2-restart-fixture.js';
 import { blockingTool } from '../helpers/S2B-runtime-tools-support.js';
 import {
   BE2_HOST_1, BE2_HOST_2, BE2_HOST_3, backfillOn, be2ExtraSchemas, controlsOn, currentPin,
@@ -37,11 +38,6 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.close();
 });
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((settle) => { resolve = settle; });
-  return { promise, resolve };
-}
 
 /** One Run with a `blockingTool` call in flight; returns the fixture and release. */
 async function inFlightRun(label: string) {

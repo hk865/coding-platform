@@ -3,13 +3,13 @@
  *
  * (a) a failed `consumeAllowance` commit blocks THIS call with the fixed text
  *     and leaves the allowance `allowed` (so the next call can still use it);
- * (b) the commit succeeds and the command never starts: the request is `used`
- *     with `usedBy`, and the SAME command is blocked again (the allowance was
- *     not returned).
+ * (b) the owner-level committed-consume case moved to
+ *     `tests/runtime/B2-04-allowance.test.ts` (used/usedBy, one request, the
+ *     fixed blocked reason and the unchanged used revision).
  *
- * The full crash / `outcome_unknown` / K3-review half of (b) is the SQLite Host
- * E2E in `tests/scenarios/B2-09b-allowance-crash.test.ts` (a second crash needs
- * the real RUN-25/L29 Host path, which this owner-level world cannot restart).
+ * The crash / `outcome_unknown` / K3-review half of (b) is the SQLite Host E2E
+ * in `tests/scenarios/B2-09b-allowance-crash.test.ts` (a second crash needs the
+ * real RUN-25/L29 Host path, which this owner-level world cannot restart).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
@@ -32,7 +32,7 @@ afterEach(async () => {
   for (const world of worlds.splice(0)) await world.close();
 });
 
-const shell = (command: string, callId = nextCall()): ToolCall => ({ schemaVersion: 1, callId, name: 'shell',
+const shell = (command: string): ToolCall => ({ schemaVersion: 1, callId: nextCall(), name: 'shell',
   arguments: { command } });
 
 const ALLOWANCE_UNCONFIRMED = '暂时确认不了允许，稍后再试';
@@ -62,32 +62,4 @@ describe.each(['memory', 'sqlite'] as const)('B2-09 allowance crash before the c
     expect((await w.listRequests(w.ctx))[0]).toMatchObject({ state: 'used', revision: 3 });
   });
 
-  it('B2-09b (owner part): the committed consume leaves the request used with usedBy, and the same command is blocked again', async () => {
-    const w = await openB2BlockedWorld(kind, { files: {
-      'app/package.json': JSON.stringify({ scripts: { 'db:migrate': 'prisma migrate deploy' } }),
-      'package.json': JSON.stringify({ scripts: { 'db:migrate': 'prisma migrate deploy' } }),
-    } });
-    worlds.push(w);
-    const command = 'npm run db:migrate';
-    await runTool(w.tool, { command, reason: '需要重新迁移' });
-    const pending = (await w.listRequests(w.ctx))[0]!;
-    expect(await w.answer('allow_rerun', pending.ref, pending.revision))
-      .toMatchObject({ status: 'committed', value: { state: 'allowed', revision: 2 } });
-
-    const callId = 'b2-09b-used-call';
-    expect(await runHook(w.hook, shell(command, callId)))
-      .toEqual({ point: 'before_tool', kind: 'continue' });
-    const used = (await w.listRequests(w.ctx))[0]!;
-    expect(used).toMatchObject({ state: 'used', revision: 3, usedBy: { runId: w.runRef.runId, callId } });
-    expect(used.usedAt).not.toBeNull();
-    // No second request was written by the consume.
-    expect(await w.listRequests(w.ctx)).toHaveLength(1);
-
-    // The allowance is NOT returned: the same command is blocked again with
-    // the fixed L19a text, and the request stays at its `used` revision.
-    const blocked = await runHook(w.hook, shell(command));
-    expect(blocked).toMatchObject({ point: 'before_tool', kind: 'block' });
-    if (blocked.kind === 'block') expect(blocked.reason).toContain('request_command_rerun');
-    expect((await w.listRequests(w.ctx))[0]).toMatchObject({ state: 'used', revision: 3 });
-  });
 });

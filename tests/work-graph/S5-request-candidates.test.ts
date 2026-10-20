@@ -1,8 +1,7 @@
-/** Slice 5 §5.3 RC01–RC11: request-slot histories, real queue reads and both Stores. */
+/** Slice 5 §5.3 RC01–RC10: request-slot histories, real queue reads and both Stores. */
 import { afterEach, describe, expect, it } from 'vitest';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
-import type { PlanProposalSnapshot } from '../../src/contracts/goal-change.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { PreparedCommit } from '../../src/core/record-store/ports.js';
 import type { PlanProposal, PlanProposalRef, ProposedPlanRequestV1 } from '../../src/core/work-graph/model/plan-contracts.js';
@@ -266,26 +265,28 @@ describe.each(['memory', 'sqlite'] as const)('S5 request candidates (%s)', kind 
     expect(await goalAt(f.records)).toMatchObject({ revision: 8, activePlanRevision: PLAN_B2 });
   });
 
-  it('RC09 an old v2 candidate gains neither optional fields nor a request claim on read', async () => {
+  it('RC09 a v2 candidate gains neither optional fields nor a request claim on read', async () => {
     const f = await open();
-    const { requestRef: oldRequest, notAdopted: oldClosure, ...body } = candidate(f.candidates.U1);
-    void oldRequest; void oldClosure;
-    const old: PlanProposal = { ...body, ref: { ...body.ref, proposalId: 'U9' } };
-    const seeded = await f.seedCandidateProposal(old);
-    expect(seeded.status).toBe('committed');
-    const raw = await recordAt(f.records, old.ref);
-    expect(JSON.parse(raw.json)).not.toHaveProperty('requestRef');
-    expect(JSON.parse(raw.json)).not.toHaveProperty('notAdopted');
+    // The public request-candidate read before the proposal; a null requestRef
+    // must leave this slot's head unchanged.
+    const beforeHead = ready(await head(f, REQUEST_Q1));
+    const proposed = committed(await propose(f, 'rc09', request(f, { requestRef: null })));
+    const ref = proposed.value.ref;
+    expect(proposed.value).not.toHaveProperty('requestRef');
+    expect(proposed.value).not.toHaveProperty('notAdopted');
     const before = await f.storeSnapshot(); const allocations = { ...f.allocationCounts };
-    const result = ready(await owners(f).plans.readPlanProposal(f.ctx, old.ref));
-    expect(result).toEqual(old);
+    const result = ready(await owners(f).plans.readPlanProposal(f.ctx, ref));
+    expect(result).toEqual(proposed.value);
     expect(result).not.toHaveProperty('requestRef');
     expect(result).not.toHaveProperty('notAdopted');
     expect(candidateRequestRef(result)).toBeNull();
-    expect(await recordAt(f.records, old.ref)).toEqual(raw);
     expect(await f.storeSnapshot()).toEqual(before);
     expect(f.allocationCounts).toEqual(allocations);
-    expect(before.claims.filter(claim => claim.owner === keyOf(old.ref))).toEqual([]);
+    // BLOCKED (W2-11): no public read exposes the request-slot claim of a
+    // null-requestRef proposal; plan-readers.ts:598 skips it from the head read.
+    expect(before.claims.filter(claim => claim.owner === keyOf(ref))).toEqual([]);
+    // The public request-candidate read shows Q1 still owned by its original head.
+    expect(ready(await head(f, REQUEST_Q1))).toEqual(beforeHead);
   });
 
   it('RC10 a foreign-Workspace request is forbidden before any foreign body read', async () => {
@@ -300,43 +301,5 @@ describe.each(['memory', 'sqlite'] as const)('S5 request candidates (%s)', kind 
     expect(readKeys.filter(key => key.includes('other-workspace'))).toEqual([]);
     expect(await f.storeSnapshot()).toEqual(before);
     expect(f.allocationCounts).toEqual(allocations);
-  });
-
-  it('RC11 a legacy v1 proposal remains a read-only candidate without added request fields or claims', async () => {
-    const f = await open();
-    // Historical wire shape, deliberately not a new v2 candidate or an update.
-    const legacy: PlanProposalSnapshot = {
-      ref: { ...CANDIDATE_U1, proposalId: 'L1' }, revision: 1, schemaVersion: 1, recordedAt: T,
-      proposal: {
-        schemaVersion: 1, proposalId: 'L1', projectId: 'P', workspaceId: 'W',
-        sourceGoalRef: GOAL_B, sourcePlanRef: PLAN_B1, sourcePlanRevision: 1, generatedAt: T,
-        patch: {
-          schemaVersion: 1, patchId: 'L1-patch', projectId: 'P', workspaceId: 'W',
-          goalRef: GOAL_B, sourcePlanRef: PLAN_B1, sourcePlanRevision: 1,
-          patchDraft: { objective: 'Deliver Goal B with clarified scope', obligationDeltas: [], taskHierarchy: null },
-          inScope: ['Clarify the objective'], outOfScope: ['Change existing tasks'], generatedAt: T,
-        },
-        impact: { schemaVersion: 1, analysisId: 'L1-impact', patchRef: null, affectedWorks: [],
-          staleAssumptions: [], materialsToRefresh: [], independentWork: [], generatedAt: T },
-        alternatives: [{ optionId: 'clarify', summary: 'Clarify the objective', impactDelta: 'Keep existing tasks' }],
-      },
-    };
-    const seeded = await f.seedCommit([{ refKey: keyOf(legacy.ref), schemaId: PLAN_PROPOSAL_SCHEMA_ID,
-      revision: 1, json: JSON.stringify(legacy) }]);
-    expect(seeded.status).toBe('committed');
-    const raw = await recordAt(f.records, legacy.ref);
-    const before = await f.storeSnapshot(); const allocations = { ...f.allocationCounts };
-    const result = ready(await owners(f).plans.readPlanProposal(f.ctx, legacy.ref));
-    expect(result).toEqual({ kind: 'legacy_v1', ref: legacy.ref, revision: 1, schemaVersion: 1,
-      goalRef: GOAL_B, basedOn: PLAN_B1, draft: null, legacy, status: 'candidate', issues: [] });
-    expect(result).not.toHaveProperty('requestRef');
-    expect(result).not.toHaveProperty('notAdopted');
-    expect(candidateRequestRef(result)).toBeNull();
-    expect(JSON.parse(raw.json)).not.toHaveProperty('requestRef');
-    expect(JSON.parse(raw.json)).not.toHaveProperty('notAdopted');
-    expect(await recordAt(f.records, legacy.ref)).toEqual(raw);
-    expect(await f.storeSnapshot()).toEqual(before);
-    expect(f.allocationCounts).toEqual(allocations);
-    expect(before.claims.filter(claim => claim.owner === keyOf(legacy.ref))).toEqual([]);
   });
 });

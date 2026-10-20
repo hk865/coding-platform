@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 import type { ArchitectureCatalogPinV1 } from './architecture-catalog.js';
 import type { ModuleRef } from './core/identity.js';
 // ------------------------------------------------------------------------ //

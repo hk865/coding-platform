@@ -164,7 +164,7 @@ it('Z02 automatic advancement: a secretary member asks the user to decide, the c
 it('Z01 automatic advancement through the scenario harness: a yielded wait is answered, the member is retired, the notice appears, seen clears it, and SES-13 recovery keeps it out', async () => {
   const commits: ScenarioCommit[] = [];
   const send = { callId: 'z01-send', name: 'send_session_message',
-    args: { recipient: {}, text: 'Z01 which file should the interrupted work write?', replyMode: 'wait' } as Record<string, unknown> };
+    args: { recipient: {}, text: 'Z01 which file should the interrupted work write?', intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const h = await openHostScenario({ automation: NO_REDRIVE, check: 'pass',
     script: {
       replies: [{ kind: 'calls', calls: [send] }],

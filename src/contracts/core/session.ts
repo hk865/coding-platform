@@ -1,8 +1,6 @@
-import type { ArtifactRef } from '../artifact.js';
 import type { CommitCursor } from '../command-event.js';
-import type { DispatchOutboxRef, RunRef, TaskTriple } from '../dispatch.js';
+import type { TaskTriple } from '../dispatch.js';
 import type { SessionMessageRef } from './session-message.js';
-import type { TaskRequeueRef } from '../task-requeue.js';
 import type { SessionArchiveRequestV1 } from './session-archive.js';
 import type { ExecutionRef, RoleConfigurationRef, SessionAggregateRef, SessionRef, SessionWorkLinkRef } from './identity.js';
 import type { OperationRef } from './operations.js';
@@ -18,9 +16,8 @@ export type SessionHealthConclusion = 'missing' | 'damaged' | 'kernel_turn_open'
 export const SESSION_HEALTH_CONCLUSIONS: readonly SessionHealthConclusion[] =
   Object.freeze(['missing', 'damaged', 'kernel_turn_open']);
 /**
- * How a Session came to be (slice 1 §2.2). `new` is the default for a caller
- * that does not supply one; absent on legacy records decodes as null and is
- * backfilled once from reliable facts.
+ * How a Session came to be (slice 1 §2.2). `new` is the default for a creation
+ * input that does not supply one; every stored Session carries a provenance.
  */
 export type SessionProvenanceV1 =
   | { schemaVersion: 1; kind: 'new' }
@@ -29,17 +26,6 @@ export type SessionProvenanceV1 =
   | { schemaVersion: 1; kind: 'handoff'; from: SessionRef }
   | { schemaVersion: 1; kind: 'readonly_copy'; from: SessionRef;
       messageRef: SessionMessageRef };
-/**
- * Reliable basis of a one-time legacy provenance backfill (slice 1 §2.2).
- * Recorded in the `SessionProvenanceBackfilled` event; never a migration table.
- */
-export type LegacyProvenanceBasisV1 =
-  | { kind: 'consultation'; messageRef: SessionMessageRef }
-  | { kind: 'requeue_creation'; operationRef: OperationRef; creationCursor: CommitCursor; requeueRef: TaskRequeueRef;
-      firstClaimRef: DispatchOutboxRef }
-  | { kind: 'manifest_seed'; operationRef: OperationRef; creationCursor: CommitCursor; runRef: RunRef;
-      manifestRef: ArtifactRef }
-  | { kind: 'no_reliable_predecessor' };
 export type SessionRecord = {
   ref: SessionAggregateRef; revision: number;
   kernel: { adapterId: string; kernelSessionId: string };
@@ -50,8 +36,8 @@ export type SessionRecord = {
   lastExecutionRef: ExecutionRef | null; occupancy: SessionOccupancy | null;
   /** Last completed-turn boundary, not the latest raw session record position. */
   historyCursor: string | null; createdAt: string; archivedAt: string | null;
-  /** Absent on records written before slice 1 and read as null. */
-  provenance?: SessionProvenanceV1 | null;
+  /** Required: every stored Session records how it came to be. */
+  provenance: SessionProvenanceV1;
   /** Absent on records written before slice 1 and read as null; non-null only while an archive is pending. */
   archiveRequest?: SessionArchiveRequestV1 | null;
   /**
@@ -59,7 +45,8 @@ export type SessionRecord = {
    * available→unavailable entry. `null` is the pending placeholder written in
    * the same record and bound to that commit's cursor; recovery removes the
    * field entirely; an already-unavailable Session keeps its existing value.
-   * Absent on records written before this package (legacy, reads as undefined).
+   * Absent when the Session is available; entering unavailable writes the
+   * placeholder or keeps the already-bound cursor.
    */
   unavailableSince?: CommitCursor | null;
 };

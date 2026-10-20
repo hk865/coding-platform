@@ -17,8 +17,9 @@
  *     `platform-scribe`, `t2` cancelled and `t3` active assigned to
  *     `platform-executor`, gate `g1`) and Goal `g2` (task `t9`) through
  *     `goals.createGoal`, `plans.proposePlan`, `plans.applyPlanChange`;
- *   - real Sessions through `sessions.admitSessionCreation`/`recordSessionCreated`
- *     whose role is the exact platform legacy template (`platform-scribe` /
+ *   - real Sessions through the real Session Runtime entry
+ *     (`platform.runtime.createSession`) whose role is the exact platform legacy
+ *     template (`platform-scribe` /
  *     `platform-executor`), so the PRODUCTION `createSessionDutyResolver` (the
  *     default; this fixture never injects `sessionDutyResolver`) maps duty from
  *     the Session's own role facts. Scribe scope therefore exercises production
@@ -193,7 +194,7 @@ export async function createS4ANoteScopeFixture(kind: S4ANoteScopeFixtureKind,
     input: { goalId: goalRef.goalId, workspace: scope, objective: 'S4A scope goal' } }));
   const scribeAssignment = (taskId: string) => ({ taskId, role: 'platform-scribe', instruction: `Scribe ${taskId}` });
   const executorAssignment = (taskId: string) => ({ taskId, role: 'platform-executor', instruction: `Execute ${taskId}` });
-  const draft: PlanRevisionDraft = { schemaVersion: 1, planId: planRef.planId, planRevision: 1, goalId: goalRef.goalId,
+  const draft: PlanRevisionDraft = { schemaVersion: 2, planId: planRef.planId, planRevision: 1, goalId: goalRef.goalId,
     stages: [{ stageId: 's1', title: 'Stage one' }],
     tasks: [
       { taskId: 't1', stageId: 's1', title: 'Scribe one', requirementLevel: 'required', taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
@@ -220,7 +221,7 @@ export async function createS4ANoteScopeFixture(kind: S4ANoteScopeFixtureKind,
   await committed('goal2', await platform.goals.createGoal(ctx, { meta: { requestId: 's4a-scope-goal2',
     expected: [{ ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 }] },
     input: { goalId: goal2Ref.goalId, workspace: scope, objective: 'S4A scope goal two' } }));
-  const draft2: PlanRevisionDraft = { schemaVersion: 1, planId: plan2Ref.planId, planRevision: 1, goalId: goal2Ref.goalId,
+  const draft2: PlanRevisionDraft = { schemaVersion: 2, planId: plan2Ref.planId, planRevision: 1, goalId: goal2Ref.goalId,
     stages: [{ stageId: 's2', title: 'Stage two' }],
     tasks: [
       { taskId: 't9', stageId: 's2', title: 'Other goal work', requirementLevel: 'required', taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
@@ -238,24 +239,14 @@ export async function createS4ANoteScopeFixture(kind: S4ANoteScopeFixtureKind,
     meta: { requestId: 's4a-scope-plan2-apply', expected: [{ ref: goal2Ref, revision: 1 }] },
     input: { proposalRef: proposed2['ref'] as never, expectedProposalRevision: proposed2['revision'] as number, decisionRefs: [] } }));
 
-  let sessionSeq = 0;
   async function createSession(requestId: string, role: S4ARole): Promise<{ sessionRef: SessionRef }> {
-    const admitted = await committed(`admit-${requestId}`, await platform.sessions.admitSessionCreation(ctx, {
-      meta: { requestId: `s4a-scope-admit-${requestId}`, expected: [] },
-      input: { workspace: scope, kernelStore: { adapterId: 's4a-kernel', storeKey: 's4a-kernel-store' },
-        role: roleRef(role), recommendedRefs: [], initialLinks: [] } }));
-    const action = admitted['action'] as { plannedSessionRef: SessionRef };
-    const admittedRef = admitted['ref'] as { projectId: string; sessionId: string };
-    const kernelSessionId = `s4a-scope-kernel-session-${requestId}-${++sessionSeq}`;
-    await platform.kernelStores.withStore('s4a-kernel', store => store.create({
-      sessionId: kernelSessionId, recordId: `s4a-scope-kernel-record-${requestId}`, createdAt: now(),
-    }, { signal: ctx.signal }));
-    const registered = await committed(`record-${requestId}`, await platform.sessions.recordSessionCreated(ctx, {
-      meta: { requestId: `s4a-scope-record-${requestId}`, expected: [] },
-      input: { operationRef: admittedRef as never, sessionRef: action.plannedSessionRef, adapterId: 's4a-kernel',
-        kernelSessionId, historyCursor: null, observedAt: now() } }));
-    const registeredRef = registered['ref'] as SessionRef & { aggregateType?: string };
-    return { sessionRef: { projectId: registeredRef.projectId, sessionId: registeredRef.sessionId } };
+    const created = await platform.runtime.createSession(ctx, {
+      workspace: scope, role: roleRef(role), recommendedRefs: [], initialLinks: [],
+      meta: { requestId: `s4a-scope-session-${requestId}`, expected: [] } });
+    if (created.status !== 'completed') {
+      throw new Error(`S4A scope fixture Session creation failed: ${JSON.stringify(created)}`);
+    }
+    return { sessionRef: { projectId: created.value.ref.projectId, sessionId: created.value.ref.sessionId } };
   }
 
   async function claim(suffix: string, sessionRef: SessionRef, claimGoalRef: GoalRef, claimPlanRef: PlanRevisionRef,

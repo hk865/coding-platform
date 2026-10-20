@@ -4,14 +4,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import type { EncodedRecord, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import { encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
+import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
@@ -25,30 +28,15 @@ const workspace: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projec
 const actor = { kind: 'human' as const, id: 'r3c-relations-author' };
 const ctx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host', actor },
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
-const digest = (value: JsonValue) => sha256Hex(canonicalJson(value));
-const policy = { schemaVersion: 1, identity: { policyId: 'policy-1' }, revision: 2,
-  content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } };
-const architecture = { schemaVersion: 1, identity: { baselineId: 'baseline-1' }, revision: 2,
-  content: { schemaVersion: 1, description: 'Accepted baseline', constraints: [] } };
-const policyRef = { aggregateType: 'CompletionPolicyRevision', projectId, policyId: 'policy-1', revision: 2 };
-const architectureRef = { aggregateType: 'ArchitectureBaselineRevision', projectId, baselineId: 'baseline-1', revision: 2 };
-const governance = [
-  { ref: policyRef, revision: 1, schemaVersion: 1, policyId: 'policy-1', contentRevision: 2,
-    contentDigest: digest(policy), content: policy.content },
-  { ref: architectureRef, revision: 1, schemaVersion: 1, baselineId: 'baseline-1', contentRevision: 2,
-    contentDigest: digest(architecture), content: architecture.content },
-  { ref: { aggregateType: 'ProjectCompletionPolicyActive', projectId }, projectId,
-    revision: 1, activeRevision: policyRef },
-  { ref: { aggregateType: 'ProjectArchitectureBaselineActive', projectId }, projectId,
-    revision: 1, activeRevision: architectureRef },
-];
 const schemas: RecordBackendSchemas = {
   records: [...materialRecordSchemas().records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
-    ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records],
-  events: [...materialRecordSchemas().events, ...PLAN_RECORD_SCHEMAS.events,
-    { eventType: 'RelationScopeSeeded', schemaVersion: 1,
-      validate: event => ({ status: 'decoded', value: event }) }],
-  lookups: [...(PLAN_RECORD_SCHEMAS.lookups ?? []), ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? [])],
+    ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
+    ...ARCHITECTURE_CATALOG_SCHEMAS.records],
+  events: [...materialRecordSchemas().events, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
+    ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
+    ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
+  lookups: [...(PLAN_RECORD_SCHEMAS.lookups ?? []), ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []),
+    ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
 };
 const artifactRef: ArtifactRef = { kind: 'artifact', contentType: 'text/plain', digest: 'a'.repeat(64),
   sizeBytes: 6, source: { kind: 'artifact', refId: 'design-output', revision: '1' } };
@@ -86,16 +74,43 @@ it.each(['memory', 'sqlite'] as const)('%s: v2 relations and exact inputs surviv
     : createSqliteRecordBackend({ path, schemas });
   let backend = open();
   try {
-    const seedRecords: EncodedRecord[] = [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace),
-      ...governance.map(snapshot => ({ refKey: canonicalJson(snapshot.ref as JsonValue),
-        schemaId: `${snapshot.ref.aggregateType}Snapshot@1`, revision: snapshot.revision,
-        json: JSON.stringify(snapshot) }))];
-    expect(await backend.records.commit({ identityKey: 'relation-seed', fingerprint: 'relation-seed',
-      guards: seedRecords.map(record => ({ refKey: record.refKey, expectedRevision: null })),
-      records: seedRecords, claims: [], indexGuards: [], indexChanges: [],
-      events: [{ eventId: 'relation-seed-event', eventType: 'RelationScopeSeeded', schemaVersion: 1,
-        occurredAt: at, json: JSON.stringify({ eventId: 'relation-seed-event', eventType: 'RelationScopeSeeded', schemaVersion: 1, occurredAt: at }) }],
-    })).toMatchObject({ status: 'committed' });
+    // Scope and governance through the real public bootstrap owners.
+    let bootstrapSequence = 0;
+    const bootstrap = createProjectBootstrapServices({ records: backend.records, now: () => at,
+      eventId: () => `relations-bootstrap-${++bootstrapSequence}` });
+    const createdProject = await bootstrap.projects.createProject(ctx, { input: { projectId },
+      meta: { requestId: 'relations-create-project', expected: [{ ref: project.ref, revision: 0 }] } });
+    if (createdProject.status !== 'committed') throw Error(`Project creation failed: ${JSON.stringify(createdProject)}`);
+    const registered = await bootstrap.projects.registerWorkspace(ctx, {
+      input: { workspace: { projectId, workspaceId } },
+      meta: { requestId: 'relations-register-workspace', expected: [
+        { ref: createdProject.value.ref, revision: createdProject.value.revision },
+        { ref: workspace.ref, revision: 0 },
+      ] } });
+    if (registered.status !== 'committed') throw Error(`Workspace registration failed: ${JSON.stringify(registered)}`);
+    const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId, policyId: 'policy-1', revision: 1 };
+    const installed = await bootstrap.completionPolicies.installCompletionPolicy(ctx, {
+      input: { policyId: policyRef.policyId, contentRevision: policyRef.revision,
+        content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } },
+      meta: { requestId: 'relations-install-policy', expected: [
+        { ref: createdProject.value.ref, revision: createdProject.value.revision }, { ref: policyRef, revision: 0 },
+      ] } });
+    if (installed.status !== 'committed') throw Error(`policy install failed: ${JSON.stringify(installed)}`);
+    const policyActiveRef = { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId };
+    const activated = await bootstrap.completionPolicies.activateCompletionPolicy(ctx, {
+      input: { target: { ref: installed.value.ref, digest: installed.value.contentDigest } },
+      meta: { requestId: 'relations-activate-policy', expected: [
+        { ref: createdProject.value.ref, revision: createdProject.value.revision }, { ref: policyActiveRef, revision: 0 },
+      ] } });
+    if (activated.status !== 'committed') throw Error(`policy activation failed: ${JSON.stringify(activated)}`);
+    const adopted = await createArchitectureCatalogService({ records: backend.records }).adoptInitialArchitecture(ctx, {
+      input: { baselineId: 'baseline-1', catalog: { modules: [], dependencies: [], requireDag: true },
+        description: 'Accepted baseline', constraints: [] },
+      meta: { requestId: 'relations-adopt-baseline', expected: [
+        { ref: createdProject.value.ref, revision: createdProject.value.revision },
+        { ref: workspace.ref, revision: registered.value.revision },
+      ] } });
+    if (adopted.status !== 'committed') throw Error(`architecture adoption failed: ${JSON.stringify(adopted)}`);
     let sequence = 0;
     const goals = createGoalService({ records: backend.records, now: () => at,
       eventId: () => `goal-${++sequence}` }).tasks;

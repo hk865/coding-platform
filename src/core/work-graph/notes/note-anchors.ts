@@ -179,7 +179,7 @@ async function readCandidateCatalog(ctx: CoreCallContext, deps: NoteAnchorFactsD
   try {
     const read = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
     if (read.status !== 'ready') return { ok: false };
-    return { ok: true, catalog: read.value.catalog === null ? null : read.value.catalog.catalog };
+    return { ok: true, catalog: read.value.catalog.catalog };
   } catch {
     return { ok: false };
   }
@@ -449,14 +449,14 @@ Promise<{ ok: true; value: number | null } | { ok: false; code: 'unavailable'; r
     const ref = baseline.ref;
     const read = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'revision', ref } });
     if (read.status === 'ready') {
-      return { ok: true, value: read.value.catalog === null ? null : read.value.baseline.ref.revision };
+      return { ok: true, value: read.value.baseline.ref.revision };
     }
     return { ok: false, code: 'unavailable',
       reason: read.status === 'rejected' ? read.reason : 'the pinned catalog revision is not readable' };
   }
   const read = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
   if (read.status === 'ready') {
-    return { ok: true, value: read.value.catalog === null ? null : read.value.baseline.ref.revision };
+    return { ok: true, value: read.value.baseline.ref.revision };
   }
   // A project with no adopted catalog is a real "none", not a failure.
   if (read.status === 'not_found') return { ok: true, value: null };

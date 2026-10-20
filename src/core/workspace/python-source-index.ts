@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { posix, resolve } from 'node:path';
-import type { ProjectSourceAccess, ProjectSourceQuery } from './project-source-index.js';
+import type { ProjectSourceAccess, ProjectSourceQuery } from './project-source-snapshot.js';
 
 const hash = (s: string | Uint8Array) => createHash('sha256').update(s).digest('hex');
 const safe = (p: string) => !!p && !/[\\:\0]/.test(p) && !p.split('/').some(s => !s || s === '.' || s === '..');

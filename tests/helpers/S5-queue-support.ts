@@ -1,19 +1,17 @@
 /** Group 6 setup only. All commands use the same observed P/W records port. */
 import { expect } from 'vitest';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import { DEFAULT_GOAL_SETTINGS_V1 } from '../../src/contracts/goal-decisions.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { VersionPin } from '../../src/contracts/core/identity.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
-import type { PreparedQueryManifestV1, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
-import type { RuntimeEventV1 } from '../../src/contracts/dispatch.js';
+import type { RoleBindingRefV1, RuntimeEventV1 } from '../../src/contracts/dispatch.js';
 import type { QueryEntryIdentity } from '../../src/core/work-graph/queries/contracts.js';
 import type { QueryJobAnswerV1, QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { GoalRef, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
-import type { CompletionPolicyRevisionSnapshot, ProjectCompletionPolicyActiveSnapshot } from '../../src/contracts/governance.js';
-import { completionPolicyContentDigest } from '../../src/contracts/governance.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY, WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import type { RoundSnapshot, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { S5RecordPort } from '../../src/core/work-graph/model/decision-contracts.js';
@@ -28,26 +26,28 @@ import { createSessionDirectory } from '../../src/core/work-graph/sessions/sessi
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
-import { createExecutionEntryService, MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/tasks/execution-entry-service.js';
-import { createQueryExecution, QUERY_MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/queries/query-execution.js';
+import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
+import { createQueryExecution } from '../../src/core/work-graph/queries/query-execution.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { parseInitialPlanningResponseV2 } from '../../src/core/work-graph/tasks/initial-plan.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
-import { TASK_REQUEUE_SCHEMA_ID } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { decodeModelRequestPermitSnapshot } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
-import { decodeWorkspaceSnapshot, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { decodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS, decodeQueryRunSnapshotRecord } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
-import { EVIDENCE_RECORD_SCHEMAS, VERIFICATION_ROUND_SNAPSHOT_SCHEMA_ID } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createB2ExecutionFixture } from './B2-execution-fixture.js';
 import { GOAL_B, OPERATOR, PROJECT, T, WORKSPACE, WORKSPACE_SCOPE,
   type S5DecisionFixture, type S5FixtureKind } from './S5-decision-fixture.js';
+import { preparationHost, prepareQueryForReal, prepareTaskForReal } from './task-claim-fixture.js';
 
 export const key = (value: object): string => canonicalJson(value as JsonValue);
 export function ready<V>(result: { status: 'ready'; value: V } | { status: 'not_found' | 'not_ready' | 'rejected' }): V {
@@ -101,15 +101,21 @@ export function materialsFor(f: S5DecisionFixture) {
   return createMaterialService({ bodies: f.bodies, authority: createMaterialRecordReaders(f.records).authority, now: f.now });
 }
 export function mailboxDependencies(f: S5DecisionFixture): SessionMailboxDependencies {
-  const host = { configurationRevision: 's5-host-config-1',
-    permissions: { policyRevision: 'legacy-template', tools: ['read', ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES], writeScope: [] },
-    hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex('s5 trusted builder template') } };
-  const authorizeConfiguration: AuthorizeConfiguration = async (ctx, input) =>
-    ctx.projectId === WORKSPACE_SCOPE.projectId && ctx.workspaceId === WORKSPACE_SCOPE.workspaceId
-      && input.configurationRevision === host.configurationRevision
-      && key(input.permissions) === key(host.permissions) && key({ value: input.hostTemplate }) === key({ value: host.hostTemplate })
-      ? { status: 'ready', value: host }
+  const permissions = { policyRevision: 'legacy-template', tools: ['read', ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES], writeScope: [] };
+  // The world has two formal Host templates: the decision sender's RA uses
+  // `platform-adviser`; the older builder Sessions/Runs keep `builder`.
+  const hostTemplates = [
+    { templateId: 'builder', revision: '1', digest: artifactBodyDigest('s5 trusted builder template') },
+    { templateId: 'platform-adviser', revision: 's3.1', digest: artifactBodyDigest('s5 trusted platform-adviser template') },
+  ];
+  const authorizeConfiguration: AuthorizeConfiguration = async (ctx, input) => {
+    const template = hostTemplates.find(candidate => key({ value: candidate }) === key({ value: input.hostTemplate }));
+    return ctx.projectId === WORKSPACE_SCOPE.projectId && ctx.workspaceId === WORKSPACE_SCOPE.workspaceId
+      && input.configurationRevision === 's5-host-config-1'
+      && key(input.permissions) === key(permissions) && template !== undefined
+      ? { status: 'ready', value: { configurationRevision: 's5-host-config-1', permissions, hostTemplate: template } }
       : { status: 'rejected', code: 'forbidden', reason: 'not the shared S5 mailbox grant' };
+  };
   return { records: f.records, sessions: createSessionDirectory({ records: f.records, lookups: f.records }),
     executions: createRunStateReader({ records: f.records }),
     roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),
@@ -118,7 +124,11 @@ export function mailboxDependencies(f: S5DecisionFixture): SessionMailboxDepende
     duties: { async readMessageDutiesFacts() { return { status: 'ready', value: {
       duties: ['adviser'], readOnlyCopy: false, independentReview: false, guards: [] } }; } } };
 }
-export function workContext(f: S5DecisionFixture, claim: TaskClaim, roleBinding = f.runRA.roleBinding): CoreCallContext {
+const BUILDER_ROLE_BINDING: RoleBindingRefV1 = { schemaVersion: 1, bindingId: 's5-binding', templateId: 'builder',
+  templateRevision: '1', bindingVersion: 1, policyRevision: 'legacy-template' };
+/** The queue world's work principal: the decision sender's Run keeps its own formal binding. */
+export function workContext(f: S5DecisionFixture, claim: TaskClaim,
+  roleBinding = canonicalJson(claim.runRef) === canonicalJson(f.runRA.ref) ? f.runRA.roleBinding : BUILDER_ROLE_BINDING): CoreCallContext {
   return { ...f.ctx, principal: { kind: 'work_run', runRef: claim.runRef, roleBinding },
     materialReader: { kind: 'run', requester: claim.runRef } };
 }
@@ -175,7 +185,7 @@ export async function answeredPlanningQuestion(f: S5DecisionFixture) {
   expect(goal.settings ?? DEFAULT_GOAL_SETTINGS_V1).toEqual({ schemaVersion: 1, autonomy: 'after_plan_confirmation',
     order: 0, waitForGoalRef: null, parallelRisks: [] });
   const roles = createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId });
-  const roleBinding = f.runRA.roleBinding;
+  const roleBinding = BUILDER_ROLE_BINDING;
   const budget = { contextWindowTokens: 128000, inputTokens: null, outputTokens: null,
     maxRequests: 4, maxToolCalls: 8, timeoutMs: null, perResponseTokens: 512 };
   const host = { configurationRevision: 's5-planning-host-1', permissions: { tools: ['read'], writeScope: [] as [] },
@@ -199,31 +209,23 @@ export async function answeredPlanningQuestion(f: S5DecisionFixture) {
   let record = committed(await jobs.claimQuery(f.ctx, { input: { queryRunRef: runRef, sessionRef: session },
     meta: { requestId: 's5-planning-claim', expected: [{ ref: job.ref, revision: 1 }, { ref: runRef, revision: 1 },
       await pin(f.records, plainSessionRefToAggregate(session))] } }));
-  const state = record.run.run.executionState;
-  if (state === undefined) throw new Error('planning claim has no usable role');
   const facts = ready(await execution.readPreparationFacts(f.ctx, runRef));
   expect(facts.goal).toMatchObject({ ref: PLANNING_GOAL, revision: 1, activePlanRevision: null });
   expect(facts.focusPlan).toBeNull();
-  const input = 'Produce one schemaVersion 2 needs_decision question.';
-  const manifest: PreparedQueryManifestV1 = { schemaVersion: 1, kind: 'query_execution', queryRunRef: runRef,
-    sessionRef: session, sessionGeneration: state.sessionGeneration, roleBinding, sessionRole: state.role,
-    role: state.roleResolution, hostTemplate: host.hostTemplate, hostConfigurationRevision: host.configurationRevision,
-    goal: { ref: facts.goal.ref, revision: facts.goal.revision }, workspace: { ref: facts.workspace.ref, revision: facts.workspace.revision },
-    focusPlan: facts.focusPlan === null ? null : { ref: facts.focusPlan.ref, revision: facts.focusPlan.revision },
-    permissions: host.permissions, runtimeBudget: budget, budget: { tokenBudget: null, deadline: null },
-    sourceRefs: [], input, inputDigest: sha256Hex(input) };
-  const body = ready(await f.bodies.put({ body: JSON.stringify(manifest), contentType: QUERY_MANIFEST_CONTENT_TYPE,
-    sourceRefs: [{ kind: 'workspace', refId: 'W', revision: String(facts.workspace.revision) }],
-    origin: { kind: 'run', owner: runRef }, requestedAt: T }));
-  const prepared = { queryRunRef: runRef, bundleRef: body.ref, inputDigest: manifest.inputDigest };
-  record = committed(await execution.bindPreparedQuery(f.ctx, { input: { prepared }, meta: {
-    requestId: 's5-planning-prepare', expected: [{ ref: runRef, revision: record.run.revision },
-      { ref: record.session.ref, revision: record.session.revision }] } }));
-  const kernel = { adapterId: record.session.kernel.adapterId, kernelSessionId: record.session.kernel.kernelSessionId,
+  const prepared = (await prepareQueryForReal(f, {
+    bodies: f.bodies, queryRunRef: runRef, queryExecution: execution, now: f.now,
+    requestId: 's5-planning-prepare',
+    host: preparationHost({ configurationRevision: host.configurationRevision, permissions: host.permissions,
+      hostTemplate: host.hostTemplate, budget }),
+  })).prepared;
+  const preparedState = ready(await execution.readQueryExecution(f.ctx, runRef));
+  const kernel = { adapterId: preparedState.session.kernel.adapterId,
+    kernelSessionId: preparedState.session.kernel.kernelSessionId,
     runId: 's5-planning-kernel-run', turnId: 's5-planning-turn' };
   const ticket = committed(await execution.beginQueryEntry(f.ctx, { input: { prepared, consumerId: 's5-planning-consumer', kernel },
-    meta: { requestId: 's5-planning-begin', expected: [{ ref: job.ref, revision: record.job.revision }, { ref: runRef, revision: record.run.revision },
-      { ref: record.session.ref, revision: record.session.revision }] } }));
+    meta: { requestId: 's5-planning-begin', expected: [{ ref: job.ref, revision: preparedState.job.revision },
+      { ref: runRef, revision: preparedState.run.revision },
+      { ref: preparedState.session.ref, revision: preparedState.session.revision }] } }));
   const entry: QueryEntryIdentity = { queryRunRef: runRef, sessionRef: ticket.sessionRef,
     sessionGeneration: ticket.sessionGeneration, entryGeneration: 1, consumerId: ticket.consumerId, kernel: ticket.kernel };
   record = committed(await execution.recordQueryObservation(f.ctx, { input: { entry,
@@ -263,7 +265,8 @@ export async function answeredPlanningQuestion(f: S5DecisionFixture) {
 /** DQ03 starts before adoption. The B2 world's independent scope is left alone. */
 export async function openUninitializedQueue(kind: S5FixtureKind) {
   const bundles = [QUERY_JOB_RECORD_SCHEMAS, SESSION_MESSAGE_RECORD_SCHEMAS, DECISION_RECORD_SCHEMAS,
-    COMPLETION_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS];
+    COMPLETION_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS,
+    { records: [], events: PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events }];
   const b2 = await createB2ExecutionFixture(kind, { records: bundles.flatMap(b => [...b.records]),
     events: bundles.flatMap(b => [...b.events]), lookups: bundles.flatMap(b => [...(b.lookups ?? [])]) });
   // Slice 2A P8: the uninitialized queue's real records port also carries the
@@ -271,47 +274,40 @@ export async function openUninitializedQueue(kind: S5FixtureKind) {
   const records = b2.base.records as S5RecordPort & RecordOrderedLookupPort;
   const ctx: CoreCallContext = { ...b2.base.ctx, ...WORKSPACE_SCOPE, principal: { kind: 'host', actor: OPERATOR },
     materialReader: { kind: 'host', ...WORKSPACE_SCOPE, actor: OPERATOR } };
-  const seeded = await b2.base.commitRaw([encodeProjectSnapshot({ ref: PROJECT, revision: 1 }),
-    encodeWorkspaceSnapshot({ ref: WORKSPACE, revision: 3 })]);
-  expect(seeded.status).toBe('committed');
+  const bootstrap = createProjectBootstrapServices({ records, now: () => T, eventId: () => 'dq03-event' });
+  committed(await bootstrap.projects.createProject(ctx, { input: { projectId: PROJECT.projectId },
+    meta: { requestId: 'dq03-project', expected: [{ ref: PROJECT, revision: 0 }] } }));
+  committed(await bootstrap.projects.registerWorkspace(ctx, { input: { workspace: WORKSPACE_SCOPE },
+    meta: { requestId: 'dq03-workspace', expected: [
+      { ref: PROJECT, revision: 1 }, { ref: WORKSPACE, revision: 0 }] } }));
   const goals = createGoalService({ records, now: () => T, eventId: () => 'dq03-goal-created' }).tasks;
   committed(await goals.createGoal(ctx, { input: { goalId: 'B', workspace: WORKSPACE_SCOPE,
     objective: 'Choose the initial architecture' }, meta: { requestId: 'dq03-create', expected: [
-      { ref: PROJECT, revision: 1 }, { ref: WORKSPACE, revision: 3 }] } }));
+      { ref: PROJECT, revision: 1 }, { ref: WORKSPACE, revision: 1 }] } }));
   return { records, ctx, plans: createPlanService({ records, now: () => T, eventId: () => 'dq03-event' }), close: () => b2.close() };
-}
-
-/** Legacy wire compatibility only: keep the real owner's records/events/claims,
- * but serialize the selected pre-S5 fields exactly as an old producer did.
- * Never used for answering, acknowledging or marking seen. */
-export function legacyNoticeWire(records: S5RecordPort, aggregateType: 'TaskRequeue' | 'VerificationRound'): S5RecordPort {
-  const schemaId = aggregateType === 'TaskRequeue' ? TASK_REQUEUE_SCHEMA_ID : VERIFICATION_ROUND_SNAPSHOT_SCHEMA_ID;
-  return { ...records, commit(batch) {
-    const oldKeys = new Set(batch.records.filter(r => r.schemaId === schemaId).map(r => r.refKey));
-    return records.commit({ ...batch, records: batch.records.map(record => {
-      if (!oldKeys.has(record.refKey)) return record;
-      const wire: Record<string, unknown> = JSON.parse(record.json);
-      delete wire.since; delete wire.noticeAutomationCap;
-      return { ...record, json: JSON.stringify(wire) };
-    }), commitCursorBindings: (batch.commitCursorBindings ?? []).filter(binding => !oldKeys.has(binding.refKey)) });
-  } };
 }
 
 /** Build an independent static-check Plan through propose/apply, then use real
  * claim/entry/result and requeue/reverify owners. A/B/C remain their frozen plans.
- * The initial governance checkpoint uses the same registered codecs as the
- * shared fixture; immutable policy content is never overwritten. */
-export async function noticeWork(f: S5DecisionFixture, options: { legacyRounds?: boolean; legacyRequeues?: boolean } = {}) {
-  const policy: CompletionPolicyRevisionSnapshot = { ref: { aggregateType: 'CompletionPolicyRevision', projectId: 'P',
-    policyId: 's5-notice-static', revision: 1 }, revision: 1, schemaVersion: 1, policyId: 's5-notice-static', contentRevision: 1,
-    content: { schemaVersion: 1, requirementKinds: ['static'], minimumRequiredRequirementsPerObligation: 1 }, contentDigest: '' };
-  policy.contentDigest = completionPolicyContentDigest(policy);
+ * The governance checkpoint is installed and activated by the public bootstrap
+ * owners; immutable policy content is never overwritten. */
+export async function noticeWork(f: S5DecisionFixture) {
   const activeRef = { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId: 'P' };
   const previous = await storedRecord(f.records, activeRef);
-  const active: ProjectCompletionPolicyActiveSnapshot = { ref: activeRef, projectId: 'P', revision: previous.revision + 1, activeRevision: policy.ref };
-  const encoded = [policy, active].map(snapshot => ({ refKey: key(snapshot.ref), schemaId: `${snapshot.ref.aggregateType}Snapshot@1`,
-    revision: snapshot.revision, json: JSON.stringify(snapshot) }));
-  expect((await f.seedCommit(encoded, { guards: [{ refKey: key(activeRef), expectedRevision: previous.revision }] })).status).toBe('committed');
+  const bootstrap = createProjectBootstrapServices({ records: f.records, now: f.now, eventId: f.newId });
+  const policyRef = { aggregateType: 'CompletionPolicyRevision', projectId: 'P',
+    policyId: 's5-notice-static', revision: 1 } as const;
+  const installed = committed(await bootstrap.completionPolicies.installCompletionPolicy(f.ctx, {
+    input: { policyId: 's5-notice-static', contentRevision: 1,
+      content: { schemaVersion: 1, requirementKinds: ['static'], minimumRequiredRequirementsPerObligation: 1 } },
+    meta: { requestId: 'nr-install-policy', expected: [{ ref: PROJECT, revision: 1 }, { ref: policyRef, revision: 0 }] },
+  }));
+  const activatedPolicy = committed(await bootstrap.completionPolicies.activateCompletionPolicy(f.ctx, {
+    input: { target: { ref: installed.ref, digest: installed.contentDigest } },
+    meta: { requestId: 'nr-activate-policy', expected: [{ ref: PROJECT, revision: 1 },
+      { ref: activeRef, revision: previous.revision }] },
+  }));
+  expect(activatedPolicy.activeRevision).toEqual(policyRef);
   const goalRef: GoalRef = { aggregateType: 'Goal', projectId: 'P', goalId: 'NR' };
   const goals = createGoalService({ records: f.records, now: f.now, eventId: f.newId }).tasks;
   const goal = committed(await goals.createGoal(f.ctx, { input: { goalId: 'NR', workspace: WORKSPACE_SCOPE,
@@ -353,21 +349,10 @@ export async function noticeWork(f: S5DecisionFixture, options: { legacyRounds?:
     const claim = await f.claimRun({ requestId: `nr-claim-${taskId}`, goalRef, planRef: plan.ref, taskId, sessionRef });
     if (taskId !== 'controller') { await f.enterClaim(claim); return claim; }
     const current = ready(await reads.readExecution(f.ctx, claim.runRef));
-    const resolved = (await roles.resolveRoleBindingFacts(f.ctx, { roleBinding: current.run.roleBinding, declaredPermissions: grant })).result;
-    const role = ready(resolved);
-    const input = 'Requeue the failed NR work when requested.';
-    const manifest: PreparedTaskManifestV1 = { schemaVersion: 1, kind: 'task_execution', claim, role, hostTemplate: template,
-      roleBinding: current.run.roleBinding, hostConfigurationRevision: 's5-notice-controller', sessionRole: current.session.role,
-      workspaceSnapshot: current.run.workspaceSnapshot, permissions: grant, budget: current.run.budget, selectedTaskInputs: [],
-      materialBasis: null, materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [], sourceRefs: [], input, inputDigest: sha256Hex(input) };
-    const body = ready(await f.bodies.put({ body: JSON.stringify(manifest), contentType: MANIFEST_CONTENT_TYPE,
-      sourceRefs: [{ kind: 'workspace', refId: 'W', revision: String(current.run.workspaceSnapshot.revision) }],
-      origin: { kind: 'run', owner: claim.runRef }, requestedAt: T }));
-    const prepared = { kind: 'task' as const, claim, envelope: { schemaVersion: 1 as const, envelopeId: 'nr-controller-envelope',
-      ...WORKSPACE_SCOPE, goalId: goalRef.goalId, taskId, runRef: claim.runRef, attemptRef: claim.attemptRef, planRef: plan.ref,
-      roleBinding: current.run.roleBinding, workspaceSnapshot: current.run.workspaceSnapshot, permissions: grant, budget: current.run.budget,
-      sourceRefs: [], bundleRef: body.ref }, inputBinding: { schemaVersion: 1 as const, inputDigest: manifest.inputDigest,
-      manifestDigest: body.ref.digest, materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [] } };
+    const prepared = (await prepareTaskForReal(f, {
+      bodies: f.bodies, runRef: claim.runRef, now: f.now, requestId: f.newId(),
+      host: preparationHost({ configurationRevision: 's5-notice-controller', permissions: grant, hostTemplate: template }),
+    })).prepared;
     const permit = committed(await entry.authorizeRuntimeEntry(f.ctx, { input: { prepared, consumerId: 'nr-controller' },
       meta: { requestId: f.newId(), expected: [await pin(f.records, claim.runRef)] } }));
     const kernel = { adapterId: current.session.kernel.adapterId, kernelSessionId: current.session.kernel.kernelSessionId,
@@ -381,14 +366,14 @@ export async function noticeWork(f: S5DecisionFixture, options: { legacyRounds?:
   };
   const automationPolicy = { current: { ...DEFAULT_TASK_AUTOMATION_POLICY } };
   const source = { revision: 1 };
-  const requeues = (legacy: boolean) => createTaskRequeueService({ records: legacy ? legacyNoticeWire(f.records, 'TaskRequeue') : f.records,
+  const requeues = () => createTaskRequeueService({ records: f.records,
     reads, materials, messages: mailbox, workspaceHost, source: { async captureDigest() { return { status: 'ready', sourceDigest: sha256Hex(`nr-source-${source.revision}`) }; } },
     delegatedWrites: { reads, roles, bodies: f.bodies, authorizeConfiguration }, automationPolicy: () => automationPolicy.current,
     now: f.now, eventId: f.newId });
-  const requeue = async (taskId: string, actor: CoreCallContext, legacy = options.legacyRequeues ?? false) => {
+  const requeue = async (taskId: string, actor: CoreCallContext) => {
     const claim = await start(taskId);
     const ended = await endRun(f, claim, { eventType: 'run_crashed', payload: { kind: 'crashed', error: 'recorded fixture failure' } });
-    const value = committed(await requeues(legacy).requeueTask(actor, { input: { taskRef: claim.task, afterRunRef: claim.runRef, reason: 'Retry failed work' },
+    const value = committed(await requeues().requeueTask(actor, { input: { taskRef: claim.task, afterRunRef: claim.runRef, reason: 'Retry failed work' },
       meta: { requestId: f.newId(), expected: [await pin(f.records, goalRef), { ref: claim.runRef, revision: ended.revision }] } }));
     if (value.kind !== 'requeued') throw new Error(`requeue refused: ${JSON.stringify(value)}`);
     return value.requeue;
@@ -397,8 +382,7 @@ export async function noticeWork(f: S5DecisionFixture, options: { legacyRounds?:
     executor: OPERATOR, permissionRevision: 's5-notice-permission', sourceAccess: 'verification_workspace', processAccess: 'all_except_denied',
     deniedPrefixes: [], checks: [{ checkId: 'static', kind: 'static', command: 'fixture-check', cwd: '.', timeoutMs: 1000, taskIds: 'all' }] };
   let roundId = 0;
-  const evidenceRecords = options.legacyRounds ? legacyNoticeWire(f.records, 'VerificationRound') : f.records;
-  const evidence = createEvidenceService({ records: evidenceRecords, executions: reads, materials, workspaceHost, configuration,
+  const evidence = createEvidenceService({ records: f.records, executions: reads, materials, workspaceHost, configuration,
     automationPolicy: () => automationPolicy.current,
     source: { async capture() { return { status: 'ready', sourceDigest: sha256Hex(`nr-source-${source.revision}`),
       sourceProof: { kind: 'current-workspace-only', runBaselineKnown: false },

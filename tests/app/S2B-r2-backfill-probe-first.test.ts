@@ -20,6 +20,7 @@ import type { RuntimeExecutionDependencies } from '../../src/core/agent-runtime/
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import type { SqliteStores } from '../../vendor/coding-agent/dist/public-api.js';
 import { createS2BRuntimeStoreFixture, type S2BRuntimeStoreFixture } from '../helpers/S2B-runtime-store-fixture.js';
+import { deferred } from '../helpers/A2-restart-fixture.js';
 import { blockingTool } from '../helpers/S2B-runtime-tools-support.js';
 import { withProbeMissing } from '../helpers/S2B-be1r2-support.js';
 import { withTool } from '../helpers/S2B-be2-reconcile-support.js';
@@ -29,11 +30,6 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.close();
 });
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((settle) => { resolve = settle; });
-  return { promise, resolve };
-}
 
 /** A generic (non-StoreError) failure on the probe's `store.get` => verdict `transient`. */
 function withProbeTransient(

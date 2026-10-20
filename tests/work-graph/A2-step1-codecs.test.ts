@@ -17,7 +17,7 @@
  * - Runs with and without `terminalPayload` (C1); `interrupted_clean` without
  *   `kernelPaused` or `pausedIntentRef` is rejected (C4); a non-sha256
  *   `continuationBriefDigest` is rejected (C3).
- * - Goals with and without `desiredStateRequestedBy` (legacy → null) and a
+ * - Goals with and without `desiredStateRequestedBy`, and a
  *   `GoalDesiredStateChanged` receipt replay that restores the original requester (LA-7).
  * - The other step-1 decoders: Attempt `requeueRef`, AD-2 outbox settlement,
  *   Session `healthConclusion`, QueryRun/QueryJob `not_entered`, platform control
@@ -42,6 +42,7 @@ import type { GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { NoProgressKeyV1 } from '../../src/contracts/no-progress.js';
 import type { PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { QueryJobSnapshot, QueryRunSnapshot } from '../../src/contracts/query-job.js';
+import { DEFAULT_RUNTIME_BUDGET } from '../../src/contracts/runtime-budget.js';
 import type {
   TaskRequeueRef, TaskRequeueSnapshotV1, TaskReworkRefusalSnapshotV1,
 } from '../../src/contracts/task-requeue.js';
@@ -340,8 +341,8 @@ function legacyCheck(definition: typeof lintCheck | typeof unitCheck, phase: Rou
     outcome, reportRef: null, sourceStatus: phase === 'finished' ? 'matched' : null };
 }
 function round(ref: VerificationRoundRef, checks: RoundCheckSnapshot[], status: RoundSnapshot['status'],
-  chain?: RoundChainV1): RoundSnapshot {
-  const snapshot: RoundSnapshot = { ref, revision: status === 'finalized' ? 3 : 1, schemaVersion: 1, subject: task,
+  chain: RoundChainV1): RoundSnapshot {
+  return { ref, revision: status === 'finalized' ? 3 : 1, schemaVersion: 1, subject: task,
     subjectRunRef: runRef(ref.runId), adoptedPlanRef: planRef, taskBasisRef: planRef, executor: operator,
     configuration: { configurationRevision: 'checks-config-1', workspace: { aggregateType: 'Workspace', projectId: P, workspaceId: W },
       executor: operator, permissionRevision: 'perm-1', sourceAccess: 'verification_workspace', processAccess: 'all_except_denied',
@@ -353,18 +354,18 @@ function round(ref: VerificationRoundRef, checks: RoundCheckSnapshot[], status: 
     verificationPlan: { schemaVersion: 1, planId: sha('8') } as unknown as RoundSnapshot['verificationPlan'],
     checks, status, outcome: status === 'finalized' ? 'INCONCLUSIVE' : null,
     gaps: status === 'finalized' ? [{ code: 'interrupted_check', message: 'unit was interrupted by a Host restart' }] : [],
-    evidenceRefs: status === 'finalized' ? [{ aggregateType: 'Evidence', projectId: P, evidenceId: 'evidence-1' }] : [] };
-  return chain === undefined ? snapshot : { ...snapshot, chain };
+    evidenceRefs: status === 'finalized' ? [{ aggregateType: 'Evidence', projectId: P, evidenceId: 'evidence-1' }] : [],
+    chain };
 }
-/** A round written before A.2: no `chain`, no `incompleteCause`. */
-const legacyRound = (): RoundSnapshot => round(roundRef('run-1', 'round-1'),
-  [legacyCheck(lintCheck, 'finished', 'PASS'), legacyCheck(unitCheck, 'interrupted', null)], 'finalized');
+/** A current chain-root round: it carries `rootChain` and omits the optional `incompleteCause`. */
+const currentRootRound = (): RoundSnapshot => round(roundRef('run-1', 'round-1'),
+  [legacyCheck(lintCheck, 'finished', 'PASS'), legacyCheck(unitCheck, 'interrupted', null)], 'finalized', rootChain);
 const reverifyBasis: ReverifyBasisV1 = { subject: task, subjectRunId: 'run-1', actionKind: 'reverify',
   failure: { checks: [{ checkId: 'unit', phase: 'interrupted', outcome: null, cause: null }], gapCodes: ['interrupted_check'] },
   source: { workspaceRevision: 4, sourceDigest: sha('5') },
   configuration: { configurationRevision: 'checks-config-1', configurationDigest: sha('7') },
   verificationInputs: { basisPlanRef: planRef, ...pins }, newInputDigest: null, digest: sha('9') };
-/** The Agent-requested successor of the legacy round (ordinal 2). */
+/** The Agent-requested successor of the current root round (ordinal 2). */
 const successorChain = (): RoundChainV1 => ({ schemaVersion: 1, ordinal: 2, predecessorRoundRef: roundRef('run-1', 'round-1'),
   predecessorRevision: 3, supersededEvidenceIds: ['evidence-1'], basisDigests: [sha('9')], autoCount: 1,
   reverify: { requestedBy: agentOf('run-1'), actorClass: 'agent', failureClass: 'check_incomplete', requestedAt: at,
@@ -377,26 +378,19 @@ const rootChain: RoundChainV1 = { schemaVersion: 1, ordinal: 1, predecessorRound
   supersededEvidenceIds: [], basisDigests: [], autoCount: 0, reverify: null };
 
 describe('VerificationRound chain and incompleteCause (spec §9.1, C5)', () => {
-  it('a legacy round (no chain, no incompleteCause) still decodes unchanged', () => {
-    const legacy = legacyRound();
-    expect('chain' in legacy).toBe(false);
-    expect(legacy.checks.every(check => !('incompleteCause' in check))).toBe(true);
-    expect(decodeVerificationRoundSnapshot(encodeVerificationRoundSnapshot(legacy))).toEqual({ status: 'decoded', value: legacy });
-  });
-
   it('a successor round (ordinal 2, Agent reverify) with incompleteCause and a chain root round-trip', () => {
     const successor = successorRound();
-    expect(successor.chain?.reverify?.requestedBy.kind).toBe('agent');
+    expect(successor.chain.reverify?.requestedBy.kind).toBe('agent');
     expect(decodeVerificationRoundSnapshot(encodeVerificationRoundSnapshot(successor))).toEqual({ status: 'decoded', value: successor });
     const root = round(roundRef('run-1', 'round-1'), [{ ...legacyCheck(lintCheck, 'pending', null), incompleteCause: null }], 'open', rootChain);
     expect(decodeVerificationRoundSnapshot(encodeVerificationRoundSnapshot(root))).toEqual({ status: 'decoded', value: root });
   });
 
-  it.each(KINDS)('%s: legacy and successor rounds persist and are found by the chain lookups', async kind => {
+  it.each(KINDS)('%s: current root and successor rounds persist and are found by the chain lookups', async kind => {
     const store = await openStore(kind);
-    const legacy = legacyRound();
+    const legacy = currentRootRound();
     const successor = successorRound();
-    await create(store, 'round-1', [encodeVerificationRoundSnapshot(legacy)]);
+    await create(store, 'round-1', [encodeVerificationRoundSnapshot(legacy, { finalizedAt: at })]);
     await create(store, 'round-2', [encodeVerificationRoundSnapshot(successor)]);
     expect(decodeVerificationRoundSnapshot(await readBack(store, key(legacy.ref)))).toEqual({ status: 'decoded', value: legacy });
     expect(decodeVerificationRoundSnapshot(await readBack(store, key(successor.ref)))).toEqual({ status: 'decoded', value: successor });
@@ -542,7 +536,7 @@ describe('Run terminalPayload, reconciliation and input binding (spec §6.1)', (
 // ------------------------------------------------------------------------ //
 const legacyGoal: GoalSnapshot = { ref: { aggregateType: 'Goal', projectId: P, goalId: G },
   workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: W }, objective: 'Ship the module',
-  desiredState: 'active', activePlanRevision: null, revision: 1 };
+  desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: null, revision: 1 };
 const pausedGoal: GoalSnapshot = { ...legacyGoal, desiredState: 'paused', revision: 2, desiredStateRevision: 2,
   desiredStateRequestedBy: human };
 const resumedGoal: GoalSnapshot = { ...legacyGoal, desiredState: 'active', revision: 3, desiredStateRevision: 3,
@@ -554,13 +548,6 @@ function desiredStateChanged(identityKey: string, goal: GoalSnapshot, change: Pi
 }
 
 describe('Goal desiredState, desiredStateRevision and desiredStateRequestedBy (D-9, LA-7)', () => {
-  it('decodes a record written before A.2 as desiredStateRevision 1 and desiredStateRequestedBy null', () => {
-    const encoded = encodeGoalSnapshot(legacyGoal);
-    expect(JSON.parse(encoded.json)).not.toHaveProperty('desiredStateRequestedBy');
-    expect(decodeGoalSnapshot(encoded)).toEqual({ status: 'decoded',
-      value: { ...legacyGoal, desiredStateRevision: 1, desiredStateRequestedBy: null } });
-  });
-
   it('round-trips the three desired states with and without a requester', () => {
     const cancelled: GoalSnapshot = { ...legacyGoal, desiredState: 'cancelled', revision: 4, desiredStateRevision: 4,
       desiredStateRequestedBy: human };
@@ -570,50 +557,11 @@ describe('Goal desiredState, desiredStateRevision and desiredStateRequestedBy (D
     }
   });
 
-  it('writes a never-changed Goal in its legacy shape, so a plan adoption keeps the pre-A.2 bytes', () => {
-    // What plan-commit-compiler writes: `{ ...decodedGoal, activePlanRevision, revision + 1 }`.
-    const decodedLegacy = decoded(decodeGoalSnapshot(encodeGoalSnapshot(legacyGoal)));
-    const adopted: GoalSnapshot = { ...decodedLegacy, activePlanRevision: planRef, revision: 2 };
-    const legacyAdopted = { ref: legacyGoal.ref, workspaceRef: legacyGoal.workspaceRef, objective: legacyGoal.objective,
-      desiredState: 'active', activePlanRevision: planRef, revision: 2 };
-    expect(encodeGoalSnapshot(adopted).json).toBe(JSON.stringify(legacyAdopted));
-    expect(decodeGoalSnapshot(encodeGoalSnapshot(adopted))).toEqual({ status: 'decoded', value: adopted });
-    // A real change is written in full.
-    expect(JSON.parse(encodeGoalSnapshot(pausedGoal).json)).toMatchObject({ desiredStateRevision: 2, desiredStateRequestedBy: human });
-  });
-
   it('rejects an Agent requester and a desiredStateRevision beyond the Goal revision', () => {
     expect(decodeGoalSnapshot(encodeGoalSnapshot({ ...pausedGoal, desiredStateRequestedBy: agentOf('run-1') })).status).toBe('invalid');
     expect(decodeGoalSnapshot(encodeGoalSnapshot({ ...pausedGoal, desiredStateRevision: 3 })).status).toBe('invalid');
     expect(decodeGoalSnapshot(encodeGoalSnapshot({ ...pausedGoal, desiredStateRevision: 0 })).status).toBe('invalid');
     expect(decodeGoalSnapshot(encodeGoalSnapshot({ ...pausedGoal, desiredState: 'stopped' as GoalSnapshot['desiredState'] })).status).toBe('invalid');
-  });
-
-  it.each(KINDS)('%s: a GoalDesiredStateChanged receipt replays the original requester after a later change', async kind => {
-    const store = await openStore(kind);
-    const goalKey = key(legacyGoal.ref);
-    await create(store, 'goal-seed', [encodeGoalSnapshot(legacyGoal)]);
-    expect(decodeGoalSnapshot(await readBack(store, goalKey))).toEqual({ status: 'decoded',
-      value: { ...legacyGoal, desiredStateRevision: 1, desiredStateRequestedBy: null } });
-
-    const pause = desiredStateChanged('goal-pause', pausedGoal,
-      { control: 'pause', from: 'active', to: 'paused', pausedEpoch: null, reason: 'stop for review', actor: human });
-    expect(await commit(store, { identityKey: 'goal-pause', records: [encodeGoalSnapshot(pausedGoal)],
-      guards: [{ refKey: goalKey, expectedRevision: 1 }], event: encodeGoalDesiredStateChangedEvent(pause) }))
-      .toMatchObject({ status: 'committed' });
-    const resume = desiredStateChanged('goal-resume', resumedGoal,
-      { control: 'resume', from: 'paused', to: 'active', pausedEpoch: 2, reason: null, actor: operator });
-    expect(await commit(store, { identityKey: 'goal-resume', records: [encodeGoalSnapshot(resumedGoal)],
-      guards: [{ refKey: goalKey, expectedRevision: 2 }], event: encodeGoalDesiredStateChangedEvent(resume) }))
-      .toMatchObject({ status: 'committed' });
-
-    expect(decodeGoalSnapshot(await readBack(store, goalKey))).toEqual({ status: 'decoded', value: resumedGoal });
-    const replayedPause = decoded(decodeGoalDesiredStateChangedEvent(await replayedEvent(store, 'goal-pause')));
-    expect(replayedPause).toEqual(pause);
-    expect(goalSnapshotFromDesiredStateChangedEvent(replayedPause)).toEqual(pausedGoal);
-    expect(goalSnapshotFromDesiredStateChangedEvent(replayedPause).desiredStateRequestedBy).toEqual(human);
-    const replayedResume = decoded(decodeGoalDesiredStateChangedEvent(await replayedEvent(store, 'goal-resume')));
-    expect(goalSnapshotFromDesiredStateChangedEvent(replayedResume)).toEqual(resumedGoal);
   });
 
   it('rejects a GoalDesiredStateChanged whose written Goal disagrees with the event', () => {
@@ -629,7 +577,7 @@ describe('Goal desiredState, desiredStateRevision and desiredStateRequestedBy (D
     expect(status({ ...pause, goal: { ...pausedGoal, phase: 'x' } as GoalSnapshot })).toBe('invalid');
     expect(status({ ...pause, goal: { ...pausedGoal, ref: { ...pausedGoal.ref, extra: 1 } } as GoalSnapshot })).toBe('invalid');
     const { desiredStateRevision: _revision, ...withoutRevision } = pausedGoal;
-    expect(status({ ...pause, goal: withoutRevision })).toBe('invalid');
+    expect(status({ ...pause, goal: withoutRevision as GoalSnapshot })).toBe('invalid');
     const replayed = goalSnapshotFromDesiredStateChangedEvent(pause);
     expect(replayed).toEqual(pausedGoal);
     expect(replayed).not.toBe(pause.goal);
@@ -677,14 +625,15 @@ describe('other step-1 decoders', () => {
     const session: SessionRecord = { ref: { aggregateType: 'Session', projectId: P, sessionId: 'session-1' }, revision: 2,
       kernel: { adapterId: 'coding-agent', kernelSessionId: 'kernel-session-1' }, lifecycle: 'active', health: 'available',
       role: { kind: 'legacy_template', templateId: 'worker', templateRevision: 'r1' }, workspaceId: W, lastExecutionRef: null,
-      occupancy: null, historyCursor: null, createdAt: at, archivedAt: null };
+      occupancy: null, historyCursor: null, createdAt: at, archivedAt: null,
+      provenance: { schemaVersion: 1, kind: 'new' } };
     const unavailable: SessionRecord = { ...session, health: 'unavailable', healthConclusion: 'damaged' };
     for (const value of [session, { ...session, healthConclusion: null }, unavailable,
       { ...unavailable, healthConclusion: 'missing' as const }, { ...unavailable, healthConclusion: 'kernel_turn_open' as const }]) {
-      // Slice 1 §2.9 (lead update 2026-10-09): a stored Session without the two new optional fields decodes
-      // with their null defaults.
+      // Slice 1 §2.9: the stored Session's provenance is required and kept;
+      // only the optional archive request decodes with its null default.
       expect(decodeSessionRecord(encodeSessionRecord(value))).toEqual({ status: 'decoded',
-        value: { ...value, provenance: null, archiveRequest: null } });
+        value: { ...value, archiveRequest: null } });
     }
     expect(decodeSessionRecord(encodeSessionRecord({ ...unavailable,
       healthConclusion: 'gone' as unknown as SessionHealthConclusion })).status).toBe('invalid');
@@ -706,10 +655,13 @@ describe('other step-1 decoders', () => {
     const queryRun: QueryRunSnapshot = { ref: queryRunRef, revision: 2, schemaVersion: 1, run: { schemaVersion: 1, queryJobRef,
       runId: 'query-run-1', status: 'closed', startedAt: null, endedAt: at, outcome: 'not_entered' } };
     expect(decodeQueryRunSnapshotRecord(encodeQueryRunSnapshotRecord(queryRun))).toEqual({ status: 'decoded', value: queryRun });
-    const queryJob: QueryJobSnapshot = { ref: queryJobRef, revision: 3, schemaVersion: 1, job: { schemaVersion: 1,
+    const queryJob: QueryJobSnapshot = { ref: queryJobRef, revision: 3, schemaVersion: 1,
+      submission: { schemaVersion: 1, identityKey: 'query-submission-1', fingerprint: sha('a'), eventId: 'query-submit-event-1' },
+      job: { schemaVersion: 1,
       queryJobId: 'query-1', projectId: P, workspaceId: W, goalId: G,
       intent: { schemaVersion: 1, intentId: 'intent-1', projectId: P, workspaceId: W, goalId: G, question: 'Which module owns X?',
-        focusTaskRefs: [{ aggregateType: 'Task', ...task }], budget: { maxTokens: null, deadline: null }, multiTurn: { maxRounds: 1 }, correlationId: 'corr-1' },
+        focusTaskRefs: [{ aggregateType: 'Task', ...task }], budget: { maxTokens: null, deadline: null }, multiTurn: { maxRounds: 1 }, correlationId: 'corr-1',
+        execution: { kind: 'semantic_query', roleBinding, runtimeBudget: DEFAULT_RUNTIME_BUDGET } },
       status: 'closed', runRef: queryRunRef, answerRefs: [],
       closeReason: { code: 'not_entered', message: 'settled at start-up without entering the Kernel' },
       submittedAt: at, updatedAt: at } };

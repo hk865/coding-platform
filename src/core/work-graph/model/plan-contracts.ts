@@ -30,7 +30,7 @@ export type { InitialPlanAnswerFacts };
  */
 export type { DelegatedWriteProvenanceV1, PlanWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 export type {
-  CandidatePlanProposal, CandidateRequestExtensionV1, LegacyPlanProposal,
+  CandidatePlanProposal, CandidateRequestExtensionV1,
   PlanChangeReason, PlanProposalRecord, PlanProposalRef,
 } from '../state/plan-machine.js';
 export type PlanProposal = PlanProposalRecord;

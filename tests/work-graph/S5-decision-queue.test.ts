@@ -13,9 +13,9 @@ import { createAutomaticReworkNoticeSource } from '../../src/core/work-graph/vie
 import { createNoticePositionComparator } from '../../src/core/work-graph/views/notice-position.js';
 import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice-display-token.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
+import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
-import { createExecutedFilesStub } from '../helpers/executed-files-stub.js';
 import { createPlanService, createRequestCandidateService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
@@ -40,7 +40,8 @@ function readers(records: S5RecordPort & RecordOrderedLookupPort, plans: PlanTas
     cardSources: [createGoalCauseCardSource(createGoalDecisionCauseReader({ records, plans })),
       createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans }))],
     noticeSources: [createAutomaticReworkNoticeSource({ records })],
-    conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }), executedFiles: createExecutedFilesStub() }),
+    conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
+      executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)) });
 }
 function mustCard(cards: readonly DecisionCardV1[], sourceKey: string): DecisionCardV1 {

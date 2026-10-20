@@ -173,12 +173,12 @@ function deepFreeze<T>(value: T): T {
 // --------------------------------------------------------------------------
 
 describe('§14.1 Goal record constructors', () => {
-  it('newGoalSnapshot writes Goal@1 with today\'s key order and no D-9 fields (commit-compiler.ts:111-118)', () => {
+  it('newGoalSnapshot writes Goal@1 with today\'s key order, epoch 1 and no requester (commit-compiler.ts:111-118)', () => {
     expect(JSON.stringify(GOAL_NEW)).toBe(JSON.stringify({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE,
-      desiredState: 'active', activePlanRevision: null, revision: 1 }));
-    expect('desiredStateRevision' in GOAL_NEW).toBe(false);
-    expect('desiredStateRequestedBy' in GOAL_NEW).toBe(false);
-    // The contract reads the absent fields as epoch 1 and no requester.
+      desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: null, revision: 1 }));
+    expect(GOAL_NEW.desiredStateRevision).toBe(1);
+    expect(GOAL_NEW.desiredStateRequestedBy).toBeNull();
+    // The contract reads the explicit fields as epoch 1 and no requester.
     const view = goalStateOf(GOAL_NEW, null);
     expect(view).toMatchObject({ node: 'active', desiredStateRevision: 1, desiredStateRequestedByClass: null,
       activePlanRef: null, completion: 'none' });
@@ -194,7 +194,8 @@ describe('§14.1 Goal record constructors', () => {
     expect(moved.desiredStateRevision).toBe(2);
     expect(moved.desiredStateRequestedBy).toEqual(HUMAN);
     expect(JSON.stringify(nextGoalPointer(GOAL_NEW, P1))).toBe(JSON.stringify({ ref: GOAL, workspaceRef: WS,
-      objective: OBJECTIVE, desiredState: 'active', activePlanRevision: P1, revision: 2 }));
+      objective: OBJECTIVE, desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
+      activePlanRevision: P1, revision: 2 }));
   });
 
   it('nextGoalDesiredState writes every Goal field, the epoch rev+1 and a copy of the requester', () => {
@@ -1341,30 +1342,6 @@ describe('§2.1 GOAL-27 running causes and the gate flow (C5, C8)', () => {
     expect(display.causes).toEqual([
       { code: 'required_task_deferred', taskIds: ['t-later'] },
       { code: 'auto_rework_pending', taskId: 't-gate', operation: 'reverify', failureClass: 'check_failed' },
-    ]);
-  });
-
-  it('a legacy PASS with gaps is not a clean PASS (VD-4): never gate_verifying; GV-5 or GV-10 as for a non-PASS head', () => {
-    const passWithGaps = roundOf('t-gate', { outcome: 'PASS', failingChecks: [], gapCodes: ['evidence_missing'] });
-    // GV-5: required active work in the scope is unsatisfied.
-    const fixing = reduceGoalDisplay(facts({ tasks: [
-      task('t-fix', { phase: 'pending' }),
-      task('t-gate', { taskKind: 'gate', phase: 'blocked', coveredTaskIds: ['t-fix'],
-        failure: failureOf({ kind: 'none' }, { failureClass: 'check_incomplete', round: passWithGaps }) }),
-    ] }));
-    expect(fixing).toMatchObject({ phase: 'RUNNING', row: 'GOAL-27', cause: null });
-    expect(fixing.causes).toEqual([{ code: 'gate_fix_in_progress', gateTaskId: 't-gate', failingChecks: [] }]);
-    // GV-10: the work is satisfied, the gate reverifies (check_incomplete).
-    const verdict: TaskAutomationVerdictV1 = { kind: 'reverify', roundRef: roundRef('t-gate'), needsFinalize: false,
-      onlyIfSourceChanged: false, failureClass: 'check_incomplete', retryAfterRefusal: false };
-    const reverifying = reduceGoalDisplay(facts({ tasks: [
-      task('t-a', { phase: 'satisfied' }),
-      task('t-gate', { taskKind: 'gate', phase: 'blocked', coveredTaskIds: ['t-a'],
-        failure: failureOf(verdict, { failureClass: 'check_incomplete', round: passWithGaps }) }),
-    ] }));
-    expect(reverifying).toMatchObject({ phase: 'RUNNING', row: 'GOAL-27', cause: null });
-    expect(reverifying.causes).toEqual([
-      { code: 'auto_rework_pending', taskId: 't-gate', operation: 'reverify', failureClass: 'check_incomplete' },
     ]);
   });
 

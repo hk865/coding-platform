@@ -17,7 +17,6 @@ import type { PlanWriteProvenanceV1 } from '../../src/contracts/delegated-write.
 import type {
   RoleBindingRefV1, RunRef, RunSnapshot, RuntimeEventV1, TaskLeaseSnapshot,
 } from '../../src/contracts/dispatch.js';
-import type { PlanProposalSnapshot } from '../../src/contracts/goal-change.js';
 import type { InitialPlanOrigin } from '../../src/contracts/initial-planning.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanValidationError, RuntimeTask } from '../../src/contracts/plan.js';
@@ -41,7 +40,6 @@ import {
   type FutureChangeTaskFactsV1,
   type FuturePlanDeltaVerdict,
   type InitialAdoptionFacts,
-  type LegacyPlanProposal,
   type PlanCarrierViewV1,
   type PlanChangeReason,
   type PlanCommitGuard,
@@ -93,10 +91,10 @@ function runtimeTask(taskId: string, overrides: Partial<RuntimeTask> = {}): Runt
     phase: 'pending', scope: { kind: 'goal' }, ...overrides };
 }
 
-function draftOf(input: { planId: string; planRevision: number; schemaVersion?: 1 | 2; goalId?: string }): PlanRevisionDraft {
+function draftOf(input: { planId: string; planRevision: number; goalId?: string }): PlanRevisionDraft {
   const base = { planId: input.planId, planRevision: input.planRevision, goalId: input.goalId ?? GOAL_ID, stages: [],
     tasks: [runtimeTask('t-build')], obligations: [], taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } };
-  return input.schemaVersion === 1 ? { ...base, schemaVersion: 1 } : { ...base, schemaVersion: 2 };
+  return { ...base, schemaVersion: 2 };
 }
 
 const INITIAL_DRAFT = draftOf({ planId: 'plan-1', planRevision: 1 });
@@ -109,12 +107,6 @@ function candidate(input: { basedOn: PlanRevisionRef | null; draft: PlanRevision
     reason: input.reason ?? REASON, issues: [], submittedBy: input.submittedBy ?? null });
 }
 
-/** The decoded legacy body is only carried; the machine reads its kind and pointer. */
-const LEGACY: LegacyPlanProposal = {
-  kind: 'legacy_v1', ref: PROPOSAL_REF, revision: 1, schemaVersion: 1, goalRef: GOAL, basedOn: P0, draft: null,
-  legacy: { ref: PROPOSAL_REF, revision: 1, schemaVersion: 1, recordedAt: T0 } as unknown as PlanProposalSnapshot,
-  status: 'candidate', issues: [],
-};
 const CANDIDATE_INITIAL = candidate({ basedOn: null, draft: INITIAL_DRAFT });
 /** An Agent-submitted future candidate: both adopters can take it. */
 const CANDIDATE_FUTURE = candidate({ basedOn: P1, draft: FUTURE_DRAFT, submittedBy: PROVENANCE });
@@ -332,7 +324,6 @@ describe('§14.1 PlanProposal record constructors', () => {
 
 const STATES = {
   absent: null,
-  legacy_v1: LEGACY,
   candidateInitial: CANDIDATE_INITIAL,
   candidateFuture: CANDIDATE_FUTURE,
   accepted: ACCEPTED,
@@ -375,16 +366,6 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     acceptAgent: MISSING,
     stale: no('illegal', 'not_found'),
     reject: no('illegal', 'not_found'),
-  },
-  legacy_v1: {
-    recordHost: EXISTS,
-    recordAgent: EXISTS,
-    recordAnswer: EXISTS,
-    acceptHost: no('illegal', 'unsupported', 'a legacy v1 patch proposal cannot be adopted by this slice'),
-    acceptAgent: no('illegal', 'unsupported', 'a legacy v1 patch proposal cannot be adopted by an Agent'),
-    // basedOn P0 is no longer the active plan: read as stale, nothing written.
-    stale: ok(LEGACY),
-    reject: no('illegal', 'unsupported'),
   },
   candidateInitial: {
     // RECORD_HOST and RECORD_ANSWER build exactly CANDIDATE_INITIAL (the writer is not stored).
@@ -494,11 +475,6 @@ describe('PLAN-01 Host proposal_recorded (plan-service.ts:923-1055)', () => {
     const result = run({ ...RECORD_HOST, basedOn }, context(pointer(active)));
     expect(result.ok).toBe(true);
   });
-
-  it('accepts a schema 1 draft (initial plans may be schema 1 or 2)', () => {
-    const draft = draftOf({ planId: 'plan-1', planRevision: 1, schemaVersion: 1 });
-    expectResult(run({ ...RECORD_HOST, draft }), ok(candidate({ basedOn: null, draft }), RECORDED_HOST_EFFECTS));
-  });
 });
 
 describe('PLAN-03 initial answer proposal_recorded (plan-service.ts:1244-1333)', () => {
@@ -530,8 +506,6 @@ describe('PLAN-02 Agent proposal_recorded (plan-service.ts:1886-2011)', () => {
     ['the Goal is outside the bound workspace (:1941-1943)', RECORD_AGENT, { goalInWorkspace: false },
       no('guard_failed', 'forbidden', 'the goal does not belong to the requested workspace')],
     ['the caller pins disagree (:1944-1950)', RECORD_AGENT, { pinsAgree: false }, no('stale', 'revision_conflict')],
-    ['a schema 1 draft (:1954-1956)', { ...RECORD_AGENT, draft: draftOf({ planId: 'plan-2', planRevision: 2, schemaVersion: 1 }) }, {},
-      no('guard_failed', 'unsupported', 'an Agent proposal requires a schemaVersion 2 future draft')],
     ['basedOn null (:1957-1958)', { ...RECORD_AGENT, basedOn: null }, {},
       no('guard_failed', 'forbidden', 'an Agent proposal must be based on an accepted source plan')],
     ['the source was not read', RECORD_AGENT, { source: null }, no('illegal', 'invalid')],
@@ -546,13 +520,11 @@ describe('PLAN-02 Agent proposal_recorded (plan-service.ts:1886-2011)', () => {
     expectResult(transitionPlanProposal(null, event, agentCtx(overrides)), expected);
   });
 
-  it('runs the fresh admission before the Goal scope, and the scope before the draft checks', () => {
+  it('runs the fresh admission before the Goal scope', () => {
     expectResult(transitionPlanProposal(null, RECORD_AGENT, agentCtx({ agentAdmission: rejection('busy', 'busy'), pinsAgree: false })),
       no('guard_failed', 'busy'));
     expectResult(transitionPlanProposal(null, { ...RECORD_AGENT, basedOn: null }, agentCtx({ goalInWorkspace: false })),
       no('guard_failed', 'forbidden', 'the goal does not belong to the requested workspace'));
-    expectResult(transitionPlanProposal(null, { ...RECORD_AGENT, basedOn: null,
-      draft: draftOf({ planId: 'plan-2', planRevision: 2, schemaVersion: 1 }) }, agentCtx()), no('guard_failed', 'unsupported'));
   });
 
   it('checks every guard before the create CAS of an existing proposal', () => {
@@ -585,7 +557,6 @@ describe('proposal_recorded on an existing record (create CAS ∅, §1.2 duplica
     ['a Host request for an Agent candidate (no provenance)', CANDIDATE_FUTURE, { ...RECORD_HOST, basedOn: P1, draft: FUTURE_DRAFT }],
     ['the same content already accepted (past the target state)', acceptProposalRecord(CANDIDATE_INITIAL), RECORD_HOST],
     ['the same content at another revision', { ...CANDIDATE_INITIAL, revision: 2 }, RECORD_HOST],
-    ['a legacy record', LEGACY, RECORD_HOST],
   ])('other content keeps today\'s create CAS result: %s', (_name, state, event) => {
     const ctx = context({ agentAdmission: event.writer === 'agent' ? 'ok' : null });
     expectResult(record(state, event, ctx), EXISTS);
@@ -678,12 +649,6 @@ describe('PLAN-05 future-only proposal_accepted (applyFutureRevision, plan-servi
   const issue = (code: PlanValidationError['code']): PlanValidationError => ({ path: 'tasks', code, message: code });
 
   it.each<[string, AcceptedEvent, Partial<PlanProposalGuardContext>, PlanProposalMachineState, Expected]>([
-    ['a schema 1 draft without decisions (:1695-1698)', ACCEPT_HOST, {},
-      withDraft(draftOf({ planId: 'plan-2', planRevision: 2, schemaVersion: 1 })),
-      no('guard_failed', 'incomplete', 'a plan change requires an accepted UserDecision; this slice does not accept raw full drafts')],
-    ['a schema 1 draft with decisions (:1699)', { ...ACCEPT_HOST, decisionRefs: [{ ref: GOAL, revision: 1 }] }, {},
-      withDraft(draftOf({ planId: 'plan-2', planRevision: 2, schemaVersion: 1 })),
-      no('guard_failed', 'unsupported', 'authorized plan-change delta compilation is not implemented in this slice')],
     ['decisionRefs are not empty (:1703-1705)', { ...ACCEPT_HOST, decisionRefs: [{ ref: GOAL, revision: 1 }] }, {}, CANDIDATE_FUTURE,
       no('guard_failed', 'unsupported', 'a W1 future-only revision does not accept decision references')],
     ['the source was not read', ACCEPT_HOST, { source: null }, CANDIDATE_FUTURE, no('illegal', 'invalid')],
@@ -825,8 +790,7 @@ describe('PLAN-05 Agent proposal_accepted (applyPlanChangeAsAgent, plan-service.
     }
   });
 
-  it('reads the state after the Agent pre-checks: legacy, not pending and old revisions keep their codes', () => {
-    expectResult(transitionPlanProposal(LEGACY, ACCEPT_AGENT, agentCtx()), no('illegal', 'unsupported'));
+  it('reads the state after the Agent pre-checks: not pending and old revisions keep their codes', () => {
     expectResult(transitionPlanProposal(ACCEPTED, ACCEPT_AGENT, agentCtx()), no('illegal', 'invalid'));
     expectResult(transitionPlanProposal(CANDIDATE_FUTURE, { ...ACCEPT_AGENT, expectedProposalRevision: 2 }, agentCtx()),
       no('stale', 'revision_conflict', 'the proposal revision changed'));
@@ -1008,7 +972,6 @@ describe('derivePlanProposalStatus (PLAN-06)', () => {
       planRef('plan-x'), 'candidate'],
     ['accepted', ACCEPTED, P2, 'accepted'],
     ['rejected', REJECTED, P1, 'rejected'],
-    ['legacy on an older plan', LEGACY, P1, 'stale'],
   ])('%s', (_name, proposal, active, expected) => {
     expect(derivePlanProposalStatus(proposal, active)).toBe(expected);
   });

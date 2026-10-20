@@ -32,7 +32,7 @@ export function createArchitectureReminderFactsReader(deps: {
       if (revision.status !== 'ready') return revision;
       const facts = await deps.observed.readReminderFacts(ctx, {
         workspace,
-        catalog: revision.value.catalog?.catalog ?? null,
+        catalog: revision.value.catalog.catalog,
       });
       if (ctx.signal.aborted) return cancelled();
       return facts;

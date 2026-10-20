@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 // ------------------------------------------------------------------------ //
 // Orthogonal Task dimensions (completion-policy.md §1 — never merged)      //
 // ------------------------------------------------------------------------ //
@@ -218,13 +217,11 @@ type PlanRevisionDraftBase = {
     taskHierarchy: TaskHierarchy;
     executionDag: RuntimeExecutionDAG;
 };
-/** V1 stays byte-compatible; V2 alone carries advisory relations and exact inputs. */
-export type PlanRevisionDraft =
-    | (PlanRevisionDraftBase & { schemaVersion: 1 })
-    | (PlanRevisionDraftBase & { schemaVersion: 2;
+/** The current draft carries advisory relations and exact inputs. */
+export type PlanRevisionDraft = PlanRevisionDraftBase & { schemaVersion: 2;
         taskRelations?: TaskRelationV2[];
         inputRequirements?: TaskInputRequirementV2[];
-    });
+    };
 // ------------------------------------------------------------------------ //
 // PlanValidationError                                                        //
 // ------------------------------------------------------------------------ //
@@ -260,16 +257,14 @@ type PlanRevisionSnapshotBase = {
     taskHierarchy: TaskHierarchy;
     executionDag: RuntimeExecutionDAG;
 };
-export type PlanRevisionSnapshot =
-    | (PlanRevisionSnapshotBase & { schemaVersion: 1 })
-    | (PlanRevisionSnapshotBase & { schemaVersion: 2;
+export type PlanRevisionSnapshot = PlanRevisionSnapshotBase & { schemaVersion: 2;
         taskRelations?: TaskRelationV2[];
         inputRequirements?: TaskInputRequirementV2[];
         /** W1 compiler-owned; absent means every Task points at this Plan. */
         taskStateBasis?: TaskStateBasisV1;
         /** C7 compiler-owned latest disposition change per Task; inherited version to version. */
         dispositionRecord?: TaskDispositionRecordV1;
-    });
+    };
 export type PlanRevisionAcceptedEvent = {
     eventId: string;
     eventType: "PlanRevisionAccepted";

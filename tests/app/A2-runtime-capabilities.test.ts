@@ -31,69 +31,32 @@
  * No model is called and no Run is started: the report is a declaration.
  */
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createLocalWorkbenchHost, type LocalWorkbenchHost } from '../../src/app/host.js';
-import { writeAutomationSettings } from '../helpers/A2-restart-fixture.js';
-import {
-  CORE_API_PREFIX,
-  PLATFORM_TOKEN_HEADER,
-  PLATFORM_TOKEN_PLACEHOLDER,
-  type CoreScope,
-  type RuntimeCapabilities,
-  type RuntimeCapabilitiesResponse,
-} from '../../src/app/core-http-types.js';
+import { PLATFORM_TOKEN_HEADER, PLATFORM_TOKEN_PLACEHOLDER, type CoreScope } from '../../src/app/core-http-types.js';
+import { SETTINGS_API_PREFIX } from '../../src/app/host-settings-types.js';
 import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { createRuntimeCapabilitiesFixture } from '../helpers/runtime-capabilities-fixture.js';
 
 const at = '2026-10-05T00:00:00.000Z';
 const scope: CoreScope = { projectId: 'a2-capabilities-project', workspaceId: 'a2-capabilities-workspace' };
 const adapterId = 'a2-capabilities-kernel';
 
-const temporary: string[] = [];
-const hosts: LocalWorkbenchHost[] = [];
-afterEach(async () => {
-  for (const host of hosts.splice(0)) await host.close().catch(() => undefined);
-  for (const directory of temporary.splice(0)) await rm(directory, { recursive: true, force: true });
+const fixture = createRuntimeCapabilitiesFixture({
+  scope, adapterId, actorId: 'a2-capabilities-operator', workspaceName: 'A2 capabilities workspace',
+  storeKey: 'a2-capabilities-store', now: () => at,
 });
+const { directory, startHost, readCapabilities } = fixture;
+afterEach(async () => { await fixture.cleanup(); });
 
-async function directory(prefix: string): Promise<string> {
-  const created = await mkdtemp(join(tmpdir(), prefix));
-  temporary.push(created);
-  return created;
-}
-
-/** A real Host over SQLite whose workspace has a configured Kernel store; the
- * page is a minimal index that only carries the per-instance token. */
-async function startHost(paths: { publicDir: string; root: string; database: string }): Promise<{ host: LocalWorkbenchHost; origin: string; token: string }> {
-  const host = await createLocalWorkbenchHost({
-    storage: { kind: 'sqlite', directory: paths.database },
-    actor: { kind: 'human', id: 'a2-capabilities-operator' },
-    publicDir: paths.publicDir,
-    now: () => at,
-    workspaces: [{ scope, name: 'A2 capabilities workspace', root: paths.root, workspaceRevision: 1, readPrefixes: ['.'] }],
-    kernelStores: { entries: [{ adapterId, storeKey: 'a2-capabilities-store', workspace: scope,
-      databasePath: join(paths.database, 'kernel.sqlite') }] },
-  });
-  hosts.push(host);
-  const address = await host.listen(0);
-  const page = await (await fetch(address.url)).text();
-  const token = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(page)?.[1];
-  if (token === undefined) throw new Error('the page did not carry the token');
-  return { host, origin: `http://${address.host}:${address.port}`, token };
-}
-
-async function readCapabilities(origin: string, token: string): Promise<RuntimeCapabilities> {
-  const response = await fetch(new URL(`${CORE_API_PREFIX}runtime/capabilities`, origin), {
+async function postSettings(origin: string, token: string, suffix: string, body: unknown): Promise<Record<string, unknown>> {
+  const response = await fetch(new URL(SETTINGS_API_PREFIX + suffix, origin), {
     method: 'POST',
     headers: { 'content-type': 'application/json', [PLATFORM_TOKEN_HEADER]: token },
-    body: JSON.stringify({ scope, input: scope }),
+    body: JSON.stringify(body),
   });
   expect(response.status).toBe(200);
-  const result = await response.json() as RuntimeCapabilitiesResponse;
-  expect(result.status).toBe('ready');
-  if (result.status !== 'ready') throw new Error('the capability report must be ready');
-  return result.value;
+  return await response.json() as Record<string, unknown>;
 }
 
 function expectAllIn(reason: string, phrases: readonly string[]): void {
@@ -241,7 +204,12 @@ it('says in the recoverRun reason that this Host has the setting automation.resu
   await writeFile(join(paths.publicDir, 'index.html'),
     `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   // The Host installs `automation` from its private settings at start (C8 wiring, 5.6).
-  await writeAutomationSettings(paths.database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+  // Reach the stored setting the way a person does: save it through the published
+  // Host settings route, close that Host, then start the Host under test.
+  const configureOff = await startHost(paths);
+  expect((await postSettings(configureOff.origin, configureOff.token, 'automation/save',
+    { autoReworkLimit: 3, resumeOnStartup: false })).status).toBe('ready');
+  await configureOff.host.close();
   const off = await startHost(paths);
   // The start-up reconciliation ran on this Host (it holds the instance lease); the setting only
   // decides whether a driver starts after it.
@@ -259,7 +227,10 @@ it('says in the recoverRun reason that this Host has the setting automation.resu
   await off.host.close();
 
   // The same ledger with the setting back on: the sentence is gone and nothing else differs.
-  await writeAutomationSettings(paths.database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true });
+  const configureOn = await startHost(paths);
+  expect((await postSettings(configureOn.origin, configureOn.token, 'automation/save',
+    { autoReworkLimit: 3, resumeOnStartup: true })).status).toBe('ready');
+  await configureOn.host.close();
   const on = await startHost(paths);
   const onReport = await readCapabilities(on.origin, on.token);
   expectAllIn(onReport.recoverRun.reason, RECOVER_RUN_BOUNDARIES);

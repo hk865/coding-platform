@@ -1,7 +1,7 @@
 /**
  * Slice 2B round-2 fix helpers (R4/R5/R7/R8). Nothing here writes a record
  * except `seedActivityRun`/`authorizeOnlyRun`, which build the shapes the
- * accepted fixtures cannot reach: a Run with a V1 authorization, a Run with a
+ * accepted fixtures cannot reach: a Run with a V2 authorization, a Run with a
  * position record but no activity record, and a `starting` Run that is
  * authorized but not yet entered. Everything else goes through the public
  * reads/services.
@@ -10,7 +10,7 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
 import type { RunExecutionHistoryV1 } from '../../src/contracts/core/execution-history.js';
 import type {
-  ExecutionAuthorizationV1, ExecutionAuthorizationV2, RunOutcome, RunRef, RunSnapshot, RunStatus,
+  ExecutionAuthorizationV2, RunOutcome, RunRef, RunSnapshot, RunStatus,
 } from '../../src/contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
@@ -40,7 +40,7 @@ export function activityGoalExecutedFiles(
 export type SeededActivityRun = {
   taskId: string; runId: string; status: RunStatus; outcome?: RunOutcome | null;
   startedAt: string | null; endedAt: string | null;
-  authorization?: ExecutionAuthorizationV1 | ExecutionAuthorizationV2;
+  authorization?: ExecutionAuthorizationV2;
   history?: RunExecutionHistoryV1;
 };
 

@@ -3,10 +3,9 @@
  *
  * Responsibility of THIS file:
  *  - own the PURE strict validators for the versioned nested facts carried by
- *    the existing @1 bodies: `ExecutionAuthorizationV2`, the retained
- *    `ExecutionAuthorizationV1` compatibility shape, `RuntimeInputBindingV1`,
- *    `TaskLeaseReleaseV1`, the @1 TaskLease snapshot including its optional
- *    release, and `TaskDispatchStateV1`/`TaskDispatchStateV2`;
+ *    the existing @1 bodies: `ExecutionAuthorizationV2`,
+ *    `RuntimeInputBindingV1`, `TaskLeaseReleaseV1`, the @1 TaskLease snapshot
+ *    including its optional release, and `TaskDispatchStateV2`;
  *  - own the A.2 Run nested-fact validators used by the Run reader:
  *    `RuntimeEventV1`, `RunSnapshot.terminalPayload` and `RunReconciliationV1`
  *    (spec §6.1 (a), (f));
@@ -14,8 +13,7 @@
  *
  * It does NOT register a second Run/Attempt/outbox/Lease schema: those
  * aggregate types are owned elsewhere and a duplicate registration is a real
- * conflict. A legacy V1 authorization is readable for history, but it is never
- * upgraded into a fresh begin permission here.
+ * conflict.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import {
@@ -36,13 +34,12 @@ import {
   hasOnlyKeys, invalid, isNonNeg as isNonNegativeSafeInteger, isPos as isPositiveSafeInteger,
   isRecord as isJsonObject, isSha256Hex, nonEmpty, parseObject,
 } from '../../../contracts/validation/common.js';
-import type { TaskDispatchStateV1 } from '../model/claim-contracts.js';
 import type { RuntimeEntryRecord, TaskEntryPermit } from '../model/execution-entry-contracts.js';
 import { encodeEventEnvelope } from './event-envelope.js';
 import { controlIntentRefProblem } from './rework-codecs.js';
 import { RUN_ACTIVITY_RECORD_SCHEMAS } from './run-activity-codecs.js';
 
-export type { ExecutionAuthorizationV2, TaskDispatchStateV1, TaskDispatchStateV2, TaskLeaseReleaseV1 };
+export type { ExecutionAuthorizationV2, TaskDispatchStateV2, TaskLeaseReleaseV1 };
 
 export const EXECUTION_ENTRY_EVENT_SCHEMA_VERSION = 1 as const;
 export const EXECUTION_ENTRY_AUTHORIZED_EVENT_TYPE = 'ExecutionEntryAuthorized' as const;
@@ -90,7 +87,6 @@ function kernelBindingProblem(value: unknown): string | null {
   return null;
 }
 
-const V1_PHASES: readonly string[] = ['authorized', 'entered', 'revoked', 'quarantined', 'settled'];
 const V2_PHASES: readonly string[] = ['authorized', 'entering', 'entered', 'unknown', 'revoked', 'settled'];
 
 // --------------------------------------------------------------------------
@@ -126,27 +122,15 @@ export function isExecutionAuthorizationV2(value: unknown): value is ExecutionAu
   return executionAuthorizationV2Problem(value) === null;
 }
 
-function executionAuthorizationV1Problem(value: unknown): string | null {
-  if (!isJsonObject(value)) return 'executionAuthorization must be an object';
-  if (!hasOnlyKeys(value, ['generation', 'consumerId', 'phase'])) {
-    return 'legacy executionAuthorization carries unknown fields';
-  }
-  if (!isPositiveSafeInteger(value['generation'])) return 'legacy executionAuthorization generation must be a positive safe integer';
-  if (!nonEmpty(value['consumerId'])) return 'legacy executionAuthorization consumerId is required';
-  if (!V1_PHASES.includes(value['phase'] as string)) return 'legacy executionAuthorization phase is not recognized';
-  return null;
-}
-
 /**
  * Run-level authorization validator. `undefined` is a historical Run with no
- * entry binding and stays readable; a V2 is strict; a legacy V1 is readable for
- * history but carries no fresh begin permission.
+ * entry binding and stays readable; a V2 is strict. An object without a V2
+ * `schemaVersion` is damaged, not historical.
  */
 export function runExecutionAuthorizationProblem(value: unknown): string | null {
   if (value === undefined) return null;
   if (!isJsonObject(value)) return 'executionAuthorization must be an object';
-  if ('schemaVersion' in value) return executionAuthorizationV2Problem(value);
-  return executionAuthorizationV1Problem(value);
+  return executionAuthorizationV2Problem(value);
 }
 
 // --------------------------------------------------------------------------

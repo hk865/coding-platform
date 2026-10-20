@@ -168,7 +168,11 @@ export function emptyView(
     recordedBy: null, recordedAt: null, countedThroughTurnEnd: null, unresolvedCalls: null };
 }
 
-/** L17: the claiming Session is the history's, else the dispatch claim's, else null. */
+/**
+ * L17: the claiming Session is the history's, else the dispatch claim's. The
+ * claim commits the Run and its dispatch record together, so a missing dispatch
+ * record is `unavailable`, carrying the dispatch ref key (W2b-57, HANDOFF 79-1).
+ */
 export async function claimingSessionOf(
   records: ReadRecords,
   run: RunSnapshot,
@@ -178,8 +182,9 @@ export async function claimingSessionOf(
   if (history !== undefined && history !== null) return history.sessionRef;
   const ref: DispatchOutboxRef = { aggregateType: 'DispatchOutboxEntry', projectId: run.ref.projectId,
     goalId: run.ref.goalId, taskId: run.task.taskId, attemptId: run.attemptId };
-  const record = await readOneKeyed(records, dispatchOutboxRefKey(ref), budget);
-  if (record === undefined) return null;
+  const refKey = dispatchOutboxRefKey(ref);
+  const record = await readOneKeyed(records, refKey, budget);
+  if (record === undefined) throw rejected('unavailable', `dispatch claim ${refKey} is missing`);
   const decoded = decodeDispatchOutboxEntry(record);
   if (decoded.status !== 'decoded') throw rejected('unavailable', `dispatch claim ${record.refKey}: ${decoded.reason}`);
   return decoded.value.claim.sessionRef;

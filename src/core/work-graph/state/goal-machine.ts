@@ -83,10 +83,9 @@ export function goalControlTarget(control: GoalControl): GoalDesiredState {
 
 /**
  * GOAL-01: Goal@1, `active`, no plan (the pre-step-3 `commit-compiler.ts:113-120`
- * literal, same key order). The two D-9 fields are absent, which the contract reads as
+ * literal, same key order). The two D-9 fields carry their creation values:
  * `desiredStateRevision` 1 and `desiredStateRequestedBy` null (`ledger.ts`);
- * `encodeGoalSnapshot` writes this pre-A.2 shape for an unchanged Goal anyway,
- * and a fresh commit returns this value as is (`graph-repository.ts:319`).
+ * a fresh commit returns this value as is (`graph-repository.ts:319`).
  */
 export function newGoalSnapshot(input: { ref: GoalRef; workspaceRef: WorkspaceRef; objective: string }): GoalSnapshot {
   return {
@@ -94,6 +93,8 @@ export function newGoalSnapshot(input: { ref: GoalRef; workspaceRef: WorkspaceRe
     workspaceRef: input.workspaceRef,
     objective: input.objective,
     desiredState: 'active',
+    desiredStateRevision: 1,
+    desiredStateRequestedBy: null,
     activePlanRevision: null,
     revision: 1,
   };
@@ -193,10 +194,10 @@ export function goalStateOf(goal: GoalSnapshot | null, goalPhase: GoalPhaseSnaps
     return { node: 'absent', desiredStateRevision: 0, activePlanRef: null, completion, desiredStateRequestedByClass: null,
       goal: null, goalPhase };
   }
-  const requestedBy = goal.desiredStateRequestedBy ?? null;
+  const requestedBy = goal.desiredStateRequestedBy;
   return {
     node: goal.desiredState,
-    desiredStateRevision: goal.desiredStateRevision ?? 1,
+    desiredStateRevision: goal.desiredStateRevision,
     activePlanRef: pointer,
     completion,
     desiredStateRequestedByClass: requestedBy === null ? null : reworkActorClassOf(null, requestedBy),
@@ -648,7 +649,7 @@ export function findGoalResumeContinuations(input: {
     default:
       return unreachable(goal.desiredState, 'goal desired state');
   }
-  const resumedEpoch = goal.desiredStateRevision ?? 1;
+  const resumedEpoch = goal.desiredStateRevision;
   const continuations: GoalResumeContinuationV1[] = [];
   for (const task of input.tasks) {
     const run = task.selectedRun;

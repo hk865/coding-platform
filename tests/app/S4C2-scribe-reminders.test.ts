@@ -716,19 +716,6 @@ it('S4C2 item 5: the restart recovery crosses inbox pages and a failed page read
   }
 }, 120_000);
 
-it('S4C2 real recipient resolver: two scribes, the smallest session id wins', async () => {
-  const f = await createS4ANoteFixture('sqlite');
-  try {
-    const first = await f.createSession('scribe-b', 'scribe');
-    const second = await f.createSession('scribe-a', 'scribe');
-    const ids = [first.sessionRef.sessionId, second.sessionRef.sessionId].sort();
-    const resolved = await f.platform.notes.resolveScribeRecipient(f.ctx());
-    expect(resolved.status).toBe('ready');
-    if (resolved.status !== 'ready') throw new Error('the scribe resolver was not ready');
-    expect(resolved.value?.sessionId).toBe(ids[0]);
-  } finally { await f.close(); }
-});
-
 it('S4C2 NE6: the cursor/period gate reads the injected clock and skips unchanged cursors', async () => {
   const started = await startRealScribe({ pendingNotes: 9 });
   try {

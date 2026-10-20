@@ -53,9 +53,10 @@ import type { PlanProposal } from '../../../src/core/work-graph/model/plan-contr
 import type { GraphWrite } from '../../../src/core/work-graph/model/task-contracts.js';
 import type { SubmitQueryJobInput } from '../../../src/core/work-graph/queries/contracts.js';
 import type { ScriptedReply } from '../../helpers/B2-runtime-fixture.js';
-import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING,
-  ag2bPlanDraft, permissionRevision } from '../../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_GOAL_REF, AG2B_QUERY_ROLE_BINDING, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_TASK_ID,
+  AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, ag2bPlanDraft, permissionRevision } from '../../helpers/AG2b-collaboration-fixture.js';
 import { draftFrom } from './common.js';
+import { preparationHost, prepareTaskForReal } from '../../helpers/task-claim-fixture.js';
 
 /**
  * SC02's three business Runs. Run 2 really writes a new source basis before
@@ -233,6 +234,7 @@ export async function submitRootQuery(platform: Platform, ctx: CoreCallContext,
     schemaVersion: 1, intentId: input.queryJobId, projectId: S5_SCOPE.projectId, workspaceId: S5_SCOPE.workspaceId,
     goalId: input.goalRef.goalId, question: input.question, focusTaskRefs: [],
     budget: { maxTokens: null, deadline: null }, multiTurn: { maxRounds: 1 }, correlationId: `s5-${input.queryJobId}`,
+    execution: { kind: 'semantic_query', roleBinding: AG2B_QUERY_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET },
   };
   const request: GraphWrite<SubmitQueryJobInput> = {
     input: { queryJobId: input.queryJobId, runId: input.runId, intent },
@@ -379,18 +381,6 @@ export async function seedTwoRequestWorld(h: PlatformScenario): Promise<TwoReque
 export function readRequestCandidate(platform: Platform, ctx: CoreCallContext, goalRef: GoalRef,
   requestRef: QueryJobRef): ReturnType<Platform['requestCandidates']['readRequestCandidate']> {
   return platform.requestCandidates.readRequestCandidate(ctx, { goalRef, requestRef });
-}
-
-/** `plans/abandon`: SPEC §3.3 line 625 pins proposal + Goal. */
-export async function abandonCandidate(platform: Platform, ctx: CoreCallContext, input: {
-  proposal: PlanProposal; requestId: string;
-}): ReturnType<Platform['requestCandidates']['abandonPlanProposal']> {
-  const goalPin = await s5GoalPin(platform, ctx, input.proposal.goalRef);
-  return platform.requestCandidates.abandonPlanProposal(ctx, {
-    input: { proposalRef: input.proposal.ref },
-    meta: { requestId: input.requestId, expected: [
-      { ref: input.proposal.ref, revision: input.proposal.revision }, goalPin] },
-  });
 }
 
 /** `decisions/answer`: the finite Workflow coordination entry (free text + annotations). */
@@ -544,7 +534,7 @@ export async function s5AgentRequeue(h: HostScenario, afterRunRef: RunRef) {
   const bodies = createSqliteRawArtifactStore(join(h.database, 'artifacts.sqlite'));
   const now = () => '2026-10-08T00:00:00.000Z';
   const permissions: TaskEnvelopeV1['permissions'] = {
-    policyRevision: 's5-aux-grant@1', tools: ['read', 'requeue_task'], writeScope: [],
+    policyRevision: 'legacy-template', tools: ['read', 'requeue_task'], writeScope: [],
   };
   const hostTemplate = { templateId: AG2B_WORK_ROLE.templateId, revision: AG2B_WORK_ROLE.templateRevision,
     digest: artifactBodyDigest('S5 auxiliary requeue admission') };
@@ -562,32 +552,10 @@ export async function s5AgentRequeue(h: HostScenario, afterRunRef: RunRef) {
     const records = backend.records;
     const reads = createRunStateReader({ records, bodies });
     const roles = createRoleConfigurationService({ records, now, eventId: randomUUID });
-    const roleFacts = await roles.resolveRoleBindingFacts(ctx,
-      { roleBinding: AG2B_WORK_ROLE_BINDING, declaredPermissions: permissions });
-    const role = mustReady('auxiliary role', roleFacts.result);
-    const input = 'Requeue the failed Task A through the delegated owner.';
-    const inputDigest = artifactBodyDigest(input);
-    const workspaceSnapshot = { workspaceId: S5_SCOPE.workspaceId, revision: pins.workspace.revision };
-    const manifest: PreparedTaskManifestV1 = {
-      schemaVersion: 1, kind: 'task_execution', claim, role, hostTemplate,
-      roleBinding: AG2B_WORK_ROLE_BINDING, hostConfigurationRevision: 's5-aux-host@1',
-      sessionRole: created.value.role, workspaceSnapshot, permissions, budget,
-      selectedTaskInputs: [], materialBasis: null, materialAccessRefs: [], additionalMaterialRefs: [],
-      deliveryRefs: [], sourceRefs: [], input, inputDigest,
-    };
-    const manifestJson = JSON.stringify(manifest);
-    const stored = await bodies.put({ body: manifestJson,
-      contentType: MANIFEST_CONTENT_TYPE,
-      sourceRefs: [{ kind: 'workspace', refId: S5_SCOPE.workspaceId, revision: String(workspaceSnapshot.revision) }],
-      origin: { kind: 'run', owner: claim.runRef }, requestedAt: now() });
-    if (stored.status !== 'ready') throw new Error(`auxiliary manifest: ${JSON.stringify(stored)}`);
-    const prepared: PreparedTaskExecution = { kind: 'task', claim,
-      envelope: { schemaVersion: 1, envelopeId: 's5-aux-envelope', ...S5_SCOPE,
-        goalId: S5_GOAL_A.goalId, taskId: S5_WORK_TASK_A2, runRef: claim.runRef, attemptRef: claim.attemptRef,
-        planRef: claim.planRef, roleBinding: AG2B_WORK_ROLE_BINDING, workspaceSnapshot, permissions,
-        budget, sourceRefs: [], bundleRef: stored.value.ref },
-      inputBinding: { schemaVersion: 1, inputDigest, manifestDigest: artifactBodyDigest(manifestJson),
-        materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [] } };
+    const prepared = (await prepareTaskForReal({ records, ctx }, {
+      bodies, runRef: claim.runRef, now, requestId: 's5-aux-prepare',
+      host: preparationHost({ configurationRevision: 's5-aux-host@1', permissions, hostTemplate }),
+    })).prepared;
     const entry = createExecutionEntryService({ records, reads, roles, bodies, authorizeConfiguration,
       now, eventId: randomUUID, newId: randomUUID });
     const runPin = async (): Promise<VersionPin> => {

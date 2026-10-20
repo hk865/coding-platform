@@ -651,7 +651,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     if (needsCatalog) {
       const read = await currentArchitecture(ctx, caches);
       if (!read.ok) return read;
-      modules = read.value?.catalog?.catalog.modules ?? null;
+      modules = read.value?.catalog.catalog.modules ?? null;
     }
 
     const retirementOf = async (anchor: NoteAnchorV1): Promise<Outcome<StaleReason[]>> => {
@@ -774,11 +774,11 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       const current = await currentArchitecture(ctx, caches);
       if (!current.ok) return current;
       if (current.value === null) return { ok: true, value: { staleReasons, unchecked: true } };
-      const currentModules = current.value.catalog?.catalog.modules ?? null;
+      const currentModules = current.value.catalog.catalog.modules ?? null;
       const basis = await architectureRevision(ctx, body.basis.catalogRevision, caches);
       if (!basis.ok) return basis;
       if (basis.value === null) return { ok: true, value: { staleReasons, unchecked: true } };
-      const basisModules = basis.value.catalog?.catalog.modules ?? null;
+      const basisModules = basis.value.catalog.catalog.modules ?? null;
       for (const anchor of anchors) {
         if (anchor.kind === 'module') {
           const before = basisModules === null ? undefined : moduleIn(basisModules, anchor.moduleId);
@@ -865,7 +865,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     if (moduleAnchors.length > 0 || fileAnchors.length > 0) {
       const read = await currentArchitecture(ctx, caches);
       if (!read.ok) return read;
-      catalog = read.value?.catalog?.catalog ?? null;
+      catalog = read.value?.catalog.catalog ?? null;
     }
     const attributedModuleOf = (path: string): string | null => catalog === null ? null
       : mapExecutedFilesToModules(catalog, [{ path, certainty: 'definite' as const }])[0]?.moduleRef?.moduleId ?? null;

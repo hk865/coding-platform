@@ -166,13 +166,33 @@ describe('reviewRoundAdmissionProblem', () => {
     })).toBe('readonly_command_access_not_full');
   });
 
-  it('still admits a review-phase review purpose with the fixed set', () => {
-    expect(reviewRoundAdmissionProblem({ ...admissible(), purpose: { ...reviewPurpose, phase: 'review' } })).toBeNull();
-  });
-
   it('still refuses a review-phase review purpose with the proposal tool set', () => {
     expect(reviewRoundAdmissionProblem({
       ...admissible(), tools: [...UNKNOWN_CALL_PROPOSAL_ROUND_TOOL_NAMES],
+    })).toBe('tool_set_mismatch');
+  });
+
+  it('refuses an ordinary prepared manifest under a review purpose', () => {
+    // An ordinary Work prepare would carry exploration/shell/edit names; a
+    // review purpose can never be paired with that manifest by the real path.
+    expect(reviewRoundAdmissionProblem({
+      ...admissible(), tools: ['read', 'run_readonly_command', 'shell', 'edit'],
+    })).toBe('tool_set_mismatch');
+  });
+
+  it('refuses a proposal-purpose manifest that misses the proposal write tool', () => {
+    expect(reviewRoundAdmissionProblem({
+      ...admissible(),
+      purpose: { ...reviewPurpose, phase: 'proposal' } as RunSnapshot['purpose'],
+      tools: ['read', 'run_readonly_command'],
+    })).toBe('tool_set_mismatch');
+  });
+
+  it('refuses a proposal-purpose manifest with one extra tool', () => {
+    expect(reviewRoundAdmissionProblem({
+      ...admissible(),
+      purpose: { ...reviewPurpose, phase: 'proposal' } as RunSnapshot['purpose'],
+      tools: [...UNKNOWN_CALL_PROPOSAL_ROUND_TOOL_NAMES, 'shell'],
     })).toBe('tool_set_mismatch');
   });
 

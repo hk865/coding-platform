@@ -20,7 +20,7 @@ it.each(['memory', 'sqlite'] as const)('%s: an unregistered Run/Lease/Reduction 
   try {
     const goalRef = { aggregateType: 'Goal' as const, projectId: 'task-facts', goalId: 'goal-1' };
     const plan: PlanRevisionSnapshot = { ref: { aggregateType: 'PlanRevision', projectId: 'task-facts', planId: 'plan-1' },
-      revision: 1, schemaVersion: 1, goalRef, planId: 'plan-1', planRevision: 1,
+      revision: 1, schemaVersion: 2, goalRef, planId: 'plan-1', planRevision: 1,
       acceptedAt: '2026-09-24T00:00:00.000Z',
       effectiveCompletionPolicy: { ref: { aggregateType: 'CompletionPolicyRevision', projectId: 'task-facts',
         policyId: 'policy-1', revision: 1 }, digest: 'a'.repeat(64) },

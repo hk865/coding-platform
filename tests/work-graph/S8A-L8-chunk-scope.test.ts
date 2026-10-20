@@ -147,7 +147,7 @@ function runtimeHost(): RuntimeHostBindings {
  * the Goal gate, as the public `plans/propose` body real callers send. */
 function planDraft(goalId: string, planId: string, moduleId: string | null): PlanRevisionDraft {
   return {
-    schemaVersion: 1, planId, planRevision: 1, goalId, stages: [{ stageId: 'stage-a', title: 'A' }],
+    schemaVersion: 2, planId, planRevision: 1, goalId, stages: [{ stageId: 'stage-a', title: 'A' }],
     tasks: [
       { taskId: 'task-a', stageId: 'stage-a', title: 'Chunk scope work', requirementLevel: 'required',
         taskKind: 'work', disposition: 'active', phase: 'pending',

@@ -1,12 +1,11 @@
 /**
  * Slice 2B round-2 R7: keyed reads charge one storage read per requested key,
- * including misses (absent activity record, absent recording epoch, absent
- * dispatch claim). Each boundary is hand-counted from L17; the read with the
- * exact cap is `ready` and one read less is `capacity`.
+ * including misses (absent activity record, absent recording epoch). Each
+ * boundary is hand-counted from L17; the read with the exact cap is `ready` and
+ * one read less is `capacity`.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { openS2BActivityFixture, type S2BActivityFixture } from '../helpers/S2B-activity-fixture.js';
-import { seedActivityRun } from '../helpers/S2B-r2-activity-support.js';
 
 const opened: S2BActivityFixture[] = [];
 afterEach(async () => { for (const fixture of opened.splice(0)) await fixture.close(); });
@@ -55,24 +54,6 @@ describe.each(['memory', 'sqlite'] as const)('S2B round-2 keyed read cap (%s)', 
     expect(await f.readModelWith(f.records, cap).readActivityCalendar(f.ctx, input))
       .toMatchObject({ status: 'ready' });
     expect(await f.readModelWith(f.records, cap - 1).readActivityCalendar(f.ctx, input))
-      .toMatchObject({ status: 'rejected', code: 'capacity' });
-  });
-
-  it('R7 readActivityCalendar charges an absent dispatch claim for an unplaced Run', async () => {
-    const f = await open(kind);
-    const session = f.b2.base.sessions.second;
-    // The §7 legacy old Run shape: no history locator and no dispatch claim, so
-    // `sessionRefs` forces the claiming-Session keyed miss.
-    // Reads: Goal (1) + epoch miss (1) + Run index row (1) + activity miss (1)
-    // + dispatch miss (1) + the fixture's two open starting Runs (2) = 7.
-    await seedActivityRun(f, { taskId: 'work-1', runId: 's2b-r2-unplaced', status: 'ended', outcome: 'failed',
-      startedAt: null, endedAt: '2026-10-14T10:15:00.000Z' });
-    const input = { goalRef: f.goalRef, from: '2026-10-14T10:00:00.000Z', to: '2026-10-14T11:00:00.000Z',
-      granularity: 'hour' as const, timeZone: 'UTC', sessionRefs: [session] };
-
-    expect(await f.readModelWith(f.records, 7).readActivityCalendar(f.ctx, input))
-      .toMatchObject({ status: 'ready' });
-    expect(await f.readModelWith(f.records, 6).readActivityCalendar(f.ctx, input))
       .toMatchObject({ status: 'rejected', code: 'capacity' });
   });
 });

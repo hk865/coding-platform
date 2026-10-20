@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 /**
  * Retained TaskEnvelope data format (versioned execution binding).
  * Target ownership: WorkGraph accepted facts; AgentRuntime consumes the binding.

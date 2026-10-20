@@ -18,11 +18,10 @@ import type {
   ModuleRef, SessionRef, VersionPin, WorkLinkRelation, WorkLinkTarget, WorkspaceScope,
 } from '../../src/contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
-import type { SessionRecord } from '../../src/contracts/core/session.js';
 import type { ArchitectureBaselineRevisionRef, CompletionPolicyRevisionRef } from '../../src/contracts/governance.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { GoalRef, ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
-import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
+import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
 import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas, RecordGuard,
   StoreCommitReceipt,
@@ -31,16 +30,21 @@ import type { LookupValue, RecordLookupPort } from '../../src/core/record-store/
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import {
-  GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeGoalSnapshot, encodeProjectSnapshot, encodeWorkspaceSnapshot,
+  GOAL_RECORD_SCHEMAS,
 } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
+import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import {
-  SESSION_RECORD_SCHEMAS, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
+  SESSION_RECORD_SCHEMAS, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
@@ -58,11 +62,11 @@ import type { SessionLifecyclePort } from '../../src/core/work-graph/sessions/li
 import type { GraphWrite as SessionGraphWrite } from '../../src/core/work-graph/model/session-contracts.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 
-export const GRAPH_FIXTURE_AT = '2026-09-24T00:00:00.000Z';
+const GRAPH_FIXTURE_AT = '2026-09-24T00:00:00.000Z';
 export const GRAPH_MODULE_ONE = 'work-graph';
 export const GRAPH_MODULE_TWO = 'record-store';
 
-export type GraphFixtureKind = 'memory' | 'sqlite';
+type GraphFixtureKind = 'memory' | 'sqlite';
 
 /** Counts the physical calls made through the injected records port. Fixture
  * setup uses the raw backend, so a spy read after `resetSpy()` reflects one
@@ -80,13 +84,13 @@ export type GraphRecordSpy = {
 
 export type GraphRecords = GoalRecordTransactionPort & RecordLookupPort;
 
-export type GraphAcceptedTask = {
+type GraphAcceptedTask = {
   goalRef: GoalRef;
   planRef: PlanRevisionRef;
   taskRef: { projectId: string; goalId: string; taskId: string };
 };
 
-export type GraphSessionConnection = {
+type GraphSessionConnection = {
   records: GraphRecords;
   catalog: ArchitectureCatalogPort;
   lifecycle: SessionLifecyclePort;
@@ -122,16 +126,7 @@ export type GraphSessionFixture = {
     requestId: string,
     initialLinks?: { target: WorkLinkTarget; relation: WorkLinkRelation }[],
   ): Promise<SessionRef>;
-  /** Trusted fixture seed of a baseline + active pointer with NO catalog row;
-   * used to prove the historical `catalog: null` read path. */
-  seedLegacyArchitectureBaseline(baselineId?: string): Promise<ArchitectureBaselineRevisionRef>;
-  /** Trusted fixture seed with a shape-valid but digest-inconsistent baseline;
-   * such a record is stored successfully but must never be read as healthy. */
-  seedTamperedArchitectureBaseline(baselineId?: string): Promise<ArchitectureBaselineRevisionRef>;
   seedAcceptedTask(): Promise<GraphAcceptedTask>;
-  /** Test-only direct rewrite of one Session (e.g. to set occupancy); never used
-   * to fabricate an archive/reactivate result. */
-  overwriteSession(ref: SessionRef, mutate: (record: SessionRecord) => SessionRecord): Promise<SessionRecord>;
   commitRaw(records: readonly EncodedRecord[], guards?: readonly RecordGuard[]): Promise<StoreCommitReceipt>;
   resetSpy(): void;
   failNextWrite(): void;
@@ -193,23 +188,6 @@ function wrapRecords(target: GraphRecords, spy: GraphRecordSpy): GraphRecords {
   };
 }
 
-export const encodeGraphGovernance = (
-  snapshot:
-    | { ref: CompletionPolicyRevisionRef; revision: number; schemaVersion: number; policyId: string;
-        contentRevision: number; contentDigest: string; content: unknown }
-    | { ref: ArchitectureBaselineRevisionRef; revision: number; schemaVersion: number; baselineId: string;
-        contentRevision: number; contentDigest: string; content: unknown }
-    | { ref: { aggregateType: 'ProjectCompletionPolicyActive'; projectId: string }; projectId: string;
-        revision: number; activeRevision: CompletionPolicyRevisionRef }
-    | { ref: { aggregateType: 'ProjectArchitectureBaselineActive'; projectId: string }; projectId: string;
-        revision: number; activeRevision: ArchitectureBaselineRevisionRef },
-): EncodedRecord => ({
-  refKey: canonicalJson(snapshot.ref as unknown as JsonValue),
-  schemaId: `${snapshot.ref.aggregateType}Snapshot@1`,
-  revision: snapshot.revision,
-  json: JSON.stringify(snapshot),
-});
-
 /** Caller pins, not writer-invented optimistic defaults. Revision zero denotes
  * an absent link in CommandMeta; the Store CAS translates it to null. */
 export async function linkRequest(f: GraphSessionFixture, sessionRef: SessionRef, target: WorkLinkTarget,
@@ -269,6 +247,8 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...TASK_CLAIM_RECORD_SCHEMAS.records,
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records,
       ...ROLE_RECORD_SCHEMAS.records,
+      ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records,
+      ...CONTROL_RECORD_SCHEMAS.records,
       ...materialRecordSchemas().records.filter(schema => schema.aggregateType === 'Run'),
     ],
     events: [
@@ -281,6 +261,8 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...TASK_CLAIM_RECORD_SCHEMAS.events,
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events,
+      ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events,
+      ...CONTROL_RECORD_SCHEMAS.events,
       { eventType: 'TrustedScopeSeeded', schemaVersion: 1,
         validate: event => ({ status: 'decoded', value: event }) },
     ],
@@ -319,36 +301,43 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
   const kernelAdapterId = 'a1-graph-kernel';
   const kernelStoreKey = 'a1-graph-kernel-store';
 
-  // ---- trusted scope seed: Project/Workspace + CompletionPolicy only ---------
+  // ---- trusted scope seed through the REAL public bootstrap steps -----------
   const policyRef: CompletionPolicyRevisionRef = {
     aggregateType: 'CompletionPolicyRevision', projectId, policyId: 'a1-policy', revision: 1,
   };
-  const policyFixture = { schemaVersion: 1, identity: { policyId: 'a1-policy' }, revision: 1,
-    content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } };
-  const policySnapshot = { ref: policyRef, revision: 1, schemaVersion: 1, policyId: policyRef.policyId,
-    contentRevision: 1, contentDigest: sha256Hex(canonicalJson(policyFixture as unknown as JsonValue)),
-    content: policyFixture.content };
-  const policyActive = { ref: { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId },
-    projectId, revision: 1, activeRevision: policyRef };
-  const project: ProjectSnapshot = { ref: projectRef, revision: 1 };
-  const workspace: WorkspaceSnapshot = { ref: workspaceRef, revision: 1 };
-  const seedEvent = { eventId: 'a1-graph-scope-seed', eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-    occurredAt: GRAPH_FIXTURE_AT, json: JSON.stringify({ eventId: 'a1-graph-scope-seed',
-      eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: GRAPH_FIXTURE_AT }) };
-  const scopeSeed: PreparedCommit = {
-    identityKey: 'a1-graph-scope-seed', fingerprint: 'a1-graph-scope-seed-v1',
-    guards: [
-      { refKey: canonicalRefKey(projectRef), expectedRevision: null },
-      { refKey: canonicalRefKey(workspaceRef), expectedRevision: null },
-      { refKey: canonicalJson(policyRef as unknown as JsonValue), expectedRevision: null },
-      { refKey: canonicalJson(policyActive.ref as unknown as JsonValue), expectedRevision: null },
-    ],
-    records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace),
-      encodeGraphGovernance(policySnapshot), encodeGraphGovernance(policyActive)],
-    claims: [], events: [seedEvent], indexGuards: [], indexChanges: [],
-  };
-  const seeded = await backend.records.commit(scopeSeed);
-  if (seeded.status !== 'committed') throw new Error(`A1 scope seed failed: ${seeded.reason}`);
+  let bootstrapEventSeq = 0;
+  const bootstrap = createProjectBootstrapServices({
+    records: backend.records,
+    now: () => GRAPH_FIXTURE_AT,
+    eventId: () => `a1-graph-bootstrap-event-${++bootstrapEventSeq}`,
+  });
+  const created = await bootstrap.projects.createProject(ctx, {
+    input: { projectId },
+    meta: { requestId: 'a1-graph-create-project', expected: [{ ref: projectRef, revision: 0 }] },
+  });
+  if (created.status !== 'committed') throw new Error(`A1 project creation failed: ${JSON.stringify(created)}`);
+  const registered = await bootstrap.projects.registerWorkspace(ctx, {
+    input: { workspace: scope },
+    meta: { requestId: 'a1-graph-register-workspace',
+      expected: [{ ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }] },
+  });
+  if (registered.status !== 'committed') throw new Error(`A1 workspace registration failed: ${JSON.stringify(registered)}`);
+  const installed = await bootstrap.completionPolicies.installCompletionPolicy(ctx, {
+    input: { policyId: policyRef.policyId, contentRevision: 1,
+      content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } },
+    meta: { requestId: 'a1-graph-install-policy',
+      expected: [{ ref: projectRef, revision: 1 }, { ref: policyRef, revision: 0 }] },
+  });
+  if (installed.status !== 'committed') throw new Error(`A1 policy installation failed: ${JSON.stringify(installed)}`);
+  // seedAcceptedTask pins the digest the real install wrote (TQ-103 stays BLOCKED).
+  const policySnapshot = installed.value;
+  const activeRef = { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId };
+  const activated = await bootstrap.completionPolicies.activateCompletionPolicy(ctx, {
+    input: { target: { ref: policyRef, digest: policySnapshot.contentDigest } },
+    meta: { requestId: 'a1-graph-activate-policy',
+      expected: [{ ref: projectRef, revision: 1 }, { ref: activeRef, revision: 0 }] },
+  });
+  if (activated.status !== 'committed') throw new Error(`A1 policy activation failed: ${JSON.stringify(activated)}`);
 
   // ---- real services over the real backend ----------------------------------
   const spy = emptySpy();
@@ -400,52 +389,26 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
     return { projectId: registered.value.ref.projectId, sessionId: registered.value.ref.sessionId };
   }
 
-  async function seedLegacyArchitectureBaseline(baselineId = 'a1-legacy-baseline'): Promise<ArchitectureBaselineRevisionRef> {
-    const baselineRef: ArchitectureBaselineRevisionRef = {
-      aggregateType: 'ArchitectureBaselineRevision', projectId, baselineId, revision: 1,
-    };
-    const fixture = { schemaVersion: 1, identity: { baselineId }, revision: 1,
-      content: { schemaVersion: 1, description: 'Legacy baseline without a catalog', constraints: [] } };
-    const snapshot = { ref: baselineRef, revision: 1, schemaVersion: 1, baselineId,
-      contentRevision: 1, contentDigest: sha256Hex(canonicalJson(fixture as unknown as JsonValue)),
-      content: fixture.content };
-    const active = { ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId },
-      projectId, revision: 1, activeRevision: baselineRef };
-    const committed = await commitRaw([encodeGraphGovernance(snapshot), encodeGraphGovernance(active)]);
-    if (committed.status !== 'committed') throw new Error(`A1 legacy baseline seed failed: ${JSON.stringify(committed)}`);
-    return baselineRef;
-  }
-
-  async function seedTamperedArchitectureBaseline(baselineId = 'a1-tampered-baseline'): Promise<ArchitectureBaselineRevisionRef> {
-    const baselineRef: ArchitectureBaselineRevisionRef = {
-      aggregateType: 'ArchitectureBaselineRevision', projectId, baselineId, revision: 1,
-    };
-    const snapshot = { ref: baselineRef, revision: 1, schemaVersion: 1, baselineId,
-      contentRevision: 1, contentDigest: sha256Hex('a1-tampered-digest'),
-      content: { schemaVersion: 1, description: 'Digest does not match the body', constraints: [] } };
-    const active = { ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId },
-      projectId, revision: 1, activeRevision: baselineRef };
-    const committed = await commitRaw([encodeGraphGovernance(snapshot), encodeGraphGovernance(active)]);
-    if (committed.status !== 'committed') throw new Error(`A1 tampered baseline seed failed: ${JSON.stringify(committed)}`);
-    return baselineRef;
-  }
-
   async function seedAcceptedTask(): Promise<GraphAcceptedTask> {
     const goalRef: GoalRef = { aggregateType: 'Goal', projectId, goalId: 'a1-goal' };
     const planRef: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId, planId: 'a1-plan' };
-    const goalWorkspaceRef = { aggregateType: 'Workspace' as const, projectId, workspaceId };
-    const firstGoal = { ref: goalRef, workspaceRef: goalWorkspaceRef, objective: 'Deliver the A1 work',
-      desiredState: 'active' as const, activePlanRevision: null, revision: 1 };
-    const goalSeed = await commitRaw([encodeGoalSnapshot(firstGoal)]);
-    if (goalSeed.status !== 'committed') throw new Error(`A1 goal seed failed: ${JSON.stringify(goalSeed)}`);
-    const architecturePin = { ref: { aggregateType: 'ArchitectureBaselineRevision' as const, projectId,
-      baselineId: 'a1-plan-baseline', revision: 1 }, digest: sha256Hex('a1-plan-baseline') };
-    const plan: PlanRevisionSnapshot = {
-      ref: planRef, revision: 1, schemaVersion: 1, goalRef, planId: planRef.planId, planRevision: 1,
-      acceptedAt: GRAPH_FIXTURE_AT,
-      effectiveCompletionPolicy: { ref: policyRef, digest: policySnapshot.contentDigest },
-      effectiveArchitectureBaseline: architecturePin,
-      stages: [],
+    // The public route: adopt the architecture baseline, create the Goal,
+    // propose the plan body, review the proposal, then apply it. No Plan or
+    // Goal record is written by hand (R-1: the propose body is a public input).
+    const adopted = await fixture.adopt('a1-seed-accepted-architecture');
+    if (adopted.status !== 'committed') throw new Error(`A1 seed adoption failed: ${JSON.stringify(adopted)}`);
+    let eventSeq = 0;
+    const eventId = () => `a1-seed-event-${++eventSeq}`;
+    const goals = createGoalService({ records: wrapped, now: () => GRAPH_FIXTURE_AT, eventId });
+    const created = await goals.tasks.createGoal(ctx, {
+      meta: { requestId: 'a1-seed-goal', expected: [
+        { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 }] },
+      input: { goalId: goalRef.goalId, workspace: scope, objective: 'Deliver the A1 work' },
+    });
+    if (created.status !== 'committed') throw new Error(`A1 goal creation failed: ${JSON.stringify(created)}`);
+    const plans = createPlanService({ records: wrapped, now: () => GRAPH_FIXTURE_AT, eventId });
+    const draft: PlanRevisionDraft = {
+      schemaVersion: 2, planId: planRef.planId, planRevision: 1, goalId: goalRef.goalId, stages: [],
       tasks: [
         { taskId: 'implement', title: 'Implement', requirementLevel: 'required', taskKind: 'work',
           disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
@@ -457,28 +420,21 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
         taskIds: ['implement', 'goal-gate'],
         verificationRequirements: [{ requirementId: 'check-1', requirementLevel: 'required', kind: 'test',
           description: 'Tests pass' }] }],
-      taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] },
+      taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [],
     };
-    const acceptedGoal = { ...firstGoal, activePlanRevision: planRef, revision: 2 };
-    const planKey = canonicalJson(planRef as unknown as JsonValue);
-    const accepted = await commitRaw([
-      encodeGoalSnapshot(acceptedGoal),
-      { refKey: planKey, schemaId: 'PlanRevisionSnapshot@1', revision: 1, json: JSON.stringify(plan) },
-    ], [{ refKey: canonicalRefKey(goalRef), expectedRevision: 1 }]);
-    if (accepted.status !== 'committed') throw new Error(`A1 plan seed failed: ${JSON.stringify(accepted)}`);
-    return { goalRef, planRef, taskRef: { projectId, goalId: goalRef.goalId, taskId: 'implement' } };
-  }
-
-  async function overwriteSession(ref: SessionRef,
-    mutate: (record: SessionRecord) => SessionRecord): Promise<SessionRecord> {
-    const card = await sessionsPort.readSession(ctx, ref);
-    if (card.status !== 'ready') throw new Error(`A1 Session rewrite read failed: ${JSON.stringify(card)}`);
-    const current = card.value.record;
-    const next: SessionRecord = { ...mutate(current), revision: current.revision + 1 };
-    const committed = await commitRaw([encodeSessionRecord(next)],
-      [{ refKey: sessionAggregateRefKey(current.ref), expectedRevision: current.revision }]);
-    if (committed.status !== 'committed') throw new Error(`A1 Session rewrite failed: ${JSON.stringify(committed)}`);
-    return next;
+    const proposed = await plans.proposePlan(ctx, { meta: { requestId: 'a1-seed-propose',
+      expected: [{ ref: goalRef, revision: 1 }] },
+      input: { goalRef, basedOn: null, draft, reason: { text: 'Adopt the A1 seed plan', sources: [] } } });
+    if (proposed.status !== 'committed' || proposed.value.issues.length > 0) {
+      throw new Error(`A1 plan proposal failed: ${JSON.stringify(proposed)}`);
+    }
+    const reviewed = await plans.readPlanProposal(ctx, proposed.value.ref);
+    if (reviewed.status !== 'ready') throw new Error(`A1 plan proposal review failed: ${JSON.stringify(reviewed)}`);
+    const applied = await plans.applyPlanChange(ctx, { meta: { requestId: 'a1-seed-apply',
+      expected: [{ ref: goalRef, revision: 1 }] },
+      input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
+    if (applied.status !== 'committed') throw new Error(`A1 plan adoption failed: ${JSON.stringify(applied)}`);
+    return { goalRef, planRef: applied.value.ref, taskRef: { projectId, goalId: goalRef.goalId, taskId: 'implement' } };
   }
 
   function buildConnection(): GraphSessionConnection {
@@ -508,10 +464,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       return catalog.readArchitectureRevision(ctxOverride ?? ctx, input);
     },
     createSession,
-    seedLegacyArchitectureBaseline,
-    seedTamperedArchitectureBaseline,
     seedAcceptedTask,
-    overwriteSession,
     commitRaw,
     resetSpy() { Object.assign(spy, emptySpy()); },
     failNextWrite() { failWrite = true; },

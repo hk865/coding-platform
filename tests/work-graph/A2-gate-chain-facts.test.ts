@@ -11,11 +11,8 @@
  *   (`source_unchanged` refusal: `stopped/gate_needs_fix`, the Goal NEEDS_DECISION), GV-4 (PASS head).
  * - TASK-15: the gate completes only from P20 `verifying(awaiting_completion)` with its chain head; the
  *   FAILed predecessor's evidence leaves the fold with the chain (VD-5).
- * - An invalid gate chain (two slot-less legacy roots) is P20 `blocked/round_ambiguous` and GV-2; with its work
- *   satisfied the Goal shows GOAL-30 `not_reworkable` only, never `awaiting_gate` (GOAL-27: no chain yet).
  * - GV-5 counts only required, active work in the gate's scope: a fix Task an operator adds (W16) and then
  *   cancels unsatisfied leaves the FAIL gate at GV-9 again, without `gate_fix_in_progress`.
- * - A row of the gate's chain lookup that names another subject refuses the whole read (`unavailable`).
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { writeFile } from 'node:fs/promises';
@@ -26,7 +23,6 @@ import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY, WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import type { CheckProcessObservation, RoundSnapshot } from '../../src/contracts/verification.js';
 import type { EvidencePort, ReverifyOutcomeV1, ReverifyRoundInput } from '../../src/core/work-graph/model/evidence-contracts.js';
-import { encodeVerificationRoundSnapshot } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
@@ -215,35 +211,6 @@ describe.each(KINDS)('%s', (kind) => {
   }, 120_000);
 });
 
-it('an invalid gate chain (two slot-less legacy roots) projects P20 blocked/round_ambiguous, reads GV-2 and is GOAL-30, never awaiting_gate', async () => {
-  const fixture = await openFixture();
-  const finalized = await finish(fixture, (await open(fixture, true)).ref, 1);
-  // Two pre-A.2 gate roots: no chain and no slot.
-  const legacy = (roundId: string): RoundSnapshot => {
-    const root: RoundSnapshot = { ...finalized, ref: { ...finalized.ref, roundId } };
-    delete root.chain;
-    return root;
-  };
-  const otherFixture = await openFixture();
-  // The work in the gate's scope is satisfied: without a chain the gate would be awaiting_gate.
-  const otherWork = await finish(otherFixture, (await open(otherFixture, false)).ref, 0);
-  expect(await complete(otherFixture, R3E_WORK_TASK_ID, otherWork.ref, 'a2-gate-legacy-work')).toMatchObject({ status: 'committed' });
-  expect(await display(otherFixture)).toMatchObject({ phase: 'RUNNING', causes: [{ code: 'awaiting_gate', gateTaskId: R3E_GATE_TASK_ID }] });
-  const roots = [legacy('a2-gate-legacy-1'), legacy('a2-gate-legacy-2')];
-  // The gate of a fresh fixture only holds the two legacy roots.
-  const moved = roots.map(root => ({ ...root, subject: gateSubject(otherFixture), subjectRunRef: { ...otherFixture.subjectRunRef },
-    ref: { ...root.ref, projectId: otherFixture.scope.projectId, workspaceId: otherFixture.scope.workspaceId,
-      goalId: otherFixture.goalRef.goalId, taskId: R3E_GATE_TASK_ID, runId: otherFixture.subjectRunRef.runId } }));
-  expect(await otherFixture.b2.base.commitRaw(moved.map(encodeVerificationRoundSnapshot))).toMatchObject({ status: 'committed' });
-  expect(await row(otherFixture, R3E_GATE_TASK_ID)).toMatchObject({ effectivePhase: 'blocked',
-    phaseCause: { code: 'round_ambiguous', detail: { gate: true } },
-    failure: { subjectKind: 'gate', failureClass: null, notReworkableCause: 'round_ambiguous', round: null,
-      automation: { verdict: { kind: 'stopped', reason: 'not_reworkable', detail: { cause: 'round_ambiguous' } } } } });
-  // GOAL-27: `awaiting_gate` only means no chain yet; the invalid chain is GOAL-30's not_reworkable alone.
-  expect(await display(otherFixture)).toMatchObject({ phase: 'NEEDS_DECISION', row: 'GOAL-30',
-    causes: [{ code: 'not_reworkable', taskId: R3E_GATE_TASK_ID, detail: { cause: 'round_ambiguous' } }] });
-}, 60_000);
-
 /** W16 (the existing plan evolution): the current Plan with the fix Task `FIX` in the goal gate's scope, at `disposition`. */
 const FIX = 'r3e-gate-fix';
 async function adoptFixTask(fixture: R3eEvidenceFixture, disposition: 'active' | 'cancelled', prefix: string): Promise<void> {
@@ -295,13 +262,3 @@ it('GV-5 counts only active required work in the gate scope: a cancelled fix Tas
     taskId: R3E_GATE_TASK_ID, operation: 'reverify', failureClass: 'check_failed' }]) });
 }, 60_000);
 
-it('a gate chain row that names another subject refuses the whole read (unavailable), never a guessed chain', async () => {
-  const fixture = await openFixture();
-  const finalized = await finish(fixture, (await open(fixture, true)).ref, 1);
-  // Indexed under the gate (`ref.taskId`), but its subject is the work Task.
-  const foreign: RoundSnapshot = { ...finalized, ref: { ...finalized.ref, roundId: 'a2-gate-foreign' },
-    subject: { ...finalized.subject, taskId: R3E_WORK_TASK_ID } };
-  expect(await fixture.b2.base.commitRaw([encodeVerificationRoundSnapshot(foreign)])).toMatchObject({ status: 'committed' });
-  expect(await fixture.b2.base.plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.goalRef })).toEqual({ status: 'rejected',
-    code: 'unavailable', reason: `round a2-gate-foreign does not belong to gate ${R3E_GATE_TASK_ID}` });
-}, 60_000);

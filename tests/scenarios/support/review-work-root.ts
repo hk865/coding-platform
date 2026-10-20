@@ -22,17 +22,27 @@
  * test can prove which steps ran (and, above all, which did not).
  */
 import { join } from 'node:path';
+import { expect } from 'vitest';
 import type { RecordCommitObserver } from '../../../src/composition/commit-observer.js';
 import { createTargetPlatform } from '../../../src/composition/create-platform.js';
 import type { ReadonlyCommandAccessInput } from '../../../src/core/agent-runtime/execution-contracts.js';
 import type { WorkflowAdvanceInput, WorkflowStepReceipt } from '../../../src/business/workflow/contracts.js';
 import {
-  AG2B_AT, AG2B_CONSUMER_ID, AG2B_SCOPE, AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, permissionRevision,
+  AG2B_AT, AG2B_CONSUMER_ID, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING,
+  AG2B_WORK_TASK_ID, permissionRevision, plain,
 } from '../../helpers/AG2b-collaboration-fixture.js';
 import type { ScriptedModel } from '../../helpers/B2-runtime-fixture.js';
 import {
-  AG2B_WORK_TOOLS, ag2bWorkRuntime, ag2bWorkspaceBindings, hostCtx, type HostScenario, type Platform,
+  AG2B_WORK_TOOLS, ag2bWorkRuntime, ag2bWorkspaceBindings, hostCtx, performs, type HostScenario, type Platform,
 } from '../harness.js';
+import {
+  createWorkbenchRuntimeHostBindings, type WorkbenchRuntimeConfiguration,
+} from '../../../src/app/runtime-configuration.js';
+import { sha256Hex } from '../../../src/contracts/fingerprint.js';
+import type { ReadResult } from '../../../src/contracts/core/results.js';
+import type { RunRef } from '../../../src/contracts/dispatch.js';
+import type { UnknownCallReviewV1 } from '../../../src/contracts/unknown-call-review.js';
+import { crashOneCommand } from './review-card-round.js';
 
 /** `openWorkRoot` (./common.ts) with the read-only command grant a review round needs. */
 export async function openReviewWorkRoot(h: HostScenario, model: ScriptedModel,
@@ -64,6 +74,88 @@ export async function openReviewWorkRoot(h: HostScenario, model: ScriptedModel,
     workflow: { consumerId: AG2B_CONSUMER_ID, bindings: [{ workspace: AG2B_SCOPE, sessionRole: AG2B_WORK_ROLE,
       roleBinding: AG2B_WORK_ROLE_BINDING, budget: { tokenBudget: 1_000_000, deadline: null } }] },
   });
+}
+
+/**
+ * The real production Host binding with `run_readonly_command` granted: the
+ * `read` tool is deliberately absent, so the review round's capability probe
+ * really answers `review_unavailable` and `settle_review` opens no round.
+ * `label` supplies this copy's binding/copy text and `hostInstanceId` its
+ * instance lease (the callers keep their own host identity).
+ */
+export async function openMissingReadReviewRoot(h: HostScenario,
+  options: { label: string; hostInstanceId: string }): Promise<Platform> {
+  const { label, hostInstanceId } = options;
+  const instruction = `${label} missing-read instruction`;
+  const configuration: WorkbenchRuntimeConfiguration = {
+    schemaVersion: 1,
+    bindings: [{
+      id: `${label}-missing-read-binding`, label: `${label} missing-read review binding`,
+      scope: AG2B_SCOPE, role: AG2B_WORK_ROLE,
+      configurationRevision: `${label}-missing-read@1`,
+      model: { revision: `${label}-missing-read-model@1`, provider: 'deepseek', model: `${label}-scripted`,
+        secretEnvironmentVariable: `${label.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_MISSING_READ_SECRET` },
+      grant: {
+        budget: AG2B_RUNTIME_BUDGET,
+        hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex(instruction) },
+        tools: ['shell', 'run_readonly_command'], writeScope: [],
+        skills: { resourceRoot: h.root, enabledIds: [] },
+        systemInstruction: instruction, deniedPrefixes: [], processSandboxOptions: {},
+        materialBasis: null, readonlyCommandAccess: 'all_except_denied' as const,
+      },
+    }],
+    queryProfiles: [],
+  };
+  const runtime = createWorkbenchRuntimeHostBindings(configuration, { secretSource: { get: () => undefined } });
+  return await createTargetPlatform({
+    storage: { kind: 'sqlite', directory: h.database },
+    workspace: ag2bWorkspaceBindings(h.root, { value: 1 }, permissionRevision(h.stepActor(), AG2B_SCOPE, ['.'])),
+    now: () => AG2B_AT,
+    kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
+      databasePath: join(h.database, 'kernel.sqlite') }] },
+    runtime,
+    hostInstance: { hostInstanceId, lease: 'owned' },
+    workflow: { consumerId: AG2B_CONSUMER_ID, bindings: [{ workspace: AG2B_SCOPE, sessionRole: AG2B_WORK_ROLE,
+      roleBinding: AG2B_WORK_ROLE_BINDING, budget: { tokenBudget: 1_000_000, deadline: null } }] },
+  });
+}
+
+/**
+ * One real RUN-25 crash plus `settle_review{review_unavailable}`: the record is
+ * `needs_decision`. The blocked original call is NOT released here: the caller
+ * keeps the returned idempotent `release` for its original cleanup, the K3-29
+ * and K3-44 recovery timing.
+ */
+export interface NeedsDecisionRecord {
+  origin: RunRef;
+  review: UnknownCallReviewV1;
+  release(): Promise<void>;
+}
+
+export async function createNeedsDecisionRecord(h: HostScenario, label: string,
+  hostInstanceId: string): Promise<NeedsDecisionRecord> {
+  const crashed = await crashOneCommand(h, { callId: `${label}-shell`, select: `${label}-a`,
+    requestId: `${label}-a-start`, shellArgs: { command: `${label} runs a program` } });
+  try {
+    const reviewRoot = await openMissingReadReviewRoot(h, { label, hostInstanceId });
+    try {
+      const toSettle = await driveReviewUntil(reviewRoot, h.select(`${label}-settle`, AG2B_WORK_TASK_ID),
+        performs('settle_review'));
+      const settled = await reviewRoot.workflow.advanceWork(hostCtx(), toSettle.stopped);
+      expect(settled).toMatchObject({ status: 'ready', value: { receipt: { kind: 'settle_review' } } });
+    } finally {
+      await reviewRoot.close();
+    }
+    const read = await h.post<ReadResult<UnknownCallReviewV1>>('unknown-call-reviews/read',
+      plain(AG2B_SCOPE, { runRef: crashed.runRef }));
+    expect(read.status).toBe('ready');
+    if (read.status !== 'ready') throw new Error(JSON.stringify(read));
+    expect(read.value).toMatchObject({ status: 'needs_decision', open: 'yes', activeRound: null });
+    return { origin: crashed.runRef, review: read.value, release: crashed.release };
+  } catch (error) {
+    await crashed.release();
+    throw error;
+  }
 }
 
 /** One root's Workflow drive until `stopBefore`; the performed step receipts come back in order. */

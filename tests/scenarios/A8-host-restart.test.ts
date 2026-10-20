@@ -159,7 +159,7 @@ it('A8-3b (W-10, RD-3, L-5, RUN-18, contract (f)): the Kernel yielded on a saved
   // so the Kernel yields in its own store and the observer's yielded-terminal write fails (`database is locked`).
   const lock = lockLedgerAfter(h.database, 'SessionMessageSent');
   const model = createScriptedModel([{ kind: 'calls', calls: [{ callId: 'a8-3b-send', name: 'send_session_message',
-    args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: A8_3B_QUESTION, replyMode: 'wait' } }] }]);
+    args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: A8_3B_QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] }]);
   const root = await openWorkRoot(h, model, lock.observer);
   let started: unknown;
   try {
@@ -229,7 +229,7 @@ it('A8-3j (W-18, D-17, W-13, RUN-20(i)): the wait message was saved and the Host
   // cannot record the send's result (its call stays started) and the Runtime books nothing.
   const lock = lockLedgerAfter(h.database, 'SessionMessageSent', { kernelStore: true });
   const model = createScriptedModel([{ kind: 'calls', calls: [{ callId: 'a8-3j-send', name: 'send_session_message',
-    args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: A8_3J_QUESTION, replyMode: 'wait' } }] }]);
+    args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: A8_3J_QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] }]);
   const root = await openWorkRoot(h, model, lock.observer);
   let started: unknown;
   try {
@@ -572,7 +572,7 @@ it('§12.1 step 5, W-17 (CI-09): a yielded wait keeps a queued control as its co
   // The work Run sends a wait message to a linked Session that nobody answers, so it really yields (as TD-5).
   let recipient: SessionRef | undefined;
   const send = { callId: 'a2-fence-send', name: 'send_session_message',
-    args: { recipient: {}, text: 'A2 fence: a question that nobody answers', replyMode: 'wait' } as Record<string, unknown> };
+    args: { recipient: {}, text: 'A2 fence: a question that nobody answers', intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const inv: InvariantTarget = { database };   // A.2 step 6
   const first = await startAG2bHost(publicDir, { root, database, replies: [{ kind: 'calls', calls: [send] }],
     beforeReply: async (_request, index) => {

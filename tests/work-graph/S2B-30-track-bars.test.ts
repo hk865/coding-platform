@@ -185,27 +185,6 @@ describe.each(['memory', 'sqlite'] as const)('S2B track bars (%s)', (kind) => {
     expect(page.unplaced.rounds).toBe(0);
   });
 
-  it('2B-30 legacy rounds without since and pre-2B finalized rounds without finalizedAt are only counted in unplaced.rounds', async () => {
-    const f = await open(kind);
-    const session = f.computeSessionRef();
-    const subjectA = await f.runAndEnd('work-1', session,
-      '2026-10-14T09:00:00.000Z', '2026-10-14T09:30:00.000Z');
-    const subjectB = await f.runAndEnd('work-2', session,
-      '2026-10-14T09:40:00.000Z', '2026-10-14T09:50:00.000Z');
-
-    f.setClock('2026-10-14T10:00:00.000Z');
-    const legacy = await f.finalize(await f.openRound(subjectA, 'work-1'));
-    await f.stripRoundSince(legacy.ref);
-
-    f.setClock('2026-10-14T10:10:00.000Z');
-    const preTwoB = await f.finalize(await f.openRound(subjectB, 'work-2'));
-    await f.stripRoundFinalizedAt(preTwoB.ref);
-
-    const page = ready(await f.readTrack({ from: '2026-10-14T10:00:00.000Z', to: '2026-10-14T12:00:00.000Z' }));
-    expect(page.bars.filter((bar) => bar.kind === 'check')).toHaveLength(0);
-    expect(page.unplaced.rounds).toBe(2);
-  });
-
   it('2B-30 a Goal-gate round with no responsible Session shows with sessionRef null and ownerSessionRefs [], and a filtered read counts it in unplaced.gateRounds', async () => {
     const f = await open(kind);
     const session = f.computeSessionRef();

@@ -276,23 +276,21 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
   if (maxRounds !== 1) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'this batch only accepts maxRounds=1') };
 
   const execution = intent['execution'];
-  if (execution !== undefined) {
-    if (!isRecord(execution)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.execution must be an object when present') };
-    if (execution['kind'] === 'execution_coordination') {
-      return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'execution_coordination is not delivered in this batch') };
-    }
-    if (execution['implementationAuthorization'] !== undefined) {
-      return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'implementationAuthorization is not delivered in this batch') };
-    }
-    if (!validQueryExecution(execution as unknown as QueryJobIntentV1['execution'])) {
-      return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.execution is not a valid execution binding shape') };
-    }
-    if (execution['kind'] !== 'initial_coordination' && execution['kind'] !== 'semantic_query') {
-      return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'this execution kind is not delivered in this batch') };
-    }
+  if (!isRecord(execution)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.execution must be an object') };
+  if (execution['kind'] === 'execution_coordination') {
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'execution_coordination is not delivered in this batch') };
+  }
+  if (execution['implementationAuthorization'] !== undefined) {
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'implementationAuthorization is not delivered in this batch') };
+  }
+  if (!validQueryExecution(execution as unknown as QueryJobIntentV1['execution'])) {
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.execution is not a valid execution binding shape') };
+  }
+  if (execution['kind'] !== 'initial_coordination' && execution['kind'] !== 'semantic_query') {
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'this execution kind is not delivered in this batch') };
   }
   let consultation: ConsultationBinding | null = null;
-  if (execution !== undefined && isRecord(execution) && execution['consultation'] !== undefined) {
+  if (execution['consultation'] !== undefined) {
     // `validQueryExecution` already proved the exact binding shape; the only
     // remaining facts are the deterministic identity and the bound scope.
     const rawConsultation = execution['consultation'] as unknown as {
@@ -679,7 +677,7 @@ async function submit(
     if (bodyRead.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the consultation message body does not exist');
     if (bodyRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the consultation message body is not readable at the required watermark');
     if (bodyRead.status !== 'ready') return bodyRead;
-    const originalInquiry = message.intent === 'inquiry' || (message.intent === undefined && message.replyMode === 'wait');
+    const originalInquiry = message.intent === 'inquiry';
     if ((originalInquiry || draft.consultation.part === 'response') && bodyRead.value.text !== draft.intent.question) {
       return rejectedWithNonEmptyCurrent('invalid', 'the consultation question must be the original message body text');
     }
@@ -687,7 +685,7 @@ async function submit(
   }
 
   const execution = draft.intent.execution;
-  if (execution !== undefined && execution.kind === 'initial_coordination' && facts.goal.activePlanRevision !== null) {
+  if (execution.kind === 'initial_coordination' && facts.goal.activePlanRevision !== null) {
     return rejectedWithNonEmptyCurrent('invalid', 'initial_coordination requires a Goal without an active Plan');
   }
 

@@ -62,7 +62,9 @@ describe('the Host instance lease file (HL-01..HL-06)', () => {
     for (let round = 0; round < 16; round += 1) {
       const dir = await directory();
       const path = join(dir, HOST_INSTANCE_LOCK_FILE);
-      await writeFile(path, JSON.stringify({ pid: 5000, hostInstanceId: 'a2-crashed', startedAt: AT }));
+      // The stale lock is the real one a Host with pid 5000 left: acquire it through
+      // the production path and never release it, so the pid is the only death proof.
+      await acquireHostInstanceLease({ directory: dir, now: () => AT, pid: 5000, isAlive: () => true });
       const contenders = await Promise.all([6001, 6002].map(pid =>
         acquireHostInstanceLease({ directory: dir, now: () => AT, pid, isAlive: candidate => candidate !== 5000 })));
       const owners = contenders.filter(lease => lease.lease === 'owned');
@@ -109,10 +111,9 @@ describe('the Host instance lease file (HL-01..HL-06)', () => {
     await first.release();
 
     const dir = await directory();
-    const path = join(dir, HOST_INSTANCE_LOCK_FILE);
-    await writeFile(path, JSON.stringify({ pid: 5000, hostInstanceId: 'k3-crashed', startedAt: AT }));
+    const crashed = await acquireHostInstanceLease({ directory: dir, now: () => AT, pid: 5000, isAlive: () => true });
     const taken = await acquireHostInstanceLease({ directory: dir, now: () => AT, pid: 6000, isAlive: pid => pid !== 5000 });
-    expect(taken.takeover).toEqual({ kind: 'hl03_stale_lock', previousInstanceId: 'k3-crashed', previousPid: 5000 });
+    expect(taken.takeover).toEqual({ kind: 'hl03_stale_lock', previousInstanceId: crashed.hostInstanceId, previousPid: 5000 });
     const peer = await acquireHostInstanceLease({ directory: dir, now: () => AT, pid: 6001, isAlive: () => true });
     expect(peer.takeover).toBeNull();
     await peer.release();

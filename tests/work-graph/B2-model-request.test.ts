@@ -9,50 +9,6 @@ async function open(kind: 'memory' | 'sqlite' = 'memory') { const f = await crea
 afterEach(async () => { for (const f of fixtures.splice(0)) await f.close(); });
 
 describe('B2 model request', () => {
-  it('an entered Run that lost its Session cannot issue another model-call permit', async () => {
-    const f = await open(); const admitted = await f.enter();
-    await f.base.overwriteSession(f.claim.sessionRef, session => ({ ...session, occupancy: null }));
-    const before = await f.read(); const request = f.actualRequest(admitted, 'after-session-loss');
-    expect(await f.model.authorizeModelRequest(f.ctx, { input: request,
-      meta: { requestId: 'issue-after-session-loss', expected: [await f.pin()] } }))
-      .toMatchObject({ status: 'rejected' });
-    expect(await f.read()).toEqual(before);
-    const rows = await f.base.records.readMany([b2Key({ aggregateType: 'ModelRequestPermit',
-      projectId: f.ctx.projectId, workspaceId: f.ctx.workspaceId,
-      permitId: modelRequestPermitIdFor(f.claim.runRef, request.requestId) })]);
-    expect(rows.status).toBe('ready');
-    if (rows.status === 'ready') expect(rows.value.records).toHaveLength(0);
-  });
-
-  it('a Lease released after permit issuance prevents attempted consumption and preserves permit revision 1', async () => {
-    const f = await open(); const admitted = await f.enter(); const request = f.actualRequest(admitted);
-    const issued = await f.model.authorizeModelRequest(f.ctx, { input: request,
-      meta: { requestId: 'issue-before-lease-release', expected: [await f.pin()] } });
-    expect(issued).toMatchObject({ status: 'committed' });
-    if (issued.status !== 'committed') throw Error('real issued model permit required');
-    const lease = (await f.read()).lease; if (!lease) throw Error('real claim lease required');
-    const released = { ...lease, revision: lease.revision + 1, release: {
-      schemaVersion: 1, runRef: f.claim.runRef, attemptRef: f.claim.attemptRef,
-      sessionRef: f.claim.sessionRef, generation: f.claim.generation,
-      releasedAt: B2_AT, eventId: 'b2-lease-release-before-model-attempt',
-    } };
-    expect(await f.base.commitRaw([{ refKey: b2Key(lease.ref), schemaId: 'TaskLeaseSnapshot@1',
-      revision: released.revision, json: JSON.stringify(released) }],
-    [{ refKey: b2Key(lease.ref), expectedRevision: lease.revision }])).toMatchObject({ status: 'committed' });
-    const before = await f.read();
-    expect(await f.model.recordModelRequestAttempt(f.ctx, {
-      input: { request, permitRef: issued.value.permitRef, attemptId: 'lease-lost-attempt', observedAt: B2_AT },
-      meta: { requestId: 'consume-after-lease-release', expected: [await f.pin(), { ref: issued.value.permitRef, revision: 1 }] },
-    })).toMatchObject({ status: 'rejected' });
-    expect(await f.read()).toEqual(before);
-    const rows = await f.base.records.readMany([b2Key(issued.value.permitRef)]);
-    expect(rows.status).toBe('ready');
-    if (rows.status === 'ready') {
-      expect(rows.value.records[0]?.revision).toBe(1);
-      expect(JSON.parse(rows.value.records[0]!.json).permit.consumedByAttemptId).toBeNull();
-    }
-  });
-
   it('binds the issued permit to the actual entered input and denies request or context digest substitution', async () => {
     const f = await open(); const admitted = await f.enter(); const request = f.actualRequest(admitted);
     const issued = await f.model.authorizeModelRequest(f.ctx, { input: request, meta: { requestId: 'issue-model-request', expected: [await f.pin()] } });

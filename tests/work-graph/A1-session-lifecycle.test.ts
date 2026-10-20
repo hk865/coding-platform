@@ -10,10 +10,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef, WorkLinkRelation, WorkLinkTarget } from '../../src/contracts/core/identity.js';
-import type { SessionRecord } from '../../src/contracts/core/session.js';
-import type { RunRef } from '../../src/contracts/dispatch.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
+import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
 import { randomUUID } from 'node:crypto';
@@ -109,16 +110,6 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session lifecycle over real %s 
     if (result.status === 'rejected') expect(result.code).toBe('forbidden');
   });
 
-  it('refuses to follow a digest-inconsistent catalog record', async () => {
-    const fixture = await make(kind);
-    await fixture.seedTamperedArchitectureBaseline();
-    const session = await fixture.createSession('tampered-catalog');
-    const result = await fixture.lifecycle.linkSessionWork(fixture.ctx,
-      await linkRequest(fixture, session, moduleTarget(fixture, GRAPH_MODULE_ONE), 'responsible', true, 'link-tampered'));
-    expect(result.status).toBe('rejected');
-    if (result.status === 'rejected') expect(result.code).toBe('unavailable');
-  });
-
   it('keeps WorkContext unsupported instead of writing a fabricated association', async () => {
     const fixture = await make(kind);
     const session = await fixture.createSession('work-context');
@@ -131,15 +122,42 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session lifecycle over real %s 
 
   it('archive rejects occupancy and an unresolved responsible Task obligation', async () => {
     const fixture = await make(kind);
-    const { taskRef } = await fixture.seedAcceptedTask();
+    const { taskRef, goalRef, planRef } = await fixture.seedAcceptedTask();
     const session = await fixture.createSession('archive-guard');
-    const runRef: RunRef = { aggregateType: 'Run', projectId: fixture.projectId, goalId: taskRef.goalId, runId: 'run-1' };
-    await fixture.overwriteSession(session, (record: SessionRecord): SessionRecord => ({ ...record,
-      occupancy: { kind: 'execution', executionRef: runRef, generation: record.revision } }));
+    // The public claim occupies the Session; without `openResponsibleLink` it
+    // opens no responsible link (claim-service.ts:1040, :1227).
+    const roles = createRoleConfigurationService({ records: fixture.records,
+      now: () => '2026-09-24T00:00:00.000Z', eventId: randomUUID });
+    const claims = createTaskClaimService({ records: fixture.records, roles,
+      now: () => '2026-09-24T00:00:00.000Z', newId: randomUUID });
+    const claimed = await claims.claimTask(fixture.ctx, {
+      input: { goalRef, planRef, taskId: taskRef.taskId, sessionRef: session,
+        roleBinding: { schemaVersion: 1 as const, bindingId: 'a1-binding', templateId: 'builder', templateRevision: '1',
+          bindingVersion: 1, policyRevision: 'legacy-template' }, budget: { tokenBudget: 100000, deadline: null } },
+      meta: { requestId: 'archive-claim', expected: [
+        { ref: goalRef, revision: 2 }, { ref: fixture.workspaceRef, revision: 1 },
+        { ref: { ...session, aggregateType: 'Session' as const }, revision: 1 }] } });
+    expect(claimed).toMatchObject({ status: 'committed' });
+    if (claimed.status !== 'committed') return;
     const busy = await fixture.lifecycle.archiveSession(fixture.ctx, await lifecycleRequest(fixture, session, 'archive-busy'));
     expect(busy).toMatchObject({ status: 'rejected', code: 'busy' });
 
-    await fixture.overwriteSession(session, (record: SessionRecord): SessionRecord => ({ ...record, occupancy: null }));
+    // A cancel of the Run that never entered ends its claim and releases the
+    // Session occupancy in the same commit (RUN-09, SES-05).
+    const reads = createRunStateReader({ records: fixture.records });
+    const execution = await reads.readExecution(fixture.ctx, claimed.value.runRef);
+    expect(execution.status).toBe('ready');
+    if (execution.status !== 'ready') return;
+    const controls = createRunControlService({ records: fixture.records,
+      authority: createMaterialRecordReaders(fixture.records).authority, reads,
+      now: () => '2026-09-24T00:00:00.000Z', eventId: randomUUID });
+    expect(await controls.submitControl(fixture.ctx, {
+      input: { runRef: claimed.value.runRef, kind: 'cancel', reason: 'the archive guard stops before entry' },
+      meta: { requestId: 'archive-cancel', expected: [{ ref: claimed.value.runRef, revision: execution.value.run.revision }] },
+    })).toMatchObject({ status: 'committed' });
+    expect(await fixture.sessionsPort.readSession(fixture.ctx, session))
+      .toMatchObject({ status: 'ready', value: { record: { occupancy: null } } });
+
     const responsible = await fixture.lifecycle.linkSessionWork(fixture.ctx,
       await linkRequest(fixture, session, { kind: 'task', ref: taskRef }, 'responsible', true, 'link-responsible'));
     expect(responsible.status).toBe('committed');

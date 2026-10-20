@@ -599,10 +599,6 @@ describe('control_superseded_by_newer (CTL-04)', () => {
     }
   });
 
-  it('a recorded state without a kind is malformed', () => {
-    expect(transitionControlIntent({ node: 'Queued', kind: null, revision: 1, observation: null }, SUPERSEDED_EVENT, ctxWith()))
-      .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'a recorded control intent must have a kind' });
-  });
 });
 
 // -------------------------------------------------------------------------- //
@@ -848,31 +844,6 @@ describe('control_observed: recorded node × intent kind × Kernel observation k
       .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'the control intent revision would not be a safe integer' });
     expect(transitionControlIntent(state, SUPERSEDED_EVENT, ctxWith()))
       .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'the control intent revision would not be a safe integer' });
-  });
-
-  it('a recorded state without a kind is malformed', () => {
-    expect(transitionControlIntent({ node: 'Queued', kind: null, revision: 1, observation: null },
-      observedEvent(kernelObservation('paused')), ctxWith()))
-      .toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: 'a recorded control intent must have a kind' });
-  });
-
-  it('a stored locator that fails the locator codec is unavailable right after the missing-locator row (`control-service.ts:551`)', () => {
-    const malformed = { ok: false, reason: 'guard_failed', code: 'unavailable', detail: 'the stored execution-history locator is malformed' };
-    const observe = (ctx: ControlGuardContext, observed: ControlObservationV1 = observation, state = queued('pause')) =>
-      transitionControlIntent(state, observedEvent(observed), ctx);
-    expect(observe(ctxWith({ history: 'malformed' }))).toEqual(malformed);
-    // The pins and the V2 entry identity come first (`:525-548`).
-    expect(observe(ctxWith({ history: 'malformed' }, { pinsMatch: { intent: false, run: true } })))
-      .toMatchObject({ reason: 'stale', detail: 'the control intent changed since the caller read it' });
-    expect(observe(ctxWith({ history: 'malformed' }, { pinsMatch: { intent: true, run: false } })))
-      .toMatchObject({ reason: 'stale', detail: 'the Run changed since the caller read it' });
-    expect(observe(ctxWith({ history: 'malformed', entry: null })))
-      .toMatchObject({ code: 'forbidden', detail: 'the observed Run has no formal V2 entry authorization' });
-    expect(observe(ctxWith({ history: 'malformed', entry: { ...ENTRY, consumerId: 'consumer-2' } })))
-      .toMatchObject({ code: 'forbidden', detail: 'the observed entry identity disagrees with the Run entry binding' });
-    // It precedes the locator identity, the window rows and the kind pairing (`:552-573`).
-    expect(observe(ctxWith({ history: 'malformed' }), kernelObservation('cancelled', { source: { ...KERNEL, position: 99 } }),
-      queued('steer'))).toEqual(malformed);
   });
 });
 

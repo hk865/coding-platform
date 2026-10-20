@@ -5,12 +5,11 @@ import type { DecisionSelectionV1 } from '../../src/contracts/goal-decisions.js'
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import {
   GOAL_A, GOAL_B, GOAL_C, PLAN_A1, PLAN_A2, PLAN_B1, T, WORKSPACE_SCOPE,
-  goalBasisOf, type S5DecisionFixture, type S5FixtureKind,
+  goalBasisOf, openS5DecisionFixture, type S5DecisionFixture, type S5FixtureKind,
 } from '../helpers/S5-decision-fixture.js';
-import { openS5GoalSettingsFixture } from '../helpers/S5-goal-settings-support.js';
 import { committed, goalAt, keyOf, messageAt, pin, ready } from '../helpers/S5-application-support.js';
 import {
-  adoptA2, assembleS5R2C, completeA1, controlA, observeC, openS5R2CompletionFixture,
+  adoptA2, assembleS5R2C, completeA1, controlA, observeC,
   readConflict, settingsEvent, type S5R2C,
 } from '../helpers/S5R2-c-support.js';
 
@@ -25,7 +24,9 @@ afterEach(async () => {
 });
 
 async function open(kind: S5FixtureKind, completion = false) {
-  const f = completion ? await openS5R2CompletionFixture(kind) : await openS5GoalSettingsFixture(kind);
+  const f = completion
+    ? await openS5DecisionFixture(kind, { catalog: 'modules', requirementKind: 'static' })
+    : await openS5DecisionFixture(kind, { catalog: 'modules' });
   fixtures.push(f);
   return assembleS5R2C(f);
 }

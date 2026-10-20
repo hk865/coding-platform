@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
-import type { ProjectSourceAccess, ProjectSourceQuery } from './project-source-index.js';
+import type { ProjectSourceAccess, ProjectSourceQuery } from './project-source-snapshot.js';
 
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const safe = (p: string) => !!p && !/[\\:\0]/.test(p) && !p.split('/').some(s => !s || s === '.' || s === '..');

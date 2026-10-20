@@ -454,8 +454,25 @@ it('AV-4 (STEP5-FLIPS §14): a pause superseded by the natural completion fences
   // `stopped` blocks rework only: a new 推进 selects the fenced Task's round (step 5.8 part 2 reads the
   // verdict first), the round opens, the check passes and the Task completes.
   const steps = (await host.advance(host.select('a2-av4-select', AG2B_WORK_TASK_ID))).steps;
-  expect(steps[0]).toMatchObject({ state: 'advance', receipt: null, next: { kind: 'perform', operation: { kind: 'open_checks' } } });
+  // The seeded Task and its adopted Plan (the AG2b seed's public inputs).
+  const taskRef = { projectId: AG2B_SCOPE.projectId, goalId: AG2B_GOAL_REF.goalId, taskId: AG2B_WORK_TASK_ID };
+  const planRef = { aggregateType: 'PlanRevision', projectId: AG2B_SCOPE.projectId, planId: 'ag2b-plan' };
+  // The same selection the source (A2 AV-4) asserted, with its exact request fields: the selected Task's
+  // open, and exactly the open's input (the completed Run, its Task, the adopted Plan).
+  expect(steps[0]).toEqual({ state: 'advance', receipt: null, reason: null, next: expect.objectContaining({ kind: 'perform',
+    taskId: AG2B_WORK_TASK_ID, operation: { kind: 'open_checks',
+      request: expect.objectContaining({ input: { subjectRunRef: runRef, subject: taskRef, planRef } }) } }) });
   expect(steps.slice(1).map(step => step.receipt?.kind)).toEqual(['open_checks', 'run_check', 'finalize_checks', 'complete_task', undefined]);
+  // The PASS head is completed with exactly its Task, the Plan and the round the open returned (A2 AV-4:
+  // `{ taskRef, planRef, roundRef: head.ref }`).
+  const opened = steps.find(step => step.receipt?.kind === 'open_checks')?.receipt;
+  if (opened?.kind !== 'open_checks' || opened.result.status !== 'committed') throw new Error('the round must open');
+  const completing = steps.map(step => step.next)
+    .find(next => next?.kind === 'perform' && next.operation.kind === 'complete_task');
+  if (completing?.kind !== 'perform' || completing.operation.kind !== 'complete_task') {
+    throw new Error('the PASS head must be completed through complete_task');
+  }
+  expect(completing.operation.request.input).toEqual({ taskRef, planRef, roundRef: opened.result.value.ref });
   expect(steps.find(step => step.receipt?.kind === 'finalize_checks'))
     .toMatchObject({ receipt: { result: { status: 'committed', value: { outcome: 'PASS' } } } });
   expect(steps.at(-1)).toMatchObject({ state: 'completed' });

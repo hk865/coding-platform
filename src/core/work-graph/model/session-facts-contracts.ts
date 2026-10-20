@@ -12,7 +12,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, WorkLinkTarget } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
-import type { SessionRecord, SessionProvenanceV1, LegacyProvenanceBasisV1 } from '../../../contracts/core/session.js';
+import type { SessionRecord, SessionProvenanceV1 } from '../../../contracts/core/session.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
@@ -89,15 +89,4 @@ export interface SessionResponsibilityBasisPort {
   readResponsibilityBasis(ctx: CoreCallContext, input: {
     sessionRef: SessionRef; target: WorkLinkTarget;
   }): Promise<ReadResult<SessionResponsibilityBasisV1>>;
-}
-
-// ------------------------------------------------------------------------ //
-// Legacy provenance port (implementation: tasks/session-provenance-facts.ts) //
-// ------------------------------------------------------------------------ //
-
-export interface LegacySessionProvenancePort {
-  deriveLegacySessionProvenance(ctx: CoreCallContext, sessionRef: SessionRef): Promise<ReadResult<{
-    provenance: SessionProvenanceV1; basis: LegacyProvenanceBasisV1;
-    guards: readonly RecordGuard[]; sourceCursor: CommitCursor;
-  }>>;
 }

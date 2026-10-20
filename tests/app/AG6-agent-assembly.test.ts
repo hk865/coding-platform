@@ -147,6 +147,7 @@ function baseOptions(root: string, databasePath: string, sessionId: string, boun
       count: () => ({ tokens: 256, method: 'model_tokenizer', tokenizer: 'ag6-labelled-local-counter' }),
     }),
     root, databasePath, sessionId, input: 'AG6 assembly turn.', budget,
+    taskBudget: { tokenBudget: null, deadline: null },
     readOnly: true, signal: new AbortController().signal,
     deniedPrefixes: [], processSandboxOptions: {}, publish: async () => {},
   };

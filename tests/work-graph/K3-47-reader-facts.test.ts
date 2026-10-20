@@ -203,7 +203,11 @@ describe.each(BACKENDS)('K3-47 (二) the Task row derives AV-2b from a real unse
     const record = await createK3PendingReview(world, { taskId: 'k3-20-a',
       label: 'k3-47-reader-pending', callId: 'k3-47-reader-pending-call', command: 'echo pending' });
     const row = await taskRow(world, record.task.taskId);
-    expect(row.unknownCallReview).toMatchObject({ status: 'pending_review', hold: null });
+    // The complete pending projection: the row's selected Run is the original
+    // Run, and the record's round/decision fields are projected verbatim.
+    expect(row).toMatchObject({ execution: record.runRef,
+      unknownCallReview: { ref: reviewRefOf(record.runRef), revision: 1, status: 'pending_review',
+        decisionReasons: [], activeRound: null, hold: null, remainingRoundSlots: 8 } });
     expect(row.failure?.unknownCallReview).toMatchObject({ status: 'pending_review', requeueConfirmed: false });
     expect(row.failure?.automation.verdict).toMatchObject({ kind: 'stopped', reason: 'unknown_call_review',
       detail: { reviewStatus: 'pending_review' } });

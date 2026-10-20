@@ -5,18 +5,14 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   appConfigSchema, ProviderRegistry, resumeCodingAgent, runCodingAgent,
-  SqliteStores, RecoveryCoordinator, kernelSessionApiVersion,
+  SqliteStores, kernelSessionApiVersion,
   type BeforeModelHookPort, type ModelClientPort, type ModelEvent,
   type ModelRequest, type RunLimits, type SessionRecord,
 } from "../../vendor/coding-agent/dist/public-api.js";
-import {
-  createTempWorkspace, type TempWorkspace, buildRawTurn, rawInsertRecords,
-  canonicalJson, checksum,
-} from "./R4a-legacy-fixtures.js";
+import { createTempWorkspace, type TempWorkspace } from "./R4a-legacy-fixtures.js";
 
 const SKILL_ROOT = fileURLToPath(new URL("../../vendor/coding-agent/resources/skills", import.meta.url));
 
@@ -153,26 +149,26 @@ describe("independent R4a execution identity and paused recovery", () => {
     const h = await harness([
       { kind: "text", text: "answer A" },
       { kind: "text", text: "answer B" },
+      { kind: "text", text: "answer C" },
     ]);
-    const first = {
+    const calls = ["A", "B", "C"].map((id) => ({
       ...h.common,
-      input: "question A",
-      executionIdentity: { runId: "run-A", turnId: "turn-A" },
-    };
-    const a = await runCodingAgent(first);
-    expect(a.state.status).toBe("completed");
-    const b = await runCodingAgent({
-      ...h.common,
-      input: "question B",
-      executionIdentity: { runId: "run-B", turnId: "turn-B" },
-    });
-    expect(b.state.status).toBe("completed");
+      input: `question ${id}`,
+      executionIdentity: { runId: `run-${id}`, turnId: `turn-${id}` },
+    }));
+    const results = [];
+    for (const call of calls) results.push(await runCodingAgent(call));
+    expect(results.map((result) => result.state.status)).toEqual([
+      "completed",
+      "completed",
+      "completed",
+    ]);
     const before = await records(h.databasePath, h.sessionId);
-    const replay = await runCodingAgent(first);
-    expect(replay.state.runId).toBe("run-A");
-    expect(replay.state.turn.turnId).toBe("turn-A");
-    expect(replay.state.transcript).toEqual(a.state.transcript);
-    expect(h.model.requests).toHaveLength(2);
+    const replay = await runCodingAgent(calls[1]!);
+    expect(replay.state.runId).toBe("run-B");
+    expect(replay.state.turn.turnId).toBe("turn-B");
+    expect(replay.state.transcript).toEqual(results[1]!.state.transcript);
+    expect(h.model.requests).toHaveLength(3);
     expect(await records(h.databasePath, h.sessionId)).toEqual(before);
   });
   it("replays the latest completed identity without another model request or Turn", async () => {
@@ -226,6 +222,7 @@ describe("independent R4a execution identity and paused recovery", () => {
     expect(paused.state.status).toBe("paused");
     expect(h.model.requests).toHaveLength(0);
     // 可拒绝不兼容恢复，或从原记录恢复约束；不能扩大可读范围。
+    const before = await records(h.databasePath, h.sessionId);
     const outcome = await resumeCodingAgent({ ...h.common, limits: limits(4) }).then(
       (value) => ({ status: "resolved" as const, value }),
       (error: unknown) => ({ status: "rejected" as const, error }),
@@ -233,10 +230,12 @@ describe("independent R4a execution identity and paused recovery", () => {
     if (outcome.status === "rejected") {
       expect(outcome.error).toMatchObject({ code: "conflict" });
       expect(h.model.requests).toHaveLength(0);
+      expect(await records(h.databasePath, h.sessionId)).toEqual(before);
     } else {
       const results = outcome.value.state.transcript.filter((row) => row.kind === "tool_result");
       expect(results).toHaveLength(1);
       expect(results[0]?.result.status).toBe("error");
+      expect(outcome.value.state.status).toBe("completed");
       expect(JSON.stringify(h.model.requests)).not.toContain(
         "INDEPENDENT_SYNTHETIC_PRIVATE_CONTENT",
       );
@@ -312,128 +311,6 @@ describe("independent R4a execution identity and paused recovery", () => {
     ).rejects.toThrow();
     expect(h.model.requests).toHaveLength(1);
     expect(await records(h.databasePath, h.sessionId)).toEqual(before);
-  });
-});
-
-});
-
-// Original: vendor/coding-agent/tests/review/R4a-recovery-contract.test.ts (all cases).
-describe("frozen public: R4a-recovery-contract.test.ts", () => {
-const roots: TempWorkspace[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map((root) => root.cleanup())); });
-class LocalModel implements ModelClientPort {
-  readonly requests: ModelRequest[] = [];
-  constructor(readonly readTarget: string | null = null) {}
-  async *stream(request: Readonly<ModelRequest>, options: { readonly signal: AbortSignal }): AsyncIterable<ModelEvent> {
-    options.signal.throwIfAborted();
-    this.requests.push(structuredClone(request));
-    if (this.readTarget && this.requests.length === 1) {
-      yield { schemaVersion: 1, requestId: request.requestId, sequence: 1, type: "tool_call_started", callId: "private-read", name: "read", ordinal: 0 };
-      yield { schemaVersion: 1, requestId: request.requestId, sequence: 2, type: "tool_arguments_delta", callId: "private-read", delta: JSON.stringify({ path: this.readTarget }) };
-      yield { schemaVersion: 1, requestId: request.requestId, sequence: 3, type: "completed", reason: "tool_calls" };
-      return;
-    }
-    yield { schemaVersion: 1, requestId: request.requestId, sequence: 1, type: "text_delta", delta: `answer-${this.requests.length}` };
-    yield { schemaVersion: 1, requestId: request.requestId, sequence: 2, type: "completed", reason: "final_answer" };
-  }
-}
-function limits(maxModelRequests: number): RunLimits {
-  return { maxModelRequests, maxToolCalls: 4, maxInputTokens: null, maxOutputTokens: null, maxTotalTokens: null, maxCostUsdMicros: null, deadlineMs: null };
-}
-const pause: BeforeModelHookPort = {
-  hookId: "contract-pause", point: "before_model", priority: 0,
-  async execute() { return { point: "before_model", kind: "pause", reason: "contract pause" }; },
-};
-async function setup(readTarget: string | null = null) {
-  const root = await createTempWorkspace("r4a-contract-"); roots.push(root);
-  const workspaceRoot = root.resolve("workspace");
-  await mkdir(path.join(workspaceRoot, "private"), { recursive: true });
-  await writeFile(path.join(workspaceRoot, "note.txt"), "fixture\n");
-  await writeFile(path.join(workspaceRoot, "private", "note.txt"), "R4A_CONTRACT_PRIVATE_SENTINEL\n");
-  const databasePath = root.resolve("session.sqlite");
-  const config = appConfigSchema.parse({
-    schemaVersion: 1,
-    model: { provider: "deepseek", model: "local", options: {}, maxOutputTokens: 128 },
-    runtime: { tokenBudget: 20_000, maxModelRequests: 6, maxToolCalls: 6 },
-    tools: { enabledNames: ["read"] }, storage: { databasePath },
-    skills: { resourceRoot: SKILL_ROOT, enabledIds: ["coding-safety"] },
-    memory: { provider: "empty" },
-  });
-  const model = new LocalModel(readTarget);
-  const providerRegistry = new ProviderRegistry().register({
-    id: "deepseek", secretEnvironmentVariable: "DEEPSEEK_API_KEY", defaultBaseUrl: "https://invalid.test",
-    capabilities: { streaming: true, toolCalls: true, usage: true }, create: () => model,
-  });
-  return { model, databasePath, common: { config, workspaceRoot, sessionId: "contract-session", providerRegistry, secretSource: { get: () => "synthetic-key" } } };
-}
-async function readRecords(databasePath: string, sessionId: string): Promise<SessionRecord[]> {
-  const store = await SqliteStores.open(databasePath);
-  try {
-    const rows: SessionRecord[] = []; let position = 0;
-    for (;;) {
-      const page = await store.read(sessionId, position, 256, { signal: new AbortController().signal });
-      rows.push(...page.records); position = rows.at(-1)?.position ?? position;
-      if (page.nextPosition === null) return rows;
-    }
-  } finally { await store.close(); }
-}
-
-describe("R4a recovery contract", () => {
-  it("stable identity replay selects the middle completed Run, with no model or SQLite writes", async () => {
-    const h = await setup();
-    const calls = ["A", "B", "C"].map((id) => ({ ...h.common, input: `question ${id}`, executionIdentity: { runId: `run-${id}`, turnId: `turn-${id}` } }));
-    const results = [];
-    for (const call of calls) results.push(await runCodingAgent(call));
-    const before = await readRecords(h.databasePath, h.common.sessionId);
-    const replay = await runCodingAgent(calls[1]!);
-    expect(replay.state.runId).toBe("run-B");
-    expect(replay.state.turn.turnId).toBe("turn-B");
-    expect(replay.state.transcript).toEqual(results[1]!.state.transcript);
-    expect(h.model.requests).toHaveLength(3);
-    expect(await readRecords(h.databasePath, h.common.sessionId)).toEqual(before);
-  });
-
-  it("a paused Turn cannot resume with a larger model budget after restart", async () => {
-    const h = await setup();
-    const paused = await runCodingAgent({ ...h.common, input: "pause", executionIdentity: { runId: "budget", turnId: "budget-turn" }, limits: limits(1), controlHooks: [pause] });
-    expect(paused.state.status).toBe("paused");
-    const before = await readRecords(h.databasePath, h.common.sessionId);
-    await expect(resumeCodingAgent({ ...h.common, limits: limits(4) })).rejects.toMatchObject({ code: "conflict" });
-    expect(h.model.requests).toHaveLength(0);
-    expect(await readRecords(h.databasePath, h.common.sessionId)).toEqual(before);
-  });
-
-  it("a paused Turn does not lose an explicit denied prefix when the resume call omits it", async () => {
-    const h = await setup("private/note.txt");
-    await runCodingAgent({ ...h.common, input: "pause", executionIdentity: { runId: "sandbox", turnId: "sandbox-turn" }, workspaceOptions: { deniedPrefixes: ["private"] }, controlHooks: [pause] });
-    const before = await readRecords(h.databasePath, h.common.sessionId);
-    const outcome = await resumeCodingAgent(h.common).then((value) => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
-    if (outcome.ok) {
-      const deniedRead = outcome.value.state.transcript.find((entry) => entry.kind === "tool_result");
-      expect(deniedRead?.kind === "tool_result" ? deniedRead.result.status : null).toBe("error");
-      expect(outcome.value.state.status).toBe("completed");
-      expect(JSON.stringify(h.model.requests)).not.toContain("R4A_CONTRACT_PRIVATE_SENTINEL");
-    } else {
-      expect(outcome.error).toMatchObject({ code: "conflict" });
-      expect(h.model.requests).toHaveLength(0);
-      expect(await readRecords(h.databasePath, h.common.sessionId)).toEqual(before);
-    }
-  });
-
-  it("reads a legacy schemaVersion=1 Turn without new constraint fields or rewriting its checksum", async () => {
-    const h = await setup();
-    const store = await SqliteStores.open(h.databasePath);
-    const signal = new AbortController().signal;
-    await store.create({ sessionId: h.common.sessionId, recordId: `session:${h.common.sessionId}`, createdAt: "2026-09-23T00:00:00.000Z" }, { signal });
-    const old = buildRawTurn({ sessionId: h.common.sessionId, startPosition: 2, runId: "old-run", turnId: "old-turn", input: "legacy" });
-    rawInsertRecords(h.databasePath, old.records);
-    const before = await readRecords(h.databasePath, h.common.sessionId);
-    expect(before.find((record) => record.recordType === "turn.started")?.payload).not.toHaveProperty("contextBasis");
-    const result = await new RecoveryCoordinator({ sessions: store, checkpoints: store }).recover(h.common.sessionId, { signal });
-    expect(result.action).toBe("terminal");
-    expect(result.state.runId).toBe("old-run");
-    expect(await readRecords(h.databasePath, h.common.sessionId)).toEqual(before);
-    await store.close();
   });
 });
 
@@ -591,61 +468,6 @@ describe("R4a paused recovery environment", () => {
     await expect(resumeCodingAgent(h.common)).rejects.toMatchObject({ code: "conflict" });
     expect(h.model.requests).toHaveLength(0);
     expect(await records(h.databasePath, h.common.sessionId)).toEqual(before);
-  });
-
-  it("ignores a checksum-valid checkpoint with unsupported recovery constraint version and replays Session events", async () => {
-    const h = await setup();
-    const store = await SqliteStores.open(h.databasePath);
-    const signal = new AbortController().signal;
-    try {
-      const checkpoints = await store.listCheckpoints("environment-run", { signal });
-      const latest = checkpoints[0];
-      expect(latest).toBeDefined();
-      const fromEvents = await new RecoveryCoordinator({ sessions: store }).recover(h.common.sessionId, { signal });
-      const before = await records(h.databasePath, h.common.sessionId);
-      const body: Record<string, unknown> = { ...latest };
-      delete body["checksum"];
-      const originalConstraints = body["recoveryConstraints"];
-      body["recoveryConstraints"] = {
-        ...(originalConstraints && typeof originalConstraints === "object" ? originalConstraints : {}),
-        version: 2,
-      };
-      const database = new DatabaseSync(h.databasePath);
-      try {
-        database.prepare("UPDATE checkpoints SET checkpoint_json=? WHERE checkpoint_id=?")
-          .run(canonicalJson({ ...body, checksum: checksum(body) }), latest!.checkpointId);
-      } finally { database.close(); }
-      const recovered = await new RecoveryCoordinator({ sessions: store, checkpoints: store })
-        .recover(h.common.sessionId, { signal });
-      expect(recovered.checkpointId).not.toBe(latest!.checkpointId);
-      expect(recovered.action).toBe("paused");
-      expect(recovered.state).toEqual(fromEvents.state);
-      expect(await records(h.databasePath, h.common.sessionId)).toEqual(before);
-    } finally { await store.close(); }
-  });
-
-  it("still accepts a legacy checkpoint without recovery constraints", async () => {
-    const h = await setup();
-    const store = await SqliteStores.open(h.databasePath);
-    const signal = new AbortController().signal;
-    try {
-      const latest = (await store.listCheckpoints("environment-run", { signal }))[0];
-      expect(latest).toBeDefined();
-      const body: Record<string, unknown> = { ...latest };
-      delete body["checksum"];
-      delete body["recoveryConstraints"];
-      const database = new DatabaseSync(h.databasePath);
-      try {
-        database.prepare("UPDATE checkpoints SET checkpoint_json=? WHERE checkpoint_id=?")
-          .run(canonicalJson({ ...body, checksum: checksum(body) }), latest!.checkpointId);
-      } finally { database.close(); }
-      const before = await records(h.databasePath, h.common.sessionId);
-      const recovered = await new RecoveryCoordinator({ sessions: store, checkpoints: store })
-        .recover(h.common.sessionId, { signal });
-      expect(recovered.checkpointId).toBe(latest!.checkpointId);
-      expect(recovered.action).toBe("paused");
-      expect(await records(h.databasePath, h.common.sessionId)).toEqual(before);
-    } finally { await store.close(); }
   });
 });
 

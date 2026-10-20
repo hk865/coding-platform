@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 import { createHash } from "node:crypto";
 /**
  * Minimal RFC 8785 / JCS canonical JSON serializer.

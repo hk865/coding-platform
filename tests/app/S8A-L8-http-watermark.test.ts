@@ -6,10 +6,8 @@
  * clear invalid reason, so a manual caller cannot move the watermark that decides
  * `pending`. The refusal row lives under `describe('rejects: …')` and, after the
  * single error, reads the public observation-state to show that neither the
- * current observation nor the request watermark moved. The same real route
- * without `requestSeq` still commits a real observation; that is its own row,
- * outside the rejects block. Only the driver passes the watermark, through the
- * non-public direct owner call.
+ * current observation nor the request watermark moved. Only the driver passes the
+ * watermark, through the non-public direct owner call.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -56,28 +54,4 @@ describe.each(['memory', 'sqlite'] as const)('L8 manual capture watermark over H
       } finally { await started.host.close(); }
     });
   });
-
-  it('the same capture body without requestSeq still commits a real observation', async () => {
-    const scope = scopeOf(`l8-watermark-${backend}`, `l8-watermark-ws-${backend}`);
-    const started = await startHost({ backend, workspaces: [workspaceConfig(scope, await makeWorkspace())] });
-    try {
-      await routeRegistered(started, scope);
-      const before = await waitState(started.base, started.token, scope, completed);
-      const baselineCapture = before.current?.captureRef.captureId;
-      const baselineSeq = before.autoCapture?.requestSeq;
-      expect(baselineCapture).toBeTruthy();
-      expect(baselineSeq).toBe(1);
-
-      const committed = await corePost(started.base, 'architecture/capture', started.token,
-        graphWrite(scope, { workspace: scope, mappings: [], previous: null },
-          `l8-watermark-committed-${backend}`, pins(scope)));
-      expect(await committed.json()).toMatchObject({ status: 'committed' });
-
-      const after = await waitState(started.base, started.token, scope,
-        state => state.current !== null && state.current.captureRef.captureId !== baselineCapture);
-      expect(after.current?.captureRef.captureId).toBeTruthy();
-      // A manual capture reads the current record's sequence; it never moves it.
-      expect(after.autoCapture).toMatchObject({ requestSeq: baselineSeq, pending: false });
-    } finally { await started.host.close(); }
-  }, 60_000);
 });

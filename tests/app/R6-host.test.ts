@@ -22,8 +22,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLocalWorkbenchHost, type LocalWorkbenchHost } from '../../src/app/host.js';
-import { loadWorkbenchCliConfig } from '../../src/app/main.js';
-import { ProviderRegistry } from '../../vendor/coding-agent/dist/public-api.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { WorkbenchRuntimeConfiguration } from '../../src/app/runtime-configuration.js';
@@ -65,6 +63,7 @@ import {
   type WorkflowStepReceipt,
 } from '../../src/app/core-http-types.js';
 import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
+import { cleanupAG2b, readPageToken, startCliHost } from '../helpers/AG2b-collaboration-fixture.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { TargetPlatformOptions } from '../../src/composition/create-platform.js';
 
@@ -89,6 +88,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const directory of temporary.splice(0)) await rm(directory, { recursive: true, force: true });
+  await cleanupAG2b();
 });
 
 type Started = { host: LocalWorkbenchHost; base: string; token: string; root: string; database: string };
@@ -132,15 +132,6 @@ async function startHost(overrides: StartOverrides = {}): Promise<Started> {
   const address = await host.listen();
   const token = await readPageToken(address.url);
   return { host, base: address.url, token, root, database };
-}
-
-async function readPageToken(base: string): Promise<string> {
-  const response = await fetch(base);
-  expect(response.status).toBe(200);
-  const html = await response.text();
-  const match = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
-  if (match?.[1] === undefined) throw new Error('the page did not expose the runtime token meta');
-  return match[1];
 }
 
 const coreUrl = (base: string, suffix: string): string => new URL(CORE_API_PREFIX + suffix, base).toString();
@@ -619,52 +610,26 @@ type R6xStarted = {
 type R6xOverrides = { root?: string; database?: string };
 
 async function startRuntimeHost(overrides: R6xOverrides = {}): Promise<R6xStarted> {
-  const root = overrides.root ?? await mkdtemp(join(tmpdir(), 'r6x-host-ws-'));
-  const database = overrides.database ?? await mkdtemp(join(tmpdir(), 'r6x-host-db-'));
-  const configDir = await mkdtemp(join(tmpdir(), 'r6x-host-config-'));
-  if (overrides.root === undefined) temporary.push(root);
-  if (overrides.database === undefined) temporary.push(database);
-  temporary.push(configDir);
-  await mkdir(join(root, 'src'), { recursive: true });
-  await writeFile(join(root, 'src', 'module.ts'), 'export const r6xMarker = "R6_EXECUTION_SOURCE";\n');
-  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({
-    compilerOptions: { target: 'ES2022', module: 'ESNext', strict: true }, include: ['src/**/*.ts'],
-  }));
   const skillsRoot = fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url));
-  const scripted = createScriptedModel([
-    { kind: 'calls', calls: [{ callId: 'r6x-source-1', name: 'project_source',
-      args: { action: 'read', path: 'src/module.ts', maxBytes: 8192, version: { kind: 'working_tree' } } }] },
-    { kind: 'text', text: executionPlanAnswer() },
-    { kind: 'text', text: 'R6 execution first work result' },
-    { kind: 'text', text: 'R6 execution second work result' },
-  ]);
-  const registry = new ProviderRegistry().register({
-    id: 'deepseek', secretEnvironmentVariable: R6X_SECRET_VAR, defaultBaseUrl: 'https://invalid.test',
-    capabilities: { streaming: true, toolCalls: true, usage: true },
-    create: () => scripted.client,
-  });
-  const runtime: WorkbenchRuntimeConfiguration = {
-    schemaVersion: 1,
-    bindings: [
-      { id: 'r6x-query-binding', label: 'R6 query runtime', scope, role: querySessionRole,
-        configurationRevision: 'r6x-query-host@1',
-        model: { revision: 'r6x-query-model@1', provider: 'deepseek', model: 'r6x-scripted-query',
-          secretEnvironmentVariable: R6X_SECRET_VAR },
-        grant: { budget: r6xRuntimeBudget, hostTemplate: { templateId: 'advisor', revision: '1', digest: sha256Hex(R6X_QUERY_INSTRUCTION) },
-          tools: ['read', 'project_source'], writeScope: [], skills: { resourceRoot: skillsRoot, enabledIds: [] },
-          systemInstruction: R6X_QUERY_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null } },
-      { id: 'r6x-work-binding', label: 'R6 work runtime', scope, role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
-        configurationRevision: 'r6x-work-host@1',
-        model: { revision: 'r6x-work-model@1', provider: 'deepseek', model: 'r6x-scripted-work',
-          secretEnvironmentVariable: R6X_SECRET_VAR },
-        grant: { budget: r6xRuntimeBudget, hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex(R6X_WORK_INSTRUCTION) },
-          tools: ['read'], writeScope: [], skills: { resourceRoot: skillsRoot, enabledIds: [] },
-          systemInstruction: R6X_WORK_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null } },
-    ],
-    queryProfiles: [{ id: 'r6x-investigate', label: 'R6 只读调查', scope, runtimeBindingId: 'r6x-query-binding',
-      sessionRole: querySessionRole, roleBinding: queryRoleBinding, runtimeBudget: r6xRuntimeBudget,
-      budget: { maxTokens: 200000, deadline: null }, consumerId: 'r6x-consumer' }],
-  };
+  const bindings: WorkbenchRuntimeConfiguration['bindings'] = [
+    { id: 'r6x-query-binding', label: 'R6 query runtime', scope, role: querySessionRole,
+      configurationRevision: 'r6x-query-host@1',
+      model: { revision: 'r6x-query-model@1', provider: 'deepseek', model: 'r6x-scripted-query',
+        secretEnvironmentVariable: R6X_SECRET_VAR },
+      grant: { budget: r6xRuntimeBudget, hostTemplate: { templateId: 'advisor', revision: '1', digest: sha256Hex(R6X_QUERY_INSTRUCTION) },
+        tools: ['read', 'project_source'], writeScope: [], skills: { resourceRoot: skillsRoot, enabledIds: [] },
+        systemInstruction: R6X_QUERY_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null } },
+    { id: 'r6x-work-binding', label: 'R6 work runtime', scope, role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
+      configurationRevision: 'r6x-work-host@1',
+      model: { revision: 'r6x-work-model@1', provider: 'deepseek', model: 'r6x-scripted-work',
+        secretEnvironmentVariable: R6X_SECRET_VAR },
+      grant: { budget: r6xRuntimeBudget, hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex(R6X_WORK_INSTRUCTION) },
+        tools: ['read'], writeScope: [], skills: { resourceRoot: skillsRoot, enabledIds: [] },
+        systemInstruction: R6X_WORK_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null } },
+  ];
+  const queryProfiles: WorkbenchRuntimeConfiguration['queryProfiles'] = [{ id: 'r6x-investigate', label: 'R6 只读调查',
+    scope, runtimeBindingId: 'r6x-query-binding', sessionRole: querySessionRole, roleBinding: queryRoleBinding,
+    runtimeBudget: r6xRuntimeBudget, budget: { maxTokens: 200000, deadline: null }, consumerId: 'r6x-consumer' }];
   // The trusted check permission revision must equal the Host workspace
   // permission generation exactly. It is derived here with the SAME algorithm as
   // app/host.ts (subject + scope + sorted read prefixes), never a guessed
@@ -685,26 +650,34 @@ async function startRuntimeHost(overrides: R6xOverrides = {}): Promise<R6xStarte
     bindings: [{ workspace: scope, sessionRole: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
       roleBinding: workRoleBinding, budget: { tokenBudget: 100000, deadline: null } }],
   };
-  const configPath = join(configDir, 'workbench.json');
-  await writeFile(configPath, JSON.stringify({
-    sqliteDirectory: database,
-    actor: { kind: 'human', id: 'r6x-operator' },
-    workspaces: [{ scope, name: 'R6 execution workspace', root, workspaceRevision: 1, readPrefixes: ['src'] }],
-    architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },
-    kernelStores: { entries: [{ adapterId: 'r6x-kernel', storeKey: 'r6x-kernel-store', workspace: scope,
-      databasePath: join(database, 'kernel.sqlite') }] },
-    runtime, checks, workflow,
-  }));
-  const loaded = await loadWorkbenchCliConfig(configPath);
-  const host = await createLocalWorkbenchHost({
-    ...loaded,
+  const started = await startCliHost({
     publicDir,
-    now: () => at,
-    runtimeProvider: { registry, secretSource: { get: (name: string) => name === R6X_SECRET_VAR ? R6X_SECRET_VALUE : undefined } },
+    tempPrefix: 'r6x-host',
+    ...(overrides.root === undefined ? {} : { root: overrides.root }),
+    ...(overrides.database === undefined ? {} : { database: overrides.database }),
+    scope, actor: { kind: 'human', id: 'r6x-operator' }, at,
+    workspaceName: 'R6 execution workspace',
+    files: {
+      'src/module.ts': 'export const r6xMarker = "R6_EXECUTION_SOURCE";\n',
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: { target: 'ES2022', module: 'ESNext', strict: true }, include: ['src/**/*.ts'],
+      }),
+    },
+    readPrefixes: ['src'], bindings, queryProfiles, checks, workflow,
+    kernelStore: { adapterId: 'r6x-kernel', storeKey: 'r6x-kernel-store' },
+    secret: { variable: R6X_SECRET_VAR, value: R6X_SECRET_VALUE },
+    // The R6 chain's single controlled model is the primary scripted client.
+    queryModel: () => false,
+    replies: [
+      { kind: 'calls', calls: [{ callId: 'r6x-source-1', name: 'project_source',
+        args: { action: 'read', path: 'src/module.ts', maxBytes: 8192, version: { kind: 'working_tree' } } }] },
+      { kind: 'text', text: executionPlanAnswer() },
+      { kind: 'text', text: 'R6 execution first work result' },
+      { kind: 'text', text: 'R6 execution second work result' },
+    ],
   });
-  const address = await host.listen();
-  const token = await readPageToken(address.url);
-  return { host, base: address.url, token, root, database, scripted };
+  return { host: started.host, base: started.base, token: started.token, root: started.root,
+    database: started.database, scripted: started.scripted };
 }
 
 describe('R6 execution entry (expected red at the first stage-one unsupported)', () => {

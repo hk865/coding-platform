@@ -1,6 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -8,9 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 /**
  * Script-level tracer tests for slice-8 §11.3: the frozen `import_graph` NDJSON
- * operation and the one `python_index` change this task owns (argv[1] is the
- * analyzers directory and the missing-Jedi literal). Expected values are the
- * literal §11.6 rows, not this script's own output.
+ * operation. Expected values are the literal §11.6 rows, not this script's own
+ * output.
  */
 const SCRIPT = fileURLToPath(new URL('../../scripts/python-source-query.py', import.meta.url));
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
@@ -127,32 +125,9 @@ it('A-20 resolves the twelve Python edges and the eleven unresolved specifiers w
   expect(statuses.every(status => status.status === 'parsed')).toBe(true);
 });
 
-it('A-20 does not record the pkg/__init__.py self edge or an unresolved for that pair', async () => {
-  const { edges, unresolved } = await scan(A20, { path: 'pyrightconfig.json', content: '{"extraPaths": ["lib"]}' });
-  expect(edges.filter(([from, to]) => from === 'pkg/__init__.py' && to === 'pkg/__init__.py')).toEqual([]);
-  expect(unresolved.filter(item => item.from === 'pkg/__init__.py' && item.specifier === '.')).toEqual([]);
-});
-
 const A21: Record<string, string> = {
   'a.py': 'import b\n', 'b.py': '', 'd.py': 'import c\n', 'lib/c.py': '', 'bad.py': 'def broken(:\n',
 };
-
-it('A-21 reads JSONC pyrightconfig.json and keeps lib as a root after trailing slashes', async () => {
-  const config = '{\n  // roots\n  "extraPaths": ["lib/",], /* x */\n}\n';
-  const { ready, failed, edges, statuses } = await scan(A21, { path: 'pyrightconfig.json', content: config });
-  expect(failed).toBeUndefined();
-  expect(ready?.notes).toEqual([]);
-  expect(sorted(pairs(edges))).toEqual([['a.py', 'b.py'], ['d.py', 'lib/c.py']]);
-  expect(statuses.find(status => status.path === 'bad.py')).toEqual({ path: 'bad.py', status: 'failed', reason: 'SyntaxError: invalid syntax' });
-});
-
-it('A-21 records unused pyright fields in notes and the bad.py SyntaxError reason', async () => {
-  const config = '[tool.pyright]\npythonVersion = "3.11"\nextraPaths = ["lib"]\n';
-  const { ready, edges, statuses } = await scan(A21, { path: 'pyproject.toml', content: config });
-  expect(ready?.notes).toEqual(['pyproject.toml 里观测不用的字段：pythonVersion']);
-  expect(sorted(pairs(edges))).toEqual([['a.py', 'b.py'], ['d.py', 'lib/c.py']]);
-  expect(statuses.find(status => status.path === 'bad.py')).toEqual({ path: 'bad.py', status: 'failed', reason: 'SyntaxError: invalid syntax' });
-});
 
 it('A-21 fails on extraPaths as a string with the frozen configuration literal', async () => {
   const config = '[tool.pyright]\nextraPaths = "lib"\n';
@@ -161,31 +136,6 @@ it('A-21 fails on extraPaths as a string with the frozen configuration literal',
   expect(failed).toEqual({ t: 'failed', reason: '配置错误：pyproject.toml 的 extraPaths 不是字符串列表' });
   expect(edges).toEqual([]);
   expect(statuses).toEqual([]);
-});
-
-it('A-21 notes a vendor root with no claimed Python files and leaves d.py c unresolved', async () => {
-  const config = '[tool.pyright]\nextraPaths = ["vendor"]\n';
-  const { ready, edges, unresolved } = await scan(A21, { path: 'pyproject.toml', content: config });
-  expect(ready?.notes).toEqual(['pyproject.toml 里用不了的查找根：vendor']);
-  expect(sorted(pairs(edges))).toEqual([['a.py', 'b.py']]);
-  expect(unresolved).toEqual([{ from: 'd.py', specifier: 'c', reason: null }]);
-});
-
-it('A-21 fails on extends with the frozen configuration literal', async () => {
-  const config = '{"extends": "base.json"}';
-  const { ready, failed, edges } = await scan(A21, { path: 'pyrightconfig.json', content: config });
-  expect(ready).toBeUndefined();
-  expect(failed).toEqual({ t: 'failed', reason: '配置错误：pyrightconfig.json 的 extends 观测还不跟进' });
-  expect(edges).toEqual([]);
-});
-
-it('A-21 keeps the configuration root order: packages.find where before pyright extraPaths', async () => {
-  const config = '[tool.setuptools.packages.find]\nwhere = ["a"]\n[tool.pyright]\nextraPaths = ["b"]\n';
-  const { edges } = await scan(
-    { 'x.py': 'import m\n', 'a/m.py': '', 'b/m.py': '' },
-    { path: 'pyproject.toml', content: config },
-  );
-  expect(sorted(pairs(edges))).toEqual([['x.py', 'a/m.py']]);
 });
 
 it('turns a RecursionError from deeply nested selected configuration JSON into one failed line', async () => {
@@ -214,20 +164,4 @@ it('python_index keeps the shared root order: packages.find where before pyright
   expect(parsed.results).toContainEqual(expect.objectContaining({
     module: 'm', resolution: 'resolved', targets: [expect.objectContaining({ path: 'a/m.py' })],
   }));
-});
-
-it('python_index takes the analyzers directory from argv[1] and names <dir>/analyzers.zip when Jedi is missing', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 's8d-python-analyzers-'));
-  roots.push(directory);
-  const archive = Buffer.from('UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==', 'base64');
-  expect(archive).toHaveLength(22);
-  await writeFile(join(directory, 'analyzers.zip'), archive);
-  await writeFile(join(directory, 'analyzers.sha256'), createHash('sha256').update(archive).digest('hex') + '\n');
-  await writeFile(join(directory, 'manifest.json'), '{}\n');
-  const result = await run([directory], JSON.stringify({ files: [], query: { operation: 'imports' } }));
-  expect(result.code, result.stderr).toBe(0);
-  expect(JSON.parse(result.stdout)).toEqual({
-    status: 'unsupported',
-    message: `Python semantic provider missing: jedi is not in ${join(directory, 'analyzers.zip')}`,
-  });
 });

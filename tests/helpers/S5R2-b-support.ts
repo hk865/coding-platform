@@ -24,8 +24,8 @@ import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-gr
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
-import { createExecutedFilesStub } from './executed-files-stub.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
+import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
@@ -79,7 +79,7 @@ export async function assembleB(f: S5DecisionFixture) {
       createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans }))],
     noticeSources: [createAutomaticReworkNoticeSource({ records })],
     conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
-      executedFiles: createExecutedFilesStub() }),
+      executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
   });
 
@@ -136,7 +136,6 @@ export async function assembleB(f: S5DecisionFixture) {
       sessionRole: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
       roleBinding: f.runRA.roleBinding, budget: f.runRA.budget }] },
     goalSettings: settings, decisionMessages: { ...decisions, sendUserMessage: mailbox.sendUserMessage.bind(mailbox) },
-    decisionSources: sources,
   };
   return { workflow: createWorkflow(dependencies), settings, plans, reads, sources, evidence,
     runtimeCalls: () => runtimeCalls };

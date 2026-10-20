@@ -30,8 +30,6 @@ import { WorkspaceSandbox } from "../../vendor/coding-agent/dist/sandbox/workspa
 export { ProcessSandbox, ProcessSandboxError };
 
 export const RL_MIB = 1_048_576;
-export const RL_PROBE_MEMORY_BYTES = 256 * RL_MIB;
-export const RL_PROBE_TASKS_MAX = 64;
 export const RL_SYSTEMD_RUN_DEFAULT = "/usr/bin/systemd-run";
 export const RL_BWRAP_DEFAULT = "/usr/bin/bwrap";
 
@@ -137,10 +135,6 @@ export function identityAndWait(payload: string): string {
     + `while [ ! -e /workspace/${RL_RELEASE} ]; do sleep 0.02; done; ${payload}`;
 }
 
-export function appendLine(file: string, text: string): string {
-  return `printf '%s\\n' ${shellQuote(text)} >> /workspace/${file}`;
-}
-
 /**
  * Item 9: the sleep carries the marker as its own argv[0] (`exec -a`), so the
  * anchored `pgrepMarked` finds the command process and not the bwrap/keeper
@@ -231,11 +225,6 @@ export async function cmdlineOf(pid: number): Promise<string> {
 /** Item 9: a failed `systemctl show` is an error, never an absent unit. */
 export function systemctlUserShow(unit: string): string {
   return execFileSync("systemctl", ["--user", "show", unit], { encoding: "utf8" });
-}
-
-export function unitLoadState(unit: string): string {
-  const match = /^LoadState=(.*)$/m.exec(systemctlUserShow(unit));
-  return match?.[1] ?? "unknown";
 }
 
 function systemctlErrorText(error: unknown): string {

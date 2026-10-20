@@ -124,7 +124,7 @@ describe('S4B M-14 the write-after check resolves facts', () => {
     } finally { await f.close(); }
   });
 
-  it.each(['memory', 'sqlite'] as const)('M-14 %s: a message fact that cannot be read is sourceUnavailable and the item remains', async kind => {
+  it.each(['memory', 'sqlite'] as const)('M-14 %s: a message fact that cannot be read is sourceUnavailable and the item remains (M-05)', async kind => {
     const f = await createS4BNoteCheckFixture(kind);
     try {
       const missing: NoteFactV1 = { kind: 'record', revision: 1, digest: null,
@@ -136,6 +136,12 @@ describe('S4B M-14 the write-after check resolves facts', () => {
       if (read.status !== 'ready') return;
       expect(read.value.sourceUnavailable).toBe(true);
       expect(read.value.currentEligible).toBe(false);
+      const page = await f.notes.listByAnchor(f.ctx(), { anchor: { kind: 'project' }, limit: 20, cursor: null });
+      expect(page.status).toBe('ready');
+      if (page.status !== 'ready') return;
+      const item = page.value.items.find(candidate => candidate.noteId === noteId);
+      expect(item).toBeDefined();
+      expect(item!.sourceUnavailable).toBe(true);
       const checks = await f.check.checkNotes(f.ctx(), { items: [{ noteId, version: 1 }] });
       expect(checks.status).toBe('ready');
       if (checks.status !== 'ready') return;

@@ -96,12 +96,6 @@ function workBinding(over: Partial<ContextAssemblyBindingV1> = {}): ContextAssem
 }
 
 describe('context-input ST01-ST15', () => {
-  it('ST01 no binding keeps the legacy input and reports no problem', () => {
-    expect(contextAssemblyProblem({
-      binding: undefined, text: 'old-A', selectedTaskInputs: [], continuationSuffix: null,
-    })).toBeNull();
-  });
-
   it('ST02 accepts a legal s3 work binding with exact byte intervals', () => {
     expect(contextAssemblyProblem({
       binding: workBinding(), text: BASE.text, selectedTaskInputs: [], continuationSuffix: null,

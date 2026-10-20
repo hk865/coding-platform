@@ -168,11 +168,8 @@ const EV = {
     kernelSource: source(6), completedHistoryBoundary: { source: source(6), cursor: 'cursor-6' },
     history: observed(3, 6, 6), unresolvedToolCallIds: [], endedAt: T_END, factEventId: 'fact-1' },
   stopU: { kind: 'stop_not_entered', source: 'U', intentRef: intentRef('i-cancel'), recordedAt: T_LATER },
-  stopR: { kind: 'stop_not_entered', source: 'R', intentRef: intentRef('i-cancel'), recordedAt: T_LATER },
   pauseU: { kind: 'pause_not_entered', source: 'U', intentRef: intentRef('i-pause') },
-  pauseR: { kind: 'pause_not_entered', source: 'R', intentRef: intentRef('i-pause') },
   resumeU: { kind: 'resume_not_entered', source: 'U', intentRef: intentRef('i-resume') },
-  resumeR: { kind: 'resume_not_entered', source: 'R', intentRef: intentRef('i-resume') },
   ctlPause: { kind: 'control_submitted', intentRef: intentRef('i-pause'), control: 'pause', reason: null },
   ctlCancel: { kind: 'control_submitted', intentRef: intentRef('i-cancel'), control: 'cancel', reason: null },
   ctlResume: { kind: 'control_submitted', intentRef: intentRef('i-resume'), control: 'resume', reason: null },
@@ -326,13 +323,9 @@ const TABLE: Record<EventCase, Record<RunNode, Expect>> = {
     Ended: { reason: 'duplicate', code: 'busy' }, YieldedWait: { reason: 'duplicate', code: 'busy' },
     EndedUnknown: { reason: 'guard_failed', code: 'incomplete' } },
   stopU: { ...NOT_ENTERED_ON_OTHERS, ...stoppedNotEntered },
-  // RUN-09..11 (R, step 5.6): the default context has no queued pointer intent to reconcile.
-  stopR: { ...NOT_ENTERED_ON_OTHERS, Claimed: ILLEGAL, Authorized: ILLEGAL, Revoked: ILLEGAL },
   pauseU: { ...NOT_ENTERED_ON_OTHERS, ...unenteredControl('i-pause') },
-  pauseR: { ...NOT_ENTERED_ON_OTHERS, Claimed: ILLEGAL, Authorized: ILLEGAL, Revoked: ILLEGAL },
   // No pointer: today's `resume requires a formal pause`.
   resumeU: { ...NOT_ENTERED_ON_OTHERS, Claimed: GUARD_BUSY, Authorized: GUARD_BUSY, Revoked: GUARD_BUSY },
-  resumeR: { ...NOT_ENTERED_ON_OTHERS, Claimed: ILLEGAL, Authorized: ILLEGAL, Revoked: ILLEGAL },
   ctlPause: { Absent: NOT_FOUND, ...ROUTED_TO_NOT_ENTERED, Entering: { to: 'Entering', effects: intentEffect('i-pause') },
     Running: { to: 'Running', effects: intentEffect('i-pause') }, YieldedWait: { to: 'YieldedWait', effects: intentEffect('i-pause') },
     Ended: BUSY, EndedUnknown: BUSY },
@@ -430,10 +423,10 @@ describe('run machine: every (node, event) combination (§6.3, §6.4)', () => {
 
 describe('runStateOf / runNodeOf / runCombinationProblem (§6.1)', () => {
   it('projects the spec fields of each node', () => {
-    expect(stateOf('Absent')).toEqual({ node: 'Absent', outcome: null, entryGeneration: null, legacyV1: false, pointer: 'none',
+    expect(stateOf('Absent')).toEqual({ node: 'Absent', outcome: null, entryGeneration: null, pointer: 'none',
       lastEventSeq: 0, unresolved: null, record: null });
-    expect(stateOf('Claimed')).toMatchObject({ entryGeneration: null, legacyV1: false, pointer: 'none', unresolved: null });
-    expect(stateOf('Running')).toMatchObject({ entryGeneration: 1, legacyV1: false, outcome: null });
+    expect(stateOf('Claimed')).toMatchObject({ entryGeneration: null, pointer: 'none', unresolved: null });
+    expect(stateOf('Running')).toMatchObject({ entryGeneration: 1, outcome: null });
     expect(stateOf('Ended')).toMatchObject({ outcome: 'completed', lastEventSeq: 1 });
     expect(stateOf('EndedUnknown')).toMatchObject({ outcome: 'outcome_unknown',
       unresolved: { observedThroughPosition: 5, toolCallIds: ['call-1'] } });
@@ -441,17 +434,9 @@ describe('runStateOf / runNodeOf / runCombinationProblem (§6.1)', () => {
       .toBe('paused');
   });
 
-  it('reads V1 and pre-B2 authorizations as legacy history, not damage', () => {
-    const v1Starting: RunSnapshot = { ...CLAIMED, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'authorized' } };
-    expect(runStateOf(v1Starting)).toMatchObject({ node: 'Claimed', legacyV1: true, entryGeneration: null });
-    const v1Running: RunSnapshot = { ...RUNNING, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'entered' } };
-    expect(runStateOf(v1Running)).toMatchObject({ node: 'Running', legacyV1: true });
-    const { executionAuthorization: _auth, ...preB2 } = RUNNING;
-    expect(runStateOf(preB2)).toMatchObject({ node: 'Running', legacyV1: true });
+  it('ends a D7 Run that never had a binding', () => {
     const { executionAuthorization: _ended, ...d7Ended } = { ...CLAIMED, status: 'ended' as const, outcome: 'cancelled' as const };
-    expect(runStateOf(d7Ended)).toMatchObject({ node: 'Ended', legacyV1: false });
-    expect(runCombinationProblem(v1Starting)).toBeNull();
-    expect(runCombinationProblem(preB2)).toBeNull();
+    expect(runStateOf(d7Ended)).toMatchObject({ node: 'Ended' });
   });
 
   it('reports V2 combinations outside the eight machine states', () => {
@@ -480,7 +465,7 @@ describe('RUN-01 claim_committed', () => {
       status: 'starting', outcome: null, exitCode: null, lastEventSeq: 0,
       lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null };
     expectSameRecord(result.next.record, expected);
-    expect(result.next).toMatchObject({ node: 'Claimed', pointer: 'none', entryGeneration: null, legacyV1: false });
+    expect(result.next).toMatchObject({ node: 'Claimed', pointer: 'none', entryGeneration: null });
   });
 
   it('keeps the consumed wait of a continuation claim and the requeueRef of a requeue record', () => {
@@ -591,8 +576,6 @@ describe('RUN-02 / RUN-03 entry_authorized', () => {
     for (const lease of ['missing', 'released', 'other'] as const) {
       expect(at(CLAIMED, ctxWith({ lease }))).toEqual({ reason: 'guard_failed', code: 'busy' });
     }
-    expect(at({ ...CLAIMED, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'authorized' } }))
-      .toEqual({ reason: 'guard_failed', code: 'forbidden' });
     expect(at(CLAIMED, ctxWith({ goal: { desiredState: 'paused', activePlanMatchesClaim: true } })))
       .toEqual({ reason: 'guard_failed', code: 'busy' });
     // The Goal before the Plan pin (`execution-entry-service.ts:960-962`; §6.6 "Goal 暂停时仍先返回 busy").
@@ -635,9 +618,6 @@ describe('RUN-02 / RUN-03 entry_authorized', () => {
         detail: 'the prepared budget disagrees with the Run' });
       expect(at(RECORD_OF[node], MISMATCHED_CLAIM), node).toMatchObject({ reason: 'guard_failed', code: 'invalid' });
     }
-    const v1: RunSnapshot = { ...CLAIMED, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'authorized' } };
-    expect(at(v1, CTX, badBudget).detail).toBe('the prepared budget disagrees with the Run');
-    expect(at(v1, MISMATCHED_CLAIM).code).toBe('invalid');
   });
 
   it('passes the active Plan and a Plan that carries the Task unchanged (RUN-02, C6; 5.4b)', () => {
@@ -718,8 +698,6 @@ describe('RUN-04 entry_begun', () => {
       answer(transitionRun(runStateOf(run), event, ctx));
     expect(at(EV.begin, { ...AUTHORIZED, controlState: pointer('cancelled') })).toEqual({ reason: 'guard_failed', code: 'busy' });
     expect(at(EV.begin, { ...AUTHORIZED, controlState: pointer('steered') })).toEqual({ reason: 'guard_failed', code: 'unsupported' });
-    expect(at(EV.begin, { ...CLAIMED, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'authorized' } }))
-      .toEqual({ reason: 'guard_failed', code: 'forbidden' });
     // The persisted claim follows the permit, so each case reaches the binding check it names.
     for (const permit of [{ ...permitAt(1), consumerId: 'other' }, permitAt(1, 2), permitAt(2),
       { ...permitAt(1), inputDigest: 'c'.repeat(64) }, { ...permitAt(1), claim: { ...claim, generation: GEN + 1 } }]) {
@@ -752,7 +730,6 @@ describe('RUN-04 entry_begun', () => {
     expect(at(RUNNING)).toMatchObject({ reason: 'illegal', code: 'busy' });
     // Before the V2 binding, its phase, the permit, the Session and the Lease.
     expect(at(CLAIMED)).toMatchObject({ code: 'invalid' });
-    expect(at({ ...CLAIMED, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'authorized' } })).toMatchObject({ code: 'invalid' });
     expect(at(ENTERING)).toMatchObject({ code: 'invalid' });
     expect(at(REVOKED)).toMatchObject({ code: 'invalid' });
     expect(answer(transitionRun(runStateOf(AUTHORIZED), { ...EV.begin, permit: permitAt(2) }, { ...MISMATCHED_CLAIM, lease: 'released' })))
@@ -798,13 +775,10 @@ describe('RUN-05 entered_observed', () => {
     expect(at({ ...EV.entered, kernelSource: source(9) })).toEqual({ reason: 'guard_failed', code: 'invalid' });
     expect(at(EV.entered, ENTERING, ctxWith({ session: { ...CTX.session, kernel: { adapterId: 'adapter-1', kernelSessionId: 'other' } } })))
       .toEqual({ reason: 'guard_failed', code: 'forbidden' });
-    const v1: RunSnapshot = { ...ENTERING, status: 'running', executionAuthorization: { generation: 1, consumerId: 'c', phase: 'entered' } };
-    expect(at(EV.entered, v1)).toEqual({ reason: 'guard_failed', code: 'forbidden' });
     // The persisted claim is the first check (`execution-entry-service.ts:1220`).
     expect(rejected(transitionRun(runStateOf(ENTERING), EV.entered, MISMATCHED_CLAIM))).toEqual({ reason: 'guard_failed',
       code: 'invalid', detail: 'the entry permit claim disagrees with the persisted claim' });
     expect(at(EV.entered, ENTERING, ctxWith({ persistedClaim: null }))).toEqual({ reason: 'illegal', code: 'invalid' });
-    expect(at(EV.entered, v1, MISMATCHED_CLAIM)).toEqual({ reason: 'guard_failed', code: 'invalid' });
     expect(at(EV.entered, RUNNING, MISMATCHED_CLAIM)).toEqual({ reason: 'guard_failed', code: 'invalid' });
   });
 });
@@ -813,14 +787,6 @@ describe('RUN-06 history_recorded', () => {
   it('moves the watermark and keeps the identity (execution-history-binding.ts key order)', () => {
     const result = ok(transitionRun(stateOf('Running'), EV.history, CTX));
     expectSameRecord(result.next.record, { ...RUNNING, revision: RUNNING.revision + 1, executionHistory: historyLocator(3, 6, null) });
-  });
-
-  it('keeps the slot self → self for an existing locator without a held V2 begin binding (execution-history-binding.ts:152-154)', () => {
-    const { executionAuthorization: _auth, ...preB2 } = RUNNING;
-    const v1: RunSnapshot = { ...RUNNING, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'entered' } };
-    for (const [label, run] of [['pre-B2', preB2], ['V1', v1]] as const) {
-      expect(ok(transitionRun(runStateOf(run), EV.history, CTX)).effects, label).toEqual(slot('self'));
-    }
   });
 
   it('holds the begin slot only for the begin binding\'s own four-field Kernel identity (execution-history-service.ts:413-423 before step 3)', () => {
@@ -849,10 +815,6 @@ describe('RUN-06 history_recorded', () => {
       .toEqual({ reason: 'guard_failed', code: 'forbidden' });
     expect(at(observed(3, 6, null), RUNNING, ctxWith({ session: { ...CTX.session, kernel: null } })))
       .toEqual({ reason: 'illegal', code: 'invalid' });
-    // A malformed stored locator is unreadable, not a conflict.
-    const malformed: RunSnapshot = { ...RUNNING, executionHistory: { ...historyLocator(3, 3, null), startPosition: 0 } };
-    expect(rejected(transitionRun(runStateOf(malformed), { kind: 'history_recorded', sessionRef, history: observed(3, 6, null) }, CTX)))
-      .toEqual({ reason: 'guard_failed', code: 'unavailable', detail: 'the stored executionHistory is malformed' });
     // The same fixed end on an ended Run only re-binds (today: no status check).
     expect(transitionRun(stateOf('Ended'), { kind: 'history_recorded', sessionRef, history: observed(3, 7, 6) }, CTX).ok).toBe(true);
   });
@@ -941,10 +903,6 @@ describe('RUN-07 terminal_observed', () => {
       .toMatchObject({ reason: 'guard_failed', code: 'invalid' });
     expect(at(EV.terminal, ctxWith({ session: { ...CTX.session, kernel: { adapterId: 'x', kernelSessionId: 'y' } } })))
       .toMatchObject({ reason: 'guard_failed', code: 'forbidden' });
-    const preB2: RunSnapshot = { ...RUNNING };
-    delete preB2.executionAuthorization;
-    expect(at(EV.terminal, CTX, preB2)).toMatchObject({ reason: 'guard_failed', code: 'forbidden' });
-    expect(at(EV.terminal, MISMATCHED_CLAIM, preB2)).toMatchObject({ reason: 'guard_failed', code: 'invalid' });
   });
 
   it('ends the Run outcome_unknown for an unresolved tool call, keeping its Session and Lease (RUN-08, RD-2; 5.6)', () => {
@@ -976,7 +934,6 @@ describe('RUN-07 terminal_observed', () => {
 // ------------------------------------------------------------------------ //
 
 describe('RUN-02/04/05/07 read the Run, Session and observation as execution-entry-service.ts does (A.2 step 3)', () => {
-  const v1 = (run: RunSnapshot): RunSnapshot => ({ ...run, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'entered' } });
   const withPhase = (run: RunSnapshot, phase: ExecutionAuthorizationV2['phase']): RunSnapshot =>
     ({ ...run, executionAuthorization: { ...authOf(RUNNING), phase } });
 
@@ -1009,30 +966,9 @@ describe('RUN-02/04/05/07 read the Run, Session and observation as execution-ent
     expect(ended.effects.some(effect => effect.kind === 'release_lease')).toBe(false);
   });
 
-  it('refuses a V1 or pre-B2 Run with the one text of a Run without a V2 binding', () => {
-    const { executionAuthorization: _auth, ...preB2 } = RUNNING;
-    const cases: Array<[RunEvent, RunSnapshot]> = [[EV.begin, v1(AUTHORIZED)], [EV.entered, v1(ENTERING)],
-      [EV.terminal, v1(RUNNING)], [EV.terminal, preB2], [EV.begin, CLAIMED]];
-    for (const [event, run] of cases) {
-      expect(rejected(transitionRun(runStateOf(run), event, CTX)), event.kind)
-        .toMatchObject({ code: 'forbidden', detail: 'the Run has no formal V2 entry authorization' });
-    }
-  });
-
-  it('reads a fresh entry by status, then the V2 phase, also outside the eight states', () => {
-    for (const phase of ['entered', 'unknown', 'settled'] as const) {
-      const damaged = withPhase(CLAIMED, phase);
-      expect(runCombinationProblem(damaged), phase).not.toBeNull();
-      expect(rejected(transitionRun(runStateOf(damaged), EV.authorize, CTX)), phase)
-        .toEqual({ reason: 'illegal', code: 'busy', detail: 'the Run already has a V2 entry authorization' });
-      expect(rejected(transitionRun(runStateOf(damaged), EV.begin, CTX)), phase)
-        .toEqual({ reason: 'illegal', code: 'busy', detail: 'the Run entry is not in the authorized phase' });
-    }
-    // A starting Run that carries an outcome is still starting to today's service.
-    const finishedStarting: RunSnapshot = { ...CLAIMED, outcome: 'crashed' };
-    expect(ok(transitionRun(runStateOf(finishedStarting), EV.authorize, CTX)).next.record?.outcome).toBe('crashed');
-    expect(rejected(transitionRun(runStateOf({ ...AUTHORIZED, status: 'running' }), EV.begin, CTX)))
-      .toEqual({ reason: 'illegal', code: 'busy', detail: 'the Run is not in a beginable starting state' });
+  it('refuses a never-bound CLAIMED Run at begin with the one text of a Run without a V2 binding', () => {
+    expect(rejected(transitionRun(runStateOf(CLAIMED), EV.begin, CTX)))
+      .toMatchObject({ code: 'forbidden', detail: 'the Run has no formal V2 entry authorization' });
   });
 
   it('reads entered_observed by the entering phase alone', () => {
@@ -1398,7 +1334,6 @@ describe('RUN-09..15 read a control submission as control-service.ts does (A.2 s
 // ------------------------------------------------------------------------ //
 
 describe('RUN-16..24 (A.2 step 5.6): the §6.4 refusals, then each row', () => {
-  const legacy: RunSnapshot = { ...RUNNING, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'entered' } };
   /** The start-up reconcile: the takeover proof under this Host's own lease. */
   const takeover = (patch: Partial<RunGuardContext> = {}) => ctxWith({ exitProof: 'host_instance_takeover', ...patch });
   const enteredTurn: RunTurnFacts = { ...CLEAN_TURN,
@@ -1406,9 +1341,8 @@ describe('RUN-16..24 (A.2 step 5.6): the §6.4 refusals, then each row', () => {
   const queued = (kind: 'pause' | 'cancel' | 'resume') => ({ pointerIntent: { kind, status: 'queued' as const, observed: null } });
   const effectsOf = (result: RunTransition) => ok(result).effects;
 
-  it('reconcile_*: legacy, Host lease, probe, then the row', () => {
+  it('reconcile_*: Host lease, probe, then the row', () => {
     for (const event of [EV.recNotEntered, EV.recTerminal, EV.recInterrupted, EV.recUnknown]) {
-      expect(answer(transitionRun(runStateOf(legacy), event, CTX)), event.kind).toEqual({ reason: 'guard_failed', code: 'unsupported' });
       for (const node of ['Entering', 'Running', 'Ended', 'Claimed'] as const) {
         expect(answer(transitionRun(stateOf(node), event, ctxWith({ hostLease: 'held_by_other' }))), `${node} ${event.kind}`)
           .toEqual({ reason: 'guard_failed', code: 'busy' });
@@ -1644,14 +1578,10 @@ describe('pure helpers (§6.6, §15.1)', () => {
       .toEqual(forbidden('the V2 entry binding session generation disagrees with the claim'));
     expect(entryPermitGuard(auth, { ...permitAt(2), claim: otherGeneration })).toEqual(mismatch);
 
-    // The V2 binding as RUN-04/05 read it: one text for a V1, a pre-B2 and a never-bound Run.
+    // The V2 binding as RUN-04/05 read it: one text for a never-bound Run.
     expect(entryV2Binding(AUTHORIZED)).toEqual({ ok: true, next: auth, effects: [] });
     const noV2 = (reason: TransitionRejectReason) =>
       ({ ok: false, reason, code: 'forbidden', detail: 'the Run has no formal V2 entry authorization' });
-    expect(entryV2Binding({ ...RUNNING, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'entered' } }))
-      .toEqual(noV2('guard_failed'));
-    const { executionAuthorization: _preB2, ...preB2 } = RUNNING;
-    expect(entryV2Binding(preB2)).toEqual(noV2('guard_failed'));
     expect(entryV2Binding(CLAIMED)).toEqual(noV2('illegal'));
 
     // The persisted claim against the permit claim, with RUN-04/05's text.
@@ -1711,8 +1641,6 @@ describe('pure helpers (§6.6, §15.1)', () => {
       .toBe('run run-1 carries an unresolved reconciliation');
     expect(runUnresolvedBlocker({ ...ENDED, executionAuthorization: { ...authOf(ENDED), phase: 'unknown' } }))
       .toBe('run run-1 carries an unreconciled unknown entry authorization');
-    expect(runUnresolvedBlocker({ ...ENDED, executionAuthorization: { generation: 1, consumerId: 'c', phase: 'quarantined' } }))
-      .toBe('run run-1 carries an unreconciled quarantined entry authorization');
     const done = (observation: RunReconciliationV1['observation']): RunSnapshot =>
       ({ ...ENDED, reconciliation: { status: 'done', observation, basis: TAKEOVER, recordedAt: T_LATER } });
     expect(runUnresolvedBlocker(done({ kind: 'not_entered', kernel, revokedGeneration: 1 }))).toBeNull();

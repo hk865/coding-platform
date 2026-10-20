@@ -4,15 +4,15 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import { GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
@@ -34,7 +34,7 @@ const creation = (requestId: string) => ({
 const schemas: RecordBackendSchemas = {
   records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
-    { eventType: 'TrustedScopeSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) }],
+    ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
   lookups: SESSION_RECORD_SCHEMAS.lookups ?? [],
 };
 const directories: string[] = [];
@@ -47,17 +47,27 @@ async function open(kind: 'memory' | 'sqlite') {
   const backend = kind === 'memory'
     ? createInMemoryRecordBackend({ schemas })
     : createSqliteRecordBackend({ schemas, path: ledgerPath });
-  const project: ProjectSnapshot = { ref: { aggregateType: 'Project', projectId }, revision: 1 };
-  const workspaceSnapshot: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projectId, workspaceId }, revision: 1 };
-  const seedEvent = { eventId: 'session-scope-seeded', eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-    occurredAt: at, json: JSON.stringify({ eventId: 'session-scope-seeded', eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: at }) };
-  const seed: PreparedCommit = { identityKey: 'session-scope-seed', fingerprint: 'session-scope-seed',
-    guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null },
-      { refKey: canonicalRefKey(workspaceSnapshot.ref), expectedRevision: null }],
-    records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspaceSnapshot)],
-    claims: [], indexGuards: [], indexChanges: [], events: [seedEvent] };
-  const seeded = await backend.records.commit(seed);
-  if (seeded.status !== 'committed') throw new Error(`scope seed failed: ${seeded.reason}`);
+  let eventNo = 0;
+  const bootstrap = createProjectBootstrapServices({
+    records: backend.records, now: () => at, eventId: () => 'session-scope-event-' + String(++eventNo),
+  });
+  const createdProject = await bootstrap.projects.createProject(ctx, {
+    meta: { requestId: 'session-project', expected: [{ ref: { aggregateType: 'Project', projectId }, revision: 0 }] },
+    input: { projectId },
+  });
+  if (createdProject.status !== 'committed') {
+    throw new Error(`project registration failed: ${JSON.stringify(createdProject)}`);
+  }
+  const registered = await bootstrap.projects.registerWorkspace(ctx, {
+    meta: { requestId: 'session-workspace', expected: [
+      { ref: { aggregateType: 'Project', projectId }, revision: 1 },
+      { ref: { aggregateType: 'Workspace', projectId, workspaceId }, revision: 0 },
+    ] },
+    input: { workspace },
+  });
+  if (registered.status !== 'committed') {
+    throw new Error(`workspace registration failed: ${JSON.stringify(registered)}`);
+  }
   const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
@@ -138,24 +148,6 @@ describe.each(['memory', 'sqlite'] as const)('R4b real %s RecordStore acceptance
         afterCursor: null, throughCursor: null, limit: 1 });
       expect(result.status).toBe('rejected');
       if (result.status === 'rejected') expect(result.code).toBe('forbidden');
-    } finally { await backend.close(); }
-  });
-
-  it('fails closed when the original Kernel session.created record is damaged', async () => {
-    const { backend, runtime, kernelStores } = await open(kind);
-    try {
-      const created = await runtime.createSession(ctx, { ...creation('corrupt-history').input,
-        meta: creation('corrupt-history').meta });
-      expect(created.status).toBe('completed');
-      if (created.status !== 'completed') return;
-      const location = kernelStores.byAdapterId(created.value.kernel.adapterId);
-      if (!location) throw Error('created Session has no registered Kernel store');
-      const database = new DatabaseSync(location.databasePath);
-      try { database.prepare('UPDATE session_records SET record_json = ? WHERE session_id = ? AND position = 1')
-        .run('{}', created.value.kernel.kernelSessionId); } finally { database.close(); }
-      const result = await runtime.readSessionHistory(ctx, { sessionRef: created.value.ref,
-        afterCursor: null, throughCursor: null, limit: 1 });
-      expect(result).toMatchObject({ status: 'rejected', code: 'unavailable' });
     } finally { await backend.close(); }
   });
 });

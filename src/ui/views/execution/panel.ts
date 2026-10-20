@@ -33,7 +33,7 @@ export function renderCollaboration(
       return `<li${isActive ? ' data-active-message="true"' : ''}>`
         + `<code>${escapeHtml(message.ref.messageId)}</code> · ${escapeHtml(message.status)}`
         + ` · ${escapeHtml(message.sender.kind)}`
-        + (message.replyMode === 'wait' ? ' · 等待回复' : '')
+        + (message.waitAfterSend === true ? ' · 等待回复' : '')
         + `<button class="link" data-action="read-collaboration-message" data-message-id="${escapeHtml(message.ref.messageId)}">查看消息</button>`
         + `</li>`;
     }).join('')}</ul>`;

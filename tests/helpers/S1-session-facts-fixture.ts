@@ -15,7 +15,6 @@ import type { QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../src/contr
 import { consultationQueryRefs } from '../../src/contracts/query-job.js';
 import { DEFAULT_RUNTIME_BUDGET } from '../../src/contracts/runtime-budget.js';
 import type { TaskResultObservation, AuthorizeConfiguration } from '../../src/core/work-graph/model/execution-entry-contracts.js';
-import type { SessionOperationRecord } from '../../src/core/work-graph/model/session-contracts.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { EncodedRecord, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { materialRecordSchemas, createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
@@ -29,11 +28,10 @@ import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/mo
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-history-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
-import { SESSION_RECORD_SCHEMAS, plainSessionRefToAggregate, encodeSessionOperationRecord } from '../../src/core/work-graph/sessions/session-record-codecs.js';
+import { SESSION_RECORD_SCHEMAS, plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
-import { createLegacySessionProvenanceReader } from '../../src/core/work-graph/tasks/session-provenance-facts.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
@@ -166,10 +164,9 @@ export type StoreObservation = Awaited<ReturnType<typeof observeStore>>;
 export function sessionOwners(base: TaskClaimFixture) {
   const records = base.records;
   const facts = createSessionFactsService({ records });
-  const provenance = createLegacySessionProvenanceReader(records, facts);
-  const directory = createSessionDirectory({ records, lookups: records, legacyProvenance: provenance });
+  const directory = createSessionDirectory({ records, lookups: records });
   const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts: facts });
-  return { facts, provenance, directory, lifecycle };
+  return { facts, directory, lifecycle };
 }
 
 export function plannedSession(base: TaskClaimFixture, requestId: string): SessionRef {
@@ -199,35 +196,6 @@ export async function createSession(base: TaskClaimFixture, requestId: string, o
     meta: { requestId: `${requestId}-register`, expected: [] },
   }));
   return { ref: admission.value.action.plannedSessionRef, operationRef: admission.value.ref, created: result };
-}
-
-/** D4: import a genuinely old accepted operation (no provenance key), then let
- * the production completion entry write SessionCreated and bind initial links.
- * The new admission entry is deliberately not used for a legacy record.
- */
-export async function createLegacySession(base: TaskClaimFixture, requestId: string,
-  initialLinks: { target: WorkLinkTarget; relation: WorkLinkRelation }[] = []) {
-  const ref = plannedSession(base, requestId);
-  const now = new Date().toISOString();
-  const operation: SessionOperationRecord = {
-    ref: { aggregateType: 'CoreOperation', projectId: base.scope.projectId, operationId: `legacy-${requestId}` },
-    revision: 1, action: { kind: 'create', plannedSessionRef: ref, workspace: base.scope,
-      kernelStore: { adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store' },
-      role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' }, recommendedRefs: [], initialLinks },
-    phase: 'accepted', requestedAt: now, updatedAt: now, observation: null, failure: null,
-  };
-  // Serialize old keys explicitly; today's encoder must not normalize the old action to new.
-  const encoded = encodeSessionOperationRecord(operation);
-  const old = { ...encoded, json: JSON.stringify(operation) };
-  const seeded = await base.commitRaw([old]);
-  if (seeded.status !== 'committed') throw new Error(`legacy operation: ${JSON.stringify(seeded)}`);
-  const result = committed(await sessionOwners(base).directory.recordSessionCreated(base.ctx, {
-    input: { operationRef: operation.ref, sessionRef: ref, adapterId: 'r4c-claim-kernel',
-      kernelSessionId: `legacy-kernel-${requestId}`, historyCursor: null, observedAt: now },
-    meta: { requestId: `${requestId}-register`, expected: [] },
-  }));
-  expect(result.value.provenance ?? null).toBeNull();
-  return { ref, operationRef: operation.ref, created: result };
 }
 
 /** Real Work entry with the exact Host grant needed by send/respond. */

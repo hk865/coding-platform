@@ -41,7 +41,6 @@ export const NOTE_SYMBOL_RECHECK_MAX = 20;
 export const MEMORY_PAGE_DEFAULT = 20;
 export const MEMORY_RESULT_MAX_BYTES = 48 * 1024;
 export const NOTE_BODY_PAGE_BYTES = 2048;
-export const NOTE_BODY_PAGE_MAX_BYTES = 4096;
 export const MEMORY_TOPICS_MAX = 50;
 // P14: the read model's own full-text bounds (distinct from the RecordStore port's).
 export const TEXT_SEARCH_MAX_TERMS = 8;

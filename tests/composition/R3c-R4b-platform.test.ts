@@ -7,15 +7,6 @@ import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
-import type { EncodedRecord, PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import { canonicalRefKey, encodeProjectSnapshot,
-  encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
-import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
-import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import type { CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
@@ -29,30 +20,24 @@ const workspace: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projec
 const actor = { kind: 'human' as const, id: 'composition-operator' };
 const ctx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host', actor },
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
-const policyFixture = { schemaVersion: 1, identity: { policyId: 'composition-policy' }, revision: 1,
-  content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } };
-const architectureFixture = { schemaVersion: 1, identity: { baselineId: 'composition-baseline' }, revision: 1,
-  content: { schemaVersion: 1, description: 'Composition baseline', constraints: [] } };
-const digest = (value: JsonValue) => sha256Hex(canonicalJson(value));
+const policyContent = { schemaVersion: 1 as const, requirementKinds: ['test'],
+  minimumRequiredRequirementsPerObligation: 1 };
+const architectureContent = { schemaVersion: 1 as const, description: 'Composition baseline', constraints: [] };
 const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId,
   policyId: 'composition-policy', revision: 1 };
 const architectureRef = { aggregateType: 'ArchitectureBaselineRevision' as const, projectId,
   baselineId: 'composition-baseline', revision: 1 };
-const governance = [
-  { ref: policyRef, revision: 1, schemaVersion: 1, policyId: policyRef.policyId, contentRevision: 1,
-    contentDigest: digest(policyFixture), content: policyFixture.content },
-  { ref: architectureRef, revision: 1, schemaVersion: 1, baselineId: architectureRef.baselineId,
-    contentRevision: 1, contentDigest: digest(architectureFixture), content: architectureFixture.content },
-  { ref: { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId }, projectId,
-    revision: 1, activeRevision: policyRef },
-  { ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId }, projectId,
-    revision: 1, activeRevision: architectureRef },
-];
-const encodeGovernance = (snapshot: (typeof governance)[number]): EncodedRecord => ({
-  refKey: canonicalJson(snapshot.ref as JsonValue), schemaId: `${snapshot.ref.aggregateType}Snapshot@1`,
-  revision: snapshot.revision, json: JSON.stringify(snapshot),
-});
-const draft: PlanRevisionDraft = { schemaVersion: 1, planId: 'composed-plan', planRevision: 1,
+// Independent content-digest expectations: JCS + SHA-256 over the full fixture
+// `{schemaVersion, identity:{...}, revision, content}` (the documented policy and
+// baseline digest algorithm), calculated by hand from the fixed content below.
+// policy  body = {"schemaVersion":1,"identity":{"policyId":"composition-policy"},"revision":1,
+//   "content":{"schemaVersion":1,"requirementKinds":["test"],"minimumRequiredRequirementsPerObligation":1}}
+const policyContentDigest = '178436335242427d901d40cd14fb51ed9367555c26c146afc5de7344ef26c23b';
+// baseline body = {"schemaVersion":1,"identity":{"baselineId":"composition-baseline"},"revision":1,
+//   "content":{"schemaVersion":1,"description":"Composition baseline","constraints":[]}}
+const architectureContentDigest = '7d13186f8b7e6e590f28a91ac52ef7a13b8f46490bcf3da80a755ad32658fbb1';
+
+const draft: PlanRevisionDraft = { schemaVersion: 2, planId: 'composed-plan', planRevision: 1,
   goalId: 'goal-1', stages: [], tasks: [
     { taskId: 'implement', title: 'Implement', requirementLevel: 'required', taskKind: 'work',
       disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
@@ -64,34 +49,12 @@ const draft: PlanRevisionDraft = { schemaVersion: 1, planId: 'composed-plan', pl
     verificationRequirements: [{ requirementId: 'composition-check', requirementLevel: 'required',
       kind: 'test', description: 'Tests pass' }] }],
   taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } };
-const materialSchemas = materialRecordSchemas();
-const schema: RecordBackendSchemas = {
-  records: [...materialSchemas.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
-    ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records],
-  events: [...materialSchemas.events, ...PLAN_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
-    { eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-      validate: event => ({ status: 'decoded', value: event }) }],
-  lookups: [...(materialSchemas.lookups ?? []), ...(PLAN_RECORD_SCHEMAS.lookups ?? []), ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []),
-    ...(SESSION_RECORD_SCHEMAS.lookups ?? [])],
-};
-const seed: PreparedCommit = { identityKey: 'composition-scope-seed', fingerprint: 'composition-scope-seed-v1',
-  guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null },
-    { refKey: canonicalRefKey(workspace.ref), expectedRevision: null },
-    ...governance.map(snapshot => ({ refKey: canonicalJson(snapshot.ref as JsonValue), expectedRevision: null }))],
-  records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace), ...governance.map(encodeGovernance)],
-  events: [{ eventId: 'composition-scope-event', eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-    occurredAt: at, json: JSON.stringify({ eventId: 'composition-scope-event', eventType: 'TrustedScopeSeeded',
-      schemaVersion: 1, occurredAt: at }) }], claims: [], indexGuards: [], indexChanges: [],
-};
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
 
 it('wires one durable Goal/Plan/Session graph and reopens the same Kernel Session', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'next-composed-r3c-r4b-'));
   dirs.push(directory);
-  const seedBackend = createSqliteRecordBackend({ path: join(directory, 'ledger.sqlite'), schemas: schema });
-  try { expect(await seedBackend.records.commit(seed)).toMatchObject({ status: 'committed' }); }
-  finally { await seedBackend.close(); }
 
   const workspaceBindings: WorkspaceHostBindings = {
     async resolveRoot(requested) {
@@ -112,6 +75,40 @@ it('wires one durable Goal/Plan/Session graph and reopens the same Kernel Sessio
   const first = await createTargetPlatform(options);
   let sessionRef: { projectId: string; sessionId: string };
   try {
+    // Public bootstrap on the same SQLite platform: Project, Workspace, the
+    // active CompletionPolicy and the initial ArchitectureBaseline. None of
+    // these writers changes the Project/Workspace revision.
+    const createdProject = await first.projects.createProject(ctx, { meta: {
+      requestId: 'composed-create-project', expected: [{ ref: project.ref, revision: 0 }] },
+      input: { projectId } });
+    expect(createdProject).toMatchObject({ status: 'committed', replayed: false, value: project });
+    const registered = await first.projects.registerWorkspace(ctx, { meta: {
+      requestId: 'composed-register-workspace', expected: [
+        { ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 0 }] },
+      input: { workspace: scope } });
+    expect(registered).toMatchObject({ status: 'committed', replayed: false, value: workspace });
+    const installed = await first.completionPolicies.installCompletionPolicy(ctx, { meta: {
+      requestId: 'composed-install-policy', expected: [
+        { ref: project.ref, revision: 1 }, { ref: policyRef, revision: 0 }] },
+      input: { policyId: policyRef.policyId, contentRevision: policyRef.revision, content: policyContent } });
+    expect(installed).toMatchObject({ status: 'committed', replayed: false,
+      value: { ref: policyRef, revision: 1, contentDigest: policyContentDigest } });
+    if (installed.status !== 'committed') throw Error('public CompletionPolicy install failed');
+    const activated = await first.completionPolicies.activateCompletionPolicy(ctx, { meta: {
+      requestId: 'composed-activate-policy', expected: [
+        { ref: project.ref, revision: 1 },
+        { ref: { aggregateType: 'ProjectCompletionPolicyActive', projectId }, revision: 0 }] },
+      input: { target: { ref: installed.value.ref, digest: installed.value.contentDigest } } });
+    expect(activated).toMatchObject({ status: 'committed', replayed: false });
+    const adoptedInitial = await first.architecture.adoptInitialArchitecture(ctx, { meta: {
+      requestId: 'composed-adopt-architecture', expected: [
+        { ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },
+      input: { baselineId: architectureRef.baselineId, description: architectureContent.description,
+        constraints: architectureContent.constraints,
+        catalog: { requireDag: true, dependencies: [], modules: [] } } });
+    expect(adoptedInitial).toMatchObject({ status: 'committed', replayed: false,
+      value: { baseline: { ref: architectureRef, contentDigest: architectureContentDigest } } });
+
     const goal = await first.goals.createGoal(ctx, { meta: { requestId: 'create-goal-once',
       expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },
       input: { goalId: 'goal-1', workspace: scope, objective: 'Use one composed graph' } });
@@ -141,8 +138,8 @@ it('wires one durable Goal/Plan/Session graph and reopens the same Kernel Sessio
     } });
     expect(applied).toMatchObject({ status: 'committed', replayed: false,
       value: { ref: { aggregateType: 'PlanRevision', projectId, planId: 'composed-plan' },
-        effectiveCompletionPolicy: { ref: policyRef, digest: digest(policyFixture) },
-        effectiveArchitectureBaseline: { ref: architectureRef, digest: digest(architectureFixture) } } });
+        effectiveCompletionPolicy: { ref: policyRef, digest: policyContentDigest },
+        effectiveArchitectureBaseline: { ref: architectureRef, digest: architectureContentDigest } } });
     if (applied.status !== 'committed') throw Error('Initial Plan adoption failed');
     // This must reach the real material reader: missing injection is not success.
     expect(await first.materials.openArtifact(ctx, { ref: material.ref, usage: 'historical_explanation' }))

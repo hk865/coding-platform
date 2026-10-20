@@ -16,21 +16,21 @@ import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 
-export const RL_QUERY_AT = '2026-09-26T00:00:00.000Z';
-export const RL_Q_PROJECT_ID = 'rl-query-project';
-export const RL_Q_WORKSPACE_ID = 'rl-query-workspace';
-export const RL_Q_SCOPE = { projectId: RL_Q_PROJECT_ID, workspaceId: RL_Q_WORKSPACE_ID };
-export const RL_Q_HOST = { kind: 'human' as const, id: 'rl-query-operator' };
-export const RL_Q_PROJECT_REF = { aggregateType: 'Project' as const, projectId: RL_Q_PROJECT_ID };
-export const RL_Q_WORKSPACE_REF = { aggregateType: 'Workspace' as const, projectId: RL_Q_PROJECT_ID, workspaceId: RL_Q_WORKSPACE_ID };
-export const RL_Q_GOAL_REF = { aggregateType: 'Goal' as const, projectId: RL_Q_PROJECT_ID, goalId: 'rl-query-goal' };
-export const RL_Q_JOB_REF = { aggregateType: 'QueryJob' as const, projectId: RL_Q_PROJECT_ID, workspaceId: RL_Q_WORKSPACE_ID, queryJobId: 'rl-query-job' };
-export const RL_Q_RUN_REF: QueryRunRef = { aggregateType: 'QueryRun', projectId: RL_Q_PROJECT_ID,
+const RL_QUERY_AT = '2026-09-26T00:00:00.000Z';
+const RL_Q_PROJECT_ID = 'rl-query-project';
+const RL_Q_WORKSPACE_ID = 'rl-query-workspace';
+const RL_Q_SCOPE = { projectId: RL_Q_PROJECT_ID, workspaceId: RL_Q_WORKSPACE_ID };
+const RL_Q_HOST = { kind: 'human' as const, id: 'rl-query-operator' };
+const RL_Q_PROJECT_REF = { aggregateType: 'Project' as const, projectId: RL_Q_PROJECT_ID };
+const RL_Q_WORKSPACE_REF = { aggregateType: 'Workspace' as const, projectId: RL_Q_PROJECT_ID, workspaceId: RL_Q_WORKSPACE_ID };
+const RL_Q_GOAL_REF = { aggregateType: 'Goal' as const, projectId: RL_Q_PROJECT_ID, goalId: 'rl-query-goal' };
+const RL_Q_JOB_REF = { aggregateType: 'QueryJob' as const, projectId: RL_Q_PROJECT_ID, workspaceId: RL_Q_WORKSPACE_ID, queryJobId: 'rl-query-job' };
+const RL_Q_RUN_REF: QueryRunRef = { aggregateType: 'QueryRun', projectId: RL_Q_PROJECT_ID,
   workspaceId: RL_Q_WORKSPACE_ID, queryJobId: 'rl-query-job', runId: 'rl-query-run' };
-export const RL_Q_ROLE: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'advisor', templateRevision: '1' };
-export const RL_Q_ROLE_BINDING = { schemaVersion: 1 as const, bindingId: 'rl-query-binding', templateId: 'advisor',
+const RL_Q_ROLE: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'advisor', templateRevision: '1' };
+const RL_Q_ROLE_BINDING = { schemaVersion: 1 as const, bindingId: 'rl-query-binding', templateId: 'advisor',
   templateRevision: '1', bindingVersion: 1, policyRevision: '1' };
-export const RL_Q_RUNTIME_BUDGET: RuntimeBudget = { contextWindowTokens: 200000, inputTokens: null, outputTokens: null,
+const RL_Q_RUNTIME_BUDGET: RuntimeBudget = { contextWindowTokens: 200000, inputTokens: null, outputTokens: null,
   maxRequests: 8, maxToolCalls: 8, timeoutMs: 30000, perResponseTokens: 512 };
 const INSTRUCTION = 'RL query trusted guidance';
 const SKILL_ROOT = join(import.meta.dirname, '../../resources/skills');
@@ -51,7 +51,7 @@ export type RLQueryFixture = {
   close(): Promise<void>;
 };
 
-export type RLQueryFixtureOptions = {
+type RLQueryFixtureOptions = {
   replies: readonly ScriptedReply[];
   tools?: readonly string[];
   writeScope?: readonly string[];

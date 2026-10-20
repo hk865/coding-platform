@@ -326,8 +326,7 @@ function createCloseOpenTurn(
     if (successor === 'found') return refusal('handed_over');
     const authorization = run.executionAuthorization;
     const runKernel = run.executionHistory?.kernel
-      ?? (authorization !== undefined && 'schemaVersion' in authorization && authorization.schemaVersion === 2
-        ? authorization.kernel : null);
+      ?? (authorization !== undefined ? authorization.kernel : null);
     if (runKernel !== null && (runKernel.adapterId !== session.kernel.adapterId
       || runKernel.kernelSessionId !== session.kernel.kernelSessionId)) {
       return { status: 'mismatch', reason: 'the afterRun Kernel binding disagrees with the Session mapping' };
@@ -352,7 +351,7 @@ function createCloseOpenTurn(
     const closeFn = deps.kernel.closeOpenTurn;
     const readBoundsFn = deps.kernel.readTurnBounds;
     const location = deps.kernelStores.byAdapterId(session.kernel.adapterId);
-    if (location === null || 'expectedSessionId' in location || closeFn === undefined || readBoundsFn === undefined) {
+    if (location === null || closeFn === undefined || readBoundsFn === undefined) {
       return { status: 'unsupported', reason: 'the Session Kernel store is legacy, another adapter, or cannot close a Turn' };
     }
     try {
@@ -427,7 +426,7 @@ function createTurnClosureSupport(
       return unsupported('the Kernel does not publish closeOpenTurn');
     }
     const location = deps.kernelStores.byAdapterId(session.kernel.adapterId);
-    if (location === null || 'expectedSessionId' in location) {
+    if (location === null) {
       return unsupported('the Session Kernel store is legacy or another adapter, so it cannot close a Turn');
     }
     return { status: 'supported' };

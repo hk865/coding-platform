@@ -342,11 +342,6 @@ async function projectReply(
   }
   const unavailableSince = reply.unavailableSince;
   const responseSince = reply.responseSince;
-  if (unavailableSince === undefined || unavailableSince === null
-    || responseSince === undefined || responseSince === null) {
-    return stableDamage(deps, window, () => ({ status: 'rejected', code: 'incomplete',
-      reason: `undelivered_reply_position_missing: ${reply.messageRef.messageId} (Session ${source.sessionId})` }));
-  }
   const itemKey = `undelivered_reply:${canonicalJson({ messageRef: reply.messageRef, responseRef: reply.responseRef } as unknown as JsonValue)}`;
   const item: NoticeItemV1 = {
     itemKey,
@@ -483,11 +478,9 @@ function isCommitPosition(value: NoticePositionV1): boolean {
 
 function isNoticePosition(value: unknown): value is NoticePositionV1 {
   if (typeof value !== 'object' || value === null) return false;
-  const position = value as { kind?: unknown; itemKey?: unknown; cursor?: unknown; occurredAt?: unknown };
+  const position = value as { kind?: unknown; itemKey?: unknown; cursor?: unknown };
   if (typeof position.itemKey !== 'string') return false;
-  if (position.kind === 'commit') return typeof position.cursor === 'string';
-  if (position.kind === 'legacy') return typeof position.occurredAt === 'string';
-  return false;
+  return position.kind === 'commit' && typeof position.cursor === 'string';
 }
 
 function compareText(left: string, right: string): -1 | 0 | 1 {

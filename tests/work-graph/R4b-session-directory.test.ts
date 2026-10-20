@@ -5,18 +5,25 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { EncodedRecord, EncodedRecordSchema, PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import type { SessionRef } from '../../src/contracts/core/identity.js';
+import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import { GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeGoalSnapshot, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
+import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
+import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
-import type { GoalSnapshot, ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
-import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
+import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
+import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'session-project';
@@ -28,45 +35,24 @@ const ctx: CoreCallContext = {
 };
 const workspace = { projectId, workspaceId };
 const role = { kind: 'legacy_template' as const, templateId: 'implementer', templateRevision: '1' };
-const policyFixture = { schemaVersion: 1, identity: { policyId: 'policy-1' }, revision: 1,
-  content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } };
-const architectureFixture = { schemaVersion: 1, identity: { baselineId: 'baseline-1' }, revision: 1,
-  content: { schemaVersion: 1, description: 'Task fixture baseline', constraints: [] } };
-const digest = (value: JsonValue) => sha256Hex(canonicalJson(value));
+const policyContent = { schemaVersion: 1 as const, requirementKinds: ['test'],
+  minimumRequiredRequirementsPerObligation: 1 };
 const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId, policyId: 'policy-1', revision: 1 };
-const architectureRef = { aggregateType: 'ArchitectureBaselineRevision' as const,
-  projectId, baselineId: 'baseline-1', revision: 1 };
-const governance = [
-  { ref: policyRef, revision: 1, schemaVersion: 1, policyId: 'policy-1', contentRevision: 1,
-    contentDigest: digest(policyFixture), content: policyFixture.content },
-  { ref: architectureRef, revision: 1, schemaVersion: 1, baselineId: 'baseline-1', contentRevision: 1,
-    contentDigest: digest(architectureFixture), content: architectureFixture.content },
-  { ref: { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId }, projectId,
-    revision: 1, activeRevision: policyRef },
-  { ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId }, projectId,
-    revision: 1, activeRevision: architectureRef },
-];
-const governanceSchemas: EncodedRecordSchema[] = governance.map(snapshot => ({
-  aggregateType: snapshot.ref.aggregateType,
-  schemaId: `${snapshot.ref.aggregateType}Snapshot@1`,
-  validate: record => record.refKey === canonicalJson(snapshot.ref as JsonValue) &&
-    record.schemaId === `${snapshot.ref.aggregateType}Snapshot@1`
-    ? { status: 'decoded', value: record } : { status: 'invalid', reason: 'wrong governance prerequisite' },
-}));
-const encodeGovernance = (snapshot: (typeof governance)[number]): EncodedRecord => ({
-  refKey: canonicalJson(snapshot.ref as JsonValue), schemaId: `${snapshot.ref.aggregateType}Snapshot@1`,
-  revision: snapshot.revision, json: JSON.stringify(snapshot),
-});
+const activePolicyRef = { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId };
+const projectRef = { aggregateType: 'Project' as const, projectId };
+const workspaceRef = { aggregateType: 'Workspace' as const, projectId, workspaceId };
 const creation = (requestId: string, kernelStore = { adapterId: 'workspace-kernel', storeKey: 'workspace-key' }) => ({
   input: { workspace, kernelStore, role, recommendedRefs: [], initialLinks: [] },
   meta: { requestId, expected: [] },
 });
 const schemas: RecordBackendSchemas = {
-  records: [...GOAL_RECORD_SCHEMAS.records, ...governanceSchemas,
+  records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
     ...PLAN_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records],
-  events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
-    { eventType: 'TrustedScopeSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) }],
-  lookups: SESSION_RECORD_SCHEMAS.lookups ?? [],
+  events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
+    ...PLAN_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
+    ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
+  lookups: [...(PLAN_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_RECORD_SCHEMAS.lookups ?? []),
+    ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
 };
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
@@ -78,46 +64,79 @@ async function open(kind: 'memory' | 'sqlite') {
   const backend = kind === 'memory'
     ? createInMemoryRecordBackend({ schemas })
     : createSqliteRecordBackend({ schemas, path: ledgerPath });
-  const project: ProjectSnapshot = { ref: { aggregateType: 'Project', projectId }, revision: 1 };
-  const workspaceSnapshot: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projectId, workspaceId }, revision: 1 };
-  const seedEvent = { eventId: 'session-scope-seeded', eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-    occurredAt: at, json: JSON.stringify({ eventId: 'session-scope-seeded', eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: at }) };
-  const seed: PreparedCommit = { identityKey: 'session-scope-seed', fingerprint: 'session-scope-seed',
-    guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null },
-      { refKey: canonicalRefKey(workspaceSnapshot.ref), expectedRevision: null },
-      ...governance.map(snapshot => ({ refKey: canonicalJson(snapshot.ref as JsonValue), expectedRevision: null }))],
-    records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspaceSnapshot),
-      ...governance.map(encodeGovernance)],
-    claims: [], indexGuards: [], indexChanges: [], events: [seedEvent] };
-  const seeded = await backend.records.commit(seed);
-  if (seeded.status !== 'committed') throw new Error(`scope seed failed: ${seeded.reason}`);
+  // Scope and governance through the real public owners: Project/Workspace,
+  // the installed and activated CompletionPolicy, then the initial architecture.
+  let bootstrapSequence = 0;
+  const bootstrap = createProjectBootstrapServices({ records: backend.records, now: () => at,
+    eventId: () => `r4b-bootstrap-${++bootstrapSequence}` });
+  const createdProject = await bootstrap.projects.createProject(ctx, {
+    input: { projectId },
+    meta: { requestId: 'r4b-create-project', expected: [{ ref: projectRef, revision: 0 }] },
+  });
+  if (createdProject.status !== 'committed') throw new Error(`Project creation failed: ${JSON.stringify(createdProject)}`);
+  const registered = await bootstrap.projects.registerWorkspace(ctx, {
+    input: { workspace },
+    meta: { requestId: 'r4b-register-workspace', expected: [
+      { ref: createdProject.value.ref, revision: createdProject.value.revision },
+      { ref: workspaceRef, revision: 0 },
+    ] },
+  });
+  if (registered.status !== 'committed') throw new Error(`Workspace registration failed: ${JSON.stringify(registered)}`);
+  const installed = await bootstrap.completionPolicies.installCompletionPolicy(ctx, {
+    input: { policyId: policyRef.policyId, contentRevision: policyRef.revision, content: policyContent },
+    meta: { requestId: 'r4b-install-policy', expected: [
+      { ref: createdProject.value.ref, revision: createdProject.value.revision },
+      { ref: policyRef, revision: 0 },
+    ] },
+  });
+  if (installed.status !== 'committed') throw new Error(`policy install failed: ${JSON.stringify(installed)}`);
+  const activated = await bootstrap.completionPolicies.activateCompletionPolicy(ctx, {
+    input: { target: { ref: installed.value.ref, digest: installed.value.contentDigest } },
+    meta: { requestId: 'r4b-activate-policy', expected: [
+      { ref: createdProject.value.ref, revision: createdProject.value.revision },
+      { ref: activePolicyRef, revision: 0 },
+    ] },
+  });
+  if (activated.status !== 'committed') throw new Error(`policy activation failed: ${JSON.stringify(activated)}`);
+  const adopted = await createArchitectureCatalogService({ records: backend.records }).adoptInitialArchitecture(ctx, {
+    input: { baselineId: 'baseline-1', description: 'Task fixture baseline', constraints: [],
+      catalog: { requireDag: true, dependencies: [], modules: [] } },
+    meta: { requestId: 'r4b-adopt-architecture', expected: [
+      { ref: createdProject.value.ref, revision: createdProject.value.revision },
+      { ref: workspaceRef, revision: registered.value.revision },
+    ] },
+  });
+  if (adopted.status !== 'committed') throw new Error(`architecture adoption failed: ${JSON.stringify(adopted)}`);
   const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
     databasePath: path.join(directory, 'kernel.sqlite'),
   }] });
-  return { backend, sessions, kernelStores, ledgerPath };
+  // The real Session Runtime entry: admission, trusted Kernel session creation
+  // and registration through the directory. Tests that need a Session as a
+  // target use this instead of writing Runtime facts themselves.
+  const operations = createSessionOperations({ sessions, kernelStores });
+  return { backend, sessions, kernelStores, operations, ledgerPath };
 }
 
-/** Seed the actual Goal → accepted immutable Plan relation used for Task links.
- * These records run through the registered Goal and Plan codecs. */
+/** Seed the actual Goal -> accepted immutable Plan relation used for Task links
+ * through the public createGoal -> proposePlan -> applyPlanChange adoption path. */
 async function seedAcceptedTask(records: Awaited<ReturnType<typeof open>>['backend']['records']) {
   const goalRef = { aggregateType: 'Goal' as const, projectId, goalId: 'goal-with-plan' };
   const planRef = { aggregateType: 'PlanRevision' as const, projectId, planId: 'accepted-plan' };
-  const workspaceRef = { aggregateType: 'Workspace' as const, projectId, workspaceId };
-  const firstGoal: GoalSnapshot = { ref: goalRef, workspaceRef, objective: 'Implement the accepted task',
-    desiredState: 'active', activePlanRevision: null, revision: 1 };
-  const initialEvent = { eventId: 'task-goal-seeded', eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-    occurredAt: at, json: JSON.stringify({ eventId: 'task-goal-seeded', eventType: 'TrustedScopeSeeded',
-      schemaVersion: 1, occurredAt: at }) };
-  const initial = await records.commit({ identityKey: 'task-goal-seed', fingerprint: 'task-goal-seed',
-    guards: [{ refKey: canonicalRefKey(goalRef), expectedRevision: null }],
-    records: [encodeGoalSnapshot(firstGoal)], events: [initialEvent], claims: [], indexGuards: [], indexChanges: [] });
-  expect(initial.status).toBe('committed');
-  const plan: PlanRevisionSnapshot = {
-    ref: planRef, revision: 1, schemaVersion: 1, goalRef, planId: 'accepted-plan', planRevision: 1, acceptedAt: at,
-    effectiveCompletionPolicy: { ref: policyRef, digest: digest(policyFixture) },
-    effectiveArchitectureBaseline: { ref: architectureRef, digest: digest(architectureFixture) },
+  let sequence = 0;
+  const goals = createGoalService({ records, now: () => at, eventId: () => `r4b-goal-${++sequence}` }).tasks;
+  const created = await goals.createGoal(ctx, {
+    input: { goalId: goalRef.goalId, workspace: { projectId, workspaceId }, objective: 'Implement the accepted task' },
+    meta: { requestId: 'r4b-create-goal', expected: [
+      { ref: projectRef, revision: 1 },
+      { ref: workspaceRef, revision: 1 },
+    ] },
+  });
+  expect(created.status).toBe('committed');
+  if (created.status !== 'committed') throw new Error('the Goal seed failed');
+  const draft: PlanRevisionDraft = {
+    schemaVersion: 2, planId: planRef.planId, planRevision: 1, goalId: goalRef.goalId,
     stages: [],
     tasks: [{ taskId: 'implement', title: 'Implement', requirementLevel: 'required', taskKind: 'work',
       disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
@@ -129,16 +148,19 @@ async function seedAcceptedTask(records: Awaited<ReturnType<typeof open>>['backe
         requirementLevel: 'required', kind: 'test', description: 'Tests pass' }] }],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] },
   };
-  const acceptedGoal: GoalSnapshot = { ...firstGoal, activePlanRevision: planRef, revision: 2 };
-  const planKey = canonicalJson(planRef as JsonValue);
-  const planEvent = { eventId: 'accepted-task-plan-seeded', eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-    occurredAt: at, json: JSON.stringify({ eventId: 'accepted-task-plan-seeded', eventType: 'TrustedScopeSeeded',
-      schemaVersion: 1, occurredAt: at }) };
-  const accepted = await records.commit({ identityKey: 'accepted-task-plan-seed', fingerprint: 'accepted-task-plan-seed',
-    guards: [{ refKey: canonicalRefKey(goalRef), expectedRevision: 1 }, { refKey: planKey, expectedRevision: null }],
-    records: [encodeGoalSnapshot(acceptedGoal), { refKey: planKey, schemaId: 'PlanRevisionSnapshot@1',
-      revision: 1, json: JSON.stringify(plan) }], events: [planEvent], claims: [], indexGuards: [], indexChanges: [] });
-  expect(accepted.status).toBe('committed');
+  const plans = createPlanService({ records, now: () => at, eventId: () => `r4b-plan-${++sequence}` });
+  const proposed = await plans.proposePlan(ctx, {
+    input: { goalRef, basedOn: null, draft, reason: { text: 'Accepted task plan', sources: [] } },
+    meta: { requestId: 'r4b-propose-plan', expected: [{ ref: goalRef, revision: created.value.revision }] },
+  });
+  expect(proposed).toMatchObject({ status: 'committed', value: { kind: 'candidate_v2', issues: [] } });
+  if (proposed.status !== 'committed') throw new Error('the Plan proposal failed');
+  const applied = await plans.applyPlanChange(ctx, {
+    input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] },
+    meta: { requestId: 'r4b-apply-plan', expected: [{ ref: goalRef, revision: created.value.revision }] },
+  });
+  expect(applied).toMatchObject({ status: 'committed', value: { ref: planRef, revision: 1, planRevision: 1 } });
+  if (applied.status !== 'committed') throw new Error('the Plan adoption failed');
   return { goalRef, planRef, taskRef: { projectId, goalId: goalRef.goalId, taskId: 'implement' } };
 }
 
@@ -223,49 +245,69 @@ describe.each(['memory', 'sqlite'] as const)('R4b real %s RecordStore acceptance
   });
 
   it('binds an initial work link to the actual Session registration commit cursor', async () => {
-    const { backend, sessions } = await open(kind);
+    const { backend, sessions, operations } = await open(kind);
     try {
       const { taskRef } = await seedAcceptedTask(backend.records);
-      const linked = { ...creation('initial-link'), input: { ...creation('initial-link').input,
-        initialLinks: [{ target: { kind: 'task' as const, ref: taskRef },
-          relation: 'responsible' as const }] } };
-      const admitted = await sessions.admitSessionCreation(ctx, linked);
-      expect(admitted.status).toBe('committed');
-      if (admitted.status !== 'committed') return;
-      const registered = await sessions.recordSessionCreated(ctx, { meta: { requestId: 'register-initial-link', expected: [] }, input: {
-        operationRef: admitted.value.ref, sessionRef: admitted.value.action.plannedSessionRef,
-        adapterId: 'workspace-kernel', kernelSessionId: 'linked-kernel-id', historyCursor: null, observedAt: at,
-      } });
-      expect(registered.status).toBe('committed');
-      if (registered.status !== 'committed') return;
-      const card = await sessions.readSession(ctx, admitted.value.action.plannedSessionRef);
+      // A real Session through the Runtime entry; the completion receipt's
+      // cursor is the registration commit that activates the initial link.
+      const created = await operations.createSession(ctx, {
+        workspace, role, recommendedRefs: [],
+        initialLinks: [{ target: { kind: 'task' as const, ref: taskRef }, relation: 'responsible' as const }],
+        meta: { requestId: 'initial-link', expected: [] },
+      });
+      expect(created.status).toBe('completed');
+      if (created.status !== 'completed') return;
+      const card = await sessions.readSession(ctx, { projectId, sessionId: created.value.ref.sessionId });
       expect(card.status).toBe('ready');
       if (card.status !== 'ready') return;
       expect(card.value.links).toHaveLength(1);
-      expect(card.value.links[0]?.since).toBe(registered.cursor);
+      expect(card.value.links[0]?.since).toBe(created.cursor);
       expect(card.value.links[0]?.until).toBeNull();
     } finally { await backend.close(); }
   });
 
-  it('rejects a Task link absent from the active accepted Plan', async () => {
-    const { backend, sessions } = await open(kind);
-    try {
-      const { taskRef } = await seedAcceptedTask(backend.records);
-      const missing = { ...creation('missing-task-link'), input: { ...creation('missing-task-link').input,
-        initialLinks: [{ target: { kind: 'task' as const, ref: { ...taskRef, taskId: 'not-in-plan' } },
-          relation: 'responsible' as const }] } };
-      const admitted = await sessions.admitSessionCreation(ctx, missing);
-      if (admitted.status === 'rejected') {
-        expect(['not_found', 'dependency_blocked', 'invalid']).toContain(admitted.code);
-        return;
-      }
-      const registered = await sessions.recordSessionCreated(ctx, { meta: { requestId: 'register-missing-task-link', expected: [] }, input: {
-        operationRef: admitted.value.ref, sessionRef: admitted.value.action.plannedSessionRef,
-        adapterId: 'workspace-kernel', kernelSessionId: 'kernel-missing-task', historyCursor: null, observedAt: at,
-      } });
-      expect(registered.status).toBe('rejected');
-      expect(await sessions.readSession(ctx, admitted.value.action.plannedSessionRef)).toEqual({ status: 'not_found' });
-    } finally { await backend.close(); }
+  describe('rejects: a Task link the active accepted Plan does not hold', () => {
+    it('rejects a Task link absent from the active accepted Plan', async () => {
+      const { backend, sessions, kernelStores } = await open(kind);
+      try {
+        const { taskRef } = await seedAcceptedTask(backend.records);
+        const missingTask = { ...taskRef, taskId: 'not-in-plan' };
+        // A3: a delegating wrapper around the real directory notes the planned
+        // Session ref of the real admission and returns the real result unchanged.
+        const planned: SessionRef[] = [];
+        const observed: SessionDirectoryPort = { ...sessions, async admitSessionCreation(callCtx, request) {
+          const admitted = await sessions.admitSessionCreation(callCtx, request);
+          if (admitted.status === 'committed') planned.push(admitted.value.action.plannedSessionRef);
+          return admitted;
+        } };
+        const operations = createSessionOperations({ sessions: observed, kernelStores });
+        const listed = async () => {
+          const page = await sessions.findSessions(ctx, { workspace, includeArchived: true, page: { limit: 10 } });
+          if (page.status !== 'ready') throw new Error(`the Session directory read failed: ${JSON.stringify(page)}`);
+          return page.value.items;
+        };
+        // Before: no Session exists in the workspace (none was created yet).
+        const before = await listed();
+        expect(before).toEqual([]);
+        const created = await operations.createSession(ctx, {
+          workspace, role, recommendedRefs: [],
+          initialLinks: [{ target: { kind: 'task' as const, ref: missingTask }, relation: 'responsible' as const }],
+          meta: { requestId: 'missing-task-link', expected: [] },
+        });
+        expect(created.status).toBe('rejected');
+        if (created.status !== 'rejected') return;
+        expect(['not_found', 'dependency_blocked', 'invalid']).toContain(created.code);
+        // The refused link never became a Session at all: the admitted planned
+        // Session is not readable, and the workspace directory is unchanged.
+        expect(planned).toHaveLength(1);
+        expect(await sessions.readSession(ctx, planned[0]!)).toEqual({ status: 'not_found' });
+        expect(await listed()).toEqual(before);
+        const found = await sessions.findSessions(ctx, { workspace,
+          target: { kind: 'task', ref: missingTask }, includeArchived: true, page: { limit: 10 } });
+        expect(found.status).toBe('ready');
+        if (found.status === 'ready') expect(found.value.items).toEqual([]);
+      } finally { await backend.close(); }
+    });
   });
 
   it.each([

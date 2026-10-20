@@ -17,7 +17,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLocalWorkbenchHost, type LocalWorkbenchHost } from '../../src/app/host.js';
 import { loadWorkbenchCliConfig } from '../../src/app/main.js';
@@ -60,9 +60,9 @@ export const AG2B_SCOPE: CoreScope = { projectId: 'ag2b-collab-project', workspa
 export const AG2B_PROJECT_REF = { aggregateType: 'Project' as const, projectId: AG2B_SCOPE.projectId };
 export const AG2B_WORKSPACE_REF = { aggregateType: 'Workspace' as const, ...AG2B_SCOPE };
 export const AG2B_GOAL_REF: GoalRef = { aggregateType: 'Goal', projectId: AG2B_SCOPE.projectId, goalId: 'ag2b-goal' };
-export const AG2B_POLICY_REF = { aggregateType: 'CompletionPolicyRevision' as const, projectId: AG2B_SCOPE.projectId,
+const AG2B_POLICY_REF = { aggregateType: 'CompletionPolicyRevision' as const, projectId: AG2B_SCOPE.projectId,
   policyId: 'ag2b-policy', revision: 1 };
-export const AG2B_POLICY_ACTIVE_REF = { aggregateType: 'ProjectCompletionPolicyActive' as const,
+const AG2B_POLICY_ACTIVE_REF = { aggregateType: 'ProjectCompletionPolicyActive' as const,
   projectId: AG2B_SCOPE.projectId };
 export const AG2B_WORK_TASK_ID = 'ag2b-work';
 export const AG2B_GATE_TASK_ID = 'ag2b-gate';
@@ -180,60 +180,127 @@ export function ag2bChecksConfiguration(options: {
   };
 }
 
+export type CliHostOptions = {
+  publicDir: string;
+  root?: string;
+  database?: string;
+  /** Prefix for the temporary workspace/database/config directories this constructor creates. */
+  tempPrefix: string;
+  scope: CoreScope;
+  actor: WorkbenchActor;
+  at: string;
+  workspaceName: string;
+  /** Workspace files relative to the root; a file a previous Host changed is kept. */
+  files: Readonly<Record<string, string>>;
+  readPrefixes: string[];
+  bindings: WorkbenchRuntimeConfiguration['bindings'];
+  queryProfiles: WorkbenchRuntimeConfiguration['queryProfiles'];
+  checks?: TrustedCheckConfiguration;
+  workflow: WorkflowHostConfiguration;
+  kernelStore?: { adapterId: string; storeKey: string };
+  secret: { variable: string; value: string };
+  /** Which model name routes to the query scripted client (the default mirrors the AG2b fixture). */
+  queryModel?: (model: string) => boolean;
+  replies?: readonly ScriptedReply[];
+  beforeReply?: (request: ModelRequest, index: number, signal: AbortSignal) => Promise<void>;
+  queryReplies?: readonly ScriptedReply[];
+  queryBeforeReply?: (request: ModelRequest, index: number, signal: AbortSignal) => Promise<void>;
+  hostOptions?: Pick<import('../../src/app/host.js').LocalWorkbenchHostOptions, 'attention' | 'inputConsumers'>;
+};
+
+/**
+ * One real Host over a CLI startup file, a real SQLite ledger/Kernel and a controlled
+ * Kernel provider: the shared constructor of the AG2b, AG2-consultation and R6 execution
+ * Hosts. Only its public inputs are parameters (scope, bindings/profiles, checks, workspace
+ * files and read prefixes); the vendor Skill root and the instruction digests stay trusted
+ * startup facts.
+ */
+export async function startCliHost(options: CliHostOptions): Promise<AG2bHost> {
+  const root = options.root ?? await mkdtemp(join(tmpdir(), `${options.tempPrefix}-ws-`));
+  const database = options.database ?? await mkdtemp(join(tmpdir(), `${options.tempPrefix}-db-`));
+  const configDir = await mkdtemp(join(tmpdir(), `${options.tempPrefix}-config-`));
+  if (options.root === undefined) temporary.push(root);
+  if (options.database === undefined) temporary.push(database);
+  temporary.push(configDir);
+  for (const [path, text] of Object.entries(options.files)) {
+    const absolute = join(root, path);
+    await mkdir(dirname(absolute), { recursive: true });
+    if (!existsSync(absolute)) await writeFile(absolute, text);
+  }
+  const scripted = createScriptedModel(options.replies ?? [], options.beforeReply);
+  const queryScripted = createScriptedModel(options.queryReplies ?? [], options.queryBeforeReply);
+  const isQueryModel = options.queryModel ?? (model => model.includes('scripted-query'));
+  const registry = new ProviderRegistry().register({
+    id: 'deepseek', secretEnvironmentVariable: options.secret.variable, defaultBaseUrl: 'https://invalid.test',
+    capabilities: { streaming: true, toolCalls: true, usage: true },
+    create: context => isQueryModel(context.model) ? queryScripted.client : scripted.client,
+  });
+  const runtime: WorkbenchRuntimeConfiguration = {
+    schemaVersion: 1, bindings: options.bindings, queryProfiles: options.queryProfiles,
+  };
+  const configPath = join(configDir, 'workbench.json');
+  await writeFile(configPath, JSON.stringify({
+    sqliteDirectory: database,
+    actor: options.actor,
+    workspaces: [{ scope: options.scope, name: options.workspaceName, root, workspaceRevision: 1,
+      readPrefixes: options.readPrefixes }],
+    architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },
+    ...(options.kernelStore === undefined ? {} : { kernelStores: { entries: [{ adapterId: options.kernelStore.adapterId,
+      storeKey: options.kernelStore.storeKey, workspace: options.scope, databasePath: join(database, 'kernel.sqlite') }] } }),
+    runtime,
+    ...(options.checks === undefined ? {} : { checks: options.checks }),
+    workflow: options.workflow,
+  }));
+  const loaded = await loadWorkbenchCliConfig(configPath);
+  const host = await createLocalWorkbenchHost({
+    ...loaded,
+    ...options.hostOptions,
+    publicDir: options.publicDir,
+    now: () => options.at,
+    runtimeProvider: { registry, secretSource: { get: (name: string) => name === options.secret.variable ? options.secret.value : undefined } },
+  });
+  const address = await host.listen();
+  const token = await readPageToken(address.url);
+  return { host, base: address.url, token, root, database, publicDir: options.publicDir, actor: options.actor, scripted, queryScripted };
+}
+
 /** One real Host over the CLI startup file, a real SQLite ledger/Kernel and a
  * controlled Kernel provider. The vendor Skill root and the real instruction
  * digests are trusted startup facts; nothing here is request input. */
 export async function startAG2bHost(publicDir: string, overrides: AG2bOverrides = {}): Promise<AG2bHost> {
-  const root = overrides.root ?? await mkdtemp(join(tmpdir(), 'ag2b-collab-ws-'));
-  const database = overrides.database ?? await mkdtemp(join(tmpdir(), 'ag2b-collab-db-'));
-  const configDir = await mkdtemp(join(tmpdir(), 'ag2b-collab-config-'));
-  if (overrides.root === undefined) temporary.push(root);
-  if (overrides.database === undefined) temporary.push(database);
-  temporary.push(configDir);
-  await writeAG2bWorkspace(root);
   const skillsRoot = fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url));
   const actor: WorkbenchActor = overrides.actor ?? { kind: 'human', id: 'ag2b-operator' };
-  const scripted = createScriptedModel(overrides.replies ?? [], overrides.beforeReply);
-  const queryScripted = createScriptedModel(overrides.queryReplies ?? [], overrides.queryBeforeReply);
-  const registry = new ProviderRegistry().register({
-    id: 'deepseek', secretEnvironmentVariable: AG2B_SECRET_VAR, defaultBaseUrl: 'https://invalid.test',
-    capabilities: { streaming: true, toolCalls: true, usage: true },
-    create: context => context.model.includes('scripted-query') ? queryScripted.client : scripted.client,
-  });
-  const runtime: WorkbenchRuntimeConfiguration = {
-    schemaVersion: 1,
-    bindings: [
-      {
-        id: 'ag2b-work-binding', label: 'AG2b work runtime', scope: AG2B_SCOPE, role: AG2B_WORK_ROLE,
-        configurationRevision: 'ag2b-work-host@1',
-        model: { revision: 'ag2b-work-model@1', provider: 'deepseek', model: 'ag2b-scripted-work', secretEnvironmentVariable: AG2B_SECRET_VAR },
-        grant: {
-          budget: AG2B_RUNTIME_BUDGET,
-          hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex(AG2B_WORK_INSTRUCTION) },
-          tools: ['read', 'write', 'find_related_sessions', 'read_session_card', 'send_session_message'],
-          writeScope: ['.'], skills: { resourceRoot: skillsRoot, enabledIds: [] },
-          systemInstruction: AG2B_WORK_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
-        },
+  const bindings: WorkbenchRuntimeConfiguration['bindings'] = [
+    {
+      id: 'ag2b-work-binding', label: 'AG2b work runtime', scope: AG2B_SCOPE, role: AG2B_WORK_ROLE,
+      configurationRevision: 'ag2b-work-host@1',
+      model: { revision: 'ag2b-work-model@1', provider: 'deepseek', model: 'ag2b-scripted-work', secretEnvironmentVariable: AG2B_SECRET_VAR },
+      grant: {
+        budget: AG2B_RUNTIME_BUDGET,
+        hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex(AG2B_WORK_INSTRUCTION) },
+        tools: ['read', 'write', 'find_related_sessions', 'read_session_card', 'send_session_message'],
+        writeScope: ['.'], skills: { resourceRoot: skillsRoot, enabledIds: [] },
+        systemInstruction: AG2B_WORK_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
       },
-      {
-        id: 'ag2b-query-binding', label: 'AG2b query runtime', scope: AG2B_SCOPE, role: AG2B_QUERY_ROLE,
-        configurationRevision: 'ag2b-query-host@1',
-        model: { revision: 'ag2b-query-model@1', provider: 'deepseek', model: 'ag2b-scripted-query', secretEnvironmentVariable: AG2B_SECRET_VAR },
-        grant: {
-          budget: AG2B_RUNTIME_BUDGET,
-          hostTemplate: { templateId: 'advisor', revision: '1', digest: sha256Hex(AG2B_QUERY_INSTRUCTION) },
-          tools: ['read', 'project_source'], writeScope: [], skills: { resourceRoot: skillsRoot, enabledIds: [] },
-          systemInstruction: AG2B_QUERY_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
-        },
+    },
+    {
+      id: 'ag2b-query-binding', label: 'AG2b query runtime', scope: AG2B_SCOPE, role: AG2B_QUERY_ROLE,
+      configurationRevision: 'ag2b-query-host@1',
+      model: { revision: 'ag2b-query-model@1', provider: 'deepseek', model: 'ag2b-scripted-query', secretEnvironmentVariable: AG2B_SECRET_VAR },
+      grant: {
+        budget: AG2B_RUNTIME_BUDGET,
+        hostTemplate: { templateId: 'advisor', revision: '1', digest: sha256Hex(AG2B_QUERY_INSTRUCTION) },
+        tools: ['read', 'project_source'], writeScope: [], skills: { resourceRoot: skillsRoot, enabledIds: [] },
+        systemInstruction: AG2B_QUERY_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
       },
-    ],
-    queryProfiles: [{
-      id: AG2B_QUERY_PROFILE_ID, label: 'AG2b read-only consultation', scope: AG2B_SCOPE,
-      runtimeBindingId: 'ag2b-query-binding', sessionRole: AG2B_QUERY_ROLE, roleBinding: AG2B_QUERY_ROLE_BINDING,
-      runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID,
-    }],
-  };
-  if (overrides.builderQueryProfile) runtime.queryProfiles.push({
+    },
+  ];
+  const queryProfiles: WorkbenchRuntimeConfiguration['queryProfiles'] = [{
+    id: AG2B_QUERY_PROFILE_ID, label: 'AG2b read-only consultation', scope: AG2B_SCOPE,
+    runtimeBindingId: 'ag2b-query-binding', sessionRole: AG2B_QUERY_ROLE, roleBinding: AG2B_QUERY_ROLE_BINDING,
+    runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID,
+  }];
+  if (overrides.builderQueryProfile) queryProfiles.push({
     id: 'ag2b-builder-query', label: 'Builder read-only continuation', scope: AG2B_SCOPE,
     runtimeBindingId: 'ag2b-work-binding', sessionRole: AG2B_WORK_ROLE, roleBinding: AG2B_WORK_ROLE_BINDING,
     runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID,
@@ -246,30 +313,27 @@ export async function startAG2bHost(publicDir: string, overrides: AG2bOverrides 
   const checks = ag2bChecksConfiguration({ actor, ...(overrides.checkCommand === undefined ? {} : { command: overrides.checkCommand }),
     ...(overrides.checkTimeoutMs === undefined ? {} : { timeoutMs: overrides.checkTimeoutMs }),
     ...(overrides.checkConfigurationRevision === undefined ? {} : { revision: overrides.checkConfigurationRevision }) });
-  const configPath = join(configDir, 'workbench.json');
-  await writeFile(configPath, JSON.stringify({
-    sqliteDirectory: database,
-    actor,
-    workspaces: [{ scope: AG2B_SCOPE, name: 'AG2b isolated project', root, workspaceRevision: 1, readPrefixes: ['.'] }],
-    architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },
-    ...(overrides.noKernelStores === true ? {} : {
-      kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
-        databasePath: join(database, 'kernel.sqlite') }] } }),
-    runtime,
-    workflow,
-    checks,
-  }));
-  const loaded = await loadWorkbenchCliConfig(configPath);
-  const host = await createLocalWorkbenchHost({
-    ...loaded,
-    ...overrides.hostOptions,
+  return await startCliHost({
     publicDir,
-    now: () => AG2B_AT,
-    runtimeProvider: { registry, secretSource: { get: (name: string) => name === AG2B_SECRET_VAR ? AG2B_SECRET_VALUE : undefined } },
+    tempPrefix: 'ag2b-collab',
+    ...(overrides.root === undefined ? {} : { root: overrides.root }),
+    ...(overrides.database === undefined ? {} : { database: overrides.database }),
+    scope: AG2B_SCOPE, actor, at: AG2B_AT, workspaceName: 'AG2b isolated project',
+    files: {
+      'src/module.ts': 'export const ag2bMarker = "AG2B_ISOLATED_SOURCE";\n',
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: { target: 'ES2022', module: 'ESNext', strict: true }, include: ['src/**/*.ts'],
+      }),
+    },
+    readPrefixes: ['.'], bindings, queryProfiles, checks, workflow,
+    ...(overrides.noKernelStores === true ? {} : { kernelStore: { adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store' } }),
+    secret: { variable: AG2B_SECRET_VAR, value: AG2B_SECRET_VALUE },
+    ...(overrides.replies === undefined ? {} : { replies: overrides.replies }),
+    ...(overrides.beforeReply === undefined ? {} : { beforeReply: overrides.beforeReply }),
+    ...(overrides.queryReplies === undefined ? {} : { queryReplies: overrides.queryReplies }),
+    ...(overrides.queryBeforeReply === undefined ? {} : { queryBeforeReply: overrides.queryBeforeReply }),
+    ...(overrides.hostOptions === undefined ? {} : { hostOptions: overrides.hostOptions }),
   });
-  const address = await host.listen();
-  const token = await readPageToken(address.url);
-  return { host, base: address.url, token, root, database, publicDir, actor, scripted, queryScripted };
 }
 
 export async function readPageToken(base: string): Promise<string> {
@@ -281,9 +345,9 @@ export async function readPageToken(base: string): Promise<string> {
   return match[1];
 }
 
-export const coreUrl = (base: string, suffix: string): string => new URL(CORE_API_PREFIX + suffix, base).toString();
+const coreUrl = (base: string, suffix: string): string => new URL(CORE_API_PREFIX + suffix, base).toString();
 
-export async function coreGet(base: string, suffix: string, token: string): Promise<Response> {
+async function coreGet(base: string, suffix: string, token: string): Promise<Response> {
   return fetch(coreUrl(base, suffix), { headers: { [PLATFORM_TOKEN_HEADER]: token } });
 }
 
@@ -299,7 +363,7 @@ export const graphWrite = (scope: CoreScope, input: unknown, requestId: string, 
   ({ scope, request: { input, meta: { requestId, expected } } });
 export const plain = (scope: CoreScope, input: unknown) => ({ scope, input });
 
-export const asRecord = (value: unknown): Record<string, unknown> =>
+const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
 
 /** The seed Plan: the required work Tasks plus the Goal gate, all carrying one
@@ -363,7 +427,7 @@ export async function settleAutoCapture(host: AG2bHost): Promise<void> {
 }
 
 /** One formal seed write: a core route suffix and its `graphWrite` body; answers the owner's result. */
-export type AG2bSeedWrite = (suffix: string, body: ReturnType<typeof graphWrite>) => Promise<unknown>;
+type AG2bSeedWrite = (suffix: string, body: ReturnType<typeof graphWrite>) => Promise<unknown>;
 
 /** The same seed through any writer: the HTTP routes above, or the owners in process (the scenario
  * harness's platform mode, tests/scenarios/harness.ts). Every write must commit. */
@@ -402,7 +466,7 @@ export async function seedAG2bWorkGraphThrough(write: AG2bSeedWrite, workIds: re
   }, 'ag2b-plan-apply', []));
 }
 
-export type AG2bSession = { sessionRef: SessionRef; sessionAggregateRef: SessionRef; revision: number };
+type AG2bSession = { sessionRef: SessionRef; sessionAggregateRef: SessionRef; revision: number };
 
 /** Create one real Session through the HTTP route, optionally joining the real
  * AG1 work-link to the seeded Task in the SAME formal writer call. */
@@ -438,7 +502,7 @@ export async function readBootstrap(host: AG2bHost): Promise<BootstrapResponse> 
   return await response.json() as BootstrapResponse;
 }
 
-export type AG2bQueryRefs = { queryJobRef: QueryJobRef; queryRunRef: QueryRunRef };
+type AG2bQueryRefs = { queryJobRef: QueryJobRef; queryRunRef: QueryRunRef };
 
 /**
  * Occupy B through the real formal Query writer: submit a pending semantic

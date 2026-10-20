@@ -1,40 +1,61 @@
 /**
  * K3-11 (L17, spec line 1425; R2): every L17 decision reason that K3-11 owns
  * appears ONCE alone, and one record carries THREE reasons and lists them in the
- * fixed write order. The reasons are pure outputs of the real state machine:
- * `inventory_incomplete` is the UCR-02 creation reason (a `needs_decision`
- * record cannot claim a round, so it is the only record that can carry it), and
- * the settlement reasons come from `createUnknownCallReviewService.settleReview`
- * over the real `transitionUnknownCallReview`.
+ * fixed write order. Every prior state comes from the public K3 chain in
+ * `tests/helpers/K3-proposal-round.ts`: the real pending record
+ * (`createK3PendingReview`), the real claim/prepare/Runtime review round
+ * (`claimK3ReviewRound`), conclusions through `recordK3Conclusion`, the
+ * Runtime's own end (`endK3RunCompleted` / `endK3RunUnfinished`), and the real
+ * `settleReview` owner (`settleK3Review`). The reasons are pure outputs of the
+ * real state machine: `inventory_incomplete` is the UCR-02 creation reason (a
+ * `needs_decision` record cannot claim a round, so it is the only record that
+ * can carry it) through the real RUN-22 attestation entry, and the settlement
+ * reasons come from `createUnknownCallReviewService.settleReview`.
  *
  * The rows' own R2 cases live in K3-19 (`review_unavailable`) and K3-45
  * (`review_incomplete`); this file shows K3-11's own single occurrence at the
  * owner seam. The `confirm_each_step` reason is read from the Goal's real
- * `settings.autonomy`; the R2 case in `tests/scenarios/K3-11-review-reasons-r2.test.ts`
- * drives it through the Workflow. The card/disposition parts are group 4.
+ * `settings.autonomy` (the public `setGoalSettings` owner); the R2 case in
+ * `tests/scenarios/K3-11-review-reasons-r2.test.ts` drives it through the
+ * Workflow. `second_consecutive` cannot be reached from a fresh Task's own
+ * record (`createK3PendingReview` always claims a new Task), so that one sample
+ * lives only in `tests/scenarios/K3-11-review-reasons-r2.test.ts:271-386`. The
+ * card/disposition parts are group 4.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
+import { shellSeam } from '../helpers/K3-tool-seams.js';
 import type {
-  CrashSuspicionV1, UnknownCallInventoryProblemV1, UnknownCallObservationV1, UnknownCallReviewDraftV1,
-  UnknownCallReviewItemV1, UnknownCallReviewRef, UnknownCallReviewV1,
+  UnknownCallInventoryProblemV1, UnknownCallObservationV1, UnknownCallReviewDraftV1,
+  UnknownCallReviewItemV1, UnknownCallReviewV1,
 } from '../../src/contracts/unknown-call-review.js';
-import { transitionUnknownCallReview, newUnknownCallReview } from '../../src/core/work-graph/state/unknown-call-review.js';
 import {
-  encodeUnknownCallReview, encodeUnknownCallReviewChangedEvent, unknownCallReviewRefKey,
-  UNKNOWN_CALL_REVIEW_CHANGED_EVENT_TYPE, UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION,
   UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS,
 } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import {
   createUnknownCallReviewService,
 } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
-import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
 import { DECISION_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import type { GoalRef } from '../../src/contracts/ledger.js';
-import { createB2ExecutionFixture, type B2ExecutionFixture, type B2Admitted } from '../helpers/B2-execution-fixture.js';
+import { createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
+import {
+  claimK3ReviewRound, createK3PendingReview, endK3RunCompleted, endK3RunUnfinished,
+  openK3ReviewCardWorld, recordK3Conclusion, settleK3Review,
+  type K3ReviewCardWorld, type K3Round,
+} from '../helpers/K3-proposal-round.js';
+import { GOAL_B } from '../helpers/S5-decision-fixture.js';
+
+// §5.1's stand-in `shell`, hoisted per test file (the K3 fixture's real Run uses it).
+const seams = vi.hoisted(() => ({ shellSeam: undefined as unknown }));
+vi.mock('../../vendor/coding-agent/dist/tools/builtin/shell/shell-tool.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/tools/builtin/shell/shell-tool.js')>();
+  return { ...actual, createShellToolDefinition: (sandboxArg: Parameters<typeof actual.createShellToolDefinition>[0]): ToolDefinition =>
+    (seams.shellSeam as typeof shellSeam).definition(actual.createShellToolDefinition, sandboxArg) };
+});
+seams.shellSeam = shellSeam;
 
 const AT = '2026-10-20T00:00:00.000Z';
 const REVIEW_SCHEMAS: RecordBackendSchemas = {
@@ -68,171 +89,37 @@ function processItem(
   };
 }
 
-const ROUND_RUN = { aggregateType: 'Run' as const, projectId: 'p', goalId: 'g', runId: 'k3-11-round' };
+// --------------------------------------------------------------------------
+// The public K3 chain: the real pending record, round, end and settlement
+// --------------------------------------------------------------------------
 
-/** A conclusion written by a review round (L16's normal `settle` input). */
-function reviewRoundConclusion(
-  verdict: 'done' | 'not_done' | 'partial' | 'undetermined',
-  crash: CrashSuspicionV1['verdict'] = 'unlikely',
-): UnknownCallObservationV1 {
-  return {
-    verdict, by: 'review_round', evidence: `K3-11 ${verdict}`,
-    roundRunRef: ROUND_RUN, crashSuspicion: { verdict: crash, evidence: `K3-11 self-check ${crash}` },
-    reviewerConclusion: null,
-  };
+const WORLDS: K3ReviewCardWorld[] = [];
+afterEach(async () => { for (const world of WORLDS.splice(0)) await world.close(); });
+
+async function openWorld(kind: 'memory' | 'sqlite'): Promise<K3ReviewCardWorld> {
+  const world = await openK3ReviewCardWorld(kind);
+  WORLDS.push(world);
+  return world;
 }
 
-type Fx = {
-  b2: B2ExecutionFixture;
-  admitted: B2Admitted;
-  reviews: ReturnType<typeof createUnknownCallReviewService>;
-  reviewRef: UnknownCallReviewRef;
-  created: UnknownCallReviewV1;
-  record: UnknownCallReviewV1;
-  close(): Promise<void>;
-};
-
-type FixtureOptions = {
-  items: UnknownCallReviewItemV1[];
-  inventory?: 'complete' | 'incomplete';
-  inventoryProblem?: UnknownCallReviewV1['inventoryProblem'];
-  priorUnknownProcess?: boolean;
-  autonomy?: 'after_plan_confirmation' | 'every_step';
-  /** false keeps the creation record idle (`pending_review`, no active round). */
-  claim?: boolean;
-};
-
-async function fixture(kind: 'memory' | 'sqlite', options: FixtureOptions): Promise<Fx> {
-  const b2 = await createB2ExecutionFixture(kind, REVIEW_SCHEMAS);
-  const admitted = await b2.enter();
-  const records = b2.base.records;
-  const runRef = b2.claim.runRef;
-  const reviewRef: UnknownCallReviewRef = {
-    aggregateType: 'UnknownCallReview', projectId: runRef.projectId, goalId: runRef.goalId, runId: 'k3-11-origin',
-  };
-  const built = newUnknownCallReview({
-    ref: reviewRef, workspaceId: b2.base.scope.workspaceId,
-    task: { projectId: runRef.projectId, goalId: runRef.goalId, taskId: b2.claim.task.taskId },
-    runRef: { aggregateType: 'Run', projectId: runRef.projectId, goalId: runRef.goalId, runId: reviewRef.runId },
-    sessionRef: { projectId: runRef.projectId, sessionId: b2.claim.sessionRef.sessionId },
-    origin: { kind: 'human_attested', attestedBy: { kind: 'human', id: 'u' }, reason: 'K3-11' },
-    inventory: options.inventory ?? 'complete', inventoryProblem: options.inventoryProblem ?? null,
-    items: options.items, itemsOmitted: 0, workspace: UNAVAILABLE,
-    streak: { priorAutoCleanup: false, priorUnknownProcess: options.priorUnknownProcess ?? false, resetRunRef: null },
-    createdAt: AT,
+/** Writes the review round's conclusion through the real UCR-04 owner. */
+async function conclude(
+  world: K3ReviewCardWorld, round: K3Round, verdict: 'done' | 'partial',
+): Promise<UnknownCallReviewV1> {
+  return await recordK3Conclusion(world, round, {
+    item: 1, verdict, evidence: `K3-11 ${verdict}`,
+    crashSuspicion: { verdict: 'unlikely', evidence: 'K3-11 self-check unlikely' },
   });
-  if (!built.ok) throw new Error(JSON.stringify(built));
-  const baseCtx = {
-    expectedRevision: built.next.revision, updatedAt: AT, actor: { kind: 'human' as const, id: 'u' },
-    activeRunEnded: false, activeRunCompleted: false, fenceHumanOnly: false, reviewUnavailable: false,
-    autonomy: options.autonomy ?? 'after_plan_confirmation', incompleteCommandAliases: [] as number[],
-    missingSelfCheckAliases: [] as number[], originalRunSelected: false,
-  };
-  const created = built.next;
-  let record = created;
-  let seq = 0;
-  if (options.claim !== false) {
-    const claimed = transitionUnknownCallReview(created, { kind: 'round_claimed', runRef, phase: 'review', round: 1 },
-      { ...baseCtx, expectedRevision: created.revision });
-    if (!claimed.ok) throw new Error(JSON.stringify(claimed));
-    await commit(records, claimed.next, 'round_claimed', 'claim-1', null);
-    record = claimed.next;
-  } else {
-    await commit(records, created, 'created', 'create', null);
-  }
-  if (options.autonomy === 'every_step') await setEveryStep(b2, reviewRef);
-  const reads = createRunStateReader({ records });
-  const reviews = createUnknownCallReviewService({
-    records, lookups: records, reads,
-    readReviewDisplays: async () => ({ status: 'ready', value: new Map(options.items.map(item => [item.alias, 'full' as const])) }),
-    now: () => AT, eventId: () => `k3-11-event-${String(++seq)}`,
-  });
-  return { b2, admitted, reviews, reviewRef, created, record, close: () => b2.close() };
 }
 
-async function commit(
-  records: B2ExecutionFixture['base']['records'], next: UnknownCallReviewV1,
-  change: Parameters<typeof encodeUnknownCallReviewChangedEvent>[0]['change'], suffix: string,
-  expectedRevision: number | null = next.revision - 1,
-): Promise<void> {
-  const id = `k3-11-${suffix}`;
-  const receipt = await records.commit({
-    identityKey: id, fingerprint: `${id}-fp`,
-    guards: [{ refKey: unknownCallReviewRefKey(next.ref), expectedRevision }],
-    records: [encodeUnknownCallReview(next)], claims: [], indexGuards: [], indexChanges: [],
-    events: [encodeUnknownCallReviewChangedEvent({
-      eventId: `${id}-event`, eventType: UNKNOWN_CALL_REVIEW_CHANGED_EVENT_TYPE,
-      schemaVersion: UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION, occurredAt: AT,
-      identityKey: id, fingerprint: `${id}-fp`, actor: { kind: 'human', id: 'u' },
-      requestId: id, change, review: next,
-    })],
-  });
-  if (receipt.status !== 'committed') throw new Error(JSON.stringify(receipt));
-}
-
-async function setEveryStep(b2: B2ExecutionFixture, reviewRef: UnknownCallReviewRef): Promise<void> {
-  const goalRef: GoalRef = { aggregateType: 'Goal', projectId: reviewRef.projectId, goalId: reviewRef.goalId };
-  const detail = await b2.base.plans.queryGoal(b2.ctx, goalRef);
+/** `every_step` through the real `setGoalSettings` public owner (F-100). */
+async function setEveryStep(world: K3ReviewCardWorld): Promise<void> {
+  const detail = await world.fixture.b2.base.plans.queryGoal(world.fixture.ctx, GOAL_B);
   if (detail.status !== 'ready') throw new Error(`K3-11 goal read: ${JSON.stringify(detail)}`);
-  let seq = 0;
-  const settings = createGoalSettingsService({
-    records: b2.base.records, now: () => AT, newId: () => `k3-11-goal-id-${String(++seq)}`,
-    operatorActor: { kind: 'human', id: 'r4c-claim-operator' },
-  });
-  const result = await settings.setGoalSettings(b2.ctx, { input: {
-    goalRef, autonomy: 'every_step', waitForGoalRef: null,
-  }, meta: { requestId: 'k3-11-autonomy', expected: [{ ref: goalRef, revision: detail.value.goal.revision }] } });
+  const result = await world.goalSettings.setGoalSettings(world.fixture.ctx, { input: {
+    goalRef: GOAL_B, autonomy: 'every_step', waitForGoalRef: null,
+  }, meta: { requestId: 'k3-11-autonomy', expected: [{ ref: GOAL_B, revision: detail.value.goal.revision }] } });
   if (result.status !== 'committed') throw new Error(`K3-11 autonomy: ${JSON.stringify(result)}`);
-}
-
-/** Ends the round Run with a known Kernel terminal (completed). */
-async function endRound(fx: Fx): Promise<void> {
-  const result = await fx.b2.entry.recordRunResult(fx.b2.ctx, {
-    input: fx.b2.terminalObservation(fx.admitted),
-    meta: { requestId: 'k3-11-end', expected: [await fx.b2.pin()] },
-  });
-  if (result.status !== 'committed') throw new Error(`end round failed: ${JSON.stringify(result)}`);
-}
-
-/** Ends the round Run `crashed`: a known end that is not `completed`. */
-async function endRoundCrashed(fx: Fx): Promise<void> {
-  const observation = fx.b2.terminalObservation(fx.admitted);
-  observation.event = fx.b2.terminalEvent({ eventType: 'run_crashed', eventId: 'k3-11-round-crash',
-    payload: { kind: 'crashed', error: 'boom' } });
-  const result = await fx.b2.entry.recordRunResult(fx.b2.ctx, { input: observation,
-    meta: { requestId: 'k3-11-round-crash', expected: [await fx.b2.pin()] } });
-  if (result.status !== 'committed') throw new Error(`crash round failed: ${JSON.stringify(result)}`);
-}
-
-/** Claims the next round at the current record revision (the Workflow's UCR-03 seam). */
-async function claimRound(fx: Fx, current: UnknownCallReviewV1, round: number): Promise<UnknownCallReviewV1> {
-  const transition = transitionUnknownCallReview(current, {
-    kind: 'round_claimed', runRef: fx.b2.claim.runRef, phase: 'review', round,
-  }, {
-    expectedRevision: current.revision, updatedAt: AT, actor: { kind: 'human', id: 'u' },
-    activeRunEnded: false, activeRunCompleted: false, fenceHumanOnly: false, reviewUnavailable: false,
-    autonomy: 'after_plan_confirmation', incompleteCommandAliases: [], missingSelfCheckAliases: [],
-    originalRunSelected: false,
-  });
-  if (!transition.ok) throw new Error(JSON.stringify(transition));
-  await commit(fx.b2.base.records, transition.next, 'round_claimed', `claim-${String(round)}`);
-  return transition.next;
-}
-
-async function settle(fx: Fx, cause: 'round_ended' | 'review_unavailable', requestId: string) {
-  const read = await fx.reviews.readReview(fx.b2.ctx, { ref: fx.reviewRef });
-  if (read.status !== 'ready') throw new Error(`K3-11 readReview: ${JSON.stringify(read)}`);
-  return fx.reviews.settleReview(fx.b2.ctx, {
-    input: { reviewRef: fx.reviewRef, cause }, meta: { requestId, expected: [{ ref: fx.reviewRef, revision: read.value.revision }] },
-  });
-}
-
-const FIXTURES: Fx[] = [];
-afterEach(async () => { for (const open of FIXTURES.splice(0)) await open.close(); });
-async function ready(kind: 'memory' | 'sqlite', options: FixtureOptions): Promise<Fx> {
-  const fx = await fixture(kind, options);
-  FIXTURES.push(fx);
-  return fx;
 }
 
 // --------------------------------------------------------------------------
@@ -315,76 +202,89 @@ describe('K3-11 L17 decision reasons', () => {
       expect(read.value.inventoryProblem).toBe('too_many_calls');
     });
 
-
-  it.each(['memory', 'sqlite'] as const)('K3-11 %s: second_consecutive appears once alone', async kind => {
-    const fx = await ready(kind, {
-      items: [processItem(1, reviewRoundConclusion('done'))], priorUnknownProcess: true,
-    });
-    await endRound(fx);
-    const result = await settle(fx, 'round_ended', 'k3-11-second');
-    expect(result).toMatchObject({ status: 'committed', value: {
-      status: 'needs_decision', activeRound: null, decisionReasons: ['second_consecutive'],
-    } });
-  });
-
   it.each(['memory', 'sqlite'] as const)('K3-11 %s: confirm_each_step appears once alone with every_step', async kind => {
-    const fx = await ready(kind, {
-      items: [processItem(1, reviewRoundConclusion('done'))], autonomy: 'every_step',
+    const world = await openWorld(kind);
+    const pending = await createK3PendingReview(world);
+    await setEveryStep(world);
+    const round = await claimK3ReviewRound(world, pending);
+    const concluded = await conclude(world, round, 'done');
+    await endK3RunCompleted(world, round.claim);
+    const result = await settleK3Review(world, concluded, {
+      cause: 'round_ended', requestId: 'k3-11-confirm',
     });
-    await endRound(fx);
-    const result = await settle(fx, 'round_ended', 'k3-11-confirm');
-    expect(result).toMatchObject({ status: 'committed', value: {
-      status: 'needs_decision', activeRound: null, decisionReasons: ['confirm_each_step'],
-    } });
+    expect(result).toMatchObject({ status: 'needs_decision', activeRound: null, decisionReasons: ['confirm_each_step'] });
   });
 
   it.each(['memory', 'sqlite'] as const)('K3-11 %s: review_unavailable appears once alone', async kind => {
-    const fx = await ready(kind, {
-      items: [processItem(1, reviewRoundConclusion('done', 'unlikely'))], claim: false,
+    // The `review_unavailable` trigger is a PENDING record with no active
+    // round. Starting from the real pending record (no conclusions), one real
+    // review round writes `done`/`unlikely`; its Run ends unfinished, the
+    // `round_ended` settlement returns the record to `pending_review`, and only
+    // then does the `review_unavailable` settlement decide. At that point
+    // `review_unavailable` is the only reason.
+    const world = await openWorld(kind);
+    const pending = await createK3PendingReview(world);
+    expect(pending.status).toBe('pending_review');
+    expect(pending.activeRound).toBeNull();
+    expect(pending.items[0]?.observed).toEqual({ verdict: 'pending', by: null });
+    const round = await claimK3ReviewRound(world, pending);
+    const concluded = await conclude(world, round, 'done');
+    await endK3RunUnfinished(world, round.claim);
+    const backToPending = await settleK3Review(world, concluded, {
+      cause: 'round_ended', requestId: 'k3-11-unavailable-first',
     });
-    const result = await settle(fx, 'review_unavailable', 'k3-11-unavailable');
-    expect(result).toMatchObject({ status: 'committed', value: {
-      status: 'needs_decision', activeRound: null, decisionReasons: ['review_unavailable'],
-    } });
+    expect(backToPending).toMatchObject({ status: 'pending_review', activeRound: null, decisionReasons: [],
+      rounds: [{ phase: 'review', round: 1, result: 'unfinished' }] });
+    const result = await settleK3Review(world, backToPending, {
+      cause: 'review_unavailable', requestId: 'k3-11-unavailable',
+    });
+    expect(result).toMatchObject({ status: 'needs_decision', activeRound: null, decisionReasons: ['review_unavailable'] });
   });
 
   it.each(['memory', 'sqlite'] as const)('K3-11 %s: review_incomplete appears once alone on the second unfinished round', async kind => {
-    const fx = await ready(kind, { items: [processItem(1, reviewRoundConclusion('done'))] });
-    await endRoundCrashed(fx);
-    const first = await settle(fx, 'round_ended', 'k3-11-first-unfinished');
-    expect(first).toMatchObject({ status: 'committed', value: {
-      status: 'pending_review', activeRound: null, decisionReasons: [],
-      rounds: [{ phase: 'review', round: 1, result: 'unfinished' }],
-    } });
-    if (first.status !== 'committed') throw new Error('K3-11 first settle');
-    const second = await claimRound(fx, first.value, 2);
-    const result = await fx.reviews.settleReview(fx.b2.ctx, { input: { reviewRef: fx.reviewRef, cause: 'round_ended' },
-      meta: { requestId: 'k3-11-second-unfinished', expected: [{ ref: fx.reviewRef, revision: second.revision }] } });
-    expect(result).toMatchObject({ status: 'committed', value: {
-      status: 'needs_decision', activeRound: null, decisionReasons: ['review_incomplete'],
+    const world = await openWorld(kind);
+    const pending = await createK3PendingReview(world);
+    const firstRound = await claimK3ReviewRound(world, pending);
+    const concluded = await conclude(world, firstRound, 'done');
+    await endK3RunUnfinished(world, firstRound.claim);
+    const first = await settleK3Review(world, concluded, {
+      cause: 'round_ended', requestId: 'k3-11-first-unfinished',
+    });
+    expect(first).toMatchObject({ status: 'pending_review', activeRound: null, decisionReasons: [],
+      rounds: [{ phase: 'review', round: 1, result: 'unfinished' }] });
+    const secondRound = await claimK3ReviewRound(world, first);
+    await endK3RunUnfinished(world, secondRound.claim);
+    const result = await settleK3Review(world, secondRound.record, {
+      cause: 'round_ended', requestId: 'k3-11-second-unfinished',
+    });
+    expect(result).toMatchObject({ status: 'needs_decision', activeRound: null, decisionReasons: ['review_incomplete'],
       rounds: [
         { phase: 'review', round: 1, result: 'unfinished' },
         { phase: 'review', round: 2, result: 'unfinished' },
       ],
-    } });
+    });
   });
 
   it.each(['memory', 'sqlite'] as const)('K3-11 %s: three reasons at once come back in the L17 fixed order', async kind => {
     // review_incomplete (3rd) + partial (5th) + confirm_each_step (10th).
-    const fx = await ready(kind, {
-      items: [processItem(1, reviewRoundConclusion('partial'))], autonomy: 'every_step',
+    const world = await openWorld(kind);
+    const pending = await createK3PendingReview(world);
+    await setEveryStep(world);
+    const firstRound = await claimK3ReviewRound(world, pending);
+    const concluded = await conclude(world, firstRound, 'partial');
+    await endK3RunUnfinished(world, firstRound.claim);
+    const first = await settleK3Review(world, concluded, {
+      cause: 'round_ended', requestId: 'k3-11-three-first',
     });
-    await endRoundCrashed(fx);
-    const first = await settle(fx, 'round_ended', 'k3-11-three-first');
-    expect(first).toMatchObject({ status: 'committed', value: { decisionReasons: [], activeRound: null } });
-    if (first.status !== 'committed') throw new Error('K3-11 three-reason first settle');
-    const second = await claimRound(fx, first.value, 2);
-    const result = await fx.reviews.settleReview(fx.b2.ctx, { input: { reviewRef: fx.reviewRef, cause: 'round_ended' },
-      meta: { requestId: 'k3-11-three-second', expected: [{ ref: fx.reviewRef, revision: second.revision }] } });
-    expect(result).toMatchObject({ status: 'committed', value: {
-      status: 'needs_decision', activeRound: null,
+    expect(first).toMatchObject({ decisionReasons: [], activeRound: null });
+    const secondRound = await claimK3ReviewRound(world, first);
+    await endK3RunUnfinished(world, secondRound.claim);
+    const result = await settleK3Review(world, secondRound.record, {
+      cause: 'round_ended', requestId: 'k3-11-three-second',
+    });
+    expect(result).toMatchObject({ status: 'needs_decision', activeRound: null,
       decisionReasons: ['review_incomplete', 'partial', 'confirm_each_step'],
-    } });
+    });
     // The literal array is L17's own order, proven against the exported order.
     expect(L17_ORDER.filter(reason =>
       ['review_incomplete', 'partial', 'confirm_each_step'].includes(reason)))

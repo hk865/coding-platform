@@ -33,7 +33,7 @@ async function openWait(overlap = false, idle = false) {
   const held = deferred();
   const release = deferred();
   const send = { callId: 'send-wait', name: 'send_session_message',
-    args: { recipient: {}, text: QUESTION, replyMode: 'wait' } as Record<string, unknown> };
+    args: { recipient: {}, text: QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const extras = overlap ? [0, 1].map(i => ({ callId: `other-question-${i}`, name: 'send_session_message',
     args: { recipient: {}, text: `independent question ${i}`, intent: 'inquiry', needsReply: true } as Record<string, unknown> })) : [];
   const f = await openS1RuntimeFixture({ replies: [

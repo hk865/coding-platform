@@ -33,7 +33,8 @@ const planRef = { aggregateType: 'PlanRevision' as const, projectId: P, planId: 
 const goalRefOf = (goalId: string): GoalRef => ({ aggregateType: 'Goal', projectId: P, goalId });
 function goalOf(goalId: string, over: Partial<GoalSnapshot> = {}): GoalSnapshot {
   return { ref: goalRefOf(goalId), workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: W },
-    objective: goalId, desiredState: 'active', desiredStateRevision: 1, activePlanRevision: planRef as never, revision: 3, ...over };
+    objective: goalId, desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
+    activePlanRevision: planRef as never, revision: 3, ...over };
 }
 
 const REQUEUE: TaskAutomationVerdictV1 = { kind: 'requeue', failureClass: 'check_failed', retryAfterRefusal: false };

@@ -17,7 +17,7 @@ import { createToolCommitLookup } from '../../src/composition/tool-commit-lookup
 import { readUnknownCallReviewDraft } from '../../src/core/agent-runtime/unknown-call-draft.js';
 import {
   ackSessionMessageRequest, respondSessionMessageRequest, sendSessionMessageRequest, sendUserMessageRequest,
-  toolCommitLookupNotPublished, toolCommitLookupUnknownTool, toolCommitRequestId,
+  toolCommitLookupUnknownTool, toolCommitRequestId,
 } from '../../src/core/work-graph/model/tool-commit-arguments.js';
 import {
   createW2WhiteboardFixture, type W2WhiteboardFixture,
@@ -68,8 +68,7 @@ function planDispatch(owner: ToolCommitLookup): ToolCommitLookup {
 }
 
 describe('K3-39 owner lookup publication (pure)', () => {
-  it('K3-39 a row-4 name with no published owner lookup is undetermined', () => {
-    expect(toolCommitLookupNotPublished()).toEqual({ status: 'undetermined', reason: 'lookup_not_published' });
+  it('K3-39 an owner lookup called with a tool name it does not own is undetermined', () => {
     expect(toolCommitLookupUnknownTool('not_a_tool')).toEqual({
       status: 'undetermined', reason: 'unknown_tool: not_a_tool',
     });

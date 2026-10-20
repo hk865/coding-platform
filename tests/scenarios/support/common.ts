@@ -451,10 +451,9 @@ export async function startWithKernelAside(h: HostScenario, start: Parameters<Ho
 }
 
 /**
- * tests/helpers/A2-restart-fixture.ts `pausedRunOnClosedHost` (the same Host 1, script, pause, assertions and
- * stale lock), with the Workflow drive of Host 1 checked step by step: the §11 invariants after every step
- * that returned a receipt (`driveChecked`, Host 1's default automation policy) on `inv`. The moved cases that
- * used the shared helper call this one (A.2 step 6: "invariants after every step").
+ * Host 1 (script, pause, assertions and stale lock), with the Workflow drive of Host 1 checked step by
+ * step: the §11 invariants after every step that returned a receipt (`driveChecked`, Host 1's default
+ * automation policy) on `inv` (A.2 step 6: "invariants after every step").
  */
 export async function pausedRunOnClosedHostChecked(root: string, database: string, publicDir: string, inv: InvariantTarget,
   pause: 'run' | 'goal' = 'run',

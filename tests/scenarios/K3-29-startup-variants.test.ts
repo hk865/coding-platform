@@ -22,17 +22,16 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
-import { cleanupScenarios, HostScenario, hostCtx, performs, waitFor } from './harness.js';
-import { preparedOf, redrivePolicy } from './support/common.js';
-import { answerCard, needsDecisionCard, queueOf, reviewOf } from './support/review-card-round.js';
-import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
+import { cleanupScenarios, HostScenario, performs, waitFor } from './harness.js';
+import { redrivePolicy } from './support/common.js';
+import { answerCard, needsDecisionCard, proposalRound, queueOf, reviewOf } from './support/review-card-round.js';
 import { failCommitOf } from './support/receipts.js';
 import { expectQuietHarnessRestart } from './support/restart.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { cleanupRestart } from '../helpers/A2-restart-fixture.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import {
-  AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain,
+  AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
@@ -44,21 +43,8 @@ import type { ResolveDecisionReadV1 } from '../../src/core/work-graph/model/deci
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 // The blocking `shell` stand-in (K3 §5.1): keeps the call in flight until the crash.
@@ -205,20 +191,15 @@ describe('K3-29 step 6b (c) variant: a record answered safer_method', () => {
         args: { item: 1, command: 'echo safer', cwd: '.', rationale: 'K3-29 variant (c) safer command' } }] },
       { kind: 'text', text: 'K3-29 variant (c) proposal round finished' },
     ]);
-    const proposalRoot = await openReviewWorkRoot(h, proposalModel);
+    const round = await proposalRound(h, { model: proposalModel, select: 'k3-29-vc-proposal',
+      requestId: 'k3-29-vc-proposal-start' });
     let proposalRunRef: RunRef | null = null;
     try {
-      const stop = await driveReviewUntil(proposalRoot, h.select('k3-29-vc-proposal', AG2B_WORK_TASK_ID),
-        performs('start'));
-      const prepared = preparedOf(stop.stopped);
-      proposalRunRef = prepared.claim.runRef;
-      expect(prepared.envelope.permissions.tools)
-        .toEqual(['read', 'run_readonly_command', 'propose_safer_method']);
-      const startResult = await proposalRoot.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID,
-        requestId: 'k3-29-vc-proposal-start' });
+      proposalRunRef = round.runRef;
+      const startResult = await round.start();
       expect(startResult).toMatchObject({ status: 'ready' });
     } finally {
-      await proposalRoot.close();
+      await round.close();
     }
     expect(proposalRunRef).not.toBeNull();
     expect(restarted.report?.runs.filter(row => proposalRunRef !== null

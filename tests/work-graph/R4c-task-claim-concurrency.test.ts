@@ -2,7 +2,49 @@
 import { expect, it } from 'vitest';
 import { createTaskClaimFixture, CLAIM_FIXTURE_AT } from '../helpers/task-claim-fixture.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
+import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
+import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
+import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
+import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { PreparedCommit } from '../../src/core/record-store/ports.js';
+import type { TaskClaimFixture } from '../helpers/task-claim-fixture.js';
+
+
+async function cancelUnentered(f: TaskClaimFixture, runRef: RunRef): Promise<number> {
+  let seq = 0;
+  const controls = createRunControlService({ records: f.records,
+    authority: createMaterialRecordReaders(f.records).authority,
+    reads: createRunStateReader({ records: f.records }),
+    now: () => CLAIM_FIXTURE_AT, eventId: () => `r4c-concurrency-control-${++seq}` });
+  const read = await createRunStateReader({ records: f.records }).readExecution(f.ctx, runRef);
+  if (read.status !== 'ready') throw Error(`the old Run is not readable: ${JSON.stringify(read)}`);
+  const result = await controls.submitControl(f.ctx, { input: { runRef, kind: 'cancel',
+    reason: 'end the old Run before the new plan' },
+    meta: { requestId: 'r4c-concurrency-cancel', expected: [{ ref: runRef, revision: read.value.run.revision }] } });
+  if (result.status !== 'committed') throw Error(`cancel failed: ${JSON.stringify(result)}`);
+  return result.value.runRevision;
+}
+
+/** B-08(e): the real requeue owner over the fixture's records and real source. */
+function requeueService(f: TaskClaimFixture) {
+  let seq = 0;
+  return createTaskRequeueService({ records: f.records,
+    reads: createRunStateReader({ records: f.records }),
+    workspaceHost: { async resolveRoot() {
+      return { status: 'ready', value: { root: f.directory, workspaceRevision: 1 } } as const;
+    } },
+    source: new VerificationWorkspaceReader(),
+    materials: {
+      async storeArtifact() { return { status: 'rejected', code: 'unsupported', reason: 'no new input is passed' } as const; },
+      async openArtifact() { return { status: 'rejected', code: 'unsupported', reason: 'no new input is passed' } as const; },
+    },
+    messages: { async readMessage() { return { status: 'rejected', code: 'unsupported', reason: 'no new input is passed' } as const; } },
+    now: () => CLAIM_FIXTURE_AT, eventId: () => `r4c-concurrency-requeue-${++seq}` });
+}
 
 it.each(['memory', 'sqlite'] as const)('%s: simultaneous identical requests return the first committed claim', async kind => {
   const f = await createTaskClaimFixture(kind);
@@ -58,25 +100,66 @@ it('one role resolver keeps concurrent projects read guards request-local', asyn
 });
 
 it('directed and whole-plan queries share the same current-plan task fold', async () => {
-  const f = await createTaskClaimFixture('memory');
+  const f = await createTaskClaimFixture('memory', CONTROL_RECORD_SCHEMAS);
   try {
-    await f.seedRun(f.tasks.first.taskId, 'running');
-    const old = await f.seedRun(f.tasks.first.taskId, 'running');
-    const { canonicalJson } = await import('../../src/contracts/fingerprint.js');
+    // B-08(e): the old Run (Plan@1) ends through the public control owner.
+    const oldClaim = await f.service.claimTask(f.ctx, await f.buildRequest({ requestId: 'fold-old-claim' }));
+    expect(oldClaim).toMatchObject({ status: 'committed' });
+    if (oldClaim.status !== 'committed') return;
+    const endedRevision = await cancelUnentered(f, oldClaim.value.runRef);
+    // The new Plan@2 is a public propose body + apply, not an in-place rewrite.
+    const plan = f.plan;
+    const draft: PlanRevisionDraft = {
+      schemaVersion: 2, planId: `${plan.planId}-next-${String(plan.planRevision + 1)}`,
+      planRevision: plan.planRevision + 1, goalId: plan.goalRef.goalId,
+      stages: structuredClone(plan.stages), tasks: plan.tasks.map(task => ({ ...task })),
+      assignments: [...(plan.assignments ?? [])].map(entry => ({ ...entry })),
+      obligations: plan.obligations.map(obligation => ({ ...obligation, taskIds: [...obligation.taskIds],
+        verificationRequirements: obligation.verificationRequirements.map(requirement => ({ ...requirement })) })),
+      taskHierarchy: structuredClone(plan.taskHierarchy), executionDag: structuredClone(plan.executionDag),
+      ...(plan.schemaVersion === 2 ? {
+        taskRelations: [...(plan.taskRelations ?? [])].map(relation => ({ ...relation })),
+        inputRequirements: [...(plan.inputRequirements ?? [])].map(requirement => ({ ...requirement })),
+      } : {}),
+    };
+    const proposed = await f.plans.proposePlan(f.ctx, { input: {
+      goalRef: f.goalRef, basedOn: plan.ref, draft,
+      reason: { text: 'Move the Task to the current plan', sources: [], affectedTaskIds: [] },
+    }, meta: { requestId: 'fold-propose-plan', expected: [await f.goalPin()] } });
+    expect(proposed).toMatchObject({ status: 'committed' });
+    if (proposed.status !== 'committed') return;
+    const applied = await f.plans.applyPlanChange(f.ctx, { input: {
+      proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [],
+    }, meta: { requestId: 'fold-apply-plan', expected: [await f.goalPin()] } });
+    expect(applied).toMatchObject({ status: 'committed' });
+    if (applied.status !== 'committed') return;
+    // The current Run: the public requeue, then a claim under the new Plan.
+    const requeued = await requeueService(f).requeueTask(f.ctx, { input: {
+      taskRef: f.tasks.first, afterRunRef: oldClaim.value.runRef, reason: 'the Task moved to the current plan',
+    }, meta: { requestId: 'fold-requeue', expected: [
+      await f.goalPin(), { ref: oldClaim.value.runRef, revision: endedRevision }] } });
+    expect(requeued).toMatchObject({ status: 'committed', value: { kind: 'requeued' } });
+    if (requeued.status !== 'committed' || requeued.value.kind !== 'requeued') return;
+    const session = await f.createSession('fold-current-session');
+    const base = await f.buildRequest({ requestId: 'fold-current-claim',
+      input: { sessionRef: session, planRef: applied.value.ref } });
+    const claimed = await f.service.claimTask(f.ctx, { ...base, input: { ...base.input,
+      requeueRef: requeued.value.requeue.ref,
+      ...(requeued.value.requeue.budget === null ? {} : { budget: requeued.value.requeue.budget }) } });
+    expect(claimed).toMatchObject({ status: 'committed' });
+    if (claimed.status !== 'committed') return;
+
     const { readCanonicalTaskFacts } = await import('../../src/core/work-graph/tasks/plan-readers.js');
-    const key = canonicalJson(old); const read = await f.records.readMany([key]);
-    if (read.status !== 'ready') throw Error('Run read failed');
-    const row = read.value.records[0]!; const body = JSON.parse(row.json);
-    body.planRef = { ...f.planRef, planId: 'older-plan' }; body.revision = 2;
-    expect(await f.commitRaw([{ ...row, revision: 2, json: JSON.stringify(body) }],
-      [{ refKey: key, expectedRevision: row.revision }])).toMatchObject({ status: 'committed' });
-    const whole = await readCanonicalTaskFacts(f.records, f.goalRef, f.plan);
-    const directed = await readCanonicalTaskFacts(f.records, f.goalRef, f.plan, f.tasks.first.taskId);
+    const whole = await readCanonicalTaskFacts(f.records, f.goalRef, applied.value);
+    const directed = await readCanonicalTaskFacts(f.records, f.goalRef, applied.value, f.tasks.first.taskId);
     expect(whole.status).toBe('ready'); expect(directed.status).toBe('ready');
     if (whole.status !== 'ready' || directed.status !== 'ready') throw Error('task facts unavailable');
     expect(directed.value.byTaskId.get(f.tasks.first.taskId))
       .toEqual(whole.value.byTaskId.get(f.tasks.first.taskId));
     expect(directed.value.byTaskId.size).toBe(1);
+    // Both recorded Runs are folded: the ended Plan@1 Run and the current Plan@2 Run.
+    expect(whole.value.runsByTaskId.get(f.tasks.first.taskId)?.map(run => run.ref.runId).sort())
+      .toEqual([oldClaim.value.runRef.runId, claimed.value.runRef.runId].sort());
   } finally { await f.close(); }
 });
 

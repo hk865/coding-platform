@@ -1177,7 +1177,7 @@ function roundFacts(head: RoundSnapshot): NonNullable<TaskFailureFactsV1['round'
   const facts = roundFailureFacts(head);
   return { roundRef: { ...head.ref }, revision: head.revision, status: head.status, outcome: head.outcome, failingChecks: facts.checks,
     gapCodes: facts.gapCodes, sourceDigest: head.identity.sourceDigest, workspaceRevision: head.identity.workspaceRevision,
-    ordinal: roundOrdinalOf(head), autoCount: head.chain?.autoCount ?? 0 };
+    ordinal: roundOrdinalOf(head), autoCount: head.chain.autoCount };
 }
 
 /**

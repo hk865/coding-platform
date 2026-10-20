@@ -42,8 +42,6 @@ type TriggerEvent = { kind: 'catalog_adopted' | 'catalog_revised' | 'check_passe
 type Fixture = {
   platform: Platform;
   ctx: CoreCallContext;
-  /** The driver's own Host system actor; only the capture replay below uses it. */
-  systemCtx: CoreCallContext;
   scope: WorkspaceScope;
   driver: AutoCaptureDriver;
   events: TriggerEvent[];
@@ -97,10 +95,6 @@ async function fixture(backend: Backend, projectId: string, files: Record<string
     principal: { kind: 'host', actor: operator },
     materialReader: { kind: 'host', projectId, workspaceId, actor: operator },
     signal: new AbortController().signal };
-  const systemCtx: CoreCallContext = { projectId, workspaceId,
-    principal: { kind: 'host', actor: systemActor },
-    materialReader: { kind: 'host', projectId, workspaceId, actor: systemActor },
-    signal: new AbortController().signal };
   const projectRef = { aggregateType: 'Project' as const, projectId };
   const workspaceRef: WorkspaceRef = { aggregateType: 'Workspace', ...scope };
   const created = await platform.projects.createProject(ctx, { meta: {
@@ -121,7 +115,7 @@ async function fixture(backend: Backend, projectId: string, files: Record<string
   const events: TriggerEvent[] = [];
   sink = event => { events.push(event); driver.projectChanged(event.projectId, event.kind); };
   return {
-    platform, ctx, systemCtx, scope, driver, events,
+    platform, ctx, scope, driver, events,
     async close() { await driver.close(); await platform.close(); },
   };
 }
@@ -167,18 +161,11 @@ describe.each(BACKENDS)('L8 A-04 adoption capture through the Host driver [%s]',
       expect(firstCaptureRef).toMatchObject({ aggregateType: 'ObservedArchitecture', projectId, workspaceId: 'main' });
       expect(fx.events).toEqual([]);
 
-      // `queryArchitecture` selects a `PersistedSourceCaptureRef`, while the
-      // public state carries the observation ref. Replaying the driver's OWN
-      // capture request with the documented auto-capture requestId returns that
-      // persisted ref (the platform restores its receipt); it starts no capture.
-      const replayedCapture = await fx.platform.architecture.captureSourceChanges(fx.systemCtx, {
-        input: { workspace: fx.scope, mappings: [], previous: null, requestSeq: 1 },
-        meta: { requestId: `auto-capture:${projectId}:main:1`, expected: [] },
-      });
-      expect(replayedCapture).toMatchObject({ status: 'committed', replayed: true });
-      if (replayedCapture.status !== 'committed') throw Error('the first capture did not replay');
+      // The public state carries the persisted ref `queryArchitecture` selects
+      // (`src/contracts/architecture-observation.ts:54`), so the old capture is
+      // selected from the public read and no capture replay is needed.
       const emptyModuleLayer = await fx.platform.architecture.queryArchitecture(fx.ctx, {
-        selection: { kind: 'observed', capture: replayedCapture.value },
+        selection: { kind: 'observed', capture: first.current!.persistedRef },
         depth: 0, relations: ['dependency'], page: { limit: 100 },
       });
       expect(emptyModuleLayer).toMatchObject({ status: 'ready' });

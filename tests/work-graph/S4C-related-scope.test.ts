@@ -116,7 +116,7 @@ async function createScopedGoal(f: S4ANoteFixture, goalId: string): Promise<Scop
   await committed('goal', await platform.goals.createGoal(ctx, { meta: { requestId: `${goalId}-create`,
     expected: [{ ref: projectRef, revision: project.value.revision }, { ref: workspaceRef, revision: 1 }] },
     input: { goalId, workspace: scope, objective: `${goalId} objective` } }));
-  const draft: PlanRevisionDraft = { schemaVersion: 1, planId: planRef.planId, planRevision: 1, goalId,
+  const draft: PlanRevisionDraft = { schemaVersion: 2, planId: planRef.planId, planRevision: 1, goalId,
     stages: [{ stageId: 's1', title: 'Stage one' }],
     tasks: [
       { taskId: 't1', stageId: 's1', title: 'Work one', requirementLevel: 'required', taskKind: 'work',

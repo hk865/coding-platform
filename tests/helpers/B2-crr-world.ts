@@ -12,8 +12,9 @@ import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import { expect } from 'vitest';
 import { decisionSourceKey, type DecisionSourceV1 } from '../../src/contracts/goal-decisions.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
+import type { GoalRef } from '../../src/contracts/ledger.js';
+import type { PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import type { CommandRerunRequestV1 } from '../../src/contracts/command-rerun-request.js';
 import type { TaskRequeueSnapshotV1 } from '../../src/contracts/task-requeue.js';
@@ -23,7 +24,7 @@ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-
 import { readKernelCommandFacts as readProductionKernelCommandFacts } from '../../src/core/agent-runtime/context-assembler.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import type { K3ReviewCardWorld } from './K3-review-card-fixture.js';
-import { openRealRunHarness } from './K3-35-continuation-fixture.js';
+import { openRealRunHarness, type K3_35RealRunHarness } from './K3-35-continuation-fixture.js';
 import { createScriptedModel } from './B2-runtime-fixture.js';
 import { shellSeam } from './K3-tool-seams.js';
 import { GOAL_B, PLAN_B2, WORKSPACE_SCOPE } from './S5-decision-fixture.js';
@@ -69,6 +70,14 @@ export async function reviewCardOf(world: K3ReviewCardWorld, record: UnknownCall
 /** Options of the ONE real blocked-record path (below). */
 export type BlockedRecordOptions = {
   /**
+   * The Goal the Run is claimed under; defaults to the K3-35 world's `GOAL_B`.
+   * A caller that adopts Tasks on another Goal passes that Goal and the ref of
+   * the accepted Plan it adopted them into.
+   */
+  goalRef?: GoalRef;
+  /** The accepted Plan the new Run claims; defaults to `PLAN_B2`. */
+  planRef?: PlanRevisionRef;
+  /**
    * The public requeue of a previous Run of the SAME Task. The new public claim
    * covers it, so one Task can leave two real records from two real Runs.
    */
@@ -79,6 +88,20 @@ export type BlockedRecordOptions = {
    * record once its Run has ended (the undisposed record, no fact written).
    */
   dispose?: boolean;
+  /**
+   * W2b-20/W2b-21: `true` creates the Run's Session with the S5 fixture's real
+   * path (`createRealS5Session`, the production Session operation owner) instead
+   * of `createS5Session`. Absent or `false` (the default): `createS5Session`, as before.
+   */
+  realSession?: boolean;
+  /**
+   * W2b-20: an already open real-Run harness of this world (opened with
+   * `runIdGeneratorOf(world)`) that the record's Run goes through; the caller
+   * owns and closes it. Many records then share ONE platform Host, as one Host
+   * recognizes many Runs. Absent (the default): a fresh harness per record,
+   * closed here, as before.
+   */
+  harness?: K3_35RealRunHarness;
 };
 
 /** The real record plus the real public `TaskClaim` its Run was entered with. */
@@ -112,11 +135,15 @@ export async function blockedRecordWithClaim(
   options: BlockedRecordOptions = {},
 ): Promise<BlockedRecordOutcome> {
   if (calls.length === 0) throw new Error('a blocked record needs at least one declared call');
-  const harness = await openRealRunHarness(world, { newId: runIdGeneratorOf(world) });
+  const harness = options.harness ?? await openRealRunHarness(world, { newId: runIdGeneratorOf(world) });
   let started: { started: Promise<unknown> } | undefined;
   try {
-    const sessionRef = await world.fixture.createS5Session(`${label}-session`);
-    const claim = await harness.claimRun({ sessionRef, planRef: PLAN_B2, taskId, requestId: `${label}-claim`,
+    const sessionRef = options.realSession === true
+      ? await world.fixture.createRealS5Session(`${label}-session`)
+      : await world.fixture.createS5Session(`${label}-session`);
+    const claim = await harness.claimRun({ sessionRef, planRef: options.planRef ?? PLAN_B2, taskId,
+      requestId: `${label}-claim`,
+      ...(options.goalRef === undefined ? {} : { goalRef: options.goalRef }),
       ...(options.requeue === undefined ? {} : { requeueRef: options.requeue }) });
     rememberClaim(world, claim);
     const model = createScriptedModel([{ kind: 'calls', calls: calls.map(call => ({
@@ -167,7 +194,7 @@ export async function blockedRecordWithClaim(
   } finally {
     shellSeam.release();
     if (started !== undefined) await started.started.catch(() => undefined);
-    await harness.closeUnion();
+    if (options.harness === undefined) await harness.closeUnion();
   }
 }
 
@@ -221,20 +248,6 @@ export async function realKernelCommandReaderOf(world: K3ReviewCardWorld): Promi
     databasePath: join(world.fixture.base.directory, 's5-kernel.sqlite'),
   }] });
   return (ctx, input) => readProductionKernelCommandFacts({ kernelStores, kernel }, ctx, input);
-}
-
-/**
- * The reviewed Run's snapshot through the PUBLIC execution read. Kept as an
- * existing export for `K3-UR7-crr-failed-set`; the F-008 request path never
- * reads a Run snapshot (the request Run is the continuation Run's principal).
- */
-export async function runSnapshotOf(
-  world: K3ReviewCardWorld, record: UnknownCallReviewV1,
-): Promise<RunSnapshot> {
-  const read = await createRunStateReader({ records: world.records })
-    .readExecution(world.fixture.ctx, record.runRef);
-  if (read.status !== 'ready') throw new Error(`the record Run is not readable: ${JSON.stringify(read)}`);
-  return read.value.run;
 }
 
 /** The latest Run claim of each Task in this world (a public execution read fills a gap). */

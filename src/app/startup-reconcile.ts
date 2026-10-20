@@ -198,15 +198,13 @@ function sessionKey(ref: { projectId: string; sessionId: string }): string { ret
 
 /**
  * How a `starting` Run stands for the reconcile: never entered (no
- * authorization, W-01; a V2 binding `authorized`/`revoked`, W-02/W-03),
- * `entering` (step 2 classifies it, W-05..W-08), or a legacy V1 binding the
- * reconcile does not migrate (reported unsupported, §12.2 note).
+ * authorization, W-01; a V2 binding `authorized`/`revoked`, W-02/W-03) or
+ * `entering` (step 2 classifies it, W-05..W-08).
  */
-function startingEntryOf(run: RunSnapshot): 'not_entered' | 'entering' | 'legacy' | 'other' {
+function startingEntryOf(run: RunSnapshot): 'not_entered' | 'entering' | 'other' {
   if (run.status !== 'starting') return 'other';
   const auth = run.executionAuthorization;
   if (auth === undefined) return 'not_entered';
-  if (!('schemaVersion' in auth) || auth.schemaVersion !== 2) return 'legacy';
   if (auth.phase === 'authorized' || auth.phase === 'revoked') return 'not_entered';
   return auth.phase === 'entering' ? 'entering' : 'other';
 }
@@ -333,11 +331,6 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
     for (const run of [...starting, ...running, ...unknownEnds]) {
       const entry = startingEntryOf(run);
       if (entry === 'not_entered') continue;   // W-01..W-03: the same claim is re-driven by the Workflow (step 6b).
-      if (entry === 'legacy') {
-        out.runs.push({ ref: refText(run.ref), row: 'V1', status: 'left',
-          reason: 'unsupported: a legacy V1 authorization is read only and never reconciled' });
-        continue;
-      }
       const read = await platform.executions.readExecution(ctx, run.ref);
       if (read.status !== 'ready') {
         out.runs.push({ ref: refText(run.ref), row: 'W-*', status: 'failed', reason: `the Run is not readable (${rejectionText(read)})` });
@@ -407,7 +400,7 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
       for (const runRef of queuedRuns.value.records) {
         const read = await platform.executions.readExecution(ctx, runRef);
         if (read.status !== 'ready') {
-          out.controls.push({ ref: refText(runRef), row: 'W-04/W-16/W-19', status: 'failed',
+          out.controls.push({ ref: refText(runRef), row: 'W-16/W-19', status: 'failed',
             reason: `the Run is not readable (${rejectionText(read)})` });
           continue;
         }
@@ -438,7 +431,7 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
       goalRecords = goals.value.records;
     }
     for (const goal of goalRecords) {
-      if ((goal.desiredStateRevision ?? 1) <= 1 && goal.desiredState === 'active') continue;
+      if (goal.desiredStateRevision <= 1 && goal.desiredState === 'active') continue;
       try {
         const pass = await deps.fanOut(ctx, goal.ref, { startup: true });
         out.fanOut.push({ goalId: goal.ref.goalId, control: pass.control, problem: pass.problem, runs: pass.runs.length,

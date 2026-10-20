@@ -1,7 +1,6 @@
 /**
- * Run reconcile service (STATE-MACHINES-SPEC §6 RUN-16/19/20/22/23/24, the R
- * source of RUN-09..11, §7 CTL-04(b)/CTL-08/CTL-10, §8 SES-05/06/07, §12;
- * A.2 step 5.6).
+ * Run reconcile service (STATE-MACHINES-SPEC §6 RUN-16/19/20/22/23/24, §7
+ * CTL-04(b)/CTL-08/CTL-10, §8 SES-05/06/07, §12; A.2 step 5.6).
  *
  * The WorkGraph writes of a Run end without a Kernel terminal (RD-5):
  *
@@ -13,8 +12,8 @@
  *   paused at a safe point);
  * - `resolveUnknownRun`: the operator's attestation of an unknown end
  *   (RUN-22), only under this Host's instance lease (L-1);
- * - `reconcileRunControls`: the queued intents the reconcile settles without
- *   another Run end (CTL-08(a) through RUN-09..11 (R), CTL-08(d)/(e)).
+ * - `reconcileRunControls`: the queued intents of an ended Run the reconcile
+ *   settles without another Run end (CTL-08(d)/(e)).
  *
  * Each write reads the execution window (Run, Attempt, Outbox, Plan, Session,
  * Lease) and the Run's intents, asks the Run machine, and commits the Run, the
@@ -28,7 +27,6 @@ import type { VersionPin } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import type { RunReconciliationBasisV1, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
-import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { hasOnlyKeys, inList, isNonNeg, utf8Bytes } from '../../../contracts/validation/common.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
@@ -64,7 +62,6 @@ import {
 } from './execution-entry-service.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import { SESSION_RECORD_SCHEMA_ID } from '../sessions/session-record-codecs.js';
-import { readGoalScope } from './plan-readers.js';
 import {
   outcomeUnknownIntentsOf, pointerIntentOf, queuedSteersOf, readRunIntents, reconciledIntentRecords,
   type ReconcileIntentFacts,
@@ -365,8 +362,7 @@ function reconcileInputProblem(input: ReconcileRunInput): string | null {
  * queued steers and the intents an unknown end left `outcome_unknown`, the
  * proven exit, this Host's instance lease, the probe and the Turn facts.
  * Entry and claim facts belong to other Run events. The Goal is not read here
- * (no reconcile end consults it); `reconcileRunControls` reads it for the
- * queued resume of RUN-11 (R) and replaces this placeholder.
+ * (no reconcile end consults it).
  */
 function reconcileRunContext(
   facts: TaskExecutionRecord, intents: readonly ControlIntentSnapshotV1[], actor: HostActor,
@@ -1025,37 +1021,8 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       const state = runStateOf(facts.run);
       const stamped = stamp();
       if (!stamped.ok) return stamped.rejection;
-      const pointer = facts.run.controlState;
       let decided: Decided;
-      let runEvent: RunEvent | null = null;
-      let goalGuards: RecordGuard[] = [];
-      let goalDesiredState: GoalSnapshot['desiredState'] | undefined;
       switch (state.node) {
-        case 'Claimed':
-        case 'Authorized':
-        case 'Revoked': {
-          // CTL-08(a): RUN-09..11 (R) for the pointer intent still queued.
-          const intent = runCtx.pointerIntent;
-          if (pointer === undefined || intent === null || intent.status !== 'queued') {
-            return invalid('the Run has no queued pointer intent to reconcile');
-          }
-          // RUN-11 (R), D-9: a queued resume applies only while the Goal is active (else it stays queued);
-          // the Goal read is guarded in the same commit.
-          const goalRef: GoalRef = { aggregateType: 'Goal', projectId: facts.run.ref.projectId, goalId: facts.run.ref.goalId };
-          const goalScope = await readGoalScope(records, goalRef);
-          if (goalScope.status !== 'ready') return reject(goalScope.code, goalScope.reason);
-          goalDesiredState = goalScope.goal.desiredState;
-          runCtx = { ...runCtx, goal: { desiredState: goalScope.goal.desiredState, activePlanMatchesClaim: true } };
-          goalGuards = [{ refKey: refKeyOf(goalRef), expectedRevision: goalScope.goal.revision }];
-          runEvent = intent.kind === 'cancel'
-            ? { kind: 'stop_not_entered', source: 'R', intentRef: pointer.intentRef, recordedAt: stamped.nowIso }
-            : intent.kind === 'pause' ? { kind: 'pause_not_entered', source: 'R', intentRef: pointer.intentRef }
-              : { kind: 'resume_not_entered', source: 'R', intentRef: pointer.intentRef };
-          const moved = transitionRun(state, runEvent, runCtx);
-          if (!moved.ok) return runRefusal(moved);
-          decided = moved;
-          break;
-        }
         case 'Ended':
         case 'EndedUnknown': {
           // CTL-08(d)/(e): every intent still queued settles; the Run is only the CAS guard.
@@ -1065,6 +1032,10 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
             ({ kind: 'intent', event: 'control_reconciled', intentRef })) };
           break;
         }
+        case 'Claimed':
+        case 'Authorized':
+        case 'Revoked':
+          return invalid(`a ${state.node} Run applies its control in the submitting commit, not the startup reconcile`);
         case 'Absent':
         case 'Entering':
         case 'Running':
@@ -1072,19 +1043,11 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
           return invalid(`a ${state.node} Run settles its intents with its own reconcile, or keeps them as the continuation fence`);
         default: return invalid('the Run node is not recognized');
       }
-      const nextRun = decided.next.record ?? facts.run;
-      const cancel = runEvent !== null && runEvent.kind === 'stop_not_entered';
       return await commitDecided({ identity: begun.identity, fingerprint: begun.fingerprint, actor,
         operation: 'reconcile_controls', facts, runPin: begun.pin, decided, intents, nowIso: stamped.nowIso,
-        eventId: stamped.eventId, signal: begun.signal, readGuards: goalGuards, requestId: begun.requestId,
-        claim: cancel && runEvent !== null ? {
-          pairing: pairingOf(state.node, facts, runCtx),
-          attemptEvent: attemptEventOfEnd(runEvent, nextRun, facts, stamped.nowIso, stamped.eventId),
-          release: reconcileRelease('stop_not_entered', state.node, 'service', runCtx.hostLease, true, false),
-        } : null,
+        eventId: stamped.eventId, signal: begun.signal, claim: null, requestId: begun.requestId,
         intentFacts: { nodeBefore: state.node, hostInstanceId: input.hostInstanceId, acceptedSteers: input.acceptedSteers,
-          cancelRef: cancel ? pointer?.intentRef ?? null : null, pausedStop: null, kernelPaused: false,
-          ...(goalDesiredState === undefined ? {} : { goalDesiredState }) } });
+          cancelRef: null, pausedStop: null, kernelPaused: false } });
     } catch (error) {
       return unavailable(`the control reconcile write failed: ${messageOf(error)}`);
     }

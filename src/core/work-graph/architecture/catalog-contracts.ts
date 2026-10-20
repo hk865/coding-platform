@@ -88,9 +88,9 @@ export type ArchitectureCatalogRecord = {
 
 export type ArchitectureRevision = {
   baseline: ArchitectureBaselineRevisionSnapshot;
-  /** `null` means the baseline predates the catalog. It is never guessed as an
-   * empty catalog. */
-  catalog: ArchitectureCatalogRecord | null;
+  /** The catalog row committed with this baseline. A missing row is
+   * `unavailable`, never a guessed empty catalog. */
+  catalog: ArchitectureCatalogRecord;
 };
 
 /**

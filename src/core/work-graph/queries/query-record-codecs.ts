@@ -234,11 +234,9 @@ export function queryJobIntentIssues(value: unknown): string[] {
     issues.push('intent.multiTurn.maxRounds must be a positive integer');
   }
   const execution = value['execution'];
-  if (execution !== undefined) {
-    if (!isRecord(execution)) issues.push('intent.execution must be an object when present');
-    else if (!validQueryExecution(execution as QueryJobIntentV1['execution'])) {
-      issues.push('intent.execution is not a valid QueryExecutionBinding shape');
-    }
+  if (!isRecord(execution)) issues.push('intent.execution must be an object');
+  else if (!validQueryExecution(execution as QueryJobIntentV1['execution'])) {
+    issues.push('intent.execution is not a valid QueryExecutionBinding shape');
   }
   return issues;
 }
@@ -444,10 +442,8 @@ function validateQueryJobSnapshot(record: EncodedRecord): DecodeResult<EncodedRe
   if (parsed['schemaVersion'] !== 1) return invalid('QueryJob snapshot schemaVersion must be 1');
   const jobProblems = jobIssues(parsed['job'], ref);
   if (jobProblems.length > 0) return invalid(`QueryJob snapshot job is invalid: ${jobProblems.join('; ')}`);
-  if (parsed['submission'] !== undefined) {
-    const problems = submissionIssues(parsed['submission']);
-    if (problems.length > 0) return invalid(`QueryJob snapshot submission is invalid: ${problems.join('; ')}`);
-  }
+  const submissionProblems = submissionIssues(parsed['submission']);
+  if (submissionProblems.length > 0) return invalid(`QueryJob snapshot submission is invalid: ${submissionProblems.join('; ')}`);
   return { status: 'decoded', value: copyRecord(record) };
 }
 
@@ -461,7 +457,7 @@ export function encodeQueryJobSnapshot(snapshot: QueryJobSnapshot): EncodedRecor
   };
 }
 
-/** Pure QueryJob record decoding; a historical snapshot without a locator stays readable. */
+/** Pure QueryJob record decoding; every current snapshot carries the submission locator. */
 export function decodeQueryJobSnapshot(record: EncodedRecord): DecodeResult<QueryJobSnapshot> {
   const checked = validateQueryJobSnapshot(record);
   if (checked.status !== 'decoded') return checked;
@@ -519,7 +515,7 @@ export function encodeQueryJobSubmittedEvent(event: QueryJobSubmittedEventV1): E
   return encodeEventEnvelope(event);
 }
 
-/** Decodes a stored submitted event; the locator mirror is optional for old rows. */
+/** Decodes a stored submitted event; its locator mirror names the same submission. */
 export function decodeQueryJobSubmittedEvent(event: EncodedDomainEvent): DecodeResult<QueryJobSubmittedEventV1> {
   const checked = validateQueryJobSubmittedEvent(event);
   if (checked.status !== 'decoded') return checked;

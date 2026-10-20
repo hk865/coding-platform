@@ -103,7 +103,7 @@ export function buildEffectiveTaskBasis(
   plan: PlanRevisionSnapshot,
 ): ReadonlyMap<string, PlanRevisionRef | BasisUnsupported> {
   const index = new Map<string, PlanRevisionRef | BasisUnsupported>();
-  if (plan.schemaVersion === 2 && plan.taskStateBasis !== undefined) {
+  if (plan.taskStateBasis !== undefined) {
     const entries = new Map(plan.taskStateBasis.entries.map((entry) => [entry.taskId, entry.planRef]));
     for (const task of plan.tasks) {
       const ref = entries.get(task.taskId);
@@ -241,7 +241,7 @@ export function planTaskFacts(plan: PlanRevisionSnapshot): PlanTaskFacts {
     definitions: buildFrozenTaskDefinitions({
       tasks: plan.tasks,
       assignments: revisionAssignments(plan),
-      inputRequirements: plan.schemaVersion === 2 ? plan.inputRequirements ?? [] : [],
+      inputRequirements: plan.inputRequirements ?? [],
       obligations: plan.obligations,
     }),
     basis: buildEffectiveTaskBasis(plan),

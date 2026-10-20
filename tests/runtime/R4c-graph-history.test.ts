@@ -17,29 +17,31 @@
 import { randomUUID } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RunExecutionHistoryV1 } from '../../src/contracts/core/execution-history.js';
 import type { VersionPin } from '../../src/contracts/core/identity.js';
-import type { RunRef, RunSnapshot, TaskAttemptSnapshot } from '../../src/contracts/dispatch.js';
+import type { RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
-import {
-  encodeDispatchOutboxEntry,
-  encodeTaskAttemptSnapshot,
-} from '../../src/core/work-graph/tasks/claim-record-codecs.js';
-import type { TaskClaim, TaskClaimOutbox } from '../../src/core/work-graph/model/claim-contracts.js';
+import type { TaskClaim } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import type { RecordExecutionHistoryInput } from '../../src/core/work-graph/model/execution-history-contracts.js';
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
 import type { ExecutionReadPort } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
+import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import { createS2BRuntimeSteps, type S2BRunHandle, type S2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
 import {
   plainSessionRefToAggregate,
   sessionAggregateRefKey,
 } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createExecutionHistoryReader } from '../../src/core/agent-runtime/observation-recovery.js';
+import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
+import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 import type { SessionHistoryRequest, SessionOperationsPort } from '../../src/core/agent-runtime/session-operations.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
@@ -69,12 +71,21 @@ const KERNEL_STORE_KEY = 'r4c-claim-kernel-store';
 const KERNEL_DATABASE = 'kernel.sqlite';
 
 const fixtures: TaskClaimFixture[] = [];
+const runtimeSteps: S2BRuntimeSteps[] = [];
 async function open(kind: ClaimFixtureKind = 'sqlite'): Promise<TaskClaimFixture> {
-  const fixture = await createTaskClaimFixture(kind);
+  const fixture = await createTaskClaimFixture(kind, {
+    records: [...CONTROL_RECORD_SCHEMAS.records, ...EXECUTION_ENTRY_RECORD_SCHEMAS.records,
+      ...MODEL_REQUEST_RECORD_SCHEMAS.records],
+    events: [...CONTROL_RECORD_SCHEMAS.events, ...EXECUTION_ENTRY_RECORD_SCHEMAS.events,
+      ...MODEL_REQUEST_RECORD_SCHEMAS.events],
+    lookups: [...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? [],
+      ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? []],
+  });
   fixtures.push(fixture);
   return fixture;
 }
 afterEach(async () => {
+  for (const steps of runtimeSteps.splice(0)) await steps.close();
   for (const fixture of fixtures.splice(0)) await fixture.close();
 });
 
@@ -107,12 +118,13 @@ async function claimedSecondSession(fixture: TaskClaimFixture, requestId: string
   return result.value;
 }
 
-async function readRun(fixture: TaskClaimFixture, ref: RunRef): Promise<RunSnapshot> {
-  const read = await fixture.records.readMany([key(ref)]);
-  if (read.status !== 'ready') throw new Error('fixture Run read failed');
-  const record = read.value.records.find(candidate => candidate.refKey === key(ref));
-  if (record === undefined) throw new Error('fixture Run is absent');
-  return JSON.parse(record.json) as RunSnapshot;
+/** R-8: the public WG11 read, as returned; never re-derive the Run's identity. */
+async function readExecution(fixture: TaskClaimFixture, ref: RunRef): Promise<RunSnapshot> {
+  const read = await createRunStateReader({ records: fixture.records })
+    .readExecution(fixture.ctx, ref);
+  expect(read.status).toBe('ready');
+  if (read.status !== 'ready') throw new Error('fixture execution read failed');
+  return read.value.run;
 }
 
 async function runPin(fixture: TaskClaimFixture, ref: RunRef): Promise<VersionPin> {
@@ -136,38 +148,40 @@ async function sessionKernel(
   return body.kernel;
 }
 
-/**
- * Craft a second real Run whose claim-linked outbox names the SAME platform
- * Session as `source`, so it shares the Kernel Session identity. The claim loop
- * cannot produce this (one Session cannot be claimed twice), so the fixture
- * writes the real Attempt/outbox records for a seeded Run; this is real Store
- * state, not a mocked port result.
- */
-async function seedLinkedRun(fixture: TaskClaimFixture, source: TaskClaim, taskId: string): Promise<RunRef> {
-  const runRef = await fixture.seedRun(taskId, 'starting');
-  const run = await readRun(fixture, runRef);
-  const attemptRef = { aggregateType: 'TaskAttempt' as const, projectId: fixture.scope.projectId,
-    goalId: fixture.goalRef.goalId, taskId, attemptId: run.attemptId };
-  const outboxRef = { aggregateType: 'DispatchOutboxEntry' as const, projectId: fixture.scope.projectId,
-    goalId: fixture.goalRef.goalId, taskId, attemptId: run.attemptId };
-  const attempt: TaskAttemptSnapshot = { ref: attemptRef, revision: 1, schemaVersion: 1, runId: runRef.runId,
-    planRef: run.planRef, status: 'claimed', startedAt: null, endedAt: null, endOutcome: null };
-  const claim: TaskClaim = {
-    task: { projectId: fixture.scope.projectId, goalId: fixture.goalRef.goalId, taskId },
-    planRef: run.planRef, workspaceId: fixture.scope.workspaceId, sessionRef: source.sessionRef,
-    sessionRevision: source.sessionRevision, generation: source.generation,
-    runRef, attemptRef, outboxRef, claimedAt: CLAIM_FIXTURE_AT,
-  };
-  const outbox: TaskClaimOutbox = { ref: outboxRef, revision: 1, schemaVersion: 1, status: 'pending', claim };
-  const sessionRefKey = sessionAggregateRefKey(plainSessionRefToAggregate(source.sessionRef));
-  const sessionRead = await fixture.records.readMany([sessionRefKey]);
-  if (sessionRead.status !== 'ready') throw new Error('fixture Session read failed');
-  const sessionRecord = sessionRead.value.records.find(candidate => candidate.refKey === sessionRefKey);
-  const receipt = await fixture.commitRaw(
-    [encodeTaskAttemptSnapshot(attempt), encodeDispatchOutboxEntry(outbox)],
-    [{ refKey: sessionRefKey, expectedRevision: sessionRecord?.revision ?? null }]);
-  expect(receipt).toMatchObject({ status: 'committed' });
-  return runRef;
+type RealSecondRun = { claim: TaskClaim; steps: S2BRuntimeSteps; handle: S2BRunHandle };
+
+/** B-08(a): a second Run in the SAME Session through the public path. The
+ * first Run ends (a real control cancel of the unentered claim), then the
+ * second Task is claimed in that Session and prepared + started for real by
+ * the shared S2B Runtime steps; its model is held at the A3 gate. */
+async function startSecondRun(fixture: TaskClaimFixture, source: TaskClaim): Promise<RealSecondRun> {
+  let sequence = 0;
+  const controls = createRunControlService({ records: fixture.records,
+    authority: createMaterialRecordReaders(fixture.records).authority,
+    reads: createRunStateReader({ records: fixture.records }),
+    now: () => CLAIM_FIXTURE_AT, eventId: () => `graph-control-${++sequence}` });
+  const cancelled = await controls.submitControl(fixture.ctx, { input: { runRef: source.runRef, kind: 'cancel',
+    reason: 'end the first Run before the second claim' },
+    meta: { requestId: 'graph-cancel-first', expected: [await runPin(fixture, source.runRef)] } });
+  expect(cancelled).toMatchObject({ status: 'committed' });
+  if (cancelled.status !== 'committed') throw Error(`the first Run did not end: ${JSON.stringify(cancelled)}`);
+  const second = await fixture.service.claimTask(fixture.ctx, await fixture.buildRequest({
+    requestId: 'graph-second-claim',
+    input: { taskId: fixture.tasks.second.taskId, sessionRef: source.sessionRef } }));
+  expect(second).toMatchObject({ status: 'committed' });
+  if (second.status !== 'committed') throw Error(`the second claim failed: ${JSON.stringify(second)}`);
+  const bodies = new RawArtifactBodyStore();
+  const steps = await createS2BRuntimeSteps({ base: fixture, bodies, ctx: fixture.ctx,
+    directory: fixture.directory, scope: fixture.scope, now: () => CLAIM_FIXTURE_AT,
+    setClock: () => undefined,
+    eventId: () => `graph-runtime-event-${++sequence}`,
+    newId: () => `graph-runtime-id-${++sequence}`,
+    consumerId: 'graph-history-runtime' });
+  runtimeSteps.push(steps);
+  const handle = await steps.start(second.value, { at: CLAIM_FIXTURE_AT,
+    replies: [{ kind: 'text', text: 'graph history real run' }] });
+  await handle.entered;
+  return { claim: second.value, steps, handle };
 }
 
 /** The real R4c.2b locator writer; it is the production owner under test, never a mock. */
@@ -223,6 +237,7 @@ async function runTurn(turn: TurnInput) {
       model: 'local-graph-history-fixture', baseUrl: 'http://127.0.0.1' }, client: turn.client },
     root: turn.fixture.directory, databasePath: kernelPath(turn.fixture), sessionId: turn.sessionId,
     input: turn.input, budget, executionIdentity: turn.identity,
+    taskBudget: { tokenBudget: null, deadline: null },
     signal: turn.signal ?? new AbortController().signal,
     meter: new ModelBudget(budget, async () => {}, {
       count: () => ({ tokens: 100, method: 'model_tokenizer', tokenizer: 'r4c-graph-history-fixture' }),
@@ -278,17 +293,7 @@ function countingRegistry(real: KernelStoreRegistry, reads: KernelRead[]): Kerne
   return {
     forWorkspace: workspace => real.forWorkspace(workspace),
     byAdapterId: adapterId => real.byAdapterId(adapterId),
-    legacy: (adapterId, expectedSessionId) => real.legacy(adapterId, expectedSessionId),
     withStore: (adapterId, use) => real.withStore(adapterId, store => use(countingKernelStore(store, reads))),
-    withLegacyReader: (adapterId, expectedSessionId, use) =>
-      real.withLegacyReader(adapterId, expectedSessionId, reader => use({
-        get: (sessionId, options) => reader.get(sessionId, options),
-        read: async (sessionId, afterPosition, limit, options) => {
-          const page = await reader.read(sessionId, afterPosition, limit, options);
-          reads.push({ sessionId, afterPosition, limit, rows: page.records.length });
-          return page;
-        },
-      })),
   };
 }
 
@@ -358,31 +363,34 @@ describe('R4c.2b graph execution history reader', () => {
     const claim = await claimed(fx, 'graph-direct-claim');
     const mapping = await sessionKernel(fx, claim.sessionRef);
     const firstIdentity: KernelExecutionIdentity = { runId: 'graph-kernel-run-1', turnId: 'graph-kernel-turn-1' };
-    const secondIdentity: KernelExecutionIdentity = { runId: 'graph-kernel-run-2', turnId: 'graph-kernel-turn-2' };
     const client = scriptedClient();
     await runTurn({ fixture: fx, sessionId: mapping.kernelSessionId, input: 'first', identity: firstIdentity, client });
-    await runTurn({ fixture: fx, sessionId: mapping.kernelSessionId, input: 'second', identity: secondIdentity, client });
+
+    // B-08(a)/R-7: the second Run in the same Session is the shared S2B real
+    // prepare + start; its end is the real Runtime end.
+    const second = await startSecondRun(fx, claim);
+    await second.steps.finish(second.handle, CLAIM_FIXTURE_AT, 'completed');
+    const run = await readExecution(fx, second.claim.runRef);
+    const history = run.executionHistory;
+    expect(history).toBeDefined();
+    if (history === undefined) throw new Error('the real second Run has no execution history');
+    expect(run).toMatchObject({ status: 'ended', outcome: 'completed' });
 
     const records = await rawRecords(kernelPath(fx), mapping.kernelSessionId);
     const firstPositions = positionsOf(records, firstIdentity);
-    const secondPositions = positionsOf(records, secondIdentity);
+    const secondPositions = positionsOf(records, history.kernel);
     expect(secondPositions.length).toBeGreaterThanOrEqual(2);
-    const secondStart = secondPositions[0];
-    const secondEnd = secondPositions.at(-1);
-    if (secondStart === undefined || secondEnd === undefined) throw new Error('real Kernel Turn has no interval');
-
-    const secondRun = await seedLinkedRun(fx, claim, fx.tasks.second.taskId);
-    const bound = await bindHistory(fx, 'graph-direct-bind', secondRun,
-      { ...mapping, ...secondIdentity }, secondStart, secondEnd, secondEnd);
-    expect(bound.status).toBe('committed');
-    if (bound.status !== 'committed') return;
+    const secondStart = history.startPosition;
+    const secondEnd = history.endPosition;
+    expect(secondStart).toBe(secondPositions[0]);
+    expect(secondEnd).toBe(secondPositions.at(-1));
 
     const h = await harness(fx);
     const page = await h.reader.readTaskExecutionHistory(fx.ctx,
-      { runRef: secondRun, afterCursor: null, limit: 200 });
+      { runRef: run.ref, afterCursor: null, limit: 200 });
     expect(page.status).toBe('ready');
     if (page.status !== 'ready') return;
-    expect(page.value.executionIdentity).toEqual({ runId: secondIdentity.runId, turnId: secondIdentity.turnId });
+    expect(page.value.executionIdentity).toEqual({ runId: history.kernel.runId, turnId: history.kernel.turnId });
     expect(page.value.items.map(item => item.source.position)).toEqual(secondPositions);
     expect(page.value.items.some(item => firstPositions.includes(item.source.position))).toBe(false);
     // The graph reader hands RT7 the persisted interval, and RT7 forwards it to RT1.
@@ -404,19 +412,26 @@ describe('R4c.2b graph execution history reader', () => {
     const identity: KernelExecutionIdentity = { runId: 'graph-upper-run', turnId: 'graph-upper-turn' };
     const client = scriptedClient();
     await runTurn({ fixture: fx, sessionId: mapping.kernelSessionId, input: 'first', identity, client });
-    const positions = positionsOf(await rawRecords(kernelPath(fx), mapping.kernelSessionId), identity);
-    const start = positions[0];
-    const upper = positions.at(-1);
-    if (start === undefined || upper === undefined) throw new Error('real Kernel Turn has no interval');
 
-    const run = await seedLinkedRun(fx, claim, fx.tasks.second.taskId);
-    const bound = await bindHistory(fx, 'graph-upper-bind', run, { ...mapping, ...identity }, start, upper, null);
-    expect(bound.status).toBe('committed');
-    if (bound.status !== 'committed') return;
+    // R-7: the second Run is a real prepare + start, held at the A3 gate; its
+    // identity and frozen interval come from the public execution read.
+    const second = await startSecondRun(fx, claim);
+    const run = await readExecution(fx, second.claim.runRef);
+    const history = run.executionHistory;
+    expect(history).toBeDefined();
+    if (history === undefined) throw new Error('the real second Run has no execution history');
+    expect(history.endPosition).toBeNull();
+    const positions = positionsOf(await rawRecords(kernelPath(fx), mapping.kernelSessionId), history.kernel)
+      .filter(position => position >= history.startPosition && position <= history.observedThroughPosition);
+    const start = history.startPosition;
+    const upper = history.observedThroughPosition;
+    expect(start).toBe(positions[0]);
+    expect(upper).toBe(positions.at(-1));
+    expect(positions.length).toBeGreaterThan(1);
 
     const h = await harness(fx);
     const first = await h.reader.readTaskExecutionHistory(fx.ctx,
-      { runRef: run, afterCursor: null, limit: 1 });
+      { runRef: run.ref, afterCursor: null, limit: 1 });
     expect(first.status).toBe('ready');
     if (first.status !== 'ready') return;
     expect(first.value.items.map(item => item.source.position)).toEqual(positions.slice(0, 1));
@@ -424,17 +439,15 @@ describe('R4c.2b graph execution history reader', () => {
     const cursor = first.value.nextCursor;
     if (cursor === null) return;
 
-    // Grow the real Session with a later Turn after the cursor was issued.
-    await runTurn({ fixture: fx, sessionId: mapping.kernelSessionId, input: 'second',
-      identity: { runId: 'graph-upper-run-2', turnId: 'graph-upper-turn-2' }, client });
+    // Grow the Session after the cursor was issued: releasing the held A3 gate
+    // runs the real terminal, appending its real records past the frozen upper.
+    await second.steps.finish(second.handle, CLAIM_FIXTURE_AT, 'completed');
     const grownTail = (await rawRecords(kernelPath(fx), mapping.kernelSessionId)).at(-1)?.position;
     if (grownTail === undefined) throw new Error('real Kernel Session has no tail');
     expect(grownTail).toBeGreaterThan(upper);
-    expect(await bindHistory(fx, 'graph-upper-grow', run,
-      { ...mapping, ...identity }, start, grownTail, null)).toMatchObject({ status: 'committed' });
 
     const continued = await h.reader.readTaskExecutionHistory(fx.ctx,
-      { runRef: run, afterCursor: cursor, limit: 200 });
+      { runRef: run.ref, afterCursor: cursor, limit: 200 });
     expect(continued.status).toBe('ready');
     if (continued.status !== 'ready') return;
     expect(continued.value.items.map(item => item.source.position)).toEqual(positions.slice(1));
@@ -514,27 +527,29 @@ describe('R4c.2b graph execution history reader', () => {
       .toMatchObject({ status: 'rejected', code: 'invalid' });
   });
 
-  it('preserves the original evidence and advances on zero matches without padding to the limit', async () => {
+  it('preserves the original evidence of the real second Run byte-for-byte', async () => {
     const fx = await open();
     const claim = await claimed(fx, 'graph-evidence-claim');
     const mapping = await sessionKernel(fx, claim.sessionRef);
-    const identity: KernelExecutionIdentity = { runId: 'graph-evidence-run', turnId: 'graph-evidence-turn' };
-    const client = scriptedClient();
-    await runTurn({ fixture: fx, sessionId: mapping.kernelSessionId, input: 'evidence', identity, client });
-    const records = await rawRecords(kernelPath(fx), mapping.kernelSessionId);
-    const positions = positionsOf(records, identity);
-    const start = positions[0];
-    const end = positions.at(-1);
-    if (start === undefined || end === undefined) throw new Error('real Kernel Turn has no interval');
 
-    const realRun = await seedLinkedRun(fx, claim, fx.tasks.second.taskId);
-    const realBound = await bindHistory(fx, 'graph-evidence-bind', realRun, { ...mapping, ...identity }, start, end, null);
-    expect(realBound.status).toBe('committed');
-    if (realBound.status !== 'committed') return;
+    // R-7: a real second Run, held at the A3 gate; its identity and interval
+    // come from the public execution read, not from a test-built locator.
+    const second = await startSecondRun(fx, claim);
+    const held = await readExecution(fx, second.claim.runRef);
+    const heldHistory = held.executionHistory;
+    expect(heldHistory).toBeDefined();
+    if (heldHistory === undefined) throw new Error('the real second Run has no execution history');
+    expect(heldHistory.endPosition).toBeNull();
+    const positions = positionsOf(await rawRecords(kernelPath(fx), mapping.kernelSessionId), heldHistory.kernel)
+      .filter(position => position >= heldHistory.startPosition && position <= heldHistory.observedThroughPosition);
+    const start = heldHistory.startPosition;
+    const end = heldHistory.observedThroughPosition;
+    expect(start).toBe(positions[0]);
+    expect(end).toBe(positions.at(-1));
 
     const h = await harness(fx);
     const page = await h.reader.readTaskExecutionHistory(fx.ctx,
-      { runRef: realRun, afterCursor: null, limit: 200 });
+      { runRef: held.ref, afterCursor: null, limit: 200 });
     expect(page.status).toBe('ready');
     if (page.status !== 'ready') return;
     expect(page.value.items.map(item => item.source.position)).toEqual(positions);
@@ -552,76 +567,61 @@ describe('R4c.2b graph execution history reader', () => {
       expect(item).toEqual(original);
     }
     expect(page.value.basis).toEqual(raw.value.basis);
-
-    // The same Session later contains a different real Turn. Advance its
-    // inspected watermark; a page in that Turn has no matches for this Run.
-    const secondIdentity = { runId: 'graph-evidence-run-2', turnId: 'graph-evidence-turn-2' };
-    await runTurn({ fixture: fx, sessionId: mapping.kernelSessionId, input: 'later evidence',
-      identity: secondIdentity, client });
-    const laterPositions = positionsOf(await rawRecords(kernelPath(fx), mapping.kernelSessionId), secondIdentity);
-    expect(laterPositions.length).toBeGreaterThan(1);
-    const laterTail = laterPositions.at(-1);
-    if (laterTail === undefined) throw new Error('later real Kernel Turn has no interval');
-    expect(await bindHistory(fx, 'graph-evidence-grow', realRun,
-      { ...mapping, ...identity }, start, laterTail, null)).toMatchObject({ status: 'committed' });
-    const beforeSecondTurn = await h.reader.readTaskExecutionHistory(fx.ctx,
-      { runRef: realRun, afterCursor: null, limit: positions.length });
-    expect(beforeSecondTurn.status).toBe('ready');
-    if (beforeSecondTurn.status !== 'ready') return;
-    expect(beforeSecondTurn.value.items.map(item => item.source.position)).toEqual(positions);
-    expect(beforeSecondTurn.value.nextCursor).not.toBeNull();
-    const nextCursor = beforeSecondTurn.value.nextCursor;
-    if (nextCursor === null) return;
-    const delegatedBefore = h.rt7Requests.length;
-    const zeroMatches = await h.reader.readTaskExecutionHistory(fx.ctx,
-      { runRef: realRun, afterCursor: nextCursor, limit: 1 });
-    expect(zeroMatches.status).toBe('ready');
-    if (zeroMatches.status !== 'ready') return;
-    expect(zeroMatches.value.items).toEqual([]);
-    expect(zeroMatches.value.scannedCount).toBe(1);
-    expect(zeroMatches.value.nextCursor).not.toBeNull();
-    expect(h.rt7Requests).toHaveLength(delegatedBefore + 1);
+    // R-4: the wave-1 later-Turn zero-match sub-case is unreachable with a real
+    // Run. While the Run is live the Kernel refuses a second Turn in the
+    // Session (`vendor/coding-agent/patches/app/composition/composition-root.ts:287`);
+    // once ended, the fixed endPosition cannot cover a later Turn
+    // (`src/core/work-graph/state/run-machine.ts:1258`).
   });
 
-  it('rejects a terminal end that falls below the frozen upper bound as stale', async () => {
-    const fx = await open();
-    const claim = await claimed(fx, 'graph-stale-claim');
-    const mapping = await sessionKernel(fx, claim.sessionRef);
-    const identity: KernelExecutionIdentity = { runId: 'graph-stale-run', turnId: 'graph-stale-turn' };
-    const client = scriptedClient();
-    await runTurn({ fixture: fx, sessionId: mapping.kernelSessionId, input: 'stale', identity, client });
-    const records = await rawRecords(kernelPath(fx), mapping.kernelSessionId);
-    const positions = positionsOf(records, identity);
-    const start = positions[0];
-    const actualEnd = positions.at(-1);
-    if (start === undefined || actualEnd === undefined) throw new Error('real Kernel Turn has no interval');
-    await runTurn({ fixture: fx, sessionId: mapping.kernelSessionId, input: 'later turn', client,
-      identity: { runId: 'graph-stale-run-2', turnId: 'graph-stale-turn-2' } });
-    const upper = (await rawRecords(kernelPath(fx), mapping.kernelSessionId)).at(-1)?.position;
-    if (upper === undefined) throw new Error('real Kernel Session has no tail');
-    expect(upper).toBeGreaterThan(actualEnd);
+  describe('rejects: a graph-history cursor whose outer upper is above the real end', () => {
+    it('returns source_stale and leaves the execution unchanged', async () => {
+      const fx = await open();
+      const claim = await claimed(fx, 'graph-stale-claim');
+      const bodies = new RawArtifactBodyStore();
+      let sequence = 0;
+      const steps = await createS2BRuntimeSteps({ base: fx, bodies, ctx: fx.ctx,
+        directory: fx.directory, scope: fx.scope, now: () => CLAIM_FIXTURE_AT,
+        setClock: () => undefined,
+        eventId: () => `graph-stale-event-${++sequence}`,
+        newId: () => `graph-stale-id-${++sequence}`,
+        consumerId: 'graph-stale-runtime' });
+      runtimeSteps.push(steps);
+      const handle = await steps.start(claim, { at: CLAIM_FIXTURE_AT,
+        replies: [{ kind: 'text', text: 'graph stale real run' }] });
+      await handle.entered;
+      await steps.finish(handle, CLAIM_FIXTURE_AT, 'completed');
+      const run = await readExecution(fx, claim.runRef);
+      const history = run.executionHistory;
+      expect(history).toBeDefined();
+      if (history === undefined) throw new Error('the real Run has no execution history');
+      const end = history.endPosition ?? history.observedThroughPosition;
+      expect(end).not.toBeNull();
 
-    const run = await seedLinkedRun(fx, claim, fx.tasks.second.taskId);
-    const openBound = await bindHistory(fx, 'graph-stale-open', run, { ...mapping, ...identity }, start, upper, null);
-    expect(openBound.status).toBe('committed');
-    if (openBound.status !== 'committed') return;
+      const h = await harness(fx);
+      const first = await h.reader.readTaskExecutionHistory(fx.ctx,
+        { runRef: run.ref, afterCursor: null, limit: 1 });
+      expect(first.status).toBe('ready');
+      if (first.status !== 'ready') return;
+      expect(first.value.items).toHaveLength(1);
+      const cursor = first.value.nextCursor;
+      expect(cursor).not.toBeNull();
+      if (cursor === null) return;
 
-    const h = await harness(fx);
-    const first = await h.reader.readTaskExecutionHistory(fx.ctx,
-      { runRef: run, afterCursor: null, limit: 1 });
-    expect(first.status).toBe('ready');
-    if (first.status !== 'ready' || first.value.nextCursor === null) return;
+      // Build the one refused input from the real cursor: change only the
+      // outer `u` to the real end + 1; every inner field stays as issued.
+      const separator = cursor.indexOf('.') + 1;
+      expect(separator).toBeGreaterThan(0);
+      const body = JSON.parse(Buffer.from(cursor.slice(separator), 'base64url').toString('utf8')) as Record<string, unknown>;
+      body['u'] = end + 1;
+      const tampered = cursor.slice(0, separator) + Buffer.from(JSON.stringify(body), 'utf8').toString('base64url');
 
-    // The immutable end is set later, BELOW the upper frozen into the cursor.
-    const lowered = await bindHistory(fx, 'graph-stale-lower', run,
-      { ...mapping, ...identity }, start, upper, actualEnd);
-    expect(lowered.status).toBe('committed');
-    if (lowered.status !== 'committed') return;
-
-    const stale = await h.reader.readTaskExecutionHistory(fx.ctx,
-      { runRef: run, afterCursor: first.value.nextCursor, limit: 200 });
-    expect(stale.status).toBe('rejected');
-    if (stale.status === 'rejected') expect(['source_stale', 'invalid']).toContain(stale.code);
+      const before = await readExecution(fx, run.ref);
+      const stale = await h.reader.readTaskExecutionHistory(fx.ctx,
+        { runRef: run.ref, afterCursor: tampered, limit: 200 });
+      expect(stale).toMatchObject({ status: 'rejected', code: 'source_stale' });
+      expect(await readExecution(fx, run.ref)).toEqual(before);
+    });
   });
 
   it('rejects malformed limits before any graph or history read', async () => {
@@ -706,17 +706,17 @@ describe('R4c.2b graph execution history reader', () => {
     const fx = await open();
     const claim = await claimed(fx, 'graph-mutate-claim');
     const mapping = await sessionKernel(fx, claim.sessionRef);
-    const identity: KernelExecutionIdentity = { runId: 'graph-mutate-run', turnId: 'graph-mutate-turn' };
-    await runTurn({ fixture: fx, sessionId: mapping.kernelSessionId, input: 'mutate', identity, client: scriptedClient() });
-    const positions = positionsOf(await rawRecords(kernelPath(fx), mapping.kernelSessionId), identity);
-    const start = positions[0];
-    const upper = positions.at(-1);
-    if (start === undefined || upper === undefined) throw new Error('real Kernel Turn has no interval');
 
-    const run = await seedLinkedRun(fx, claim, fx.tasks.second.taskId);
-    const bound = await bindHistory(fx, 'graph-mutate-bind', run, { ...mapping, ...identity }, start, upper, upper);
-    expect(bound.status).toBe('committed');
-    if (bound.status !== 'committed') return;
+    // R-7/R-8: the second Run is real and its identity/interval are the ones
+    // the public execution read returns.
+    const second = await startSecondRun(fx, claim);
+    await second.steps.finish(second.handle, CLAIM_FIXTURE_AT, 'completed');
+    const run = await readExecution(fx, second.claim.runRef);
+    const history = run.executionHistory;
+    expect(history).toBeDefined();
+    if (history === undefined) throw new Error('the real second Run has no execution history');
+    const positions = positionsOf(await rawRecords(kernelPath(fx), mapping.kernelSessionId), history.kernel);
+    expect(positions).not.toHaveLength(0);
 
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -743,7 +743,7 @@ describe('R4c.2b graph execution history reader', () => {
     const reader = createGraphExecutionHistoryReader({ executions, history: spied });
     const ownedCtx: CoreCallContext = { ...fx.ctx, principal: structuredClone(fx.ctx.principal),
       materialReader: structuredClone(fx.ctx.materialReader) };
-    const request = { runRef: structuredClone(run), afterCursor: null as string | null, limit: 200 };
+    const request = { runRef: structuredClone(run.ref), afterCursor: null as string | null, limit: 200 };
     const pending = reader.readTaskExecutionHistory(ownedCtx, request);
     ownedCtx.workspaceId = 'mutated-workspace';
     request.runRef.runId = 'mutated-run';
@@ -753,7 +753,7 @@ describe('R4c.2b graph execution history reader', () => {
     const result = await pending;
     expect(result.status).toBe('ready');
     if (result.status !== 'ready') return;
-    expect(seen[0]?.runId).toBe(run.runId);
+    expect(seen[0]?.runId).toBe(run.ref.runId);
     expect(rt7Requests[0]?.limit).toBe(200);
     expect(rt7Requests[0]?.afterCursor).toBeNull();
     expect(result.value.items.map(item => item.source.position)).toEqual(positions);
@@ -864,7 +864,7 @@ describe('R4c.2b RT1 bounded Session history range', () => {
     })).toMatchObject({ status: 'rejected', code: 'invalid' });
   });
 
-  it('preserves an empty terminal page at the real upper cursor while still detecting a truncated source', async () => {
+  it('preserves an empty terminal page at the real upper cursor', async () => {
     const fx = await open();
     const claim = await claimed(fx, 'rt1-terminal-page-claim');
     const mapping = await sessionKernel(fx, claim.sessionRef);
@@ -893,47 +893,6 @@ describe('R4c.2b RT1 bounded Session history range', () => {
       throughCursor: null, limit: 200, range };
     const empty = await h.owner.readSessionHistory(fx.ctx, request);
     expect(empty).toMatchObject({ status: 'ready', value: { items: [], nextCursor: null } });
-
-    const database = new DatabaseSync(kernelPath(fx));
-    try {
-      const deleted = database.prepare('DELETE FROM session_records WHERE session_id = ? AND position = ?')
-        .run(mapping.kernelSessionId, through);
-      expect(Number(deleted.changes)).toBe(1);
-    } finally { database.close(); }
-    expect(await h.owner.readSessionHistory(fx.ctx, request))
-      .toMatchObject({ status: 'rejected', code: 'unavailable' });
   });
 
-  it('rejects continuation after the frozen Session tail is truncated instead of shrinking its range', async () => {
-    const fx = await open();
-    const claim = await claimed(fx, 'rt1-truncated-tail-claim');
-    const mapping = await sessionKernel(fx, claim.sessionRef);
-    const identity = { runId: 'rt1-truncated-tail-run', turnId: 'rt1-truncated-tail-turn' };
-    await runTurn({ fixture: fx, sessionId: mapping.kernelSessionId, input: 'truncate after page',
-      identity, client: scriptedClient() });
-    const positions = positionsOf(await rawRecords(kernelPath(fx), mapping.kernelSessionId), identity);
-    expect(positions.length).toBeGreaterThan(2);
-    const start = positions[0];
-    const through = positions.at(-1);
-    if (start === undefined || through === undefined) throw new Error('real Kernel Turn has no interval');
-    const range = { ...mapping, startPosition: start, throughPosition: through };
-    const h = await harness(fx);
-    const opened = await h.owner.readSessionHistory(fx.ctx,
-      { sessionRef: claim.sessionRef, afterCursor: null, throughCursor: null, limit: 1, range });
-    expect(opened.status).toBe('ready');
-    if (opened.status !== 'ready') return;
-    expect(opened.value.nextCursor).not.toBeNull();
-    const cursor = opened.value.nextCursor;
-    if (cursor === null) return;
-
-    const database = new DatabaseSync(kernelPath(fx));
-    try {
-      const deleted = database.prepare('DELETE FROM session_records WHERE session_id = ? AND position = ?')
-        .run(mapping.kernelSessionId, through);
-      expect(Number(deleted.changes)).toBe(1);
-    } finally { database.close(); }
-    expect(await h.owner.readSessionHistory(fx.ctx,
-      { sessionRef: claim.sessionRef, afterCursor: cursor, throughCursor: null, limit: 200, range }))
-      .toMatchObject({ status: 'rejected', code: 'unavailable' });
-  });
 });

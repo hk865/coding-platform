@@ -1,6 +1,5 @@
-import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { CommitCursor } from '../../contracts/command-event.js';
-import type { CommandMeta, SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { GoalRef } from '../../contracts/ledger.js';
@@ -15,7 +14,7 @@ import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import type { GoalDecisionCauseReadV1 } from '../../core/work-graph/model/decision-contracts.js';
 import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
-import type { CreateGoalInput, GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
+import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
 import type { TaskClaimPort } from '../../core/work-graph/model/claim-contracts.js';
 import type { UnknownCallReviewPort } from '../../core/work-graph/model/unknown-call-review-contracts.js';
 import type { InitialPlanProposalResult, PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
@@ -56,16 +55,6 @@ export type RedriveAnswerV1 =
 export type FailedCardRefV1 =
   | { kind: 'unknown_call_review'; reviewRef: UnknownCallReviewRef }
   | { kind: 'command_rerun_request'; requestRef: CommandRerunRequestRef };
-
-/** N0-only accepted shape. The full GoalInput proposal/decision protocol is
- * deliberately absent until WorkGraph publishes its real proposal Port. */
-export type N0GoalInput = {
-  meta: CommandMeta;
-  goal: CreateGoalInput;
-  requestBodyRef: ArtifactRef;
-  text: string;
-  action: { kind: 'request_work'; executeWithinRequest: boolean };
-};
 
 /**
  * R5c.1 finite advancement surface.
@@ -231,11 +220,6 @@ export type WorkflowAdvanceInternal = {
    * route never passes.
    */
   failedCardRefs?: FailedCardRefV1[];
-  /**
-   * B1 rework 4 legacy UCR-only carry. The installed Host driver still sends
-   * this field; it is parsed into the same union set and kept for compatibility.
-   */
-  failedReviewRefs?: UnknownCallReviewRef[];
 };
 
 /** `select_work` is read-only; `perform` names one already-determined step. */
@@ -264,12 +248,6 @@ export type WorkflowAdvanceResult = CoreRejection | {
      * otherwise and on every `waiting`/`completed` result.
      */
     failedCardRefs?: FailedCardRefV1[];
-    /**
-     * K3-46 rework 4 compatibility projection of `failedCardRefs`: the UCR refs
-     * only, still sent to the installed Host driver. A CRR-only set leaves this
-     * absent so the driver's UCR array never holds a foreign shape.
-     */
-    failedReviewRefs?: UnknownCallReviewRef[];
     reason: string | null;
     /**
      * Slice 1 E17 (§4.2 S:823): the per-Session failures of the bounded

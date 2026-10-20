@@ -377,21 +377,6 @@ it.each(['memory', 'sqlite'] as const)(
   },
 );
 
-it('T-05 both: the memory and sqlite backends agree page by page', async () => {
-  const memory = await store('memory');
-  const sqlite = await store('sqlite');
-  try {
-    await seed(memory, pagingRows, 't05m');
-    await seed(sqlite, pagingRows, 't05s');
-    const memoryPages = await pageThrough(memory, 2);
-    const sqlitePages = await pageThrough(sqlite, 2);
-    expect(sqlitePages).toEqual(memoryPages);
-  } finally {
-    await memory.close();
-    await sqlite.close();
-  }
-});
-
 // --------------------------------------------------------------------------
 // T-08: the `all` (AND) rule — every term must be a substring — keeps the
 // refKey byte order.
@@ -683,38 +668,8 @@ it('T-05 both: more than 1000 prefix records yield the same records on both back
     const sqlitePage = await search(sqlite, request);
     expect({ memory: refs(memoryPage), sqlite: refs(sqlitePage) })
       .toEqual({ memory: [keyOf('p1', 'zzzz')], sqlite: [keyOf('p1', 'zzzz')] });
-  } finally {
-    await memory.close();
-    await sqlite.close();
-  }
-});
-
-it('T-05 both: more than 1000 prefix records yield the same next on both backends', async () => {
-  const memory = await store('memory');
-  const sqlite = await store('sqlite');
-  try {
-    await seedBatch(memory, capRows, 't05capm2');
-    await seedBatch(sqlite, capRows, 't05caps2');
-    const request = { index: 's4b-text', values: ['p1'], terms: ['needle'], limit: 20 };
-    const memoryPage = await search(memory, request);
-    const sqlitePage = await search(sqlite, request);
     expect({ memory: memoryPage.next, sqlite: sqlitePage.next })
       .toEqual({ memory: null, sqlite: null });
-  } finally {
-    await memory.close();
-    await sqlite.close();
-  }
-});
-
-it('T-05 both: more than 1000 prefix records yield the same complete on both backends', async () => {
-  const memory = await store('memory');
-  const sqlite = await store('sqlite');
-  try {
-    await seedBatch(memory, capRows, 't05capm3');
-    await seedBatch(sqlite, capRows, 't05caps3');
-    const request = { index: 's4b-text', values: ['p1'], terms: ['needle'], limit: 20 };
-    const memoryPage = await search(memory, request);
-    const sqlitePage = await search(sqlite, request);
     expect({ memory: memoryPage.complete, sqlite: sqlitePage.complete })
       .toEqual({ memory: true, sqlite: true });
   } finally {

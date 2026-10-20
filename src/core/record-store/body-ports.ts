@@ -6,13 +6,12 @@ import type { StoreResult } from './ports.js';
 /** The physical store records provenance but never interprets material grants. */
 export type MaterialOrigin =
   | { kind: 'run'; owner: ArtifactOwnerRunRef | TaskAttemptRef }
-  | { kind: 'legacy'; ownerRunRef: ArtifactOwnerRunRef | null }
   | PlatformMaterialOrigin;
 export type RawArtifactPut = {
   body: string;
   contentType: string;
   sourceRefs: SourceRefV1[];
-  origin: Exclude<MaterialOrigin, { kind: 'legacy' }>;
+  origin: MaterialOrigin;
   requestedAt: string;
 };
 export type RawArtifactRecord = {

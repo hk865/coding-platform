@@ -1,23 +1,14 @@
 /**
  * Slice 2A QE3, Group N: the automatic-rework notice source (L4/L5/L7).
  *
- * Rows: QA-11 (legacy `since`-less requeues), QA-18 (ordered reverify index +
- * full-chain verification, D2). Every dataset is built through the real S5
- * owners; QA-11's three historical requeues are the only direct storage writes
- * (L-fixtures exception 1).
+ * Rows: QA-18 (ordered reverify index + full-chain verification, D2).
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
-import { automaticRework, committed, legacyRequeueItemKeys, legacyRequeueRecords,
-  noticesHarness, openReverifyChain, openS2ANotices } from '../helpers/S2A-notices-support.js';
+import { automaticRework, committed, noticesHarness, openReverifyChain, openS2ANotices } from '../helpers/S2A-notices-support.js';
 import { GOAL_B } from '../helpers/S5-decision-fixture.js';
 import { automationContext, mailboxDependencies, workContext } from '../helpers/S5-queue-support.js';
-
-/** ItemKey of one requeue notice (`automatic_rework:<canonical ref>`). */
-function requeueItemKey(ref: object): string {
-  return `automatic_rework:${canonicalJson(ref as JsonValue)}`;
-}
 
 /** ItemKey of one reverify notice (`automatic_rework:<4-digit ordinal>:<ref>`). */
 function reverifyItemKey(ordinal: number, ref: object): string {
@@ -34,47 +25,6 @@ async function open(kind: 'memory' | 'sqlite') {
 }
 
 describe.each(['memory', 'sqlite'] as const)('S2A automatic-rework notices (%s)', kind => {
-  it('QA-11 legacy requeues without since order by occurredAt before the commit-position requeues', async () => {
-    const { f, work } = await open(kind);
-    // One real commit-bound requeue is the template and the commit notice.
-    const real = await work.requeue('system', automationContext(f));
-    const seeded = await f.seedCommit(legacyRequeueRecords(real));
-    expect(seeded.status).toBe('committed');
-    const legacyKeys = legacyRequeueItemKeys(real);
-    const realKey = requeueItemKey(real.ref);
-    const h = noticesHarness(f, [automaticRework(f)]);
-
-    // No saved seen position: the three legacy requeues come first, in
-    // occurredAt order (c, b, a), then the commit-position requeue.
-    const first = await h.page({ categories: ['automatic_rework'], limit: 50 });
-    expect(first.notices.map(notice => notice.itemKey)).toEqual([...legacyKeys, realKey]);
-    expect(first.notices.map(notice => notice.position.kind)).toEqual(['legacy', 'legacy', 'legacy', 'commit']);
-    expect(first.notices.slice(0, 3).map(notice => notice.position)).toEqual([
-      { kind: 'legacy', occurredAt: '2026-10-07T00:00:00.000Z', itemKey: legacyKeys[0]! },
-      { kind: 'legacy', occurredAt: '2026-10-08T00:00:00.000Z', itemKey: legacyKeys[1]! },
-      { kind: 'legacy', occurredAt: '2026-10-09T00:00:00.000Z', itemKey: legacyKeys[2]! },
-    ]);
-    expect(first.counts.notices.automatic_rework).toBe(4);
-
-    // Paging with a small limit does not change the count.
-    const pageOne = await h.page({ categories: ['automatic_rework'], limit: 2 });
-    expect(pageOne.notices.map(notice => notice.itemKey)).toEqual([legacyKeys[0], legacyKeys[1]]);
-    expect(pageOne.counts.notices.automatic_rework).toBe(4);
-    expect(pageOne.nextCursor).not.toBeNull();
-    const pageTwo = await h.page({ categories: ['automatic_rework'], limit: 2, cursor: pageOne.nextCursor! });
-    expect(pageTwo.notices.map(notice => notice.itemKey)).toEqual([legacyKeys[2], realKey]);
-    expect(pageTwo.counts.notices.automatic_rework).toBe(4);
-
-    // A saved LEGACY seen position at the earliest occurredAt leaves the other
-    // two legacy requeues, then the commit-position one.
-    const seenFirst = await h.page({ categories: ['automatic_rework'], limit: 1 });
-    expect(seenFirst.notices.map(notice => notice.itemKey)).toEqual([legacyKeys[0]]);
-    expect(seenFirst.seenThrough).toEqual({ automatic_rework: seenFirst.notices[0]!.position });
-    await h.mark(seenFirst.displayToken, seenFirst.seenThrough);
-    const after = await h.page({ categories: ['automatic_rework'], limit: 50 });
-    expect(after.notices.map(notice => notice.itemKey)).toEqual([legacyKeys[1], legacyKeys[2], realKey]);
-  }, 600_000);
-
   it('QA-18 the ordered reverify index names only the subject; the chain verifies and only new system rounds appear', async () => {
     const { f, work } = await open(kind);
     // Round 1 (root), round 2 opened by a PERSON, round 3 opened by the system.

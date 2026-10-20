@@ -4,9 +4,8 @@
  *
  * The dataset is built by the exported `buildD1` fixture in
  * `tests/helpers/S2C-L-line-support.ts` (also used by group W's route test)
- * through the real public services; the one storage-boundary exception is the
- * legacy Session L (§7). A failed read is injected only through the storage
- * wrappers. Assertions read only the public `WorkLineReadPort`.
+ * through the real public services. A failed read is injected only through the
+ * storage wrappers. Assertions read only the public `WorkLineReadPort`.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ReadResult } from '../../src/contracts/core/results.js';
@@ -29,14 +28,13 @@ describe.each(['memory', 'sqlite'] as const)('2C-14 D1 counts and ordering (%s)'
     return fixture;
   }
 
-  it('2C-14 (1) the literal D1 counts are working 3, standby 6 and the archived range', async () => {
+  it('2C-14 (1) the literal D1 counts are working 3, standby 5 and the archived range', async () => {
     const f = await lineFixture();
     const d1 = await buildD1(f);
     const list = ready(await f.reader.listWorkLines(f.ctx, { workspace: f.base.scope }));
     expect(list.counts.working).toEqual({ status: 'exact', value: 3 });
-    expect(list.counts.standby).toEqual({ status: 'exact', value: 6 });
-    expect(list.counts.archived).toEqual({ status: 'partial', atLeast: 1, atMost: 2,
-      reason: '1 legacy Session(s) without provenance', asOf: expect.any(String) });
+    expect(list.counts.standby).toEqual({ status: 'exact', value: 5 });
+    expect(list.counts.archived).toEqual({ status: 'exact', value: 2, asOf: expect.any(String) });
 
     const row = (ref: SessionRef) => rowOf(list.rows, ref);
     expect(row(d1.a)?.status.bucket).toBe('working');
@@ -49,20 +47,19 @@ describe.each(['memory', 'sqlite'] as const)('2C-14 D1 counts and ordering (%s)'
     expect(row(d1.e)?.status.own).toBe('retired');
     expect(row(d1.f2)?.status.bucket).toBe('standby');
     expect(row(d1.h)?.status.own).toBe('paused');
-    expect(row(d1.l)?.status.own).toBe('standby');
     // Copies and the retired predecessor are not separate lines.
     expect(row(d1.gCopy)).toBeUndefined();
     expect(row(d1.k)).toBeUndefined();
     expect(row(d1.f1)).toBeUndefined();
-    expect(list.rows).toHaveLength(9);
+    expect(list.rows).toHaveLength(8);
   });
 
   it('2C-14 (2) a pinned line sorts first and the rest follow by attention then latest activity', async () => {
     const f = await lineFixture();
     const d1 = await buildD1(f);
-    await f.setPins([d1.l], []);
+    await f.setPins([d1.g], []);
     const list = ready(await f.reader.listWorkLines(f.ctx, { workspace: f.base.scope }));
-    expect(list.rows[0]?.key.sessionId).toBe(d1.l.sessionId);
+    expect(list.rows[0]?.key.sessionId).toBe(d1.g.sessionId);
     expect(list.rows[0]?.pinned).toBe(true);
     const unpinned = list.rows.slice(1);
     for (let index = 1; index < unpinned.length; index += 1) {

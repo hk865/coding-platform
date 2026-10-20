@@ -22,15 +22,6 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { GoalRef, ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot, RuntimeTask } from '../../src/contracts/plan.js';
-import type { EncodedRecord, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
-import { canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
-import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
-import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
-import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from '../../src/core/agent-runtime/whiteboard-tools.js';
 import type { ToolCall, ToolDefinition, ToolResult, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
 import type { PlanProposal, TaskGraph } from '../../src/core/work-graph/model/plan-contracts.js';
@@ -51,36 +42,11 @@ const ctx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host'
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
 const goalRef: GoalRef = { aggregateType: 'Goal', projectId, goalId: 'w2-intent-goal' };
 
-const digest = (value: JsonValue) => sha256Hex(canonicalJson(value));
+const policyContent = { schemaVersion: 1 as const, requirementKinds: ['test'],
+  minimumRequiredRequirementsPerObligation: 1 };
+const architectureContent = { schemaVersion: 1 as const, description: 'W2 composed baseline', constraints: [] };
 const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId, policyId: 'w2-policy', revision: 1 };
 const architectureRef = { aggregateType: 'ArchitectureBaselineRevision' as const, projectId, baselineId: 'w2-baseline', revision: 1 };
-const policyFixture = { schemaVersion: 1, identity: { policyId: 'w2-policy' }, revision: 1,
-  content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } };
-const architectureFixture = { schemaVersion: 1, identity: { baselineId: 'w2-baseline' }, revision: 1,
-  content: { schemaVersion: 1, description: 'W2 composed baseline', constraints: [] } };
-const governance = [
-  { ref: policyRef, revision: 1, schemaVersion: 1, policyId: 'w2-policy', contentRevision: 1,
-    contentDigest: digest(policyFixture as unknown as JsonValue), content: policyFixture.content },
-  { ref: architectureRef, revision: 1, schemaVersion: 1, baselineId: 'w2-baseline', contentRevision: 1,
-    contentDigest: digest(architectureFixture as unknown as JsonValue), content: architectureFixture.content },
-  { ref: { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId }, projectId, revision: 1, activeRevision: policyRef },
-  { ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId }, projectId, revision: 1, activeRevision: architectureRef },
-];
-const encodeGovernance = (snapshot: (typeof governance)[number]): EncodedRecord => ({
-  refKey: canonicalJson(snapshot.ref as unknown as JsonValue), schemaId: `${snapshot.ref.aggregateType}Snapshot@1`,
-  revision: snapshot.revision, json: JSON.stringify(snapshot),
-});
-const materialSchemas = materialRecordSchemas();
-const fullSchemas: RecordBackendSchemas = {
-  records: [...materialSchemas.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...PLAN_RECORD_SCHEMAS.records,
-    ...PLAN_STATE_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...TASK_CLAIM_RECORD_SCHEMAS.records],
-  events: [...materialSchemas.events, ...PLAN_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
-    ...TASK_CLAIM_RECORD_SCHEMAS.events,
-    { eventType: 'TrustedScopeSeeded', schemaVersion: 1, validate: (event) => ({ status: 'decoded', value: event }) }],
-  lookups: [...(materialSchemas.lookups ?? []), ...(PLAN_RECORD_SCHEMAS.lookups ?? []),
-    ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_RECORD_SCHEMAS.lookups ?? []),
-    ...(TASK_CLAIM_RECORD_SCHEMAS.lookups ?? [])],
-};
 
 function workNode(taskId: string, title: string, executionIntent?: RuntimeTask['executionIntent']): RuntimeTask {
   return { taskId, title, requirementLevel: 'required', taskKind: 'work', disposition: 'active',
@@ -113,18 +79,6 @@ afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recurs
 it('real composition: an initial plan_only Plan adopts and survives a SQLite reopen', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'next-w2-intent-'));
   dirs.push(directory);
-  const seedBackend = createSqliteRecordBackend({ path: join(directory, 'ledger.sqlite'), schemas: fullSchemas });
-  try {
-    const scopeEvent = { eventId: 'w2-composed-scope-event', eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: AT };
-    const seed = await seedBackend.records.commit({
-      identityKey: 'w2-composed-scope-seed', fingerprint: 'w2-composed-scope-seed-v1',
-      guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null },
-        { refKey: canonicalRefKey(workspace.ref), expectedRevision: null },
-        ...governance.map((snapshot) => ({ refKey: canonicalJson(snapshot.ref as unknown as JsonValue), expectedRevision: null }))],
-      records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace), ...governance.map(encodeGovernance)],
-      events: [{ ...scopeEvent, json: JSON.stringify(scopeEvent) }], claims: [], indexGuards: [], indexChanges: [] });
-    expect(seed).toMatchObject({ status: 'committed' });
-  } finally { await seedBackend.close(); }
 
   const workspaceBindings: WorkspaceHostBindings = {
     async resolveRoot(requested) {
@@ -140,6 +94,37 @@ it('real composition: an initial plan_only Plan adopts and survives a SQLite reo
 
   const first = await createTargetPlatform(options);
   try {
+    // Public bootstrap on the same SQLite platform: Project, Workspace, the
+    // active CompletionPolicy and the initial ArchitectureBaseline.
+    const createdProject = await first.projects.createProject(ctx, { meta: {
+      requestId: 'w2-composed-create-project', expected: [{ ref: project.ref, revision: 0 }] },
+      input: { projectId } });
+    expect(createdProject).toMatchObject({ status: 'committed', replayed: false, value: project });
+    const registered = await first.projects.registerWorkspace(ctx, { meta: {
+      requestId: 'w2-composed-register-workspace', expected: [
+        { ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 0 }] },
+      input: { workspace: scope } });
+    expect(registered).toMatchObject({ status: 'committed', replayed: false, value: workspace });
+    const installed = await first.completionPolicies.installCompletionPolicy(ctx, { meta: {
+      requestId: 'w2-composed-install-policy', expected: [
+        { ref: project.ref, revision: 1 }, { ref: policyRef, revision: 0 }] },
+      input: { policyId: policyRef.policyId, contentRevision: policyRef.revision, content: policyContent } });
+    expect(installed).toMatchObject({ status: 'committed', replayed: false });
+    if (installed.status !== 'committed') throw new Error('public CompletionPolicy install failed');
+    expect(await first.completionPolicies.activateCompletionPolicy(ctx, { meta: {
+      requestId: 'w2-composed-activate-policy', expected: [
+        { ref: project.ref, revision: 1 },
+        { ref: { aggregateType: 'ProjectCompletionPolicyActive', projectId }, revision: 0 }] },
+      input: { target: { ref: installed.value.ref, digest: installed.value.contentDigest } } }))
+      .toMatchObject({ status: 'committed', replayed: false });
+    expect(await first.architecture.adoptInitialArchitecture(ctx, { meta: {
+      requestId: 'w2-composed-adopt-architecture', expected: [
+        { ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },
+      input: { baselineId: architectureRef.baselineId, description: architectureContent.description,
+        constraints: architectureContent.constraints,
+        catalog: { requireDag: true, dependencies: [], modules: [] } } }))
+      .toMatchObject({ status: 'committed', replayed: false });
+
     const goal = await first.goals.createGoal(ctx, { meta: { requestId: 'w2-composed-goal',
       expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },
       input: { goalId: goalRef.goalId, workspace: scope, objective: 'W2 intent-only composed goal' } });

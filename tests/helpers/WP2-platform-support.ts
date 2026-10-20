@@ -23,7 +23,6 @@ import type { PlatformDutyV1 } from '../../src/contracts/platform-duty.js';
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
-import type { GoalSettingsV1 } from '../../src/contracts/goal-decisions.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
 import type {
   RuntimeHostBindings, RuntimeExecutionDependencies,
@@ -49,12 +48,11 @@ import {
 import { B2_AT, createScriptedModel, type ScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
 import { C2_SKILL_ROOT, C2_SAFETY_PATH, C2_SKILL_IDS } from './C2-runtime-platform-fixture.js';
 
-export { B2_AT as WP2_AT };
-export const WP2_ALL_TOOL_NAMES: readonly string[] = [
+const WP2_ALL_TOOL_NAMES: readonly string[] = [
   ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES,
 ];
 
-export type WP2PlatformOptions = {
+type WP2PlatformOptions = {
   kind?: 'memory' | 'sqlite';
   /** The Session's fixed platform duty (spec L1). */
   duty?: PlatformDutyV1;
@@ -99,6 +97,13 @@ export type WP2PlatformOptions = {
   contextResidentBytes?: number;
   /** Register a passing static check so the Workflow can advance past `open_checks`. */
   check?: boolean;
+  /**
+   * The requirement kind the memory world's governance and plan use, so the
+   * registered `check` covers it. The memory world supports `static` (matching
+   * `wp2-static`); the SQLite world seeds its Plan through `task-claim-fixture`,
+   * which fixes `test`, and refuses `static`. Default `test` (unchanged).
+   */
+  checkRequirementKind?: 'test' | 'static';
   /** Scripted replies for the read-only Query Host binding (E3 F14 Query Answer). */
   queryReplies?: readonly ScriptedReply[];
   /** Before each Query model stream; a real gate for an in-flight QueryRun. */
@@ -180,7 +185,7 @@ export type WP2PlatformFixture = {
 };
 
 /** One observed prepared commit: the receipt cursor plus the encoded events. */
-export type WP2ObservedCommit = { cursor: string; events: readonly { eventType: string; json: string }[] };
+type WP2ObservedCommit = { cursor: string; events: readonly { eventType: string; json: string }[] };
 
 /** Model-request text of the most recent scripted call. */
 export function requestText(model: ScriptedModel): string {
@@ -254,7 +259,8 @@ async function withSourceFault<T>(options: WP2PlatformOptions, action: () => Pro
 /** The shared scope/governance seed through the composition's own owner ports. */
 async function seedMemoryFoundation(platform: Wp2Platform, ctx: CoreCallContext,
   scope: TaskClaimFixture['scope'], projectRef: TaskClaimFixture['projectRef'],
-  workspaceRef: TaskClaimFixture['workspaceRef'], prefix: string): Promise<void> {
+  workspaceRef: TaskClaimFixture['workspaceRef'], prefix: string,
+  requirementKind: 'test' | 'static'): Promise<void> {
   const projectId = scope.projectId;
   const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId, policyId: `${prefix}-policy`, revision: 1 };
   const policyActiveRef = { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId };
@@ -264,7 +270,7 @@ async function seedMemoryFoundation(platform: Wp2Platform, ctx: CoreCallContext,
     meta: { requestId: `${prefix}-workspace`, expected: [{ ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }] } }));
   const installed = mustCommit<{ ref: unknown; contentDigest: string }>(await platform.completionPolicies.installCompletionPolicy(ctx, {
     input: { policyId: `${prefix}-policy`, contentRevision: 1,
-      content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } },
+      content: { schemaVersion: 1, requirementKinds: [requirementKind], minimumRequiredRequirementsPerObligation: 1 } },
     meta: { requestId: `${prefix}-policy`, expected: [{ ref: projectRef, revision: 1 }, { ref: policyRef, revision: 0 }] } }));
   mustCommit(await platform.completionPolicies.activateCompletionPolicy(ctx, {
     input: { target: { ref: installed.ref as never, digest: installed.contentDigest } },
@@ -280,12 +286,13 @@ async function seedMemoryWorld(platform: Wp2Platform, ctx: CoreCallContext, scop
   projectRef: TaskClaimFixture['projectRef'], workspaceRef: TaskClaimFixture['workspaceRef'],
   roleSpec: RoleConfigurationRef, roleBinding: TaskClaimFixture['roleBinding'], budget: TaskClaimFixture['budget'],
   goalId: string, planId: string, taskId: string, prefix: string,
+  requirementKind: 'test' | 'static' = 'test',
   claimTask: Wp2Platform['claims']['claimTask'] = platform.claims.claimTask.bind(platform.claims)):
   Promise<{ goalRef: GoalRef; planRef: PlanRevisionRef; sessionRef: SessionRef; claim: TaskClaim }> {
   const goalRef: GoalRef = { aggregateType: 'Goal', projectId: scope.projectId, goalId };
   mustCommit(await platform.goals.createGoal(ctx, { input: { goalId, workspace: scope, objective: `WP2 ${prefix}` },
     meta: { requestId: `${prefix}-goal`, expected: [{ ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 }] } }));
-  const draft: PlanRevisionDraft = { schemaVersion: 1, planId, planRevision: 1, goalId, stages: [],
+  const draft: PlanRevisionDraft = { schemaVersion: 2, planId, planRevision: 1, goalId, stages: [],
     tasks: [
       { taskId, title: 'WP2 work', requirementLevel: 'required', taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
       { taskId: `${taskId}-gate`, title: 'WP2 gate', requirementLevel: 'required', taskKind: 'gate', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
@@ -293,7 +300,7 @@ async function seedMemoryWorld(platform: Wp2Platform, ctx: CoreCallContext, scop
     assignments: [{ taskId, role: roleBinding.templateId, instruction: 'WP2 work' }],
     obligations: [{ obligationId: `${prefix}-obligation`, title: 'WP2 delivery', requirementLevel: 'required',
       taskIds: [taskId, `${taskId}-gate`],
-      verificationRequirements: [{ requirementId: `${prefix}-check`, requirementLevel: 'required', kind: 'test', description: 'WP2 test' }] }],
+      verificationRequirements: [{ requirementId: `${prefix}-check`, requirementLevel: 'required', kind: requirementKind, description: 'WP2 test' }] }],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } };
   const proposed = mustCommit<{ ref: unknown; revision: number; issues: unknown[] }>(await platform.plans.proposePlan(ctx, {
     input: { goalRef, basedOn: null, draft, reason: { text: `WP2 ${prefix} plan`, sources: [] } },
@@ -457,7 +464,8 @@ async function createWP2MemoryPlatform(options: WP2PlatformOptions): Promise<WP2
   // deterministic claim owner when `deterministicClaimIds` is set.
   let composedRecords: unknown = null;
   let livePlatform = await withSourceFault(options, () => withBackendFault(() => createTargetPlatform(platformOptions)));
-  await seedMemoryFoundation(livePlatform, f.ctx, f.scope, f.projectRef, f.workspaceRef, 'wp2-memory');
+  const requirementKind = options.checkRequirementKind ?? 'test';
+  await seedMemoryFoundation(livePlatform, f.ctx, f.scope, f.projectRef, f.workspaceRef, 'wp2-memory', requirementKind);
   // The coordination matrix has no production writer, and a `role_spec` Session
   // needs one to resolve; the memory world therefore uses the exact versioned
   // `platform-secretary@s3.1` legacy template, which the composition's
@@ -467,13 +475,13 @@ async function createWP2MemoryPlatform(options: WP2PlatformOptions): Promise<WP2
     : null;
   const first = await seedMemoryWorld(livePlatform, f.ctx, f.scope, f.projectRef, f.workspaceRef, memTemplate,
     memBinding, f.budget, f.goalRef.goalId, f.planRef.planId, f.tasks.first.taskId, 'wp2-memory-first',
-    deterministicClaims?.claimTask.bind(deterministicClaims));
+    requirementKind, deterministicClaims?.claimTask.bind(deterministicClaims));
   allowedRuns.add(canonicalJson(first.claim.runRef as unknown as JsonValue));
   let second: Awaited<ReturnType<typeof seedMemoryWorld>> | null = null;
   if (options.secondWorld === true) {
     second = await seedMemoryWorld(livePlatform, f.ctx, f.scope, f.projectRef, f.workspaceRef, memTemplate,
       memBinding, f.budget, 'wp2-second-goal', 'wp2-second-plan', 'wp2-second-task', 'wp2-memory-second',
-      deterministicClaims?.claimTask.bind(deterministicClaims));
+      requirementKind, deterministicClaims?.claimTask.bind(deterministicClaims));
     allowedRuns.add(canonicalJson(second.claim.runRef as unknown as JsonValue));
   }
   const workCtx = (runRef: RunRef = first.claim.runRef): CoreCallContext => ({
@@ -535,6 +543,9 @@ async function createDerivedReadOnlyCopy(f: TaskClaimFixture, role: RoleConfigur
 
 export async function createWP2Platform(options: WP2PlatformOptions = {}): Promise<WP2PlatformFixture> {
   if ((options.kind ?? 'sqlite') === 'memory') return createWP2MemoryPlatform(options);
+  if (options.checkRequirementKind === 'static') {
+    throw new Error('WP2 static check requirements are only supported by the memory world');
+  }
   const toolNames = [...(options.tools ?? WP2_ALL_TOOL_NAMES)];
   const duty = options.duty ?? 'secretary';
   const systemInstruction = options.systemInstruction === undefined
@@ -618,7 +629,7 @@ export async function createWP2Platform(options: WP2PlatformOptions = {}): Promi
       expected: [{ ref: f.projectRef, revision: 1 }, { ref: f.workspaceRef, revision: 1 }] },
       input: { goalId: secondGoalRef.goalId, workspace: f.scope, objective: 'WP2 second independent run' } });
     if (created.status !== 'committed') throw new Error(`WP2 second Goal: ${JSON.stringify(created)}`);
-    const draft: PlanRevisionDraft = { schemaVersion: 1, planId: secondPlanRef.planId, planRevision: 1,
+    const draft: PlanRevisionDraft = { schemaVersion: 2, planId: secondPlanRef.planId, planRevision: 1,
       goalId: secondGoalRef.goalId, stages: [],
       tasks: [
         { taskId: SECOND_TASK, title: 'Second task', requirementLevel: 'required', taskKind: 'work',
@@ -862,13 +873,8 @@ export function decisionRequestArgs(goalRef: GoalRef, overrides: Partial<{
   };
 }
 
-/** Default GoalSettingsV1 for a platform whose Goal has no settings record. */
-export function goalSettingsWith(autonomy: GoalSettingsV1['autonomy']): GoalSettingsV1 {
-  return { schemaVersion: 1, autonomy, order: 0, waitForGoalRef: null, parallelRisks: [] };
-}
-
 /** One trusted passing static check on the WP2 workspace (E0 next-round rows). */
-export function wp2ChecksConfiguration(f: TaskClaimFixture): TrustedCheckConfiguration {
+function wp2ChecksConfiguration(f: TaskClaimFixture): TrustedCheckConfiguration {
   return {
     configurationRevision: 'wp2-checks@1',
     workspace: f.workspaceRef,

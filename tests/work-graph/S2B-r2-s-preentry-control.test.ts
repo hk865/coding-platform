@@ -5,9 +5,6 @@
  * machine applies them at once with a `platform_not_entered` observation,
  * CTL-02 / D-7) and a real `ExecutionEntryPort` entry — then read through the
  * public `readTaskStateTimeline`.
- *
- * The round-1 `S2B-32-task-timeline-fold.test.ts` case stays as the
- * supplementary direct-observation version.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GoalRef } from '../../src/contracts/ledger.js';

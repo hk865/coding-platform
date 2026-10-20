@@ -16,7 +16,7 @@ import {
 
 const READ_ONLY_NAMES = [
   // L3 row 1
-  'read', 'check', 'list_files', 'search', 'symbols', 'code_index', 'project_source', 'project_index',
+  'read', 'check', 'list_files', 'search', 'symbols', 'code_index', 'project_source',
   'python_index', 'cpp_index', 'source_excerpt', 'read_source', 'read_material',
   // L3 row 2
   'read_session_inbox', 'read_session_message', 'read_session_message_body', 'read_user_decision',

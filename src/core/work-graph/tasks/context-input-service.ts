@@ -361,7 +361,7 @@ async function bindContext(
 // --------------------------------------------------------------------------
 
 function legacyRequirements(plan: PlanRevisionSnapshot): readonly TaskInputRequirementV2[] {
-  return plan.schemaVersion === 2 ? plan.inputRequirements ?? [] : [];
+  return plan.inputRequirements ?? [];
 }
 
 function declarationsFor(plan: PlanRevisionSnapshot, consumer: TaskTriple): InputDeclarationV1[] {

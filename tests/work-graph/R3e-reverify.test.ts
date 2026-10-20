@@ -19,9 +19,8 @@
  *   `no_new_basis` (S1 → S1, the same note twice), a human note as a new
  *   input, `source_unchanged`, `verification_uncovered` (configuration
  *   revision stored, LA-4); the refusal pin; the 0-commit problems.
- * - Gate (VD-15): `source_unchanged` on a FAIL gate head, the successor on the
- *   anchored producer after a change; a legacy slot-less root (`null → key`),
- *   then two roots (`incomplete`).
+ * - Gate (VD-15): `source_unchanged` on a FAIL gate head and the successor on
+ *   the anchored producer after a change.
  * - Races: two reverifies of one head, a reverify against a requeue of the
  *   same head (VR-09's same-owner slot), and a reverify refusal against a
  *   requeue in either commit order (§13.2 point 5: the requeue guards the
@@ -60,7 +59,7 @@ import type { VerificationRoundSourcePort } from '../../src/contracts/verificati
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import type { EvidencePort, ReverifyOutcomeV1, ReverifyRoundInput } from '../../src/core/work-graph/model/evidence-contracts.js';
 import {
-  VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE, encodeVerificationRoundSnapshot,
+  VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
 } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { createEvidenceService, type EvidenceServiceDependencies } from '../../src/core/work-graph/evidence/evidence-service.js';
 import {
@@ -463,29 +462,6 @@ describe.each(KINDS)('reverifyRound (%s)', (kind) => {
       .toMatchObject({ status: 'rejected', code: 'busy', current: [{ ref: g2.ref, revision: 1 }] });
   }, 60_000);
 });
-
-it('a legacy slot-less root is reverified null → successor; a second legacy root makes the chain invalid (incomplete)', async () => {
-  // A finalized INCONCLUSIVE round of another fixture is the template of a pre-A.2 root: no chain, no slot.
-  const template = await openFixture();
-  const finalized = await finish(template, (await open(template)).ref, null);
-  const fixture = await openFixture();
-  const owner = reverifier(fixture, 'legacy');
-  const root: RoundSnapshot = { ...finalized, subject: { ...fixture.subject }, subjectRunRef: { ...fixture.subjectRunRef },
-    ref: { ...finalized.ref, projectId: fixture.scope.projectId, workspaceId: fixture.scope.workspaceId,
-      goalId: fixture.goalRef.goalId, taskId: fixture.subject.taskId, runId: fixture.subjectRunRef.runId, roundId: 'r3e-legacy-root' } };
-  delete root.chain;
-  expect(await fixture.b2.base.commitRaw([encodeVerificationRoundSnapshot(root)])).toMatchObject({ status: 'committed' });
-  const next = reverified(await owner.evidence.reverifyRound!(fixture.ctx, reverifyRequest(root, 'r3e-legacy')));
-  expect(next.chain).toMatchObject({ ordinal: 2, predecessorRoundRef: root.ref, supersededEvidenceIds: chainEvidenceIds(root) });
-  // The slot moved null → successor: a fresh root on the subject is busy with the new head.
-  expect(await fixture.evidence.openVerification(fixture.ctx, fixture.openRequest()))
-    .toMatchObject({ status: 'rejected', code: 'busy', current: [{ ref: next.ref, revision: 1 }] });
-  // A second slot-less root on the same subject: two roots, no head.
-  const second: RoundSnapshot = { ...root, ref: { ...root.ref, roundId: 'r3e-legacy-root-2' } };
-  expect(await fixture.b2.base.commitRaw([encodeVerificationRoundSnapshot(second)])).toMatchObject({ status: 'committed' });
-  expect(await owner.evidence.reverifyRound!(fixture.ctx, reverifyRequest(second, 'r3e-two-roots')))
-    .toMatchObject({ status: 'rejected', code: 'incomplete' });
-}, 60_000);
 
 it.each(KINDS)('%s: two reverifies of one head, and a reverify racing a requeue of it, commit exactly once', async (kind) => {
   const fixture = await openFixture(kind);

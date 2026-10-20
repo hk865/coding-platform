@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 /**
  * Core result contracts (skeleton/CONTRACTS.md §4).
  *

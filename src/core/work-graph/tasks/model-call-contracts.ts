@@ -40,18 +40,14 @@ export interface ModelRequestPort {
   }>): Promise<WriteResult<IssuedModelRequest>>;
 }
 
-/**
- * Historical permits may lack the request pins and therefore cannot authorize a
- * new actual call; a fresh consumption requires every pin.
- */
 export type ModelRequestPermitV1 = {
   schemaVersion: 1;
   permitId: string;
   runRef: RunRef;
-  requestId?: string;
-  requestDigest?: string;
-  contextInputDigest?: string;
-  manifestDigest?: string;
+  requestId: string;
+  requestDigest: string;
+  contextInputDigest: string;
+  manifestDigest: string;
   deliveryRefs: ModelRequestMaterialPinV1[];
   /** Exact authorization copied from the Run envelope at issuance time. */
   permissions: TaskEnvelopeV1['permissions'];

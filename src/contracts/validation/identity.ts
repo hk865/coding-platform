@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 /** identity protocol schema validation. Structural checks do not grant authority. */
 import type { ValidationIssue } from './common.js';
 import { isRecord, stringField } from './common.js';

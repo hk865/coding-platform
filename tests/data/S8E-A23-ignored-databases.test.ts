@@ -38,7 +38,12 @@ const cppEdges = [{ from: 'p1/a.cpp', to: 'p1/a.h' }, { from: 'p2/b.cpp', to: 'p
 
 for (const backend of BACKENDS) {
   it(`A-23 merges ignored per-package databases and recaptures on their change [${backend}]`, async () => {
-    const f = await fixture(backend, `s8e-a23-merge-${backend}`, baseEntries(), { git: true });
+    const f = await fixture(backend, `s8e-a23-merge-${backend}`, baseEntries([
+      // Replaces the base `.gitignore` (a later entry for the same path wins).
+      ['.gitignore', 'build/\nnode_modules/\n'],
+      // Ignored, but under a skip-list directory: never a third merged database.
+      ['node_modules/pkg/compile_commands.json', p1Db],
+    ]), { git: true });
     fixtures.push(f);
     const first = await f.capture();
     const page = await f.listFiles(first);
@@ -47,6 +52,8 @@ for (const backend of BACKENDS) {
     expect(page.edges).toEqual(cppEdges);
     expect(page.languages.find(language => language.language === 'cpp')).toEqual({
       language: 'cpp', files: 5, parsed: 4, edges: 'supported', reason: null,
+      // Exactly the two `build/` databases merge: the ignored database under
+      // `node_modules/` does not become a third one.
       notes: ['合并了 2 个编译数据库', APPROX],
       // The added `main.cpp` claims C/C++ but the merged databases do not compile it.
       issues: [{ path: 'main.cpp', kind: 'skipped', reason: '源文件不在编译数据库里' }],

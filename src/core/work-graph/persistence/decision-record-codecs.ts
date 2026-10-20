@@ -49,10 +49,6 @@ export const GOAL_SETTINGS_CHANGED_EVENT = 'GoalSettingsChanged' as const;
 export const WORKSPACE_NOTICE_SEEN_CHANGED_EVENT = 'WorkspaceNoticeSeenChanged' as const;
 export const DECISION_EVENT_SCHEMA_VERSION = 1 as const;
 
-/** The encoding selectors (never an aggregate revision). */
-export const GOAL_SETTINGS_CHANGED_SCHEMA_ID = 'GoalSettingsChanged@1' as const;
-export const WORKSPACE_NOTICE_SEEN_CHANGED_SCHEMA_ID = 'WorkspaceNoticeSeenChanged@1' as const;
-
 // --------------------------------------------------------------------------
 // Encoders / decoders
 // --------------------------------------------------------------------------

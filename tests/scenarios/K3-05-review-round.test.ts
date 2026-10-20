@@ -17,6 +17,12 @@
  * - the original Run's `unresolvedToolCallIds` still names the shell call, the
  *   Task is not completed, and the lease was last released by the review round.
  *
+ * Merged in from K3-06's process example (K3-06:174-239): the `toolName`/`contained`
+ * item fields, the ended review Run's purpose and the exact single `rounds`
+ * element; and from K3-13's single-item chain (K3-13:107-166): alias 1, the exact
+ * pending `observed`, `open: 'no'` and the conclusion's evidence text. The
+ * two-item owner coverage stays in tests/work-graph/K3-13-two-items-owner.test.ts.
+ *
  * The scenario drives every Workflow step itself (`resumeOnStartup: false`); the
  * review root (./support/review-work-root.ts) carries the read-only command
  * grant so `reviewCapability` answers `available`. Scripted model only.
@@ -42,21 +48,8 @@ import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-revie
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 // --- The shell seam (A's process call) ------------------------------------
@@ -83,7 +76,7 @@ function reviewOf(h: HostScenario, runRef: RunRef): Promise<ReadResult<UnknownCa
 }
 
 describe('K3-05 the review round really runs and settles', () => {
-  it('K3-05: RUN-25 leaves a process item pending; the review claim, the prepared L13 tools and the Run purpose are real; the round records done/unlikely, settle_review (no open_checks) resolves the record and the round releases the lease', async () => {
+  it('K3-05/K3-06/K3-13: RUN-25 leaves a process item pending; the review claim, the prepared L13 tools and the Run purpose are real; the round records done/unlikely, settle_review (no open_checks) resolves the record and the round releases the lease', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
 
     // --- A: a `shell` call in flight, closed by RUN-25. ----------------------
@@ -115,12 +108,17 @@ describe('K3-05 the review round really runs and settles', () => {
     if (created.status !== 'ready') return;
     expect(created.value).toMatchObject({ status: 'pending_review', decisionReasons: [], activeRound: null });
     expect(created.value.items).toHaveLength(1);
-    expect(created.value.items[0]).toMatchObject({ kind: 'process', observed: { verdict: 'pending', by: null } });
+    expect(created.value.items.map(item => item.alias)).toEqual([1]);
+    expect(created.value.items.map(item => item.observed)).toEqual([
+      { verdict: 'pending', by: null },
+    ]);
+    expect(created.value.items[0]).toMatchObject({ toolName: 'shell', kind: 'process', contained: true,
+      observed: { verdict: 'pending', by: null } });
 
     // --- The review round is opened for real (UR1): claim basis `review`. ----
     const modelReview = createScriptedModel([
       { kind: 'calls', calls: [{ callId: 'k3-05-review-conclusion', name: 'record_unknown_call_review',
-        args: { item: 1, verdict: 'done', evidence: 'the shell call reached its end before the crash',
+        args: { item: 1, verdict: 'done', evidence: 'the first command finished',
           crashSuspicion: { verdict: 'unlikely', evidence: 'the command itself leaves no crash trace' } } }] },
       { kind: 'text', text: 'the review round wrote its conclusion' },
     ]);
@@ -152,11 +150,13 @@ describe('K3-05 the review round really runs and settles', () => {
       await reviewRoot.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID,
         requestId: 'k3-05-review-start' });
       const ended = await readExecution(h.host, roundRunRef);
-      expect(ended.run).toMatchObject({ status: 'ended', outcome: 'completed' });
+      expect(ended.run).toMatchObject({ status: 'ended', outcome: 'completed',
+        purpose: { kind: 'unknown_call_review', phase: 'review', round: 1 } });
       const concluded = await reviewOf(h, preparedA.claim.runRef);
       expect(concluded.status).toBe('ready');
       if (concluded.status !== 'ready') return;
       expect(concluded.value.status).toBe('pending_review');
+      expect(concluded.value.items).toHaveLength(1);
       expect(concluded.value.items[0]!.observed).toMatchObject({ verdict: 'done', by: 'review_round',
         crashSuspicion: { verdict: 'unlikely' }, roundRunRef: { runId: roundRunRef.runId } });
 
@@ -175,10 +175,12 @@ describe('K3-05 the review round really runs and settles', () => {
       const resolved = await reviewOf(h, preparedA.claim.runRef);
       expect(resolved.status).toBe('ready');
       if (resolved.status !== 'ready') return;
-      expect(resolved.value).toMatchObject({ status: 'resolved', decisionReasons: [], activeRound: null });
+      expect(resolved.value).toMatchObject({ status: 'resolved', decisionReasons: [], activeRound: null, open: 'no' });
       expect(resolved.value.rounds).toHaveLength(1);
+      expect(resolved.value.rounds).toMatchObject([{ phase: 'review', round: 1, result: 'finished' }]);
+      expect(resolved.value.items).toHaveLength(1);
       expect(resolved.value.items[0]!.observed).toMatchObject({ verdict: 'done', by: 'review_round',
-        crashSuspicion: { verdict: 'unlikely' } });
+        evidence: 'the first command finished', crashSuspicion: { verdict: 'unlikely' } });
 
       // --- The original Kernel call stays unresolved; the Task is not done. --
       // RUN-25 leaves the original Run `crashed` with a `takeover_unresolved`

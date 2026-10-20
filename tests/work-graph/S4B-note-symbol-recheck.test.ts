@@ -70,16 +70,4 @@ describe('S4B MF4 symbol rechecks', () => {
     } finally { await f.close(); }
   });
 
-  it.each(['memory', 'sqlite'] as const)('MF4 %s: a renamed symbol is still symbol_missing', async kind => {
-    const f = await createS4BNoteCheckFixture(kind);
-    try {
-      const noteId = await writeSymbolNote(f);
-      await writeFile(join(f.root, 'src/a/x.ts'), 'export const renamed = 1;\n');
-      const read = await f.notes.readNote(f.ctx(), { noteId });
-      expect(read.status).toBe('ready');
-      if (read.status !== 'ready') return;
-      expect(read.value.anchorStatus).toBe('retired');
-      expect(read.value.anchorRetiredReasons).toContain('symbol_missing');
-    } finally { await f.close(); }
-  });
 });

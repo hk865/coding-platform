@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 export type CoordinationPolicyRevisionRef = {
     aggregateType: "CoordinationPolicyRevision";
     projectId: string;
@@ -69,10 +68,6 @@ export type CoordinationPolicyContentV1 = {
     };
     /** 角色矩阵（可选；缺省表示该项目尚未登记角色目录，见 CoordinationRoleMatrixV1 注释）。 */
     roles?: CoordinationRoleMatrixV1;
-};
-export type CoordinationPolicyPin = {
-    ref: CoordinationPolicyRevisionRef;
-    digest: string;
 };
 export type CoordinationPolicyRevisionSnapshot = {
     ref: CoordinationPolicyRevisionRef;

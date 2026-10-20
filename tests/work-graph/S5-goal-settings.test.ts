@@ -35,8 +35,8 @@ import { createSessionDirectory } from '../../src/core/work-graph/sessions/sessi
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { decodeSessionMessageRecord } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
-import { createExecutedFilesStub } from '../helpers/executed-files-stub.js';
 import { createExecutionEntryService, MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/tasks/execution-entry-service.js';
+import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
@@ -50,7 +50,8 @@ import {
   T, WORKSPACE, WORKSPACE_REVISION, WORKSPACE_SCOPE, conflictSourceOf, goalBasisOf,
   type S5DecisionFixture, type S5Records, type S5StoreSnapshot,
 } from '../helpers/S5-decision-fixture.js';
-import { openS5GoalSettingsFixture } from '../helpers/S5-goal-settings-support.js';
+import { openS5DecisionFixture } from '../helpers/S5-decision-fixture.js';
+import { preparationHost, prepareTaskForReal } from '../helpers/task-claim-fixture.js';
 
 type Kind = 'memory' | 'sqlite';
 type Ctx = { kind: Kind; f: S5DecisionFixture; service: GoalSettingsPort };
@@ -86,7 +87,7 @@ function settings(f: S5DecisionFixture, records: S5Records = f.records): GoalSet
   return createGoalSettingsService({ records, now: f.now, newId: f.newId, operatorActor: f.operatorActor });
 }
 async function open(kind: Kind, pausedB: boolean): Promise<Ctx> {
-  const f = await openS5GoalSettingsFixture(kind, pausedB);
+  const f = await openS5DecisionFixture(kind, { catalog: 'modules', pausedB });
   fixtures.push(f);
   return { kind, f, service: settings(f) };
 }
@@ -267,37 +268,11 @@ function s5Entry(x: Ctx) {
 
 /** The fixture's own `buildPrepared` for one claim, in the P/W scope. */
 async function s5Prepared(x: Ctx, claim: TaskClaim): Promise<PreparedTaskExecution> {
-  const { reads, roles } = s5Entry(x);
-  const target = await reads.readExecution(x.f.ctx, claim.runRef);
-  if (target.status !== 'ready') throw new Error(`S5 prepared run read: ${JSON.stringify(target)}`);
-  const input = 'S5 decision fixture prepared manifest input';
-  const inputDigest = artifactBodyDigest(input);
-  const permissions = structuredClone(S5_HOST.permissions);
-  const roleFacts = await roles.resolveRoleBindingFacts(x.f.ctx, { roleBinding: target.value.run.roleBinding, declaredPermissions: permissions });
-  if (roleFacts.result.status !== 'ready') throw new Error(`S5 prepared role facts: ${JSON.stringify(roleFacts)}`);
-  const role: RoleSpecResolutionV1 = roleFacts.result.value;
-  const workspaceSnapshot = { workspaceId: claim.workspaceId, revision: WORKSPACE_REVISION };
-  const manifest: PreparedTaskManifestV1 = {
-    schemaVersion: 1, kind: 'task_execution', claim, role, hostTemplate: structuredClone(S5_HOST.hostTemplate),
-    roleBinding: target.value.run.roleBinding, hostConfigurationRevision: S5_HOST.configurationRevision,
-    sessionRole: target.value.session.role, workspaceSnapshot, permissions, budget: target.value.run.budget,
-    selectedTaskInputs: [], materialBasis: null, materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [],
-    sourceRefs: [], input, inputDigest,
-  };
-  const manifestJson = JSON.stringify(manifest);
-  const stored = await x.f.bodies.put({ body: manifestJson, contentType: MANIFEST_CONTENT_TYPE,
-    sourceRefs: [{ kind: 'workspace', refId: claim.workspaceId, revision: String(workspaceSnapshot.revision) }],
-    origin: { kind: 'run', owner: claim.runRef }, requestedAt: T });
-  if (stored.status !== 'ready') throw new Error(`S5 manifest store: ${JSON.stringify(stored)}`);
-  const envelope: TaskEnvelopeV1 = {
-    schemaVersion: 1, envelopeId: 's5-ss16-envelope', projectId: claim.task.projectId, workspaceId: claim.workspaceId,
-    goalId: claim.task.goalId, taskId: claim.task.taskId, runRef: claim.runRef, attemptRef: claim.attemptRef,
-    planRef: claim.planRef, roleBinding: target.value.run.roleBinding, workspaceSnapshot, permissions, budget: target.value.run.budget,
-    sourceRefs: [], bundleRef: stored.value.ref,
-  };
-  const inputBinding: PreparedTaskExecution['inputBinding'] = { schemaVersion: 1, inputDigest,
-    manifestDigest: artifactBodyDigest(manifestJson), materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [] };
-  return { kind: 'task', claim, envelope, inputBinding };
+  return (await prepareTaskForReal(x.f, {
+    bodies: x.f.bodies, runRef: claim.runRef, now: x.f.now, requestId: `s5-ss16-prepare-${claim.runRef.runId}`,
+    host: preparationHost({ configurationRevision: S5_HOST.configurationRevision,
+      permissions: S5_HOST.permissions, hostTemplate: S5_HOST.hostTemplate }),
+  })).prepared;
 }
 
 
@@ -328,7 +303,8 @@ function decisions(x: Ctx) {
 async function conflicts(x: Ctx): Promise<GoalConflictReadV1> {
   const reads = createDecisionReadModel({ records: x.f.records, cardSources: [], noticeSources: [],
     conflicts: createGoalConflictAssembler({ records: x.f.records,
-      catalog: createArchitectureCatalogService({ records: x.f.records }), executedFiles: createExecutedFilesStub() }),
+      catalog: createArchitectureCatalogService({ records: x.f.records }),
+      executedFiles: createGoalExecutedFilesReader({ records: x.f.records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)) });
   const before = await x.f.storeSnapshot();
   const read = await reads.queryGoalConflicts(x.f.ctx, { workspace: WORKSPACE_SCOPE });

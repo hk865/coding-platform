@@ -1,6 +1,7 @@
-/** Independent A1 product-path acceptance. Only the trusted Project/Workspace
- * bootstrap is seeded; catalog, Kernel Sessions, links and lifecycle changes
- * must be produced by the public composition. No model call or fake producer. */
+/** Independent A1 product-path acceptance. The trusted Project/Workspace
+ * bootstrap comes from the public Host writers; catalog, Kernel Sessions, links
+ * and lifecycle changes must be produced by the public composition. No model
+ * call or fake producer. */
 import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,10 +9,6 @@ import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef, SessionWorkLinkRef, WorkLinkTarget } from '../../src/contracts/core/identity.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
-import type { PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import { GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot,
-  encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import type {
   AdoptedArchitecture, AdoptInitialArchitectureInput, ReviseArchitectureCatalogInput,
 } from '../../src/core/work-graph/architecture/catalog-contracts.js';
@@ -38,27 +35,10 @@ afterEach(async () => {
   for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
 
-async function seedTrustedScope(directory: string): Promise<void> {
-  const schemas: RecordBackendSchemas = { ...GOAL_RECORD_SCHEMAS,
-    events: [...GOAL_RECORD_SCHEMAS.events, { eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-      validate: event => ({ status: 'decoded', value: event }) }] };
-  const backend = createSqliteRecordBackend({ path: join(directory, 'ledger.sqlite'), schemas });
-  const seed: PreparedCommit = { identityKey: 'a1-platform-scope-seed', fingerprint: 'a1-platform-scope-v1',
-    guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null },
-      { refKey: canonicalRefKey(workspace.ref), expectedRevision: null }],
-    records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace)],
-    events: [{ eventId: 'a1-platform-scope-event', eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-      occurredAt: at, json: JSON.stringify({ eventId: 'a1-platform-scope-event',
-        eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: at }) }],
-    claims: [], indexGuards: [], indexChanges: [] };
-  try { expect(await backend.records.commit(seed)).toMatchObject({ status: 'committed' }); }
-  finally { await backend.close(); }
-}
 
 it('creates before a baseline, discovers module-linked Sessions, and preserves identity/history through archive and reopen', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'next-a1-graph-session-platform-'));
   directories.push(directory);
-  await seedTrustedScope(directory);
   const workspaceBindings: WorkspaceHostBindings = {
     async resolveRoot(requested) {
       return requested.projectId === projectId && requested.workspaceId === workspaceId
@@ -72,6 +52,17 @@ it('creates before a baseline, discovers module-linked Sessions, and preserves i
       storeKey: 'a1-platform-kernel-store', workspace: scope, databasePath: join(directory, 'kernel.sqlite') }] } };
   let platform = await createTargetPlatform(options);
   try {
+    // The real public Host writers create the scope: no raw Store seed.
+    const createdProject = await platform.projects.createProject(ctx, { meta: {
+      requestId: 'a1-create-project', expected: [{ ref: project.ref, revision: 0 }],
+    }, input: { projectId } });
+    expect(createdProject).toMatchObject({ status: 'committed', replayed: false, value: project });
+    const registeredWorkspace = await platform.projects.registerWorkspace(ctx, { meta: {
+      requestId: 'a1-register-workspace',
+      expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 0 }],
+    }, input: { workspace: scope } });
+    expect(registeredWorkspace).toMatchObject({ status: 'committed', replayed: false, value: workspace });
+
     // Starting an independent working Session does not need a global catalog,
     // accepted Plan, synthetic Task or permanent Agent registration.
     const createRequest: CreateSessionRequest = { workspace: scope, role, recommendedRefs: [], initialLinks: [],
@@ -103,9 +94,32 @@ it('creates before a baseline, discovers module-linked Sessions, and preserves i
     const adopted = await platform.architecture.adoptInitialArchitecture(ctx, adoptRequest);
     expect(adopted).toMatchObject({ status: 'committed', replayed: false });
     if (adopted.status !== 'committed') throw Error('formal catalog adoption failed');
+    // The adopted revision, written from the fixed adopt input above: the first adoption is revision 1 of
+    // the input's baseline id, for both the baseline and its catalog; the baseline content is exactly the
+    // input's description and constraints; the catalog is the input catalog unchanged; an initial adoption
+    // has no revision event (`since: null`). The content digest is
+    // `sha256(canonicalJson({schemaVersion:1,identity:{baselineId},revision:contentRevision,content}))` (keys
+    // sorted, no spaces). For this input that text is (one line, 183 bytes of UTF-8)
+    // {"content":{"constraints":[],"description":"An adopted source-tools responsibility","schemaVersion":1},
+    //  "identity":{"baselineId":"a1-platform-baseline"},"revision":1,"schemaVersion":1}
+    // and its SHA-256, computed by hand with node:crypto over that text, is the literal.
+    const baselineRef = { aggregateType: 'ArchitectureBaselineRevision', projectId,
+      baselineId: 'a1-platform-baseline', revision: 1 };
+    const expectedArchitecture = {
+      baseline: { ref: baselineRef, revision: 1, schemaVersion: 1, baselineId: 'a1-platform-baseline',
+        contentRevision: 1, contentDigest: '27272b141e404048373f9886a5c179a23d500d987d486619fae262023fb055d5',
+        content: { schemaVersion: 1, description: 'An adopted source-tools responsibility', constraints: [] } },
+      catalog: { ref: { aggregateType: 'ArchitectureCatalog', projectId, baselineId: 'a1-platform-baseline', revision: 1 },
+        revision: 1, baselineRef, schemaVersion: 1, since: null, catalog: { requireDag: true, dependencies: [], modules: [
+          { ref: target.ref, name: 'Source tools', responsibility: 'Read and compare project sources',
+            paths: ['src/source-tools'], interfaces: [{ id: 'source-read', description: 'Read exact sources',
+              paths: ['src/source-tools/index.ts'] }] },
+        ] } },
+    };
+    expect(adopted.value).toEqual(expectedArchitecture);
     const currentArchitecture = await platform.architecture.readArchitectureRevision(ctx,
       { selection: { kind: 'current' } });
-    expect(currentArchitecture).toMatchObject({ status: 'ready', value: adopted.value });
+    expect(currentArchitecture).toEqual({ status: 'ready', value: expectedArchitecture });
 
     const linkRef: SessionWorkLinkRef = { ...sessionRef, aggregateType: 'SessionWorkLink',
       target, relation: 'responsible' };
@@ -162,7 +176,7 @@ it('creates before a baseline, discovers module-linked Sessions, and preserves i
     expect(historical.value.items.find(card => card.record.ref.sessionId === sessionRef.sessionId)?.links)
       .toEqual(beforeArchive.links);
     expect(await platform.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } }))
-      .toMatchObject({ status: 'ready', value: adopted.value });
+      .toEqual({ status: 'ready', value: expectedArchitecture });
 
     await platform.close();
     platform = await createTargetPlatform(options);
@@ -208,7 +222,7 @@ it('creates before a baseline, discovers module-linked Sessions, and preserves i
     expect(finalHistory.value.items).toEqual(originalHistory.value.items);
     expect(await platform.architecture.readArchitectureRevision(ctx,
       { selection: { kind: 'revision', ref: adopted.value.baseline.ref } }))
-      .toMatchObject({ status: 'ready', value: adopted.value });
+      .toEqual({ status: 'ready', value: expectedArchitecture });
   } finally { await platform.close(); }
 });
 

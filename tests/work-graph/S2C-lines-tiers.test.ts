@@ -152,7 +152,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-03 six attention tiers (%s)', (
     expect(row?.status.attentionComplete).toBe(false);
   });
 
-  it('2C-03 (3) an INCONCLUSIVE formal round puts the line in the blocked tier', async () => {
+  it('2C-03 (3) / 2C-12 (9) an INCONCLUSIVE formal round puts the line in the blocked tier', async () => {
     const f = await lineFixture();
     await f.checks.installPolicy();
     const goal = await f.checks.addCheckableGoal('g03-blocked', [{ taskId: 'b', title: 'Blocked task' }]);
@@ -168,6 +168,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-03 six attention tiers (%s)', (
     expect(finalized.outcome).toBe('INCONCLUSIVE');
 
     const row = rowOf(ready(await f.reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, head);
+    expect(row?.status.own).toBe('standby');
     expect(row?.status.attention?.code).toBe('blocked');
     expect(row?.status.attention?.reason.code).toBe('round_inconclusive');
     expect(row?.status.bucket).toBe('standby');

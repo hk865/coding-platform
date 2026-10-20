@@ -23,7 +23,7 @@ import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../../c
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
-import type { SessionProvenanceV1, SessionRecord } from '../../../contracts/core/session.js';
+import type { SessionRecord } from '../../../contracts/core/session.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { ContextCallKindV1, PlatformDutyV1 } from '../../../contracts/graph-context.js';
 import { consultationQueryRefs } from '../../../contracts/query-job.js';
@@ -114,7 +114,7 @@ function expectedQueryDuty(manifest: PreparedQueryManifestV1): PlatformDutyV1 | 
  * `copy` assembly. Every other callKind remains forbidden.
  */
 function expectedQueryCallKinds(job: QueryJobSnapshot): readonly ContextCallKindV1[] {
-  return job.job.intent.execution?.kind === 'initial_coordination' ? ['planning', 'copy'] : ['copy'];
+  return job.job.intent.execution.kind === 'initial_coordination' ? ['planning', 'copy'] : ['copy'];
 }
 /** QRR-06, like RUN-22: the attestation reason becomes the close message, bounded. */
 const MAX_ATTESTATION_REASON_CHARS = 2000;
@@ -224,14 +224,12 @@ function sessionKeyOf(ref: SessionRecord['ref']): string {
 export function queryClaimDispatchProblem(
   facts: SessionFactsV1,
   readonlyQueryMatches: boolean,
-  legacyProvenance: SessionProvenanceV1 | null = null,
 ): CoreRejection | null {
   const refusal = sessionDispatchAdmissionProblem(facts.session, {
     purpose: 'query',
     waiting: facts.wait,
     consumedWait: null,
     readonlyQueryMatches,
-    legacyProvenance,
   });
   return refusal === null || refusal.ok ? null : rejectedWithNonEmptyCurrent(refusal.code, refusal.detail);
 }
@@ -333,7 +331,6 @@ async function readExecutionRecord(deps: QueryExecutionDependencies, queryRunRef
  * and never a fixed system actor. */
 async function readInitiator(deps: QueryExecutionDependencies, job: QueryJobSnapshot): Promise<ReadResult<HostActor>> {
   const submission = job.submission;
-  if (submission === undefined) return rejectedWithNonEmptyCurrent('unsupported', 'the QueryJob has no exact submission locator');
   let found;
   try {
     found = await deps.records.lookupCommit({ identityKey: submission.identityKey, fingerprint: submission.fingerprint });
@@ -897,7 +894,6 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const nextSession = sessionStep(session, { kind: 'occupy', holder: queryRunRef });
     if ('status' in nextSession) return nextSession;
     const execution = job.job.intent.execution;
-    if (execution === undefined) return rejectedWithNonEmptyCurrent('unsupported', 'claimQuery requires an explicit read-only execution binding');
     if (execution.consultation !== undefined) {
       // The FIRST occupancy point re-checks the bound recipient against the
       // ACTUAL claimed Session and the deterministic message identity. The
@@ -919,31 +915,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     // S1-DISPATCH-02: when the trusted Session-facts reader is injected, a
     // pending archive request or a Work wait is `busy`; a copy provenance admits
     // only its own pinned consultation Query and refuses every other Query.
-    let derivedDispatchGuards: readonly RecordGuard[] = [];
     if (deps.sessionFacts !== undefined) {
       const factsRead = await deps.sessionFacts.readSessionFacts(owned, sessionRef);
       if (factsRead.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the target Session does not exist');
       if (factsRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the Session facts are not readable at the required watermark');
       if (factsRead.status !== 'ready') return factsRead;
       const facts = factsRead.value;
-      const recorded = facts.session.provenance ?? null;
-      // N3 (§3.4 S:630): a legacy Session has no recorded provenance. Obtain the
-      // trusted derivation and its guards through the injected model-level port;
-      // without that port the L1 `incomplete` refusal stands.
-      let legacyProvenance: SessionProvenanceV1 | null = null;
-      if (recorded === null && deps.legacyProvenance !== undefined) {
-        const derived = await deps.legacyProvenance.deriveLegacySessionProvenance(owned, sessionRef);
-        if (derived.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the target Session does not exist');
-        if (derived.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the legacy provenance is not readable at the required watermark');
-        if (derived.status !== 'ready') return derived;
-        legacyProvenance = derived.value.provenance;
-        derivedDispatchGuards = derived.value.guards;
-      }
-      const effectiveProvenance = recorded ?? legacyProvenance;
-      const readonlyQueryMatches = effectiveProvenance !== null && effectiveProvenance.kind === 'readonly_copy'
+      const provenance = facts.session.provenance;
+      const readonlyQueryMatches = provenance.kind === 'readonly_copy'
         && execution.consultation !== undefined
-        && sameRef(execution.consultation.messageRef, effectiveProvenance.messageRef);
-      const problem = queryClaimDispatchProblem(facts, readonlyQueryMatches, legacyProvenance);
+        && sameRef(execution.consultation.messageRef, provenance.messageRef);
+      const problem = queryClaimDispatchProblem(facts, readonlyQueryMatches);
       if (problem !== null) return problem;
     }
     if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query claim was cancelled before Role resolution');
@@ -994,7 +976,6 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       { refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! },
       { refKey: sessionKeyOf(session.ref), expectedRevision: expected.session! },
       ...roleFacts.guards,
-      ...derivedDispatchGuards,
     ]);
     return commitOperation({
       deps, identityKey, fingerprint, guards,
@@ -1076,18 +1057,16 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       continuationSuffix: null,
     });
     if (assemblyProblem !== null) return assemblyProblem;
-    if (manifest.contextAssembly !== undefined) {
-      // §3.2 G-CTX: the saved call scope and duty must match the canonical Query
-      // facts (the intent's execution kind and the Query's resolved Role). An
-      // initial coordination accepts `planning` or `copy` (see
-      // `expectedQueryCallKinds`); every other Query kind requires `copy`.
-      const fixedDuty = expectedQueryDuty(manifest);
-      if (fixedDuty !== undefined && manifest.contextAssembly.duty !== fixedDuty) {
-        return rejectedWithNonEmptyCurrent('forbidden', 'the assembled Query context duty disagrees with the resolved Role');
-      }
-      if (!expectedQueryCallKinds(job).includes(manifest.contextAssembly.callKind)) {
-        return rejectedWithNonEmptyCurrent('forbidden', 'the assembled Query context callKind disagrees with the Query execution kind');
-      }
+    // §3.2 G-CTX: the saved call scope and duty must match the canonical Query
+    // facts (the intent's execution kind and the Query's resolved Role). An
+    // initial coordination accepts `planning` or `copy` (see
+    // `expectedQueryCallKinds`); every other Query kind requires `copy`.
+    const fixedDuty = expectedQueryDuty(manifest);
+    if (fixedDuty !== undefined && manifest.contextAssembly.duty !== fixedDuty) {
+      return rejectedWithNonEmptyCurrent('forbidden', 'the assembled Query context duty disagrees with the resolved Role');
+    }
+    if (!expectedQueryCallKinds(job).includes(manifest.contextAssembly.callKind)) {
+      return rejectedWithNonEmptyCurrent('forbidden', 'the assembled Query context callKind disagrees with the Query execution kind');
     }
     if (state.phase === 'prepared') {
       if (state.prepared === null || !sameRef(state.prepared.bundleRef, loaded.value.bundleRef)) {
@@ -1210,7 +1189,6 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     }
     if (job.job.status !== 'pending' && job.job.status !== 'running') return rejectedWithNonEmptyCurrent('busy', 'the QueryJob is not awaiting a fresh entry');
     const execution = job.job.intent.execution;
-    if (execution === undefined) return rejectedWithNonEmptyCurrent('unsupported', 'beginQueryEntry requires an explicit read-only execution binding');
     const loaded = await loadQueryManifest(deps.bodies, prepared as unknown as PreparedQueryExecution);
     if (loaded.status !== 'ready') return toRejection(loaded);
     const manifest = loaded.value.manifest;

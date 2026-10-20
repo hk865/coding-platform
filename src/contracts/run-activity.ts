@@ -96,12 +96,9 @@ export function provenNotEnteredKernel(run: RunSnapshot, since: string | null): 
   // so it is checked before the authorization binding.
   if (run.reconciliation?.observation.kind === 'not_entered') return true;
   const authorization = run.executionAuthorization;
-  if (authorization !== undefined && authorization !== null) {
-    if ('schemaVersion' in authorization && authorization.schemaVersion === 2) {
-      return authorization.kernel === null
-        && (authorization.phase === 'authorized' || authorization.phase === 'revoked');
-    }
-    return false;
+  if (authorization !== undefined) {
+    return authorization.kernel === null
+      && (authorization.phase === 'authorized' || authorization.phase === 'revoked');
   }
   return run.endedAt !== null && since !== null && run.endedAt >= since;
 }

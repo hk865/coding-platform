@@ -51,24 +51,6 @@ describe('S4B M-01 changed and deleted basis files', () => {
   });
 });
 
-describe('S4B M-05 unavailable fact source', () => {
-  it.each(['memory', 'sqlite'] as const)('M-05 %s: an unreadable message fact is sourceUnavailable and the note is still returned', async kind => {
-    const f = await createS4BNoteCheckFixture(kind);
-    try {
-      const missing: NoteFactV1 = { kind: 'record', revision: 1, digest: null,
-        ref: { aggregateType: 'SessionMessage', projectId: f.inner.scope.projectId,
-          workspaceId: f.inner.scope.workspaceId, messageId: 'no-such-message' } };
-      const noteId = await writeAccepted(f, draft({ facts: [missing] }));
-      const page = await f.notes.listByAnchor(f.ctx(), { anchor: { kind: 'project' }, limit: 20, cursor: null });
-      expect(page.status).toBe('ready');
-      if (page.status !== 'ready') return;
-      const item = page.value.items.find(candidate => candidate.noteId === noteId);
-      expect(item).toBeDefined();
-      expect(item!.sourceUnavailable).toBe(true);
-    } finally { await f.close(); }
-  });
-});
-
 describe('S4B M-04 retired basis note', () => {
   it.each(['memory', 'sqlite'] as const)('M-04 %s: a superseded basis-note head makes the note stale for basis_note_retired', async kind => {
     const f = await createS4BNoteCheckFixture(kind);

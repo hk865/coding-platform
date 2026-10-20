@@ -1558,13 +1558,17 @@ function builtInMemberNoticeSource(records: DecisionReadRecordsPort, messages: r
           if (origin.status !== 'decoded') {
             return { status: 'rejected', code: 'unavailable', reason: `member notice origin: ${origin.reason}` };
           }
+          const since = origin.value.since;
+          // §2.5 line 291: a notice is positioned only by its bound commit
+          // cursor; an absent position is unavailable, never a legacy fallback.
+          if (since === undefined || since === null) {
+            return { status: 'rejected', code: 'unavailable', reason: 'member notice origin has no commit position' };
+          }
           const itemKey = `member_notice:${sessionMessageRefKey(message.ref)}`;
           items.push({
             itemKey, category: 'member_notice',
             goalRef: message.goalRef ?? { aggregateType: 'Goal', projectId: message.ref.projectId, goalId: '' },
-            position: origin.value.since === undefined || origin.value.since === null
-              ? { kind: 'legacy', occurredAt: message.createdAt, itemKey }
-              : { kind: 'commit', cursor: origin.value.since, itemKey },
+            position: { kind: 'commit', cursor: since, itemKey },
             summary: '你有一条新通知', objects: [], rework: null,
           });
         }
@@ -1815,7 +1819,6 @@ function isCardSeek(value: unknown): value is CardSeekV1 {
 
 function isNoticePosition(value: unknown): value is NoticePositionV1 {
   if (!isRecord(value) || typeof value['itemKey'] !== 'string') return false;
-  if (value['kind'] === 'legacy') return typeof value['occurredAt'] === 'string';
   return value['kind'] === 'commit' && typeof value['cursor'] === 'string';
 }
 

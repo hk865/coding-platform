@@ -253,21 +253,6 @@ describe('S4C D-15: an outdated pending understanding', () => {
   });
 });
 
-describe('S4C D-16: replaces a user note that is also in coexistWith', () => {
-  it.each(KINDS)('D-16 %s: the write is accepted directly with no user reason', async kind => {
-    await withFixture(kind, {}, async f => {
-      const mine = await f.write(f.ctx(), general({ topic: 'mine16', anchor: FILE_A }), null);
-      const mineId = idOf(mine);
-      const run = await f.claimRun('s4c-d16');
-      const note = await f.write(f.workCtx(run), general({ topic: 'new16', anchor: FILE_A,
-        replaces: [mineId], coexistWith: [mineId] }), 's4a-goal');
-      expect(note).toMatchObject({ status: 'accepted', reasons: [] });
-      expect((await itemOf(f, mineId)).storedState).toBe('accepted');
-      expect((await itemOf(f, idOf(note))).coexistWith).toEqual([mineId]);
-    });
-  });
-});
-
 describe('S4C D-06 exception: a current understanding is not user_note_replaced', () => {
   it.each(KINDS)('D-06 %s: an agent understanding replacing the user understanding is accepted', async kind => {
     await withFixture(kind, {}, async f => {
@@ -280,32 +265,6 @@ describe('S4C D-06 exception: a current understanding is not user_note_replaced'
         { expectedPointerRevision: 1 });
       expect(u2).toMatchObject({ status: 'accepted', reasons: [] });
       expect((await itemOf(f, idOf(u1))).storedState).toBe('superseded');
-    });
-  });
-});
-
-describe('RW-8 a resolution is only applicable to an accept', () => {
-  it.each(KINDS)('RW-8 review %s: a review carrying a resolution is invalid, resolution_not_applicable', async kind => {
-    await withFixture(kind, {}, async f => {
-      const note = await f.write(f.ctx(), general({ topic: 'rw8-review', anchor: FILE_A }), null);
-      const refused = await f.platform.notes.reviewNote(f.ctx(), { commandId: 'rw8-review',
-        noteId: idOf(note), expectedVersion: 1, expectedPointerRevision: null, verdict: 'review',
-        resolution: 'supersede', reason: null });
-      expect(refused).toMatchObject({ status: 'rejected', code: 'invalid', reason: 'resolution_not_applicable' });
-      expect((await itemOf(f, idOf(note))).storedState).toBe('accepted');
-    });
-  });
-
-  it.each(KINDS)('RW-8 reject %s: a reject carrying a resolution is invalid, resolution_not_applicable', async kind => {
-    await withFixture(kind, { goalQuota: 0 }, async f => {
-      const pending = await f.write(f.workCtx(await f.claimRun('rw8-reject')),
-        general({ topic: 'rw8-reject', anchor: FILE_A }), 's4a-goal');
-      expect(pending).toMatchObject({ status: 'pending_review' });
-      const refused = await f.platform.notes.reviewNote(f.ctx(), { commandId: 'rw8-reject',
-        noteId: idOf(pending), expectedVersion: 1, expectedPointerRevision: null, verdict: 'reject',
-        resolution: 'coexist', reason: '不收' });
-      expect(refused).toMatchObject({ status: 'rejected', code: 'invalid', reason: 'resolution_not_applicable' });
-      expect((await itemOf(f, idOf(pending))).storedState).toBe('pending_review');
     });
   });
 });

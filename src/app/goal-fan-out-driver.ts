@@ -190,7 +190,7 @@ function controlOf(goal: GoalSnapshot): GoalControl | null {
   switch (goal.desiredState) {
     case 'paused': return 'pause';
     case 'cancelled': return 'cancel';
-    case 'active': return (goal.desiredStateRevision ?? 1) > 1 ? 'resume' : null;
+    case 'active': return goal.desiredStateRevision > 1 ? 'resume' : null;
     default: return null;
   }
 }
@@ -351,8 +351,8 @@ export function createGoalFanOutDriver(deps: GoalFanOutDriverDependencies): Goal
       const goalRead = await deps.plans.queryGoal(ctx, goalRef);
       if (goalRead.status !== 'ready') return result('failed', `the Goal is not readable (${reasonOf(goalRead)})`);
       const goal = goalRead.value.goal;
-      if (goal.desiredState !== desired || (goal.desiredStateRevision ?? 1) !== epoch) {
-        return result('stale', `the Goal moved to ${goal.desiredState}@${String(goal.desiredStateRevision ?? 1)}`);
+      if (goal.desiredState !== desired || goal.desiredStateRevision !== epoch) {
+        return result('stale', `the Goal moved to ${goal.desiredState}@${String(goal.desiredStateRevision)}`);
       }
       const read = await deps.executions.readExecution(ctx, runRef);
       if (read.status !== 'ready') return result('failed', `the Run is not readable (${reasonOf(read)})`);
@@ -361,8 +361,8 @@ export function createGoalFanOutDriver(deps: GoalFanOutDriverDependencies): Goal
       // §2.3 re-drive step 2, GOAL-14: at a start the entered Runs were classified by step 2; one it left
       // (W-07) takes no resume now: it is resumed only after a later start classifies it.
       const authorization = run.executionAuthorization;
-      if (startup && control === 'resume' && authorization !== undefined && 'schemaVersion' in authorization
-        && authorization.schemaVersion === 2 && (authorization.phase === 'entering' || authorization.phase === 'entered')) {
+      if (startup && control === 'resume' && authorization !== undefined
+        && (authorization.phase === 'entering' || authorization.phase === 'entered')) {
         return result('skipped', 'entered Run left by step 2; resumed only after it is classified (GOAL-14, §2.3)');
       }
       let pointer: ControlIntentSnapshotV1 | null = null;
@@ -408,7 +408,7 @@ export function createGoalFanOutDriver(deps: GoalFanOutDriverDependencies): Goal
     }
     if (read.status !== 'ready') return report(0, null, `the affected Runs are not readable (${reasonOf(read)})`);
     const goal = read.value.goal;
-    const epoch = goal.desiredStateRevision ?? 1;
+    const epoch = goal.desiredStateRevision;
     const control = controlOf(goal);
     if (control === null) return report(epoch, null, null);
     if (deps.driving !== undefined && !deps.driving()) {
@@ -472,7 +472,7 @@ export function createGoalFanOutDriver(deps: GoalFanOutDriverDependencies): Goal
         if (written.code === 'revision_conflict' || written.code === 'busy') {
           const goal = await deps.plans.queryGoal(ctx, goalRef);
           const moved = goal.status === 'ready' && (goal.value.goal.desiredState !== 'active'
-            || (goal.value.goal.desiredStateRevision ?? 1) !== continuation.trigger.resumedEpoch);
+            || goal.value.goal.desiredStateRevision !== continuation.trigger.resumedEpoch);
           if (moved) {
             results.push(result('stale', reasonOf(written)));
             continue;

@@ -18,7 +18,7 @@ export type UnknownCallKindEntry = {
 /** L3, exact order. Row 8 ("everything else") is implicit in the functions below. */
 export const UNKNOWN_CALL_KIND_TABLE: readonly UnknownCallKindEntry[] = [
   // Row 1: Kernel read/check and exploration tools.
-  ...['read', 'check', 'list_files', 'search', 'symbols', 'code_index', 'project_source', 'project_index',
+  ...['read', 'check', 'list_files', 'search', 'symbols', 'code_index', 'project_source',
     'python_index', 'cpp_index', 'source_excerpt', 'read_source', 'read_material']
     .map((toolName) => ({ toolName, kind: 'read_only' as const, contained: true })),
   // Row 2: platform read-only tools (these never look up a commit receipt).

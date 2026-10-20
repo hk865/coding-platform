@@ -125,7 +125,7 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
   };
   const readMessagePart = async (ctx: CoreCallContext, message: SessionMessage, seen: Set<string>,
     results: SuppliedInput[]): Promise<void> => {
-    if (message.intent === 'inquiry' || (message.intent === undefined && message.replyMode === 'wait')) return;
+    if (message.intent === 'inquiry') return;
     const inputId = deriveInputId(message.ref, 'message');
     if (seen.has(inputId) || alreadyAcceptedBySource(message, inputId)) return;
     const body = await deps.messages.readMessageBody(ctx, { messageRef: message.ref, part: 'message' });

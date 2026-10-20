@@ -5,15 +5,10 @@
  * services; the only storage-boundary writes are amendment A2's picker Runs and
  * `T*`'s 2,999 cloned Runs (2A QA-17's coordinator-ruled exception, reported
  * under UNSPECIFIED). Every assertion reads the public `WorkLineReadPort`.
- *
- * Amendment A2 is the last test: one unlimited-budget `lines/list` per backend
- * with the per-line L1b budgeted reads and the shared-cost reads/times printed,
- * not asserted.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  buildScaleFixture, countAcceptedCalls, countingRecords, measureBudgetedReads, S2C_SCALE_TIMEOUT_MS,
-  S2C_UNLIMITED_BUDGET, type ScaleFixture,
+  buildScaleFixture, S2C_SCALE_TIMEOUT_MS, type ScaleFixture,
 } from '../helpers/S2C-X-scale-fixture.js';
 import type { LineRowV1, WorkLineListV1 } from '../../src/contracts/work-line.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
@@ -141,46 +136,5 @@ describe.each(KIND)('2C-25 scale (%s)', (kind) => {
     expect(before.every((row) => row.status.attention !== null
       || (row.status.attentionComplete === false && row.status.attention === null))).toBe(true);
     expect(after.every((row) => row.status.attention === null && row.status.attentionComplete === true)).toBe(true);
-  }, S2C_SCALE_TIMEOUT_MS);
-
-  it('A2 measured on this build (printout, not asserted)', async () => {
-    const lines = await list(fixture.readerUnlimited);
-    const budgeted = new Map<string, number>();
-    for (const row of lines.rows) {
-      budgeted.set(row.key.sessionId, await measureBudgetedReads(fixture, row.key));
-    }
-    const ordinary = lines.rows
-      .filter((row) => row.key.sessionId !== fixture.r.sessionId && row.key.sessionId !== fixture.w.sessionId)
-      .map((row) => budgeted.get(row.key.sessionId) ?? 0);
-    const m = Math.max(...ordinary);
-    const r = (await countAcceptedCalls(fixture, fixture.r, S2C_UNLIMITED_BUDGET))
-      - (await countAcceptedCalls(fixture, fixture.r, 2)) + 2;
-    const w = budgeted.get(fixture.w.sessionId) ?? 0;
-    const z = budgeted.get(fixture.z.sessionId) ?? 0;
-    budgeted.set(fixture.r.sessionId, r);
-
-    const counted = countingRecords(fixture.deps.records);
-    const started = performance.now();
-    const shared = ready(await fixture.readerWith(counted.records, 1_000_000_000)
-      .listWorkLines(fixture.ctx, { workspace: fixture.scope }));
-    const sharedMs = performance.now() - started;
-    const tally = new Map<string, number>();
-    for (const call of counted.calls) {
-      const name = call.kind === 'readMany' ? `readMany(${String(call.records)})`
-        : `${call.kind}:${'index' in call ? call.index : ''}`;
-      tally.set(name, (tally.get(name) ?? 0) + 1);
-    }
-    // eslint-disable-next-line no-console
-    console.log(`[A2 ${kind}] m=${String(m)} r=${String(r)} w=${String(w)} z=${String(z)}`
-      + ` sharedCalls=${String(counted.calls.length)} sharedMs=${sharedMs.toFixed(0)} rows=${String(shared.rows.length)}`);
-    const totalBudgeted = [...budgeted.values()].reduce((sum, value) => sum + value, 0);
-    // eslint-disable-next-line no-console
-    console.log(`[A2 ${kind}] perLineBudgeted`, JSON.stringify(Object.fromEntries([...budgeted.entries()].sort())));
-    // eslint-disable-next-line no-console
-    console.log(`[A2 ${kind}] fullListCalls=${String(counted.calls.length)} budgetedSum=${String(totalBudgeted)}`
-      + ` nonBudgeted(sum incl. open work)=${String(counted.calls.length - totalBudgeted)} sharedMs=${sharedMs.toFixed(0)}`);
-    // eslint-disable-next-line no-console
-    console.log(`[A2 ${kind}] shared tally`, JSON.stringify(Object.fromEntries([...tally.entries()].sort())));
-    expect(m).toBeGreaterThan(0);
   }, S2C_SCALE_TIMEOUT_MS);
 });

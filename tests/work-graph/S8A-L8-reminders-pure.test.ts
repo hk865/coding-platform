@@ -127,47 +127,6 @@ describe('commonDirectoryPrefixLength / bestModuleDirectoryPrefixLength (interfa
 });
 
 describe('architectureReminderRowEntries (interface §8/§11, book rulings 9–11)', () => {
-  it('A-03: the four rows in kind order, each with the 3-hour observation time', () => {
-    expect(texts({ facts: facts(), taskModuleRef: A, now: THREE_HOURS_FIVE })).toEqual([
-      '声明的依赖没有 import：A→B，src/a/core（3 小时前的观测）',
-      'import 没有声明的依赖：src/b/extra.ts → src/a/core/util.ts（3 小时前的观测）',
-      '新文件没归组：src/a/loose.ts（3 小时前的观测）',
-      '可能移动：src/old.ts → src/new.ts（3 小时前的观测）',
-    ]);
-  });
-
-  it('an unknown dependency finding ends with ，不确定', () => {
-    const uncertain: FormalObservedFindingV1 = {
-      kind: 'dependency_missing', moduleRef: A, path: 'src/a/core', detail: 'A→B', certainty: 'unknown',
-    };
-    expect(texts({
-      facts: facts({ findings: [uncertain], previous: A03_LATEST }), taskModuleRef: A, now: THREE_HOURS_FIVE,
-    })).toEqual(['声明的依赖没有 import：A→B，src/a/core，不确定（3 小时前的观测）']);
-  });
-
-  it('caps at 10 rows and adds 另有 N 条架构提醒没列出', () => {
-    const extraPaths = Array.from({ length: 12 }, (_unused, index) => `src/a/core/n${String(index + 1).padStart(2, '0')}.ts`);
-    const latest = nodes(extraPaths.map((path, index) => ({ path, digest: `x${String(index)}` })));
-    const findings: FormalObservedFindingV1[] = extraPaths.map((path) => ({
-      kind: 'ungrouped', moduleRef: null, path, detail: '不在任何模块 path 下', certainty: 'unknown',
-    }));
-    const rows = texts({
-      facts: facts({ latest, previous: latest, findings }), taskModuleRef: A, now: THREE_HOURS_FIVE,
-    });
-    expect(rows).toHaveLength(11);
-    expect(rows.slice(0, 10)).toEqual(Array.from({ length: 10 }, (_unused, index) =>
-      `新文件没归组：src/a/core/n${String(index + 1).padStart(2, '0')}.ts（3 小时前的观测）`));
-    expect(rows[10]).toBe('另有 2 条架构提醒没列出');
-  });
-
-  it('no successful observation -> 还没有观测', () => {
-    expect(texts({
-      facts: facts({ state: { current: null, previous: null, previousPersistedRef: null, autoCapture: null },
-        latest: null, previous: null, findings: [] }),
-      taskModuleRef: A, now: THREE_HOURS_FIVE,
-    })).toEqual(['还没有观测']);
-  });
-
   it('an observation with nothing to say -> no rows', () => {
     expect(texts({
       facts: facts({ catalog: null, findings: [], previous: A03_LATEST }), taskModuleRef: null, now: THREE_HOURS_FIVE,

@@ -9,15 +9,11 @@
  *   Session occupancy in the same commit, and supersedes the queued steers.
  * - D-8: a submission supersedes the still-queued older pointer intent in the
  *   same commit; an observation that committed first wins the CAS.
- * - D-9 and RD-8: a resume needs the Goal active; a yielded wait whose
- *   continuation a successor consumed takes no control. Both are read-side
- *   facts here: the paused Goal is written by `setGoalControl` since 5.5
- *   (driven end to end in tests/scenarios/A7-control.test.ts and
- *   tests/work-graph/A2-goal-control.test.ts), and the successor's
- *   Lease is written by a continuation claim that needs a replied wait
- *   message (the mailbox flow, driven end to end by step 6's
- *   scenarios/A7-control.test.ts). The test injects them at the read port and
- *   writes nothing by hand.
+ * - D-9: a resume needs the Goal active. The paused/cancelled Goal is written by
+ *   the public `setGoalControl` owner (two independent fixtures), and the entered
+ *   Run comes from the real Runtime held at its A3 model gate
+ *   (tests/helpers/S2B-runtime-steps-fixture.ts); pause and cancel of a Run stay
+ *   accepted while its Goal is not active.
  * - CTL-06 and CTL-09: terminal_without_cancel is recorded only after a known
  *   terminal; the same Kernel fact again is a no-op on an applied or
  *   superseded intent, other content is stale.
@@ -25,20 +21,27 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ControlIntentKindV1, ControlIntentRef, ControlObservationV1, SubmittedControl } from '../../src/contracts/control-intent.js';
 import type { VersionPin } from '../../src/contracts/core/identity.js';
-import type { RunSnapshot, RuntimeEventV1 } from '../../src/contracts/dispatch.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import type { RunControlPort, ControlObservationPort } from '../../src/core/work-graph/tasks/control-contracts.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import type { ExecutionReadPort } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
+import { createS2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
 import {
-  B2_AT, b2Key, createB2ExecutionFixture, type B2ExecutionFixture, type B2Records,
+  B2_AT, createB2ExecutionFixture, type B2ExecutionFixture, type B2Records,
 } from '../helpers/B2-execution-fixture.js';
 
 const fixtures: B2ExecutionFixture[] = [];
 async function open(): Promise<B2ExecutionFixture> {
-  const fixture = await createB2ExecutionFixture('sqlite', CONTROL_RECORD_SCHEMAS);
+  // GoalPhase (the public Goal control's second pin) is registered alongside the
+  // control records; the conversion reads and writes the real Goal through it.
+  const fixture = await createB2ExecutionFixture('sqlite', {
+    records: [...CONTROL_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records],
+    events: [...CONTROL_RECORD_SCHEMAS.events, ...COMPLETION_RECORD_SCHEMAS.events],
+    lookups: [...(CONTROL_RECORD_SCHEMAS.lookups ?? []), ...(COMPLETION_RECORD_SCHEMAS.lookups ?? [])],
+  });
   fixtures.push(fixture);
   return fixture;
 }
@@ -258,93 +261,104 @@ describe('D-8: the newer submission supersedes the still-queued older pointer in
   });
 });
 
-describe('a yielded wait: D-8 on the fence, RD-8 once a successor consumed the continuation', () => {
-  async function yieldedRun(fixture: B2ExecutionFixture): Promise<RunSnapshot> {
-    const admitted = await fixture.enter();
-    const observation = fixture.terminalObservation(admitted);
-    const event: RuntimeEventV1 = { ...observation.event, eventType: 'run_yielded', eventId: 'a2-runtime-yield',
-      payload: { kind: 'yielded', yield: { reason: 'reply_required', requestedBy: 'app', yieldedAt: B2_AT, pendingToolCallId: null } } };
-    const yielded = await fixture.entry.recordRunResult(fixture.ctx, { input: { ...observation, event,
-      continuation: { schemaVersion: 1, kind: 'wait_reply', task: fixture.claim.task, sessionRef: fixture.claim.sessionRef,
-        messageRef: { aggregateType: 'SessionMessage', projectId: fixture.ctx.projectId,
-          workspaceId: fixture.claim.workspaceId, messageId: 'a2-wait-message' } } },
-      meta: { requestId: 'a2-yield', expected: [await fixture.pin()] } });
-    expect(yielded).toMatchObject({ status: 'committed', value: { status: 'ended', outcome: 'yielded' } });
-    if (yielded.status !== 'committed') throw Error('a yielded Run is required');
-    return yielded.value;
-  }
-
-  it('a resume over the queued wait-window pause supersedes it (RUN-14)', async () => {
-    const fixture = await open();
-    const controls = controlsOn(fixture.base.records, 'wait');
-    await yieldedRun(fixture);
-    const pause = await submit(fixture, controls, 'a2-wait-pause', 'pause');
-    expect(pause.intent).toMatchObject({ status: 'queued' });
-    const resume = await submit(fixture, controls, 'a2-wait-resume', 'resume');
-    expect(resume.intent).toMatchObject({ status: 'queued' });
-    expect(await readIntent(controls, fixture, pause.intent.ref)).toMatchObject({ status: 'superseded',
-      observation: { origin: 'platform_superseded', detail: { supersededBy: resume.intent.ref } } });
-    expect((await fixture.read()).run.controlState).toEqual({ intentRef: resume.intent.ref, desiredState: 'running' });
-  });
-
-  it('RD-8: once a successor Run holds the Lease, the yielded Run takes no control and nothing is written', async () => {
-    const fixture = await open();
-    await yieldedRun(fixture);
-    const real = createRunStateReader({ records: fixture.base.records });
-    // The successor claim of the continuation re-holds the Task Lease (ATT-15); its
-    // writer is the continuation claim, so the read port reports that holder here.
-    const consumed: ExecutionReadPort = { async readExecution(ctx, ref, options) {
-      const read = await real.readExecution(ctx, ref, options);
-      return read.status !== 'ready' || read.value.lease === null ? read
-        : { status: 'ready', value: { ...read.value, lease: { ...read.value.lease, holderRunId: 'a2-successor-run',
-          attemptId: 'a2-successor-attempt' } } };
-    } };
-    const counted = countingCommits(fixture.base.records);
-    const controls = controlsOn(counted.records, 'consumed', consumed);
-    for (const kind of ['pause', 'cancel', 'resume', 'steer'] as const) {
-      expect(await controls.submitControl(fixture.ctx, { input: { runRef: fixture.claim.runRef, kind, reason: 'too late' },
-        meta: { requestId: `a2-consumed-${kind}`, expected: [await fixture.pin()] } }), kind).toEqual({ status: 'rejected', code: 'busy',
-        reason: 'a successor Run already consumed the yielded wait continuation; no new control intent is accepted' });
-    }
-    expect(counted.commits()).toBe(0);
-    // While the yielded Run still holds the released Lease, the wait-window control is accepted.
-    expect(await controlsOn(fixture.base.records, 'not-consumed').submitControl(fixture.ctx, {
-      input: { runRef: fixture.claim.runRef, kind: 'cancel', reason: null },
-      meta: { requestId: 'a2-not-consumed-cancel', expected: [await fixture.pin()] } }))
-      .toMatchObject({ status: 'committed', value: { intent: { status: 'queued' } } });
-  });
-});
-
 describe('D-9: a resume needs the Goal active', () => {
-  /** The Goal read through this port reports `desiredState` (its writer `setGoalControl` is tested in A2-goal-control). */
-  function goalReadAs(records: B2Records, goalKey: string, desiredState: 'paused' | 'cancelled'): B2Records {
-    return { ...records, async readMany(keys) {
-      const read = await records.readMany(keys);
-      if (read.status !== 'ready') return read;
-      return { ...read, value: { ...read.value, records: read.value.records.map(record => record.refKey !== goalKey ? record
-        : { ...record, json: JSON.stringify({ ...JSON.parse(record.json) as Record<string, unknown>, desiredState }) }) } };
-    } };
+  /** The public Goal owner writes the desired state; the task graph supplies the GoalPhase pin. */
+  async function setGoal(fixture: B2ExecutionFixture, control: 'pause' | 'resume' | 'cancel', requestId: string) {
+    const goal = await fixture.base.plans.queryGoal(fixture.ctx, fixture.base.goalRef);
+    const graph = await fixture.base.plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.base.goalRef });
+    if (goal.status !== 'ready' || graph.status !== 'ready') throw Error('the Goal and its task graph must be readable');
+    const completion = graph.value.completion;
+    return fixture.base.goals.setGoalControl(fixture.ctx, {
+      input: { goalRef: fixture.base.goalRef, control, reason: `operator ${control}` },
+      meta: { requestId, expected: [
+        { ref: fixture.base.goalRef, revision: goal.value.goal.revision },
+        { ref: { aggregateType: 'GoalPhase' as const, projectId: fixture.base.goalRef.projectId,
+          goalId: fixture.base.goalRef.goalId },
+          revision: completion?.status === 'recorded' ? completion.snapshot.revision : 0 },
+      ] } });
   }
 
   it('refuses a resume of a not-entered and of an entered Run while the Goal is paused or cancelled; pause and cancel stay accepted', async () => {
-    const fixture = await open();
-    const goalKey = b2Key({ aggregateType: 'Goal', projectId: fixture.claim.task.projectId, goalId: fixture.claim.task.goalId });
-    const controls = controlsOn(fixture.base.records, 'goal');
-    await submit(fixture, controls, 'a2-goal-pause', 'pause');
-    for (const desiredState of ['paused', 'cancelled'] as const) {
-      const counted = countingCommits(goalReadAs(fixture.base.records, goalKey, desiredState));
-      expect(await controlsOn(counted.records, `goal-${desiredState}`).submitControl(fixture.ctx, {
-        input: { runRef: fixture.claim.runRef, kind: 'resume', reason: null },
-        meta: { requestId: `a2-goal-${desiredState}-resume`, expected: [await fixture.pin()] } }))
-        .toEqual({ status: 'rejected', code: 'busy',
-          reason: `the Goal is ${desiredState}; a single Run is not resumed while its Goal is not active` });
-      expect(counted.commits()).toBe(0);
-    }
-    expect((await submit(fixture, controls, 'a2-goal-active-resume', 'resume')).intent).toMatchObject({ status: 'applied' });
+    // ---- paused Goal, not-entered Run -------------------------------------------------
+    const pausedFixture = await open();
+    const pausedControls = controlsOn(pausedFixture.base.records, 'goal-paused');
+    await submit(pausedFixture, pausedControls, 'a2-goal-pause', 'pause');
+    expect(await setGoal(pausedFixture, 'pause', 'a2-goal-paused')).toMatchObject({ status: 'committed',
+      value: { desiredState: 'paused' } });
+    const counted = countingCommits(pausedFixture.base.records);
+    expect(await controlsOn(counted.records, 'goal-paused').submitControl(pausedFixture.ctx, {
+      input: { runRef: pausedFixture.claim.runRef, kind: 'resume', reason: null },
+      meta: { requestId: 'a2-goal-paused-resume', expected: [await pausedFixture.pin()] } }))
+      .toEqual({ status: 'rejected', code: 'busy',
+        reason: 'the Goal is paused; a single Run is not resumed while its Goal is not active' });
+    expect(counted.commits()).toBe(0);
+    expect(await setGoal(pausedFixture, 'resume', 'a2-goal-resumed')).toMatchObject({ status: 'committed',
+      value: { desiredState: 'active' } });
+    expect((await submit(pausedFixture, pausedControls, 'a2-goal-active-resume', 'resume')).intent)
+      .toMatchObject({ status: 'applied' });
 
     // A paused Goal does not stop a pause or a cancel of the Run.
-    const pausedGoal = controlsOn(goalReadAs(fixture.base.records, goalKey, 'paused'), 'goal-paused-pause');
-    expect((await submit(fixture, pausedGoal, 'a2-goal-paused-pause', 'pause')).intent).toMatchObject({ status: 'applied' });
+    await setGoal(pausedFixture, 'pause', 'a2-goal-paused-again');
+    const stillPaused = controlsOn(pausedFixture.base.records, 'goal-paused-pause');
+    expect((await submit(pausedFixture, stillPaused, 'a2-goal-paused-pause', 'pause')).intent).toMatchObject({ status: 'applied' });
+
+    // ---- cancelled Goal (not resumable), not-entered Run --------------------------------
+    // Its own fixture: a cancelled Goal cannot be made active again. The refused resume
+    // goes through an A3 commit counter on the real records: it writes nothing.
+    const notEnteredFixture = await open();
+    const notEnteredControls = controlsOn(notEnteredFixture.base.records, 'goal-cancelled-not-entered');
+    await submit(notEnteredFixture, notEnteredControls, 'a2-goal-not-entered-pause', 'pause');
+    expect(await setGoal(notEnteredFixture, 'cancel', 'a2-goal-not-entered-cancelled')).toMatchObject({ status: 'committed',
+      value: { desiredState: 'cancelled' } });
+    const countedNotEntered = countingCommits(notEnteredFixture.base.records);
+    expect(await controlsOn(countedNotEntered.records, 'goal-cancelled-not-entered-resume').submitControl(notEnteredFixture.ctx, {
+      input: { runRef: notEnteredFixture.claim.runRef, kind: 'resume', reason: null },
+      meta: { requestId: 'a2-goal-cancelled-not-entered-resume', expected: [await notEnteredFixture.pin()] } }))
+      .toEqual({ status: 'rejected', code: 'busy',
+        reason: 'the Goal is cancelled; a single Run is not resumed while its Goal is not active' });
+    expect(countedNotEntered.commits()).toBe(0);
+
+    // ---- cancelled Goal (not resumable), entered Run from the real Runtime -------------
+    const cancelledFixture = await open();
+    const steps = await createS2BRuntimeSteps({
+      base: cancelledFixture.base, bodies: cancelledFixture.bodies, ctx: cancelledFixture.ctx,
+      directory: cancelledFixture.base.directory, scope: cancelledFixture.base.scope,
+      now: () => B2_AT, setClock: () => undefined,
+      eventId: () => 'a2-goal-event', newId: () => 'a2-goal-id', consumerId: 'runtime-a',
+    });
+    try {
+      const enteredControls = controlsOn(cancelledFixture.base.records, 'goal-cancelled');
+      const handle = await steps.start(cancelledFixture.claim, { at: B2_AT, replies: [
+        { kind: 'calls', calls: [{ callId: 'a2-goal-read', name: 'read', args: { path: 'package.json' } }] },
+        { kind: 'text', text: 'A2 goal cancelled after the pause' },
+      ] });
+      await handle.entered;
+      // A real pause on the entered Run: the model reply is held at the A3 gate; releasing
+      // it lets the Runtime reach its tool-group safe point, which applies the pause.
+      const pause = await submit(cancelledFixture, enteredControls, 'a2-goal-entered-pause', 'pause');
+      expect(pause.intent).toMatchObject({ status: 'queued' });
+      handle.release();
+      await handle.settled;
+      expect(await readIntent(enteredControls, cancelledFixture, pause.intent.ref))
+        .toMatchObject({ status: 'applied', observation: { kind: 'paused' } });
+
+      expect(await setGoal(cancelledFixture, 'cancel', 'a2-goal-cancelled')).toMatchObject({ status: 'committed',
+        value: { desiredState: 'cancelled' } });
+      const countedEntered = countingCommits(cancelledFixture.base.records);
+      expect(await controlsOn(countedEntered.records, 'goal-cancelled-resume').submitControl(cancelledFixture.ctx, {
+        input: { runRef: cancelledFixture.claim.runRef, kind: 'resume', reason: null },
+        meta: { requestId: 'a2-goal-cancelled-resume', expected: [await cancelledFixture.pin()] } }))
+        .toEqual({ status: 'rejected', code: 'busy',
+          reason: 'the Goal is cancelled; a single Run is not resumed while its Goal is not active' });
+      expect(countedEntered.commits()).toBe(0);
+      // A cancelled Goal is terminal: the public owner refuses to resume it.
+      expect(await setGoal(cancelledFixture, 'resume', 'a2-goal-cancelled-resume-goal'))
+        .toMatchObject({ status: 'rejected', code: 'invalid', reason: 'the Goal is cancelled (terminal); a resume has no effect' });
+      const stillCancelled = await cancelledFixture.base.plans.queryGoal(cancelledFixture.ctx, cancelledFixture.base.goalRef);
+      expect(stillCancelled).toMatchObject({ status: 'ready', value: { goal: { desiredState: 'cancelled' } } });
+    } finally {
+      await steps.close();
+    }
   });
 });
 

@@ -13,10 +13,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import type { EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import type { EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { RecordCountPort, RecordLookupIndex, RecordLookupPort, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
+import {
+  commitRow, event, keyV, keyW, recordSchema, typed,
+} from '../helpers/SP-record-store-support.js';
 
-const at = '2026-10-16T00:00:00.000Z';
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
 
@@ -24,27 +26,6 @@ type Backend = {
   records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort;
   close(): Promise<void>;
 };
-
-function recordSchema(aggregateType: string) {
-  return {
-    schemaId: `${aggregateType}@1`,
-    aggregateType,
-    validate: (record: EncodedRecord) => {
-      const body: unknown = JSON.parse(record.json);
-      if (typeof body !== 'object' || body === null || !('ref' in body)) {
-        return { status: 'invalid' as const, reason: 'ref missing' };
-      }
-      return { status: 'decoded' as const, value: record };
-    },
-  };
-}
-
-function event(id: string): EncodedDomainEvent {
-  return {
-    eventId: id, eventType: 'Changed', schemaVersion: 1, occurredAt: at,
-    json: JSON.stringify({ eventId: id, eventType: 'Changed', schemaVersion: 1, occurredAt: at }),
-  };
-}
 
 async function open(kind: 'memory' | 'sqlite', schemas: RecordBackendSchemas): Promise<{ backend: Backend; path?: string }> {
   if (kind === 'memory') {
@@ -119,37 +100,17 @@ const isolationSchemas: RecordBackendSchemas = {
   lookups: [...wIndexes, ...vIndexes],
 };
 
-const keyW = (id: string) => `{"aggregateType":"W","id":${JSON.stringify(id)}}`;
-const keyV = (id: string) => `{"aggregateType":"V","id":${JSON.stringify(id)}}`;
-
-function typed(aggregateType: 'W' | 'V', id: string, body: Record<string, unknown>): EncodedRecord {
-  return {
-    refKey: aggregateType === 'W' ? keyW(id) : keyV(id),
-    schemaId: `${aggregateType}@1`,
-    revision: 1,
-    json: JSON.stringify({ ref: { aggregateType, id }, revision: 1, group: 'shared', ...body }),
-  };
-}
-
-function commitRow(backend: Backend, id: string, row: EncodedRecord): Promise<unknown> {
-  const commit: PreparedCommit = {
-    identityKey: id, fingerprint: `fp-${id}`, guards: [{ refKey: row.refKey, expectedRevision: null }],
-    records: [row], events: [event(id)], claims: [], indexGuards: [], indexChanges: [],
-  };
-  return backend.records.commit(commit);
-}
-
 it.each(['memory', 'sqlite'] as const)('SP-33 %s: type filters stay on their own aggregate type', async (kind) => {
   const { backend } = await open(kind, isolationSchemas);
   try {
     // W: three rows whose `status` values are open/held/missing; V: three rows
     // with closed/missing/open, so `open` is shared by both types.
-    expect(await commitRow(backend, 'w1', typed('W', 'w1', { status: 'open', n: 1 }))).toMatchObject({ status: 'committed' });
-    expect(await commitRow(backend, 'w2', typed('W', 'w2', { n: 2 }))).toMatchObject({ status: 'committed' });
-    expect(await commitRow(backend, 'w3', typed('W', 'w3', { status: 'held', n: 3 }))).toMatchObject({ status: 'committed' });
-    expect(await commitRow(backend, 'v1', typed('V', 'v1', { status: 'closed', n: 1 }))).toMatchObject({ status: 'committed' });
-    expect(await commitRow(backend, 'v2', typed('V', 'v2', { n: 2 }))).toMatchObject({ status: 'committed' });
-    expect(await commitRow(backend, 'v3', typed('V', 'v3', { status: 'open', n: 3 }))).toMatchObject({ status: 'committed' });
+    expect(await commitRow(backend, 'w1', typed('W', 'w1', { status: 'open', n: 1 }, { group: 'shared' }))).toMatchObject({ status: 'committed' });
+    expect(await commitRow(backend, 'w2', typed('W', 'w2', { n: 2 }, { group: 'shared' }))).toMatchObject({ status: 'committed' });
+    expect(await commitRow(backend, 'w3', typed('W', 'w3', { status: 'held', n: 3 }, { group: 'shared' }))).toMatchObject({ status: 'committed' });
+    expect(await commitRow(backend, 'v1', typed('V', 'v1', { status: 'closed', n: 1 }, { group: 'shared' }))).toMatchObject({ status: 'committed' });
+    expect(await commitRow(backend, 'v2', typed('V', 'v2', { n: 2 }, { group: 'shared' }))).toMatchObject({ status: 'committed' });
+    expect(await commitRow(backend, 'v3', typed('V', 'v3', { status: 'open', n: 3 }, { group: 'shared' }))).toMatchObject({ status: 'committed' });
 
     const wPlainOpen = await backend.records.lookup({ index: 'w-plain', values: ['shared', 'open'], limit: 10 });
     expect(wPlainOpen).toMatchObject({ status: 'ready', value: { records: [{ refKey: keyW('w1') }] } });

@@ -129,7 +129,7 @@ async function runCommand(host: Started, requestId: string, command: string): Pr
   }, { timeout: 10_000, interval: 25 }).toBe('settled');
 }
 
-it('RL-44 a live save reaches the next command through the production holder without a restart', async () => {
+it('RL-44 RL-34 a live save reaches the next workbench command page through the production holder without a restart', async () => {
   rlSandbox.status = { status: 'available' };
   rlSandbox.next = () => defaultRLSandboxResult();
   const settingsDirectory = await temp('rl-44-live-settings-');

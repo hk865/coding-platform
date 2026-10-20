@@ -31,7 +31,6 @@ import type {
 import { decodeNoticeOrigin } from '../persistence/decision-record-codecs.js';
 import {
   decodeVerificationRoundSnapshot,
-  S2B_ROUND_BY_GOAL_LEGACY_LOOKUP,
   S2B_ROUND_BY_GOAL_LOOKUP,
 } from '../persistence/evidence-record-codecs.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
@@ -315,7 +314,7 @@ async function readCalendarWindow(
   let runsNotEntered = 0;
   let runsInProgress = 0;
   let runsUnplaced = 0;
-  let checksUnplaced = 0;
+  const checksUnplaced = 0;
   let runsSessionUnknown = 0;
   let checksGateUnplaced = 0;
 
@@ -475,15 +474,6 @@ async function readCalendarWindow(
         addTask(cell, taskId, 0, 0, checks);
       },
     });
-  }
-
-  // ---- 5. Legacy rounds without `since` (time unknown) --------------------
-  const legacyRows = await readEqualityAll(records, S2B_ROUND_BY_GOAL_LEGACY_LOOKUP,
-    [input.goalRef.projectId, workspaceId, input.goalRef.goalId, null], budget);
-  for (const record of legacyRows) {
-    const decoded = decodeVerificationRoundSnapshot(record);
-    if (decoded.status !== 'decoded') throw rejected('unavailable', `round ${record.refKey}: ${decoded.reason}`);
-    checksUnplaced += checksBegun(decoded.value);
   }
 
   // ---- R4: resolve every returned SessionRef; enforce the bound workspace.

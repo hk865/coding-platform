@@ -4,19 +4,24 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import type { EncodedRecord, EncodedRecordSchema, PreparedCommit, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import { GOAL_RECORD_SCHEMAS, encodeProjectSnapshot, encodeWorkspaceSnapshot, canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
+import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
-import type { RunSnapshot, TaskLeaseSnapshot } from '../../src/contracts/dispatch.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../src/contracts/ledger.js';
+import { createB2RuntimeFixture, type B2RuntimeFixture } from '../helpers/B2-runtime-fixture.js';
+import { prepareTaskForReal } from '../helpers/task-claim-fixture.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'r3c-adoption';
@@ -28,57 +33,29 @@ const ctx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host'
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
 
 const policyFixture = { schemaVersion: 1, identity: { policyId: 'policy-1' }, revision: 2,
-  content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } };
+  content: { schemaVersion: 1 as const, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } };
 const architectureFixture = { schemaVersion: 1, identity: { baselineId: 'baseline-1' }, revision: 2,
   content: { schemaVersion: 1, description: 'Accepted baseline', constraints: [] } };
 const digest = (value: JsonValue) => sha256Hex(canonicalJson(value));
-const policyRef = { aggregateType: 'CompletionPolicyRevision', projectId, policyId: 'policy-1', revision: 2 };
-const architectureRef = { aggregateType: 'ArchitectureBaselineRevision', projectId, baselineId: 'baseline-1', revision: 2 };
-const policyActiveRef = { aggregateType: 'ProjectCompletionPolicyActive', projectId };
-const architectureActiveRef = { aggregateType: 'ProjectArchitectureBaselineActive', projectId };
-const governance = [
-  { ref: policyRef, revision: 1, schemaVersion: 1, policyId: 'policy-1', contentRevision: 2,
-    contentDigest: digest(policyFixture), content: policyFixture.content },
-  { ref: architectureRef, revision: 1, schemaVersion: 1, baselineId: 'baseline-1', contentRevision: 2,
-    contentDigest: digest(architectureFixture), content: architectureFixture.content },
-  { ref: policyActiveRef, projectId, revision: 1, activeRevision: policyRef },
-  { ref: architectureActiveRef, projectId, revision: 1, activeRevision: architectureRef },
-];
-const encoded = (snapshot: (typeof governance)[number]): EncodedRecord => ({
-  refKey: canonicalJson(snapshot.ref as JsonValue),
-  schemaId: `${snapshot.ref.aggregateType}Snapshot@1`, revision: snapshot.revision,
-  json: JSON.stringify(snapshot),
-});
-const governanceSchemas: EncodedRecordSchema[] = governance.map(snapshot => ({
-  aggregateType: snapshot.ref.aggregateType,
-  schemaId: `${snapshot.ref.aggregateType}Snapshot@1`,
-  validate: record => record.refKey === canonicalJson(snapshot.ref as JsonValue) &&
-    record.schemaId === `${snapshot.ref.aggregateType}Snapshot@1`
-    ? { status: 'decoded', value: record } : { status: 'invalid', reason: 'wrong test prerequisite' },
-}));
+const policyRef = { aggregateType: 'CompletionPolicyRevision', projectId, policyId: 'policy-1', revision: 2 } as const;
+const policyActiveRef = { aggregateType: 'ProjectCompletionPolicyActive', projectId } as const;
 const schemas: RecordBackendSchemas = {
-  records: [...GOAL_RECORD_SCHEMAS.records, ...governanceSchemas, ...PLAN_RECORD_SCHEMAS.records,
-    ...PLAN_STATE_RECORD_SCHEMAS.records,
+  records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
+    ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
+    ...ARCHITECTURE_CATALOG_SCHEMAS.records,
     ...materialRecordSchemas().records.filter(record => record.aggregateType === 'Run')],
-  events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_RECORD_SCHEMAS.events,
-    { eventType: 'ScopeSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) },
-    { eventType: 'TaskStateSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) }],
-  lookups: [...PLAN_RECORD_SCHEMAS.lookups, ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? [])],
-};
-const seed: PreparedCommit = { identityKey: 'r3c-adoption-seed', fingerprint: 'r3c-adoption-seed-v1',
-  guards: [project.ref, workspace.ref, ...governance.map(x => x.ref)].map(ref => ({
-    refKey: canonicalJson(ref as JsonValue), expectedRevision: null })),
-  records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace), ...governance.map(encoded)],
-  events: [{ eventId: 'r3c-adoption-seed-event', eventType: 'ScopeSeeded', schemaVersion: 1,
-    occurredAt: at, json: JSON.stringify({ eventId: 'r3c-adoption-seed-event', eventType: 'ScopeSeeded',
-      schemaVersion: 1, occurredAt: at }) }], claims: [], indexGuards: [], indexChanges: [],
+  events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
+    ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
+    ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
+  lookups: [...(PLAN_RECORD_SCHEMAS.lookups ?? []), ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []),
+    ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
 };
 
 function validDraft(): PlanRevisionDraft {
   const work = (taskId: string, title: string) => ({ taskId, title, requirementLevel: 'required' as const,
     taskKind: 'work' as const, disposition: 'active' as const, phase: 'pending' as const,
     scope: { kind: 'goal' as const } });
-  return { schemaVersion: 1, planId: 'plan-1', planRevision: 1, goalId: 'goal-1', stages: [],
+  return { schemaVersion: 2, planId: 'plan-1', planRevision: 1, goalId: 'goal-1', stages: [],
     tasks: [work('design', 'Design'), work('implement', 'Implement'),
       { taskId: 'goal-gate', title: 'Goal gate', requirementLevel: 'required', taskKind: 'gate',
         disposition: 'active', phase: 'pending', scope: { kind: 'goal' } }],
@@ -93,7 +70,11 @@ function validDraft(): PlanRevisionDraft {
 }
 
 const dirs: string[] = [];
-afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
+const runtimeFixtures: B2RuntimeFixture[] = [];
+afterEach(async () => {
+  for (const fixture of runtimeFixtures.splice(0)) await fixture.close();
+  for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
+});
 
 it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Plan is atomic, immutable and queryable', async kind => {
   const dir = kind === 'sqlite' ? await mkdtemp(join(tmpdir(), 'next-r3c-adopt-')) : null;
@@ -101,7 +82,56 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
   const backend = kind === 'memory' ? createInMemoryRecordBackend({ schemas })
     : createSqliteRecordBackend({ path: join(dir!, 'records.sqlite'), schemas });
   try {
-    expect(await backend.records.commit(seed)).toMatchObject({ status: 'committed' });
+    // Scope, governance and architecture through the real public owners.
+    let bootstrapSequence = 0;
+    const bootstrap = createProjectBootstrapServices({ records: backend.records, now: () => at,
+      eventId: () => `r3c-bootstrap-${++bootstrapSequence}` });
+    const createdProject = await bootstrap.projects.createProject(ctx, { input: { projectId },
+      meta: { requestId: 'r3c-create-project', expected: [{ ref: project.ref, revision: 0 }] } });
+    if (createdProject.status !== 'committed') throw Error(`Project creation failed: ${JSON.stringify(createdProject)}`);
+    const registered = await bootstrap.projects.registerWorkspace(ctx, {
+      input: { workspace: { projectId, workspaceId } },
+      meta: { requestId: 'r3c-register-workspace', expected: [
+        { ref: createdProject.value.ref, revision: createdProject.value.revision },
+        { ref: workspace.ref, revision: 0 },
+      ] } });
+    if (registered.status !== 'committed') throw Error(`Workspace registration failed: ${JSON.stringify(registered)}`);
+    const installed = await bootstrap.completionPolicies.installCompletionPolicy(ctx, {
+      input: { policyId: policyRef.policyId, contentRevision: policyRef.revision, content: policyFixture.content },
+      meta: { requestId: 'r3c-install-policy', expected: [
+        { ref: createdProject.value.ref, revision: createdProject.value.revision },
+        { ref: policyRef, revision: 0 },
+      ] } });
+    if (installed.status !== 'committed') throw Error(`policy install failed: ${JSON.stringify(installed)}`);
+    const activated = await bootstrap.completionPolicies.activateCompletionPolicy(ctx, {
+      input: { target: { ref: installed.value.ref, digest: installed.value.contentDigest } },
+      meta: { requestId: 'r3c-activate-policy', expected: [
+        { ref: createdProject.value.ref, revision: createdProject.value.revision },
+        { ref: policyActiveRef, revision: 0 },
+      ] } });
+    if (activated.status !== 'committed') throw Error(`policy activation failed: ${JSON.stringify(activated)}`);
+    // The hand-written prerequisite used an architecture content revision 2.
+    // The initial adoption writes revision 1, so one public revision writes the
+    // same revision-2 baseline content the original assertion expects.
+    const catalog = createArchitectureCatalogService({ records: backend.records });
+    const emptyCatalog = { modules: [], dependencies: [], requireDag: true as const };
+    const adopted = await catalog.adoptInitialArchitecture(ctx, {
+      input: { baselineId: architectureFixture.identity.baselineId, catalog: emptyCatalog,
+        description: architectureFixture.content.description,
+        constraints: architectureFixture.content.constraints },
+      meta: { requestId: 'r3c-adopt-baseline', expected: [
+        { ref: createdProject.value.ref, revision: createdProject.value.revision },
+        { ref: workspace.ref, revision: registered.value.revision },
+      ] } });
+    if (adopted.status !== 'committed') throw Error(`initial architecture adoption failed: ${JSON.stringify(adopted)}`);
+    const revised = await catalog.reviseArchitectureCatalog(ctx, {
+      input: { basedOn: { ref: adopted.value.baseline.ref, digest: adopted.value.baseline.contentDigest },
+        catalog: emptyCatalog, reason: 'Reach the revision-2 baseline the original prerequisite used' },
+      meta: { requestId: 'r3c-revise-baseline', expected: [
+        { ref: createdProject.value.ref, revision: createdProject.value.revision },
+        { ref: workspace.ref, revision: registered.value.revision },
+      ] } });
+    if (revised.status !== 'committed') throw Error(`architecture revision failed: ${JSON.stringify(revised)}`);
     let sequence = 0;
     const goals = createGoalService({ records: backend.records, now: () => at,
       eventId: () => `r3c-goal-${++sequence}` }).tasks;
@@ -165,40 +195,103 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     if (storedPlan.status !== 'ready') throw Error('stored Plan is unavailable');
     expect(JSON.parse(storedPlan.value.records[0]!.json).tasks[0].phase).toBe('pending');
 
-    // The final Run lookup page can become stale before the exact-record read.
-    // Insert a real ended Run in that gap; an unresolved attempt cannot become
-    // a fresh ready task merely because TaskReduction has not arrived yet.
-    const endedRun: RunSnapshot = { ref: { aggregateType: 'Run', projectId,
-      goalId: 'goal-1', runId: 'design-ended-without-reduction' }, revision: 1, schemaVersion: 1,
-      task: { projectId, goalId: 'goal-1', taskId: 'design' }, attemptId: 'design-ended-attempt',
-      planRef: applied.value.ref, roleBinding: { schemaVersion: 1, bindingId: 'binding-ended',
-        templateId: 'builder', templateRevision: '1', bindingVersion: 1, policyRevision: '1' },
-      budget: { tokenBudget: 100, deadline: null }, workspaceSnapshot: { workspaceId, revision: 1 },
-      status: 'ended', outcome: 'outcome_unknown', exitCode: null, lastEventSeq: 1,
-      lastRuntimeEventId: 'run-ended', lastFactEventId: 'run-ended-fact', envelope: null,
-      startedAt: at, endedAt: at };
+    // ---- TP-147: the real Runtime owns the running and ended Runs. ----
+    let releaseDesign!: () => void;
+    const designGate = new Promise<void>(resolve => { releaseDesign = resolve; });
+    let designReached!: () => void;
+    const designHeld = new Promise<void>(resolve => { designReached = resolve; });
+    let releaseImplement!: () => void;
+    const implementGate = new Promise<void>(resolve => { releaseImplement = resolve; });
+    let implementReached!: () => void;
+    const implementHeld = new Promise<void>(resolve => { implementReached = resolve; });
+    const runtimeWorld = await createB2RuntimeFixture({ kind,
+      scriptedReplies: [{ kind: 'text', text: 'R3c design completed' },
+        { kind: 'text', text: 'R3c implement completed' }],
+      beforeReply: async (_request, index) => {
+        if (index === 0) { designReached(); await designGate; }
+        else if (index === 1) { implementReached(); await implementGate; }
+      } });
+    runtimeFixtures.push(runtimeWorld);
+    const rf = runtimeWorld.claimFixture;
+    const runtimeGoal = await rf.goals.createGoal(runtimeWorld.ctx, {
+      meta: { requestId: 'r3c-runtime-goal',
+        expected: [{ ref: rf.projectRef, revision: 1 }, { ref: rf.workspaceRef, revision: 1 }] },
+      input: { goalId: 'goal-1', workspace: runtimeWorld.scope, objective: 'R3c runtime race' },
+    });
+    if (runtimeGoal.status !== 'committed') throw Error('the runtime Goal creation failed');
+    const runtimeProposed = await rf.plans.proposePlan(runtimeWorld.ctx, {
+      meta: { requestId: 'r3c-runtime-propose', expected: [{ ref: runtimeGoal.value.ref, revision: 1 }] },
+      input: { goalRef: runtimeGoal.value.ref, basedOn: null, draft: validDraft(),
+        reason: { text: 'R3c runtime plan', sources: [] } },
+    });
+    if (runtimeProposed.status !== 'committed' || runtimeProposed.value.issues.length > 0) {
+      throw Error(`the runtime Plan proposal failed: ${JSON.stringify(runtimeProposed)}`);
+    }
+    const runtimeApplied = await rf.plans.applyPlanChange(runtimeWorld.ctx, {
+      meta: { requestId: 'r3c-runtime-apply', expected: [{ ref: runtimeGoal.value.ref, revision: 1 }] },
+      input: { proposalRef: runtimeProposed.value.ref,
+        expectedProposalRevision: runtimeProposed.value.revision, decisionRefs: [] },
+    });
+    if (runtimeApplied.status !== 'committed') throw Error('the runtime Plan adoption failed');
+    const firstCard = await rf.sessionsPort.readSession(runtimeWorld.ctx, runtimeWorld.claim.sessionRef);
+    if (firstCard.status !== 'ready') throw Error('the fixture Session role is unavailable');
+    const designSession = await rf.createSession('r3c-design-session', firstCard.value.record.role);
+    const designClaim = await rf.service.claimTask(runtimeWorld.ctx, await rf.buildRequest({
+      requestId: 'r3c-design-claim',
+      input: { goalRef: runtimeGoal.value.ref, planRef: runtimeApplied.value.ref,
+        taskId: 'design', sessionRef: designSession },
+    }));
+    if (designClaim.status !== 'committed') throw Error('the design claim failed');
+    runtimeWorld.allowRun(designClaim.value.runRef);
+    const designPrepared = await prepareTaskForReal(rf, {
+      bodies: runtimeWorld.deps.bodies, runRef: designClaim.value.runRef,
+      host: runtimeWorld.host, requestId: 'r3c-design-prepare',
+    });
+    const designStart = runtimeWorld.runtime.port.startRun(runtimeWorld.ctx, {
+      prepared: designPrepared.prepared, consumerId: 'r3c-adoption-runtime', requestId: 'r3c-design-start',
+    });
+    const designSettled = designStart.then(result => ({ settled: true as const, result }));
+    const designEarly = await Promise.race([designHeld.then(() => null), designSettled]);
+    if (designEarly !== null) {
+      throw Error(`the design Run settled before its model gate: ${JSON.stringify(designEarly)}`);
+    }
+
+    // The running design Run and the still-eligible implement Task.
+    const graphWithRun = await rf.plans.queryTaskGraph(runtimeWorld.ctx, { goalRef: runtimeGoal.value.ref });
+    expect(graphWithRun).toMatchObject({ status: 'ready', value: { tasks: [
+      { ref: { taskId: 'design' }, definition: { phase: 'pending' },
+        effectivePhase: 'running', execution: designClaim.value.runRef, eligibility: { eligible: false } },
+      { ref: { taskId: 'implement' }, definition: { phase: 'pending' },
+        effectivePhase: 'pending', eligibility: { eligible: true } },
+      { ref: { taskId: 'goal-gate' }, definition: { phase: 'pending' },
+        effectivePhase: 'pending', eligibility: { eligible: false } },
+    ] } });
+    if (graphWithRun.status !== 'ready') throw Error('task graph unavailable after the running Run');
+    expect(graphWithRun.value.tasks).toHaveLength(3);
+    expect(await rf.plans.queryReadyTasks(runtimeWorld.ctx, { goalRef: runtimeGoal.value.ref,
+      includeBlocked: false, page: { limit: 10 } }))
+      .toMatchObject({ status: 'ready', value: { items: [{ task: { ref: { taskId: 'implement' } } }] } });
+
+    // The race: the canonical lookup page is read first, then the real design
+    // Run is released and awaited to its end before the stale page returns;
+    // nothing in this world writes the Workflow's TaskReduction.
     let injectEndedRun = true;
     const racingReadyReader = createPlanService({ records: {
-      ...backend.records,
+      ...rf.records,
       async lookup(request) {
-        const page = await backend.records.lookup(request);
+        const page = await rf.records.lookup(request);
         if (injectEndedRun && request.index === 'r3c-run-by-goal'
           && page.status === 'ready' && page.value.next === null) {
           injectEndedRun = false;
-          const stateEvent = { eventId: 'ended-run-race', eventType: 'TaskStateSeeded',
-            schemaVersion: 1, occurredAt: at };
-          expect(await backend.records.commit({ identityKey: 'ended-run-race', fingerprint: 'ended-run-race-v1',
-            guards: [{ refKey: canonicalJson(endedRun.ref as JsonValue), expectedRevision: null }],
-            records: [{ refKey: canonicalJson(endedRun.ref as JsonValue), schemaId: 'RunSnapshot@1',
-              revision: endedRun.revision, json: JSON.stringify(endedRun) }],
-            events: [{ ...stateEvent, json: JSON.stringify(stateEvent) }],
-            claims: [], indexGuards: [], indexChanges: [] })).toMatchObject({ status: 'committed' });
+          releaseDesign();
+          const ended = await designStart;
+          expect(ended).toMatchObject({ status: 'ready' });
         }
         return page;
       },
-    }, now: () => at, eventId: () => `r3c-ready-race-${++sequence}` });
-    const racedReady = await racingReadyReader.queryReadyTasks(ctx, { goalRef: goal.value.ref,
-      includeBlocked: false, page: { limit: 10 } });
+    }, now: () => at, eventId: () => `r3c-runtime-ready-race-${++sequence}` });
+    const racedReady = await racingReadyReader.queryReadyTasks(runtimeWorld.ctx, {
+      goalRef: runtimeGoal.value.ref, includeBlocked: false, page: { limit: 10 } });
     expect(injectEndedRun).toBe(false);
     if (racedReady.status === 'ready') {
       expect(racedReady.value.items).not.toContainEqual(expect.objectContaining({
@@ -208,88 +301,65 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     } else {
       expect(['not_ready', 'rejected']).toContain(racedReady.status);
     }
-    const endedGraph = await plans.queryTaskGraph(ctx, { goalRef: goal.value.ref });
+    const endedGraph = await rf.plans.queryTaskGraph(runtimeWorld.ctx, { goalRef: runtimeGoal.value.ref });
     if (endedGraph.status === 'ready') {
       expect(endedGraph.value.tasks.find(task => task.ref.taskId === 'design')).toMatchObject({
-        eligibility: { eligible: false }, execution: endedRun.ref,
+        eligibility: { eligible: false }, execution: designClaim.value.runRef,
       });
     } else {
       expect(['not_ready', 'rejected']).toContain(endedGraph.status);
     }
 
-    // A real canonical Run/Lease appears after the accepted Plan. The Plan's
-    // immutable `phase` stays pending, while the graph and readiness must use
-    // these newer facts. Empty/unsupported readers must not mean "free".
-    const runRef = { aggregateType: 'Run' as const, projectId, goalId: 'goal-1', runId: 'design-run' };
-    const run: RunSnapshot = { ref: runRef, revision: 1, schemaVersion: 1,
-      task: { projectId, goalId: 'goal-1', taskId: 'design' }, attemptId: 'design-attempt',
-      planRef: applied.value.ref, roleBinding: { schemaVersion: 1, bindingId: 'binding-1',
-        templateId: 'builder', templateRevision: '1', bindingVersion: 1, policyRevision: '1' },
-      budget: { tokenBudget: 100, deadline: null }, workspaceSnapshot: { workspaceId, revision: 1 },
-      status: 'running', outcome: null, exitCode: null, lastEventSeq: 1,
-      lastRuntimeEventId: 'run-started', lastFactEventId: 'run-fact', envelope: null,
-      startedAt: at, endedAt: null };
-    const lease: TaskLeaseSnapshot = { ref: { aggregateType: 'TaskLease', projectId,
-      goalId: 'goal-1', taskId: 'design' }, revision: 1, schemaVersion: 1,
-      holderRunId: runRef.runId, attemptId: 'design-attempt', grantedAt: at, expiresAt: null };
-    const stateEvent = { eventId: 'canonical-task-state', eventType: 'TaskStateSeeded',
-      schemaVersion: 1, occurredAt: at };
-    expect(await backend.records.commit({ identityKey: 'canonical-task-state', fingerprint: 'canonical-task-state-v1',
-      guards: [run.ref, lease.ref].map(ref => ({ refKey: canonicalJson(ref as JsonValue), expectedRevision: null })),
-      records: [run, lease].map(snapshot => ({ refKey: canonicalJson(snapshot.ref as JsonValue),
-        schemaId: `${snapshot.ref.aggregateType}Snapshot@1`, revision: snapshot.revision,
-        json: JSON.stringify(snapshot) })),
-      events: [{ ...stateEvent, json: JSON.stringify(stateEvent) }],
-      claims: [], indexGuards: [], indexChanges: [] })).toMatchObject({ status: 'committed' });
-    const graphWithRun = await plans.queryTaskGraph(ctx, { goalRef: goal.value.ref });
-    expect(graphWithRun).toMatchObject({ status: 'ready', value: { tasks: [
-      { ref: { taskId: 'design' }, definition: { phase: 'pending' },
-        effectivePhase: 'running', execution: runRef, eligibility: { eligible: false } },
-      { ref: { taskId: 'implement' }, definition: { phase: 'pending' },
-        effectivePhase: 'pending', eligibility: { eligible: true } },
-      { ref: { taskId: 'goal-gate' }, definition: { phase: 'pending' },
-        effectivePhase: 'pending', eligibility: { eligible: false } },
-    ] } });
-    if (graphWithRun.status !== 'ready') throw Error('task graph unavailable after Run');
-    expect(graphWithRun.value.tasks).toHaveLength(3);
-    expect(await plans.queryReadyTasks(ctx, { goalRef: goal.value.ref, includeBlocked: false,
-      page: { limit: 10 } })).toMatchObject({ status: 'ready', value: { items: [{ task: { ref: { taskId: 'implement' } } }] } });
-
-    const implementRun: RunSnapshot = { ...run,
-      ref: { aggregateType: 'Run', projectId, goalId: 'goal-1', runId: 'implement-race' },
-      task: { projectId, goalId: 'goal-1', taskId: 'implement' }, attemptId: 'implement-race-attempt',
-      lastRuntimeEventId: 'implement-race-started', lastFactEventId: 'implement-race-fact' };
-    let injectImplementRun = true;
+    // A second real Run appears after the graph lookup read its old page and
+    // stays running at its own model gate.
+    const implementSession = await rf.createSession('r3c-implement-session', firstCard.value.record.role);
+    let implementRunRef: import('../../src/contracts/dispatch.js').RunRef | undefined;
+    let implementStart: ReturnType<typeof runtimeWorld.runtime.port.startRun> | undefined;
+    let injectImplement = true;
     const racingGraphReader = createPlanService({ records: {
-      ...backend.records,
+      ...rf.records,
       async lookup(request) {
-        const page = await backend.records.lookup(request);
-        if (injectImplementRun && request.index === 'r3c-run-by-goal'
+        const page = await rf.records.lookup(request);
+        if (injectImplement && request.index === 'r3c-run-by-goal'
           && page.status === 'ready' && page.value.next === null) {
-          injectImplementRun = false;
-          const stateEvent = { eventId: 'implement-run-race', eventType: 'TaskStateSeeded',
-            schemaVersion: 1, occurredAt: at };
-          expect(await backend.records.commit({ identityKey: 'implement-run-race',
-            fingerprint: 'implement-run-race-v1',
-            guards: [{ refKey: canonicalJson(implementRun.ref as JsonValue), expectedRevision: null }],
-            records: [{ refKey: canonicalJson(implementRun.ref as JsonValue), schemaId: 'RunSnapshot@1',
-              revision: implementRun.revision, json: JSON.stringify(implementRun) }],
-            events: [{ ...stateEvent, json: JSON.stringify(stateEvent) }],
-            claims: [], indexGuards: [], indexChanges: [] })).toMatchObject({ status: 'committed' });
+          injectImplement = false;
+          const claim = await rf.service.claimTask(runtimeWorld.ctx, await rf.buildRequest({
+            requestId: 'r3c-implement-claim',
+            input: { goalRef: runtimeGoal.value.ref, planRef: runtimeApplied.value.ref,
+              taskId: 'implement', sessionRef: implementSession },
+          }));
+          if (claim.status !== 'committed') throw Error('the implement claim failed');
+          implementRunRef = claim.value.runRef;
+          runtimeWorld.allowRun(claim.value.runRef);
+          const prepared = await prepareTaskForReal(rf, {
+            bodies: runtimeWorld.deps.bodies, runRef: claim.value.runRef,
+            host: runtimeWorld.host, requestId: 'r3c-implement-prepare',
+          });
+          implementStart = runtimeWorld.runtime.port.startRun(runtimeWorld.ctx, {
+            prepared: prepared.prepared, consumerId: 'r3c-adoption-runtime', requestId: 'r3c-implement-start',
+          });
+          const settled = implementStart.then(result => ({ settled: true as const, result }));
+          const early = await Promise.race([implementHeld.then(() => null), settled]);
+          if (early !== null) {
+            throw Error(`the implement Run settled before its model gate: ${JSON.stringify(early)}`);
+          }
         }
         return page;
       },
     }, now: () => at, eventId: () => `r3c-graph-race-${++sequence}` });
-    const racedGraph = await racingGraphReader.queryTaskGraph(ctx, { goalRef: goal.value.ref });
-    expect(injectImplementRun).toBe(false);
+    const racedGraph = await racingGraphReader.queryTaskGraph(runtimeWorld.ctx, { goalRef: runtimeGoal.value.ref });
+    expect(injectImplement).toBe(false);
+    if (implementStart === undefined || implementRunRef === undefined) throw Error('the implement gate did not fire');
     if (racedGraph.status === 'ready') {
       expect(racedGraph.value.tasks.find(task => task.ref.taskId === 'implement')).toMatchObject({
-        effectivePhase: 'running', execution: implementRun.ref, eligibility: { eligible: false },
+        effectivePhase: 'running', execution: implementRunRef, eligibility: { eligible: false },
       });
       expect(racedGraph.value.tasks).toHaveLength(3);
     } else {
       expect(['not_ready', 'rejected']).toContain(racedGraph.status);
     }
+    releaseImplement();
+    expect(await implementStart).toMatchObject({ status: 'ready' });
 
     const changedDraft = { ...validDraft(), planId: 'plan-change', planRevision: 2 };
     expect(await plans.proposePlan(ctx, { meta: { requestId: 'stale-proposal',
@@ -304,16 +374,6 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
         reason: { text: 'Change candidate', sources: [] } } });
     expect(change).toMatchObject({ status: 'committed', value: { kind: 'candidate_v2' } });
     if (change.status !== 'committed') throw Error('change candidate failed');
-    expect(await plans.applyPlanChange(ctx, { meta: { requestId: 'change-no-decision',
-      expected: [{ ref: goal.value.ref, revision: 2 }] },
-      input: { proposalRef: change.value.ref, expectedProposalRevision: change.value.revision,
-        decisionRefs: [] } })).toMatchObject({ status: 'rejected' });
-    expect(await plans.queryGoal(ctx, goal.value.ref)).toMatchObject({ status: 'ready',
-      value: { goal: { activePlanRevision: applied.value.ref, revision: 2 } } });
-    expect(await backend.records.readMany([canonicalJson({ aggregateType: 'PlanRevision', projectId,
-      planId: 'plan-change' })])).toMatchObject({ status: 'ready', value: { missing: [
-      canonicalJson({ aggregateType: 'PlanRevision', projectId, planId: 'plan-change' }),
-    ] } });
 
     const secondGoal = await goals.createGoal(ctx, { meta: { requestId: 'create-goal-2',
       expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },

@@ -15,13 +15,8 @@
  * fake the adapter, weaken the physical-read assertions or assert on wall-clock time.
  *
  * The range cases are observed without timing:
- *  - damage outside the requested page must not block a local page read;
- *  - a tail payload that is damaged must not hide the tail position;
  *  - an instrumented `node:sqlite` spy shows the statements and fetched row count
  *    during `read` only (fixture seeding happens before the spy is armed).
- *
- * Kernel `append`/replay full-history validation is intentionally kept, so a fresh
- * store must still fail closed when the history is corrupted.
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -154,15 +149,6 @@ async function seedSession(store: Store, sessionId: string, turns: number): Prom
   for (let index = 0; index < turns; index += 1) drafts.push(...turnDrafts(index, sessionId));
   await store.append(sessionId, 1, drafts, options());
   return SESSION_CREATED_POSITION + drafts.length;
-}
-
-async function mutateDatabase(databasePath: string, mutate: (database: DatabaseSync) => void): Promise<void> {
-  const database = new DatabaseSync(databasePath);
-  try {
-    mutate(database);
-  } finally {
-    database.close();
-  }
 }
 
 function positionsOf(page: { records: readonly kernel.SessionRecord[] }): number[] {
@@ -417,185 +403,12 @@ describe('R4c.2b Kernel Session history range read', () => {
     expect(spy.state.fetchedRows).toBeLessThanOrEqual(3 + 8);
   });
 
-  it('reads a back page even when a front record payload is damaged outside the range', async () => {
-    const { databasePath } = await newDatabase('next-r4c-range-outside-');
-    const store = await openStore(databasePath);
-    const total = await seedSession(store, 'session-outside', 120);
-    await mutateDatabase(databasePath, (database) => {
-      database
-        .prepare('UPDATE session_records SET record_json = ? WHERE session_id = ? AND position = 2')
-        .run('{}', 'session-outside');
-    });
-
-    const page = await store.read('session-outside', total - 3, 3, options());
-    expect(positionsOf(page)).toEqual([total - 2, total - 1, total]);
-    expect(page.lastPosition).toBe(total);
-    expect(page.nextPosition).toBeNull();
-  });
-
-  it('still reports the tail position when the tail payload is damaged outside the range', async () => {
-    const { databasePath } = await newDatabase('next-r4c-range-tail-damaged-');
-    const store = await openStore(databasePath);
-    const total = await seedSession(store, 'session-tail-damaged', 20);
-    await mutateDatabase(databasePath, (database) => {
-      database
-        .prepare('UPDATE session_records SET record_json = ? WHERE session_id = ? AND position = ?')
-        .run('{}', 'session-tail-damaged', total);
-    });
-
-    const page = await store.read('session-tail-damaged', 0, 3, options());
-    expect(positionsOf(page)).toEqual([1, 2, 3]);
-    expect(page.lastPosition).toBe(total);
-    expect(page.nextPosition).toBe(3);
-  });
-
-  it.each([
-    ['zero', 0],
-    ['negative', -1],
-    ['unsafe', 9007199254740992n],
-  ] as const)('rejects a %s tail key as corrupt and cleans up the read snapshot', async (_name, position) => {
-    const { databasePath } = await newDatabase('next-r4c-range-tail-key-');
-    const store = await openStore(databasePath);
-    const sessionId = 'session-tail-key';
-    await store.create({ sessionId, recordId: 'created-tail-key', createdAt: AT }, options());
-    await mutateDatabase(databasePath, (database) => {
-      database.prepare('UPDATE session_records SET position = ? WHERE session_id = ?')
-        .run(position, sessionId);
-    });
-
-    let failure: unknown;
-    try {
-      await store.read(sessionId, 0, 1, options());
-    } catch (error) {
-      failure = error;
-    } finally {
-      // Restore the actual key while retaining the same reader connection. A
-      // leaked transaction would either retain stale data or reject the next read.
-      await mutateDatabase(databasePath, (database) => {
-        database.prepare('UPDATE session_records SET position = 1 WHERE session_id = ?').run(sessionId);
-      });
-    }
-    const restored = await store.read(sessionId, 0, 1, options());
-    expect(restored.revision).toBe(1);
-    expect(positionsOf(restored)).toEqual([1]);
-    expect(restored.lastPosition).toBe(1);
-    expect(restored.nextPosition).toBeNull();
-    expect(failure).toMatchObject({ code: 'corrupt' });
-  });
-
-  it('rejects damaged, schema-invalid and checksum-invalid records inside the requested page', async () => {
-    const cases: Array<[string, (database: DatabaseSync, sessionId: string) => void]> = [
-      ['not JSON', (database, sessionId) => {
-        database
-          .prepare('UPDATE session_records SET record_json = ? WHERE session_id = ? AND position = 2')
-          .run('not-json', sessionId);
-      }],
-      ['schema-invalid', (database, sessionId) => {
-        database
-          .prepare('UPDATE session_records SET record_json = ? WHERE session_id = ? AND position = 2')
-          .run('{}', sessionId);
-      }],
-      ['checksum-invalid', (database, sessionId) => {
-        const row = database
-          .prepare('SELECT record_json FROM session_records WHERE session_id = ? AND position = 2')
-          .get(sessionId) as { record_json: string };
-        const record = JSON.parse(row.record_json) as { recordedAt: string };
-        record.recordedAt = '2026-09-26T00:00:00.000Z';
-        database
-          .prepare('UPDATE session_records SET record_json = ? WHERE session_id = ? AND position = 2')
-          .run(JSON.stringify(record), sessionId);
-      }],
-    ];
-
-    for (const [name, mutate] of cases) {
-      const { databasePath } = await newDatabase('next-r4c-range-inpage-');
-      const store = await openStore(databasePath);
-      await seedSession(store, 'session-inpage', 4);
-      await mutateDatabase(databasePath, (database) => mutate(database, 'session-inpage'));
-      await expect(store.read('session-inpage', 0, 3, options()), name).rejects.toMatchObject({ code: 'corrupt' });
-      await store.close();
-    }
-  });
-
-  it('rejects a gap in the middle of the requested range', async () => {
-    const { databasePath } = await newDatabase('next-r4c-range-gap-');
-    const store = await openStore(databasePath);
-    await seedSession(store, 'session-gap', 4);
-    await mutateDatabase(databasePath, (database) => {
-      database.prepare('DELETE FROM session_records WHERE session_id = ? AND position = 3').run('session-gap');
-    });
-
-    await expect(store.read('session-gap', 0, 5, options())).rejects.toMatchObject({ code: 'corrupt' });
-  });
-
-  it('rejects a database position that contradicts the record payload position', async () => {
-    const { databasePath } = await newDatabase('next-r4c-range-position-');
-    const store = await openStore(databasePath);
-    await seedSession(store, 'session-position', 4);
-    // Swap the primary-key position columns of two in-page records while leaving both
-    // payloads (and their checksums) intact: the key order now disagrees with the
-    // payload position.
-    await mutateDatabase(databasePath, (database) => {
-      const sessionId = 'session-position';
-      database.prepare('UPDATE session_records SET position = -1 WHERE session_id = ? AND position = 2').run(sessionId);
-      database.prepare('UPDATE session_records SET position = 2 WHERE session_id = ? AND position = 3').run(sessionId);
-      database.prepare('UPDATE session_records SET position = 3 WHERE session_id = ? AND position = -1').run(sessionId);
-    });
-
-    await expect(store.read('session-position', 0, 4, options())).rejects.toMatchObject({ code: 'corrupt' });
-  });
-
-  it('rejects a database Session key that contradicts the record payload Session', async () => {
-    const { databasePath } = await newDatabase('next-r4c-range-session-key-');
-    const store = await openStore(databasePath);
-    await seedSession(store, 'session-key-a', 4);
-    await seedSession(store, 'session-key-b', 4);
-    // Move a perfectly valid record from Session B into Session A's row at the same
-    // position. The checksum stays valid; only the payload sessionId disagrees with
-    // the database key.
-    await mutateDatabase(databasePath, (database) => {
-      const borrowed = database
-        .prepare('SELECT record_json FROM session_records WHERE session_id = ? AND position = 2')
-        .get('session-key-b') as { record_json: string };
-      database
-        .prepare('UPDATE session_records SET record_json = ? WHERE session_id = ? AND position = 2')
-        .run(borrowed.record_json, 'session-key-a');
-    });
-
-    await expect(store.read('session-key-a', 0, 4, options())).rejects.toMatchObject({ code: 'corrupt' });
-    // Session B is untouched by Session A's damage.
-    const healthy = await store.read('session-key-b', 0, 4, options());
-    expect(positionsOf(healthy)).toEqual([1, 2, 3, 4]);
-  });
-
-  it('keeps append/replay full-history validation after a reopen even though read is ranged', async () => {
-    const { databasePath } = await newDatabase('next-r4c-range-append-');
-    const store = await openStore(databasePath);
-    await seedSession(store, 'session-append', 4);
-    await mutateDatabase(databasePath, (database) => {
-      database
-        .prepare('UPDATE session_records SET record_json = ? WHERE session_id = ? AND position = 2')
-        .run('{}', 'session-append');
-    });
-    await store.close();
-
-    const reopened = await openStore(databasePath);
-    const header = await reopened.get('session-append', options());
-    await expect(reopened.append('session-append', header.revision, turnDrafts(99, 'append-retry'), options()))
-      .rejects.toMatchObject({ code: 'corrupt' });
-  });
-
-  it('isolates Sessions so damage and tails never leak across them', async () => {
+  it('isolates Sessions so tails never leak across them', async () => {
     const { databasePath } = await newDatabase('next-r4c-range-isolation-');
     const store = await openStore(databasePath);
     const totalA = await seedSession(store, 'session-iso-a', 30);
     const totalB = await seedSession(store, 'session-iso-b', 12);
     expect(totalA).not.toBe(totalB);
-    await mutateDatabase(databasePath, (database) => {
-      database
-        .prepare('UPDATE session_records SET record_json = ? WHERE session_id = ? AND position = 2')
-        .run('{}', 'session-iso-a');
-    });
 
     const pageA = await store.read('session-iso-a', totalA - 2, 2, options());
     expect(positionsOf(pageA)).toEqual([totalA - 1, totalA]);

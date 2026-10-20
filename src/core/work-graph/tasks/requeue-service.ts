@@ -948,7 +948,7 @@ export function createTaskRequeueService(
     if (input.trigger !== undefined) {
       const trigger = input.trigger;
       if (!sameRef(trigger.goalRef, goalRef)) return reject('invalid', 'the goal_resume trigger names another Goal');
-      if (goal.desiredState !== 'active' || (goal.desiredStateRevision ?? 1) !== trigger.resumedEpoch) {
+      if (goal.desiredState !== 'active' || goal.desiredStateRevision !== trigger.resumedEpoch) {
         return reject('revision_conflict', 'the Goal is no longer at the resume epoch the trigger names',
           [{ ref: goalRef, revision: goal.revision }]);
       }

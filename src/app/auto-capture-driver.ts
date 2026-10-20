@@ -211,7 +211,7 @@ export function createAutoCaptureDriver(deps: AutoCaptureDriverDependencies): Au
         const catalog = await deps.catalog.readArchitectureRevision(context(scope, controller.signal), {
           selection: { kind: 'current' },
         });
-        if (catalog.status === 'ready') adopted = catalog.value.catalog?.catalog ?? null;
+        if (catalog.status === 'ready') adopted = catalog.value.catalog.catalog;
         else if (catalog.status !== 'not_found') {
           if (catalog.status === 'not_ready') return;
           if (catalog.code === 'cancelled') return;

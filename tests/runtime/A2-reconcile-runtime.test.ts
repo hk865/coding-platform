@@ -1,10 +1,10 @@
 /**
  * A.2 step 5.6: the Run ends without a booked Kernel terminal, through the real
  * Runtime, the real WorkGraph owners and a real Kernel on one SQLite fixture
- * (docs/refactor/STATE-MACHINES-SPEC.md §6 RUN-03, RUN-08..11 (R), RUN-14,
- * RUN-16..21, RUN-24; §4 TASK-27; §7 CTL-07, CTL-08(a)(c)(d)(e); §12.1 steps 2
- * and 5; §12.2 W-04, W-05, W-09, W-13, W-15, W-16, W-19, W-20 and
- * "进程内的同类收尾"; §12.5 CI-01, CI-02, CI-05; the §12.10 cases A8-1d, A8-3e
+ * (docs/refactor/STATE-MACHINES-SPEC.md §6 RUN-03, RUN-08..11, RUN-14,
+ * RUN-16..21, RUN-24; §4 TASK-27; §7 CTL-07, CTL-08(c)(d)(e); §12.1 steps 2
+ * and 5; §12.2 W-05, W-09, W-13, W-15, W-16, W-19, W-20 and
+ * "进程内的同类收尾"; §12.5 CI-05; the §12.10 cases A8-3e
  * (W-13) and A8-3k, which the Host-level A8 files cannot reach).
  *
  * A Host "restart" is a fresh Runtime and fresh owners over the same stores,
@@ -15,9 +15,7 @@
  * `turn.started`, a Kernel call that never returns, a controlled tool that
  * keeps its call in flight or ignores a cancel, and a lost result commit or
  * control ack (the WorkGraph owner answering `unavailable`). None grants
- * anything or rewrites a record, except A8-1d: no current writer leaves a
- * queued intent on a Run that never entered (D-7, W-05), so that case seeds
- * the two records as a ledger from before D-7 holds them.
+ * anything or rewrites a record.
  *
  * Scripted model replies only; no real model is called.
  */
@@ -25,12 +23,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { ControlIntentRef } from '../../src/contracts/control-intent.js';
 import type { HostTakeoverProofV1, WorkspaceCaptureV1 } from '../../src/contracts/unknown-call-review.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { VersionPin } from '../../src/contracts/core/identity.js';
-import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import { encodeControlIntentSnapshot } from '../../src/core/work-graph/persistence/control-record-codecs.js';
-import { newQueuedControlIntentRecord } from '../../src/core/work-graph/state/control-intent-machine.js';
-import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import type { RuntimeExecutionDependencies } from '../../src/core/agent-runtime/execution-contracts.js';
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import {
@@ -518,89 +511,6 @@ it('§12.1 step 5, CTL-08(e)/(c): an ended Run that still carries a queued pause
   expect(await controls.readControl(fx.ctx, pauseRef)).toEqual(settled);
 }, 60_000);
 
-/**
- * The pre-D-7 ledger of §12.2 W-04: a Run that never entered whose pointer names a queued intent, as the control
- * owner wrote it before D-7 applied such a control at once. No current writer leaves this state (D-7; RUN-16 settles a
- * queued pause or cancel in its own commit, W-05), so the two records are seeded as that ledger holds them: the
- * `queued@1` intent and the Run's pointer (one revision later).
- */
-async function seedPreD7Intent(fx: B2RuntimeFixture, kind: 'cancel' | 'pause' | 'resume'): Promise<ControlIntentRef> {
-  const run = (await read(fx)).run;
-  const actor = fx.ctx.principal.kind === 'host' ? fx.ctx.principal.actor : null;
-  if (actor === null || (actor.kind !== 'human' && actor.kind !== 'system')) throw new Error('the fixture context must be a Host operator');
-  const ref: ControlIntentRef = { aggregateType: 'ControlIntent', projectId: fx.scope.projectId, workspaceId: fx.scope.workspaceId,
-    intentId: `a2-w04-pre-d7-${kind}` };
-  const desiredState = kind === 'cancel' ? 'cancelled' : kind === 'pause' ? 'paused' : 'running';
-  const intent = newQueuedControlIntentRecord({ schemaVersion: 1, ref, runRef: run.ref, kind, desiredState,
-    reason: `a ${kind} from before D-7`, requestedAt: B2_AT, requestedBy: { kind: actor.kind, id: actor.id } });
-  const pointed = { ...run, revision: run.revision + 1, controlState: { intentRef: ref, desiredState } };
-  const runKey = canonicalJson(run.ref as unknown as JsonValue);
-  const seeded = await fx.claimFixture.commitRaw([encodeControlIntentSnapshot(intent),
-    { refKey: runKey, schemaId: 'RunSnapshot@1', revision: pointed.revision, json: JSON.stringify(pointed) }],
-  [{ refKey: runKey, expectedRevision: run.revision }]);
-  if (seeded.status !== 'committed') throw new Error(`the pre-D-7 seed: ${JSON.stringify(seeded)}`);
-  return ref;
-}
-
-it('A8-1d (W-04, CI-01, CI-02, CTL-08(a), RUN-09..11 (R)): a Run that never entered still holds a pre-D-7 queued intent at the restart; a cancel ends it and releases the claim, a pause is applied in place, a resume waits while the Goal is paused', async () => {
-  for (const kind of ['cancel', 'pause', 'resume'] as const) {
-    const fx = await makeFixture({ scriptedReplies: [] });
-    const controls = controlsOn(fx);
-    const intentRef = await seedPreD7Intent(fx, kind);
-    const before = await read(fx);
-    expect(before.run, kind).toMatchObject({ status: 'starting', controlState: { intentRef } });
-    expect(before.run.executionAuthorization, 'Claimed: never authorized').toBeUndefined();
-    const restarted = restartedHost(fx, HOST_2, controls);
-    const settle = async () => reconcileRunControlsAtStartup({ owner: restarted.classifier.owner, reconcile: restarted.deps.runReconcile! },
-      fx.ctx, { record: await read(fx), hostInstanceId: HOST_2.hostInstanceId, queuedSteers: false });
-    if (kind === 'resume') {
-      // CI-02 (D-9): while the Goal is paused the queued resume stays queued and the Run is left as it is.
-      const goalRef = fx.claimFixture.goalRef;
-      // The Goal and GoalPhase pins setGoalControl requires (HANDOFF decision 29; 0 = no GoalPhase stored).
-      const pinsOf = async (): Promise<VersionPin[]> => {
-        const goal = await fx.claimFixture.plans.queryGoal(fx.ctx, goalRef);
-        const graph = await fx.claimFixture.plans.queryTaskGraph(fx.ctx, { goalRef });
-        if (goal.status !== 'ready' || graph.status !== 'ready') throw new Error('the Goal and its task graph must be readable');
-        const completion = graph.value.completion;
-        return [{ ref: goalRef, revision: goal.value.goal.revision },
-          { ref: { aggregateType: 'GoalPhase', projectId: goalRef.projectId, goalId: goalRef.goalId },
-            revision: completion?.status === 'recorded' ? completion.snapshot.revision : 0 }];
-      };
-      let goalEvents = 0;
-      const goals = { records: fx.claimFixture.records, now: () => B2_AT, eventId: () => `a2-w04-goal-event-${++goalEvents}` };
-      const paused = await setGoalControlFromHost(goals, fx.ctx, { input: { goalRef, control: 'pause', reason: 'A8-1d' },
-        meta: { requestId: 'a2-w04-goal-pause', expected: await pinsOf() } });
-      expect(paused, JSON.stringify(paused)).toMatchObject({ status: 'committed', value: { desiredState: 'paused' } });
-      expect(await settle()).toMatchObject({ row: 'W-04', status: 'left', reason: expect.stringMatching(/^busy: /) });
-      expect(await controls.readControl(fx.ctx, intentRef)).toMatchObject({ status: 'ready', value: { status: 'queued', revision: 1 } });
-      expect((await read(fx)).run.revision, 'a refusal writes nothing').toBe(before.run.revision);
-      const resumed = await setGoalControlFromHost(goals, fx.ctx, { input: { goalRef, control: 'resume', reason: 'A8-1d' },
-        meta: { requestId: 'a2-w04-goal-resume', expected: await pinsOf() } });
-      expect(resumed, JSON.stringify(resumed)).toMatchObject({ status: 'committed', value: { desiredState: 'active' } });
-    }
-    expect(await settle(), kind).toMatchObject({ row: 'W-04', status: 'reconciled', reason: 'queued intents settled' });
-    const observed = { cancel: 'cancelled', pause: 'paused', resume: 'resumed' }[kind];
-    expect(await controls.readControl(fx.ctx, intentRef), kind).toMatchObject({ status: 'ready', value: { status: 'applied',
-      revision: 2, observation: { origin: 'platform_not_entered', kind: observed, detail: { entryPhase: 'none' } } } });
-    const after = await read(fx);
-    expect(after.run.controlState, 'the pointer stays').toEqual(before.run.controlState);
-    if (kind === 'cancel') {
-      // RUN-09 (R): the Run that never entered ends cancelled; its claim is released in the same commit (SES-05, ATT-23).
-      expect(after.run).toMatchObject({ status: 'ended', outcome: 'cancelled' });
-      expect(after.attempt).toMatchObject({ status: 'ended' });
-      expect(after.session.occupancy).toBeNull();
-      expect(after.lease?.release).toBeDefined();
-    } else {
-      // RUN-10/11 (R): a pause or resume writes no Run (the commit guards it); the claim is kept.
-      expect(after.run.revision).toBe(before.run.revision);
-      expect(after.run.status).toBe('starting');
-      expect(after.session.occupancy).toMatchObject({ kind: 'execution', executionRef: { runId: fx.claim.runRef.runId } });
-      expect(after.lease?.release).toBeUndefined();
-    }
-    expect(fx.scripted.calls(), 'the reconcile calls no model').toBe(0);
-  }
-}, 90_000);
-
 it('A8-3k (W-19, CI-05, RUN-08, CTL-08(d)): the in-process unknown end committed and the crash lost the cancel\'s ack; the restart records the cancel outcome_unknown and keeps the Run, its Session and its Lease', async () => {
   const toolName = 'a2-runtime-ignoring';
   const entered = deferred();
@@ -1041,7 +951,7 @@ it('K3-21 review_round wins over every other guard', async () => {
     // TASK-03r through the public claim port: the Run record carries the real
     // review purpose. Preparation must see it: RUN-02 (D5) refuses entry when the
     // prepared manifest has no review instruction matching the round record.
-    const request = await fx.claimFixture.buildRequest();
+    const request = await fx.claimFixture.buildRequest({ input: { sessionRef: fx.claim.sessionRef } });
     request.input.review = { reviewRef, expectedRevision: 1, phase: 'review' };
     const claimed = await fx.claimFixture.makeService().claimTask(fx.ctx, request);
     if (claimed.status !== 'committed') throw new Error(`K3-21 review claim: ${JSON.stringify(claimed)}`);
@@ -1052,7 +962,7 @@ it('K3-21 review_round wins over every other guard', async () => {
     // fresh Kernel Session so it can enter (the Workflow closes the original one
     // before the review claim in the real flow; this test only needs the Run
     // running with a call in flight).
-    await fx.claimFixture.overwriteSession(fx.claimFixture.sessions.first, record => ({ ...record,
+    await fx.claimFixture.overwriteSession(fx.claim.sessionRef, record => ({ ...record,
       kernel: { ...record.kernel, kernelSessionId: 'k3-review-kernel-session' } }));
 
     // Enter the review Run with one declared batch of 33 calls, all held by the

@@ -18,23 +18,17 @@
  *   - real pause/resume `ControlIntent`s through `createRunControlService`
  *     (`submitControl` + the trusted `recordControlObservation`), so the track
  *     reader sees genuine `applied`/`paused`/`resumed` observations;
- *   - legacy storage-boundary shapes allowed by spec §7: a round JSON with its
- *     `since` removed (no ordering candidate) and a finalized round with its
- *     `finalizedAt` removed, both committed through `commitRaw`;
  *   - the track read through the public `createTrackReadModel`.
  *
- * Nothing here writes a business fact directly except those two §7 legacy
- * round shapes; no model, no network.
+ * The real prepare is wired; entered and end are still handwritten because
+ * W1-15 is BLOCKED. No model, no network.
  */
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef, VersionPin, RoleConfigurationRef } from '../../src/contracts/core/identity.js';
 import type { ControlObservationV1, ControlIntentRef } from '../../src/contracts/control-intent.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
-import { continuationBriefDigest, renderContinuationBriefZh } from '../../src/contracts/continuation-brief.js';
-import { assembleAnomalySection, assembleContinuationBrief } from '../../src/core/agent-runtime/continuation-brief-assembly.js';
+import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { QueryJobRef, QueryRunRef, QueryJobAnswerV1 } from '../../src/contracts/query-job.js';
-import type { PreparedQueryManifestV1, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
-import { createQueryExecution, QUERY_MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/queries/query-execution.js';
+import { createQueryExecution } from '../../src/core/work-graph/queries/query-execution.js';
 import type { QueryEntryIdentity } from '../../src/core/work-graph/queries/contracts.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import type { RunActivityFactsV1, RunActivitySnapshot } from '../../src/contracts/run-activity.js';
@@ -44,7 +38,7 @@ import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskRequeueSnapshotV1 } from '../.
 import type { RoundSnapshot, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
-import type { EncodedRecord, RecordBackendSchemas, RecordGuard } from '../../src/core/record-store/ports.js';
+import type { EncodedRecord, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { ClaimTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
@@ -56,14 +50,12 @@ import { createRunControlService } from '../../src/core/work-graph/tasks/control
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
-import { EVIDENCE_RECORD_SCHEMAS, VERIFICATION_ROUND_SNAPSHOT_SCHEMA_ID } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
-import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
-import { completionPolicyContentDigest } from '../../src/contracts/governance.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
@@ -79,6 +71,8 @@ import type { ReadResult } from '../../src/contracts/core/results.js';
 import {
   B2_AT, B2_HOST, createB2ExecutionFixture, type B2ExecutionFixture,
 } from './B2-execution-fixture.js';
+import { preparationHost, prepareQueryForReal } from './task-claim-fixture.js';
+import { installStaticCompletionPolicyFor } from './S2B-runtime-steps-fixture.js';
 
 export type S2BTrackFixtureKind = 'memory' | 'sqlite';
 
@@ -145,10 +139,6 @@ export type S2BTrackFixture = {
   finalize(round: RoundSnapshot): Promise<RoundSnapshot>;
   /** The real pause/resume control pair on an entered Run at the given instants. */
   pauseThenResume(runRef: RunRef, pausedAt: string, resumedAt: string): Promise<{ pause: ControlIntentRef; resume: ControlIntentRef }>;
-  /** §7 legacy shape: overwrite the round record with its top-level `since` removed. */
-  stripRoundSince(roundRef: RoundSnapshot['ref']): Promise<void>;
-  /** §7 legacy shape: overwrite a finalized round record with `finalizedAt` removed. */
-  stripRoundFinalizedAt(roundRef: RoundSnapshot['ref']): Promise<void>;
   readTrack(input: { from: string; to: string; cursor?: string | null; limit?: number; sessionRefs?: SessionRef[] },
     options?: { readRecordCap?: number }): Promise<ReadResult<TrackBarsPageV1>>;
   track(records?: S2BTrackFixture['records'], readRecordCap?: number): TrackReadPort;
@@ -265,39 +255,8 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
    * the accepted `S2B-activity-fixture.ts` governance-seeding step.
    */
   async function installStaticCompletionPolicy(): Promise<void> {
-    const bootstrap = createProjectBootstrapServices({ records: baseRecords, now, eventId });
-    const projectKey = canonicalJson(b2.base.projectRef as unknown as JsonValue);
-    const projectRead = await baseRecords.readMany([projectKey]);
-    if (projectRead.status !== 'ready') throw new Error(`S2B project revision read failed: ${JSON.stringify(projectRead)}`);
-    const project = projectRead.value.records.find((record) => record.refKey === projectKey);
-    if (project === undefined) throw new Error('S2B project record is missing');
-    const projectRevision = (JSON.parse(project.json) as { revision: number }).revision;
-    const policyId = 's2b-track-policy';
-    const content = { schemaVersion: 1 as const, requirementKinds: ['static'],
-      minimumRequiredRequirementsPerObligation: 1 };
-    const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId: b2.base.scope.projectId,
-      policyId, revision: 1 };
-    const installed = await bootstrap.completionPolicies.installCompletionPolicy(b2.ctx, {
-      input: { policyId, contentRevision: 1, content },
-      meta: { requestId: requestId('install-policy'), expected: [
-        { ref: b2.base.projectRef, revision: projectRevision }, { ref: policyRef, revision: 0 },
-      ] },
-    });
-    if (installed.status !== 'committed') throw new Error(`S2B policy install failed: ${JSON.stringify(installed)}`);
-    const activeRef = { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId: b2.base.scope.projectId };
-    const activeRead = await baseRecords.readMany([canonicalJson(activeRef as unknown as JsonValue)]);
-    if (activeRead.status !== 'ready') throw new Error(`S2B active policy read failed: ${JSON.stringify(activeRead)}`);
-    const active = activeRead.value.records.find((record) => record.refKey === canonicalJson(activeRef as unknown as JsonValue));
-    if (active === undefined) throw new Error('S2B active policy pointer is missing');
-    const activeRevision = (JSON.parse(active.json) as { revision: number }).revision;
-    const activated = await bootstrap.completionPolicies.activateCompletionPolicy(b2.ctx, {
-      input: { target: { ref: policyRef, digest: completionPolicyContentDigest({ schemaVersion: 1, policyId,
-        contentRevision: 1, content }) } },
-      meta: { requestId: requestId('activate-policy'), expected: [
-        { ref: b2.base.projectRef, revision: projectRevision }, { ref: activeRef, revision: activeRevision },
-      ] },
-    });
-    if (activated.status !== 'committed') throw new Error(`S2B policy activate failed: ${JSON.stringify(activated)}`);
+    await installStaticCompletionPolicyFor({ base: b2.base, ctx: b2.ctx, records: baseRecords, now, eventId,
+      policyId: 's2b-track-policy' });
   }
 
   async function adoptInitialPlan(goalRef: GoalRef, workTaskIds: readonly string[]): Promise<void> {
@@ -310,7 +269,7 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
         taskKind: 'gate', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
     ];
     const draft: PlanRevisionDraft = {
-      schemaVersion: 1, planId: `${goalRef.goalId}-plan`, planRevision: 1, goalId: goalRef.goalId,
+      schemaVersion: 2, planId: `${goalRef.goalId}-plan`, planRevision: 1, goalId: goalRef.goalId,
       stages: [], tasks,
       assignments: workTaskIds.map((taskId) => ({ taskId, role: 'builder', instruction: `Do ${taskId}` })),
       obligations: [{ obligationId: 's2b-track-obligation', title: 'S2B track work',
@@ -372,41 +331,9 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
 
   async function enter(claim: TaskClaim, at: string): Promise<KernelExecutionBinding> {
     clock = at;
-    let prepared = await b2.buildPrepared({ claim });
-    // A requeue Run must carry its C3 continuation brief before the Kernel
-    // entry is authorized (the same assembly `S1-archive-service-fixture`
-    // uses, over this fixture's real `readContinuationBasis` read).
-    const facts = await runReads.readExecution(b2.ctx, claim.runRef);
-    if (facts.status !== 'ready') throw new Error(`S2B enter Run read failed: ${JSON.stringify(facts)}`);
-    if (facts.value.run.requeueRef !== undefined && facts.value.run.requeueRef !== null) {
-      const basis = await runReads.readContinuationBasis!(b2.ctx, { runRef: claim.runRef });
-      if (basis.status !== 'ready') throw new Error(`S2B continuation basis failed: ${JSON.stringify(basis)}`);
-      const pending = basis.value.pendingAnomalies ?? [];
-      const anomalies = pending.length === 0 ? null : assembleAnomalySection(pending);
-      const brief = assembleContinuationBrief({ basis: basis.value, factsRecord: basis.value.previous,
-        factsHops: 0, factsTruncated: false,
-        turn: { kernel: 'unavailable', reason: 'the S2B track fixture has no prior Kernel store' },
-        workspace: { briefCheckpoint: { kind: 'brief', at: clock, workspaceRevision: 1, sourceDigest: null,
-          unavailableReason: 'not captured in this fixture' },
-          uncommitted: { status: 'unavailable', baseCommit: null, paths: [], omitted: 0,
-            reason: 'not captured in this fixture' } },
-        claimSessionRef: claim.sessionRef, anomalies });
-      const digest = continuationBriefDigest(brief);
-      const body = await b2.bodies.read(prepared.envelope.bundleRef);
-      if (body.status !== 'ready') throw new Error(`S2B manifest read failed: ${JSON.stringify(body)}`);
-      const manifest = JSON.parse(body.value.body) as PreparedTaskManifestV1;
-      manifest.continuationBrief = brief;
-      manifest.input += `\n\n${renderContinuationBriefZh(brief, digest)}`;
-      manifest.inputDigest = sha256Hex(manifest.input);
-      const json = JSON.stringify(manifest);
-      const stored = await b2.bodies.put({ body: json, contentType: body.value.ref.contentType,
-        sourceRefs: body.value.sourceRefs, origin: { kind: 'run', owner: claim.runRef }, requestedAt: clock });
-      if (stored.status !== 'ready') throw new Error(`S2B manifest rewrite failed: ${JSON.stringify(stored)}`);
-      prepared = { ...prepared, envelope: { ...prepared.envelope, bundleRef: stored.value.ref },
-        inputBinding: { ...prepared.inputBinding, inputDigest: manifest.inputDigest,
-          manifestDigest: sha256Hex(json), continuationBriefDigest: digest,
-          ...(brief.anomalies === undefined ? {} : { anomalyAnchorRefs: brief.anomalies.anchors.map((anchor) => anchor.ref) }) } };
-    }
+    // The real preparation carries a requeue Run's C3 continuation brief and
+    // its byte budget; never append it to a saved manifest a second time.
+    const prepared = await b2.buildPrepared({ claim });
     const sessionKernel = await b2.kernelFor(claim);
     const kernel: KernelExecutionBinding = { ...sessionKernel,
       runId: `${claim.runRef.runId}-kernel`, turnId: `${claim.runRef.runId}-turn` };
@@ -653,41 +580,23 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
         await pinOf(jobRef), await pinOf(runRef), await b2.base.sessionPin(sessionRef),
       ] } });
     if (record.status !== 'committed') throw new Error(`S2B query claim failed: ${JSON.stringify(record)}`);
-    const state = record.value.run.run.executionState;
-    if (state === undefined) throw new Error('S2B query claim has no execution state');
-    const facts = await owner.readPreparationFacts(b2.ctx, runRef);
-    if (facts.status !== 'ready') throw new Error(`S2B query facts failed: ${JSON.stringify(facts)}`);
-    const manifest: PreparedQueryManifestV1 = { schemaVersion: 1, kind: 'query_execution', queryRunRef: runRef,
-      sessionRef, sessionGeneration: state.sessionGeneration, roleBinding: b2.base.roleBinding, sessionRole: state.role,
-      role: state.roleResolution, hostTemplate: host.hostTemplate,
-      hostConfigurationRevision: host.configurationRevision,
-      goal: { ref: facts.value.goal.ref, revision: facts.value.goal.revision },
-      workspace: { ref: facts.value.workspace.ref, revision: facts.value.workspace.revision },
-      focusPlan: facts.value.focusPlan === null ? null
-        : { ref: facts.value.focusPlan.ref, revision: facts.value.focusPlan.revision },
-      permissions: host.permissions, runtimeBudget: queryBudget, budget: { tokenBudget: null, deadline: null },
-      sourceRefs: [], input: question, inputDigest: sha256Hex(question) };
-    const body = await b2.bodies.put({ body: JSON.stringify(manifest), contentType: QUERY_MANIFEST_CONTENT_TYPE,
-      sourceRefs: [{ kind: 'workspace', refId: b2.base.scope.workspaceId,
-        revision: String(facts.value.workspace.revision) }],
-      origin: { kind: 'run', owner: runRef }, requestedAt: clock });
-    if (body.status !== 'ready') throw new Error(`S2B query manifest store failed: ${JSON.stringify(body)}`);
-    const prepared = { queryRunRef: runRef, bundleRef: body.value.ref, inputDigest: manifest.inputDigest };
-    record = await owner.bindPreparedQuery(b2.ctx, { input: { prepared },
-      meta: { requestId: requestId('query-bind'), expected: [
-        { ref: runRef, revision: record.value.run.revision },
-        { ref: record.value.session.ref, revision: record.value.session.revision },
-      ] } });
-    if (record.status !== 'committed') throw new Error(`S2B query bind failed: ${JSON.stringify(record)}`);
-    const kernel = { adapterId: record.value.session.kernel.adapterId,
-      kernelSessionId: record.value.session.kernel.kernelSessionId,
+    const prepared = (await prepareQueryForReal({ records: baseRecords, ctx: b2.ctx }, {
+      bodies: b2.bodies, queryRunRef: runRef, queryExecution: owner, now: () => clock,
+      requestId: requestId('query-prepare'),
+      host: preparationHost({ configurationRevision: host.configurationRevision,
+        permissions: host.permissions, hostTemplate: host.hostTemplate, budget: queryBudget }),
+    })).prepared;
+    const preparedState = await owner.readQueryExecution(b2.ctx, runRef);
+    if (preparedState.status !== 'ready') throw new Error(`S2B query read failed: ${JSON.stringify(preparedState)}`);
+    const kernel = { adapterId: preparedState.value.session.kernel.adapterId,
+      kernelSessionId: preparedState.value.session.kernel.kernelSessionId,
       runId: `${runRef.runId}-kernel`, turnId: `${runRef.runId}-turn` };
     const ticket = await owner.beginQueryEntry(b2.ctx, { input: {
       prepared, consumerId: `s2b-track-query-${suffix}`, kernel },
       meta: { requestId: requestId('query-begin'), expected: [
-        { ref: jobRef, revision: record.value.job.revision },
-        { ref: runRef, revision: record.value.run.revision },
-        { ref: record.value.session.ref, revision: record.value.session.revision },
+        { ref: jobRef, revision: preparedState.value.job.revision },
+        { ref: runRef, revision: preparedState.value.run.revision },
+        { ref: preparedState.value.session.ref, revision: preparedState.value.session.revision },
       ] } });
     if (ticket.status !== 'committed') throw new Error(`S2B query begin failed: ${JSON.stringify(ticket)}`);
     const entry: QueryEntryIdentity = { queryRunRef: runRef, sessionRef: ticket.value.sessionRef,
@@ -702,8 +611,7 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
     if (entered.status !== 'committed') throw new Error(`S2B query entered failed: ${JSON.stringify(entered)}`);
     const answerText = `S2B track answer ${suffix}`;
     const answerBody = await b2.bodies.put({ body: answerText, contentType: 'text/plain; charset=utf-8',
-      sourceRefs: [{ kind: 'workspace', refId: b2.base.scope.workspaceId,
-        revision: String(facts.value.workspace.revision) }],
+      sourceRefs: [prepared.bundleRef.source],
       origin: { kind: 'run', owner: runRef }, requestedAt: clock });
     if (answerBody.status !== 'ready') throw new Error(`S2B query answer store failed: ${JSON.stringify(answerBody)}`);
     const answer: QueryJobAnswerV1 = { schemaVersion: 1, answerId: `s2b-track-a-${suffix}`, queryJobRef: jobRef,
@@ -832,23 +740,6 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
     return intent.ref;
   }
 
-  /** Reads the current encoded round record and re-commits it with one top-level key removed. */
-  async function stripRoundKey(roundRef: RoundSnapshot['ref'], key: 'since' | 'finalizedAt'): Promise<void> {
-    const refKey = canonicalJson(roundRef as never);
-    const read = await records.readMany([refKey]);
-    if (read.status !== 'ready') throw new Error(`S2B round read failed: ${JSON.stringify(read)}`);
-    const record = read.value.records.find((candidate) => candidate.refKey === refKey);
-    if (record === undefined) throw new Error('S2B round record is missing');
-    const parsed = JSON.parse(record.json) as Record<string, unknown>;
-    delete parsed[key];
-    parsed['revision'] = record.revision + 1;
-    const guards: RecordGuard[] = [{ refKey, expectedRevision: record.revision }];
-    const committed = await b2.base.commitRaw([
-      { refKey, schemaId: VERIFICATION_ROUND_SNAPSHOT_SCHEMA_ID, revision: record.revision + 1, json: JSON.stringify(parsed) },
-    ], guards);
-    if (committed.status !== 'committed') throw new Error(`S2B legacy round commit failed: ${JSON.stringify(committed)}`);
-  }
-
   function track(target: S2BTrackFixture['records'] = records, readRecordCap?: number): TrackReadPort {
     return createTrackReadModel({ records: target, now,
       ...(readRecordCap === undefined ? {} : { readRecordCap }) });
@@ -877,8 +768,6 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
     beginChecks, interruptExecutingChecks, finalize, pauseThenResume,
     openRound: (subjectRunRef, taskId) => openRoundInternal(subjectRunRef, taskId, undefined),
     openGateRound: (producerRunRef) => openRoundInternal(producerRunRef, 'gate-1', 'goal'),
-    stripRoundSince: (roundRef) => stripRoundKey(roundRef, 'since'),
-    stripRoundFinalizedAt: (roundRef) => stripRoundKey(roundRef, 'finalizedAt'),
     readTrack: (input, options) => track(records, options?.readRecordCap).readTrackBars(b2.ctx, {
       goalRef: trackGoalRef, from: input.from, to: input.to,
       cursor: input.cursor ?? null, limit: input.limit ?? 100,

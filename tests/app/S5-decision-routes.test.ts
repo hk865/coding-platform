@@ -22,7 +22,7 @@ import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-re
 import { decodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { createDecisionSettingsService } from '../../src/core/work-graph/configuration/decision-settings-service.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
-import { createExecutedFilesStub } from '../helpers/executed-files-stub.js';
+import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { createAutomaticReworkNoticeSource } from '../../src/core/work-graph/views/automatic-rework-notices.js';
 import { createDecisionReadModel } from '../../src/core/work-graph/views/decision-read-model.js';
@@ -217,10 +217,14 @@ it('RT06 decisions/notices/seen with a mismatched display token is invalid and c
     const records = backend.records;
     const displayTokens = createNoticeDisplayToken(randomBytes(32));
     const positions = createNoticePositionComparator();
+    // The production executed-files reader over the real SQLite backend: its
+    // `platformRecordSchemas()` registers EXECUTION_ENTRY_RECORD_SCHEMAS, which
+    // carries RUN_ACTIVITY_RECORD_SCHEMAS and its ordered index, and the backend
+    // port is the real `lookupOrdered` itself.
     const reads = createDecisionReadModel({ records, cardSources: [],
       noticeSources: [createAutomaticReworkNoticeSource({ records })], displayTokens, positions,
       conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
-        executedFiles: createExecutedFilesStub() }) });
+        executedFiles: createGoalExecutedFilesReader({ records }) }) });
     const settings = createDecisionSettingsService({ records, displayTokens, positions,
       operatorActor: OPERATOR, now: () => T, newId: randomUUID });
     const realBindings = createPlatformCoreRouteBindings({ ...composed, decisions: reads, workspaceDecisionSettings: settings });
@@ -243,7 +247,9 @@ it('RT06 decisions/notices/seen with a mismatched display token is invalid and c
       return decoded.value;
     };
     const beforeWorkspace = await readWorkspace();
-    expect(beforeWorkspace).toMatchObject({ revision: 3, decisionSettings: { schemaVersion: 1, noticeSeen: {} } });
+    // R-4: a persisted empty decisionSettings.noticeSeen has no public writer
+    // (notice-settings-machine.ts:56-62), so only the reachable Workspace@3 remains.
+    expect(beforeWorkspace).toMatchObject({ revision: 3 });
     const before = s5StoreSnapshot(f.b2.base.ledgerPath);
     const body = { scope: WORKSPACE_SCOPE, request: {
       // The signed page is automatic_rework; trying to mark another category
@@ -266,7 +272,7 @@ it('RT07 messages/send keeps the old SessionRef binding and never enters sendUse
   reset();
   const sent = committed({ ref: { aggregateType: 'SessionMessage', projectId: P, workspaceId: WORKSPACE_SCOPE.workspaceId, messageId: 'rt07' }, revision: 1 });
   respond('messages.sendMessage', sent);
-  const request = { input: { recipient: SESSION, text: 'old session message', replyMode: 'wait' }, meta: { requestId: 's5-rt07', expected: [] } };
+  const request = { input: { recipient: SESSION, text: 'old session message', intent: 'inquiry', needsReply: true, waitAfterSend: true }, meta: { requestId: 's5-rt07', expected: [] } };
   const result = await dispatch('messages/send', { scope: WORKSPACE_SCOPE, request });
   expect(result).toBe(sent);
   expect(argAt(callsTo('messages.sendMessage')[0], 1)).toEqual(request); // old binding/response shape

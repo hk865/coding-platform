@@ -12,7 +12,6 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import type { CommandRerunRequestV1 } from '../../src/contracts/command-rerun-request.js';
 import type {
@@ -36,13 +35,12 @@ import { createRoleConfigurationService } from '../../src/core/work-graph/config
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
-import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
-import { readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createCommandRerunRequestService } from '../../src/core/work-graph/tasks/command-rerun-request-service.js';
 import { commandSha256 } from '../../src/core/work-graph/state/command-normalization.js';
-import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
 import {
-  createK3NeedsDecisionRecord, openK3ReviewCardWorld, K3_REVIEW_TASKS, type K3ReviewCardWorld,
+  adoptReorderedPlan, createDriverSettledWaiter, createK3NeedsDecisionRecord, interceptDispositionCommits,
+  openK3ReviewCardWorld, reviewServiceOver, type K3ReviewCardWorld,
 } from '../helpers/K3-review-card-fixture.js';
 import {
   blockedRecord, crrCardOf, CRR_COMMAND, reviewCardOf, workRunCtx,
@@ -51,7 +49,7 @@ import { shellSeam } from '../helpers/K3-tool-seams.js';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import { messageAt } from '../helpers/S5-application-support.js';
 import {
-  GOAL_B, PLAN_B2, WORKSPACE_SCOPE,
+  GOAL_B, WORKSPACE_SCOPE,
 } from '../helpers/S5-decision-fixture.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 
@@ -80,22 +78,6 @@ function selectWork(taskId?: string, answers?: WorkflowAdvanceInput['answers']):
 
 function hasKey(value: unknown, key: string): boolean {
   return typeof value === 'object' && value !== null && Object.prototype.hasOwnProperty.call(value, key);
-}
-
-/** Wait until the Host driver's handle leaves the active states. */
-async function waitForSettledDriver(
-  driver: ReturnType<typeof createCollaborationDriver>, ctx: CoreCallContext,
-) {
-  const deadline = Date.now() + 10_000;
-  for (;;) {
-    const read = await driver.read(ctx, { goalRef: GOAL_B });
-    if (read.status === 'ready') {
-      const state = read.value.state;
-      if (state === 'waiting' || state === 'completed' || state === 'failed' || state === 'stopped') return read.value;
-    }
-    if (Date.now() > deadline) throw new Error('the K3 UR7 CRR driver did not settle');
-    await new Promise(resolve => setTimeout(resolve, 5));
-  }
 }
 
 /** The real public ① answer for a UCR / CRR card (no ②). */
@@ -153,45 +135,22 @@ function failingCardCommits(
   records: K3ReviewCardWorld['records'],
   faults: { ucr?: string; crr?: string },
 ): K3ReviewCardWorld['records'] {
-  return {
+  const ucrReason = faults.ucr;
+  const crrReason = faults.crr;
+  // The CRR check stays the inner wrapper: the UCR disposition check runs first,
+  // exactly as the one wrapper this replaces did.
+  const withCrr = crrReason === undefined ? records : {
     ...records,
     async commit(batch: Parameters<K3ReviewCardWorld['records']['commit']>[0]) {
-      if (faults.ucr !== undefined) {
-        const disposition = batch.events.some((event) => {
-          if (event.eventType !== 'UnknownCallReviewChanged') return false;
-          const body = JSON.parse(event.json) as { change?: unknown };
-          return body.change === 'disposition_applied';
-        });
-        if (disposition) {
-          return { status: 'rejected' as const, code: 'unavailable' as const, reason: faults.ucr };
-        }
-      }
-      if (faults.crr !== undefined
-        && batch.events.some(event => event.eventType === 'CommandRerunRequestChanged')) {
-        return { status: 'rejected' as const, code: 'unavailable' as const, reason: faults.crr };
+      if (batch.events.some(event => event.eventType === 'CommandRerunRequestChanged')) {
+        return { status: 'rejected' as const, code: 'unavailable' as const, reason: crrReason };
       }
       return records.commit(batch);
     },
   } as K3ReviewCardWorld['records'];
-}
-
-/** The real review owner over `records` (the wrapped store for fault injection). */
-function reviewServiceOver(world: K3ReviewCardWorld, records: K3ReviewCardWorld['records']) {
-  let sequence = 0;
-  return createUnknownCallReviewService({ records, reads: createRunStateReader({ records }),
-    readAnswerText: async (ctx: CoreCallContext, { source }) => {
-      const read = await world.decisions.readDecisionAnswer(ctx, { source });
-      if (read.status !== 'ready') return read;
-      return { status: 'ready', value: read.value.body === null ? null : read.value.body.text };
-    },
-    taskProjection: async (_ctx, task) => {
-      const goalRef = { aggregateType: 'Goal' as const, projectId: task.projectId, goalId: task.goalId };
-      const window = await readGoalPlanWindow(records, goalRef);
-      if (window.status !== 'ready') return window;
-      if (window.plan === null) return { status: 'rejected', code: 'not_found' as const, reason: 'no active Plan' };
-      return readCanonicalTaskFacts(records, goalRef, window.plan, task.taskId);
-    },
-    now: () => world.fixture.now(), eventId: () => `k3-ur7-review-${String(++sequence)}` });
+  if (ucrReason === undefined) return withCrr;
+  return interceptDispositionCommits(withCrr,
+    async () => ({ status: 'rejected', code: 'unavailable', reason: ucrReason }));
 }
 
 /** The real CRR owner over `records` (same deps the fixture uses; wrapped store for faults). */
@@ -258,15 +217,13 @@ function assemble(world: K3ReviewCardWorld, options: {
     bindings: [{
       workspace: WORKSPACE_SCOPE,
       sessionRole: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
-      roleBinding: f.runRA.roleBinding,
+      roleBinding: f.runRB.roleBinding,
       budget: f.runRA.budget,
     }],
   };
   const plans = createPlanService({ records: f.records, now: f.now, eventId: f.newId });
   const goalSettings = createGoalSettingsService({ records: f.records, now: f.now, newId: f.newId,
     operatorActor: f.operatorActor });
-  const decisionSources = createDecisionSourceFacts({ records: f.records, plans,
-    unknownCallReviews: world.reviews, commandRerunRequests: commandRerun });
   const dependencies: WorkflowDependencies = {
     tasks: createGoalService({ records: f.records, now: f.now, eventId: f.newId }).tasks,
     plans,
@@ -278,7 +235,6 @@ function assemble(world: K3ReviewCardWorld, options: {
     sourceAuthority: createSourceAuthorityReader({ authority }),
     configuration, goalSettings,
     decisionMessages: world.decisions as unknown as NonNullable<WorkflowDependencies['decisionMessages']>,
-    decisionSources,
     unknownCallReviews: reviews,
     applicationReceipt: world.applicationReceipt,
     decisionApplications: {
@@ -314,43 +270,6 @@ function assemble(world: K3ReviewCardWorld, options: {
   return { workflow, crrApplies: () => crrApplies };
 }
 
-/**
- * Put the K3 review tasks first in a REAL adopted Plan revision so the ordinary
- * selection reaches them before the fixture's already-running Tasks. The change
- * still goes through propose + apply (no Task record is hand-edited).
- */
-async function adoptReorderedPlan(world: K3ReviewCardWorld): Promise<void> {
-  const f = world.fixture;
-  const plans = f.b2.base.plans;
-  const goal = await plans.queryGoal(f.ctx, GOAL_B);
-  if (goal.status !== 'ready') throw new Error(`the Goal read failed: ${JSON.stringify(goal)}`);
-  const graph = await plans.queryTaskGraph(f.ctx, { goalRef: GOAL_B });
-  if (graph.status !== 'ready') throw new Error(`the Task graph read failed: ${JSON.stringify(graph)}`);
-  const tasks = graph.value.plan.tasks;
-  const review = tasks.filter(task => (K3_REVIEW_TASKS as readonly string[]).includes(task.taskId));
-  const other = tasks.filter(task => !(K3_REVIEW_TASKS as readonly string[]).includes(task.taskId));
-  const draft: PlanRevisionDraft = {
-    schemaVersion: 2, planId: 'PUR7', planRevision: 3, goalId: GOAL_B.goalId,
-    stages: structuredClone(graph.value.plan.stages),
-    tasks: [...review.map(task => ({ ...task })), ...other.map(task => ({ ...task }))],
-    assignments: (graph.value.plan.assignments ?? []).map(entry => ({ ...entry })),
-    obligations: graph.value.plan.obligations.map(obligation => ({ ...obligation,
-      taskIds: [...obligation.taskIds],
-      verificationRequirements: obligation.verificationRequirements.map(requirement => ({ ...requirement })) })),
-    taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [],
-  };
-  const proposed = await plans.proposePlan(f.ctx, { input: { goalRef: GOAL_B, basedOn: PLAN_B2, draft,
-    reason: { text: 'K3 UR7 failed-card set reordered Tasks', sources: [] } },
-    meta: { requestId: 'k3-ur7-reorder-propose', expected: [{ ref: GOAL_B, revision: goal.value.goal.revision }] } });
-  if (proposed.status !== 'committed' || proposed.value.issues.length > 0) {
-    throw new Error(`the K3 UR7 reordered proposal failed: ${JSON.stringify(proposed)}`);
-  }
-  const applied = await plans.applyPlanChange(f.ctx, { input: {
-    proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] },
-  meta: { requestId: 'k3-ur7-reorder-apply', expected: [{ ref: GOAL_B, revision: goal.value.goal.revision }] } });
-  if (applied.status !== 'committed') throw new Error(`the K3 UR7 reordered adoption failed: ${JSON.stringify(applied)}`);
-}
-
 describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card set covers both card kinds (%s)', kind => {
   it('a failed command_rerun_request ② continues the ordinary advance and carries the request ref', async () => {
     const world = await openK3ReviewCardWorld(kind, { realKernelCommandFacts: true });
@@ -364,7 +283,8 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
     const otherRecord = await createK3NeedsDecisionRecord(world, 'k3-20-a');
     // The cards are answered AFTER the reordered Plan is adopted: the UCR
     // answer pins the Goal content basis, so it must be the final one.
-    await adoptReorderedPlan(world);
+    await adoptReorderedPlan(world, { planId: 'PUR7', requestIdPrefix: 'k3-ur7-reorder',
+      reasonText: 'K3 UR7 failed-card set reordered Tasks' });
     const answerRef = await answerCrrCard(world, 'k3-ur7-crr-answer');
     await answerUcrCard(world, otherRecord, 'k3-ur7-crr-other-answer');
 
@@ -385,7 +305,7 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
       { kind: 'command_rerun_request', requestRef: request.ref },
     ]);
     // The legacy UCR projection stays empty: this is not a review record ref.
-    expect(advanced.value.failedReviewRefs).toBeUndefined();
+    expect(advanced.value).not.toHaveProperty('failedReviewRefs');
     expect(assembled.crrApplies()).toBe(1);
 
     // A second advance of the same continuous selection is handed the same
@@ -410,7 +330,8 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
     // set is observable beside it.
     const otherRecord = await createK3NeedsDecisionRecord(world, 'k3-20-c');
     // Answer after the reordered Plan is adopted (the UCR answer pins its content).
-    await adoptReorderedPlan(world);
+    await adoptReorderedPlan(world, { planId: 'PUR7', requestIdPrefix: 'k3-ur7-reorder',
+      reasonText: 'K3 UR7 failed-card set reordered Tasks' });
     const ucrAnswer = await answerUcrCard(world, ucrRecord, 'k3-ur7-mixed-ucr-answer');
     const crrAnswer = await answerCrrCard(world, 'k3-ur7-mixed-crr-reanswer');
     await answerUcrCard(world, otherRecord, 'k3-ur7-mixed-other-answer');
@@ -419,7 +340,7 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
       ucr: 'injected unknown_call_review ② failure',
       crr: 'injected command_rerun_request ② failure',
     });
-    const reviews = reviewServiceOver(world, records);
+    const reviews = reviewServiceOver(world, records, { eventIdPrefix: 'k3-ur7-review-' });
     const commandRerun = crrServiceOver(world, records);
     const assembled = assemble(world, { records, reviews, commandRerun });
 
@@ -442,7 +363,7 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
     // F-077: the ordinary selection continued; there is ONE failed-card
     // expression (`failedCardRefs`, asserted above) and the old public
     // `failedReviewRefs` projection is no longer produced.
-    expect(advanced.value.failedReviewRefs).toBeUndefined();
+    expect(advanced.value).not.toHaveProperty('failedReviewRefs');
   }, 120_000);
 
   it('a named-Task advance with the same failed CRR card still returns waiting', async () => {
@@ -471,7 +392,8 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
       [{ callId: 'k3-ur7-driver-call', command: CRR_COMMAND }]);
     const request = await requestRerunOf(world, record, 'k3-ur7-driver-request');
     const otherRecord = await createK3NeedsDecisionRecord(world, 'k3-20-a');
-    await adoptReorderedPlan(world);
+    await adoptReorderedPlan(world, { planId: 'PUR7', requestIdPrefix: 'k3-ur7-reorder',
+      reasonText: 'K3 UR7 failed-card set reordered Tasks' });
     const answerRef = await answerCrrCard(world, 'k3-ur7-driver-crr-reanswer');
     await answerUcrCard(world, otherRecord, 'k3-ur7-driver-other-answer');
 
@@ -506,15 +428,17 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
     const unused = async (..._args: unknown[]): Promise<never> => {
       throw new Error('the K3 UR7 CRR driver test never calls this dependency');
     };
+    const waiter = createDriverSettledWaiter({ failureText: 'the K3 UR7 CRR driver did not settle' });
     driver = createCollaborationDriver({
       workflow: narrowedWorkflow, runtime: unused, sessions: unused,
       executions: { readExecution: unused },
       mailbox: { readMessage: unused, readOutbox: unused }, controls: unused, profiles: [],
+      onChange: waiter.onChange,
     } as unknown as Parameters<typeof createCollaborationDriver>[0]);
     try {
       const started = await driver.start(world.fixture.ctx, { advance: selectWork(undefined, answers), queryProfileIds: [] });
       expect(started.status).toBe('ready');
-      const settled = await waitForSettledDriver(driver, world.fixture.ctx);
+      const settled = await waiter.waitForSettledDriver(driver, world.fixture.ctx);
 
       // The first step carries the CRR failure; a LATER step is handed the SAME
       // discriminated ref through the internal argument (not the public input).
@@ -538,25 +462,6 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
       expect(settled.state).not.toBe('failed');
     } finally {
       await driver.close();
-    }
-  }, 120_000);
-
-  it('the failed-card set is never a public advance input (both field names are refused)', async () => {
-    const world = await openK3ReviewCardWorld(kind);
-    worlds.push(world);
-    const assembled = assemble(world);
-    for (const key of ['failedReviewRefs', 'failedCardRefs']) {
-      const rejected = await assembled.workflow.advanceWork(world.fixture.ctx,
-        { ...selectWork(), [key]: [] } as unknown as WorkflowAdvanceInput);
-      expect(rejected).toMatchObject({ status: 'rejected', code: 'invalid' });
-      if (rejected.status !== 'rejected') throw new Error(JSON.stringify(rejected));
-      expect(rejected.reason).toContain(key);
-    }
-    const fresh = await assembled.workflow.advanceWork(world.fixture.ctx, selectWork());
-    expect(fresh.status).toBe('ready');
-    if (fresh.status === 'ready' && fresh.value.next !== null) {
-      expect(hasKey(fresh.value.next, 'failedCardRefs')).toBe(false);
-      expect(hasKey(fresh.value.next, 'failedReviewRefs')).toBe(false);
     }
   }, 120_000);
 });

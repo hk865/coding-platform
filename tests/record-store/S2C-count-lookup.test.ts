@@ -16,14 +16,12 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import type {
-  EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas,
-} from '../../src/core/record-store/ports.js';
-import type { RecordCountPort, RecordCountRequest } from '../../src/core/record-store/lookup-ports.js';
-
-const at = '2026-10-14T00:00:00.000Z';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import type { RecordCountRequest } from '../../src/core/record-store/lookup-ports.js';
+import {
+  change, keyOf, open as openStore, seed, widget, widgetSchemas as baseWidgetSchemas, type TextBackend,
+} from '../helpers/S4B-text-search-support.js';
 
 const plainIndex = { name: 's2c-count-by-group', aggregateType: 'Widget', paths: ['group'] };
 const distinctIndex = { name: 's2c-count-by-tone', aggregateType: 'Widget', paths: ['bucket', 'tone'] };
@@ -36,82 +34,34 @@ const intOrderIndex = {
 const reopenFirstIndex = { name: 's2c-count-reopen', aggregateType: 'Widget', paths: ['group'] };
 const reopenSecondIndex = { name: 's2c-count-reopen', aggregateType: 'Widget', paths: ['group', 'tone'] };
 
+// S2C's own five indexes: the shared record/event schemas plus these lookups.
 const widgetSchemas: RecordBackendSchemas = {
-  records: [{
-    schemaId: 'Widget@1', aggregateType: 'Widget', validate: (record) => {
-      const body: unknown = JSON.parse(record.json);
-      if (typeof body !== 'object' || body === null || !('ref' in body)) {
-        return { status: 'invalid', reason: 'widget ref missing' };
-      }
-      return { status: 'decoded', value: record };
-    },
-  }],
-  events: [{ eventType: 'WidgetChanged', schemaVersion: 1, validate: (event) => ({ status: 'decoded', value: event }) }],
-  lookups: [plainIndex, distinctIndex, textOrderIndex, intOrderIndex, reopenSecondIndex],
+  ...baseWidgetSchemas, lookups: [plainIndex, distinctIndex, textOrderIndex, intOrderIndex, reopenSecondIndex],
 };
 
 function withLookups(lookups: unknown): RecordBackendSchemas {
   return { ...widgetSchemas, lookups: lookups as NonNullable<RecordBackendSchemas['lookups']> };
 }
 
-type Backend = { records: GoalRecordTransactionPort & RecordCountPort; close(): Promise<void> };
-
 const temp: string[] = [];
 afterEach(async () => { for (const dir of temp.splice(0)) await rm(dir, { recursive: true, force: true }); });
 
-/** The canonical refKey of a Widget ref, built here so it is not a product call. */
-function keyOf(projectId: string, widgetId: string): string {
-  return JSON.stringify({ aggregateType: 'Widget', projectId, widgetId });
-}
-
-function widget(projectId: string, widgetId: string, body: Record<string, unknown>): EncodedRecord {
-  const ref = { aggregateType: 'Widget', projectId, widgetId };
-  return {
-    refKey: keyOf(projectId, widgetId), schemaId: 'Widget@1', revision: 1,
-    json: JSON.stringify({ ref, revision: 1, ...body }),
-  };
-}
-
-function event(id: string): EncodedDomainEvent {
-  return {
-    eventId: id, eventType: 'WidgetChanged', schemaVersion: 1, occurredAt: at,
-    json: JSON.stringify({ eventId: id, eventType: 'WidgetChanged', schemaVersion: 1, occurredAt: at }),
-  };
-}
-
-function change(id: string, value: EncodedRecord): PreparedCommit {
-  return {
-    identityKey: id, fingerprint: 'fingerprint-' + id,
-    guards: [{ refKey: value.refKey, expectedRevision: null }],
-    records: [value], events: [event(id)], claims: [], indexGuards: [], indexChanges: [],
-  };
-}
-
+// Every open passes this file's schemas explicitly; the shared open creates the
+// temporary directory, which the wrapper registers for cleanup.
 async function open(
   kind: 'memory' | 'sqlite',
   overrides: { schemas?: RecordBackendSchemas; path?: string } = {},
-): Promise<{ backend: Backend; path?: string }> {
-  if (kind === 'memory') {
-    return { backend: createInMemoryRecordBackend({ schemas: overrides.schemas ?? widgetSchemas }) as unknown as Backend };
-  }
-  const dir = overrides.path ? undefined : await mkdtemp(join(tmpdir(), 's2c-count-'));
-  if (dir) temp.push(dir);
-  const path = overrides.path ?? join(dir!, 'records.sqlite');
-  return {
-    backend: createSqliteRecordBackend({ path, schemas: overrides.schemas ?? widgetSchemas }) as unknown as Backend,
-    path,
-  };
-}
-
-async function seed(backend: Backend, rows: readonly EncodedRecord[], prefix: string): Promise<void> {
-  for (const [position, row] of rows.entries()) {
-    expect(await backend.records.commit(change(`${prefix}-${String(position)}`, row)))
-      .toMatchObject({ status: 'committed' });
-  }
+): Promise<{ backend: TextBackend; path?: string }> {
+  const opened = await openStore(kind, {
+    schemas: overrides.schemas ?? widgetSchemas,
+    ...(overrides.path === undefined ? {} : { path: overrides.path }),
+  });
+  if (opened.dir !== undefined) temp.push(opened.dir);
+  return opened;
 }
 
 /** The public count, or a loud failure if the store refused. */
-async function countOf(backend: Backend, request: RecordCountRequest): Promise<number> {
+async function countOf(backend: TextBackend, request: RecordCountRequest): Promise<number> {
   const result = await backend.records.countLookup(request);
   if (result.status !== 'ready') throw new Error(`countLookup failed: ${result.code}: ${result.reason}`);
   return result.value.count;
@@ -328,7 +278,7 @@ it('2C-08 sqlite: an index registered on reopen counts rows committed before it 
   const path = join(dir, 'records.sqlite');
   const first = createSqliteRecordBackend({
     path, schemas: withLookups([reopenFirstIndex]),
-  }) as unknown as Backend;
+  });
   await seed(first, [
     widget('p', 'r1', { group: 'reopen', tone: 'x' }),
     widget('p', 'r2', { group: 'reopen', tone: 'x' }),
@@ -337,7 +287,7 @@ it('2C-08 sqlite: an index registered on reopen counts rows committed before it 
   ], 'c08-reopen');
   await first.close();
 
-  const reopened = createSqliteRecordBackend({ path, schemas: widgetSchemas }) as unknown as Backend;
+  const reopened = createSqliteRecordBackend({ path, schemas: widgetSchemas });
   try {
     // The reopened registration adds `tone` as a second path; the new index is
     // built over the rows committed before it existed.

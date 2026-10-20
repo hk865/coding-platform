@@ -14,24 +14,13 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { RunRef } from '../../src/contracts/dispatch.js';
 import type {
   UnknownCallReviewRef, UnknownCallReviewV1,
 } from '../../src/contracts/unknown-call-review.js';
-import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { newUnknownCallReview } from '../../src/core/work-graph/state/unknown-call-review.js';
 import {
-  newUnknownCallReview, transitionUnknownCallReview,
-  type UnknownCallReviewContextV1,
-} from '../../src/core/work-graph/state/unknown-call-review.js';
-import {
-  decodeUnknownCallReview, encodeUnknownCallReview, encodeUnknownCallReviewChangedEvent, unknownCallReviewRefKey,
-  UNKNOWN_CALL_REVIEW_CHANGED_EVENT_TYPE, UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION,
-  UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS,
+  decodeUnknownCallReview, encodeUnknownCallReview,
 } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
-import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
-import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
-import { createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { openRealRunHarness } from '../helpers/K3-35-continuation-fixture.js';
 import { openK3ReviewCardWorld, answerK3Disposition, claimK3ReviewRound, endK3RunCompleted, recordK3Conclusion,
@@ -79,15 +68,9 @@ const AT = '2026-10-20T00:00:00.000Z';
 // K3 L7 budget table: 512 KiB - reserve R (365,536) = 158,720. The literal is
 // the spec's, so a drift in the production constant fails this test.
 const B = 158_720;
-const REVIEW_SCHEMAS: RecordBackendSchemas = {
-  records: [...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records],
-  events: [...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events],
-  lookups: [...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? [])],
-};
 const UNAVAILABLE = {
   status: 'unavailable' as const, runBaselineKnown: false, reason: 'not_configured' as const, detail: 'k3-48-2',
 };
-const bytesOf = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).length;
 
 /**
  * K3-48 (一)'s long-command builder: a 512-byte callId, a 512-byte command and
@@ -111,130 +94,12 @@ function processItem(alias: number, pathPad: number, firstPathShrink = 0) {
   };
 }
 
-const FIXTURES: { b2: B2ExecutionFixture; close(): Promise<void> }[] = [];
 const WORLDS: K3ReviewCardWorld[] = [];
 afterEach(async () => {
   shellSeam.release();
   sandbox.available = true;
-  for (const open of FIXTURES.splice(0)) await open.close();
   for (const world of WORLDS.splice(0)) await world.close();
 });
-
-type Built = {
-  b2: B2ExecutionFixture;
-  records: B2ExecutionFixture['base']['records'];
-  reviews: ReturnType<typeof createUnknownCallReviewService>;
-  reviewRef: UnknownCallReviewRef;
-  ctx: CoreCallContext;
-};
-
-/** The ids every exact-size builder fills; the padding never touches them. */
-type ReviewRefs = {
-  reviewRef: UnknownCallReviewRef;
-  workspaceId: string;
-  task: { projectId: string; goalId: string; taskId: string };
-  originRunRef: RunRef;
-  claimRunRef: RunRef;
-  sessionId: string;
-};
-
-function ctxOf(revision: number, overrides: Partial<UnknownCallReviewContextV1> = {}): UnknownCallReviewContextV1 {
-  return { expectedRevision: revision, updatedAt: AT, actor: { kind: 'human', id: 'u' },
-    activeRunEnded: false, activeRunCompleted: false, fenceHumanOnly: false, reviewUnavailable: false,
-    autonomy: 'after_plan_confirmation', incompleteCommandAliases: [], missingSelfCheckAliases: [],
-    originalRunSelected: false, ...overrides };
-}
-
-/** The L9 creation record (no round yet) with `count` exact-size `processItem`s. */
-function pendingReview(
-  refs: ReviewRefs, count: number, pathPad: number, lastPathShrink = 0,
-): UnknownCallReviewV1 {
-  const built = newUnknownCallReview({
-    ref: refs.reviewRef, workspaceId: refs.workspaceId, task: refs.task, runRef: refs.originRunRef,
-    sessionRef: { projectId: refs.reviewRef.projectId, sessionId: refs.sessionId },
-    origin: { kind: 'human_attested', attestedBy: { kind: 'human', id: 'u' }, reason: 'K3-48-2' },
-    inventory: 'complete', inventoryProblem: null, itemsOmitted: 0, workspace: UNAVAILABLE,
-    items: Array.from({ length: count }, (_, index) =>
-      processItem(index + 1, pathPad, index === count - 1 ? lastPathShrink : 0)),
-    streak: { priorAutoCleanup: false, priorUnknownProcess: false, resetRunRef: null }, createdAt: AT,
-  });
-  if (!built.ok) throw new Error(JSON.stringify(built));
-  return built.next;
-}
-
-/**
- * Builds the smallest item count whose 512-byte-field record reaches `target`:
- * the shared path pad is solved linearly (the builder's serialised size grows
- * by exactly 8 bytes per pad character per item), then the first path is
- * trimmed by the rounding remainder so the record is exactly `target` bytes.
- */
-function exactSizedRecord(
-  target: number,
-  build: (count: number, pathPad: number, lastPathShrink: number) => UnknownCallReviewV1,
-): UnknownCallReviewV1 {
-  let count = 0;
-  let pathPad = 0;
-  for (let candidate = 1; candidate <= 31; candidate += 1) {
-    const sample = build(candidate, 64, 0);
-    const base = bytesOf(sample) - 8 * candidate * 64;
-    const pad = Math.ceil((target - base) / (8 * candidate));
-    if (pad >= 1 && pad <= 512) { count = candidate; pathPad = pad; break; }
-  }
-  if (count === 0) throw new Error('no legal item count reaches the near-threshold target');
-  return build(count, pathPad, bytesOf(build(count, pathPad, 0)) - target);
-}
-
-/** Builds a `pending_review` record with one active round, padded so its serialised size is exactly `target`. */
-async function fixture(kind: 'memory' | 'sqlite', target: number): Promise<Built> {
-  const b2 = await createB2ExecutionFixture(kind, REVIEW_SCHEMAS);
-  FIXTURES.push({ b2, close: () => b2.close() });
-  await b2.enter();
-  const records = b2.base.records;
-  const runRef = b2.claim.runRef;
-  const reviewRef: UnknownCallReviewRef = {
-    aggregateType: 'UnknownCallReview', projectId: runRef.projectId, goalId: runRef.goalId, runId: 'k3-48-2-origin',
-  };
-  const refs: ReviewRefs = {
-    reviewRef, workspaceId: b2.base.scope.workspaceId,
-    task: { projectId: runRef.projectId, goalId: runRef.goalId, taskId: b2.claim.task.taskId },
-    originRunRef: { aggregateType: 'Run', projectId: runRef.projectId, goalId: runRef.goalId, runId: reviewRef.runId },
-    claimRunRef: runRef, sessionId: b2.claim.sessionRef.sessionId,
-  };
-  const record = exactSizedRecord(target, (count, pathPad, lastPathShrink) => {
-    const pending = pendingReview(refs, count, pathPad, lastPathShrink);
-    const claimed = transitionUnknownCallReview(pending, {
-      kind: 'round_claimed', runRef, phase: 'review', round: 1,
-    }, ctxOf(pending.revision));
-    if (!claimed.ok) throw new Error(JSON.stringify(claimed));
-    return claimed.next;
-  });
-  expect(bytesOf(record)).toBe(target);
-  const refKey = unknownCallReviewRefKey(reviewRef);
-  const receipt = await records.commit({
-    identityKey: 'k3-48-2-setup', fingerprint: 'k3-48-2-setup-fp',
-    guards: [{ refKey, expectedRevision: null }],
-    records: [encodeUnknownCallReview(record)], claims: [], indexGuards: [], indexChanges: [],
-    events: [encodeUnknownCallReviewChangedEvent({
-      eventId: 'k3-48-2-setup-event', eventType: UNKNOWN_CALL_REVIEW_CHANGED_EVENT_TYPE,
-      schemaVersion: UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION, occurredAt: AT,
-      identityKey: 'k3-48-2-setup', fingerprint: 'k3-48-2-setup-fp', actor: { kind: 'human', id: 'u' },
-      requestId: 'k3-48-2-setup', change: 'round_claimed', review: record,
-    })],
-  });
-  if (receipt.status !== 'committed') throw new Error(`setup commit failed: ${JSON.stringify(receipt)}`);
-  let seq = 0;
-  const reviews = createUnknownCallReviewService({
-    records, lookups: records, reads: createRunStateReader({ records }),
-    readReviewDisplays: async () => ({ status: 'not_found' }),
-    now: () => AT, eventId: () => `k3-48-2-event-${String(++seq)}`,
-  });
-  const ctx: CoreCallContext = {
-    projectId: b2.base.scope.projectId, workspaceId: b2.base.scope.workspaceId,
-    principal: { kind: 'work_run', runRef, roleBinding: b2.run.roleBinding },
-    materialReader: b2.ctx.materialReader, signal: b2.ctx.signal,
-  };
-  return { b2, records, reviews, reviewRef, ctx };
-}
 
 type ProposalBuilt = { world: K3ReviewCardWorld; record: UnknownCallReviewV1; round: K3Round };
 
@@ -301,8 +166,9 @@ async function proposalFixture(kind: 'memory' | 'sqlite'): Promise<ProposalBuilt
 }
 
 /**
- * F-067: a REAL public `awaiting_proposal` record whose body is near the
- * optional-text budget `B`, built only through the public steps.
+ * The real first half of the near-budget chain: a REAL `pending_review` record
+ * whose body is near the optional-text budget `B`, built only through the
+ * public steps.
  *
  * The record size that matters is the review record's serialised bytes; its
  * one real process item is bounded (a 512-byte callId / command / 8×512 path
@@ -312,23 +178,34 @@ async function proposalFixture(kind: 'memory' | 'sqlite'): Promise<ProposalBuilt
  * real start baseline (`prepareViaRuntime`), and the 50 long-named files are
  * written to disk AFTER that baseline, through `writeFile`. RUN-20/RUN-22 then
  * capture the real change set; nothing is constructed.
+ *
+ * `pathBytes` is the hand-chosen total relative length of each changed path.
+ * The capture sample is 50 paths, so a caller tunes the record size by 50 bytes
+ * per path byte without touching anything else.
+ *
+ * W2b-21: the record Run's Session is the S5 fixture's real one
+ * (`createRealS5Session`, the production Session operation owner), so its Kernel
+ * Session identity is the one the platform issued.
  */
-async function nearBudgetProposalFixture(kind: 'memory' | 'sqlite'): Promise<ProposalBuilt> {
+async function nearBudgetPendingReview(
+  kind: 'memory' | 'sqlite', pathBytes: number, label: string,
+): Promise<{ world: K3ReviewCardWorld; record: UnknownCallReviewV1 }> {
   const world = await openK3ReviewCardWorld(kind, { realKernelCommandFacts: true });
   WORLDS.push(world);
   const harness = await openRealRunHarness(world, { gitWorkspace: true });
-  const session = await world.fixture.createS5Session(`k3-48-2-near-${kind}`);
+  const session = await world.fixture.createRealS5Session(`k3-48-2-near-${label}`);
   const claim = await harness.claimRun({ sessionRef: session, planRef: PLAN_B2, taskId: 'k3-20-a',
-    requestId: `k3-48-2-near-claim-${kind}` });
+    requestId: `k3-48-2-near-claim-${label}` });
   const recordRun = await harness.prepareAndStart(claim, {
     model: createScriptedModel([{ kind: 'calls', calls: [{
-      callId: `k3-48-2-near-shell-${kind}`, name: 'shell', args: { command: 'printf k3-48-2 > a.txt' },
+      callId: `k3-48-2-near-shell-${label}`, name: 'shell', args: { command: 'printf k3-48-2 > a.txt' },
     }] }]),
     tools: ['read', 'shell'], writeScope: ['.'], blockOnShell: true, prepareViaRuntime: true,
   });
   // Real files under the workspace root, written after the run-start baseline.
   for (let index = 0; index < 50; index += 1) {
-    const relative = `${pathOfBytes(NEAR_BUDGET_PATH_BYTES - 4)}/f${String(index).padStart(2, '0')}`;
+    // `pathOfBytes(pathBytes - 4)` + `/fNN` is exactly `pathBytes` bytes.
+    const relative = `${pathOfBytes(pathBytes - 4)}/f${String(index).padStart(2, '0')}`;
     await mkdir(dirname(join(world.fixture.base.directory, relative)), { recursive: true });
     await writeFile(join(world.fixture.base.directory, relative), 'k3-48-2 changed\n');
   }
@@ -345,6 +222,12 @@ async function nearBudgetProposalFixture(kind: 'memory' | 'sqlite'): Promise<Pro
   if (created.workspace.status !== 'captured' || created.workspace.sample.length !== 50) {
     throw new Error(`the near-budget record did not capture 50 real paths: ${JSON.stringify(created.workspace)}`);
   }
+  return { world, record: created };
+}
+
+/** F-067: a REAL public `awaiting_proposal` record near `B`, built from the near-budget pending record. */
+async function nearBudgetProposalFixture(kind: 'memory' | 'sqlite'): Promise<ProposalBuilt> {
+  const { world, record: created } = await nearBudgetPendingReview(kind, NEAR_BUDGET_PATH_BYTES, kind);
   const reviewRound = await claimK3ReviewRound(world, created, { phase: 'review' });
   const concluded = await recordK3Conclusion(world, reviewRound, {
     item: 1, verdict: 'done', evidence: 'K3-48-2: ran',
@@ -371,6 +254,13 @@ async function nearBudgetProposalFixture(kind: 'memory' | 'sqlite'): Promise<Pro
  * cwd can make the post-proposal precondition exactly `B - 2,000` bytes.
  */
 const NEAR_BUDGET_PATH_BYTES = 3_022;
+/**
+ * The same tuning for the review-conclusion row: the record after the real
+ * review-round claim must sit in the row's window, so adding the 1,500-byte
+ * evidence write crosses `B` and adding the 100-byte write stays under it.
+ * The record grows by exactly 50 bytes per path byte (50 captured paths).
+ */
+const NEAR_CONCLUSION_PATH_BYTES = 3_078;
 /** A short real safer command: the separate 5,120-byte approved-method budget includes the cwd. */
 const NEAR_COMMAND = 'echo safer';
 
@@ -415,26 +305,40 @@ function createdRecordWithDigest(digest: string): UnknownCallReviewV1 {
 
 describe('K3-48 (二) optional model text admission', () => {
   it.each(['memory', 'sqlite'] as const)('K3-48 (二) %s: a long evidence write over budget is capacity and the record is byte-identical', async kind => {
-    const fx = await fixture(kind, B - 1000);
-    const before = await fx.reviews.readReview(fx.ctx, { ref: fx.reviewRef });
+    // The real near-budget chain: real git work tree, real Run baseline, 50
+    // long real paths captured by RUN-20/RUN-22, then the real review-round
+    // claim (UCR-03) enters a running round that may write the conclusion.
+    const { world, record: pending } = await nearBudgetPendingReview(
+      kind, NEAR_CONCLUSION_PATH_BYTES, `${kind}-conclusion`);
+    const round = await claimK3ReviewRound(world, pending, { phase: 'review' });
+    const reviewRef = round.record.ref;
+    const before = await world.reviews.readReview(round.context, { ref: reviewRef });
     if (before.status !== 'ready') throw new Error('setup record must be readable');
+    // The row's window: the record is large enough that the +1,500-byte
+    // evidence write crosses B, and small enough that the +100-byte write
+    // stays at or under it (the observed field's own JSON is added by the
+    // conclusion either way).
+    const size = k3SerializedBytes(before.value);
+    expect(size).toBeGreaterThan(B - 1_500);
+    expect(size).toBeLessThanOrEqual(B - 100);
     const revision = before.value.revision;
 
-    const over = await fx.reviews.recordConclusion(fx.ctx,
-      request(fx.reviewRef, 'k3-48-2-long', revision, 'x'.repeat(1500)) as never);
+    const over = await world.reviews.recordConclusion(round.context,
+      request(reviewRef, 'k3-48-2-long', revision, 'x'.repeat(1500)) as never);
     expect(over).toMatchObject({ status: 'rejected', code: 'capacity' });
 
-    const after = await fx.reviews.readReview(fx.ctx, { ref: fx.reviewRef });
+    const after = await world.reviews.readReview(round.context, { ref: reviewRef });
     if (after.status !== 'ready') throw new Error('the record must still be readable');
     expect(JSON.stringify(after.value)).toBe(JSON.stringify(before.value));
 
-    const short = await fx.reviews.recordConclusion(fx.ctx,
-      request(fx.reviewRef, 'k3-48-2-short', revision, 'y'.repeat(100)) as never);
+    const short = await world.reviews.recordConclusion(round.context,
+      request(reviewRef, 'k3-48-2-short', revision, 'y'.repeat(100)) as never);
     expect(short).toMatchObject({ status: 'committed', replayed: false });
-    const accepted = await fx.reviews.readReview(fx.ctx, { ref: fx.reviewRef });
+    const accepted = await world.reviews.readReview(round.context, { ref: reviewRef });
     if (accepted.status !== 'ready') throw new Error('the accepted record must be readable');
     expect(accepted.value.items[0]).toMatchObject({ alias: 1,
       observed: { verdict: 'done', by: 'review_round', evidence: 'y'.repeat(100) } });
+    await endK3RunCompleted(world, round.claim);
   });
 
   it.each(['sqlite'] as const)('K3-48 (二) %s: a real awaiting_proposal record admits a 2,000-character rationale and the proposal is readable', async kind => {
@@ -468,7 +372,7 @@ describe('K3-48 (二) optional model text admission', () => {
     expect(accepted.value.revision).toBe(revision + 1);
   }, 120_000);
 
-  it.each([['memory', 457], ['sqlite', 376]] as const)('K3-48 (二) %s: the real near-budget proposal refuses 2,000 characters as capacity and admits 100', async (kind, cwdBytes) => {
+  it.each([['memory', 422], ['sqlite', 341]] as const)('K3-48 (二) %s: the real near-budget proposal refuses 2,000 characters as capacity and admits 100', async (kind, cwdBytes) => {
     const fx = await nearBudgetProposalFixture(kind);
     const reviewRef = fx.round.record.ref;
     const before = await fx.world.reviews.readReview(fx.round.context, { ref: reviewRef });
@@ -509,13 +413,19 @@ describe('K3-48 (二) optional model text admission', () => {
     // record is exactly B - 2,000 = 156,720 bytes BEFORE the rationale text.
     // The precondition is asserted against that fixed literal; the pre-write
     // size below is only the independent after-the-fact check of it:
-    //   memory: 155,989 + 274 + 457 = 156,720
-    //   sqlite: 156,070 + 274 + 376 = 156,720
+    //   memory: 156,024 + 274 + 422 = 156,720
+    //   sqlite: 156,105 + 274 + 341 = 156,720
+    // W2b-21: the record Run's Session is now the real one. Its Kernel Session id
+    // is the platform's `session-` + 64 hex = 72 bytes, where the handwritten
+    // `s5-kernel-session-k3-48-2-near-<kind>` was 18 + 19 = 37 bytes; the record
+    // carries it once (the item's Kernel binding), so it is 72 - 37 = 35 bytes
+    // larger (155,989 -> 156,024; 156,070 -> 156,105) and each cwd is 35 bytes
+    // shorter (457 -> 422; 376 -> 341). The written record is the same 156,720.
     // The backends differ by 81 bytes because the sqlite capture's notVisible
     // list adds four store names with their JSON quotes/comma:
     //   "artifacts.sqlite" 19 + "artifacts.sqlite-shm" 23
     //   + "artifacts.sqlite-wal" 23 + "ledger.sqlite" 16 = 81,
-    // so the sqlite cwd is 81 bytes shorter (457 - 81 = 376).
+    // so the sqlite cwd is 81 bytes shorter (422 - 81 = 341).
     const BEFORE_TEXT = 156_720;
     expect(B - 2_000).toBe(BEFORE_TEXT);
     expect(k3SerializedBytes(before.value) + REVISION_BYTES + PROPOSAL_JSON_BYTES + cwdBytes)

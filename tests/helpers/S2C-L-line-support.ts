@@ -38,8 +38,6 @@ import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/quer
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
-import { encodeSessionRecord } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import { createSessionRecord } from '../../src/core/work-graph/state/session-availability.js';
 import { createRunSupport, runKey, waitContinuation, yieldedEvent, type RunSupport } from './S2C-L-runs-support.js';
 import { createLineCheckSupport, type LineCheckSupport } from './S2C-L-check-support.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
@@ -106,8 +104,6 @@ export type LineFixture = {
     workspace?: WorkspaceScope;
   }): Promise<{ ref: SessionRef; record: import('../../src/contracts/core/session.js').SessionRecord;
     cursor: import('../../src/contracts/command-event.js').CommitCursor }>;
-  /** The §7 exception: a valid legacy Session record with no provenance, committed at the storage boundary. */
-  createLegacySession(requestId: string): Promise<SessionRef>;
   link(session: SessionRef, target: WorkLinkTarget, relation: WorkLinkRelation, active: boolean): Promise<void>;
   transfer(from: SessionRef, to: SessionRef, target: WorkLinkTarget): Promise<void>;
   closeTerminal(session: SessionRef, target: WorkLinkTarget): Promise<void>;
@@ -316,7 +312,7 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
     const dependsOn = effective.flatMap((task) => task.dependsOnId === undefined ? []
       : [{ taskId: task.taskId, dependsOnId: task.dependsOnId, requires: { kind: 'output-contract' as const, label: `${task.dependsOnId} output` } }]);
     const needsV2 = checkable || effective.some((task) => task.executionIntent !== undefined);
-    return { schemaVersion: needsV2 ? 2 : 1, planId, planRevision: 1, goalId, stages, tasks: draftTasks,
+    return { schemaVersion: 2, planId, planRevision: 1, goalId, stages, tasks: draftTasks,
       ...(needsV2 ? { taskRelations: [], inputRequirements: [] } : {}),
       assignments: draftTasks.filter((entry) => entry.taskKind === 'work').map((entry) => ({
         taskId: entry.taskId, role: 'builder', instruction: entry.title })),
@@ -463,19 +459,6 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
     plans: base.plans,
   };
 
-  /** The §7 exception: a legal historical Session with no provenance, at the storage boundary. */
-  async function createLegacySession(requestId: string): Promise<SessionRef> {
-    const ref: SessionRef = { projectId: scope.projectId, sessionId: `legacy-${requestId}` };
-    const record = createSessionRecord({
-      ref: plainSessionRefToAggregate(ref),
-      kernel: { adapterId: KERNEL_ADAPTER, kernelSessionId: `kernel-legacy-${requestId}` },
-      role: defaultRole, workspaceId: scope.workspaceId, createdAt: new Date().toISOString(),
-    });
-    const committed = await base.commitRaw([encodeSessionRecord(record)]);
-    if (committed.status !== 'committed') throw new Error(`S2C-L legacy Session commit failed: ${JSON.stringify(committed)}`);
-    return ref;
-  }
-
   function queueReader(target: WorkLineStore = records, budget?: number,
     options: { decisions?: WorkLineStore; autoReworkLimit?: number;
       duty?: (role: { templateId?: string; roleId?: string }) => 'executor' | 'secretary' | 'unknown' } = {}): WorkLineReadPort {
@@ -523,7 +506,7 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
     reader: createWorkLineReader(deps),
     readerWith: (target, budget) => lineReaderOver(base, target, () => 'executor', budget),
     queueReader, writeAnchors,
-    createSession, createLegacySession, link, transfer, closeTerminal, archive, claim, claimWith, addGoal, setGoalDesired,
+    createSession, link, transfer, closeTerminal, archive, claim, claimWith, addGoal, setGoalDesired,
     addCheckableGoal: (goalId, tasks) => addGoal(goalId, tasks, { checkable: true }),
     checks,
     setPins, workspaceSnapshot, taskOf,
@@ -628,7 +611,7 @@ export function commitBeforeLookupOrdered(
 export type D1 = {
   a: SessionRef; b: SessionRef; c: SessionRef; d: SessionRef; e: SessionRef;
   f1: SessionRef; f2: SessionRef; g: SessionRef; gCopy: SessionRef;
-  h: SessionRef; i: SessionRef; j: SessionRef; k: SessionRef; l: SessionRef;
+  h: SessionRef; i: SessionRef; j: SessionRef; k: SessionRef;
   workGoal: LineGoal; aRunKey: string;
 };
 
@@ -707,8 +690,5 @@ export async function buildD1(f: LineFixture): Promise<D1> {
     provenance: copyProvenance(g, f.base.scope.workspaceId, 'd1-k-msg') })).ref;
   await f.archive(k);
 
-  // L: legacy Session without provenance (the §7 storage-boundary exception).
-  const l = await f.createLegacySession('d1-l');
-
-  return { a, b, c, d, e, f1, f2, g, gCopy, h, i, j, k, l, workGoal, aRunKey: runKey(aClaim.runRef) };
+  return { a, b, c, d, e, f1, f2, g, gCopy, h, i, j, k, workGoal, aRunKey: runKey(aClaim.runRef) };
 }

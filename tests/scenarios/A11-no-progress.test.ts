@@ -645,7 +645,7 @@ it('A11 #4: a message its recipient has answered is a new basis, so the requeue 
   const QUESTION = 'A11 #4 question: does the static check read the workspace at all?';
   const ANSWER = 'A11 #4 answer: no, it exits 1 whatever the files hold';
   const ask = { callId: 'a11-ask', name: 'send_session_message',
-    args: { recipient: {}, text: QUESTION, replyMode: 'wait' } as Record<string, unknown> };
+    args: { recipient: {}, text: QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const h = await openHostScenario({ automation: NO_REDRIVE, check: 'fail', workIds: [W, WORK_2], script: {
     replies: [textReply('A11 #4 Run 1 changes nothing'), textReply('A11 #4 Run 2 changes nothing'), { kind: 'calls', calls: [ask] }],
     queryReplies: [textReply(ANSWER)] } });

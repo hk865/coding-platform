@@ -171,6 +171,7 @@ async function fixture(name: string, respond: ModelRound, assertMaterialsCurrent
     meter, root, databasePath: join(directory, 'kernel.sqlite'), sessionId: `source-text-${name}`,
     input: 'Use project_source for bounded text reads, captures, queries, comparisons and release.',
     budget, readOnly: true, signal: new AbortController().signal,
+    taskBudget: { tokenBudget: null, deadline: null },
     deniedPrefixes: [], processSandboxOptions: {}, publish: async () => {},
     projectSource: { mode: 'frozen', open },
     // This hook observes the trusted provider boundary only; it does not fabricate

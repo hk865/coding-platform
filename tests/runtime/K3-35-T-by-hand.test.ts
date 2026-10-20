@@ -50,7 +50,7 @@ import {
   type K3_35PublicRecord,
 } from '../helpers/K3-35-continuation-fixture.js';
 import { prepareWorstCase } from '../helpers/K3-35-prepare.js';
-import { requiredReviewBlock } from '../helpers/K3-35-required-review-block.js';
+import { requiredReviewBlock } from '../helpers/K3-continuation-pure-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 // The §5.1 shell stand-in and the KE6 sandbox probe (no host process runs).

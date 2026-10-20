@@ -3,7 +3,7 @@
  *
  * Guard cases use controlled facts to reach each Run permission branch directly.
  * Integration cases below also use persisted SQLite claims, the actual material
- * and source readers, and WorkspaceTools for starting/running/revoked records.
+ * and source readers, and WorkspaceTools for starting/running records.
  * Cases reach `resolveRoot` / the Run authorization. The `events` member is a
  * test-only trap: it counts calls and throws, because a Work source read must
  * not read Query-origin event pages. Rejections are observed through the real
@@ -25,7 +25,7 @@ import type { SourceAuthorityReads, SourceCanonicalRef, SourceCanonicalSnapshot 
 import { WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
-import { createTaskClaimFixture } from '../helpers/task-claim-fixture.js';
+import { createB2RuntimeFixture } from '../helpers/B2-runtime-fixture.js';
 
 const at = '2026-09-25T00:00:00.000Z';
 const projectId = 'r4c-guard-project';
@@ -261,48 +261,6 @@ it('rejects an unknown principal kind before creating a sandbox', async () => {
   expect(facts.eventsCalls()).toBe(0);
 });
 
-it('rejects unreadable consumed envelope identity from a real stored Run without throwing or file I/O', async () => {
-  const fixture = await createTaskClaimFixture('sqlite');
-  try {
-    const claimed = await fixture.service.claimTask(fixture.ctx, await fixture.buildRequest());
-    if (claimed.status !== 'committed') throw Error('real TaskClaim fixture did not commit');
-    const material = createMaterialRecordReaders(fixture.records).authority;
-    const original = await material.load(claimed.value.runRef);
-    if (original.status !== 'found' || original.snapshot.ref.aggregateType !== 'Run') {
-      throw Error('real claim Run could not be decoded by MaterialAuthority');
-    }
-    const run = original.snapshot as RunSnapshot;
-    // The existing Run codec permits an object envelope. Its permissions are
-    // valid here; only identities actually consumed by the runtime are absent.
-    const envelope = { permissions: validEnvelope().permissions } as TaskEnvelopeV1;
-    const damaged: RunSnapshot = { ...run, revision: run.revision + 1, status: 'running', startedAt: at, envelope };
-    const refKey = canonical(run.ref);
-    expect(await fixture.commitRaw([{ refKey, schemaId: 'RunSnapshot@1', revision: damaged.revision,
-      json: JSON.stringify(damaged) }], [{ refKey, expectedRevision: run.revision }]))
-      .toMatchObject({ status: 'committed' });
-    // Prove the malformed identity reaches the consumer through the real codec,
-    // instead of using a fake successful provider result or a failed fixture.
-    expect(await material.load(run.ref)).toMatchObject({ status: 'found', snapshot: { envelope } });
-    const snapshots = createSourceAuthorityReader({ authority: material });
-    const events = vi.fn(async () => { throw Error('Work guard must not read Query event pages'); });
-    const authority: SourceAuthorityReads = { ...snapshots, events };
-    const root = await directory();
-    const runtime = { kind: 'work' as const, root, workspace: fixture.workspaceRef,
-      runRef: run.ref, attemptRef: claimed.value.attemptRef, roleBinding: run.roleBinding };
-    const ctx: CoreCallContext = { ...fixture.ctx,
-      principal: { kind: 'work_run', runRef: run.ref, roleBinding: run.roleBinding },
-      materialReader: { kind: 'run', requester: run.ref } };
-    const io = observeFileAccess();
-    const result = await accessFor(authority, policyFor(root), runtime).open(ctx, fixture.workspaceRef)
-      .catch(error => ({ status: 'threw' as const, error: String(error) }));
-    io.expectNone();
-    expect(result).toMatchObject({ status: 'rejected', code: 'unavailable' });
-    expect(events).not.toHaveBeenCalled();
-  } finally {
-    await fixture.close();
-  }
-});
-
 it('keeps the prepared root, mount registration and host lifecycle checks', async () => {
   const root = await directory();
   const otherRoot = await directory();
@@ -318,20 +276,22 @@ it('keeps the prepared root, mount registration and host lifecycle checks', asyn
   await expect(stopping.open(workContext(), workspace)).resolves.toMatchObject({ status: 'rejected', code: 'cancelled' });
 });
 
-it('uses real SQLite facts through both readers: a starting claim is denied, a trusted running seed can read, and revocation is fresh', async () => {
-  const fixture = await createTaskClaimFixture('sqlite');
+it('uses real SQLite facts through both readers: a starting claim is denied, a real running Run can read', async () => {
+  let providerEntered!: () => void;
+  const entered = new Promise<void>(resolve => { providerEntered = resolve; });
+  let releaseProvider!: () => void;
+  const providerRelease = new Promise<void>(resolve => { releaseProvider = resolve; });
+  const fixture = await createB2RuntimeFixture({ kind: 'sqlite',
+    scriptedReplies: [{ kind: 'text', text: 'guarded source read' }],
+    beforeReply: async () => { providerEntered(); await providerRelease; } });
   let handle: ReturnType<typeof createWorkspaceTools> | undefined;
   try {
-    const claimed = await fixture.service.claimTask(fixture.ctx, await fixture.buildRequest());
-    expect(claimed.status).toBe('committed');
-    if (claimed.status !== 'committed') throw Error('real TaskClaim fixture did not commit');
-    const materialAuthority = createMaterialRecordReaders(fixture.records).authority;
-    const original = await materialAuthority.load(claimed.value.runRef);
+    const materialAuthority = createMaterialRecordReaders(fixture.claimFixture.records).authority;
+    const original = await materialAuthority.load(fixture.claim.runRef);
     if (original.status !== 'found' || original.snapshot.ref.aggregateType !== 'Run') {
       throw Error('real claim Run could not be decoded by MaterialAuthority');
     }
-    let current = original.snapshot as RunSnapshot;
-    expect(current).toMatchObject({ status: 'starting', envelope: null });
+    expect(original.snapshot as RunSnapshot).toMatchObject({ status: 'starting', envelope: null });
     const root = await directory();
     const snapshots = createSourceAuthorityReader({ authority: materialAuthority });
     const events = vi.fn(async () => { throw Error('Work integration must not read Query event pages'); });
@@ -340,14 +300,14 @@ it('uses real SQLite facts through both readers: a starting claim is denied, a t
     const authority: SourceAuthorityReads = { ...snapshots, events };
     const ctx: CoreCallContext = {
       ...fixture.ctx,
-      principal: { kind: 'work_run', runRef: claimed.value.runRef, roleBinding: fixture.roleBinding },
-      materialReader: { kind: 'run', requester: claimed.value.runRef },
+      principal: { kind: 'work_run', runRef: fixture.claim.runRef, roleBinding: fixture.claimFixture.roleBinding },
+      materialReader: { kind: 'run', requester: fixture.claim.runRef },
     };
-    const runtime = { kind: 'work' as const, root, workspace: fixture.workspaceRef,
-      runRef: claimed.value.runRef, attemptRef: claimed.value.attemptRef, roleBinding: fixture.roleBinding };
+    const runtime = { kind: 'work' as const, root, workspace: fixture.claimFixture.workspaceRef,
+      runRef: fixture.claim.runRef, attemptRef: fixture.claim.attemptRef, roleBinding: fixture.claimFixture.roleBinding };
     handle = createWorkspaceTools({ access: accessFor(authority, policyFor(root), runtime),
       now: () => at, limits: DEFAULT_WORKSPACE_LIMITS });
-    const input = { workspace: fixture.workspaceRef, path: 'src/main.ts', maxBytes: 4096,
+    const input = { workspace: fixture.claimFixture.workspaceRef, path: 'src/main.ts', maxBytes: 4096,
       version: { kind: 'working_tree' as const } };
     const io = observeFileAccess();
 
@@ -355,38 +315,30 @@ it('uses real SQLite facts through both readers: a starting claim is denied, a t
     io.expectNone();
     expect.soft(starting).toMatchObject({ status: 'rejected', code: 'forbidden' });
 
-    const seedRun = async (next: RunSnapshot) => {
-      const refKey = canonical(current.ref);
-      const committed = await fixture.commitRaw([{ refKey, schemaId: 'RunSnapshot@1',
-        revision: next.revision, json: JSON.stringify(next) }],
-      [{ refKey, expectedRevision: current.revision }]);
-      expect(committed).toMatchObject({ status: 'committed' });
-      current = next;
-    };
-    const envelope: TaskEnvelopeV1 = {
-      ...validEnvelope(), projectId: fixture.scope.projectId, workspaceId: fixture.scope.workspaceId,
-      goalId: current.task.goalId, taskId: current.task.taskId,
-      runRef: current.ref, attemptRef: claimed.value.attemptRef, planRef: current.planRef,
-      roleBinding: current.roleBinding, workspaceSnapshot: current.workspaceSnapshot, budget: current.budget,
-      bundleRef: { ...validEnvelope().bundleRef,
-        source: { kind: 'workspace', refId: fixture.scope.workspaceId, revision: '1' } },
-    };
-    // Trusted persisted test seed for this consumer only. No entry service,
-    // execution authorization or claim-to-running transition is claimed here.
-    await seedRun({ ...current, revision: current.revision + 1, status: 'running', startedAt: at, envelope });
-    io.clear();
-    const readable = await handle.tools.readWorkspace(ctx, input);
-    expect.soft(readable).toMatchObject({ status: 'ready', value: {
-      path: 'src/main.ts', content: 'export const guardedSource = 1;\n' } });
-    expect.soft(io.read).toHaveBeenCalledTimes(1);
-
-    await seedRun({ ...current, revision: current.revision + 1,
-      envelope: { ...envelope, permissions: { ...envelope.permissions, tools: [] } } });
-    io.clear();
-    const revoked = await handle.tools.readWorkspace(ctx, input);
-    io.expectNone();
-    expect(revoked).toMatchObject({ status: 'rejected', code: 'forbidden' });
-    expect(events).not.toHaveBeenCalled();
+    const prepared = await fixture.runtime.port.prepareExecution(fixture.ctx, {
+      runRef: fixture.claim.runRef, requestId: 'guard-running-prepare' });
+    expect(prepared.status).toBe('ready');
+    if (prepared.status !== 'ready') return;
+    const running = fixture.runtime.port.startRun(fixture.ctx,
+      { prepared: prepared.value, consumerId: 'guard-running-consumer', requestId: 'guard-running-start' });
+    try {
+      const first = await Promise.race([entered.then(() => true), running.then(() => false)]);
+      expect(first).toBe(true);
+      if (!first) return;
+      const current = await fixture.deps.executions.readExecution(fixture.ctx, fixture.claim.runRef);
+      expect(current.status).toBe('ready');
+      if (current.status !== 'ready') return;
+      expect(current.value.run).toMatchObject({ status: 'running', executionAuthorization: { phase: 'entered' } });
+      io.clear();
+      const readable = await handle.tools.readWorkspace(ctx, input);
+      expect.soft(readable).toMatchObject({ status: 'ready', value: {
+        path: 'src/main.ts', content: 'export const guardedSource = 1;\n' } });
+      expect.soft(io.read).toHaveBeenCalledTimes(1);
+      expect(events).not.toHaveBeenCalled();
+    } finally {
+      releaseProvider();
+      await running;
+    }
   } finally {
     await handle?.close();
     await fixture.close();

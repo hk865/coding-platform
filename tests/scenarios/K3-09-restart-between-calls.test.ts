@@ -24,7 +24,7 @@ import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.j
 import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
 import { preparedOf, redrivePolicy } from './support/common.js';
 import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
-import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
+import { crashOneCommand } from './support/review-card-round.js';
 import { expectQuietHarnessRestart } from './support/restart.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
@@ -39,21 +39,8 @@ import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-revie
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 // --- The shell seam (the original work call in flight) --------------------
@@ -104,35 +91,16 @@ function reviewOf(h: HostScenario, runRef: RunRef): Promise<ReadResult<UnknownCa
   return h.post<ReadResult<UnknownCallReviewV1>>('unknown-call-reviews/read', plain(AG2B_SCOPE, { runRef }));
 }
 
-/** K3-05's A half: a `shell` call in flight is closed by RUN-25, leaving the record `pending_review`. */
-async function crashShellRun(h: HostScenario, label: string): Promise<ReturnType<typeof preparedOf>> {
-  shellSeam.arm();
-  const modelA = createScriptedModel([{ kind: 'calls', calls: [
-    { callId: `${label}-shell`, name: 'shell', args: { command: `${label} runs a program` } }] }]);
-  const rootA = await openShellWorkRoot(h, modelA);
-  let runningA: Promise<unknown> | null = null;
-  try {
-    const startA = await prepareOn(rootA, h.select(`${label}-a`, AG2B_WORK_TASK_ID));
-    const preparedA = preparedOf(startA);
-    runningA = rootA.runtime.startRun(hostCtx(), { prepared: preparedA, consumerId: AG2B_CONSUMER_ID,
-      requestId: `${label}-a-start` });
-    await shellSeam.waitForCall();
-    const report = await h.restart({ crash: true });
-    expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
-      { ref: JSON.stringify(preparedA.claim.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
-        autoCleanup: { applied: true } }] } });
-    return preparedA;
-  } finally {
-    shellSeam.release();
-    await runningA?.catch(() => undefined);
-    await rootA.close();
-  }
-}
-
 describe('K3-09 (一) restart between two review calls', () => {
   it('K3-09 (一): a clean interruption between calls is RUN-19; the first round is unfinished, the second claims in the same Session, one continuation, a final restart writes nothing', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const preparedA = await crashShellRun(h, 'k3-09a');
+    const crashed = await crashOneCommand(h, { callId: 'k3-09a-shell', select: 'k3-09a-a',
+      requestId: 'k3-09a-a-start', shellArgs: { command: 'k3-09a runs a program' } });
+    await crashed.release();
+    expect(crashed.report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+      { ref: JSON.stringify(crashed.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+        autoCleanup: { applied: true } }] } });
+    const preparedA = crashed.prepared;
     const created = await reviewOf(h, preparedA.claim.runRef);
     expect(created.status).toBe('ready');
     if (created.status !== 'ready') return;
@@ -241,7 +209,13 @@ describe('K3-09 (一) restart between two review calls', () => {
 
   it('K3-09 (二): a restart while record_unknown_call_review is in flight is RUN-20(i) blockedBy review_round; UR5 skips, the attestation (no record) leaves the round unfinished, and the second round claims in the same Session', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const preparedA = await crashShellRun(h, 'k3-09b');
+    const crashed = await crashOneCommand(h, { callId: 'k3-09b-shell', select: 'k3-09b-a',
+      requestId: 'k3-09b-a-start', shellArgs: { command: 'k3-09b runs a program' } });
+    await crashed.release();
+    expect(crashed.report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+      { ref: JSON.stringify(crashed.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+        autoCleanup: { applied: true } }] } });
+    const preparedA = crashed.prepared;
     const created = await reviewOf(h, preparedA.claim.runRef);
     expect(created.status).toBe('ready');
     if (created.status !== 'ready') return;

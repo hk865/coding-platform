@@ -410,7 +410,7 @@ export function tallyWorld(counts: OpCounts, world: InvariantWorld, eventTypes: 
       counts.add(`fact:disposition:${cls}:${entry.from}->${entry.to}${entry.traced ? ':traced' : ''}`);
     }
   }
-  for (const message of world.messages) counts.add(`fact:message:${message.status}${message.replyMode === 'wait' ? ':wait' : ''}`);
+  for (const message of world.messages) counts.add(`fact:message:${message.status}${message.waitAfterSend === true ? ':wait' : ''}`);
   for (const goal of world.goals) counts.add(`fact:goal:${goal.desiredState}`);
   for (const phase of world.goalPhases) counts.add(`fact:goal-phase:${phase.phase}`);
   for (const type of eventTypes) counts.add(`event:${type}`);
@@ -617,7 +617,7 @@ export class HostFuzz {
     const live = world.runs.filter((run) => run.status !== 'ended');
     const heads = this.reverifiableHeads();
     const open = this.openHeads(heads);
-    const waits = world.messages.filter((message) => message.status !== 'responded' && message.replyMode === 'wait');
+    const waits = world.messages.filter((message) => message.status !== 'responded' && message.waitAfterSend === true);
     const late = this.operation > this.options.operations - 4;
     const entries: Array<readonly [number, readonly [string, () => Promise<void>]]> = [
       [active ? 34 : 6, ['advance', () => this.opAdvance()]],
@@ -694,7 +694,7 @@ export class HostFuzz {
         const recipient = this.recipient!;
         setCalls(reply, [{ callId: `fuzz-${index}-send`, name: 'send_session_message', args: {
           recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId },
-          text: `fuzz question ${index}: which marker does src/module.ts export?`, replyMode: 'wait' } }]);
+          text: `fuzz question ${index}: which marker does src/module.ts export?`, intent: 'inquiry', needsReply: true, waitAfterSend: true } }]);
         return;
       }
       case 'final':
@@ -1945,7 +1945,7 @@ export class HostFuzz {
 
   /** Answers a wait message through the formal consultation (the query model), as its recipient. */
   private async opReply(): Promise<void> {
-    const waits = this.world().messages.filter((message) => message.status !== 'responded' && message.replyMode === 'wait');
+    const waits = this.world().messages.filter((message) => message.status !== 'responded' && message.waitAfterSend === true);
     const message = this.rng.pick(waits);
     const answer = await this.h.answer('workflow/consultation', plain(AG2B_SCOPE, { schemaVersion: 1, messageRef: message.ref,
       goalRef: AG2B_GOAL_REF, roleBinding: AG2B_QUERY_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET,

@@ -10,6 +10,7 @@ import { createExplorationTools, type ExplorationToolsHandle, type SourceToolOpt
 import { readSourceIdentity } from '../../core/workspace/source-identity.js';
 import type { RuntimeSourceCaptureAccess, RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
+import { kernelToolNameOf } from '../work-graph/state/unknown-call-kinds.js';
 
 /** The internal result of the ONE existing finally cleanup. It is a local
  * proof for the Trusted Host's live handle, never a public control ack. */
@@ -21,7 +22,7 @@ export type ObservedModelRunOptions = {
   kernel: typeof import('../../../vendor/coding-agent/dist/public-api.js'); bound: BoundModel; meter: ModelBudget;
   root: string; databasePath: string; sessionId: string; input: string; budget: RuntimeBudget; readOnly: boolean;
   /** Persistent Run cumulative constraint; the formal driver always supplies it. */
-  taskBudget?: ModelTokenBudget;
+  taskBudget: ModelTokenBudget;
   /** Trusted clock used to evaluate the persistent absolute task deadline. */
   now?: () => string;
   /** Frozen public Kernel inputs; the caller supplies a real completed history boundary. */
@@ -76,16 +77,15 @@ export type ObservedModelRunOptions = {
   systemInstruction?: string;
   sourceTools?: SourceToolOptions;
   /**
-   * 本次模型循环的源码捕获模式。未指定（或显式 `legacy_live`）保持原调用方兼容语义，
-   * 仍是旧 `project_index` 实时路径；显式 `frozen` 必须提供可信工厂，**不会**回落成旧工具。
+   * 本次模型循环的源码捕获模式。显式 `frozen` 必须提供可信工厂，**不会**回落成任何实时索引。
    * 工厂返回的访问能力由本函数独占并在 finally 关闭；工具组不能关闭它。
    *
    * `openOn` 决定可信工厂何时被调用：缺省或 `before_run` 保持既有 eager 语义，此时工厂失败
-   * 原样结束本次调用；`first_use` 先注册 `project_source` 而不调用工厂、也不回落 `project_index`，
-   * 在第一次真实工具执行时才打开，同一 Run 至多一个共享 open Promise，其失败由工具作为 error
-   * 结果交回模型，Kernel 可继续该 Run（不要求整次 Run 抛异常）。
+   * 原样结束本次调用；`first_use` 先注册 `project_source` 而不调用工厂，在第一次真实工具
+   * 执行时才打开，同一 Run 至多一个共享 open Promise，其失败由工具作为 error 结果交回模型，
+   * Kernel 可继续该 Run（不要求整次 Run 抛异常）。
    */
-  projectSource?: { mode: 'legacy_live' } | { mode: 'frozen'; open: RuntimeSourceCaptureFactory; openOn?: 'before_run' | 'first_use' };
+  projectSource?: { mode: 'frozen'; open: RuntimeSourceCaptureFactory; openOn?: 'before_run' | 'first_use' };
   materialTools?: (workspace: WorkspaceSandbox) => ToolDefinition[];
   /**
    * 协调 Host 工具（协作通信）。它们是**平台级**入口：身份由宿主绑定，
@@ -174,7 +174,7 @@ async function closeOwnedResources(groups: readonly ExplorationToolsHandle[], cl
  * K3 table check stay in sync with the real registration behavior.
  */
 export const EXPLORATION_TOOL_NAMES = [
-  'list_files', 'search', 'symbols', 'code_index', 'project_source', 'project_index',
+  'list_files', 'search', 'symbols', 'code_index', 'project_source',
   'python_index', 'cpp_index', 'source_excerpt', 'read_source', 'read_material',
 ] as const;
 
@@ -281,7 +281,7 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
     const sourceReadNames: readonly string[] = ['read_source', 'read_material'];
     const readTools: string[] = hasRead
       ? EXPLORATION_TOOL_NAMES.filter(name => !sourceReadNames.includes(name)
-        && (name !== 'project_source' || frozen) && (name !== 'project_index' || !frozen))
+        && (name !== 'project_source' || frozen))
       : [];
     // 协调工具只有在宿主**确实**注入了访问面时才装配；注入时它们和内置工具一样出现在
     // 本次请求的工具清单里（模型只能看见被启用的工具名）。
@@ -300,7 +300,7 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
       ? [] : [o.commandRerunToolName];
     const enabledNames = hasRead && reviewSource
       ? ['read_source', ...(o.materialTools ? ['read_material'] : []), ...readTools, ...coordinationNames, ...readonlyCommandNames, ...unknownCallReviewNames, ...commandRerunNames]
-      : [...allowed.map(tool => tool === 'write' ? 'edit' : tool), ...readTools, ...coordinationNames, ...readonlyCommandNames, ...unknownCallReviewNames, ...commandRerunNames];
+      : [...allowed.map(kernelToolNameOf), ...readTools, ...coordinationNames, ...readonlyCommandNames, ...unknownCallReviewNames, ...commandRerunNames];
     const needsExploration = hasRead;
     let result!: Awaited<ReturnType<typeof o.kernel.runCodingAgent>>;
     try {
@@ -320,12 +320,12 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
             // Register the created handle before the material/coordination factories can throw, so a
             // later initialization failure still closes this group. The run-level projectSource is
             // authoritative; a caller-supplied access in `sourceTools` cannot be used unowned here.
-            const handle = createExplorationTools(workspace, {
+            const explorationOptions: SourceToolOptions = {
               sourceIdentity: () => readSourceIdentity(o.root, workspace.identity), ...o.sourceTools,
-              projectSource: frozen
-                ? (lazyFrozen ? { mode: 'frozen', access: openSharedSource } : { mode: 'frozen', access: source! })
-                : { mode: 'legacy_live' },
-            });
+              ...(frozen === undefined ? {} : { projectSource: lazyFrozen ? { mode: 'frozen' as const, access: openSharedSource } : { mode: 'frozen' as const, access: source! } }),
+            };
+            if (frozen === undefined) delete explorationOptions.projectSource;
+            const handle = createExplorationTools(workspace, explorationOptions);
             owned.push(handle);
             tools.push(...handle.tools);
           }

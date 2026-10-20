@@ -178,25 +178,24 @@ const HOST_INTERRUPTED: RoundShape = { status: 'finalized', outcome: 'INCONCLUSI
 const NOT_STARTED: RoundShape = { status: 'finalized', outcome: 'INCONCLUSIVE',
   checks: [check('c1', 'finished', 'INCONCLUSIVE', 'not_started'), check('c2', 'interrupted', null, 'host_restart'),
     check('c3', 'finished', 'PASS')], gaps: [gap('interrupted_check')] };
-const PASS_GAPS: RoundShape = { status: 'finalized', outcome: 'PASS', checks: [check('c1', 'finished', 'PASS')], gaps: [gap('uncovered_requirement')] };
 const NULL_OUTCOME: RoundShape = { status: 'finalized', outcome: null, checks: [check('c1', 'pending', null)], gaps: [gap('pending_check')] };
 const PASS: RoundShape = { status: 'finalized', outcome: 'PASS', checks: [check('c1', 'finished', 'PASS')], gaps: [] };
 
 const ROOT_CHAIN: RoundChainV1 = { schemaVersion: 1, ordinal: 1, predecessorRoundRef: null, predecessorRevision: null,
   supersededEvidenceIds: [], basisDigests: [], autoCount: 0, reverify: null };
-function roundOf(roundId: string, shape: RoundShape, chain: RoundChainV1 | null = ROOT_CHAIN, runId = 'run-1', source = 'S1'): RoundSnapshot {
+function roundOf(roundId: string, shape: RoundShape, chain: RoundChainV1 = ROOT_CHAIN, runId = 'run-1', source = 'S1'): RoundSnapshot {
   return {
     ref: roundRef(roundId, runId), revision: 3, schemaVersion: 1, subject: { ...task }, subjectRunRef: runRef(runId),
     adoptedPlanRef: PLAN, taskBasisRef: PLAN, executor: HUMAN,
     configuration: {} as RoundSnapshot['configuration'], configurationDigest: sha('c'), identity: identityOf(source),
     sourceProof: {} as RoundSnapshot['sourceProof'], verificationPlan: {} as RoundSnapshot['verificationPlan'],
-    ...structuredClone(shape), evidenceRefs: [], ...(chain === null ? {} : { chain }),
+    ...structuredClone(shape), evidenceRefs: [], chain,
   };
 }
 const headOf = (shape: RoundShape, runId = 'run-1'): RoundChainHeadV1 => roundChainHead([roundOf('round-1', shape, ROOT_CHAIN, runId)]);
 const NO_CHAIN: RoundChainHeadV1 = { kind: 'none' };
-/** Two legacy slot-less roots of one Run (GAP-52). */
-const INVALID_CHAIN: RoundChainHeadV1 = roundChainHead([roundOf('round-a', FAIL, null), roundOf('round-b', FAIL, null)]);
+/** Two chain roots of one Run (GAP-52). */
+const INVALID_CHAIN: RoundChainHeadV1 = roundChainHead([roundOf('round-a', FAIL), roundOf('round-b', FAIL)]);
 /**
  * A valid chain of `ordinal` rounds: every predecessor a finalized
  * INCONCLUSIVE round, the head `shape` with `autoCount`. Chain fields that no
@@ -381,8 +380,6 @@ describe('deriveReworkClass: one case per FC row (TD-8)', () => {
       { kind: 'class', failureClass: 'check_failed', interruption: null }],
     ['FC-16 INCONCLUSIVE head', ended('run-1', 'completed'), null, headOf(INCONCLUSIVE), 'FC-16',
       { kind: 'class', failureClass: 'check_incomplete', interruption: null }],
-    ['FC-16 legacy PASS with gaps', ended('run-1', 'completed'), null, headOf(PASS_GAPS), 'FC-16',
-      { kind: 'class', failureClass: 'check_incomplete', interruption: null }],
     ['FC-16 finalized without outcome', ended('run-1', 'completed'), null, headOf(NULL_OUTCOME), 'FC-16',
       { kind: 'class', failureClass: 'check_incomplete', interruption: null }],
     ['FC-17 clean PASS head', ended('run-1', 'completed'), null, headOf(PASS), 'FC-17', { kind: 'no_rework' }],
@@ -401,7 +398,6 @@ describe('deriveReworkClass: one case per FC row (TD-8)', () => {
       observedThroughPosition: 3, unresolvedToolCallIds: ['call-1'] }, 'quarantined') });
     const unresolvedDone = unresolvedDoneRun('run-1');
     const authUnknown = authUnknownRun('run-1');
-    const authQuarantined = ended('run-1', 'completed', { executionAuthorization: { generation: 1, consumerId: 'c', phase: 'quarantined' } });
     const noOutcome = runOf('run-1', { outcome: null });
     expect(deriveReworkClass(quarantined, null, NO_CHAIN)).toMatchObject({ row: 'FC-2', detail: 'run run-1 is quarantined and not reconciled' });
     expect(deriveReworkClass(unresolved, null, headOf(FAIL))).toMatchObject({ row: 'FC-2' });
@@ -409,7 +405,6 @@ describe('deriveReworkClass: one case per FC row (TD-8)', () => {
       .toMatchObject({ row: 'FC-2', detail: 'run run-1 carries an unresolved reconciliation' });
     expect(deriveReworkClass(authUnknown, null, headOf(FAIL)))
       .toMatchObject({ row: 'FC-2', detail: 'run run-1 carries an unreconciled unknown entry authorization' });
-    expect(deriveReworkClass(authQuarantined, null, headOf(FAIL))).toMatchObject({ row: 'FC-2' });
     expect(deriveReworkClass(noOutcome, null, NO_CHAIN))
       .toMatchObject({ row: 'FC-2', cause: 'run_outcome_unknown', detail: 'run run-1 ended without an outcome' });
   });
@@ -447,7 +442,7 @@ describe('deriveReworkClass: one case per FC row (TD-8)', () => {
       ['none', NO_CHAIN, 'FC-12'], ['invalid', INVALID_CHAIN, 'FC-11'], ['open pending', headOf(OPEN_PENDING), 'FC-14'],
       ['open interrupted', headOf(OPEN_INTERRUPTED), 'FC-13'], ['open mixed', headOf(OPEN_MIXED), 'FC-14'],
       ['FAIL', headOf(FAIL), 'FC-15'], ['INCONCLUSIVE', headOf(INCONCLUSIVE), 'FC-16'], ['host-interrupted', headOf(HOST_INTERRUPTED), 'FC-16'],
-      ['not-started', headOf(NOT_STARTED), 'FC-16'], ['PASS with gaps', headOf(PASS_GAPS), 'FC-16'], ['finalized null', headOf(NULL_OUTCOME), 'FC-16'], ['PASS', headOf(PASS), 'FC-17'],
+      ['not-started', headOf(NOT_STARTED), 'FC-16'], ['finalized null', headOf(NULL_OUTCOME), 'FC-16'], ['PASS', headOf(PASS), 'FC-17'],
     ];
     const others: Array<[RunOutcome, ReworkClassRow]> = [
       ['failed', 'FC-9'], ['cancelled', 'FC-8'], ['budget_exhausted', 'FC-10'], ['crashed', 'FC-9'], ['yielded', 'FC-5'], ['outcome_unknown', 'FC-2'],
@@ -856,7 +851,6 @@ describe('automationVerdict: AV-0..AV-12 (TD-9, work Tasks)', () => {
   it('AV-7d: check_incomplete is reverified; FC-13 finalizes first', () => {
     expect(verdictOf(work(failed, headOf(OPEN_INTERRUPTED)))).toEqual({ row: 'AV-7d', verdict: { kind: 'reverify',
       roundRef: roundRef('round-1'), needsFinalize: true, onlyIfSourceChanged: false, failureClass: 'check_incomplete', retryAfterRefusal: false } });
-    expect(verdictOf(work(failed, headOf(PASS_GAPS))).verdict).toMatchObject({ kind: 'reverify', needsFinalize: false });
     expect(verdictOf(work(failed, chainAt(3, INCONCLUSIVE, 1))).verdict).toMatchObject({ kind: 'reverify', roundRef: roundRef('round-3') });
   });
 
@@ -1027,7 +1021,6 @@ describe('automationVerdict: GV-0..GV-10 (TD-9, C5, gates)', () => {
   it('GV-9 / GV-10', () => {
     expect(verdictOf(gate(headOf(FAIL)))).toEqual({ row: 'GV-9', verdict: reverifyOf(true, 'check_failed') });
     expect(verdictOf(gate(headOf(INCONCLUSIVE)))).toEqual({ row: 'GV-10', verdict: reverifyOf(false, 'check_incomplete') });
-    expect(verdictOf(gate(headOf(PASS_GAPS)))).toEqual({ row: 'GV-10', verdict: reverifyOf(false, 'check_incomplete') });
     expect(verdictOf(gate(chainAt(3, FAIL, 1)))).toEqual({ row: 'GV-9', verdict: reverifyOf(true, 'check_failed', false, 'round-3') });
   });
 });

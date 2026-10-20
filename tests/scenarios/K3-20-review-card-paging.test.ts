@@ -34,7 +34,7 @@ import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goa
 import { createNoticePositionComparator } from '../../src/core/work-graph/views/notice-position.js';
 import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice-display-token.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
-import { createExecutedFilesStub } from '../helpers/executed-files-stub.js';
+import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { K3_REVIEW_TASKS, openK3ReviewCardWorld, type K3ReviewCardWorld } from '../helpers/K3-review-card-fixture.js';
 import { GOAL_B, T, WORKSPACE_SCOPE } from '../helpers/S5-decision-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
@@ -169,6 +169,10 @@ describe('K3-20 review card source paging', () => {
         }
         return page;
       },
+      // The real executed-files reader reads its activity window through the
+      // ordered index too; the wrapper must forward the real backend method.
+      lookupOrdered: (request: Parameters<typeof f.records.lookupOrdered>[0]) =>
+        f.records.lookupOrdered(request),
     } as typeof f.records;
     const reviewsForQueue = createUnknownCallReviewService({ records: wrappedRecords, lookups: wrappedRecords, reads,
       taskProjection: async (_ctx, task) => {
@@ -294,7 +298,7 @@ function completeReadModel(records: ReadRecords, cardSources: readonly DecisionC
     noticeSources: (['second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
       'continuation'] as const).map(emptyNoticeSource),
     conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
-      executedFiles: createExecutedFilesStub() }),
+      executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(),
     displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
   });

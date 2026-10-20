@@ -80,7 +80,7 @@ function writeValue<T>(result: WriteResult<T>): T {
 }
 function forbidden(): never { throw new Error('unexpected CU fixture port call'); }
 
-export type DutyMaintenanceFixture = {
+type DutyMaintenanceFixture = {
   b2: B2ExecutionFixture;
   ctx: CoreCallContext;
   scope: WorkspaceScope;
@@ -333,13 +333,13 @@ export async function openDutyMaintenanceFixture(
   }
 }
 
-export type AssemblerFactsOptions = {
+type AssemblerFactsOptions = {
   sources?: GraphContextFactsV1['sources'];
   extensions?: ContextExtensionsV1;
   /** The assembler's resident byte budget, not the model token budget. */
   budget?: number;
 };
-export type AssemblerFactsFixture = {
+type AssemblerFactsFixture = {
   assembler: ContextAssembler;
   ctx: CoreCallContext;
   facts: GraphContextFactsV1;
@@ -375,7 +375,7 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
   const planRef: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: 'p', planId: 'p1' };
   const workspace: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projectId: 'p', workspaceId: 'w' }, revision: 7 };
   const goal: GoalSnapshot = { ref: goalRef, workspaceRef: workspace.ref, objective: 'Ship A\n第二行',
-    revision: 1, desiredState: 'active', activePlanRevision: planRef };
+    revision: 1, desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: planRef };
   const plan: PlanRevisionSnapshot = { schemaVersion: 2, ref: planRef, revision: 1, goalRef, planId: 'p1', planRevision: 1,
     acceptedAt: T0,
     effectiveCompletionPolicy: { ref: { aggregateType: 'CompletionPolicyRevision', projectId: 'p', policyId: 'policy', revision: 1 }, digest: sha256Hex('policy') },
@@ -404,7 +404,8 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
     session: { ref: { aggregateType: 'Session', ...claim.sessionRef }, revision: 1,
       kernel: { adapterId: 'cu-kernel', kernelSessionId: 'cu-kernel-s1' }, lifecycle: 'active', health: 'available',
       role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' }, workspaceId: 'w',
-      lastExecutionRef: null, occupancy: null, historyCursor: null, createdAt: T0, archivedAt: null },
+      lastExecutionRef: null, occupancy: null, historyCursor: null, createdAt: T0, archivedAt: null,
+      provenance: { schemaVersion: 1, kind: 'new' } },
     lease: null, readThrough: null,
   };
   const facts: GraphContextFactsV1 = { goal, graph: null, architecture: null, executions: [], inputs: [], readThrough: null,
@@ -442,7 +443,10 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
   const question = 'What remains for A?';
   const queryFacts: QueryPreparationFacts = {
     record: {
-      job: { ref: queryJobRef, revision: 1, schemaVersion: 1, job: { schemaVersion: 1,
+      job: { ref: queryJobRef, revision: 1, schemaVersion: 1,
+        submission: { schemaVersion: 1, identityKey: 'cu-query-submit',
+          fingerprint: sha256Hex('cu-query-submit'), eventId: 'cu-query-submit-event' },
+        job: { schemaVersion: 1,
         queryJobId: 'cu-query', projectId: 'p', workspaceId: 'w', goalId: 'g', status: 'pending',
         runRef: queryRunRef, answerRefs: [], closeReason: null, submittedAt: T0, updatedAt: T0,
         intent: { schemaVersion: 1, intentId: 'cu-query-intent', projectId: 'p', workspaceId: 'w', goalId: 'g',
@@ -484,7 +488,7 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
     graphReads: () => graphReads };
 }
 
-export type StartRefusalFixture = {
+type StartRefusalFixture = {
   workflow: WorkflowPort;
   ctx: CoreCallContext;
   input: Extract<WorkflowAdvanceInput, { kind: 'perform' }>;
@@ -498,14 +502,16 @@ export type StartRefusalFixture = {
 /** WF01/WF02. workflow.ts:425-507 validates ctx/base but reads no owner before
  * performStep(start):1353. No optional maintenance ports are installed (1464).
  */
-export function startRefusalWorkflow(
+export async function startRefusalWorkflow(
   startResult: Awaited<ReturnType<WorkflowDependencies['runtime']['startRun']>>,
-): StartRefusalFixture {
+): Promise<StartRefusalFixture> {
   const f = assemblerWithFacts();
   const { claim } = f.taskInput.execution.outbox;
-  const inputText = 'CU prepared input';
   // This is the explicitly requested Runtime double, so no manifest is stored
-  // or admitted. Still give it consistent manifest/envelope/digest identities.
+  // or admitted; its context binding is still the production assembler's.
+  const assembled = await f.assembleTask();
+  if (assembled.status !== 'ready') throw new Error(`CU assembler refused: ${JSON.stringify(assembled)}`);
+  const inputText = assembled.value.input;
   const manifest: PreparedTaskManifestV1 = {
     schemaVersion: 1, kind: 'task_execution', claim, role: f.taskInput.role,
     hostTemplate: f.taskInput.configuration.hostTemplate,
@@ -514,8 +520,11 @@ export function startRefusalWorkflow(
     sessionRole: f.taskInput.execution.session.role,
     workspaceSnapshot: f.taskInput.execution.run.workspaceSnapshot,
     permissions: f.taskInput.permissions, budget: f.taskInput.execution.run.budget,
-    selectedTaskInputs: [], materialBasis: null, materialAccessRefs: [], additionalMaterialRefs: [],
-    deliveryRefs: [], sourceRefs: [], input: inputText, inputDigest: sha256Hex(inputText),
+    selectedTaskInputs: assembled.value.selectedTaskInputs,
+    materialBasis: null, materialAccessRefs: [], additionalMaterialRefs: [],
+    deliveryRefs: [], sourceRefs: [], contextAssembly: assembled.value.binding,
+    ...(assembled.value.sessionBasis === undefined ? {} : { sessionBasis: assembled.value.sessionBasis }),
+    input: inputText, inputDigest: sha256Hex(inputText),
   };
   const body = JSON.stringify(manifest);
   const prepared: PreparedTaskExecution = { kind: 'task', claim,

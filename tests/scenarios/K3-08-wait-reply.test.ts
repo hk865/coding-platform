@@ -2,7 +2,7 @@
  * K3 row K3-08 (R1, L4/L13, K KA-08; spec line 1415): the wait reply and the
  * review round's mailbox fence.
  *
- *   (一) a `replyMode: 'wait'` send is in flight when the Host crashes: RUN-25
+ *   (一) an explicit inquiry wait send is in flight when the Host crashes: RUN-25
  *        closes the Run with the send observed `done` (the message committed),
  *        the wait relation is gone (A8-3j), and the reply, delivered to the
  *        original Session, is received at the continuation's safe point;
@@ -41,21 +41,8 @@ import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 const seams = vi.hoisted(() => ({ shell: undefined as unknown }));
@@ -95,7 +82,7 @@ async function messageOf(h: HostScenario, sessionRef: { projectId: string; sessi
 }
 
 /**
- * A8-3j's crash point: the batch's first call is the `replyMode: 'wait'` send.
+ * A8-3j's crash point: the batch's first call is the explicit inquiry wait send.
  * The ledger and Kernel store are locked right after the message commit, so the
  * send's result is never recorded and the Host stops.
  */
@@ -131,7 +118,7 @@ describe('K3-08 the wait reply and the review round mailbox fence', () => {
     const recipient = await recipientParticipant(h, 'k3-08-one-recipient');
     const crashed = await crashOnWaitSend(h, 'k3-08-one', [{ callId: 'k3-08-one-send', name: 'send_session_message',
       args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId },
-        text: 'K3-08 (一): a question whose wait the crash loses', replyMode: 'wait' } }]);
+        text: 'K3-08 (一): a question whose wait the crash loses', intent: 'inquiry', needsReply: true, waitAfterSend: true } }]);
     const { runRef, sessionRef, report } = crashed;
 
     // RUN-25 applies (a git workspace, the contained send, a readable Kernel).

@@ -387,7 +387,7 @@ export async function completeTaskFromHost(
   // TD-2 (L-3, VD-5): the evidence every TaskRequeue of the Task stored and the
   // completion round's own chain superseded leaves the fold before it.
   const superseded = new Set([...evidenceSupersededByRequeue(facts.requeuesByTaskId.get(task.taskId) ?? []),
-    ...(snapshot.chain?.supersededEvidenceIds ?? [])]);
+    ...snapshot.chain.supersededEvidenceIds]);
   const evidenceKeys = await collectEvidenceKeys(deps.records, indexKey, goalRef.projectId, snapshot.evidenceRefs, superseded);
   if ('rejection' in evidenceKeys) return evidenceKeys.rejection;
   const evidenceSnapshots = evidenceKeys.evidence;

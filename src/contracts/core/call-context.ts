@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 import type { ActorRef } from '../command-event.js';
 import type { AgentPrincipalRefV1 } from '../coordination.js';
 import type { RoleBindingRefV1, RunRef } from '../dispatch.js';

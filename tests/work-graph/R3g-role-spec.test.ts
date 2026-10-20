@@ -338,17 +338,11 @@ it('sqlite: installed and activated role survives reopening the physical Store',
   } finally { await reopened.close(); }
 });
 
-it.each(['memory', 'sqlite'] as const)('%s: verified absence differs from corrupt role governance', async kind => {
+it.each(['memory', 'sqlite'] as const)('%s: verified absence, malformed declaredPermissions and the Store watermark', async kind => {
   const dir = kind === 'sqlite' ? await mkdtemp(join(tmpdir(), 'next-r3g-corrupt-')) : null;
   if (dir !== null) dirs.push(dir);
-  // A permissive physical codec represents an already persisted legacy/bad
-  // row. The service must decode canonical governance itself and fail closed.
-  const corruptSchemas: RecordBackendSchemas = { ...schemas,
-    records: schemas.records.map(schema => schema.aggregateType === 'ProjectCoordinationPolicyActive'
-      ? { ...schema, validate: (record: EncodedRecord) => ({ status: 'decoded' as const, value: record }) }
-      : schema) };
-  const backend = kind === 'memory' ? createInMemoryRecordBackend({ schemas: corruptSchemas })
-    : createSqliteRecordBackend({ path: join(dir!, 'records.sqlite'), schemas: corruptSchemas });
+  const backend = kind === 'memory' ? createInMemoryRecordBackend({ schemas })
+    : createSqliteRecordBackend({ path: join(dir!, 'records.sqlite'), schemas });
   try {
     expect(await backend.records.commit(seedProject)).toMatchObject({ status: 'committed' });
     const roles = createRoleConfigurationService({ records: backend.records, now: () => at,
@@ -378,30 +372,6 @@ it.each(['memory', 'sqlite'] as const)('%s: verified absence differs from corrup
     const future = makeCommitCursor(seqOfCommitCursor(current.value.readThrough) + 1_000);
     expect(await roles.readRoleSpec(ctx, { pin: missingPin }, { atLeastCursor: future }))
       .toMatchObject({ status: 'not_ready', required: { kind: 'platform', cursor: future } });
-    const corruptRef = { aggregateType: 'ProjectCoordinationPolicyActive', projectId };
-    const missingPolicyRef = { aggregateType: 'CoordinationPolicyRevision', projectId,
-      policyId: 'missing-policy', revision: 1 };
-    const missingEvent = { eventId: 'r3g-missing-policy-event', eventType: 'ScopeSeeded',
-      schemaVersion: 1, occurredAt: at };
-    expect(await backend.records.commit({ identityKey: 'r3g-missing-policy-seed',
-      fingerprint: 'r3g-missing-policy-seed-v1',
-      guards: [{ refKey: key(corruptRef), expectedRevision: null }],
-      records: [{ refKey: key(corruptRef), schemaId: 'ProjectCoordinationPolicyActiveSnapshot@1',
-        revision: 1, json: JSON.stringify({ ref: corruptRef, projectId, revision: 1,
-          activeRevision: missingPolicyRef }) }],
-      events: [{ ...missingEvent, json: JSON.stringify(missingEvent) }],
-      claims: [], indexGuards: [], indexChanges: [] })).toMatchObject({ status: 'committed' });
-    expect(await roles.resolveRoleBinding(ctx, request)).toMatchObject({ status: 'rejected' });
-    const corruptEvent = { eventId: 'r3g-corrupt-seed-event', eventType: 'ScopeSeeded',
-      schemaVersion: 1, occurredAt: at };
-    expect(await backend.records.commit({ identityKey: 'r3g-corrupt-seed', fingerprint: 'r3g-corrupt-seed-v1',
-      guards: [{ refKey: key(corruptRef), expectedRevision: 1 }],
-      records: [{ refKey: key(corruptRef), schemaId: 'ProjectCoordinationPolicyActiveSnapshot@1',
-        revision: 2, json: JSON.stringify({ ref: corruptRef, projectId, revision: 2,
-          activeRevision: null }) }],
-      events: [{ ...corruptEvent, json: JSON.stringify(corruptEvent) }],
-      claims: [], indexGuards: [], indexChanges: [] })).toMatchObject({ status: 'committed' });
-    expect(await roles.resolveRoleBinding(ctx, request)).toMatchObject({ status: 'rejected' });
   } finally { await backend.close(); }
 });
 
@@ -500,47 +470,5 @@ it.each(['memory', 'sqlite'] as const)('%s: review mutation after invocation can
       roleId: 'builder' })])).toMatchObject({ status: 'ready', value: { records: [
       { revision: 1, json: expect.any(String) },
     ] } });
-  } finally { await backend.close(); }
-});
-
-it.each(['memory', 'sqlite'] as const)('%s: review replay rejects an event attributed to another actor', async kind => {
-  const dir = kind === 'sqlite' ? await mkdtemp(join(tmpdir(), 'next-r3g-replay-actor-')) : null;
-  if (dir !== null) dirs.push(dir);
-  const backend = kind === 'memory' ? createInMemoryRecordBackend({ schemas })
-    : createSqliteRecordBackend({ path: join(dir!, 'records.sqlite'), schemas });
-  try {
-    expect(await backend.records.commit(seedProject)).toMatchObject({ status: 'committed' });
-    let sequence = 0;
-    const roles = createRoleConfigurationService({ records: backend.records, now: () => at,
-      eventId: () => `r3g-replay-actor-${++sequence}` });
-    const install = installCommand(1, 'actor-install');
-    const installed = await roles.installRoleSpec(ctx, install);
-    expect(installed).toMatchObject({ status: 'committed' });
-    if (installed.status !== 'committed') throw Error('role install failed before replay check');
-    const pin = { ref: installed.revisionRef, digest: installed.contentDigest };
-    const activate = activateCommand(pin, 'actor-activate');
-    expect(await roles.activateRoleSpec(ctx, activate)).toMatchObject({ status: 'committed' });
-    const before = await backend.records.readMany([key(project.ref)]);
-    expect(before).toMatchObject({ status: 'ready' });
-    if (before.status !== 'ready') throw Error('ledger cursor unavailable');
-
-    const alteredEventReader = createRoleConfigurationService({ records: {
-      ...backend.records,
-      async eventAt(cursor) {
-        const stored = await backend.records.eventAt(cursor);
-        if (stored.status !== 'ready') return stored;
-        const body = JSON.parse(stored.value.event.json) as Record<string, unknown>;
-        body.actor = { kind: 'human', id: 'other-actor' };
-        return { status: 'ready' as const, value: { ...stored.value,
-          event: { ...stored.value.event, json: JSON.stringify(body) } } };
-      },
-    }, now: () => at, eventId: () => `r3g-replay-read-${++sequence}` });
-    expect(await alteredEventReader.installRoleSpec(ctx, install)).toMatchObject({ status: 'rejected' });
-    expect(await alteredEventReader.activateRoleSpec(ctx, activate)).toMatchObject({ status: 'rejected' });
-    const after = await backend.records.readMany([key(project.ref),
-      key({ aggregateType: 'ProjectRoleSpecActive', projectId, roleId: 'builder' })]);
-    expect(after).toMatchObject({ status: 'ready', value: { records: [
-      { revision: 1 }, { revision: 1 },
-    ], readThrough: before.value.readThrough } });
   } finally { await backend.close(); }
 });

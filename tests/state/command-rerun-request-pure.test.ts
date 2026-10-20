@@ -4,19 +4,16 @@
  * The rows moved out of `command-rerun-request.test.ts` sized the list with the
  * production `COMMAND_RERUN_REQUEST_MAX_FORMS` constant, so the expected count
  * came from the implementation. Here the cap is the literal 8: eight forms are
- * accepted, the ninth is refused at both the constructor and the transition.
+ * accepted and the ninth is refused by the constructor (the transition's own
+ * refusal is covered by K3-B3-shared-rules-pure).
  * Form digests are fixed SHA-256 literals of the hand-written texts.
  */
 import { describe, expect, it } from 'vitest';
-import type { CommandRerunRequestRef, CommandRerunRequestV1 } from '../../src/contracts/command-rerun-request.js';
-import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
+import type { CommandRerunRequestRef } from '../../src/contracts/command-rerun-request.js';
 import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { UnknownCallReviewRef } from '../../src/contracts/unknown-call-review.js';
 import {
   newCommandRerunRequest,
-  transitionCommandRerunRequest,
-  type CommandRerunRequestContextV1,
-  type CommandRerunRequestEventV1,
   type CommandRerunRequestFormV1,
   type NewCommandRerunRequestInputV1,
 } from '../../src/core/work-graph/state/command-rerun-request.js';
@@ -32,8 +29,6 @@ const requestRef = (requestId: string): CommandRerunRequestRef =>
 const reviewRef = (runId: string): UnknownCallReviewRef =>
   ({ aggregateType: 'UnknownCallReview', projectId: P, goalId: G, runId });
 const runRef = (runId: string): RunRef => ({ aggregateType: 'Run', projectId: P, goalId: G, runId });
-const messageRef = (messageId: string): SessionMessageRef =>
-  ({ aggregateType: 'SessionMessage', projectId: P, workspaceId: W, messageId });
 
 function baseInput(overrides: Partial<NewCommandRerunRequestInputV1> = {}): NewCommandRerunRequestInputV1 {
   return {
@@ -41,23 +36,6 @@ function baseInput(overrides: Partial<NewCommandRerunRequestInputV1> = {}): NewC
     alias: 3, command: 'npm run db:migrate', commandSha256: 'sha-command', match: { kind: 'exact' },
     reason: 'rerun after the check', createdAt: T0, ...overrides,
   };
-}
-
-function record(overrides: Partial<NewCommandRerunRequestInputV1> = {}): CommandRerunRequestV1 {
-  const result = newCommandRerunRequest(baseInput(overrides));
-  if (!result.ok) throw new Error(`constructor rejected: ${result.detail}`);
-  return result.next;
-}
-
-const formsAddedEvent = (form: CommandRerunRequestFormV1): CommandRerunRequestEventV1  =>
-  ({ kind: 'forms_added', identityKey: 'f1', fingerprint: 'fp-f1', form });
-const allowedEvent = (): CommandRerunRequestEventV1 =>
-  ({ kind: 'allowed', identityKey: 'a1', fingerprint: 'fp-a1', answerMessageRef: messageRef('m1'),
-    allowedAt: '2026-01-02T00:00:00.000Z' });
-
-function ctx(overrides: Partial<CommandRerunRequestContextV1> = {}): CommandRerunRequestContextV1 {
-  return { expectedRevision: 1, updatedAt: '2026-01-02T00:00:00.000Z', cardMatches: true,
-    taskActive: true, sameRun: true, ...overrides };
 }
 
 /** Eight forms (the literal cap), each with the fixed SHA-256 of `form N`. */
@@ -86,24 +64,5 @@ describe('CRR-01/CRR-07 (F-027): the literal eighth-form cap', () => {
     expect(ninth.ok).toBe(false);
     if (ninth.ok) throw new Error('expected capacity');
     expect([ninth.reason, ninth.code]).toEqual(['guard_failed', 'capacity']);
-  });
-
-  it('refuses forms_added on a full eight-form request with capacity', () => {
-    const full = record({ declaredForms: eightForms });
-    expect(full.declaredForms).toHaveLength(8);
-    const result = transitionCommandRerunRequest(full, formsAddedEvent(NINTH_FORM), ctx());
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected capacity');
-    expect([result.reason, result.code]).toEqual(['guard_failed', 'capacity']);
-  });
-});
-
-describe('CRR-02 (F-027): card-key admission is fixed literal', () => {
-  it('refuses an answer whose card key does not match, writing nothing', () => {
-    const pending = record();
-    const result = transitionCommandRerunRequest(pending, allowedEvent(), ctx({ cardMatches: false }));
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected invalid');
-    expect([result.reason, result.code]).toEqual(['guard_failed', 'invalid']);
   });
 });

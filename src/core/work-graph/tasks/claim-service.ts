@@ -100,7 +100,6 @@ import { isNonNeg as isSafeRevision, isPos as isPositiveBudget, isRecord, nonEmp
 import { isolatedWriteOf, trustedContextOf } from './trusted-context.js';
 import { taskPhaseFactsOf } from './task-phase-facts.js';
 import { createSessionFactsService } from './session-facts.js';
-import { createLegacySessionProvenanceReader } from './session-provenance-facts.js';
 
 const RUN_SCHEMA_ID = 'RunSnapshot@1';
 const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
@@ -179,7 +178,6 @@ export function workClaimDispatchProblem(
     waiting: facts.wait,
     consumedWait,
     readonlyQueryMatches: false,
-    legacyProvenance: null,
   });
   return refusal === null || refusal.ok ? null : reject(refusal.code, refusal.detail);
 }
@@ -724,21 +722,15 @@ export type TaskClaimGoalSettingsDependencies = TaskClaimDependencies & {
 
 export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies): TaskClaimPort {
   const records: Records = deps.records;
-  // Slice 1 §0.2 L1: the direct Work claim uses the same-submodule Session facts
-  // reader and the trusted legacy-provenance reader; an absent provenance is
-  // never treated as `new`.
+  // Slice 1 §0.2 L1: the direct Work claim reads the same-submodule Session
+  // facts reader; the decoded record's current provenance is the only source.
   const sessionFactsService = createSessionFactsService({ records });
-  const legacyProvenance = createLegacySessionProvenanceReader(records, sessionFactsService, deps.bodies);
 
   /**
-   * S1-DISPATCH-01 at the direct claim entry: read the trusted Session facts,
-   * resolve a legacy provenance from reliable evidence when the record has
-   * none, and let the Session machine decide. A copy, a pending archive request
-   * or a wait is refused here, not only in `chooseSession`.
-   *
-   * §3.4 S:630: the evidence the derivation read is part of this claim's
-   * commit, so a concurrent Session write between the read and the commit is a
-   * revision conflict instead of a claim on stale facts.
+   * S1-DISPATCH-01 at the direct claim entry: read the trusted Session facts
+   * and let the Session machine decide from the record's current provenance.
+   * A copy, a pending archive request or a wait is refused here, not only in
+   * `chooseSession`.
    */
   async function claimDispatchProblem(
     ctx: CoreCallContext,
@@ -755,27 +747,8 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     const facts = factsRead.value;
     const consumed: SessionWorkWaitV1 | null = consumedWait === undefined ? null
       : { runRef: consumedWait.runRef, messageRef: consumedWait.messageRef, task: taskTriple };
-    if ((facts.session.provenance ?? null) !== null) {
-      const refusal = workClaimDispatchProblem(facts, consumed);
-      return refusal === null ? { guards: [] } : { rejection: refusal };
-    }
-    const derived = await legacyProvenance.deriveLegacySessionProvenance(ctx, sessionRef);
-    if (derived.status === 'rejected' && derived.code === 'cycle') return { rejection: reject('cycle', derived.reason) };
-    if (derived.status !== 'ready') {
-      // §3.2 refusal table: keep the reader's own code and reason (`unavailable`,
-      // `cancelled`, `forbidden`, …); only a genuinely unreadable provenance is
-      // an incomplete ambiguity.
-      if (derived.status === 'rejected') return { rejection: reject(derived.code, derived.reason, derived.current) };
-      return { rejection: incomplete('legacy_provenance_ambiguous: the Session provenance is not readable and no trusted legacy basis proves it') };
-    }
-    // The trusted legacy provenance is passed as the guard fact; the Session
-    // record itself is never rewritten outside `state/session-availability.ts`.
-    const refusal = sessionDispatchAdmissionProblem(facts.session, {
-      purpose: 'work', waiting: facts.wait, consumedWait: consumed, readonlyQueryMatches: false,
-      legacyProvenance: derived.value.provenance,
-    });
-    if (refusal !== null && !refusal.ok) return { rejection: reject(refusal.code, refusal.detail) };
-    return { guards: derived.value.guards };
+    const refusal = workClaimDispatchProblem(facts, consumed);
+    return refusal === null ? { guards: [] } : { rejection: refusal };
   }
 
   /**

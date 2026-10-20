@@ -128,13 +128,13 @@ const UNIT = pendingCheck('unit', cov('r2'));
 const pendingGap = (checkId: string, requirementId: string): RoundGapV1 =>
   ({ code: 'pending_check', message: `the required check ${checkId} never ran`, coverage: cov(requirementId) });
 
-/** An open@1 without `chain`: the service's literal before A.2 step 5.3, read back as a legacy slot-less root. */
+/** An open@1 carrying the ordinal-1 chain root every current round is written with (C5). */
 const OPEN_PENDING: RoundSnapshot = { ref: roundRef('round-1'), revision: 1, schemaVersion: 1, subject: { ...task },
   subjectRunRef: runRef('run-1'), adoptedPlanRef: planRef, taskBasisRef: planRef, executor: operator, configuration: CONFIG,
   configurationDigest: sha('a'), identity: IDENTITY, sourceProof: SOURCE_PROOF, verificationPlan: PLAN2,
-  checks: [LINT, UNIT], status: 'open', outcome: null, gaps: [], evidenceRefs: [] };
+  checks: [LINT, UNIT], status: 'open', outcome: null, gaps: [], evidenceRefs: [], chain: rootRoundChain() };
 /** VR-01's open@1 (`buildOpenedRound`): the same bytes with the ordinal-1 chain root last (C5). */
-const OPENED: RoundSnapshot = { ...OPEN_PENDING, chain: rootRoundChain() };
+const OPENED: RoundSnapshot = { ...OPEN_PENDING };
 const OPEN_EXECUTING: RoundSnapshot = { ...OPEN_PENDING, revision: 2, checks: [executingCheck(LINT, 'inv-lint'), UNIT] };
 const OPEN_INTERRUPTED: RoundSnapshot = { ...OPEN_PENDING, revision: 4,
   checks: [finishedCheck(LINT, 'PASS'), interruptedCheck(UNIT, 'host_restart')] };
@@ -145,9 +145,6 @@ const FINAL_FAIL: RoundSnapshot = { ...OPEN_SETTLED, revision: 6, checks: [finis
   status: 'finalized', outcome: 'FAIL', gaps: [], evidenceRefs: [evidence('e-1'), evidence('e-3')] };
 const FINAL_INCONCLUSIVE: RoundSnapshot = { ...OPEN_PENDING, revision: 2, status: 'finalized', outcome: 'INCONCLUSIVE',
   gaps: [pendingGap('lint', 'r1'), pendingGap('unit', 'r2')], evidenceRefs: [] };
-/** Legacy PASS with gaps (VD-4): a pending check whose requirement another PASS covered. */
-const FINAL_PASS_GAPS: RoundSnapshot = { ...OPEN_PENDING, revision: 3, checks: [finishedCheck(LINT, 'PASS'), UNIT],
-  status: 'finalized', outcome: 'PASS', gaps: [pendingGap('unit', 'r2')], evidenceRefs: [evidence('e-5')] };
 
 /** One open round with a check in every phase, for the check machine. */
 const C_PENDING = pendingCheck('c-pending', cov('c-pending'));
@@ -231,7 +228,6 @@ const ROUND_STATES = {
   final_pass: FINAL_PASS,
   final_fail: FINAL_FAIL,
   final_inconclusive: FINAL_INCONCLUSIVE,
-  final_pass_gaps: FINAL_PASS_GAPS,
 } satisfies Record<string, RoundSnapshot | null>;
 type RoundStateLabel = keyof typeof ROUND_STATES;
 const R_COLS = Object.keys(ROUND_STATES) as RoundStateLabel[];
@@ -258,9 +254,9 @@ const openedEffects = (round: RoundSnapshot): VerificationEffect[] => [{ kind: '
     nextOwner: roundSlotOwner(round.ref) } },
   { kind: 'emit_event', eventType: 'VerificationRoundOpened' }];
 const OPENED_EFFECTS = openedEffects(OPENED);
-/** VR-09 effects: the head guarded as read and its slot claimed by the same owner (legacy slot-less: null → null). */
+/** VR-09 effects: the head guarded as read and its slot claimed by the same owner. */
 const requeuedEffects = (head: RoundSnapshot): VerificationEffect[] => {
-  const owner = head.chain === undefined ? null : roundSlotOwner(head.ref);
+  const owner = roundSlotOwner(head.ref);
   return [{ kind: 'guard_round_unchanged', revision: head.revision },
     { kind: 'claim_round_slot', claim: { claimKey: roundSlotKey(roundSlotSubjectOf(head)), expectedOwner: owner, nextOwner: owner } }];
 };
@@ -280,26 +276,25 @@ const FINALIZED_FROM_SETTLED: RoundSnapshot = { ...OPEN_SETTLED, revision: 6, st
 
 const ROUND_TABLE: Record<RoundEventLabel, () => Record<RoundStateLabel, Expect>> = {
   // VR-01 from ∅ only; an existing round is never re-opened (§9.4 "回到 open").
-  round_opened: () => r(to(OPENED, OPENED_EFFECTS), II, II, II, II, II, II, II, II),
+  round_opened: () => r(to(OPENED, OPENED_EFFECTS), II, II, II, II, II, II, II),
   // VR-07 (D-2): executing refuses (`finalizeRoundOutcome`), interrupted is a gap; finalized is busy (`roundWriteAdmission`).
   round_finalized: () => r(II, to(FINALIZED_FROM_PENDING, finalizedEffects(1, [])), GI,
     to(FINALIZED_FROM_INTERRUPTED, finalizedEffects(4, [{ ref: evidence('e-1'), checkId: 'lint', coverage: cov('r1') }])),
     to(FINALIZED_FROM_SETTLED, finalizedEffects(5, [
       { ref: evidence('e-1'), checkId: 'lint', coverage: cov('r1') },
       { ref: evidence('e-2'), checkId: 'unit', coverage: cov('r2') },
-    ])), IB, IB, IB, IB),
+    ])), IB, IB, IB),
   // VR-14/15 (5.9): only a finalized non-clean-PASS head has a successor (the predecessor is not
-  // written; a legacy slot-less head moves the slot null → successor); an open head is finalize_first
+  // written; the slot moves head → successor); an open head is finalize_first
   // (busy), a clean PASS head invalid, no predecessor not_found.
   round_reverified: () => r(no('illegal', 'not_found'), GB, GB, GB, GB, II,
     to(successorOf(FINAL_FAIL), reverifiedEffects(FINAL_FAIL)),
-    to(successorOf(FINAL_INCONCLUSIVE), reverifiedEffects(FINAL_INCONCLUSIVE)),
-    to(successorOf(FINAL_PASS_GAPS), reverifiedEffects(FINAL_PASS_GAPS))),
+    to(successorOf(FINAL_INCONCLUSIVE), reverifiedEffects(FINAL_INCONCLUSIVE))),
   // VR-09 (5.4): only a finalized non-clean-PASS head; the round is guarded, not written, and its
-  // slot is claimed by the same owner (a legacy slot-less head null → null). An open head is
+  // slot is claimed by the same owner. An open head is
   // finalize_first (busy); a clean PASS has nothing to requeue.
   task_requeued: () => r(no('illegal', 'not_found'), GB, GB, GB, GB, II, keep(requeuedEffects(FINAL_FAIL)),
-    keep(requeuedEffects(FINAL_INCONCLUSIVE)), keep(requeuedEffects(FINAL_PASS_GAPS))),
+    keep(requeuedEffects(FINAL_INCONCLUSIVE))),
 };
 
 describe('transitionRound: every (state, event) combination', () => {
@@ -513,7 +508,7 @@ describe('VR-01 round_opened guards', () => {
       expectedOwner: null, nextOwner: canonicalJson(OPENED.ref) } });
   });
 
-  it('VD-1/VD-15: an existing chain (a legacy root included) is busy, an invalid one incomplete, after the subject checks', () => {
+  it('VD-1/VD-15: an existing chain is busy, an invalid one incomplete, after the subject checks', () => {
     expect(openWith({ chain: roundChainHead([OPEN_PENDING]) })).toEqual({ ok: false, reason: 'guard_failed', code: 'busy',
       detail: `the subject ${T} already has a verification round chain (head round-1); its next round is a successor (VR-14)` });
     expect(openWith({ chain: roundChainHead([FINAL_FAIL]) })).toMatchObject({ code: 'busy' });
@@ -849,10 +844,7 @@ describe('record constructors', () => {
     // VR-11: @n + k → @n+k, CAS n.
     expect(nextTaskEvidenceIndex({ ref, exists: true, revision: 2, evidenceIds: ['e-1', 'e-2'] }, ['e-3'])).toEqual({ write: true,
       expectedRevision: 2, record: { ref, revision: 3, schemaVersion: 1, evidenceIds: ['e-1', 'e-2', 'e-3'] } });
-    // VR-11: a stored legacy @0 row is guarded at 0 and repaired by the append.
-    expect(nextTaskEvidenceIndex({ ref, exists: true, revision: 0, evidenceIds: [] }, ['e-1'])).toEqual({ write: true,
-      expectedRevision: 0, record: { ref, revision: 1, schemaVersion: 1, evidenceIds: ['e-1'] } });
-    // VR-12: zero appended ids write nothing, neither a new @0 row nor a rewrite.
+    // VR-12: zero appended ids write nothing, neither a row nor a rewrite.
     expect(nextTaskEvidenceIndex(absent, [])).toEqual({ write: false });
     expect(nextTaskEvidenceIndex({ ref, exists: true, revision: 1, evidenceIds: ['e-1'] }, [])).toEqual({ write: false });
   });
@@ -876,10 +868,6 @@ describe('finalizeRoundOutcome (the D-2 fold)', () => {
       detail: 'the check lint is executing; its result window is not reconciled' });
     expect(fold(OPEN_INTERRUPTED.checks)).toEqual({ status: 'folded', outcome: 'INCONCLUSIVE',
       gaps: [interruptedCheckGap('unit', 'r2', 'host_restart')], admissions: [{ checkId: 'lint', coverage: cov('r1') }] });
-    // A legacy interrupted check without a cause names none.
-    const legacy = { ...interruptedCheck(UNIT, 'host_restart'), incompleteCause: null };
-    expect(fold([finishedCheck(LINT, 'PASS'), legacy])).toMatchObject({ outcome: 'INCONCLUSIVE',
-      gaps: [{ code: 'interrupted_check', message: 'the required check unit was interrupted', coverage: cov('r2') }] });
   });
 
   it('applicable PASS on every requirement → PASS with the coverage admitted', () => {
@@ -1063,11 +1051,11 @@ describe('buildSuccessorRound (VR-14 record, VD-12/VD-13)', () => {
     expect(chainEvidenceIds(r2)).toEqual(['e-1', 'e-3', 'e-4']);
   });
 
-  it('autoCount: human 0, Host interruption keeps it, otherwise +1 (legacy root reads 0)', () => {
+  it('autoCount: human 0, Host interruption keeps it, otherwise +1', () => {
     const interrupted: RoundSnapshot = finalizedAs({ ...OPEN_PENDING, checks: [finishedCheck(LINT, 'PASS'),
       interruptedCheck(UNIT, 'host_restart')], chain: { ...rootRoundChain(), autoCount: 0 } }, 'INCONCLUSIVE', ['e-6'], [interruptedGap]);
     const counted = (predecessorAuto: number, round: RoundSnapshot, actorClass: 'human' | 'system' | 'agent') =>
-      buildSuccessorRound(successorInput({ ...round, chain: { ...(round.chain ?? rootRoundChain()), autoCount: predecessorAuto } },
+      buildSuccessorRound(successorInput({ ...round, chain: { ...round.chain, autoCount: predecessorAuto } },
         'round-x', { actorClass })).chain?.autoCount;
     expect(counted(2, interrupted, 'agent')).toBe(2);
     expect(counted(2, interrupted, 'human')).toBe(0);
@@ -1091,14 +1079,13 @@ describe('buildSuccessorRound (VR-14 record, VD-12/VD-13)', () => {
   it('refuses a predecessor that is not a finalized non-PASS head', () => {
     expect(() => buildSuccessorRound(successorInput(FINAL_PASS, 'round-2'))).toThrow('no successor');
     expect(() => buildSuccessorRound(successorInput(OPEN_SETTLED, 'round-2'))).toThrow('no successor');
-    expect(buildSuccessorRound(successorInput(FINAL_PASS_GAPS, 'round-2')).chain?.reverify?.failureClass).toBe('check_incomplete');
   });
 });
 
 describe('roundChainHead (VD-14)', () => {
   const r2 = finalizedAs(buildSuccessorRound(successorInput(FINAL_FAIL, 'round-2')), 'FAIL', ['e-4']);
 
-  it('none, a single legacy root, and a chain in any input order', () => {
+  it('none, a single root, and a chain in any input order', () => {
     expect(roundChainHead([])).toEqual({ kind: 'none' });
     expect(roundChainHead([OPEN_PENDING])).toEqual({ kind: 'head', head: OPEN_PENDING, chain: [OPEN_PENDING] });
     expect(roundChainHead([r2, FINAL_FAIL])).toEqual({ kind: 'head', head: r2, chain: [FINAL_FAIL, r2] });
@@ -1106,11 +1093,6 @@ describe('roundChainHead (VD-14)', () => {
     expect(roundChainHead([rooted])).toMatchObject({ kind: 'head', head: rooted });
     expect(roundOrdinalOf(OPEN_PENDING)).toBe(1);
     expect(roundOrdinalOf(r2)).toBe(2);
-  });
-
-  it('a legacy PASS with gaps may have a successor', () => {
-    const next = buildSuccessorRound(successorInput(FINAL_PASS_GAPS, 'round-2'));
-    expect(roundChainHead([FINAL_PASS_GAPS, next])).toMatchObject({ kind: 'head', head: next });
   });
 
   it('invalid: two roots, an ordinal gap or repeat, a wrong predecessor, a PASS/open predecessor, two runIds', () => {
@@ -1147,17 +1129,16 @@ describe('chain evidence, failure class and exemption', () => {
   it('reverifyFailureClass and isFinalizedNonPass', () => {
     expect(reverifyFailureClass(FINAL_FAIL)).toBe('check_failed');
     expect(reverifyFailureClass(FINAL_INCONCLUSIVE)).toBe('check_incomplete');
-    expect(reverifyFailureClass(FINAL_PASS_GAPS)).toBe('check_incomplete');
     expect(reverifyFailureClass(FINAL_PASS)).toBeNull();
     expect(reverifyFailureClass(OPEN_SETTLED)).toBeNull();
-    expect([FINAL_FAIL, FINAL_INCONCLUSIVE, FINAL_PASS_GAPS, FINAL_PASS, OPEN_PENDING].map(isFinalizedNonPass))
-      .toEqual([true, true, true, false, false]);
+    expect([FINAL_FAIL, FINAL_INCONCLUSIVE, FINAL_PASS, OPEN_PENDING].map(isFinalizedNonPass))
+      .toEqual([true, true, false, false]);
   });
 
   it('reverifyExemption (§13.7 point 3)', () => {
     const withChecks = (checks: RoundCheckSnapshot[], gaps: RoundGapV1[] = [interruptedGap]) => reverifyExemption({ checks, gaps });
-    const finished = (cause: RoundCheckIncompleteCause | null) =>
-      cause === null ? finishedCheck(UNIT, 'INCONCLUSIVE') : { ...finishedCheck(UNIT, 'INCONCLUSIVE'), incompleteCause: cause };
+    const finished = (cause: RoundCheckIncompleteCause) =>
+      ({ ...finishedCheck(UNIT, 'INCONCLUSIVE'), incompleteCause: cause });
     const pass = finishedCheck(LINT, 'PASS');
     expect(withChecks([pass, interruptedCheck(UNIT, 'host_restart')])).toBe('host_interruption');
     expect(withChecks([pass, finished('not_started')], [])).toBe('not_started');
@@ -1167,9 +1148,6 @@ describe('chain evidence, failure class and exemption', () => {
     expect(withChecks([pass, finished('process_cancelled')], [])).toBe('none');
     expect(withChecks([pass, interruptedCheck(UNIT, 'host_restart')], [interruptedGap,
       { code: 'uncovered_requirement', message: 'no check covers r9' }])).toBe('none');
-    // A legacy check has no cause.
-    expect(withChecks([pass, { ...interruptedCheck(UNIT, 'host_restart'), incompleteCause: null }])).toBe('none');
-    expect(withChecks([pass, finished(null)], [])).toBe('none');
     expect(withChecks([pass], [])).toBe('none');
     expect(withChecks([pass, UNIT], [pendingGap('unit', 'r2')])).toBe('none');
   });
@@ -1204,7 +1182,6 @@ describe('roundTaskSignal (projection input, §4 P7–P13, P20)', () => {
     expect(roundTaskSignal([FINAL_FAIL])).toEqual({ kind: 'fail', head: FINAL_FAIL, ordinal: 1, failedCheckIds: ['unit'] });
     expect(roundTaskSignal([FINAL_INCONCLUSIVE])).toEqual({ kind: 'inconclusive', head: FINAL_INCONCLUSIVE, ordinal: 1,
       gapCodes: ['pending_check'], legacyPassWithGaps: false });
-    expect(roundTaskSignal([FINAL_PASS_GAPS])).toMatchObject({ kind: 'inconclusive', legacyPassWithGaps: true });
     expect(roundTaskSignal([FINAL_PASS])).toEqual({ kind: 'pass', head: FINAL_PASS, ordinal: 1 });
     const successor = buildSuccessorRound(successorInput(FINAL_FAIL, 'round-2'));
     expect(roundTaskSignal([FINAL_FAIL, successor])).toMatchObject({ kind: 'open', ordinal: 2,
@@ -1238,8 +1215,6 @@ describe('step 5.4: VR-09 task_requeued and the VR-01 TaskRequeue cover', () => 
       { kind: 'claim_round_slot', claim: { claimKey: roundSlotKey(roundSlotSubjectOf(chained)),
         expectedOwner: roundSlotOwner(chained.ref), nextOwner: roundSlotOwner(chained.ref) } },
     ] });
-    // A legacy slot-less head guards the empty slot (null -> null).
-    expect(requeuedEffects(FINAL_FAIL)[1]).toMatchObject({ claim: { expectedOwner: null, nextOwner: null } });
     expect(transitionRound(OPEN_PENDING, ROUND_EVENTS.task_requeued(), ctxOf(OPEN_PENDING)))
       .toMatchObject({ ok: false, reason: 'guard_failed', code: 'busy', detail: expect.stringMatching(/^finalize_first: /) });
   });

@@ -112,7 +112,6 @@ function pendingRecord(metadata: DecisionMessageMetadataV1 = decisionMeta()): Se
     bodyRef: BODY,
     sourceRef: SOURCE,
     createdAt: T,
-    replyMode: null,
     intent: 'decision_request',
     needsReply: true,
     waitAfterSend: false,
@@ -232,7 +231,7 @@ const SENT_EFFECTS: readonly MessageEffect[] = [
 
 function sendContext(dutiesAllowSend: boolean): MessageGuardContext {
   return baseCtx({ principal: 'work_run', workRunAuthorization: 'ok', recipientScope: 'same_workspace',
-    sendFlags: { needsReply: true, waitAfterSend: false, replyMode: null, pinCount: 0 },
+    sendFlags: { needsReply: true, waitAfterSend: false, pinCount: 0 },
     userSend: { goalScopeMatches: true, dutiesAllowSend, decisionParamsValid: true } });
 }
 
@@ -289,7 +288,7 @@ describe('S5 message decision unit rows (§5.2 MD01..MD14)', () => {
     if (!result.ok) throw new Error('an admitted adviser must be able to send');
     const next = createSessionMessageRecord({
       ref: MESSAGE_REF, sender: WORK_SENDER, recipient: USER_RECIPIENT, bodyRef: BODY,
-      sourceRef: SOURCE, createdAt: T, replyMode: null, intent: 'decision_request',
+      sourceRef: SOURCE, createdAt: T, intent: 'decision_request',
       needsReply: true, waitAfterSend: false, goalRef: GOAL_B, decision: decisionMeta(),
     });
     // [lead S5-T3-D7] the S5-MSG-01 constructor writes the owning Goal and the decision metadata.

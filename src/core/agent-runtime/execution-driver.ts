@@ -125,7 +125,7 @@ export const BUILTIN_TOOL_NAMES = new Set<string>(['read', 'write', 'shell']);
  * here still grants nothing; this is an assembly guard only. */
 export const RESERVED_TOOL_NAMES = new Set<string>([
   ...BUILTIN_TOOL_NAMES, 'edit', 'check', 'list_files', 'search', 'symbols', 'code_index',
-  'project_source', 'project_index', 'python_index', 'cpp_index', 'source_excerpt', 'read_source', 'read_material',
+  'project_source', 'python_index', 'cpp_index', 'source_excerpt', 'read_source', 'read_material',
 ]);
 
 type CoordinationTools = { names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] };
@@ -611,7 +611,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       //    verbatim; a fresh Run derives a stable identity from the claim so a
       //    lost begin response cannot create a second Turn.
       const existingAuth = record.run.executionAuthorization;
-      const isV2 = existingAuth !== undefined && 'schemaVersion' in existingAuth && existingAuth.schemaVersion === 2;
+      const isV2 = existingAuth !== undefined;
       const existingKernel = isV2 ? existingAuth.kernel : null;
       if (existingKernel !== null && (existingKernel.adapterId !== record.session.kernel.adapterId
         || existingKernel.kernelSessionId !== record.session.kernel.kernelSessionId)) {
@@ -868,7 +868,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         return rejected('source_stale', 'the workspace revision moved since the Run was prepared');
       }
       const location = deps.kernelStores.byAdapterId(record.session.kernel.adapterId);
-      if (!location || 'expectedSessionId' in location) return rejected('unsupported', 'the prepared Session is not mapped to a current Kernel store');
+      if (!location) return rejected('unsupported', 'the prepared Session is not mapped to a current Kernel store');
       if (!nonEmpty(location.databasePath)) return rejected('unsupported', 'the mapped Kernel store has no database path');
 
       // 6. Obtain the entry permit: reuse the persisted V2 permit when the Run
@@ -1035,8 +1035,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
               }
               const currentRun = reread.value.run;
               const retryAuth = currentRun.executionAuthorization;
-              const sameEntering = retryAuth !== undefined && 'schemaVersion' in retryAuth
-                && retryAuth.schemaVersion === 2 && retryAuth.phase === 'entering'
+              const sameEntering = retryAuth !== undefined && retryAuth.phase === 'entering'
                 && retryAuth.consumerId === refreshedPermit.consumerId
                 && retryAuth.generation === refreshedPermit.entryGeneration
                 && retryAuth.inputDigest === refreshedPermit.inputDigest;
@@ -1053,7 +1052,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             enteredDone = true;
             currentRevision = entered.value.revision;
             const enteredAuth = entered.value.executionAuthorization;
-            if (enteredAuth !== undefined && 'schemaVersion' in enteredAuth && enteredAuth.schemaVersion === 2) {
+            if (enteredAuth !== undefined) {
               refreshedPermit.authorizationRevision = enteredAuth.revision;
             }
           }
@@ -1300,7 +1299,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
     try { read = await deps.executions.readExecution(ctx, runRef); } catch { return; }
     if (read.status !== 'ready') return;
     const auth = read.value.run.executionAuthorization;
-    if (read.value.run.status !== 'starting' || auth === undefined || !('schemaVersion' in auth) || auth.schemaVersion !== 2
+    if (read.value.run.status !== 'starting' || auth === undefined
       || auth.phase !== 'entering') {
       return;
     }
@@ -1331,7 +1330,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
     adapterId: string, kernelSessionId: string, kernel: KernelExecutionBinding, afterPosition: number, signal: AbortSignal,
   ): Promise<{ startPosition: number; position: number }> {
     const location = deps.kernelStores.byAdapterId(adapterId);
-    if (!location || 'expectedSessionId' in location) throw new Error('the Kernel adapter is not a current registered store');
+    if (!location) throw new Error('the Kernel adapter is not a current registered store');
     const use = async (reader: KernelSessionReader) => {
       const head = await reader.read(kernelSessionId, 0, 1, { signal });
       if (head.records.length === 0) throw new Error('the Kernel Session has no position-1 history');

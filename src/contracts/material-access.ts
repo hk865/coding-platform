@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 /**
  * Material access grants — cross-principal read authorization for stored
  * material (ArtifactVault), bound to the source version it was granted against.

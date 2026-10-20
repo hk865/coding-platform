@@ -79,7 +79,7 @@ type Crashed = {
  * K3-01's crash point when `crashEvent` is `SessionMessageSent` (the message
  * committed, the Kernel result never recorded) and K3-02's when it is
  * `ModelRequestEvidenceRecorded` (before the message commit). The send is a
- * `replyMode: 'wait'` message so the Kernel yields; the caller drives on.
+ * an explicit inquiry wait message so the Kernel yields; the caller drives on.
  */
 async function crashSendFlow(h: HostScenario, label: string, crashEvent: string,
   options: { armLookupFailure?: boolean } = {}): Promise<Crashed> {
@@ -89,7 +89,7 @@ async function crashSendFlow(h: HostScenario, label: string, crashEvent: string,
   const prepared = preparedOf(toStart.next);
   const lock = lockLedgerAfter(h.database, crashEvent, { kernelStore: true });
   const model = createScriptedModel([{ kind: 'calls', calls: [{ callId: `${label}-send`, name: 'send_session_message',
-    args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: `${label} question`, replyMode: 'wait' } }] }]);
+    args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: `${label} question`, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] }]);
   const root = await openWorkRoot(h, model, lock.observer);
   try {
     await root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID, requestId: `${label}-start` });
@@ -114,7 +114,7 @@ async function crashSendBeforeMessage(h: HostScenario, label: string): Promise<C
   const prepared = preparedOf(toStart.next);
   mailboxSeam.arm();
   const model = createScriptedModel([{ kind: 'calls', calls: [{ callId: `${label}-send`, name: 'send_session_message',
-    args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: `${label} question`, replyMode: 'wait' } }] }]);
+    args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: `${label} question`, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] }]);
   const root = await openWorkRoot(h, model);
   let running: Promise<unknown> | null = null;
   let report: Awaited<ReturnType<HostScenario['restart']>>;

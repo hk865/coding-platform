@@ -12,25 +12,23 @@
  * services. No successful port result is mocked; the Host configuration callback
  * is the same trusted test double the frozen B2 fixture uses.
  */
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { VersionPin, SessionRef } from '../../src/contracts/core/identity.js';
 import type { RoleConfigurationRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
-import type { RunRef, RunSnapshot, TaskBudgetV1 } from '../../src/contracts/dispatch.js';
+import type { RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { GoalRef, ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
-import type { PreparedQueryExecution, PreparedQueryManifestV1, PreparedTaskExecution, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
+import type { PreparedQueryManifestV1, PreparedTaskExecution, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { RuntimeBudget } from '../../src/contracts/runtime-budget.js';
 import type { QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { RoleBindingRefV1 } from '../../src/contracts/dispatch.js';
-import type { RoleSpecResolutionV1 } from '../../src/contracts/role-spec-materials.js';
-import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import { artifactBodyDigest } from '../../src/contracts/artifact.js';
+import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type {
   ContextAssemblyBindingV1, ContextSectionNameV1, ContextSourceV1, InputDeclarationV1, InputSelectionV1,
@@ -47,18 +45,35 @@ import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-se
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { createQueryExecution } from '../../src/core/work-graph/queries/query-execution.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
-import { QUERY_MANIFEST_CONTENT_TYPE } from '../../src/contracts/no-progress.js';
-import { QUERY_CONTEXT_PRELUDE } from '../../src/core/agent-runtime/context-assembler.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import type {
-  AuthorizeConfiguration, ExecutionEntryDependencies, ExecutionEntryPort, TaskEntryPermit,
+  AuthorizeConfiguration, ExecutionEntryDependencies, ExecutionEntryPort,
 } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import type { AuthorizeQueryConfiguration, QueryExecutionPort } from '../../src/core/work-graph/queries/contracts.js';
 import type { RoleBindingFactsPort } from '../../src/core/work-graph/model/configuration-contracts.js';
-import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import {
-  createTaskClaimFixture, type ClaimFixtureKind, type TaskClaimFixture,
+  createTaskClaimFixture, preparationHost, prepareQueryForReal, prepareTaskForReal,
+  type ClaimFixtureKind, type TaskClaimFixture,
 } from '../helpers/task-claim-fixture.js';
+import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { LINE_SETTINGS_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-settings-codecs.js';
+import { createLineSettingsService } from '../../src/core/work-graph/configuration/line-settings-service.js';
+import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
+import { createTaskContextInputService } from '../../src/core/work-graph/tasks/context-input-service.js';
+import { createArchitectureCatalogService, ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-service.js';
+import {
+  createGraphContextReader, type GraphContextReaderDependencies,
+} from '../../src/core/work-graph/views/graph-context-reader.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
+import { createSessionHistoryCursorOwner, createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
+import { reconcileRunAtStartup } from '../../src/core/agent-runtime/run-reconcile.js';
+import { createS2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
+import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
+import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
+import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 
 const AT = '2026-09-24T00:00:00.000Z';
 const H = (value: string): string => sha256Hex(value);
@@ -143,8 +158,18 @@ export type AdmissionFixture = {
   /** Calls the trusted entry made through the RoleBindingFacts resolver. */
   resolverCalls(): number;
   readRun(): Promise<RunSnapshot>;
+  /** The real upstream tA Run (the legacy body's provenance owner). */
+  readSecondRun(): Promise<RunSnapshot>;
   pin(): Promise<VersionPin>;
   prepare(options?: PrepareOptions): Promise<PreparedTaskExecution>;
+  /** A real second claim (tA) and its real prepared manifest, for the idempotency row. */
+  prepareSecond(): Promise<PreparedTaskExecution>;
+  /** The pin of that real second claim. */
+  secondPin(): Promise<VersionPin>;
+  /** The base hand-built preparation: AD08's BLOCKED base path and AD06's one refused input. */
+  basePrepare(options: { input: string; workspaceRevision?: number; claim?: TaskClaimLike }): Promise<PreparedTaskExecution>;
+  /** A real public Session-pin change at the expected Workspace revision. */
+  changePins(add: SessionRef[], remove: SessionRef[], expected: number, requestId: string): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -197,37 +222,51 @@ function workspaceSource(revision: number): ContextSourceV1 {
 }
 
 export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<AdmissionFixture> {
-  const base = await createTaskClaimFixture(kind, EXECUTION_ENTRY_RECORD_SCHEMAS);
+  const base = await createTaskClaimFixture(kind, {
+    records: [...EXECUTION_ENTRY_RECORD_SCHEMAS.records, ...EVIDENCE_RECORD_SCHEMAS.records,
+      ...CONTROL_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records,
+      ...ARCHITECTURE_CATALOG_SCHEMAS.records, ...MODEL_REQUEST_RECORD_SCHEMAS.records],
+    events: [...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...EVIDENCE_RECORD_SCHEMAS.events,
+      ...CONTROL_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events,
+      ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...MODEL_REQUEST_RECORD_SCHEMAS.events],
+    lookups: [...EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? [], ...EVIDENCE_RECORD_SCHEMAS.lookups ?? [],
+      ...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? [],
+      ...ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [], ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? []],
+  });
   const records = base.records;
   const myCtx = ctxFor(PROJECT_ID, WORKSPACE_ID);
+  let eventSeq = 0;
+  let clock = AT;
+  const now = () => clock;
+  const setClock = (at: string): void => { clock = at; };
+  const eventId = () => `ad-event-${++eventSeq}`;
 
-  // The §5.1 Workspace is seeded at revision 7 (AD08 moves it to 8); Project p is
-  // the smallest trusted scope the real Goal/Plan/Session owners need.
+  // The §5.1 Workspace is registered by the public bootstrap owner at @1;
+  // six real public Session-pin changes below take it to @7 (AD08 then moves
+  // it to @8 the same way). The Project row is the trusted scope seed.
   const project: ProjectSnapshot = { ref: PROJECT_REF, revision: 1 };
-  const workspace: WorkspaceSnapshot = { ref: WORKSPACE_REF, revision: 7 };
-  const seeded = await base.commitRaw(
-    [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace)],
-    [{ refKey: canonicalRefKey(PROJECT_REF), expectedRevision: null },
-      { refKey: canonicalRefKey(WORKSPACE_REF), expectedRevision: null }]);
+  const seeded = await base.commitRaw([encodeProjectSnapshot(project)],
+    [{ refKey: canonicalRefKey(PROJECT_REF), expectedRevision: null }]);
   if (seeded.status !== 'committed') throw new Error(`AD scope seed failed: ${JSON.stringify(seeded)}`);
+  const bootstrap = createProjectBootstrapServices({ records, now, eventId });
+  const registeredWorkspace = await bootstrap.projects.registerWorkspace(myCtx, {
+    input: { workspace: SCOPE }, meta: { requestId: 'ad-register-workspace',
+      expected: [{ ref: PROJECT_REF, revision: 1 }, { ref: WORKSPACE_REF, revision: 0 }] } });
+  if (registeredWorkspace.status !== 'committed') {
+    throw new Error(`AD Workspace registration failed: ${JSON.stringify(registeredWorkspace)}`);
+  }
 
-  // Trusted governance for project p: a 'static' verification-kind policy and a baseline.
+  // Trusted governance for project p: the completion policy is the smallest
+  // trusted seed; the architecture is adopted through the public owner below.
   const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId: PROJECT_ID, policyId: 's3-policy', revision: 1 };
-  const baselineRef = { aggregateType: 'ArchitectureBaselineRevision' as const, projectId: PROJECT_ID, baselineId: 's3-baseline', revision: 1 };
   const policyFixture = { schemaVersion: 1, identity: { policyId: 's3-policy' }, revision: 1,
     content: { schemaVersion: 1, requirementKinds: ['static'], minimumRequiredRequirementsPerObligation: 1 } };
-  const baselineFixture = { schemaVersion: 1, identity: { baselineId: 's3-baseline' }, revision: 1,
-    content: { schemaVersion: 1, description: 'S3 admission baseline', constraints: [] } };
   const digest = (value: JsonValue) => sha256Hex(canonicalJson(value));
   const activePolicyRef = { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId: PROJECT_ID };
-  const activeBaselineRef = { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId: PROJECT_ID };
   const governance = [
     { ref: policyRef, revision: 1, schemaVersion: 1, policyId: policyRef.policyId, contentRevision: 1,
       contentDigest: digest(policyFixture as unknown as JsonValue), content: policyFixture.content },
-    { ref: baselineRef, revision: 1, schemaVersion: 1, baselineId: baselineRef.baselineId,
-      contentRevision: 1, contentDigest: digest(baselineFixture as unknown as JsonValue), content: baselineFixture.content },
     { ref: activePolicyRef, projectId: PROJECT_ID, revision: 1, activeRevision: policyRef },
-    { ref: activeBaselineRef, projectId: PROJECT_ID, revision: 1, activeRevision: baselineRef },
   ];
   const governanceSeed = await base.commitRaw(governance.map(snapshot => ({
     refKey: key(snapshot.ref), schemaId: `${snapshot.ref.aggregateType}Snapshot@1`,
@@ -235,9 +274,22 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
   })));
   if (governanceSeed.status !== 'committed') throw new Error(`AD governance seed failed: ${JSON.stringify(governanceSeed)}`);
 
+  // TQ-091: the baseline/catalog/active rows come from the public adoption
+  // owner, never a hand-written catalog row.
+  const architecture = createArchitectureCatalogService({ records });
+  const adopted = await architecture.adoptInitialArchitecture(myCtx, {
+    input: { baselineId: 's3-baseline', description: 'S3 admission baseline', constraints: [],
+      catalog: { requireDag: true, dependencies: [], modules: [{ ref: { projectId: PROJECT_ID, moduleId: 's3-admission' },
+        name: 'S3 admission', responsibility: 'S3 admission fixture', paths: ['src/s3-admission'], interfaces: [] }] } },
+    meta: { requestId: 'ad-adopt-architecture', expected: [
+      { ref: PROJECT_REF, revision: 1 }, { ref: WORKSPACE_REF, revision: 1 }] },
+  });
+  if (adopted.status !== 'committed') throw new Error(`AD architecture adoption failed: ${JSON.stringify(adopted)}`);
+
+
   const createdGoal = await base.goals.createGoal(myCtx, { meta: {
     requestId: 'ad-create-goal',
-    expected: [{ ref: PROJECT_REF, revision: 1 }, { ref: WORKSPACE_REF, revision: 7 }] },
+    expected: [{ ref: PROJECT_REF, revision: 1 }, { ref: WORKSPACE_REF, revision: 1 }] },
     input: { goalId: GOAL_REF.goalId, workspace: SCOPE, objective: 'Ship platform' } });
   if (createdGoal.status !== 'committed') throw new Error(`AD Goal creation failed: ${JSON.stringify(createdGoal)}`);
 
@@ -271,42 +323,90 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
     input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
   if (applied.status !== 'committed') throw new Error(`AD Plan adoption failed: ${JSON.stringify(applied)}`);
 
-  // One Run for the upstream task tA: the provenance owner of the legacy body.
-  const runARef: RunRef = { aggregateType: 'Run', projectId: PROJECT_ID, goalId: GOAL_REF.goalId, runId: 'runA' };
-  const runA: RunSnapshot = { ref: runARef, revision: 1, schemaVersion: 1, task: TA,
-    attemptId: 'attemptA', planRef: PLAN_REF, roleBinding: base.roleBinding, budget: base.budget,
-    workspaceSnapshot: { workspaceId: WORKSPACE_ID, revision: 7 }, status: 'ended', outcome: 'completed',
-    exitCode: 0, lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null,
-    startedAt: null, endedAt: null };
-  const runASeed = await base.commitRaw([{ refKey: key(runARef), schemaId: 'RunSnapshot@1', revision: 1, json: JSON.stringify(runA) }]);
-  if (runASeed.status !== 'committed') throw new Error(`AD runA seed failed: ${JSON.stringify(runASeed)}`);
-
   const bodies = new RawArtifactBodyStore();
-  const storedOldA = await bodies.put({ body: 'old-A', contentType: 'text/plain',
-    sourceRefs: [{ kind: 'artifact', refId: 'old-A', revision: '1' }], origin: { kind: 'run', owner: runARef }, requestedAt: AT });
-  if (storedOldA.status !== 'ready') throw new Error(`AD legacy body store failed: ${JSON.stringify(storedOldA)}`);
 
-  // A real mapped Session for the §5.1 claim.
+  // The main and upstream Sessions are created by the public Session route
+  // (`sessions/create` -> sessionOperations.createSession), which admits and
+  // registers the mapping as ONE operation and creates the Kernel Session.
   const roleRef: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' };
-  const admitted = await base.sessionsPort.admitSessionCreation(myCtx, { meta: { requestId: 'ad-admit-session', expected: [] },
-    input: { workspace: SCOPE, kernelStore: { adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store' },
-      role: roleRef, recommendedRefs: [], initialLinks: [] } });
-  if (admitted.status !== 'committed') throw new Error(`AD Session admission failed: ${JSON.stringify(admitted)}`);
-  const sessionRef: SessionRef = { projectId: admitted.value.action.plannedSessionRef.projectId,
-    sessionId: admitted.value.action.plannedSessionRef.sessionId };
-  const registered = await base.sessionsPort.recordSessionCreated(myCtx, { meta: { requestId: 'ad-register-session', expected: [] },
-    input: { operationRef: admitted.value.ref, sessionRef, adapterId: 'r4c-claim-kernel',
-      kernelSessionId: 'ad-kernel-session-b', historyCursor: null, observedAt: AT } });
-  if (registered.status !== 'committed') throw new Error(`AD Session registration failed: ${JSON.stringify(registered)}`);
-  const sessionCard = await base.sessionsPort.readSession(myCtx, sessionRef);
-  if (sessionCard.status !== 'ready') throw new Error(`AD Session read failed: ${JSON.stringify(sessionCard)}`);
+  const kernelStores = await createKernelStoreRegistry({ entries: [{ adapterId: 'r4c-claim-kernel',
+    storeKey: 'r4c-claim-kernel-store', workspace: SCOPE, databasePath: join(base.directory, 'kernel.sqlite') }] });
+  const sessionOperations = createSessionOperations({ sessions: base.sessionsPort, kernelStores });
+  async function createPublicSession(requestId: string): Promise<{ ref: SessionRef; revision: number }> {
+    const created = await sessionOperations.createSession(myCtx, { workspace: SCOPE, role: roleRef,
+      recommendedRefs: [], initialLinks: [], meta: { requestId, expected: [] } });
+    if (created.status !== 'completed') throw new Error(`AD public Session creation failed: ${JSON.stringify(created)}`);
+    const card = await base.sessionsPort.readSession(myCtx, created.value.ref);
+    if (card.status !== 'ready') throw new Error(`AD Session read failed: ${JSON.stringify(card)}`);
+    const ref: SessionRef = { projectId: created.value.ref.projectId, sessionId: created.value.ref.sessionId };
+    return { ref, revision: card.value.record.revision };
+  }
+  const mainSession = await createPublicSession('ad-create-session');
+  const sessionRef = mainSession.ref;
+  const sessionRevision = mainSession.revision;
 
   const goalRead = await base.plans.queryGoal(myCtx, GOAL_REF);
   if (goalRead.status !== 'ready') throw new Error(`AD Goal read failed: ${JSON.stringify(goalRead)}`);
 
-  let eventSeq = 0;
-  const now = () => AT;
-  const eventId = () => `ad-event-${++eventSeq}`;
+  // The real graph/materials/input owners, so the real assembler can record the
+  // Goal and Workspace sources the admission checks read.
+  const materialReads = createMaterialRecordReaders(records);
+  const materials = createMaterialService({ bodies, authority: materialReads.authority, now });
+  const hostActor: GraphContextReaderDependencies['hostActor'] = { kind: 'system', id: 's3-admission-context-host' };
+  const executions = createRunStateReader({ records, bodies });
+  const inputs = createTaskContextInputService({ records, materials, bodies, hostActor });
+  const graph = createGraphContextReader({ records, goals: base.plans, plans: base.plans, architecture,
+    sessions: base.sessionsPort, executions, inputs, hostActor });
+  const adHost = preparationHost({ configurationRevision: HOST_CONFIG_REVISION,
+    permissions: HOST_PERMISSIONS, hostTemplate: HOST_TEMPLATE });
+
+  // Six real public Session-pin changes take the Workspace from its public
+  // registration @1 to @7 (no hand-written @5 row).
+  const lineSettings = createLineSettingsService({ records, sessionRead: base.sessionsPort.readSession, now,
+    operatorActor: actor });
+  async function changePins(expected: number, add: SessionRef[], remove: SessionRef[], requestId: string): Promise<void> {
+    const result = await lineSettings.setLinePins(myCtx, { meta: { requestId,
+      expected: [{ ref: WORKSPACE_REF, revision: expected }] }, input: { workspace: SCOPE, add, remove } });
+    if (result.status !== 'committed') throw new Error(`AD pin change failed: ${JSON.stringify(result)}`);
+  }
+  for (let revision = 1; revision < 7; revision += 1) {
+    const add = revision % 2 === 1 ? [sessionRef] : [];
+    const remove = revision % 2 === 1 ? [] : [sessionRef];
+    await changePins(revision, add, remove, `ad-pin-${revision}`);
+  }
+
+  // AD03's second manifest and the upstream ended Run: a real tA Session,
+  // claim, prepare and scripted-model start/end at Workspace@7 (no raw Run
+  // seed and no Host-written Session registration).
+  const upstreamSession = await createPublicSession('ad-create-upstream-session');
+  const secondClaimed = await base.service.claimTask(myCtx, { input: {
+    goalRef: GOAL_REF, planRef: PLAN_REF, taskId: TA.taskId, sessionRef: upstreamSession.ref,
+    roleBinding: base.roleBinding, budget: base.budget }, meta: { requestId: 'ad-claim-second', expected: [
+    { ref: GOAL_REF, revision: goalRead.value.goal.revision },
+    { ref: WORKSPACE_REF, revision: 7 },
+    { ref: { aggregateType: 'Session', projectId: PROJECT_ID, sessionId: upstreamSession.ref.sessionId },
+      revision: upstreamSession.revision },
+  ] } });
+  if (secondClaimed.status !== 'committed') throw new Error(`AD second claim failed: ${JSON.stringify(secondClaimed)}`);
+  const secondClaim = secondClaimed.value;
+  const secondPrepared = (await prepareTaskForReal({ records, ctx: myCtx }, {
+    bodies, runRef: secondClaim.runRef, now, requestId: 'ad-second-prepare',
+    host: adHost, graphContext: graph, taskInputs: inputs })).prepared;
+
+  const runtimeSteps = await createS2BRuntimeSteps({ base, bodies, ctx: myCtx, directory: base.directory, scope: SCOPE,
+    now, setClock, eventId, newId: () => `ad-runtime-id-${++eventSeq}`, consumerId: 'runtime-a', workspaceRevision: 7,
+    host: { configurationRevision: HOST_CONFIG_REVISION, permissions: HOST_PERMISSIONS, hostTemplate: HOST_TEMPLATE } });
+  const upstreamHandle = await runtimeSteps.start(secondClaim, { at: AT,
+    replies: [{ kind: 'text', text: 'AD upstream task A completed' }] });
+  await upstreamHandle.entered;
+  await runtimeSteps.finish(upstreamHandle, AT, 'completed');
+
+  // The ended upstream Run is the provenance owner of the legacy body.
+  const runARef: RunRef = secondClaim.runRef;
+  const storedOldA = await bodies.put({ body: 'old-A', contentType: 'text/plain',
+    sourceRefs: [{ kind: 'artifact', refId: 'old-A', revision: '1' }], origin: { kind: 'run', owner: runARef }, requestedAt: AT });
+  if (storedOldA.status !== 'ready') throw new Error(`AD legacy body store failed: ${JSON.stringify(storedOldA)}`);
+
   // §5.1 fixes tB's only Run to `runB`. The shared claim helper does not expose
   // its `newId`, so the same real claim owner is built here with a deterministic
   // first id (the next two generated ids are the Attempt and the event).
@@ -319,7 +419,7 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
     roleBinding: base.roleBinding, budget: base.budget }, meta: { requestId: 'ad-claim-tB', expected: [
     { ref: GOAL_REF, revision: goalRead.value.goal.revision },
     { ref: WORKSPACE_REF, revision: 7 },
-    { ref: { aggregateType: 'Session', projectId: PROJECT_ID, sessionId: sessionRef.sessionId }, revision: sessionCard.value.record.revision },
+    { ref: { aggregateType: 'Session', projectId: PROJECT_ID, sessionId: sessionRef.sessionId }, revision: sessionRevision },
   ] } });
   if (claimResult.status !== 'committed') throw new Error(`AD claim failed: ${JSON.stringify(claimResult)}`);
   const claim = claimResult.value;
@@ -363,8 +463,6 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
   };
   const entry = createExecutionEntryService(deps);
 
-  const rolesForManifest = createRoleConfigurationService({ records, now, eventId });
-
   async function readRun(): Promise<RunSnapshot> {
     const read = await createRunStateReader({ records }).readExecution(myCtx, runB);
     if (read.status !== 'ready') throw new Error(`AD Run read failed: ${JSON.stringify(read)}`);
@@ -376,18 +474,50 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
     return { ref: runB, revision: run.revision };
   }
 
+  let prepareSeq = 0;
+
   async function prepare(options: PrepareOptions = {}): Promise<PreparedTaskExecution> {
     const target = options.claim ?? claim;
-    const input = options.input ?? workInput('R', 'G', 'T');
-    const inputDigest = options.inputDigest ?? artifactBodyDigest(input);
-    const binding = options.binding === undefined
-      ? makeBinding([selectedOldA(runARef), missingEdge()], [workspaceSource(options.workspaceRevision ?? 7)], input)
-      : options.binding;
-    const selectedTaskInputs = options.selectedTaskInputs ?? [{ requirementId: 'legacy-old-a', ref: OLD_A }];
+    const real = await prepareTaskForReal({ records, ctx: myCtx }, { bodies, runRef: target.runRef, now,
+      requestId: `ad-prepare-${target.runRef.runId}-${++prepareSeq}`,
+      host: adHost, graphContext: graph, taskInputs: inputs });
+    return real.prepared;
+  }
+
+  /** AD03's second content: tA's real Prepared value, a genuinely different
+   * manifest from tB's, which the owner must refuse for the same request. */
+  async function prepareSecond(): Promise<PreparedTaskExecution> {
+    return secondPrepared;
+  }
+
+  async function secondPin(): Promise<VersionPin> {
+    const read = await createRunStateReader({ records }).readExecution(myCtx, secondClaim.runRef);
+    if (read.status !== 'ready') throw new Error(`AD second Run read failed: ${JSON.stringify(read)}`);
+    return { ref: secondClaim.runRef, revision: read.value.run.revision };
+  }
+
+  async function readSecondRun(): Promise<RunSnapshot> {
+    const read = await createRunStateReader({ records }).readExecution(myCtx, secondClaim.runRef);
+    if (read.status !== 'ready') throw new Error(`AD second Run read failed: ${JSON.stringify(read)}`);
+    return read.value.run;
+  }
+
+  // AD08 (Workspace source) stays BLOCKED: the real preparation carries no
+  // Workspace source, so that row keeps the base hand-built preparation path,
+  // as `t-base` had it (`:383`). AD06 only builds its one refused input here.
+  const rolesForManifest = createRoleConfigurationService({ records, now, eventId });
+  async function basePrepare(options: { input: string; workspaceRevision?: number; claim?: TaskClaimLike }):
+  Promise<PreparedTaskExecution> {
+    const target = options.claim ?? claim;
+    const input = options.input;
+    const inputDigest = artifactBodyDigest(input);
+    const binding = makeBinding([selectedOldA(runARef), missingEdge()],
+      [workspaceSource(options.workspaceRevision ?? 7)], input);
+    const selectedTaskInputs = [{ requirementId: 'legacy-old-a', ref: OLD_A }];
     const workspaceRevision = options.workspaceRevision ?? 7;
     const roleFacts = await rolesForManifest.resolveRoleBindingFacts(myCtx, {
       roleBinding: base.roleBinding, declaredPermissions: HOST_PERMISSIONS });
-    if (roleFacts.result.status !== 'ready') throw new Error('AD real role fixture could not resolve');
+    if (roleFacts.result.status !== 'ready') throw new Error('AD base role fixture could not resolve');
     const role = roleFacts.result.value;
     const workspaceSnapshot = { workspaceId: WORKSPACE_ID, revision: workspaceRevision };
     const manifest: PreparedTaskManifestV1 = {
@@ -396,14 +526,13 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
       sessionRole: roleRef, workspaceSnapshot, permissions: HOST_PERMISSIONS, budget: base.budget,
       selectedTaskInputs, materialBasis: null, materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [],
       sourceRefs: [{ kind: 'workspace', refId: WORKSPACE_ID, revision: String(workspaceRevision) }],
-      ...(binding === null ? {} : { contextAssembly: binding }), input, inputDigest,
+      contextAssembly: binding, input, inputDigest,
     };
-    const manifestJson = JSON.stringify(manifest);
-    const stored = await bodies.put({ body: manifestJson,
+    const stored = await bodies.put({ body: JSON.stringify(manifest),
       contentType: 'application/vnd.coding-platform.task-execution-manifest+json;version=1',
       sourceRefs: [{ kind: 'workspace', refId: WORKSPACE_ID, revision: String(workspaceRevision) }],
       origin: { kind: 'run', owner: target.runRef }, requestedAt: now() });
-    if (stored.status !== 'ready') throw new Error(`AD manifest store failed: ${JSON.stringify(stored)}`);
+    if (stored.status !== 'ready') throw new Error(`AD base manifest store failed: ${JSON.stringify(stored)}`);
     const envelope: PreparedTaskExecution['envelope'] = {
       schemaVersion: 1, envelopeId: 'ad-envelope-1', projectId: PROJECT_ID, workspaceId: WORKSPACE_ID,
       goalId: GOAL_REF.goalId, taskId: TB.taskId, runRef: target.runRef, attemptRef: target.attemptRef,
@@ -417,9 +546,12 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
 
   return {
     base, ctx: myCtx, bodies, entry, roles: entryRoles, host, claim, runB, runA: runARef,
-    goalRevision: goalRead.value.goal.revision, sessionRef, sessionRevision: sessionCard.value.record.revision,
-    commitCount: () => commitCount, bodyReads: () => bodyReads, resolverCalls: () => resolverCalls, readRun, pin, prepare,
-    close: () => base.close(),
+    goalRevision: goalRead.value.goal.revision, sessionRef, sessionRevision,
+    commitCount: () => commitCount, bodyReads: () => bodyReads, resolverCalls: () => resolverCalls, readRun, readSecondRun,
+    pin, prepare, prepareSecond, secondPin, basePrepare,
+    changePins: (add: SessionRef[], remove: SessionRef[], expected: number, requestId: string) =>
+      changePins(expected, add, remove, requestId),
+    close: async () => { await runtimeSteps.close(); await base.close(); },
   };
 }
 
@@ -473,16 +605,95 @@ describe.each(['memory', 'sqlite'] as const)('S3 prepared context admission (%s)
     expect(fixture.bodyReads()).toBe(readsBefore);
   });
 
-  it('AD03: the same requestId with another manifest is an idempotency conflict and commits nothing', async () => {
-    const fixture = await open(kind);
-    const first = await fixture.prepare({ input: workInput('R', 'G', 'T') });
-    const pin = await fixture.pin();
-    expect(await authorize(fixture, first, 'ad03', [pin])).toMatchObject({ status: 'committed', replayed: false });
-    const commitsBefore = fixture.commitCount();
-    const second = await fixture.prepare({ input: workInput('R', 'G', 'T2') });
-    const conflict = await authorize(fixture, second, 'ad03', [pin]);
-    expect(conflict).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
-    expect(fixture.commitCount()).toBe(commitsBefore);
+  describe('rejects: prepared context admission', () => {
+    it('AD03: the same requestId with another manifest is an idempotency conflict and commits nothing', async () => {
+      const fixture = await open(kind);
+      const first = await fixture.prepare();
+      const pin = await fixture.pin();
+      expect(await authorize(fixture, first, 'ad03', [pin])).toMatchObject({ status: 'committed', replayed: false });
+      // A real prepared manifest for the other Task (tA), not the same value
+      // with a changed envelope id.
+      const second = await fixture.prepareSecond();
+      const firstRunBefore = await fixture.readRun();
+      const secondRunBefore = await fixture.readSecondRun();
+      const commitsBefore = fixture.commitCount();
+      const conflict = await authorize(fixture, second, 'ad03', [await fixture.secondPin()]);
+      expect(conflict).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
+      // A6: the public execution read of BOTH Runs named by the refused request
+      // is unchanged, and the owner committed nothing.
+      expect(await fixture.readRun()).toEqual(firstRunBefore);
+      expect(await fixture.readSecondRun()).toEqual(secondRunBefore);
+      expect(fixture.commitCount()).toBe(commitsBefore);
+    });
+
+    it('AD06: a revoked Run re-authorizes only with the fixed binding; another binding is invalid and the original is kept', async () => {
+      const fixture = await open(kind);
+      // A2 fault at a named point: the Kernel store is unreadable for the one
+      // boundary read after the real begin. The real Runtime start therefore
+      // fails before the entered fact and leaves the Run `Entering` (revoked by
+      // the Host reconcile below, as run-reconcile W-05 does).
+      const kernelPath = join(fixture.base.directory, 'kernel.sqlite');
+      const savedKernelPath = `${kernelPath}.ad06`;
+      let kernelSwapped = false;
+      const steps = await createS2BRuntimeSteps({ base: fixture.base, bodies: fixture.bodies, ctx: fixture.ctx,
+        directory: fixture.base.directory, scope: SCOPE, now: () => AT, setClock: () => undefined,
+        eventId: () => 'ad06-event', newId: () => 'ad06-id', consumerId: 'runtime-a', workspaceRevision: 7,
+        host: { configurationRevision: HOST_CONFIG_REVISION, permissions: HOST_PERMISSIONS, hostTemplate: HOST_TEMPLATE },
+        beforeBegin: async () => {
+          await rename(kernelPath, savedKernelPath);
+          await writeFile(kernelPath, 'AD06 not a Kernel Store');
+          kernelSwapped = true;
+        } });
+      try {
+        const handle = await steps.start(fixture.claim, { at: AT,
+          replies: [{ kind: 'text', text: 'AD06 never enters' }] });
+        await handle.settled.catch(() => undefined);
+      } finally {
+        await steps.close();
+        if (kernelSwapped) {
+          await rm(kernelPath, { force: true });
+          await rename(savedKernelPath, kernelPath);
+        }
+      }
+      const entering = await fixture.readRun();
+      expect(entering).toMatchObject({ status: 'starting', executionAuthorization: { phase: 'entering' } });
+      // The Host reconcile's own probe: the restored Kernel Store is readable and
+      // holds no Turn of the fixed identity, so the real classifier reaches W-05
+      // and the real write service revokes the Run (run-reconcile W-05).
+      const kernelStores = await createKernelStoreRegistry({ entries: [{ adapterId: 'r4c-claim-kernel',
+        storeKey: 'r4c-claim-kernel-store', workspace: SCOPE, databasePath: kernelPath }] });
+      const owner = createSessionHistoryCursorOwner({ kernelStores });
+      const reads = createRunStateReader({ records: fixture.base.records });
+      const execution = await reads.readExecution(fixture.ctx, fixture.runB);
+      if (execution.status !== 'ready') throw new Error(`AD06 Run record read failed: ${JSON.stringify(execution)}`);
+      const hostInstanceId = 'ad06-host';
+      const reconcile = createRunReconcileService({ records: fixture.base.records, reads, now: () => AT,
+        hostInstance: { hostInstanceId, lease: 'owned' }, eventId: () => 'ad06-reconcile-event' });
+      const controls = createRunControlService({ records: fixture.base.records, reads,
+        authority: createMaterialRecordReaders(fixture.base.records).authority, now: () => AT,
+        eventId: () => 'ad06-control-event' });
+      const report = await reconcileRunAtStartup({ owner, controls, entry: fixture.entry, reconcile,
+        now: () => AT, newId: () => 'ad06-reconcile-id' }, fixture.ctx, {
+        record: execution.value, hostInstanceId,
+        probe: await owner.probe({ session: execution.value.session, signal: fixture.ctx.signal }) });
+      expect(report).toMatchObject({ status: 'reconciled', row: 'W-05' });
+      const before = await fixture.readRun();
+      expect(before).toMatchObject({ status: 'starting', executionAuthorization: { phase: 'revoked' } });
+      const fixedBinding = before.inputBinding;
+      expect(fixedBinding).toBeDefined();
+      // The one built refused input: another Prepared binding for the same claim.
+      const changed = await fixture.basePrepare({ claim: fixture.claim, input: workInput('R', 'G', 'CHANGED') });
+      const commitsBefore = fixture.commitCount();
+      const result = await authorize(fixture, changed, 'ad06-second', [await fixture.pin()]);
+      expect(result).toMatchObject({ status: 'rejected', code: 'invalid' });
+      expect(fixture.commitCount()).toBe(commitsBefore);
+      const after = await fixture.readRun();
+      expect(after.revision).toBe(before.revision);
+      expect(after.inputBinding).toEqual(fixedBinding);
+      expect(after.envelope).toEqual(before.envelope);
+      expect(after.executionAuthorization).toEqual(before.executionAuthorization);
+    });
+
   });
 
   it('AD04: a tampered saved input body or digest is invalid and commits nothing', async () => {
@@ -494,38 +705,6 @@ describe.each(['memory', 'sqlite'] as const)('S3 prepared context admission (%s)
     const result = await authorize(fixture, tampered, 'ad04', [await fixture.pin()]);
     expect(result).toMatchObject({ status: 'rejected', code: 'invalid' });
     expect(fixture.commitCount()).toBe(commitsBefore);
-  });
-
-  it('AD05: an old manifest without contextAssembly authorizes as before and is not migrated', async () => {
-    const fixture = await open(kind);
-    const prepared = await fixture.prepare({ binding: null, selectedTaskInputs: [] });
-    const result = await authorize(fixture, prepared, 'ad05', [await fixture.pin()]);
-    expect(result).toMatchObject({ status: 'committed', replayed: false });
-    const stored = await fixture.bodies.read(prepared.envelope.bundleRef);
-    expect(stored.status).toBe('ready');
-    if (stored.status !== 'ready') throw new Error('AD05 manifest body required');
-    expect(stored.value.body.includes('"contextAssembly"')).toBe(false);
-  });
-
-  it('AD06: a revoked Run re-authorizes only with the fixed binding; another binding is invalid and the original is kept', async () => {
-    const fixture = await open(kind);
-    const prepared = await fixture.prepare();
-    const pin = await fixture.pin();
-    expect(await authorize(fixture, prepared, 'ad06-first', [pin])).toMatchObject({ status: 'committed', replayed: false });
-    const before = await fixture.readRun();
-    const fixedBinding = before.inputBinding;
-    expect(fixedBinding).toBeDefined();
-    // RUN-16 (proven not entered) revokes the V2 binding in place; the Run stays `starting`.
-    const revoked: RunSnapshot = { ...before, revision: before.revision + 1,
-      executionAuthorization: { ...(before.executionAuthorization as Record<string, unknown>), phase: 'revoked' } as never };
-    const committedRevoke = await fixture.base.commitRaw([{ refKey: key(before.ref), schemaId: 'RunSnapshot@1',
-      revision: revoked.revision, json: JSON.stringify(revoked) }], [{ refKey: key(before.ref), expectedRevision: before.revision }]);
-    expect(committedRevoke).toMatchObject({ status: 'committed' });
-    const changed = await fixture.prepare({ claim: prepared.claim, input: workInput('R', 'G', 'CHANGED') });
-    const result = await authorize(fixture, changed, 'ad06-second', [await fixture.pin()]);
-    expect(result).toMatchObject({ status: 'rejected', code: 'invalid' });
-    const after = await fixture.readRun();
-    expect(after.inputBinding).toEqual(fixedBinding);
   });
 
   it('AD07: a new Query with the look/find and read tools binds prepared with the triple intersection equal', async () => {
@@ -544,19 +723,13 @@ describe.each(['memory', 'sqlite'] as const)('S3 prepared context admission (%s)
 
   it('AD08: a Workspace moved from @7 to @8 after assembly is a revision conflict while the write guard still pins @7', async () => {
     const fixture = await open(kind);
-    const prepared = await fixture.prepare({ workspaceRevision: 7 });
-    // The assembled binding named Workspace@7; the record now moves to @8.
-    const current = await fixture.base.records.readMany([canonicalRefKey(WORKSPACE_REF)]);
-    if (current.status !== 'ready') throw new Error('AD08 workspace read failed');
-    const record = current.value.records.find(candidate => candidate.refKey === canonicalRefKey(WORKSPACE_REF));
-    if (record === undefined) throw new Error('AD08 workspace record absent');
-    const moved = await fixture.base.commitRaw([{ refKey: canonicalRefKey(WORKSPACE_REF), schemaId: 'WorkspaceSnapshot@1',
-      revision: 8, json: JSON.stringify({ ref: WORKSPACE_REF, revision: 8 }) }],
-    [{ refKey: canonicalRefKey(WORKSPACE_REF), expectedRevision: record.revision }]);
-    expect(moved).toMatchObject({ status: 'committed' });
+    const prepared = await fixture.basePrepare({ input: workInput('R', 'G', 'T'), workspaceRevision: 7 });
     const runBefore = await fixture.readRun();
     const sessionBefore = await fixture.base.sessionsPort.readSession(fixture.ctx, fixture.sessionRef);
     if (sessionBefore.status !== 'ready') throw new Error('AD08 Session read failed');
+    // The assembled binding named Workspace@7; a real public pin change now
+    // advances the record to @8 (no hand-filled revision).
+    await fixture.changePins([fixture.sessionRef], [], 7, 'ad08-pin');
     const result = await authorize(fixture, prepared, 'ad08', [await fixture.pin()]);
     expect(result).toMatchObject({ status: 'rejected', code: 'revision_conflict' });
     // A CAS-rejected attempt may still call commit, so compare the durable
@@ -654,37 +827,23 @@ export async function createQueryAdmissionFixture(kind: ClaimFixtureKind): Promi
     ] } });
   if (claimed.status !== 'committed') throw new Error(`AD07 claim failed: ${JSON.stringify(claimed)}`);
 
-  const facts = await execution.readPreparationFacts(myCtx, queryRunRef);
-  if (facts.status !== 'ready') throw new Error(`AD07 preparation facts failed: ${JSON.stringify(facts)}`);
-  const state = facts.value.record.run.run.executionState;
-  if (state === undefined) throw new Error('AD07 QueryRun has no execution state');
-  const input = `${QUERY_CONTEXT_PRELUDE}\n\n## Runtime context\nR\n\n## Goal\nQ`;
-  const contextAssembly: ContextAssemblyBindingV1 = {
-    schemaVersion: 1, formatVersion: 's3-context-v1', callKind: 'copy', duty: 'executor',
-    residentBudgetBytes: 4096, residentBytes: 0, totalBytes: B(input),
-    sections: requiredSections(input), sources: [], inputSelections: [], extensions: emptyExtensions(),
-  };
-  const manifest: PreparedQueryManifestV1 = {
-    schemaVersion: 1, kind: 'query_execution', queryRunRef, sessionRef: state.sessionRef,
-    sessionGeneration: state.sessionGeneration, roleBinding: state.roleBinding, sessionRole: state.role,
-    role: state.roleResolution as Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>,
-    hostTemplate, hostConfigurationRevision: 'ad07-host@1', goal: { ref: facts.value.goal.ref, revision: facts.value.goal.revision },
-    workspace: { ref: facts.value.workspace.ref, revision: facts.value.workspace.revision },
-    focusPlan: null, permissions: { tools: intersection, writeScope: [] }, runtimeBudget,
-    budget: { tokenBudget: 4096, deadline: null }, sourceRefs: [], contextAssembly,
-    input, inputDigest: artifactBodyDigest(input),
-  };
-  const manifestJson = JSON.stringify(manifest);
-  const stored = await bodies.put({ body: manifestJson, contentType: QUERY_MANIFEST_CONTENT_TYPE,
-    sourceRefs: [{ kind: 'workspace', refId: WORKSPACE_ID, revision: '7' }], origin: { kind: 'run', owner: queryRunRef }, requestedAt: AT });
-  if (stored.status !== 'ready') throw new Error(`AD07 manifest store failed: ${JSON.stringify(stored)}`);
-  const prepared: PreparedQueryExecution = { queryRunRef, bundleRef: stored.value.ref, inputDigest: manifest.inputDigest };
+  // A delegating wrapper records the REAL bind result so AD07 can assert it.
+  let capturedBind: Awaited<ReturnType<QueryExecutionPort['bindPreparedQuery']>> | undefined;
+  const wrappedExecution: QueryExecutionPort = { ...execution,
+    async bindPreparedQuery(ctx, request) {
+      const result = await execution.bindPreparedQuery(ctx, request);
+      capturedBind = result;
+      return result;
+    } };
+  const real = await prepareQueryForReal({ records: base.records, ctx: myCtx }, {
+    bodies, queryRunRef, queryExecution: wrappedExecution, now, requestId: 'ad07-prepare',
+    host: preparationHost({ configurationRevision: 'ad07-host@1',
+      permissions: { tools: intersection, writeScope: [] }, hostTemplate, budget: runtimeBudget }),
+  });
+  if (capturedBind === undefined) throw new Error('AD07 real Query preparation did not bind');
   return {
-    manifest, hostCeiling, roleCeiling, queryCeiling,
-    bind: () => execution.bindPreparedQuery(myCtx, { input: { prepared }, meta: { requestId: 'ad07-bind', expected: [
-      { ref: queryRunRef, revision: claimed.value.run.revision },
-      { ref: { aggregateType: 'Session', projectId: PROJECT_ID, sessionId: sessionRef.sessionId }, revision: claimed.value.session.revision },
-    ] } }),
+    manifest: real.manifest, hostCeiling, roleCeiling, queryCeiling,
+    bind: async () => capturedBind!,
     close: () => base.close(),
   };
 }

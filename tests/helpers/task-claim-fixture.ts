@@ -20,17 +20,38 @@ import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } 
 import type { GoalRef, ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type {
-  EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas, RecordGuard, StoreCommitReceipt,
+  EncodedRecord, GoalRecordTransactionPort, RecordBackendSchemas, RecordGuard, StoreCommitReceipt,
 } from '../../src/core/record-store/ports.js';
 import type { LookupValue, RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import { canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
+import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
+import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { SESSION_RECORD_SCHEMAS, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
+import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
+import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
+import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { createContextAssembler, type ContextAssemblerDependencies } from '../../src/core/agent-runtime/context-assembler.js';
+import { createExecutionPreparation, loadPreparedManifest } from '../../src/core/agent-runtime/execution-preparation.js';
+import { createQueryPreparation } from '../../src/core/agent-runtime/query-preparation.js';
+import type { RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../../src/core/agent-runtime/execution-contracts.js';
+import type { QueryExecutionPort } from '../../src/core/work-graph/queries/contracts.js';
+import type { QueryRunRef } from '../../src/contracts/query-job.js';
+import type {
+  PreparedQueryExecution, PreparedQueryManifestV1, PreparedTaskExecution, PreparedTaskManifestV1,
+} from '../../src/contracts/core/prepared-execution.js';
+import type { ContextAssemblyBindingV1 } from '../../src/contracts/graph-context.js';
+import type { RuntimeBudget } from '../../src/contracts/runtime-budget.js';
+import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
+import type { ModelClientPort } from '../../vendor/coding-agent/dist/public-api.js';
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-history-codecs.js';
@@ -38,14 +59,16 @@ import { createGoalService } from '../../src/core/work-graph/tasks/task-service.
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import type { RoleConfigurationPort } from '../../src/core/work-graph/model/configuration-contracts.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
+import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import type { ClaimTaskInput, TaskClaimPort } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { GoalTaskPort, GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import type { PlanTaskPort } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 
 const AT = '2026-09-24T00:00:00.000Z';
 export const CLAIM_FIXTURE_AT = AT;
@@ -79,6 +102,16 @@ export type ClaimRequestOverrides = {
   input?: Partial<ClaimTaskInput>;
   requestId?: string;
   expected?: readonly VersionPin[];
+};
+
+export type ClaimFixtureOptions<A = unknown> = {
+  /** The clock the fixture's owners (and its public bootstrap) use; default `CLAIM_FIXTURE_AT`. */
+  clock?: () => string;
+  /** Opt-in store observer installed before every bootstrap write; its result is exposed as `audit`. */
+  audit?: (records: Records) => A;
+  /** The trusted initial architecture module the public bootstrap adopts. */
+  bootstrapModule?: { moduleId?: string; name?: string; responsibility?: string; description?: string;
+    paths?: readonly string[] };
 };
 
 export type TaskClaimFixture = {
@@ -156,8 +189,11 @@ function wrapRecords(target: Records, spy: RecordSpy): Records {
 }
 
 /** The real Goal/Plan/Session records plus an accepted plan for two work tasks
- * and one goal gate. Governance is a trusted fixture seed. */
-export async function createTaskClaimFixture(kind: ClaimFixtureKind, additionalSchemas: RecordBackendSchemas = { records: [], events: [] }): Promise<TaskClaimFixture> {
+ * and one goal gate. Governance is created through the public bootstrap owners
+ * (Project, Workspace, completion policy and the adopted architecture). */
+export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind,
+  additionalSchemas: RecordBackendSchemas = { records: [], events: [] },
+  options: ClaimFixtureOptions<A> = {}): Promise<TaskClaimFixture & { audit?: A }> {
   const directory = await mkdtemp(join(tmpdir(), `next-r4c-claim-${kind}-`));
   const ledgerPath = join(directory, 'ledger.sqlite');
   const materials = materialRecordSchemas();
@@ -165,12 +201,14 @@ export async function createTaskClaimFixture(kind: ClaimFixtureKind, additionalS
     records: uniqueBySchemaId([...materials.records, ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records,
       ...ROLE_RECORD_SCHEMAS.records, ...TASK_CLAIM_RECORD_SCHEMAS.records,
-      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records, ...additionalSchemas.records], (schema) => schema.schemaId),
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records,
+      ...additionalSchemas.records], (schema) => schema.schemaId),
     events: uniqueBySchemaId([...materials.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...TASK_CLAIM_RECORD_SCHEMAS.events, ...EXECUTION_HISTORY_RECORD_SCHEMAS.events,
       { eventType: 'TrustedScopeSeeded', schemaVersion: 1,
         validate: event => ({ status: 'decoded', value: event }) }, ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
+      ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
       ...additionalSchemas.events], (schema) => `${schema.eventType}@${String(schema.schemaVersion)}`),
     lookups: uniqueBySchemaId([...(materials.lookups ?? []), ...(PLAN_RECORD_SCHEMAS.lookups ?? []),
       ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []), ...(PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? []),
@@ -181,6 +219,7 @@ export async function createTaskClaimFixture(kind: ClaimFixtureKind, additionalS
   const backend = kind === 'memory'
     ? createInMemoryRecordBackend({ schemas })
     : createSqliteRecordBackend({ path: ledgerPath, schemas });
+  const audit = options.audit?.(backend.records);
 
   const projectId = 'r4c-claim-project';
   const workspaceId = 'r4c-claim-workspace';
@@ -195,43 +234,49 @@ export async function createTaskClaimFixture(kind: ClaimFixtureKind, additionalS
     materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal,
   };
 
-  // ---- trusted scope + governance seed (Project/Workspace/policy/baseline) --
-  const policyFixture = { schemaVersion: 1, identity: { policyId: 'r4c-claim-policy' }, revision: 1,
-    content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } };
-  const architectureFixture = { schemaVersion: 1, identity: { baselineId: 'r4c-claim-baseline' }, revision: 1,
-    content: { schemaVersion: 1, description: 'R4c claim fixture baseline', constraints: [] } };
-  const digest = (value: JsonValue) => sha256Hex(canonicalJson(value));
+  const now = options.clock ?? (() => AT);
+  // ---- real Project/Workspace/policy/baseline bootstrap through the public owners --
+  let bootstrapSeq = 0;
+  const bootstrap = createProjectBootstrapServices({ records: backend.records, now,
+    eventId: () => `r4c-claim-bootstrap-${++bootstrapSeq}` });
+  const createdProject = await bootstrap.projects.createProject(ctx, {
+    input: { projectId }, meta: { requestId: 'r4c-claim-create-project', expected: [{ ref: projectRef, revision: 0 }] },
+  });
+  if (createdProject.status !== 'committed') throw new Error(`fixture project setup failed: ${JSON.stringify(createdProject)}`);
+  const registeredWorkspace = await bootstrap.projects.registerWorkspace(ctx, {
+    input: { workspace: scope }, meta: { requestId: 'r4c-claim-register-workspace', expected: [
+      { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }] },
+  });
+  if (registeredWorkspace.status !== 'committed') throw new Error(`fixture workspace setup failed: ${JSON.stringify(registeredWorkspace)}`);
   const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId,
     policyId: 'r4c-claim-policy', revision: 1 };
-  const architectureRef = { aggregateType: 'ArchitectureBaselineRevision' as const, projectId,
-    baselineId: 'r4c-claim-baseline', revision: 1 };
-  const governance = [
-    { ref: policyRef, revision: 1, schemaVersion: 1, policyId: policyRef.policyId, contentRevision: 1,
-      contentDigest: digest(policyFixture), content: policyFixture.content },
-    { ref: architectureRef, revision: 1, schemaVersion: 1, baselineId: architectureRef.baselineId,
-      contentRevision: 1, contentDigest: digest(architectureFixture), content: architectureFixture.content },
-    { ref: { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId }, projectId,
-      revision: 1, activeRevision: policyRef },
-    { ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId }, projectId,
-      revision: 1, activeRevision: architectureRef },
-  ];
-  const encodeGovernance = (snapshot: (typeof governance)[number]): EncodedRecord => ({
-    refKey: canonicalJson(snapshot.ref as unknown as JsonValue),
-    schemaId: `${snapshot.ref.aggregateType}Snapshot@1`, revision: snapshot.revision, json: JSON.stringify(snapshot),
+  const installed = await bootstrap.completionPolicies.installCompletionPolicy(ctx, {
+    input: { policyId: policyRef.policyId, contentRevision: 1,
+      content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } },
+    meta: { requestId: 'r4c-claim-install-policy', expected: [{ ref: projectRef, revision: 1 }, { ref: policyRef, revision: 0 }] },
   });
-  const project: ProjectSnapshot = { ref: projectRef, revision: 1 };
-  const workspace: WorkspaceSnapshot = { ref: workspaceRef, revision: 1 };
-  const scopeEvent = { eventId: 'r4c-claim-scope-event', eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-    occurredAt: AT, json: JSON.stringify({ eventId: 'r4c-claim-scope-event', eventType: 'TrustedScopeSeeded',
-      schemaVersion: 1, occurredAt: AT }) };
-  const scopeSeed: PreparedCommit = { identityKey: 'r4c-claim-scope-seed', fingerprint: 'r4c-claim-scope-seed-v1',
-    guards: [{ refKey: canonicalRefKey(projectRef), expectedRevision: null },
-      { refKey: canonicalRefKey(workspaceRef), expectedRevision: null },
-      ...governance.map(snapshot => ({ refKey: canonicalJson(snapshot.ref as unknown as JsonValue), expectedRevision: null }))],
-    records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace), ...governance.map(encodeGovernance)],
-    events: [scopeEvent], claims: [], indexGuards: [], indexChanges: [] };
-  const seededScope = await backend.records.commit(scopeSeed);
-  if (seededScope.status !== 'committed') throw new Error(`fixture scope seed failed: ${seededScope.reason}`);
+  if (installed.status !== 'committed') throw new Error(`fixture policy setup failed: ${JSON.stringify(installed)}`);
+  const activated = await bootstrap.completionPolicies.activateCompletionPolicy(ctx, {
+    input: { target: { ref: installed.value.ref, digest: installed.value.contentDigest } },
+    meta: { requestId: 'r4c-claim-activate-policy', expected: [{ ref: projectRef, revision: 1 },
+      { ref: { aggregateType: 'ProjectCompletionPolicyActive', projectId }, revision: 0 }] },
+  });
+  if (activated.status !== 'committed') throw new Error(`fixture policy activation failed: ${JSON.stringify(activated)}`);
+  const architectureModule = {
+    moduleId: options.bootstrapModule?.moduleId ?? 'r4c-claim-work',
+    name: options.bootstrapModule?.name ?? 'R4c claim work',
+    responsibility: options.bootstrapModule?.responsibility ?? 'Fixture workspace',
+    description: options.bootstrapModule?.description ?? 'R4c claim fixture baseline',
+    paths: options.bootstrapModule?.paths ?? ['src/r4c-claim-work'],
+  };
+  const architecture = await createArchitectureCatalogService({ records: backend.records }).adoptInitialArchitecture(ctx, {
+    input: { baselineId: 'r4c-claim-baseline', description: architectureModule.description, constraints: [],
+      catalog: { requireDag: true, dependencies: [], modules: [{ ref: { projectId, moduleId: architectureModule.moduleId },
+        name: architectureModule.name, responsibility: architectureModule.responsibility, paths: [...architectureModule.paths], interfaces: [] }] } },
+    meta: { requestId: 'r4c-claim-adopt-architecture', expected: [
+      { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 }] },
+  });
+  if (architecture.status !== 'committed') throw new Error(`fixture architecture setup failed: ${JSON.stringify(architecture)}`);
 
   // ---- real services over the real backends ---------------------------------
   let eventSeq = 0;
@@ -239,7 +284,6 @@ export async function createTaskClaimFixture(kind: ClaimFixtureKind, additionalS
   let seedSeq = 0;
   let requestSeq = 0;
   let idSeq = 0;
-  const now = () => AT;
   const newId = () => `r4c-claim-id-${++idSeq}`;
   const materialsSpy: MaterialSpy = { openArtifactCalls: 0 };
   const materialsPort = {
@@ -259,8 +303,8 @@ export async function createTaskClaimFixture(kind: ClaimFixtureKind, additionalS
     guards: readonly RecordGuard[] = []): Promise<StoreCommitReceipt> {
     const sequence = ++seedSeq;
     const event = { eventId: `r4c-claim-seed-event-${sequence}`, eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-      occurredAt: AT, json: JSON.stringify({ eventId: `r4c-claim-seed-event-${sequence}`,
-        eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: AT }) };
+      occurredAt: now(), json: JSON.stringify({ eventId: `r4c-claim-seed-event-${sequence}`,
+        eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: now() }) };
     const guarded = new Set(guards.map(guard => guard.refKey));
     const allGuards: RecordGuard[] = [...guards,
       ...recordsToWrite.filter(record => !guarded.has(record.refKey))
@@ -277,7 +321,7 @@ export async function createTaskClaimFixture(kind: ClaimFixtureKind, additionalS
     input: { goalId: goalRef.goalId, workspace: scope, objective: 'Exercise the atomic claim skeleton' } });
   if (createdGoal.status !== 'committed') throw new Error(`fixture Goal creation failed: ${JSON.stringify(createdGoal)}`);
 
-  const draft: PlanRevisionDraft = { schemaVersion: 1, planId: planRef.planId, planRevision: 1,
+  const draft: PlanRevisionDraft = { schemaVersion: 2, planId: planRef.planId, planRevision: 1,
     goalId: goalRef.goalId, stages: [],
     tasks: [
       { taskId: 'implement-a', title: 'Implement A', requirementLevel: 'required', taskKind: 'work',
@@ -315,20 +359,17 @@ export async function createTaskClaimFixture(kind: ClaimFixtureKind, additionalS
     storeKey: 'r4c-claim-kernel-store', workspace: scope, databasePath: join(directory, 'kernel.sqlite') }] });
   const defaultRole: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' };
 
+  const sessionOperations = createSessionOperations({ sessions: sessionsPort, kernelStores });
+
   async function createSession(requestId: string, role: RoleConfigurationRef = defaultRole): Promise<SessionRef> {
-    const admitted = await sessionsPort.admitSessionCreation(ctx, { meta: { requestId: `admit-${requestId}`, expected: [] },
-      input: { workspace: scope, kernelStore: { adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store' },
-        role, recommendedRefs: [], initialLinks: [] } });
-    if (admitted.status !== 'committed') throw new Error(`fixture session admission failed: ${JSON.stringify(admitted)}`);
-    const kernelSessionId = `r4c-claim-kernel-session-${requestId}`;
-    await kernelStores.withStore('r4c-claim-kernel', store => store.create({
-      sessionId: kernelSessionId, recordId: `r4c-claim-kernel-record-${requestId}`, createdAt: AT,
-    }, { signal: ctx.signal }));
-    const registered = await sessionsPort.recordSessionCreated(ctx, { meta: { requestId: `register-${requestId}`, expected: [] },
-      input: { operationRef: admitted.value.ref, sessionRef: admitted.value.action.plannedSessionRef,
-        adapterId: 'r4c-claim-kernel', kernelSessionId, historyCursor: null, observedAt: AT } });
-    if (registered.status !== 'committed') throw new Error(`fixture session registration failed: ${JSON.stringify(registered)}`);
-    return { projectId: registered.value.ref.projectId, sessionId: registered.value.ref.sessionId };
+    // The real Session operations owner admits, creates the pinned Kernel Session
+    // and registers the mapping; the fixture never calls `recordSessionCreated`.
+    const created = await sessionOperations.createSession(ctx, {
+      workspace: scope, role, recommendedRefs: [], initialLinks: [],
+      meta: { requestId: `admit-${requestId}`, expected: [] },
+    });
+    if (created.status !== 'completed') throw new Error(`fixture session creation failed: ${JSON.stringify(created)}`);
+    return { projectId: created.value.ref.projectId, sessionId: created.value.ref.sessionId };
   }
   const firstSession = await createSession('session-first');
   const secondSession = await createSession('session-second');
@@ -376,17 +417,18 @@ export async function createTaskClaimFixture(kind: ClaimFixtureKind, additionalS
     goals: goalsService.tasks, plans, sessionsPort, roleService, makeService,
     async buildRequest(overrides = {}) {
       const sessionRef = overrides.input?.sessionRef ?? firstSession;
-      const goalRead = await plans.queryGoal(ctx, goalRef);
+      const requestedGoalRef = overrides.input?.goalRef ?? goalRef;
+      const goalRead = await plans.queryGoal(ctx, requestedGoalRef);
       if (goalRead.status !== 'ready') throw new Error(`fixture goal read failed: ${JSON.stringify(goalRead)}`);
       const card = await sessionsPort.readSession(ctx, sessionRef);
       if (card.status !== 'ready') throw new Error(`fixture session read failed: ${JSON.stringify(card)}`);
       const expected = overrides.expected ?? [
-        { ref: goalRef, revision: goalRead.value.goal.revision },
+        { ref: requestedGoalRef, revision: goalRead.value.goal.revision },
         { ref: workspaceRef, revision: await decodedRevision(canonicalRefKey(workspaceRef)) },
         { ref: plainSessionRefToAggregate(sessionRef), revision: card.value.record.revision },
       ];
       return { input: {
-        goalRef: overrides.input?.goalRef ?? goalRef,
+        goalRef: requestedGoalRef,
         planRef: overrides.input?.planRef ?? planRef,
         taskId: overrides.input?.taskId ?? tasks.first.taskId,
         sessionRef,
@@ -449,5 +491,168 @@ export async function createTaskClaimFixture(kind: ClaimFixtureKind, additionalS
       await rm(directory, { recursive: true, force: true });
     },
   };
-  return fixture;
+  return audit === undefined ? fixture : { ...fixture, audit };
+}
+
+/**
+ * The model handle a preparation-only Host carries: preparation never streams, so
+ * a call here is a fixture defect and fails loudly instead of inventing a reply.
+ */
+const preparationOnlyModel: ModelClientPort = {
+  async *stream() { throw new Error('the preparation-only Host model must not be called'); },
+};
+
+export type PreparationHostConfiguration = {
+  configurationRevision: string;
+  /** Optional: preparation takes the policy revision from the Run's Role binding. */
+  permissions: { policyRevision?: string; tools: string[]; writeScope?: string[] };
+  hostTemplate: { templateId: string; revision: string; digest: string } | null;
+  budget?: RuntimeBudget;
+  client?: ModelClientPort;
+};
+
+/** A trusted Host binding for the REAL preparation path, over public configuration only. */
+export function preparationHost(config: PreparationHostConfiguration): RuntimeHostBindings {
+  const resolved = (): ResolvedRuntimeConfiguration => ({
+    configurationRevision: config.configurationRevision,
+    model: {
+      configuration: { revision: config.configurationRevision, provider: 'test', model: 'test', baseUrl: 'http://127.0.0.1' },
+      client: config.client ?? preparationOnlyModel,
+    },
+    budget: config.budget ?? { contextWindowTokens: 128000, inputTokens: null, outputTokens: null,
+      maxRequests: 4, maxToolCalls: 8, timeoutMs: null, perResponseTokens: 512 },
+    hostTemplate: config.hostTemplate === null ? null : { ...config.hostTemplate },
+    tools: [...config.permissions.tools],
+    writeScope: [...(config.permissions.writeScope ?? [])],
+    skills: { resourceRoot: '/tmp', enabledIds: [] },
+    systemInstruction: 'preparation-only trusted Host configuration',
+    deniedPrefixes: [],
+    processSandboxOptions: {},
+    materialBasis: null,
+  });
+  return {
+    async resolveConfiguration() { return { status: 'ready', value: resolved() }; },
+    async resolveQueryConfiguration() { return { status: 'ready', value: resolved() }; },
+  };
+}
+
+export type RealPreparationWorld = { records: Records; ctx: CoreCallContext };
+
+export type RealPreparedTask = {
+  prepared: PreparedTaskExecution;
+  manifest: PreparedTaskManifestV1;
+  binding: ContextAssemblyBindingV1;
+};
+
+export type RealTaskPreparationOptions = {
+  bodies: RawArtifactStorePort;
+  runRef: RunRef;
+  host: RuntimeHostBindings;
+  records?: Records;
+  /** The trusted call context of the world; defaults to the fixture's own. */
+  ctx?: CoreCallContext;
+  now?: () => string;
+  requestId?: string;
+  graphContext?: ContextAssemblerDependencies['graphContext'];
+  taskInputs?: ContextAssemblerDependencies['taskInputs'];
+  /** The ledger directory; needed only to map the Session's Kernel store for a requeue Run. */
+  directory?: string;
+  /** The Workspace scope of that Kernel mapping. */
+  scope?: { projectId: string; workspaceId: string };
+};
+
+/**
+ * Prepare ONE claimed Run through the production `createExecutionPreparation`
+ * over the fixture's own real owners. The returned manifest body is the saved
+ * one, so a caller never builds a manifest or context binding by hand.
+ */
+export async function prepareTaskForReal(
+  fixture: RealPreparationWorld, options: RealTaskPreparationOptions,
+): Promise<RealPreparedTask> {
+  const records = options.records ?? fixture.records;
+  const now = options.now ?? ((): string => CLAIM_FIXTURE_AT);
+  let sequence = 0;
+  const eventId = (): string => `real-prepare-event-${++sequence}`;
+  const newId = (): string => `real-prepare-id-${++sequence}`;
+  const executions = createRunStateReader({ records, bodies: options.bodies });
+  const roles = createRoleConfigurationService({ records, now, eventId });
+  const materials = createMaterialService({
+    bodies: options.bodies, authority: createMaterialRecordReaders(records).authority, now });
+  const unknownCallReviews = createUnknownCallReviewService({ records, reads: executions, now, eventId });
+  const kernelStores = options.directory === undefined || options.scope === undefined ? undefined
+    : await createKernelStoreRegistry({ entries: [{
+      adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',
+      workspace: options.scope, databasePath: join(options.directory, 'kernel.sqlite'),
+    }] });
+  const assemblerDeps = { executions, roles, materials, bodies: options.bodies, unknownCallReviews, now,
+    ...(kernelStores === undefined ? {} : { kernelStores }),
+    ...(options.graphContext === undefined ? {} : { graphContext: options.graphContext }),
+    ...(options.taskInputs === undefined ? {} : { taskInputs: options.taskInputs }) } as ContextAssemblerDependencies;
+  const assembler = createContextAssembler(assemblerDeps);
+  const preparation = createExecutionPreparation({
+    executions, roles, bodies: options.bodies, host: options.host, now, newId,
+    materials, unknownCallReviews,
+    ...(kernelStores === undefined ? {} : { kernelStores }),
+    readTaskClosure: async (_ctx, task) => readTaskClosure(records,
+      { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
+  }, assembler);
+  const result = await preparation.prepare(options.ctx ?? fixture.ctx, {
+    runRef: options.runRef, requestId: options.requestId ?? 'real-task-prepare' });
+  if (result.status !== 'ready') throw new Error(`real Task preparation failed: ${JSON.stringify(result)}`);
+  const loaded = await loadPreparedManifest(options.bodies, result.value);
+  if (loaded.status !== 'ready') throw new Error(`real prepared manifest is not readable: ${JSON.stringify(loaded)}`);
+  return { prepared: result.value, manifest: loaded.value.manifest, binding: loaded.value.manifest.contextAssembly };
+}
+
+export type RealPreparedQuery = {
+  prepared: PreparedQueryExecution;
+  manifest: PreparedQueryManifestV1;
+  binding: ContextAssemblyBindingV1;
+};
+
+export type RealQueryPreparationOptions = {
+  bodies: RawArtifactStorePort;
+  queryRunRef: QueryRunRef;
+  host: RuntimeHostBindings;
+  queryExecution: QueryExecutionPort;
+  records?: Records;
+  ctx?: CoreCallContext;
+  now?: () => string;
+  requestId?: string;
+};
+
+/**
+ * Prepare ONE claimed Query through the production `createQueryPreparation`
+ * (which also binds the saved manifest) over the fixture's own real owners.
+ */
+export async function prepareQueryForReal(
+  fixture: RealPreparationWorld, options: RealQueryPreparationOptions,
+): Promise<RealPreparedQuery> {
+  const records = options.records ?? fixture.records;
+  const now = options.now ?? ((): string => CLAIM_FIXTURE_AT);
+  let sequence = 0;
+  const eventId = (): string => `real-query-prepare-event-${++sequence}`;
+  const newId = (): string => `real-query-prepare-id-${++sequence}`;
+  const executions = createRunStateReader({ records, bodies: options.bodies });
+  const roles = createRoleConfigurationService({ records, now, eventId });
+  const materials = createMaterialService({
+    bodies: options.bodies, authority: createMaterialRecordReaders(records).authority, now });
+  const assemblerDeps = { executions, roles, materials, bodies: options.bodies, now } as ContextAssemblerDependencies;
+  const assembler = createContextAssembler(assemblerDeps);
+  // The preparation owner reads exactly these ports; the rest of the Runtime
+  // dependency bundle belongs to start, which this helper never invokes.
+  const preparation = createQueryPreparation({
+    executions, roles, bodies: options.bodies, host: options.host, now, newId,
+    queryExecution: options.queryExecution,
+  } as unknown as Parameters<typeof createQueryPreparation>[0], assembler);
+  const result = await preparation.prepare(options.ctx ?? fixture.ctx, {
+    queryRunRef: options.queryRunRef, requestId: options.requestId ?? 'real-query-prepare' });
+  if (result.status !== 'ready') throw new Error(`real Query preparation failed: ${JSON.stringify(result)}`);
+  // Read the saved manifest through the fixture's real materials owner, never
+  // by opening the body store directly (rule sheet F7).
+  const stored = await materials.openArtifact(options.ctx ?? fixture.ctx, {
+    ref: result.value.bundleRef, usage: 'historical_explanation' });
+  if (stored.status !== 'ready') throw new Error(`real prepared Query manifest is not readable: ${JSON.stringify(stored)}`);
+  const manifest = JSON.parse(stored.value.body) as PreparedQueryManifestV1;
+  return { prepared: result.value, manifest, binding: manifest.contextAssembly };
 }

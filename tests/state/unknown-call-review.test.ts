@@ -27,7 +27,7 @@ import {
   truncateUnknownCallReviewItems,
   type NewUnknownCallReviewInputV1,
   type UnknownCallReviewContextV1,
-  type UnknownCallReviewEvent,
+  type UnknownCallReviewEventV1,
 } from '../../src/core/work-graph/state/unknown-call-review.js';
 
 const P = 'p1';
@@ -154,7 +154,7 @@ function ctx(overrides: Partial<UnknownCallReviewContextV1> = {}): UnknownCallRe
   };
 }
 
-function transition(current: UnknownCallReviewV1, event: UnknownCallReviewEvent, context = ctx()) {
+function transition(current: UnknownCallReviewV1, event: UnknownCallReviewEventV1, context = ctx()) {
   return transitionUnknownCallReview(current, event, context);
 }
 

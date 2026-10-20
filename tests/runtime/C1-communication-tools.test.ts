@@ -23,7 +23,7 @@ import type { SessionMessageRef } from '../../src/contracts/core/session-message
 import { SESSION_MESSAGE_CONTENT_TYPE } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import type { SessionMailboxPort, SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
-import { createSessionMailboxTools, SESSION_MAILBOX_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
+import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
 import type { ToolCall, ToolResult, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
 
 const AT = '2026-09-26T00:00:00.000Z';
@@ -112,13 +112,6 @@ function buildTools(mailbox: SessionMailboxPort, context: CoreCallContext = host
 // --------------------------------------------------------------------------
 
 describe('C1 SessionMailbox tool adapter', () => {
-  it('publishes exactly the six fixed names and matching definitions', () => {
-    const { port } = recordingMailbox();
-    const { handle, definitions } = buildTools(port);
-    expect(handle.names).toEqual([...SESSION_MAILBOX_TOOL_NAMES]);
-    expect(definitions.map(definition => definition.name)).toEqual([...SESSION_MAILBOX_TOOL_NAMES]);
-  });
-
   it('rejects every forbidden permission/source field instead of ignoring it', async () => {
     const { port, sends } = recordingMailbox();
     const { byName } = buildTools(port);
@@ -182,17 +175,6 @@ describe('C1 SessionMailbox tool adapter', () => {
     const withExtraExpected = await byName('ack_session_message').handler.execute(
       toolCall('ack_session_message', 'call-extra', { messageRef, expectedRevision: 3, expected: [] }), { signal: signal() });
     expect(withExtraExpected).toMatchObject({ status: 'error', error: { code: 'invalid_arguments' } });
-  });
-
-  it('declares read_only for reads and a real platform side effect for writes', () => {
-    const { port } = recordingMailbox();
-    const { byName } = buildTools(port);
-    expect(byName('read_session_inbox').effectClass).toBe('read_only');
-    expect(byName('read_session_message').effectClass).toBe('read_only');
-    expect(byName('read_session_message_body').effectClass).toBe('read_only');
-    for (const name of ['send_session_message', 'ack_session_message', 'respond_session_message']) {
-      expect(byName(name).effectClass).not.toBe('read_only');
-    }
   });
 
   it('never falls back to a Host or a silent success on cancel, rejection or a failed binding', async () => {

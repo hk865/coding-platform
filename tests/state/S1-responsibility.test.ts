@@ -51,6 +51,7 @@ function sessionRecord(sessionId: string, revision: number, over: Partial<Sessio
     historyCursor: null,
     createdAt: T0,
     archivedAt: null,
+    provenance: { schemaVersion: 1, kind: 'new' },
     ...over,
   };
 }

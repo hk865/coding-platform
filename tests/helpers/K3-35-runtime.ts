@@ -35,6 +35,7 @@ import { createModelCallService } from '../../src/core/work-graph/tasks/model-ca
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
 import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import type { AuthorizeConfiguration } from '../../src/core/work-graph/model/execution-entry-contracts.js';
+import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { ScriptedModel } from './B2-runtime-fixture.js';
 import type { K3ReviewCardWorld } from './K3-review-card-fixture.js';
 import { GOAL_B } from './S5-decision-fixture.js';
@@ -122,6 +123,44 @@ export const k3_35AuthorizeConfiguration: AuthorizeConfiguration = async (_ctx, 
 };
 
 /**
+ * W2b-20: the same Host check as `k3_35AuthorizeConfiguration`, for a Host that
+ * authorizes Runs of every Goal in `goals` (each by project and Goal id). Every
+ * other condition is unchanged.
+ */
+export function k3_35AuthorizeConfigurationFor(goals: readonly GoalRef[]): AuthorizeConfiguration {
+  return async (_ctx, input) => {
+    if (input.configurationRevision !== K3_35_HOST_REVISION
+      || !goals.some(goal => input.run.ref.projectId === goal.projectId && input.run.ref.goalId === goal.goalId)
+      || input.sessionRole.kind !== 'legacy_template'
+      || input.sessionRole.templateId !== K3_35_HOST_TEMPLATE.templateId
+      || input.sessionRole.templateRevision !== K3_35_HOST_TEMPLATE.revision) {
+      return { status: 'rejected', code: 'forbidden',
+        reason: 'the K3-35 Host does not authorize this configuration' };
+    }
+    return { status: 'ready', value: { configurationRevision: K3_35_HOST_REVISION,
+      permissions: structuredClone(input.permissions), hostTemplate: structuredClone(input.hostTemplate) } };
+  };
+}
+
+/** W2b-20: the further Goals a world's K3-35 Host authorizes (none unless a row adds one). */
+const authorizedGoals = new WeakMap<K3ReviewCardWorld, GoalRef[]>();
+
+/**
+ * W2b-20, the optional second-Goal authorization. A row that claims a Run on
+ * another Goal of the SAME S5 world adds that Goal here; every K3-35 Runtime
+ * built over the world afterwards authorizes `GOAL_B` and the added Goals with
+ * `k3_35AuthorizeConfigurationFor`. A world with no added Goal keeps
+ * `k3_35AuthorizeConfiguration` exactly.
+ */
+export function authorizeK3_35Goal(world: K3ReviewCardWorld, goalRef: GoalRef): void {
+  const goals = authorizedGoals.get(world) ?? [];
+  if (!goals.some(goal => goal.projectId === goalRef.projectId && goal.goalId === goalRef.goalId)) {
+    goals.push(structuredClone(goalRef));
+  }
+  authorizedGoals.set(world, goals);
+}
+
+/**
  * Build ONE production Runtime over the S5 world's records/bodies. The caller
  * hands the prepared value of a claimed Run to `runtime.port.startRun`.
  */
@@ -153,7 +192,9 @@ export function createK3_35Runtime(world: K3ReviewCardWorld, options: K3_35Runti
   };
   // The production entry owner the Runtime drives: it authorizes exactly the
   // configuration the Host just returned, for the fixture's legacy Session role.
-  const authorizeConfiguration = k3_35AuthorizeConfiguration;
+  const addedGoals = authorizedGoals.get(world);
+  const authorizeConfiguration = addedGoals === undefined ? k3_35AuthorizeConfiguration
+    : k3_35AuthorizeConfigurationFor([GOAL_B, ...addedGoals]);
   const entry = createExecutionEntryService({ records, reads: executions, roles, bodies: { read: ref => bodies.read(ref) },
     authorizeConfiguration, now, eventId, newId });
   const modelRequests = createModelCallService({ records, reads: executions, roles, bodies,

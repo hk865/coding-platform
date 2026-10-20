@@ -361,7 +361,7 @@ export async function readGoalFootprint(
   // The current formal catalog (a baseline without a catalog is NOT an empty one).
   // §8.2 data row: a catalog read that cannot complete is `unavailable` naming
   // the source, never the legitimate "no catalog adopted" answer. Only a real
-  // `not_found` (or a ready result with `catalog: null`) stays `architecture = null`.
+  // `not_found` stays `architecture = null`.
   let architecture: AdoptedArchitecture | null = null;
   let revision: Awaited<ReturnType<ArchitectureCatalogPort['readArchitectureRevision']>>;
   try {
@@ -371,7 +371,7 @@ export async function readGoalFootprint(
       reason: `architecture catalog: ${unavailableReason(error)}` };
   }
   if (revision.status === 'ready') {
-    architecture = revision.value.catalog === null ? null : revision.value.catalog.catalog;
+    architecture = revision.value.catalog.catalog;
   } else if (revision.status === 'rejected') {
     return { status: 'rejected', code: 'unavailable', reason: `architecture catalog: ${revision.reason}` };
   } else if (revision.status === 'not_ready') {

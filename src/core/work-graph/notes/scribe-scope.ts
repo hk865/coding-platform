@@ -150,7 +150,7 @@ async function readCatalog(ctx: CoreCallContext, deps: ScribeScopeDependencies):
   try {
     const read = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
     if (read.status === 'ready') {
-      return { ok: true, catalog: read.value.catalog === null ? null : read.value.catalog.catalog };
+      return { ok: true, catalog: read.value.catalog.catalog };
     }
     if (read.status === 'rejected') {
       return { ok: false, code: read.code === 'forbidden' ? 'forbidden' : 'unavailable', reason: read.reason };

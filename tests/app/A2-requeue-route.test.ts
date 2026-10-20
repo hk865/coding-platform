@@ -15,77 +15,28 @@
  * Three scripted model calls (Run 1's text; Run 2's edit and final text).
  */
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import {
-  PLATFORM_TOKEN_PLACEHOLDER, type TaskExecutionRecord,
-} from '../../src/app/core-http-types.js';
-import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
-import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import { continuationBriefDigest, continuationBriefMarker, type ContinuationBriefV1 } from '../../src/contracts/continuation-brief.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
-import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { TaskRequeueOutcomeV1 } from '../../src/contracts/task-requeue.js';
 import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import {
-  AG2B_GOAL_REF, AG2B_RESULT_FILE, AG2B_RESULT_TEXT, AG2B_SCOPE, AG2B_WORK_TASK_ID, cleanupAG2b, corePost, graphWrite, plain,
-  seedAG2bWorkGraph, startAG2bHost, type AG2bHost,
+  AG2B_GOAL_REF, AG2B_RESULT_FILE, AG2B_RESULT_TEXT, AG2B_SCOPE, cleanupAG2b, corePost, graphWrite, plain,
+  seedAG2bWorkGraph, startAG2bHost,
 } from '../helpers/AG2b-collaboration-fixture.js';
+import {
+  cleanupRestart, driveWorkflow, post, publicDirectory, readExecution, selectWork, TASK, workRow,
+} from '../helpers/A2-restart-fixture.js';
 
-const temporary: string[] = [];
 afterEach(async () => {
   await cleanupAG2b();
-  for (const directory of temporary.splice(0)) await rm(directory, { recursive: true, force: true });
+  await cleanupRestart();
 });
 
-const TASK = { projectId: AG2B_SCOPE.projectId, goalId: AG2B_GOAL_REF.goalId, taskId: AG2B_WORK_TASK_ID };
-
-async function post<T>(host: AG2bHost, suffix: string, body: unknown): Promise<T> {
-  const response = await corePost(host.base, suffix, host.token, body);
-  expect(response.status, suffix).toBe(200);
-  return await response.json() as T;
-}
-
-/**
- * Drive `workflow/advance` until the Workflow settles. Since A.2 step 5.8 the Workflow requeues a failed
- * Task automatically (C8); this test is the operator's `tasks/requeue`, so the Host stops before that
- * automatic `requeue_task` (tests/scenarios/A1-rework-same-session.test.ts drives it).
- */
-async function driveWorkflow(host: AG2bHost, flowId: string): Promise<Extract<WorkflowAdvanceResult, { status: 'ready' }>['value']> {
-  let input: WorkflowAdvanceInput = { schemaVersion: 1, goalRef: AG2B_GOAL_REF, flowId, sessionHint: null, kind: 'select_work',
-    taskId: AG2B_WORK_TASK_ID };
-  for (let guard = 0; guard < 32; guard += 1) {
-    const result: WorkflowAdvanceResult = await post<WorkflowAdvanceResult>(host, 'workflow/advance', plain(AG2B_SCOPE, input));
-    if (result.status !== 'ready') throw new Error(`the Workflow call was not ready: ${JSON.stringify(result)}`);
-    if (result.value.state === 'completed' || result.value.next === null) return result.value;
-    input = result.value.next;
-    if (input.kind === 'perform' && input.operation.kind === 'requeue_task') return result.value;
-  }
-  throw new Error('the Workflow did not settle');
-}
-
-async function workRow(host: AG2bHost): Promise<Record<string, unknown> & { execution: RunRef | null }> {
-  const graph = await post<ReadResult<{ tasks: Array<{ ref: { taskId: string }; execution: RunRef | null } & Record<string, unknown>> }>>(
-    host, 'tasks/query', plain(AG2B_SCOPE, { goalRef: AG2B_GOAL_REF }));
-  if (graph.status !== 'ready') throw new Error(`the task graph must be readable: ${JSON.stringify(graph)}`);
-  const row = graph.value.tasks.find(candidate => candidate.ref.taskId === AG2B_WORK_TASK_ID);
-  if (row === undefined) throw new Error('the work Task must be in the graph');
-  return row;
-}
-
-async function readRun(host: AG2bHost, runRef: RunRef): Promise<TaskExecutionRecord['run']> {
-  const read = await post<ReadResult<TaskExecutionRecord>>(host, 'executions/read', plain(AG2B_SCOPE, runRef));
-  if (read.status !== 'ready') throw new Error(`the Run must be readable: ${JSON.stringify(read)}`);
-  return read.value.run;
-}
-
 it('tasks/requeue and executions/brief: a failed Task is requeued over HTTP, continues with its brief and completes', async () => {
-  const publicDir = await mkdtemp(join(tmpdir(), 'a2-requeue-public-'));
-  temporary.push(publicDir);
-  await writeFile(join(publicDir, 'index.html'),
-    `<!doctype html><meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
+  const publicDir = await publicDirectory();
   const replies: ScriptedReply[] = [
     { kind: 'text', text: 'A2 requeue: first attempt without the result file' },
     { kind: 'calls', calls: [{ callId: 'a2-requeue-edit', name: 'edit',
@@ -97,7 +48,8 @@ it('tasks/requeue and executions/brief: a failed Task is requeued over HTTP, con
     await seedAG2bWorkGraph(host);
 
     // Run 1 ends with text only; the registered check fails and the Task is failed.
-    const first = await driveWorkflow(host, 'a2-requeue-route-1');
+    const firstSteps = await driveWorkflow(host, selectWork('a2-requeue-route-1'), { stopBefore: 'requeue_task' });
+    const first = firstSteps.at(-1)!;
     expect(first.state).not.toBe('completed');
     const failed = await workRow(host);
     expect(failed).toMatchObject({ effectivePhase: 'failed', phaseCause: { code: 'check_failed' },
@@ -105,7 +57,7 @@ it('tasks/requeue and executions/brief: a failed Task is requeued over HTTP, con
         automation: { verdict: { kind: 'requeue', failureClass: 'check_failed', retryAfterRefusal: false } } } });
     const run1Ref = failed.execution;
     if (run1Ref === null) throw new Error('Run 1 must be selected');
-    const run1 = await readRun(host, run1Ref);
+    const run1 = (await readExecution(host, run1Ref)).run;
     const goal = await post<ReadResult<{ goal: GoalSnapshot }>>(host, 'goals/read', plain(AG2B_SCOPE, AG2B_GOAL_REF));
     if (goal.status !== 'ready') throw new Error(`the Goal must be readable: ${JSON.stringify(goal)}`);
 
@@ -119,14 +71,14 @@ it('tasks/requeue and executions/brief: a failed Task is requeued over HTTP, con
       phaseCause: { code: 'requeued', detail: { requeueRef } } });
 
     // The Workflow claims the requeue; Run 2 starts with the brief, writes the file and the Goal completes.
-    const second = await driveWorkflow(host, 'a2-requeue-route-2');
-    expect(second).toMatchObject({ state: 'completed' });
+    const secondSteps = await driveWorkflow(host, selectWork('a2-requeue-route-2'), { stopBefore: 'requeue_task' });
+    expect(secondSteps.at(-1)).toMatchObject({ state: 'completed' });
     expect(await readFile(join(host.root, AG2B_RESULT_FILE), 'utf8')).toBe(AG2B_RESULT_TEXT);
     const done = await workRow(host);
     expect(done).toMatchObject({ effectivePhase: 'satisfied' });
     const run2Ref = done.execution;
     if (run2Ref === null || run2Ref.runId === run1Ref.runId) throw new Error('Run 2 must be selected');
-    const run2 = await readRun(host, run2Ref);
+    const run2 = (await readExecution(host, run2Ref)).run;
     expect(run2).toMatchObject({ requeueRef, outcome: 'completed' });
     const digest = run2.inputBinding?.continuationBriefDigest;
     if (digest === undefined) throw new Error('Run 2 must bind its brief');

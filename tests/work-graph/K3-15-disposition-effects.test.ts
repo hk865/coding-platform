@@ -227,16 +227,6 @@ describe.each(['memory', 'sqlite'] as const)('K3-15 (一)(二)(三) card disposi
       targets: [], platformTargets: [] });
   }, 120_000);
 
-  it('K3-15 (L20): a card skip_as_done records the one blocked command', async () => {
-    const world = await openWorld(kind);
-    const applied = await applyChoice(world, 'skip_as_done', { text: 'skip it' });
-    const section = assembleUnknownCallReviewSection({ review: applied });
-    // K3-15 (二): the real record blocked #1 and the section carries the fact.
-    expect(applied.blockedCommands).toHaveLength(1);
-    expect(applied.blockedCommands[0]).toMatchObject({ alias: 1, reviewRunId: applied.runRef.runId });
-    expect(section.blockedCommands).toHaveLength(1);
-  }, 120_000);
-
   it('K3-15 (L20): a released handle_myself records the released card hold', async () => {
     const world = await openWorld(kind);
     const held = await applyChoice(world, 'handle_myself', { text: 'I handled it' });

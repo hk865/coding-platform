@@ -61,7 +61,7 @@ import {
 import { paintAll } from './views/shell/render.js';
 
 // Test-facing seams that now live in their own modules keep this import path.
-export { DISPLAY_PREFERENCE_V1_KEY, createScopeDisplayStore } from './state/display-preference.js';
+export { createScopeDisplayStore } from './state/display-preference.js';
 export type {
   ScopeDisplayIds,
   GlobalDisplayPreference,

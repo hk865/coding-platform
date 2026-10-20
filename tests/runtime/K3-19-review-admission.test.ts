@@ -25,7 +25,7 @@
  * prepared manifest under a review purpose, a mixed-phase manifest, a set
  * missing/extra a tool, a non-empty write scope) are a pure input -> output
  * test of `reviewRoundAdmissionProblem` in
- * `K3-19-review-admission-pure.test.ts`.
+ * `tests/contracts/review-admission.test.ts`.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { join } from 'node:path';

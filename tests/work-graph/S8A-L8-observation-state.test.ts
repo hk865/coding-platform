@@ -365,28 +365,57 @@ const accepted = (requestSeq: number) => (state: ArchitectureObservationStateV1)
 
 /** A2/A3 wrapper around the REAL public start read. The first call either
  * returns the real ready result after a controlled hold, returns an explicit
- * unavailable rejection once, or throws once; the driver still produces every
- * request and failure record itself. */
+ * rejection once (`unavailable`, or `forbidden` for the passthrough row), or
+ * throws once; `counts`, when given, records the driver's start-read, capture
+ * and failure calls; the driver still produces every request and failure
+ * record itself. */
 function startStateRead(
   architecture: ReturnType<typeof createObservedArchitecture>,
-  behavior: 'ready' | 'rejected' | 'throw',
+  behavior: 'ready' | 'rejected' | 'forbidden' | 'throw',
   entered?: () => void, release?: Promise<void>,
+  counts?: { state: number; capture: number; failure: number },
 ): ReturnType<typeof createObservedArchitecture> {
   let calls = 0;
-  return { ...architecture, async observationState(ctx, input) {
+  const counted = counts === undefined ? {} : {
+    async captureSourceChanges(...args: Parameters<typeof architecture.captureSourceChanges>) {
+      counts.capture += 1;
+      return architecture.captureSourceChanges(...args);
+    },
+    async failAutoCapture(...args: Parameters<typeof architecture.failAutoCapture>) {
+      counts.failure += 1;
+      return architecture.failAutoCapture(...args);
+    },
+  };
+  return { ...architecture, ...counted, async observationState(ctx, input) {
+    if (counts !== undefined) counts.state += 1;
     if (calls > 0) return architecture.observationState(ctx, input);
     calls += 1;
-    // The cancelled-ready row returns the REAL read result: start it with the
-    // driver's own context before the hold, so cancellation happens mid-call.
-    const real = behavior === 'ready' ? architecture.observationState(ctx, input) : null;
+    if (behavior === 'ready') {
+      // The cancelled-ready row (a late ready): AWAIT the REAL read with the
+      // driver's own context while its signal is still live and check that it
+      // is ready, only then signal `entered`. The close aborts the round during
+      // the hold, and the cached ready result is returned unchanged after the
+      // release. A real read that is not ready throws here, before `entered`,
+      // so the row never reaches its close and fails.
+      const real = await architecture.observationState(ctx, input);
+      if (real.status !== 'ready') {
+        throw Error('the real start read did not return ready: ' + JSON.stringify(real));
+      }
+      entered?.();
+      if (release !== undefined) await release;
+      return real;
+    }
     entered?.();
     if (release !== undefined) await release;
     if (behavior === 'rejected') {
       return { status: 'rejected' as const, code: 'unavailable' as const,
         reason: 'injected observation-state rejection' };
     }
-    if (behavior === 'throw') throw Error('injected observation-state throw');
-    return real!;
+    if (behavior === 'forbidden') {
+      return { status: 'rejected' as const, code: 'forbidden' as const,
+        reason: 'injected start-state rejection' };
+    }
+    throw Error('injected observation-state throw');
   } };
 }
 
@@ -692,6 +721,26 @@ describe('L8 automatic capture and observation state through public steps', () =
     }
   });
 
+  it.each(BACKENDS)('L8-7 %s: a forbidden start observation-state read with no old observation keeps current null and its exact code and reason', async kind => {
+    const fx = await fixture(kind);
+    let driver: AutoCaptureDriver | undefined;
+    try {
+      const architecture = startStateRead(fx.plain, 'forbidden');
+      driver = makeDriver(fx, architecture, fx.catalog);
+      driver.workspaceRegistered(workspace);
+      const failure = await waitForState(fx, failed(1), 'start-state forbidden failure');
+      expect(failure.autoCapture).toMatchObject({ requestSeq: 1, status: 'failed', pending: true,
+        trigger: 'workspace_registered' });
+      expect(failure.autoCapture!.failure).toEqual({ code: 'forbidden',
+        reason: 'injected start-state rejection' });
+      // No capture ever ran, so the failure leaves no current observation.
+      expect(failure.current).toBeNull();
+    } finally {
+      await driver?.close();
+      await fx.close();
+    }
+  });
+
   it.each(BACKENDS)('L8-8 %s: a thrown start observation-state read also takes the shared failure exit', async kind => {
     const fx = await fixture(kind);
     let driver: AutoCaptureDriver | undefined;
@@ -708,6 +757,33 @@ describe('L8 automatic capture and observation state through public steps', () =
       expect(failure.autoCapture!.failure!.reason).toContain('injected observation-state throw');
       expect(failure.current!.captureRef).toEqual(oldRef);
       expect(failure.previous).toBeNull();
+    } finally {
+      await driver?.close();
+      await fx.close();
+    }
+  });
+
+  it.each(BACKENDS)('L8-8 %s: a thrown start observation-state read with no old observation keeps current null and maps to unavailable', async kind => {
+    const fx = await fixture(kind);
+    let driver: AutoCaptureDriver | undefined;
+    try {
+      // As `startStateRead(..., 'throw')`, but the first read throws this
+      // variant's own reason; later reads are the real ones.
+      let thrown = false;
+      const architecture: typeof fx.plain = { ...fx.plain, async observationState(ctx, input) {
+        if (thrown) return fx.plain.observationState(ctx, input);
+        thrown = true;
+        throw Error('injected start-state throw');
+      } };
+      driver = makeDriver(fx, architecture, fx.catalog);
+      driver.workspaceRegistered(workspace);
+      const failure = await waitForState(fx, failed(1), 'start-state throw failure');
+      expect(failure.autoCapture).toMatchObject({ requestSeq: 1, status: 'failed', pending: true,
+        trigger: 'workspace_registered' });
+      expect(failure.autoCapture!.failure).toEqual({ code: 'unavailable',
+        reason: 'injected start-state throw' });
+      // No capture ever ran, so the failure leaves no current observation.
+      expect(failure.current).toBeNull();
     } finally {
       await driver?.close();
       await fx.close();
@@ -742,6 +818,34 @@ describe('L8 automatic capture and observation state through public steps', () =
     }
   });
 
+  it.each(BACKENDS)('L8-9 %s: a close during a held start read that returns a failure writes no failed request and no observation when no old observation exists', async kind => {
+    const fx = await fixture(kind);
+    let driver: AutoCaptureDriver | undefined;
+    try {
+      const entered = deferred();
+      const release = deferred();
+      const counts = { state: 0, capture: 0, failure: 0 };
+      const architecture = startStateRead(fx.plain, 'rejected', () => entered.resolve(),
+        release.promise, counts);
+      driver = makeDriver(fx, architecture, fx.catalog);
+      driver.workspaceRegistered(workspace);
+      await entered.promise;
+      const closing = driver.close();
+      release.resolve();
+      await closing;
+      const state = await observationState(fx);
+      expect(state.autoCapture).toMatchObject({ requestSeq: 1, status: 'requested',
+        failure: null, pending: true });
+      expect(state.current).toBeNull();
+      expect(counts.failure).toBe(0);
+      expect(counts.capture).toBe(0);
+      expect(counts.state).toBe(1);
+    } finally {
+      await driver?.close();
+      await fx.close();
+    }
+  });
+
   it.each(BACKENDS)('L8-10 %s: a close during a held start read that throws writes no failed request and keeps the old observation', async kind => {
     const fx = await fixture(kind);
     let driver: AutoCaptureDriver | undefined;
@@ -762,6 +866,34 @@ describe('L8 automatic capture and observation state through public steps', () =
       expect(state.autoCapture).toMatchObject({ requestSeq: 1, status: 'requested',
         failure: null, pending: true });
       expect(state.current!.captureRef).toEqual(oldRef);
+    } finally {
+      await driver?.close();
+      await fx.close();
+    }
+  });
+
+  it.each(BACKENDS)('L8-10 %s: a close during a held start read that throws writes no failed request and no observation when no old observation exists', async kind => {
+    const fx = await fixture(kind);
+    let driver: AutoCaptureDriver | undefined;
+    try {
+      const entered = deferred();
+      const release = deferred();
+      const counts = { state: 0, capture: 0, failure: 0 };
+      const architecture = startStateRead(fx.plain, 'throw', () => entered.resolve(),
+        release.promise, counts);
+      driver = makeDriver(fx, architecture, fx.catalog);
+      driver.workspaceRegistered(workspace);
+      await entered.promise;
+      const closing = driver.close();
+      release.resolve();
+      await closing;
+      const state = await observationState(fx);
+      expect(state.autoCapture).toMatchObject({ requestSeq: 1, status: 'requested',
+        failure: null, pending: true });
+      expect(state.current).toBeNull();
+      expect(counts.failure).toBe(0);
+      expect(counts.capture).toBe(0);
+      expect(counts.state).toBe(1);
     } finally {
       await driver?.close();
       await fx.close();
@@ -789,6 +921,37 @@ describe('L8 automatic capture and observation state through public steps', () =
         failure: null, pending: true });
       expect(state.current!.captureRef).toEqual(oldRef);
       expect(state.previous).toBeNull();
+    } finally {
+      await driver?.close();
+      await fx.close();
+    }
+  });
+
+  it.each(BACKENDS)('L8-11 %s: a close during a held start read that returns ready writes no failed request and no observation when no old observation exists', async kind => {
+    const fx = await fixture(kind);
+    let driver: AutoCaptureDriver | undefined;
+    try {
+      const entered = deferred();
+      const release = deferred();
+      const counts = { state: 0, capture: 0, failure: 0 };
+      const architecture = startStateRead(fx.plain, 'ready', () => entered.resolve(),
+        release.promise, counts);
+      driver = makeDriver(fx, architecture, fx.catalog);
+      driver.workspaceRegistered(workspace);
+      await entered.promise;
+      // The real start read has already returned ready; the close aborts the
+      // round during the hold, and the released ready arrives late: a
+      // cancellation must neither capture nor record a failure.
+      const closing = driver.close();
+      release.resolve();
+      await closing;
+      const state = await observationState(fx);
+      expect(state.autoCapture).toMatchObject({ requestSeq: 1, status: 'requested',
+        failure: null, pending: true });
+      expect(state.current).toBeNull();
+      expect(counts.failure).toBe(0);
+      expect(counts.capture).toBe(0);
+      expect(counts.state).toBe(1);
     } finally {
       await driver?.close();
       await fx.close();

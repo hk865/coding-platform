@@ -393,6 +393,7 @@ sys.exit(proc.returncode)
     ]);
     const graph = await f.graph();
 
+    expect(coverageOf(graph, 'cpp')).toMatchObject({ files: 1, parsed: 1 });
     expect(graph.edges).toEqual([]);
     expect(graph.unresolved).toEqual([{ from: 'main.cpp', specifier: '"missing.h"', reason: null }]);
   }, 60000);

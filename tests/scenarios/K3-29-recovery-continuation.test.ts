@@ -24,7 +24,7 @@ import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.j
 import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
 import { preparedOf, redrivePolicy } from './support/common.js';
 import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
-import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
+import { crashOneCommand } from './support/review-card-round.js';
 import { expectQuietHarnessRestart } from './support/restart.js';
 import { createScriptedModel, type ScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
@@ -37,21 +37,8 @@ import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-revie
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 const seams = vi.hoisted(() => ({ shellSeam: undefined as unknown }));
@@ -97,37 +84,6 @@ function reviewOf(h: HostScenario, runRef: RunRef): Promise<ReadResult<UnknownCa
  * state a real crash cannot create. `afterEach` releases every handle.
  */
 const crashHandles: Array<() => Promise<void>> = [];
-async function crashShellRun(h: HostScenario, label: string): Promise<ReturnType<typeof preparedOf>> {
-  shellSeam.arm();
-  const modelA = createScriptedModel([{ kind: 'calls', calls: [
-    { callId: `${label}-shell`, name: 'shell', args: { command: `${label} runs a program` } }] }]);
-  const rootA = await openShellWorkRoot(h, modelA);
-  let runningA: Promise<unknown> | null = null;
-  let released = false;
-  const release = async (): Promise<void> => {
-    if (released) return;
-    released = true;
-    shellSeam.release();
-    await runningA?.catch(() => undefined);
-    await rootA.close();
-  };
-  try {
-    const startA = await prepareOn(rootA, h.select(`${label}-a`, AG2B_WORK_TASK_ID));
-    const preparedA = preparedOf(startA);
-    runningA = rootA.runtime.startRun(hostCtx(), { prepared: preparedA, consumerId: AG2B_CONSUMER_ID,
-      requestId: `${label}-a-start` });
-    await shellSeam.waitForCall();
-    const report = await h.restart({ crash: true });
-    expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
-      { ref: JSON.stringify(preparedA.claim.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
-        autoCleanup: { applied: true } }] } });
-    crashHandles.push(release);
-    return preparedA;
-  } catch (error) {
-    await release();
-    throw error;
-  }
-}
 
 async function readyReview(h: HostScenario, runRef: RunRef): Promise<UnknownCallReviewV1> {
   const created = await reviewOf(h, runRef);
@@ -146,7 +102,13 @@ Promise<WriteResult<UnknownCallReviewV1>> {
 describe('K3-29 rows 6/7: a released hold, the automatic requeue and the continuation', () => {
   it('K3-29 row 6: after the hold is released the record is resolved/released with no TaskRequeue; the next advance requeues without a confirmation card and claims in the nearest holder Session', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const preparedA = await crashShellRun(h, 'k3-29r6');
+    const crashed = await crashOneCommand(h, { callId: `k3-29r6-shell`, select: `k3-29r6-a`,
+      requestId: `k3-29r6-a-start`, shellArgs: { command: `k3-29r6 runs a program` } });
+    crashHandles.push(crashed.release);
+    expect(crashed.report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+      { ref: JSON.stringify(crashed.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+        autoCleanup: { applied: true } }] } });
+    const preparedA = crashed.prepared;
     const created = await readyReview(h, preparedA.claim.runRef);
 
     const held = await holdDirectly(h, created, 'k3-29r6-hold');
@@ -186,7 +148,13 @@ describe('K3-29 rows 6/7: a released hold, the automatic requeue and the continu
   it('K3-29 row 7: the claimed continuation is an ordinary Run; it ends and exactly one continuation exists', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass',
       script: { replies: [{ kind: 'text', text: 'K3-29 row 7: the continuation ran' }] } });
-    const preparedA = await crashShellRun(h, 'k3-29r7');
+    const crashed = await crashOneCommand(h, { callId: `k3-29r7-shell`, select: `k3-29r7-a`,
+      requestId: `k3-29r7-a-start`, shellArgs: { command: `k3-29r7 runs a program` } });
+    crashHandles.push(crashed.release);
+    expect(crashed.report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+      { ref: JSON.stringify(crashed.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+        autoCleanup: { applied: true } }] } });
+    const preparedA = crashed.prepared;
     const created = await readyReview(h, preparedA.claim.runRef);
     const held = await holdDirectly(h, created, 'k3-29r7-hold');
     if (held.status !== 'committed') return;
@@ -211,7 +179,13 @@ describe('K3-29 rows 6/7: a released hold, the automatic requeue and the continu
 describe('K3-29 rows 10/11: a direct hold', () => {
   it('K3-29 row 10: a direct hold is resolved/held; a restart changes nothing and the Task stays stopped (AV-4c)', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const preparedA = await crashShellRun(h, 'k3-29r10');
+    const crashed = await crashOneCommand(h, { callId: `k3-29r10-shell`, select: `k3-29r10-a`,
+      requestId: `k3-29r10-a-start`, shellArgs: { command: `k3-29r10 runs a program` } });
+    crashHandles.push(crashed.release);
+    expect(crashed.report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+      { ref: JSON.stringify(crashed.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+        autoCleanup: { applied: true } }] } });
+    const preparedA = crashed.prepared;
     const created = await readyReview(h, preparedA.claim.runRef);
     const held = await holdDirectly(h, created, 'k3-29r10-hold');
     expect(held).toMatchObject({ status: 'committed', value: { status: 'resolved', activeRound: null,
@@ -237,7 +211,13 @@ describe('K3-29 rows 10/11: a direct hold', () => {
 
   it('K3-29 row 11: the same direct-hold request replays the original receipt and writes nothing', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const preparedA = await crashShellRun(h, 'k3-29r11');
+    const crashed = await crashOneCommand(h, { callId: `k3-29r11-shell`, select: `k3-29r11-a`,
+      requestId: `k3-29r11-a-start`, shellArgs: { command: `k3-29r11 runs a program` } });
+    crashHandles.push(crashed.release);
+    expect(crashed.report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+      { ref: JSON.stringify(crashed.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+        autoCleanup: { applied: true } }] } });
+    const preparedA = crashed.prepared;
     const created = await readyReview(h, preparedA.claim.runRef);
     const held = await holdDirectly(h, created, 'k3-29r11-hold');
     expect(held).toMatchObject({ status: 'committed', replayed: false, value: { disposition: { source: 'direct', hold: 'held' } } });
@@ -257,7 +237,13 @@ describe('K3-29 rows 10/11: a direct hold', () => {
 describe('K3-29 row 12: a direct hold while the review round is claimed but not entered', () => {
   it('K3-29 row 12: UR3h cancels the unentered round, the crash after the cancel commit is handed off by 6b (c) kind 2, and the next advance only settles the round', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const preparedA = await crashShellRun(h, 'k3-29r12');
+    const crashed = await crashOneCommand(h, { callId: `k3-29r12-shell`, select: `k3-29r12-a`,
+      requestId: `k3-29r12-a-start`, shellArgs: { command: `k3-29r12 runs a program` } });
+    crashHandles.push(crashed.release);
+    expect(crashed.report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+      { ref: JSON.stringify(crashed.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+        autoCleanup: { applied: true } }] } });
+    const preparedA = crashed.prepared;
     const created = await readyReview(h, preparedA.claim.runRef);
     const reviewRoot = await openReviewWorkRoot(h, createScriptedModel([{ kind: 'text', text: 'never entered' }]));
     let roundRun: RunRef | null = null;
@@ -317,7 +303,13 @@ describe('K3-29 row 12: a direct hold while the review round is claimed but not 
  * stands for the next instance.
  */
 async function claimReviewInNewSession(h: HostScenario, label: string, model: ScriptedModel) {
-  const preparedA = await crashShellRun(h, label);
+  const crashed = await crashOneCommand(h, { callId: `${label}-shell`, select: `${label}-a`,
+    requestId: `${label}-a-start`, shellArgs: { command: `${label} runs a program` } });
+  crashHandles.push(crashed.release);
+  expect(crashed.report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+    { ref: JSON.stringify(crashed.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+      autoCleanup: { applied: true } }] } });
+  const preparedA = crashed.prepared;
   const created = await readyReview(h, preparedA.claim.runRef);
   kernelClosure.mode = 'unsupported';
   const first = await openReviewWorkRoot(h, createScriptedModel([{ kind: 'text', text: 'never entered' }]));
@@ -449,7 +441,13 @@ describe('K3-29 rows 8/9: the review claim after the Session change', () => {
 describe('K3-29 extra (一): a crash after the review claim, before start', () => {
   it('K3-29 extra (一): 6b (c) hands the Goal off, UR3a prepares and starts the SAME claimed Run, and no second review Run is opened', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const preparedA = await crashShellRun(h, 'k3-29e1');
+    const crashed = await crashOneCommand(h, { callId: `k3-29e1-shell`, select: `k3-29e1-a`,
+      requestId: `k3-29e1-a-start`, shellArgs: { command: `k3-29e1 runs a program` } });
+    crashHandles.push(crashed.release);
+    expect(crashed.report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
+      { ref: JSON.stringify(crashed.runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+        autoCleanup: { applied: true } }] } });
+    const preparedA = crashed.prepared;
     const created = await readyReview(h, preparedA.claim.runRef);
     const first = await openReviewWorkRoot(h, createScriptedModel([{ kind: 'text', text: 'never entered' }]));
     let claimedRun: RunRef;

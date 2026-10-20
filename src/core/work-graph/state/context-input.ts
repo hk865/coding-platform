@@ -208,7 +208,7 @@ function trailingSectionProblem(input: {
 }
 
 export type ContextAssemblyProblemInput = {
-  binding: ContextAssemblyBindingV1 | undefined;
+  binding: ContextAssemblyBindingV1;
   text: string;
   selectedTaskInputs: { requirementId: string; ref: ArtifactRef }[];
   continuationSuffix: string | null;
@@ -222,8 +222,7 @@ export type ContextAssemblyProblemInput = {
 export function contextAssemblyProblem(input: ContextAssemblyProblemInput): CoreRejection | null {
   const { binding, text, selectedTaskInputs, continuationSuffix } = input;
   const reviewSuffix = input.reviewSuffix ?? null;
-  if (binding === undefined) return null;
-  // A present but malformed value (null included) is `invalid`, never legacy (§2.4 item 1).
+  // A malformed value (null included) is `invalid`, never legacy (§2.4 item 1).
   if (!isRecord(binding)) return invalid('the context assembly binding is not an object');
   if (binding.schemaVersion !== 1) return invalid('the context assembly binding schemaVersion must be 1');
   if (binding.formatVersion !== CONTEXT_FORMAT_VERSION) return invalid('the context assembly formatVersion is not s3-context-v1');
@@ -359,28 +358,25 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
  * Wiring 1 W1-CTX-01/G (§2.2, L2/L4): the pure Goal-content check of a saved
  * `ContextAssemblyBindingV1`. It compares only the digest of the Goal-record
  * content the Work Goal section shows, stored on the binding's own Goal
- * `record` source, against the current Goal digest. A missing binding, a
- * rebinding, no matching source, and a `null` digest all pass (legacy prepared
- * manifests stay valid); only a present, different string rejects, with the
- * exact `context_goal_changed:` reason the Workflow's `start` mapping reads.
+ * `record` source, against the current Goal digest. A rebinding and no
+ * matching source pass; only a different digest rejects, with the exact
+ * `context_goal_changed:` reason the Workflow's `start` mapping reads.
  */
 export function contextGoalContentProblem(input: {
-  binding: ContextAssemblyBindingV1 | undefined;
+  binding: ContextAssemblyBindingV1;
   claimGoal: { projectId: string; goalId: string };
   currentGoalDigest: string;
   rebinding: boolean;
 }): CoreRejection | null {
   const { binding, claimGoal, currentGoalDigest, rebinding } = input;
-  if (binding === undefined) return null;
   // CTX-02: an already bound manifest is only validated, never re-pinned (§3.2).
   if (rebinding) return null;
   for (const source of binding.sources) {
     if (source.kind !== 'record') continue;
     if (source.ref.aggregateType !== 'Goal') continue;
     if (source.ref.projectId !== claimGoal.projectId || source.ref.goalId !== claimGoal.goalId) continue;
-    // Only a present, different string rejects; a null digest is a legacy manifest
-    // that never stored the shown Goal content (L2) and stays valid.
-    if (typeof source.digest === 'string' && source.digest !== currentGoalDigest) {
+    // The current writer always stores the shown Goal content digest.
+    if (source.digest !== currentGoalDigest) {
       return {
         status: 'rejected',
         code: 'revision_conflict',

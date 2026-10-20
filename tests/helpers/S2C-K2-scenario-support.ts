@@ -7,7 +7,6 @@
  * the real public routes; no record is written directly.
  */
 import type { ReadResult } from '../../src/contracts/core/results.js';
-import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { GraphHoverReadV1, TaskHoverV1 } from '../../src/contracts/work-line.js';
 import type { ScriptedReply } from './B2-runtime-fixture.js';
 import { AG2B_GOAL_REF, AG2B_SCOPE, plain } from './AG2b-collaboration-fixture.js';
@@ -29,9 +28,4 @@ export function taskHoverOf(hover: GraphHoverReadV1, taskId: string): TaskHoverV
   const task = hover.tasks.find(candidate => candidate.task.taskId === taskId);
   if (task === undefined) throw new Error(`graph/hover: no task ${taskId}`);
   return task;
-}
-
-/** The `sessions/read` Session ref (projectId + sessionId) of a session card. */
-export function sessionRefOfCard(session: { ref: { projectId: string; sessionId: string } }): SessionRef {
-  return { projectId: session.ref.projectId, sessionId: session.ref.sessionId };
 }

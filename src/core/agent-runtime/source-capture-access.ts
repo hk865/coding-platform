@@ -3,9 +3,8 @@
 import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
 import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { SourceAuthorityReads, SourceSnapshotReads, SourceSnapshotResult } from '../work-graph/source-authority-ports.js';
-import { seqOfCommitCursor } from '../../contracts/ledger.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
-import type { ActorRef, CommitCursor } from '../../contracts/command-event.js';
+import type { ActorRef } from '../../contracts/command-event.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskAttemptRef } from '../../contracts/dispatch.js';
 import type { SourceRunSpec } from './source-binding-types.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
@@ -256,13 +255,8 @@ function workSourceContext(binding: WorkSourceBinding, runSignal: AbortSignal, h
  */
 export function createQuerySourceCaptureFactory(
   deps: {
-    /**
-     * R5b.2 narrow compatibility: the formal Query source path may hold either
-     * the full event capability or the snapshot-plus-exact-submission surface.
-     * The stage-one skeleton only widens the type; stage two selects the exact
-     * locator path when the Job actually carries a locator.
-     */
-    authority: () => SourceSnapshotReads & Partial<Pick<SourceAuthorityReads, 'events'>>;
+    /** The real accepted source facts: the snapshot surface plus the exact submission read. */
+    authority: () => Pick<SourceAuthorityReads, 'load' | 'readQuerySubmission'>;
     sourcePolicyFor?: (projectId: string, workspaceId: string) => Promise<SourcePolicy | null>;
     hostSignal: AbortSignal;
     now: () => string;
@@ -285,7 +279,7 @@ export function createQuerySourceCaptureFactory(
     // A missing trusted policy fails explicitly; it never falls back to the legacy live index.
     if (!sourcePolicyFor) throw Error('trusted workspace source policy is unavailable for this query');
     try {
-      if (!origin) origin = resolveQueryOrigin(deps.authority(), copied, hostSignal, runSignal);
+      if (!origin) origin = resolveQueryOrigin(deps.authority(), copied);
       const resolved = await origin;
       const binding: QuerySourceBinding = {
         kind: 'query', root,
@@ -563,7 +557,6 @@ type QueryOrigin = {
   execution: NonNullable<QueryJobIntentV1['execution']>;
 };
 
-const QUERY_ORIGIN_PAGE_SIZE = 256;
 
 /** Current canonical Query qualification; the single implementation of these checks. */
 type CurrentQueryState = {
@@ -622,108 +615,41 @@ async function loadCurrentQueryState(
 }
 
 /**
- * Resolve the original initiator of one accepted QueryJob exactly once per factory. The
- * canonical source is the QueryJobSubmitted event, not QueryRunStarted (which may be a
- * dispatcher), and never a fixed local/system actor. Only a bounded candidate and a conflict
- * flag are retained; the scan stops at the end of the append-only history and checks Host/Run
- * cancellation on every page.
+ * Resolve the original initiator of one accepted QueryJob exactly once per
+ * factory, from the Job's own exact submission locator (lookupCommit -> eventAt).
+ * Only the original submission is interpreted; every read failure keeps its own
+ * error semantics.
  */
 async function resolveQueryOrigin(
-  ledger: SourceSnapshotReads & Partial<Pick<SourceAuthorityReads, 'events'>>,
+  ledger: SourceSnapshotReads,
   request: QueryExecutionRequest,
-  hostSignal: AbortSignal,
-  runSignal: AbortSignal,
 ): Promise<QueryOrigin> {
   // Current qualification is implemented once; a rejected current state fails this
   // initialization with the original error semantics.
   const current = await loadCurrentQueryState(ledger, request);
   if (current.status !== 'ready') throw Error('query source capture: ' + current.reason);
   const { jobRef, job, execution } = current.value;
-  // R5b.2: the formal Query path resolves the ORIGINAL initiator from the Job's
-  // own exact submission locator (lookupCommit -> eventAt) instead of scanning
-  // the append-only history. Only a caller with no locator capability falls back
-  // to the legacy event scan below.
-  if (typeof ledger.readQuerySubmission === 'function' && job.submission !== undefined) {
-    const submissionRead = await ledger.readQuerySubmission(jobRef);
-    if (submissionRead.status !== 'ready') {
-      const detail = submissionRead.status === 'not_found' ? 'not_found'
-        : submissionRead.status === 'not_ready' ? 'not_ready'
-        : submissionRead.code + ': ' + submissionRead.reason;
-      throw Error('query source capture: the exact QueryJob submission is not readable: ' + detail);
-    }
-    const submittedEvent = submissionRead.value;
-    const submitted = submittedEvent.payload.job;
-    const initial = submitted.queryJobId === jobRef.queryJobId
-      && submitted.projectId === job.job.projectId && submitted.workspaceId === job.job.workspaceId
-      && submitted.goalId === job.job.goalId
-      && canonicalJson(submitted.runRef ?? null) === canonicalJson(job.job.runRef)
-      && submitted.submittedAt === job.job.submittedAt
-      && canonicalJson(submitted.intent) === canonicalJson(job.job.intent)
-      && submitted.status === 'pending' && submitted.answerRefs.length === 0 && submitted.closeReason === null;
-    if (!initial) throw Error('query source capture: the recorded submission is not the initial QueryJob');
-    if (submittedEvent.actor.kind === 'agent') throw Error('query source capture: the original initiator kind is unsupported');
-    return { jobRef: structuredClone(jobRef), actor: { kind: submittedEvent.actor.kind, id: submittedEvent.actor.id }, execution: structuredClone(execution) };
+  if (typeof ledger.readQuerySubmission !== 'function')
+    throw Error('query source capture: the exact submission reader is not available');
+  const submissionRead = await ledger.readQuerySubmission(jobRef);
+  if (submissionRead.status !== 'ready') {
+    const detail = submissionRead.status === 'not_found' ? 'not_found'
+      : submissionRead.status === 'not_ready' ? 'not_ready'
+      : submissionRead.code + ': ' + submissionRead.reason;
+    throw Error('query source capture: the exact QueryJob submission is not readable: ' + detail);
   }
-  // O(1) extra state: one candidate plus conflict/unsupported flags. The full history is
-  // never retained, and a second match is rejected instead of collected.
-  let candidate: Extract<ActorRef, { kind: 'human' | 'system' }> | undefined;
-  let conflict = false;
-  let unsupported = false;
-  let cursor: CommitCursor | null = null;
-  const events = ledger.events;
-  if (events === undefined)
-    throw Error('query source capture: no event capability; the exact submission reader is not available in stage one');
-  for (;;) {
-    if (hostSignal.aborted || runSignal.aborted)
-      throw Error('query source capture: cancelled while resolving the original initiator');
-    const page = await events({ afterCursor: cursor, limit: QUERY_ORIGIN_PAGE_SIZE });
-    // Check cancellation immediately after the await, before consuming the page: a request that
-    // was cancelled while the page was in flight must not keep scanning or resolve an origin.
-    if (hostSignal.aborted || runSignal.aborted)
-      throw Error('query source capture: cancelled while resolving the original initiator');
-    // Reject malformed pages instead of looping: the page must echo the requested cursor and
-    // its rows must be strictly increasing after it.
-    if (page.afterCursor !== cursor) throw Error('query source capture: the event page does not start at the requested cursor');
-    let previous = cursor === null ? 0 : seqOfCommitCursor(cursor);
-    for (const row of page.events) {
-      const rowSeq = seqOfCommitCursor(row.cursor);
-      if (rowSeq <= previous) throw Error('query source capture: the event page is not strictly increasing');
-      previous = rowSeq;
-      const event = row.event;
-      if (event.eventType !== 'QueryJobSubmitted') continue;
-      if (event.projectId !== jobRef.projectId || event.workspaceId !== jobRef.workspaceId) continue;
-      if (event.aggregateType !== 'QueryJob' || event.aggregateId !== jobRef.queryJobId || event.aggregateRevision !== 1) continue;
-      const submitted = event.payload.job;
-      const initial = submitted.queryJobId === jobRef.queryJobId
-        && submitted.projectId === job.job.projectId && submitted.workspaceId === job.job.workspaceId
-        && submitted.goalId === job.job.goalId
-        && canonicalJson(submitted.runRef ?? null) === canonicalJson(job.job.runRef)
-        && submitted.submittedAt === job.job.submittedAt
-        && canonicalJson(submitted.intent) === canonicalJson(job.job.intent)
-        && submitted.status === 'pending' && submitted.answerRefs.length === 0 && submitted.closeReason === null;
-      if (!initial) { conflict = true; continue; }
-      // The current CorePrincipal supports human/system initiators; an agent origin must be
-      // refused, never relabelled as system.
-      if (event.actor.kind === 'agent') { unsupported = true; continue; }
-      if (candidate !== undefined) { conflict = true; continue; }
-      candidate = { kind: event.actor.kind, id: event.actor.id };
-    }
-    const through = page.throughCursor;
-    if (page.events.length > 0) {
-      if (through === null || seqOfCommitCursor(through) !== previous)
-        throw Error('query source capture: the event page cursor does not match its last event');
-    } else if (through !== cursor) {
-      throw Error('query source capture: an empty event page moved the cursor');
-    }
-    if (!page.hasMore) break;
-    if (through === null || seqOfCommitCursor(through) <= (cursor === null ? 0 : seqOfCommitCursor(cursor)))
-      throw Error('query source capture: the event scan did not advance');
-    cursor = through;
-  }
-  if (conflict || unsupported) throw Error('query source capture: the original initiator is conflicting or unsupported');
-  if (candidate === undefined) throw Error('query source capture: the original initiator is unavailable');
-  // The bound job identity is the reference derived from the request, never the loaded record's.
-  return { jobRef: structuredClone(jobRef), actor: structuredClone(candidate), execution: structuredClone(execution) };
+  const submittedEvent = submissionRead.value;
+  const submitted = submittedEvent.payload.job;
+  const initial = submitted.queryJobId === jobRef.queryJobId
+    && submitted.projectId === job.job.projectId && submitted.workspaceId === job.job.workspaceId
+    && submitted.goalId === job.job.goalId
+    && canonicalJson(submitted.runRef ?? null) === canonicalJson(job.job.runRef)
+    && submitted.submittedAt === job.job.submittedAt
+    && canonicalJson(submitted.intent) === canonicalJson(job.job.intent)
+    && submitted.status === 'pending' && submitted.answerRefs.length === 0 && submitted.closeReason === null;
+  if (!initial) throw Error('query source capture: the recorded submission is not the initial QueryJob');
+  if (submittedEvent.actor.kind === 'agent') throw Error('query source capture: the original initiator kind is unsupported');
+  return { jobRef: structuredClone(jobRef), actor: { kind: submittedEvent.actor.kind, id: submittedEvent.actor.id }, execution: structuredClone(execution) };
 }
 
 /**

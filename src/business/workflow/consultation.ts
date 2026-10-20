@@ -138,8 +138,8 @@ export function createConsultationConsumer(deps: {
   /** Attach the already-saved official answer; never calls a model. */
   async function attach(owned: Owned, message: SessionMessage, query: QueryJobRecord | null,
     answer: QueryJobAnswerSnapshot): Promise<ConsultationResult> {
-    const part = query?.job.job.intent.execution?.consultation?.part ?? 'message';
-    const asksReply = part !== 'response' && ( message.intent === 'inquiry' || message.needsReply === true || message.replyMode === 'wait');
+    const part = query?.job.job.intent.execution.consultation?.part ?? 'message';
+    const asksReply = part !== 'response' && ( message.intent === 'inquiry' || message.needsReply === true);
     if (!asksReply) {
       const current = await deps.consultations.messages.readMessage(owned.ctx, message.ref);
       if (current.status !== 'ready') return waiting(message, query, answer, 'the original input is not readable');
@@ -206,7 +206,7 @@ export function createConsultationConsumer(deps: {
    */
   async function driveAccepted(owned: Owned, messageRef: SessionMessageRef, message: SessionMessage,
     consumerId: string, record: QueryJobRecord): Promise<ConsultationResult> {
-    const refs = consultationQueryRefs(messageRef, record.job.job.intent.execution?.consultation?.part);
+    const refs = consultationQueryRefs(messageRef, record.job.job.intent.execution.consultation?.part);
     const phase = record.run.run.executionState?.phase;
     if (phase === 'entering' || phase === 'entered' || phase === 'unknown' || phase === 'settled') {
       if (deps.runtime.observeQuery === undefined) return waiting(message, record, null, 'the Runtime has no Query observation binding');
@@ -246,8 +246,8 @@ export function createConsultationConsumer(deps: {
     const job = record.job;
     const run = record.run;
     const execution = job.job.intent.execution;
-    const consultation = execution?.consultation;
-    if (execution === undefined || execution.kind !== 'semantic_query' || consultation === undefined) {
+    const consultation = execution.consultation;
+    if (execution.kind !== 'semantic_query' || consultation === undefined) {
       return reject('forbidden', 'the existing deterministic Query is not an explicit consultation');
     }
     if (!sameCanonical(consultation.messageRef, message.ref)) {
@@ -361,7 +361,7 @@ export function createConsultationConsumer(deps: {
     // or the boundary. A null throughPosition is the explicit empty baseline,
     // distinct from a non-empty inherited prefix.
     const target = value.part === 'response' && message.sender.kind === 'work_run' ? message.sender.sessionRef : sessionRecipient;
-    const isolatedInquiry = value.part !== 'response' && (message.intent === 'inquiry' || (message.intent === undefined && message.replyMode === 'wait'));
+    const isolatedInquiry = value.part !== 'response' && message.intent === 'inquiry';
     let derivation = value.part === 'response' ? undefined : message.consultationDerivation;
     if (isolatedInquiry && derivation === undefined) {
       const recordDerivation = deps.consultations.messages.recordConsultationDerivation;
@@ -503,7 +503,7 @@ export function createConsultationConsumer(deps: {
   async function archiveAnsweredCopy(ctx: CoreCallContext, message: SessionMessage,
     query: QueryJobRecord | null): Promise<string | null> {
     if (sessionArchive === undefined) return null;
-    const copyRef = query?.job.job.intent.execution?.consultation?.derivation?.childSessionRef
+    const copyRef = query?.job.job.intent.execution.consultation?.derivation?.childSessionRef
       ?? message.consultationDerivation?.childSessionRef;
     if (copyRef === undefined) return null;
     const read = await deps.sessions.readSession(ctx, copyRef);

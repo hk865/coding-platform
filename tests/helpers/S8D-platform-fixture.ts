@@ -43,14 +43,14 @@ export type SourceAnalyzers = {
 };
 
 /** §11.2 trusted test injection handed to the one observation light scan. */
-export type LightScan = {
+type LightScan = {
   fault?: (event: { phase: 'language' } | { phase: 'file'; path: string }) => void;
   maxRawReferences?: number;
 };
 
 /** `workspace` initializes the repo at the workspace root; `parent` one level up
  * (a real subdirectory-of-a-repo workspace; listed paths stay root-relative). */
-export type FixtureGit = { repo?: 'workspace' | 'parent' };
+type FixtureGit = { repo?: 'workspace' | 'parent' };
 
 const gitRun = promisify(execFile);
 const GIT_ENV = {
@@ -76,9 +76,9 @@ export type GraphShape = {
 type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;
 type RawCaptureResult = Awaited<ReturnType<Platform['architecture']['captureSourceChanges']>>;
 /** The raw write result plus the persisted ref the next capture can pass as `previous`. */
-export type CaptureOutcome = RawCaptureResult & { persisted: PersistedSourceCaptureRef | null };
+type CaptureOutcome = RawCaptureResult & { persisted: PersistedSourceCaptureRef | null };
 /** `capture()` keeps its observed capture ref and adds the persisted ref. */
-export type FixtureCapture = ObservedCaptureRef & { persisted: PersistedSourceCaptureRef };
+type FixtureCapture = ObservedCaptureRef & { persisted: PersistedSourceCaptureRef };
 type Mappings = { id: string; kind: 'module'; paths: string[] }[];
 type AdoptionDependencies = { from: ModuleRef; to: ModuleRef; reason: string }[];
 

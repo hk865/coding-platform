@@ -8,11 +8,9 @@
  * `requestRerun`) to prove a valid `rewriteOf` with an unknown script still
  * reaches the request path.
  */
-import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
-import type { CommandRerunRequestV1 } from '../../src/contracts/command-rerun-request.js';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import { createCommandRecognizer } from '../../src/core/work-graph/tasks/command-recognition.js';
 import { commandSha256 } from '../../src/core/work-graph/state/command-normalization.js';
@@ -24,6 +22,7 @@ import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { failWorkspaceReads, openRealWorkspace, type RealWorkspace } from '../helpers/K3-real-workspace.js';
 import { GOAL_B, T, WORKSPACE_SCOPE } from '../helpers/S5-decision-fixture.js';
+import { ctx, keyOf, record, request } from '../helpers/B2-12-recognition-fixture.js';
 
 // §5.1's stand-in `shell`, hoisted per test file (the fixture's real Run uses it).
 const seams = vi.hoisted(() => ({ shellSeam: undefined as unknown }));
@@ -34,50 +33,12 @@ vi.mock('../../vendor/coding-agent/dist/tools/builtin/shell/shell-tool.js', asyn
 });
 seams.shellSeam = shellSeam;
 
-const sha = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
-const keyOf = (words: string[]): string => sha(JSON.stringify(words));
 const worlds: K3ReviewCardWorld[] = [];
 const workspaces: RealWorkspace[] = [];
 afterEach(async () => {
   for (const workspace of workspaces.splice(0)) await workspace.close();
   for (const world of worlds.splice(0)) await world.close();
 });
-
-const ctx: CoreCallContext = {
-  projectId: 'P', workspaceId: 'W',
-  principal: { kind: 'host', actor: { kind: 'human', id: 'o' } },
-  materialReader: { kind: 'none' }, signal: new AbortController().signal,
-} as never;
-
-function record(input: {
-  runId: string; createdAt: string;
-  blocked: Array<{
-    alias: number; commandSha256: string;
-    actions?: Array<{ text: string; sha256: string }>;
-    expansions?: Array<{ action: string; scriptName: string; scriptText: string;
-      actions: Array<{ text: string; sha256: string }>;
-      basis: { path: string; digest: string } | { status: 'unavailable'; reason: string } }>;
-  }>;
-}): UnknownCallReviewV1 {
-  return {
-    ref: { aggregateType: 'UnknownCallReview', projectId: 'P', goalId: 'B', runId: input.runId },
-    createdAt: input.createdAt,
-    blockedCommands: input.blocked.map(entry => ({
-      reviewRunId: input.runId, alias: entry.alias, commandSha256: entry.commandSha256,
-      kernelCallRef: {}, actions: entry.actions ?? [], expansions: entry.expansions ?? [],
-      truncated: false,
-    })),
-  } as unknown as UnknownCallReviewV1;
-}
-
-function request(input: {
-  runId: string; alias: number; declaredForms: Array<{ sha256: string; text: string }>;
-}): CommandRerunRequestV1 {
-  return {
-    reviewRef: { aggregateType: 'UnknownCallReview', projectId: 'P', goalId: 'B', runId: input.runId },
-    alias: input.alias, declaredForms: input.declaredForms,
-  } as unknown as CommandRerunRequestV1;
-}
 
 /** F-021: real files served by the production workspace reader. */
 async function workspace(files: Record<string, string>): Promise<RealWorkspace> {

@@ -145,17 +145,6 @@ describe('2C-01 deriveLineStatus', () => {
     expect(status.ownReason.code).toBe('occupancy_unexplained');
   });
 
-  it('2C-01 T1 before T2: a legacy null conclusion with an unknown occupancy is 已退役 and 待核对', () => {
-    const holder = { kind: 'run' as const, run: runFacts(runOf(RUN_R1, { outcome: 'outcome_unknown' })) };
-    const status = deriveLineStatus(facts({
-      head: sessionRecord({ health: 'unavailable', healthConclusion: null }),
-      holder,
-    }));
-    expect(status.own).toBe('retired');
-    expect(status.ownReason.code).toBe('retired_unrecorded');
-    expect(status.attention?.code).toBe('unknown');
-  });
-
   it('2C-01 T0 binding: afterRunRef pointing at another Run is 已退役, not 已暂停', () => {
     const paused = taskFact({
       phaseCause: { code: 'paused_interrupted', detail: { afterRunRef: RUN_R2, pausedIntentRef: INTENT_REF, kernelPaused: true } },

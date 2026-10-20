@@ -9,7 +9,7 @@ import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SourceRefV1 } from '../../src/contracts/dispatch.js';
 import { makeCommitCursor } from '../../src/contracts/ledger.js';
-import type { SessionMailboxPort, SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { SessionMailboxPort, SessionMessage, UndeliveredReplyV1 } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { NoticeItemV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { SessionDirectoryPort, SessionPageRequest } from '../../src/core/work-graph/model/session-contracts.js';
 import { encodeSessionMessageRecord, sessionMessageRefKey } from '../../src/core/work-graph/sessions/message-record-codecs.js';
@@ -218,58 +218,11 @@ describe('WP2 undelivered-reply notices', () => {
     expect(String(conflict.reason)).toContain('undelivered_reply_identity_conflict:');
   });
 
-  it('M05 old data missing a position blocks only its Goal; a damaged position is refused', async () => {
+  it('M05 a damaged position is refused', async () => {
     const f = await open();
     await unavailableWithReply(f);
     const base = f.f.base;
     const deps: NoticeDeps = { records: f.records, sessions: f.f.sessions, messages: f.f.mailbox };
-    // Real pre-package records: the Session snapshot and the message carry no
-    // position, and the mailbox DTO (which would project them) omits them too.
-    const stripped = createUndeliveredReplyNoticeSource({
-      records: {
-        readMany: keys => deps.records.readMany(keys),
-        lookup: async (request) => {
-          const result = await deps.records.lookup(request);
-          if (result.status !== 'ready' || request.index !== SESSION_BY_WORKSPACE_LOOKUP) return result;
-          return { ...result, value: { ...result.value,
-            records: result.value.records.map((record) => {
-              const body = JSON.parse(record.json) as Record<string, unknown>;
-              delete body['unavailableSince'];
-              return { ...record, json: JSON.stringify(body) };
-            }) } };
-        },
-      },
-      sessions: deps.sessions,
-      messages: {
-        readMessage: async (ctx, ref) => {
-          const result = await deps.messages.readMessage(ctx, ref);
-          if (result.status !== 'ready') return result;
-          const { responseSince: _dropped, ...message } = result.value;
-          return { ...result, value: message };
-        },
-        readUndeliveredReplies: async (ctx, input) => {
-          const result = await deps.messages.readUndeliveredReplies!(ctx, input);
-          if (result.status !== 'ready') return result;
-          return { status: 'ready', value: { ...result.value,
-            items: result.value.items.map(({ unavailableSince: _u, responseSince: _r, ...rest }) => rest) } };
-        },
-      },
-    });
-    const other = { aggregateType: 'Goal' as const, projectId: base.scope.projectId, goalId: 'b2-second-goal' };
-
-    const otherGoal = await stripped.readPage(f.ctx, { workspace: base.scope, goalRef: other, page: { limit: 100 } });
-    expect(otherGoal.status).toBe('ready');
-    if (otherGoal.status !== 'ready') throw new Error('another Goal must not be blocked');
-    expect(otherGoal.value.items).toEqual([]);
-
-    const affected = await stripped.readPage(f.ctx, { workspace: base.scope, goalRef: base.goalRef, page: { limit: 100 } });
-    expect(affected.status).toBe('rejected');
-    if (affected.status !== 'rejected') throw new Error('the affected Goal must fail');
-    expect(affected.code).toBe('incomplete');
-    expect(affected.reason.startsWith('undelivered_reply_position_missing:')).toBe(true);
-
-    const unfiltered = await stripped.readPage(f.ctx, { workspace: base.scope, page: { limit: 100 } });
-    expect(unfiltered.status).toBe('rejected');
 
     const damaged = await withMessages(deps, {
       readMessage: (ctx, ref) => deps.messages.readMessage(ctx, ref),
@@ -443,7 +396,7 @@ describe('WP2 undelivered-reply notices', () => {
     const malformed = [
       ['garbage', { kind: 'commit', cursor: 'garbage', itemKey: 'undelivered_reply:x' }],
       ['zero', { kind: 'commit', cursor: 'c0000000000', itemKey: 'undelivered_reply:x' }],
-      ['legacy', { kind: 'legacy', occurredAt: '2026-01-01T00:00:00.000Z', itemKey: 'undelivered_reply:x' }],
+      ['unknown', { kind: 'unknown', itemKey: 'undelivered_reply:x' }],
     ] as const;
 
     // (1) Empty source: a malformed position inside the VALID envelope must still
@@ -796,7 +749,8 @@ describe('WP2 undelivered-reply notices', () => {
         const result = await deps.messages.readUndeliveredReplies!(ctx, input);
         if (result.status !== 'ready') return result;
         return { status: 'ready', value: { ...result.value,
-          items: result.value.items.map(({ unavailableSince: _u, responseSince: _r, ...rest }) => rest) } };
+          items: result.value.items.map(({ unavailableSince: _u, responseSince: _r, ...rest }) =>
+            rest as unknown as UndeliveredReplyV1) } };
       },
     });
     const page = await source.readPage(f.ctx, { workspace: f.scope, page: { limit: 100 } });

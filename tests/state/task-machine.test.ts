@@ -5,8 +5,7 @@
  * - `projectTaskPhase` / `classifyTaskPhase`: one case per row P1..P18 with
  *   its target phase (A.2 step 5.3; P4 since 5.4; P19 since 5.6) and the TD-1
  *   cause; P20 (5.9 part 2) for a gate's own chain head right after P1;
- *   in-round monotonicity, legacy PASS with gaps,
- *   successor heads and the disposition independence.
+ *   in-round monotonicity, successor heads and the disposition independence.
  * - `transitionTask`: every (state, event) combination over the projection
  *   states (plus ∅): a legal one asserts `next` and `effects`, a re-projection
  *   without change asserts the same state and `effects:[]` (SD-1), an illegal
@@ -128,7 +127,7 @@ function round(roundId: string, patch: Partial<RoundSnapshot> = {}): RoundSnapsh
     adoptedPlanRef: planRef, taskBasisRef: planRef, configurationDigest: sha('c'),
     identity: { workspaceRevision: 3 }, verificationPlan: { planId: 'vplan-1', planDigest: sha('d') },
     checks: [roundCheck('lint', 'pending'), roundCheck('unit', 'pending')], status: 'open', outcome: null, gaps: [],
-    evidenceRefs: [], ...patch } as unknown as RoundSnapshot;
+    evidenceRefs: [], chain: rootRoundChain(), ...patch } as unknown as RoundSnapshot;
 }
 const pendingGap = { code: 'pending_check', message: 'the required check unit never ran' };
 const OPEN_PENDING = round('round-1');
@@ -139,9 +138,7 @@ const FINAL_FAIL = round('round-1', { status: 'finalized', outcome: 'FAIL',
 const FINAL_INCONCLUSIVE = round('round-1', { status: 'finalized', outcome: 'INCONCLUSIVE', gaps: [pendingGap] });
 const FINAL_PASS = round('round-1', { status: 'finalized', outcome: 'PASS',
   checks: [roundCheck('lint', 'finished', 'PASS'), roundCheck('unit', 'finished', 'PASS')], evidenceRefs: [evidence('e-1'), evidence('e-2')] });
-const FINAL_PASS_GAPS = round('round-1', { status: 'finalized', outcome: 'PASS', gaps: [pendingGap],
-  checks: [roundCheck('lint', 'finished', 'PASS'), roundCheck('unit', 'pending')], evidenceRefs: [evidence('e-5')] });
-/** Two legacy roots on one subject: the chain is invalid (P10). */
+/** Two roots on one subject: the chain is invalid (P10). */
 const TWO_ROOTS = [OPEN_PENDING, round('round-2', { status: 'finalized', outcome: 'FAIL' })];
 
 const ROOT_FAIL = round('round-1', { status: 'finalized', outcome: 'FAIL', chain: rootRoundChain(),
@@ -162,7 +159,6 @@ const SIG = {
   fail: roundTaskSignal([FINAL_FAIL]),
   inconclusive: roundTaskSignal([FINAL_INCONCLUSIVE]),
   pass: roundTaskSignal([FINAL_PASS]),
-  passGaps: roundTaskSignal([FINAL_PASS_GAPS]),
   succOpen: roundTaskSignal([ROOT_FAIL, SUCC_OPEN]),
   succFail: roundTaskSignal([ROOT_FAIL, SUCC_FAIL]),
 };
@@ -300,8 +296,6 @@ describe('projectTaskPhase: one case per row, the target phase (§4.1, §15.2 st
       [SIG.interrupted, P20.interrupted], [SIG.fail, P20.fail], [SIG.inconclusive, P20.inconclusive], [SIG.pass, P20.pass],
       [SIG.invalid, P20.invalid], [SIG.succOpen, P20.succOpen]];
     for (const [signal, projected] of cases) expect(classifyTaskPhase(gateFacts({ round: signal }))).toEqual(projected);
-    // A legacy PASS with gaps is round_inconclusive (VD-4), as for work.
-    expect(classifyTaskPhase(gateFacts({ round: SIG.passGaps }))).toEqual(P20.inconclusive);
     // P1 wins; P20 comes before P15; without a chain a gate has no Run: P16, or P15 with an unresolvable reduction.
     expect(classifyTaskPhase(gateFacts({ applicableReduction: { phase: 'satisfied' }, round: SIG.pass })))
       .toEqual(ROW.P1.projection);
@@ -316,11 +310,6 @@ describe('projectTaskPhase: one case per row, the target phase (§4.1, §15.2 st
     expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.mixed }))).toEqual({ row: 'P12', phase: 'verifying',
       cause: { code: 'verification_running', detail: { checkIds: ['lint'] } } });
     expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.interrupted }))).toEqual(ROW.P9.projection);
-  });
-
-  it('a legacy PASS with gaps is P8 round_inconclusive, never awaiting completion (VD-4)', () => {
-    expect(classifyTaskPhase(facts({ selectedRun: COMPLETED, round: SIG.passGaps }))).toEqual({ row: 'P8', phase: 'blocked',
-      cause: { code: 'round_inconclusive', detail: { gapCodes: ['pending_check'] } } });
   });
 
   it('a successor head adds ordinal and predecessor to the detail (C5)', () => {
@@ -895,7 +884,6 @@ describe('task_completed in completeTask order', () => {
     ['the round subject', round('r', { ...FINAL_PASS, subject: gateTask }), 'invalid', 'the round subject disagrees with the requested task'],
     ['an open round', OPEN_PENDING, 'incomplete', 'the specified round is not finalized'],
     ['a FAIL round', FINAL_FAIL, 'incomplete', 'the specified round did not finalize as PASS'],
-    ['a PASS with gaps', FINAL_PASS_GAPS, 'incomplete', 'the specified round carries unresolved gaps'],
     ['no evidence', round('r', { ...FINAL_PASS, evidenceRefs: [] }), 'incomplete', 'the specified round admitted no Evidence'],
   ] as const)('%s', (_name, passRound, code, detail) => {
     expect(at(work(passRound))).toMatchObject({ ok: false, reason: 'guard_failed', code, detail });
@@ -1000,7 +988,7 @@ describe('task_completed in completeTask order', () => {
   });
 
   it('the owner stops where the transition refuses: the round before its producer is read, the producer, then the fold', () => {
-    const rounds = [FINAL_PASS, OPEN_PENDING, FINAL_FAIL, FINAL_PASS_GAPS, round('r', { ...FINAL_PASS, evidenceRefs: [] }),
+    const rounds = [FINAL_PASS, OPEN_PENDING, FINAL_FAIL, round('r', { ...FINAL_PASS, evidenceRefs: [] }),
       round('r', { ...FINAL_PASS, subject: gateTask })];
     const producers: RunSnapshot[] = [PRODUCER, RUNNING, ENDED_UNKNOWN, YIELDED_WAIT,
       { ...PRODUCER, ref: { ...PRODUCER.ref, goalId: 'other' } }, { ...PRODUCER, task: { ...task, taskId: 'other' } }];
@@ -1347,7 +1335,7 @@ describe('newTaskRequeueRecord', () => {
     ['an open head with only interrupted checks (FC-13: finalize first)', { afterRun: COMPLETED, basis: keyOf('completed'),
       chain: roundChainHead([OPEN_INTERRUPTED]) }, /is open; it is finalized before a requeue \(FC-13\)/],
     // I-12 clause 2 for an outcome `deriveReworkClass` judges without the chain (FC-9).
-    ['a crashed Run whose chain is invalid (two legacy roots)', { chain: roundChainHead(TWO_ROOTS) },
+    ['a crashed Run whose chain is invalid (two roots)', { chain: roundChainHead(TWO_ROOTS) },
       /the round chain is invalid .*\(incomplete\)/],
     ['a crashed Run whose head is a clean PASS', { chain: roundChainHead([FINAL_PASS]) }, /round-1 is a clean PASS/],
     ['a crashed Run whose head is open', { chain: roundChainHead([OPEN_PENDING]) },

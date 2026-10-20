@@ -16,7 +16,7 @@ import { createMaterialRecordReaders } from '../../src/core/work-graph/materials
 import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
-import { createExecutedFilesStub } from './executed-files-stub.js';
+import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { createAutomaticReworkNoticeSource } from '../../src/core/work-graph/views/automatic-rework-notices.js';
 import {
   createDecisionReadModel, createGoalCauseCardSource, createPlanningQuestionCardSource,
@@ -44,8 +44,11 @@ export function windowReadModel(f: S5DecisionFixture, records: S5Records): Decis
     cardSources: [createGoalCauseCardSource(causes),
       createPlanningQuestionCardSource(createPlanningQuestionReader({ records: inner, plans }))],
     noticeSources: [createAutomaticReworkNoticeSource({ records: inner })],
+    // The production executed-files reader over the real records; the S5 fixture
+    // registers RUN_ACTIVITY_RECORD_SCHEMAS and forwards the real `lookupOrdered`.
     conflicts: createGoalConflictAssembler({ records: inner,
-      catalog: createArchitectureCatalogService({ records: inner }), executedFiles: createExecutedFilesStub() }),
+      catalog: createArchitectureCatalogService({ records: inner }),
+      executedFiles: createGoalExecutedFilesReader({ records: inner }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)) });
 }
 

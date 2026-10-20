@@ -18,10 +18,12 @@ import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-re
 import type {
   EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas,
 } from '../../src/core/record-store/ports.js';
-import type { RecordLookupIndex, RecordTextSearchPort } from '../../src/core/record-store/lookup-ports.js';
+import type {
+  RecordCountPort, RecordLookupIndex, RecordLookupPort, RecordOrderedLookupPort, RecordTextSearchPort,
+} from '../../src/core/record-store/lookup-ports.js';
 
 /** A fixed instant so fixtures are deterministic. */
-export const at = '2026-10-15T00:00:00.000Z';
+const at = '2026-10-15T00:00:00.000Z';
 
 /** The test full-text index: the project equality prefix + the three text paths. */
 export const textIndex: RecordLookupIndex = {
@@ -67,7 +69,7 @@ export function withLookups(indexes: readonly RecordLookupIndex[]): RecordBacken
 }
 
 export type TextBackend = {
-  records: GoalRecordTransactionPort & RecordTextSearchPort;
+  records: GoalRecordTransactionPort & RecordTextSearchPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort;
   close(): Promise<void>;
 };
 
@@ -91,7 +93,7 @@ export function widget(
   };
 }
 
-export function event(id: string): EncodedDomainEvent {
+function event(id: string): EncodedDomainEvent {
   return {
     eventId: id,
     eventType: 'WidgetChanged',
@@ -126,12 +128,12 @@ export type OpenOptions = {
 export async function open(
   kind: 'memory' | 'sqlite',
   options: OpenOptions = {},
-): Promise<{ backend: TextBackend; path?: string; dir?: string }> {
+): Promise<{ backend: TextBackend; path?: string; dir?: string | undefined }> {
   if (kind === 'memory') {
     return {
       backend: createInMemoryRecordBackend({
         schemas: options.schemas ?? widgetSchemas,
-      }) as unknown as TextBackend,
+      }),
     };
   }
   const dir = options.path === undefined ? await mkdtemp(join(tmpdir(), 's4b-text-')) : undefined;
@@ -140,8 +142,9 @@ export async function open(
     backend: createSqliteRecordBackend({
       path,
       schemas: options.schemas ?? widgetSchemas,
-    }) as unknown as TextBackend,
+    }),
     path,
+    dir,
   };
 }
 
@@ -180,7 +183,7 @@ export async function seedBatch(
   }
 }
 
-export type SearchRequest = {
+type SearchRequest = {
   index: string;
   values: readonly string[];
   terms: readonly string[];

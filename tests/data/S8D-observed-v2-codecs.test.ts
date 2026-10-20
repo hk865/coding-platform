@@ -19,9 +19,6 @@ import {
 import {
   normalizeFileGraph, serializeFileGraphChunks,
 } from '../../src/core/work-graph/architecture/architecture-service.js';
-import {
-  mapArchitectureSource, type ArchitectureSourceMaterial,
-} from '../../src/core/workspace/architecture-source.js';
 import type { ObservedFileGraphManifestV2 } from '../../src/core/work-graph/architecture/contracts.js';
 
 type ChunkGraph = {
@@ -185,15 +182,6 @@ describe('S8D observed v2 chunk validation', () => {
 describe('S8D observed v2 chunk scope (pure codec, A5)', () => {
   const emptyGraph = { nodes: [], edges: [], unresolved: [] } as const;
 
-  it('rejects an old unscoped chunk instead of filling its scope in', () => {
-    // The earlier v2 chunk body had no project/workspace fields. It is an older
-    // format (decision 79), so the decoder rejects it rather than filling the
-    // scope in from the record.
-    expect(decodeObservedFileGraphChunk(
-      JSON.stringify({ schemaVersion: 2, nodes: [], edges: [], unresolved: [] }), SCOPE))
-      .toMatchObject({ status: 'invalid' });
-  });
-
   it('rejects a chunk body whose scope differs from the expected capture scope', () => {
     const body = serializeFileGraphChunks(normalizeFileGraph(emptyGraph), SCOPE, CAP)[0]!;
     // The body itself is valid; only its scope disagrees with the canonical
@@ -255,48 +243,6 @@ describe('S8D observed v2 unresolved pass-through', () => {
     const decoded = bodies.map(body => decodeObservedFileGraphChunk(body, SCOPE, 2))
       .flatMap(chunk => chunk.status === 'decoded' && chunk.value.schemaVersion === 2 ? chunk.value.unresolved : []);
     expect(decoded).toEqual(unresolved);
-  });
-});
-
-describe('S8D compact module snapshot (§11.2)', () => {
-  const scope = { projectId: 'p', workspaceId: 'w', workspaceRevision: 1 };
-  // Every source is unmapped, so the mapper emits one `unmapped source: <path>`
-  // line per source; that is the only unresolved wording this test needs.
-  const materialWith = (paths: string[]): ArchitectureSourceMaterial => ({
-    sources: paths.map(path => ({ path, digest: digest('a') })),
-    imports: [], manifestDigest: digest('d'), commit: null,
-    engine: 'typescript', engineVersion: '6.0.3', configPath: null,
-  });
-  const linesOf = (paths: string[]): string[] => paths.map(path => 'unmapped source: ' + path);
-
-  it('drops indexedSources and keeps everything under 500 lines / 64 KiB', () => {
-    const paths = ['a.ts', 'b.ts'];
-    const compact = mapArchitectureSource(materialWith(paths), scope, [], 'observation');
-    expect('indexedSources' in compact).toBe(false);
-    expect(compact.unresolved).toEqual(linesOf(paths));
-  });
-
-  it('cuts at 500 lines and appends exactly one line with the removed count', () => {
-    const paths = Array.from({ length: 502 }, (_, index) => `line${String(index).padStart(3, '0')}.ts`);
-    const lines = linesOf(paths);
-    const compact = mapArchitectureSource(materialWith(paths), scope, [], 'observation');
-    expect(compact.unresolved).toHaveLength(501);
-    expect(compact.unresolved.slice(0, 500)).toEqual(lines.slice(0, 500));
-    expect(compact.unresolved[500]).toBe('另有 2 条没列出，逐条见文件层');
-  });
-
-  it('cuts at 64 KiB of the kept lines joined by a newline and reports the exact remainder', () => {
-    // 400 unique 200-character lines: k kept lines joined by '\n' are 201*k - 1
-    // bytes, so k = 326 is 65,525 bytes (the largest k <= 65,536) and 74 are removed.
-    // `unmapped source: ` is 17 characters, so each path is 183 characters.
-    const paths = Array.from({ length: 400 }, (_, index) => String(index).padStart(4, '0') + 'x'.repeat(179));
-    const lines = linesOf(paths);
-    expect(new Set(lines.map(line => line.length))).toEqual(new Set([200]));
-    const compact = mapArchitectureSource(materialWith(paths), scope, [], 'observation');
-    expect(compact.unresolved).toHaveLength(327); // 326 kept lines plus the one summary line
-    expect(compact.unresolved.slice(0, 326)).toEqual(lines.slice(0, 326));
-    expect(Buffer.byteLength(compact.unresolved.slice(0, 326).join('\n'), 'utf8')).toBe(65_525);
-    expect(compact.unresolved[326]).toBe('另有 74 条没列出，逐条见文件层');
   });
 });
 

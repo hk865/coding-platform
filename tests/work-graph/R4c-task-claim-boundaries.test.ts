@@ -4,14 +4,18 @@ import { createTaskClaimFixture, CLAIM_FIXTURE_AT, type TaskClaimFixture } from 
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { roleSpecContentDigest, type RoleSpecContentV1, type RoleSpecPinV1 } from '../../src/contracts/role-spec.js';
 import { coordinationPolicyContentDigest, type CoordinationPolicyContentV1 } from '../../src/contracts/human-role-collaboration.js';
-import { revisionAssignments } from '../../src/contracts/plan.js';
+import { revisionAssignments, type PlanRevisionDraft } from '../../src/contracts/plan.js';
 import type { EncodedRecord } from '../../src/core/record-store/ports.js';
 import { decodeDispatchOutboxEntry, taskClaimedEventFromEvent } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
+import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 
 const fixtures: TaskClaimFixture[] = [];
 afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close(); });
 async function open(kind: 'memory' | 'sqlite') {
-  const fixture = await createTaskClaimFixture(kind); fixtures.push(fixture); return fixture;
+  const fixture = await createTaskClaimFixture(kind, CONTROL_RECORD_SCHEMAS); fixtures.push(fixture); return fixture;
 }
 const key = (ref: object) => canonicalJson(ref as JsonValue);
 const encode = (snapshot: { ref: object; revision: number }): EncodedRecord => ({
@@ -95,13 +99,50 @@ it('replays before deadline/current Session checks and never calls the clock on 
 });
 
 it('a Run in an older Plan still prevents a fresh claim, without a second scan', async () => {
-  const f = await open('memory'); const ref = await f.seedRun(f.tasks.first.taskId, 'ended');
-  const read = await f.records.readMany([key(ref)]); if (read.status !== 'ready') throw Error('read failed');
-  const row = read.value.records[0]!; const body = JSON.parse(row.json);
-  body.revision++; body.planRef = { ...f.planRef, planId: 'old-accepted-plan' };
-  expect(await f.commitRaw([{ ...row, revision: body.revision, json: JSON.stringify(body) }],
-    [{ refKey: row.refKey, expectedRevision: row.revision }])).toMatchObject({ status: 'committed' });
-  expect(await f.service.claimTask(f.ctx, await f.buildRequest()))
+  const f = await open('memory');
+  const claim = await f.service.claimTask(f.ctx, await f.buildRequest({ requestId: 'older-plan-claim' }));
+  expect(claim.status).toBe('committed');
+  if (claim.status !== 'committed') return;
+  let sequence = 0;
+  const controls = createRunControlService({
+    records: f.records, authority: createMaterialRecordReaders(f.records).authority,
+    reads: createRunStateReader({ records: f.records }),
+    now: () => CLAIM_FIXTURE_AT, eventId: () => `r4c-boundary-control-${++sequence}`,
+  });
+  expect(await controls.submitControl(f.ctx, {
+    input: { runRef: claim.value.runRef, kind: 'cancel', reason: 'stop before entering' },
+    meta: { requestId: 'older-plan-cancel', expected: [{ ref: claim.value.runRef, revision: 1 }] },
+  })).toMatchObject({ status: 'committed' });
+  // A real Plan revision moves past the one the claimed Run still names.
+  const plan = f.plan;
+  const draft: PlanRevisionDraft = {
+    schemaVersion: 2, planId: `${plan.planId}-next-${String(plan.planRevision + 1)}`,
+    planRevision: plan.planRevision + 1, goalId: plan.goalRef.goalId,
+    stages: structuredClone(plan.stages), tasks: plan.tasks.map(task => ({ ...task })),
+    assignments: [...(plan.assignments ?? [])].map(entry => ({ ...entry })),
+    obligations: plan.obligations.map(obligation => ({ ...obligation, taskIds: [...obligation.taskIds],
+      verificationRequirements: obligation.verificationRequirements.map(requirement => ({ ...requirement })) })),
+    taskHierarchy: structuredClone(plan.taskHierarchy), executionDag: structuredClone(plan.executionDag),
+    ...(plan.schemaVersion === 2 ? {
+      taskRelations: [...(plan.taskRelations ?? [])].map(relation => ({ ...relation })),
+      inputRequirements: [...(plan.inputRequirements ?? [])].map(requirement => ({ ...requirement })),
+    } : {}),
+  };
+  const proposed = await f.plans.proposePlan(f.ctx, { input: {
+    goalRef: f.goalRef, basedOn: plan.ref, draft,
+    reason: { text: 'Move past the claimed Run plan', sources: [], affectedTaskIds: [] },
+  }, meta: { requestId: 'older-plan-propose', expected: [await f.goalPin()] } });
+  expect(proposed).toMatchObject({ status: 'committed' });
+  if (proposed.status !== 'committed') return;
+  const applied = await f.plans.applyPlanChange(f.ctx, { input: {
+    proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [],
+  }, meta: { requestId: 'older-plan-apply', expected: [await f.goalPin()] } });
+  expect(applied).toMatchObject({ status: 'committed' });
+  if (applied.status !== 'committed') return;
+  // All prior steps are done: the refused claim's own calls alone are counted.
+  f.spy.commits = 0;
+  f.spy.lookups.length = 0;
+  expect(await f.service.claimTask(f.ctx, await f.buildRequest({ input: { planRef: applied.value.ref } })))
     .toMatchObject({ status: 'rejected', code: 'busy' });
   expect(f.spy.commits).toBe(0);
   expect(f.spy.lookups).toHaveLength(1);

@@ -1344,10 +1344,8 @@ export async function readGoalTriggerRecords(
     const activeKey = planRevisionRefKey(plan.ref);
     for (const task of tasks) {
       if (task.disposition !== 'cancelled' && task.disposition !== 'superseded') continue;
-      const change = plan.schemaVersion === 2
-        ? plan.dispositionRecord?.entries.find((entry) => entry.taskId === task.taskId
-          && (entry.to === 'cancelled' || entry.to === 'superseded'))
-        : undefined;
+      const change = plan.dispositionRecord?.entries.find((entry) => entry.taskId === task.taskId
+        && (entry.to === 'cancelled' || entry.to === 'superseded'));
       if (change !== undefined && !samePlanRevisionPointer(change.setIn, plan.ref)) {
         const key = planRevisionRefKey(change.setIn);
         sourcePlanRefs.set(key, change.setIn);
@@ -2274,10 +2272,8 @@ export function createSessionResponsibilityBasisReader(
         // The FIRST terminal disposition Plan's acceptedAt: the active plan may
         // only inherit the change (W16 `dispositionRecord.setIn`).
         finishedAt = plan.acceptedAt;
-        const change = plan.schemaVersion === 2
-          ? plan.dispositionRecord?.entries.find((entry) => entry.taskId === task['taskId']
-            && (entry.to === 'cancelled' || entry.to === 'superseded'))
-          : undefined;
+        const change = plan.dispositionRecord?.entries.find((entry) => entry.taskId === task['taskId']
+          && (entry.to === 'cancelled' || entry.to === 'superseded'));
         if (change !== undefined && planRevisionRefKey(change.setIn) !== planRevisionRefKey(plan.ref)) {
           const originRead = await readPlan(records, change.setIn);
           // E2: the original terminal Plan carries the real `acceptedAt`; a

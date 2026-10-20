@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 /** goal protocol schema validation. Structural checks do not grant authority. */
 import { normalizeObjective } from '../command-event.js';
 import type { ValidationIssue } from './common.js';

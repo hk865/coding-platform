@@ -189,7 +189,9 @@ describe('W2 Agent success chain', () => {
   it('Agent apply adopts its own sourced candidate and preserves unchanged task basis', async () => {
     const f = await make();
     const draft = editedDraft(f, 'w2-agent-plan-apply', 'implement-b', 'Agent apply B');
-    const candidate = await f.seedAgentCandidate({ draft, basedOn: f.planRef, proposalId: 'w2-agent-candidate-apply' });
+    const proposedCandidate = await f.proposeAsWorkRun(draft, f.planRef, { requestId: 'w2-agent-candidate-apply' });
+    if (proposedCandidate.status !== 'committed') throw Error(`Agent propose failed: ${JSON.stringify(proposedCandidate)}`);
+    const candidate = proposedCandidate.value;
     const applied = await f.applyAsWorkRun(candidate.ref, candidate.revision, { requestId: 'w2-agent-apply-own' });
     // TARGET RED: Stage 1 stops at the unsupported admission seam.
     expect(applied, 'W2 Agent apply must commit its own candidate').toMatchObject({ status: 'committed' });
@@ -210,8 +212,9 @@ describe('W2 Agent authorization rejects', () => {
     const plan2 = await f.readPlanSnapshot(f.plan2Ref);
     const draft2 = f.futureDraftFor(plan2, 'w2-second-plan-foreign',
       d => ({ ...d, tasks: d.tasks.map(t => t.taskId === 'b2-second-task' ? { ...t, title: 'Second edited' } : t) }));
-    const foreign = await f.seedAgentCandidate({ claim: f.secondClaim, goalRef: f.goal2Ref,
-      draft: draft2, basedOn: f.plan2Ref, proposalId: 'w2-agent-candidate-foreign' });
+    const proposedForeign = await f.proposeAsSecondWorkRun(draft2, f.plan2Ref, { requestId: 'w2-agent-candidate-foreign' });
+    if (proposedForeign.status !== 'committed') throw Error(`second Agent propose failed: ${JSON.stringify(proposedForeign)}`);
+    const foreign = proposedForeign.value;
     const applied = await f.applyAsWorkRun(foreign.ref, foreign.revision,
       { requestId: 'w2-agent-apply-foreign', expected: [] });
     // TARGET RED: the second Run's candidate must be forbidden, not adopted.
@@ -236,14 +239,13 @@ describe('W2 Agent authorization rejects', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ status: 'rejected', code: 'forbidden' });
   });
 
-  it.each(['initial', 'foreign-source', 'v1'] as const)(
+  it.each(['initial', 'foreign-source'] as const)(
     'Agent propose rejects a %s candidate before any Plan commit', async variant => {
       const f = await make();
       const draft = f.futureDraft(`w2-outside-scope-${variant}`);
-      const basedOn = variant === 'initial' ? null : variant === 'foreign-source' ? f.plan2Ref : f.planRef;
-      const { taskRelations: _relations, inputRequirements: _inputs, ...legacyDraft } = draft;
+      const basedOn = variant === 'initial' ? null : f.plan2Ref;
       const request = await f.buildAgentProposeRequest(f.goalRef, f.planRef,
-        variant === 'v1' ? { ...legacyDraft, schemaVersion: 1 } : draft, basedOn,
+        draft, basedOn,
         { requestId: `w2-outside-scope-${variant}` });
       let commits = 0;
       const records: typeof f.records = { ...f.records, async commit(prepared) {
@@ -254,7 +256,7 @@ describe('W2 Agent authorization rejects', () => {
         now: () => '2026-09-26T00:00:00.000Z', eventId: () => `w2-outside-scope-${variant}-event` });
       const result = await plans.proposePlan(f.ctxWork, request);
       expect(result, JSON.stringify(result)).toMatchObject({ status: 'rejected',
-        code: variant === 'initial' ? 'forbidden' : variant === 'foreign-source' ? 'not_found' : 'unsupported' });
+        code: variant === 'initial' ? 'forbidden' : 'not_found' });
       expect(commits, 'out-of-scope candidates never reach Store commit').toBe(0);
     });
 
@@ -382,10 +384,11 @@ describe('W2 Agent identity and replay', () => {
 
   it('exact apply replays its original receipt after terminal/revocation; changed Plan/Proposal pins conflict', async () => {
     const f = await make();
-    const candidate = await f.seedAgentCandidate({
-      draft: editedDraft(f, 'w2-agent-plan-replay', 'implement-b', 'Replay B'),
-      basedOn: f.planRef, proposalId: 'w2-agent-candidate-replay',
-    });
+    const proposedCandidate = await f.proposeAsWorkRun(
+      editedDraft(f, 'w2-agent-plan-replay', 'implement-b', 'Replay B'), f.planRef,
+      { requestId: 'w2-agent-candidate-replay' });
+    if (proposedCandidate.status !== 'committed') throw Error(`Agent propose failed: ${JSON.stringify(proposedCandidate)}`);
+    const candidate = proposedCandidate.value;
     const expected: VersionPin[] = [...await f.callerPins(), { ref: candidate.ref, revision: candidate.revision }];
     const options = { requestId: 'w2-agent-replay', expected };
     const first = await f.applyAsWorkRun(candidate.ref, candidate.revision, options);
@@ -462,10 +465,11 @@ describe('W2 Agent identity and replay', () => {
 
   it('a signal aborted after the actual commit preserves that invocation committed result', async () => {
     const f = await make();
-    const candidate = await f.seedAgentCandidate({
-      draft: editedDraft(f, 'w2-agent-plan-late-cancel', 'implement-b', 'Late cancel B'),
-      basedOn: f.planRef, proposalId: 'w2-agent-candidate-late',
-    });
+    const proposedCandidate = await f.proposeAsWorkRun(
+      editedDraft(f, 'w2-agent-plan-late-cancel', 'implement-b', 'Late cancel B'), f.planRef,
+      { requestId: 'w2-agent-candidate-late' });
+    if (proposedCandidate.status !== 'committed') throw Error(`Agent propose failed: ${JSON.stringify(proposedCandidate)}`);
+    const candidate = proposedCandidate.value;
     const controller = new AbortController();
     let committed = false;
     const records: typeof f.records = { ...f.records, async commit(prepared) {

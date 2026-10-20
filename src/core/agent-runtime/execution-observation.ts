@@ -527,8 +527,8 @@ export function createExecutionObservation(deps: ExecutionObservationDependencie
         return rejected('unavailable', 'the persisted locator disagrees with the claim Session mapping');
       }
       const auth = record.run.executionAuthorization;
-      if (auth === undefined || !('schemaVersion' in auth) || auth.schemaVersion !== 2) {
-        // No formal V2 binding yet: there is no Kernel run to reconcile.
+      if (auth === undefined) {
+        // No V2 binding yet: there is no Kernel run to reconcile.
         return { status: 'ready', value: record };
       }
       const v2Auth: ExecutionAuthorizationV2 = auth;

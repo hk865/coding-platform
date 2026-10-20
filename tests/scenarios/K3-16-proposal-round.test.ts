@@ -19,7 +19,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
-import { answerCard, needsDecisionCard, queueOf, reviewOf } from './support/review-card-round.js';
+import { answerCard, needsDecisionCard, proposalRound, queueOf, reviewOf } from './support/review-card-round.js';
 import { preparedOf, redrivePolicy, toolOutputJson } from './support/common.js';
 import { preparedManifestOf } from './support/brief.js';
 import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
@@ -38,21 +38,8 @@ import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-revie
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 // The blocking `shell` stand-in (K3 §5.1): keeps the call in flight until the crash.
@@ -121,15 +108,12 @@ describe('K3-16 the real proposal round', () => {
         args: { item: 2, command: 'echo nope', cwd: null, rationale: 'not a proposal target' } }] },
       { kind: 'text', text: 'k3-16 the proposal round finished' },
     ]);
-    const root = await openReviewWorkRoot(h, model);
+    const round = await proposalRound(h, { model, select: 'k3-16-case1-proposal',
+      requestId: 'k3-16-case1-proposal-start' });
     try {
-      const stop = await driveReviewUntil(root, h.select('k3-16-case1-proposal', AG2B_WORK_TASK_ID), performs('start'));
-      const prepared = preparedOf(stop.stopped);
-      expect(prepared.envelope.permissions.tools)
-        .toEqual(['read', 'run_readonly_command', 'propose_safer_method']);
-      expect(prepared.envelope.permissions.writeScope).toEqual([]);
+      expect(round.prepared.envelope.permissions.writeScope).toEqual([]);
 
-      const manifest = await preparedManifestOf(h, prepared.envelope.bundleRef);
+      const manifest = await preparedManifestOf(h, round.prepared.envelope.bundleRef);
       expect(manifest.unknownCallReview).toMatchObject({
         phase: 'proposal', targets: [1], personText: NOTE,
         annotations: [{ path: null, text: ANNOTATION_TEXT }], platformTargets: [],
@@ -140,8 +124,7 @@ describe('K3-16 the real proposal round', () => {
       expect(manifest.input).toContain(`- 批注（记录）：${ANNOTATION_TEXT}`);
       expect(manifest.input).not.toContain('### 要核对的调用');
 
-      const started = await root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID,
-        requestId: 'k3-16-case1-proposal-start' });
+      const started = await round.start();
       expect(started).toMatchObject({ status: 'ready' });
 
       // The tool result receives the write (receipt), and the outside alias is a
@@ -158,7 +141,7 @@ describe('K3-16 the real proposal round', () => {
       expect(written).toMatchObject({ status: 'ready', value: { status: 'awaiting_proposal',
         proposals: [{ alias: 1, command: NEW_COMMAND, cwd: '.', rationale: 'run the tests serially instead' }] } });
     } finally {
-      await root.close();
+      await round.close();
     }
 
     const settled = await h.advance(h.select('k3-16-case1-settle', AG2B_WORK_TASK_ID),

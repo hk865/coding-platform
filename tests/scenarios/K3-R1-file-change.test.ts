@@ -6,9 +6,7 @@
  * call (`edit-tool.js:118-128`), so two in-flight edits cannot be one batch.
  * The R1 row is therefore covered by two single-call cases (`replace` and
  * `create`), each with a stand-in that keeps the REAL class and capabilities
- * and only blocks. The older two-entry case is kept as an INJECTION example
- * (not R1): a read-only, independent stand-in that makes the Kernel batch both
- * calls, so a two-item review can be exercised without claiming an R1 flow.
+ * and only blocks.
  *
  * K3-04 replace/create assertions:
  *  - RUN-25 (W-26) and one `compare_in_continuation` item each;
@@ -16,8 +14,8 @@
  *    unified diff with the hand-computed content, <=2,000 units;
  *  - the prepared manifest's `workspaceBaseline` is an Artifact ref, not content.
  * The Host-denied file absence, the git-ignored directory handling and the
- * `notVisible` sentence live in the injection example (they are unaffected by
- * the edit class) and in the focused L5/L6 cases.
+ * `notVisible` sentence are asserted in the replace case (the pre-start hook
+ * writes the ignored directory before the first advance).
  */
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -136,6 +134,8 @@ type SingleEditOptions = {
   path: string;
   callOldText: string;
   callNewText: string;
+  /** Runs after `HostScenario.open` and before the first `h.advance`. */
+  beforeStart?: (root: string) => Promise<void>;
   /** Runs while the single edit call is in flight. */
   during: (root: string) => Promise<void>;
 };
@@ -143,8 +143,10 @@ type SingleEditOptions = {
 /** One in-flight edit with the REAL class: crash (RUN-25), read the record and the prepared note. */
 async function driveSingleEdit(options: SingleEditOptions): Promise<{
   review: UnknownCallReviewV1; brief: ContinuationBriefV1; note: string;
+  manifest: Awaited<ReturnType<typeof preparedManifestOf>>;
 }> {
   const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
+  if (options.beforeStart !== undefined) await options.beforeStart(h.root);
   const toStart = await h.advance(h.select(options.label, AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
   const prepared = preparedOf(toStart.next);
 
@@ -179,20 +181,35 @@ async function driveSingleEdit(options: SingleEditOptions): Promise<{
   const manifest = await preparedManifestOf(h, continued.envelope.bundleRef);
   const brief = manifest.continuationBrief;
   if (brief === undefined) throw new Error('the prepared manifest must carry the continuation brief');
-  return { review, brief, note: renderContinuationBriefZh(brief, continuationBriefDigest(brief)) };
+  return { review, brief, note: renderContinuationBriefZh(brief, continuationBriefDigest(brief)), manifest };
 }
 
 describe('K3 R1 file change (K3-04)', () => {
   it('K3-04 (replace, L5/L6): one in-flight replace of a clean tracked file is modified and carries the hand-computed diff', async () => {
-    const { review, brief, note } = await driveSingleEdit({ label: 'k3-04-replace', mode: 'replace', path: 'src/module.ts',
+    const { review, brief, note, manifest } = await driveSingleEdit({ label: 'k3-04-replace', mode: 'replace', path: 'src/module.ts',
       callOldText: 'SCENARIO_GIT_BASELINE', callNewText: 'K3_CHANGED',
+      beforeStart: async (root) => {
+        // A git-ignored directory: write it and exclude it from git (an earlier
+        // completed command's write). It must appear only in `notVisible`.
+        await appendFile(join(root, '.git', 'info', 'exclude'), 'k3-04-ignored/\n');
+        await mkdir(join(root, 'k3-04-ignored'), { recursive: true });
+        await writeFile(join(root, 'k3-04-ignored', 'note.txt'), 'written into a git-ignored directory\n');
+      },
       during: async (root) => { await writeFile(join(root, 'src', 'module.ts'), CHANGED); } });
 
     expect(review.items).toHaveLength(1);
+    expect(review.items.map(item => item.toolName)).toEqual(['edit']);
+    expect(review.items.map(item => item.kind)).toEqual(['file_edit']);
     expect(review.items.map(item => item.observed)).toEqual([
       { verdict: 'compare_in_continuation', by: 'platform' },
     ]);
     expect(review.workspace).toMatchObject({ status: 'captured', runBaselineKnown: true });
+    // The git-ignored directory is listed in notVisible, and the ignored file is nowhere.
+    expect(JSON.stringify(review)).not.toContain('k3-04-ignored/note.txt');
+    if (review.workspace.status === 'captured') {
+      expect(review.workspace.notVisible).toContain('k3-04-ignored/');
+      expect(review.workspace.sample.map(entry => entry.path)).not.toContain('k3-04-ignored/note.txt');
+    }
 
     const section = brief.unknownCallReview;
     expect(section).not.toBeNull();
@@ -202,106 +219,9 @@ describe('K3 R1 file change (K3-04)', () => {
     expect(file?.diff?.text).toBe(EXPECTED_DIFF);
     expect(file?.diff?.truncated).toBe(false);
     expect((file?.diff?.text.length ?? 0)).toBeLessThanOrEqual(2_000);
+    expect(section.workspace.notVisible).toContain('k3-04-ignored/');
     expect(note).toContain('有改动');
     expect(note).toContain('- 不在变动清单里，不证明没做。');
-  }, 180_000);
-
-  it('K3-04 (create, L5/L6): one in-flight create of an untracked file is added', async () => {
-    const { review, brief } = await driveSingleEdit({ label: 'k3-04-create', mode: 'create', path: 'src/new-file.txt',
-      callOldText: '', callNewText: CREATED,
-      during: async (root) => { await writeFile(join(root, 'src', 'new-file.txt'), CREATED); } });
-
-    expect(review.items).toHaveLength(1);
-    expect(review.items.map(item => item.observed)).toEqual([
-      { verdict: 'compare_in_continuation', by: 'platform' },
-    ]);
-
-    const section = brief.unknownCallReview;
-    expect(section).not.toBeNull();
-    if (section === null || section === undefined) return;
-    const file = section.items[0]!.files.find(candidate => candidate.path === 'src/new-file.txt');
-    expect(file).toMatchObject({ path: 'src/new-file.txt', mode: 'create', change: 'added' });
-  }, 180_000);
-
-  it('injection example (not R1): a read-only independent stand-in makes a two-entry review reachable', async () => {
-    const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    // A git-ignored directory: write it and exclude it from git (an earlier
-    // completed command's write). It must appear only in `notVisible`.
-    await appendFile(join(h.root, '.git', 'info', 'exclude'), 'k3-04-ignored/\n');
-    await mkdir(join(h.root, 'k3-04-ignored'), { recursive: true });
-    await writeFile(join(h.root, 'k3-04-ignored', 'note.txt'), 'written into a git-ignored directory\n');
-
-    const toStart = await h.advance(h.select('k3-04', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
-    const prepared = preparedOf(toStart.next);
-
-    editSeam.arm();
-    const model = createScriptedModel([{ kind: 'calls', calls: [
-      { callId: 'k3-04-replace', name: 'edit', args: { mode: 'replace', path: 'src/module.ts',
-        oldText: 'SCENARIO_GIT_BASELINE', newText: 'K3_CHANGED' } },
-      { callId: 'k3-04-create', name: 'edit', args: { mode: 'create', path: 'src/new-file.txt', newText: CREATED } },
-    ] }]);
-    const root = await openWorkRoot(h, model);
-    let running: Promise<unknown> | null = null;
-    let report: Awaited<ReturnType<HostScenario['restart']>>;
-    try {
-      running = root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID, requestId: 'k3-04-start' });
-      await editSeam.waitForCall();
-      // The edits are "in flight": the workspace already shows their effects.
-      await writeFile(join(h.root, 'src', 'module.ts'), CHANGED);
-      await writeFile(join(h.root, 'src', 'new-file.txt'), CREATED);
-      report = await h.restart({ crash: true });
-    } finally {
-      editSeam.release();
-      await running?.catch(() => undefined);
-      await root.close();
-    }
-
-    const runRef = prepared.claim.runRef;
-    expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
-      { ref: JSON.stringify(runRef), row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
-        autoCleanup: { applied: true } }] } });
-
-    const read = await h.post<ReadResult<UnknownCallReviewV1>>('unknown-call-reviews/read', plain(AG2B_SCOPE, { runRef }));
-    expect(read.status).toBe('ready');
-    if (read.status !== 'ready') return;
-    const review = read.value;
-    // Two file-edit items, both `compare_in_continuation`.
-    expect(review.items).toHaveLength(2);
-    expect(review.items.map(item => item.toolName)).toEqual(['edit', 'edit']);
-    expect(review.items.map(item => item.kind)).toEqual(['file_edit', 'file_edit']);
-    expect(review.items.map(item => item.observed)).toEqual([
-      { verdict: 'compare_in_continuation', by: 'platform' },
-      { verdict: 'compare_in_continuation', by: 'platform' },
-    ]);
-    // The git-ignored directory is listed in notVisible, and the ignored file is nowhere.
-    expect(JSON.stringify(review)).not.toContain('k3-04-ignored/note.txt');
-    expect(review.workspace).toMatchObject({ status: 'captured', runBaselineKnown: true });
-    if (review.workspace.status === 'captured') {
-      expect(review.workspace.notVisible).toContain('k3-04-ignored/');
-      expect(review.workspace.sample.map(entry => entry.path)).not.toContain('k3-04-ignored/note.txt');
-    }
-
-    // The continuation note: both paths, the hand-computed diff, the fixed sentence, no protected name.
-    const toContinue = await h.advance(h.select('k3-04', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
-    const continued = preparedOf(toContinue.next);
-    const manifest = await preparedManifestOf(h, continued.envelope.bundleRef);
-    const brief = manifest.continuationBrief;
-    if (brief === undefined) throw new Error('the prepared manifest must carry the continuation brief');
-    const note = renderContinuationBriefZh(brief, continuationBriefDigest(brief));
-    const section = brief.unknownCallReview;
-    expect(section).not.toBeNull();
-    if (section === null || section === undefined) return;
-
-    const replaceItem = section.items.find(item => item.files.some(file => file.path === 'src/module.ts'));
-    const createItem = section.items.find(item => item.files.some(file => file.path === 'src/new-file.txt'));
-    expect(replaceItem?.files[0]).toMatchObject({ path: 'src/module.ts', mode: 'replace', change: 'modified' });
-    expect(createItem?.files[0]).toMatchObject({ path: 'src/new-file.txt', mode: 'create', change: 'added' });
-    const replaceFile = replaceItem?.files[0];
-    expect(replaceFile?.diff?.text).toBe(EXPECTED_DIFF);
-    expect(replaceFile?.diff?.truncated).toBe(false);
-    expect((replaceFile?.diff?.text.length ?? 0)).toBeLessThanOrEqual(2_000);
-    expect(note).toContain('- 不在变动清单里，不证明没做。');
-    expect(section.workspace.notVisible).toContain('k3-04-ignored/');
     // The Host-denied file appears nowhere, not even its name.
     // L5 (spec line 204; contract line 810) requires the stored capture's
     // `notVisible` to carry the protected *prefix* `.evaluator`, and that
@@ -316,9 +236,25 @@ describe('K3 R1 file change (K3-04)', () => {
       ref: { kind: 'artifact', contentType: 'application/vnd.platform.workspace-baseline+json' },
       digest: expect.any(String) });
     expect(manifest.workspaceBaseline).not.toHaveProperty('dirty');
-
-    // The independent batch started both `edit` calls before either handler
-    // ran, so both are held (and both are `running` in the crashed Kernel).
-    expect(editSeam.calls.map(call => call.callId)).toEqual(['k3-04-replace', 'k3-04-create']);
   }, 180_000);
+
+  it('K3-04 (create, L5/L6): one in-flight create of an untracked file is added', async () => {
+    const { review, brief } = await driveSingleEdit({ label: 'k3-04-create', mode: 'create', path: 'src/new-file.txt',
+      callOldText: '', callNewText: CREATED,
+      during: async (root) => { await writeFile(join(root, 'src', 'new-file.txt'), CREATED); } });
+
+    expect(review.items).toHaveLength(1);
+    expect(review.items.map(item => item.toolName)).toEqual(['edit']);
+    expect(review.items.map(item => item.kind)).toEqual(['file_edit']);
+    expect(review.items.map(item => item.observed)).toEqual([
+      { verdict: 'compare_in_continuation', by: 'platform' },
+    ]);
+
+    const section = brief.unknownCallReview;
+    expect(section).not.toBeNull();
+    if (section === null || section === undefined) return;
+    const file = section.items[0]!.files.find(candidate => candidate.path === 'src/new-file.txt');
+    expect(file).toMatchObject({ path: 'src/new-file.txt', mode: 'create', change: 'added' });
+  }, 180_000);
+
 });

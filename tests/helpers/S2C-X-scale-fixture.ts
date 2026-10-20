@@ -48,22 +48,16 @@
  */
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
-import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { TaskClaim } from '../../src/core/work-graph/model/claim-contracts.js';
-import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
-import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
-import type { GoalRecordTransactionPort, StoreResult } from '../../src/core/record-store/ports.js';
-import type {
-  OrderedLookupRequest, RecordCountRequest, RecordLookupPort, RecordLookupRequest,
-  RecordOrderedLookupPort, RecordCountPort,
-} from '../../src/core/record-store/lookup-ports.js';
+import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-execution.js';
+import type { GoalRecordTransactionPort } from '../../src/core/record-store/ports.js';
+import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { SessionAnomalyPort } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import type { SessionDutyReadPort, WorkLineReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
 import type { WorkLineReaderDeps, WorkLineStore } from '../../src/core/work-graph/views/work-line-reader.js';
-import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
@@ -74,15 +68,14 @@ import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/ses
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
-import { MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { SESSION_MAILBOX_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { sessionAnomalyRefKey } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import {
-  assembleLineBriefs, createWorkLineReader, LINE_HISTORY_READ_BUDGET,
+  createWorkLineReader, LINE_HISTORY_READ_BUDGET,
 } from '../../src/core/work-graph/views/work-line-reader.js';
-import { completedEvent, crashedEvent, L_HOST, type RunSupport } from './S2C-L-runs-support.js';
+import { completedEvent, crashedEvent, L_HOST } from './S2C-L-runs-support.js';
 import { decisionReadsOver, openLineFixture, type LineFixture } from './S2C-L-line-support.js';
-import type { ClaimFixtureKind } from './task-claim-fixture.js';
+import { preparationHost, prepareTaskForReal, type ClaimFixtureKind } from './task-claim-fixture.js';
 
 /** P9: only the 2C-25 scale work uses this timeout. */
 export const S2C_SCALE_TIMEOUT_MS = 1_800_000;
@@ -104,11 +97,9 @@ export type ScaleFixture = {
   activePredecessors: SessionRef[];
   /** The real production-shaped reader (real undelivered/anomaly/queue factories). */
   reader: WorkLineReadPort;
-  /** An unlimited-budget reader (amendment A2). */
-  readerUnlimited: WorkLineReadPort;
   /** A reader over an arbitrary records surface and budget. */
   readerWith(records: WorkLineStore, budget?: number): WorkLineReadPort;
-  /** The reader dependencies (for the A2 per-line budget measurement). */
+  /** The reader dependencies. */
   deps: WorkLineReaderDeps;
   close(): Promise<void>;
 };
@@ -118,7 +109,6 @@ const AT = '2026-09-24T00:00:00.000Z';
 const KERNEL_STORE = { adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store' };
 const DEFAULT_ROLE = { kind: 'legacy_template' as const, templateId: 'builder', templateRevision: '1' };
 const MAIL_PERMISSIONS = { ...L_HOST.permissions, tools: [...SESSION_MAILBOX_TOOL_NAMES] };
-const UNLIMITED = 1_000_000_000;
 
 const scaleWorkTasks = Array.from({ length: 100 }, (_value, index) => ({
   taskId: `work-${String(index).padStart(3, '0')}`, title: `Scale work ${String(index)}`,
@@ -147,32 +137,13 @@ function workContext(base: CoreCallContext, runRef: RunRef, roleBinding: RunSnap
 async function prepareWithPermissions(
   f: LineFixture, claim: TaskClaim, run: RunSnapshot, permissions: typeof L_HOST.permissions,
 ): Promise<PreparedTaskExecution> {
-  const input = 'S2C-X scale mailbox input';
-  const inputDigest = artifactBodyDigest(input);
-  const manifest: PreparedTaskManifestV1 = {
-    schemaVersion: 1, kind: 'task_execution', claim,
-    role: { status: 'absent', roleId: 'builder', reason: 'legacy template has no installed role spec' },
-    hostTemplate: L_HOST.hostTemplate, roleBinding: run.roleBinding,
-    hostConfigurationRevision: L_HOST.configurationRevision, sessionRole: DEFAULT_ROLE,
-    workspaceSnapshot: { workspaceId: claim.workspaceId, revision: 1 },
-    permissions, budget: f.base.budget, selectedTaskInputs: [], materialBasis: null,
-    materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [], sourceRefs: [], input, inputDigest,
-  };
-  const manifestJson = JSON.stringify(manifest);
-  const stored = await f.runs.bodies.put({ body: manifestJson, contentType: MANIFEST_CONTENT_TYPE,
-    sourceRefs: [{ kind: 'workspace', refId: claim.workspaceId, revision: '1' }],
-    origin: { kind: 'run', owner: claim.runRef }, requestedAt: AT });
-  if (stored.status !== 'ready') throw new Error(`S2C-X manifest store failed: ${JSON.stringify(stored)}`);
-  const envelope: TaskEnvelopeV1 = {
-    schemaVersion: 1, envelopeId: `s2c-x-envelope-${claim.runRef.runId}`,
-    projectId: claim.task.projectId, workspaceId: claim.workspaceId, goalId: claim.task.goalId,
-    taskId: claim.task.taskId, runRef: claim.runRef, attemptRef: claim.attemptRef, planRef: claim.planRef,
-    roleBinding: run.roleBinding, workspaceSnapshot: { workspaceId: claim.workspaceId, revision: 1 },
-    permissions, budget: f.base.budget, sourceRefs: [], bundleRef: stored.value.ref,
-  };
-  return { kind: 'task', claim, envelope,
-    inputBinding: { schemaVersion: 1, inputDigest, manifestDigest: artifactBodyDigest(manifestJson),
-      materialAccessRefs: [], deliveryRefs: [] } };
+  const real = await prepareTaskForReal(f.base, {
+    bodies: f.runs.bodies, runRef: claim.runRef, now: () => AT,
+    requestId: `s2c-x-prepare-${claim.runRef.runId}`,
+    host: preparationHost({ configurationRevision: L_HOST.configurationRevision,
+      permissions, hostTemplate: L_HOST.hostTemplate }),
+  });
+  return real.prepared;
 }
 
 /** The real entry owner, used only to grant the mailbox tools to R and its replier. */
@@ -232,72 +203,6 @@ function realDeps(f: LineFixture, records: WorkLineStore, budget?: number): Work
     decisions: decisionReadsOver(f.base, records),
     ...(budget === undefined ? {} : { historyReadBudget: budget }),
   };
-}
-
-// -------------------------------------------------------------------------- //
-// A2 instrument: count exactly the store calls the reader makes               //
-// -------------------------------------------------------------------------- //
-
-export type ReaderCall =
-  | { kind: 'lookup'; index: string }
-  | { kind: 'lookupOrdered'; index: string }
-  | { kind: 'countLookup'; index: string }
-  | { kind: 'readMany'; records: number }
-  | { kind: 'eventAt' };
-
-/** Wrap a store and log every `lookup`/`lookupOrdered`/`countLookup`/`readMany`/`eventAt` call. */
-export function countingRecords(store: WorkLineStore): { records: WorkLineStore; calls: ReaderCall[] } {
-  const calls: ReaderCall[] = [];
-  const records = {
-    ...store,
-    async readMany(refKeys: readonly string[]): Promise<Awaited<ReturnType<WorkLineStore['readMany']>>> {
-      calls.push({ kind: 'readMany', records: refKeys.length });
-      return store.readMany(refKeys);
-    },
-    async eventAt(cursor: Parameters<WorkLineStore['eventAt']>[0]): Promise<Awaited<ReturnType<WorkLineStore['eventAt']>>> {
-      calls.push({ kind: 'eventAt' });
-      return store.eventAt(cursor);
-    },
-    async lookup(request: RecordLookupRequest): Promise<Awaited<ReturnType<WorkLineStore['lookup']>>> {
-      calls.push({ kind: 'lookup', index: request.index });
-      return store.lookup(request);
-    },
-    async lookupOrdered(request: OrderedLookupRequest): Promise<Awaited<ReturnType<WorkLineStore['lookupOrdered']>>> {
-      calls.push({ kind: 'lookupOrdered', index: request.index });
-      return store.lookupOrdered(request);
-    },
-    async countLookup(request: RecordCountRequest): Promise<Awaited<ReturnType<WorkLineStore['countLookup']>>> {
-      calls.push({ kind: 'countLookup', index: request.index });
-      return store.countLookup(request);
-    },
-  } as unknown as WorkLineStore;
-  return { records, calls };
-}
-
-/** The unlimited budget used by the A2 measurement. */
-export const S2C_UNLIMITED_BUDGET = 1_000_000_000;
-
-/** The accepted store calls of one line at one budget (the A2 measurement unit). */
-export async function countAcceptedCalls(f: ScaleFixture, head: SessionRef, budget: number): Promise<number> {
-  const { decisions: _decisions, ...baseDeps } = f.deps;
-  const counted = countingRecords(f.deps.records);
-  await assembleLineBriefs({ ...baseDeps, records: counted.records, historyReadBudget: budget }, f.ctx,
-    { workspace: f.scope, heads: [head] });
-  return counted.calls.length;
-}
-
-/**
- * The L1b budgeted-part reads of one line: assemble it alone with an unlimited
- * budget and again with budget 0; the difference is exactly the calls that went
- * through the line's own counting wrapper. R is measured by its caller with
- * budget 2 because its budget-0 wrapped failure also suppresses open-work reads
- * (the reported 2C-25 (4) reader defect).
- */
-export async function measureBudgetedReads(f: ScaleFixture, head: SessionRef): Promise<number> {
-  // The decision queue is shared and identical in both runs, so leaving it out
-  // of this per-line measurement does not change the difference (2C-03/2C-12
-  // still read the real queue).
-  return (await countAcceptedCalls(f, head, S2C_UNLIMITED_BUDGET)) - (await countAcceptedCalls(f, head, 0));
 }
 
 // -------------------------------------------------------------------------- //
@@ -493,7 +398,6 @@ export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFi
     kind, f, ctx, scope, x, r, w, z, archivedHeads, activeCopies, activeSuccessors, activePredecessors,
     activeHeads: [...startingHeads, ...activeSuccessors, x, r, w, z, replier, picker, ...idleFillerHeads],
     reader: createWorkLineReader(deps),
-    readerUnlimited: createWorkLineReader({ ...deps, historyReadBudget: UNLIMITED }),
     readerWith: (records, budget) => createWorkLineReader(realDeps(f, records, budget)),
     deps,
     close: async () => { await f.close(); },
@@ -519,5 +423,3 @@ async function createArchivedCopy(f: LineFixture, requestId: string, asked: Sess
   if (registered.status !== 'committed') throw new Error(`S2C-X archived copy registration failed: ${JSON.stringify(registered)}`);
   return { projectId: registered.value.ref.projectId, sessionId: registered.value.ref.sessionId };
 }
-
-export type { RunSupport, StoreResult, RecordLookupPort, RecordOrderedLookupPort, RecordCountPort, GoalRef, SessionRef };

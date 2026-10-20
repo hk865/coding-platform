@@ -39,11 +39,13 @@ import {
 import { CORE_API_PREFIX, PLATFORM_TOKEN_HEADER, PLATFORM_TOKEN_PLACEHOLDER } from '../../src/app/core-http-types.js';
 import { createWorkbenchServer, type WorkbenchServer } from '../../src/app/server.js';
 import { createLocalWorkbenchHost, type LocalWorkbenchHost } from '../../src/app/host.js';
+import { acquireHostInstanceLease } from '../../src/app/host-instance-lease.js';
 import { UI_PLATFORM_TOKEN_META_NAME } from '../../src/ui/api/protocol.js';
 import { createActivityReadModel } from '../../src/core/work-graph/views/activity-read-model.js';
 import { createTrackReadModel } from '../../src/core/work-graph/views/track-read-model.js';
 import { createTaskStateTimeline } from '../../src/core/work-graph/views/task-state-timeline.js';
 import { openS2BTrackFixture, type S2BTrackFixture } from '../helpers/S2B-track-fixture.js';
+import { readPageToken } from '../helpers/AG2b-collaboration-fixture.js';
 import { openS2BTimelineFixture, type S2BTimelineFixture } from '../helpers/S2B-task-timeline-fixture.js';
 import { countedFacts } from '../helpers/S2B-activity-fixture.js';
 import { B2_AT } from '../helpers/B2-execution-fixture.js';
@@ -105,12 +107,6 @@ async function postWithToken(base: string, token: string, suffix: string, scope:
   return await response.json();
 }
 
-async function readPageToken(base: string): Promise<string> {
-  const html = await (await fetch(base)).text();
-  const match = new RegExp(`<meta name="${UI_PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(html);
-  if (match?.[1] === undefined) throw new Error('the page did not expose the runtime token meta');
-  return match[1];
-}
 
 async function placeholderPublicDirectory(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 's2b-35-public-'));
@@ -198,9 +194,9 @@ async function startHost(actor: { kind: 'human' | 'system'; id: string }, scope:
   await mkdir(join(directory, 'src'), { recursive: true });
   await writeFile(join(directory, 'README.md'), '# s2b-35 host workspace\n');
   if (lock) {
-    await writeFile(join(directory, 'host-instance.lock'), JSON.stringify({
-      pid: process.pid, hostInstanceId: 's2b-35-other-host', startedAt: B2_AT,
-    }));
+    // The live peer is the real lease this process would hold: acquire it through
+    // the production path and keep it, so the next Host reads a live pid.
+    await acquireHostInstanceLease({ directory, now: () => B2_AT });
   }
   const host = await createLocalWorkbenchHost({
     storage: { kind: 'sqlite', directory },

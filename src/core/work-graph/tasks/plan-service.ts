@@ -767,21 +767,19 @@ type TaskRowIndex = {
 function buildTaskRowIndex(plan: PlanRevisionSnapshot): TaskRowIndex {
   const relationsByTask = new Map<string, TaskRelationV2[]>();
   const inputsByTask = new Map<string, TaskInputRequirementV2[]>();
-  if (plan.schemaVersion === 2) {
-    for (const relation of plan.taskRelations ?? []) {
-      const endpoints = relation.fromTaskId === relation.toTaskId
-        ? [relation.fromTaskId] : [relation.fromTaskId, relation.toTaskId];
-      for (const taskId of endpoints) {
-        const list = relationsByTask.get(taskId);
-        if (list === undefined) relationsByTask.set(taskId, [relation]);
-        else list.push(relation);
-      }
+  for (const relation of plan.taskRelations ?? []) {
+    const endpoints = relation.fromTaskId === relation.toTaskId
+      ? [relation.fromTaskId] : [relation.fromTaskId, relation.toTaskId];
+    for (const taskId of endpoints) {
+      const list = relationsByTask.get(taskId);
+      if (list === undefined) relationsByTask.set(taskId, [relation]);
+      else list.push(relation);
     }
-    for (const requirement of plan.inputRequirements ?? []) {
-      const list = inputsByTask.get(requirement.consumerTaskId);
-      if (list === undefined) inputsByTask.set(requirement.consumerTaskId, [requirement]);
-      else list.push(requirement);
-    }
+  }
+  for (const requirement of plan.inputRequirements ?? []) {
+    const list = inputsByTask.get(requirement.consumerTaskId);
+    if (list === undefined) inputsByTask.set(requirement.consumerTaskId, [requirement]);
+    else list.push(requirement);
   }
   return { relationsByTask, inputsByTask };
 }
@@ -974,8 +972,7 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
   const requeueBudget = coveringRequeueRef === null ? null
     : (facts.requeuesByTaskId.get(taskId) ?? []).find((requeue) => sameRef(requeue.ref, coveringRequeueRef))?.budget ?? null;
   // C7 (TD-4): the latest disposition change as the read Plan records it; no history walk.
-  const dispositionChange = plan.schemaVersion === 2
-    ? plan.dispositionRecord?.entries.find((entry) => entry.taskId === taskId) : undefined;
+  const dispositionChange = plan.dispositionRecord?.entries.find((entry) => entry.taskId === taskId);
   return {
     ref: { projectId: plan.ref.projectId, goalId, taskId },
     definition,
@@ -1139,7 +1136,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       || job.job.projectId !== wanted.projectId || job.job.workspaceId !== wanted.workspaceId) {
       return rejected('forbidden', 'the QueryJob is outside the requested answer scope');
     }
-    if (job.job.intent.execution?.kind !== 'initial_coordination') {
+    if (job.job.intent.execution.kind !== 'initial_coordination') {
       return rejected('invalid', 'the QueryJob intent is not an initial_coordination request');
     }
     if (!nonEmpty(job.job.goalId)) return rejected('incomplete', 'the QueryJob intent has no Goal');
@@ -2167,7 +2164,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const scope = { projectId: goalRef.projectId, workspaceId: goal.workspaceRef.workspaceId };
       runStopInputs = shown.map((run) => ({ run, pointedIntent: intents.intents.get(run.ref.runId) ?? null,
         fanOutIntentRef: controlIntentRefFor(GOAL_FAN_OUT_ACTOR, scope,
-          goalFanOutRequestId(goalRef, goal.desiredStateRevision ?? 1, run.ref, control)),
+          goalFanOutRequestId(goalRef, goal.desiredStateRevision, run.ref, control)),
         // D-7: the platform pauses or cancels a Run that never entered itself.
         capability: notEnteredEntryPhase(runControlNodeOf(run)) !== null ? { status: 'supported' as const } : capability }));
     }

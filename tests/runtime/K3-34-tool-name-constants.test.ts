@@ -56,13 +56,16 @@ describe('K3-34 tool-name constants', () => {
   });
 
   it('K3-34 holds every RESERVED_TOOL_NAMES member in the table after the mapping', () => {
-    expect(RESERVED_TOOL_NAMES.size).toBe(BUILTIN_TOOL_NAMES.size + 13);
+    // Counted by hand from the spec's L3 name table, less the deleted
+    // `project_index`: 3 builtin (`read`/`write`/`shell`) + `edit` + `check`
+    // + the 10 exploration names = 15.
+    expect(RESERVED_TOOL_NAMES.size).toBe(15);
     for (const name of RESERVED_TOOL_NAMES) {
       const kernel = kernelToolNameOf(name);
       expect([name, containedByHostStop(kernel)]).toEqual([name, true]);
     }
     // The exploration constant is exactly the table's row-1 exploration names.
-    expect([...EXPLORATION_TOOL_NAMES].sort()).toEqual(['code_index', 'cpp_index', 'list_files', 'project_index',
+    expect([...EXPLORATION_TOOL_NAMES].sort()).toEqual(['code_index', 'cpp_index', 'list_files',
       'project_source', 'python_index', 'read_material', 'read_source', 'search', 'source_excerpt', 'symbols']);
     for (const name of EXPLORATION_TOOL_NAMES) {
       expect([name, unknownCallKindOf(name), containedByHostStop(name)]).toEqual([name, 'read_only', true]);

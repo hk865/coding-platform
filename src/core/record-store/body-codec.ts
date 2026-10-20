@@ -2,22 +2,18 @@
  * Raw artifact body codec — the one old/new row boundary for the existing
  * `artifacts(key, record)` table (RecordStore §5).
  *
- * The stored row is the legacy shape plus a single additive canonical field:
- *   { ref, body, sourceRefs, ownerRunRef, origin? }
+ * The stored row carries its required canonical provenance:
+ *   { ref, body, sourceRefs, origin }
  *
- * `ownerRunRef` stays byte-compatible for old readers (a Run/QueryRun keeps its
- * full ref; a TaskAttempt or platform origin stores null). `origin` is the new
- * canonical provenance; a legacy row has none and is decoded from
- * `ownerRunRef`, and a null owner is never guessed into a principal. A legacy
- * origin may be decoded but can never be newly encoded.
+ * `origin` names a Run/TaskAttempt or a platform operation; a null owner is
+ * never guessed into a principal, and a row without an origin is corrupt.
  *
  * All physical validation lives here so the memory Map seam and the SQLite table
  * differ only in how a row is persisted:
  *  - an incomplete RawArtifactPut is `invalid` (the store maps an
  *    ArtifactBodyCodecError raised by `encodeArtifactBodyRow` to `invalid`);
- *  - a stored row whose JSON, schema, ref or body integrity does not hold, or
- *    whose canonical origin disagrees with its compatibility `ownerRunRef`, is
- *    `corrupt` (the store maps an ArtifactBodyCodecError raised by
+ *  - a stored row whose JSON, schema, origin, ref or body integrity does not
+ *    hold is `corrupt` (the store maps an ArtifactBodyCodecError raised by
  *    `decodeArtifactBodyRow` to `corrupt`), never `not_found` and never an
  *    empty body.
  *
@@ -26,7 +22,6 @@
  */
 import { ARTIFACT_MAX_SIZE_BYTES, artifactBodyDigest, artifactBodySize } from "../../contracts/artifact.js";
 import type { ArtifactOwnerRunRef, ArtifactRef } from "../../contracts/artifact.js";
-import { sameArtifactOwnerRunRef } from "../../contracts/material-access.js";
 import type { SourceRefV1, TaskAttemptRef } from "../../contracts/dispatch.js";
 import type { MaterialOrigin, RawArtifactPut, RawArtifactRecord } from "./body-ports.js";
 import { isJsonObject, isNonEmptyString, parseJsonObject } from "./record-codec.js";
@@ -151,23 +146,19 @@ export function artifactBodyKey(ref: Pick<ArtifactRef, "contentType" | "digest" 
 
 /**
  * One origin shape rule shared by the new-write boundary and the stored-row
- * reader. It rejects the decode-only legacy branch and any unknown kind, and
- * returns both the canonical origin and the compatibility `ownerRunRef` it must
- * agree with, so encode and decode never maintain two copies of the rule.
+ * reader. It rejects any unknown kind and returns the canonical origin, so
+ * encode and decode never maintain two copies of the rule.
  */
-type NormalizedOrigin = { origin: MaterialOrigin; ownerRunRef: ArtifactOwnerRunRef | null };
-
-function normalizeOrigin(value: unknown): NormalizedOrigin {
+function normalizeOrigin(value: unknown): MaterialOrigin {
   if (!isJsonObject(value)) reject("origin must be an object");
   const kind = value["kind"];
   if (kind === "run") {
     const owner = value["owner"];
     if (isOwnerRunRef(owner)) {
-      const cloned = cloneOwnerRunRef(owner);
-      return { origin: { kind: "run", owner: cloned }, ownerRunRef: cloned };
+      return { kind: "run", owner: cloneOwnerRunRef(owner) };
     }
     if (isTaskAttemptRef(owner)) {
-      return { origin: { kind: "run", owner: cloneTaskAttemptRef(owner) }, ownerRunRef: null };
+      return { kind: "run", owner: cloneTaskAttemptRef(owner) };
     }
     reject("run origin must carry a complete Run/QueryRun/TaskAttempt ref");
   }
@@ -183,39 +174,19 @@ function normalizeOrigin(value: unknown): NormalizedOrigin {
     const actor = value["actor"];
     if (!isActorRef(actor)) reject("platform origin actor must be a human/system actor");
     return {
-      origin: {
-        kind: "platform_operation",
-        projectId,
-        ...(workspaceId === undefined ? {} : { workspaceId }),
-        requestId,
-        actor: { kind: actor.kind, id: actor.id },
-      },
-      ownerRunRef: null,
+      kind: "platform_operation",
+      projectId,
+      ...(workspaceId === undefined ? {} : { workspaceId }),
+      requestId,
+      actor: { kind: actor.kind, id: actor.id },
     };
   }
-  if (kind === "legacy") reject("legacy origins cannot be written or stored explicitly");
   reject(`origin kind ${String(kind)} is not supported`);
 }
 
-/** A row with a canonical origin must carry the compatible owner authority. */
-function originOwnerMatches(value: unknown, expected: ArtifactOwnerRunRef | null): boolean {
-  if (expected === null) return value === null;
-  return isOwnerRunRef(value) && sameArtifactOwnerRunRef(value, expected);
-}
-
-function decodeOrigin(value: unknown, ownerRunRef: unknown): MaterialOrigin {
-  if (value === undefined) {
-    if (ownerRunRef === undefined || ownerRunRef === null) return { kind: "legacy", ownerRunRef: null };
-    if (!isOwnerRunRef(ownerRunRef)) {
-      reject("stored legacy ownerRunRef must be null or a complete Run/QueryRun ref");
-    }
-    return { kind: "legacy", ownerRunRef: cloneOwnerRunRef(ownerRunRef) };
-  }
-  const normalized = normalizeOrigin(value);
-  if (!originOwnerMatches(ownerRunRef, normalized.ownerRunRef)) {
-    reject("stored ownerRunRef does not match the canonical origin");
-  }
-  return normalized.origin;
+function decodeOrigin(value: unknown): MaterialOrigin {
+  if (value === undefined) reject("stored origin is required");
+  return normalizeOrigin(value);
 }
 
 /** New-write boundary: a complete input encodes a row; a legacy origin is refused. */
@@ -236,7 +207,7 @@ export function encodeArtifactBodyRow(input: RawArtifactPut): string {
     sourceRefs.push(cloneSourceRef(candidate));
   }
   if (!isNonEmptyString(raw["requestedAt"])) reject("put requestedAt must be a non-empty string");
-  const { ownerRunRef, origin } = normalizeOrigin(raw["origin"]);
+  const origin = normalizeOrigin(raw["origin"]);
   const sizeBytes = artifactBodySize(body);
   if (sizeBytes > ARTIFACT_MAX_SIZE_BYTES) {
     reject(`put body size ${sizeBytes} exceeds ${ARTIFACT_MAX_SIZE_BYTES}`);
@@ -244,7 +215,7 @@ export function encodeArtifactBodyRow(input: RawArtifactPut): string {
   const digest = artifactBodyDigest(body);
   const firstSource = sourceRefs[0]!;
   const ref: ArtifactRef = { kind: "artifact", contentType, digest, sizeBytes, source: cloneSourceRef(firstSource) };
-  return JSON.stringify({ ref, body, sourceRefs, ownerRunRef, origin });
+  return JSON.stringify({ ref, body, sourceRefs, origin });
 }
 
 /**
@@ -283,5 +254,5 @@ export function decodeArtifactBodyRow(json: string): RawArtifactRecord {
   if (artifactBodyDigest(body) !== ref.digest || artifactBodySize(body) !== ref.sizeBytes) {
     reject("stored body does not match its recorded digest/size");
   }
-  return { ref: cloneArtifactRef(ref), body, sourceRefs, origin: decodeOrigin(row["origin"], row["ownerRunRef"]) };
+  return { ref: cloneArtifactRef(ref), body, sourceRefs, origin: decodeOrigin(row["origin"]) };
 }

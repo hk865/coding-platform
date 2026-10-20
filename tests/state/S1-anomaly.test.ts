@@ -103,7 +103,7 @@ describe('S1-anomaly: the anchor machine and the Task archive label/next rows (S
     expect(result).not.toHaveProperty('next');
   });
 
-  it('UT19 only a claimed successor carries the anchor, so it is not picked up and the Task waits for dispatch', () => {
+  it('UT19/UT21 only a claimed successor carries the anchor, so it is not picked up and the Task waits for dispatch', () => {
     const anchor = newSessionAnomalyAnchorRecord(ANOMALY_INPUT);
     // A claim is not an entered execution: the reader contributes no `entered` entry.
     const view = deriveSessionAnomalyView(anchor, []);
@@ -127,15 +127,6 @@ describe('S1-anomaly: the anchor machine and the Task archive label/next rows (S
     expect(archive.pending).toEqual([]);
     expect(archive.label).toBeNull();
     expect(archive.next).toBeNull();
-  });
-
-  it('UT21 a cancelled successor that never entered carries the anchor but does not pick it up', () => {
-    const anchor = newSessionAnomalyAnchorRecord(ANOMALY_INPUT);
-    const view = deriveSessionAnomalyView(anchor, []);
-    expect(view.pickedUpBy).toBeNull();
-    const archive = archiveOf([view]);
-    expect(archive.label).toBe('中断，待核对');
-    expect(archive.next).toEqual({ kind: 'dispatch' });
   });
 
   it('UT22 a paused-interrupted Task with a pending anchor reads human_continue', () => {

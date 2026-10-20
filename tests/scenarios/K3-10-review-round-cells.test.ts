@@ -21,7 +21,7 @@ import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.j
 import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
 import { preparedOf, redrivePolicy } from './support/common.js';
 import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
-import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
+import { crashOneCommand } from './support/review-card-round.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { cleanupRestart, readExecution } from '../helpers/A2-restart-fixture.js';
@@ -38,21 +38,8 @@ import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js'
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 // The blocking `shell` stand-in (K3 §5.1): keeps the call in flight until the crash.
@@ -118,34 +105,13 @@ const K3_10_CELLS: readonly K310Cell[] = [
   { verdict: 'undetermined', crash: 'undetermined', reasons: ['undetermined', 'crash_undetermined'] },
 ];
 
-/** One `shell` call in flight, closed by RUN-25 on the crash restart; returns the original RunRef. */
-async function crashOneCommandRun(h: HostScenario, label: string,
-  shellArgs: Record<string, unknown> = { command: `${label} runs a program` }): Promise<RunRef> {
-  shellSeam.arm();
-  const modelA = createScriptedModel([{ kind: 'calls', calls: [
-    { callId: `${label}-shell`, name: 'shell', args: shellArgs }] }]);
-  const rootA = await openShellWorkRoot(h, modelA);
-  let runningA: Promise<unknown> | null = null;
-  let preparedA: ReturnType<typeof preparedOf>;
-  try {
-    const startA = await prepareOn(rootA, h.select(label, AG2B_WORK_TASK_ID));
-    preparedA = preparedOf(startA);
-    runningA = rootA.runtime.startRun(hostCtx(), { prepared: preparedA, consumerId: AG2B_CONSUMER_ID,
-      requestId: `${label}-start` });
-    await shellSeam.waitForCall();
-    await h.restart({ crash: true });
-  } finally {
-    shellSeam.release();
-    await runningA?.catch(() => undefined);
-    await rootA.close();
-  }
-  return preparedA.claim.runRef;
-}
-
 /** The real review round for one cell, then `settle_review`. */
 async function runReviewCell(h: HostScenario, cell: K310Cell): Promise<void> {
   const label = `k3-10-${cell.verdict}-${cell.crash}`;
-  const originalRunRef = await crashOneCommandRun(h, label);
+  const crashed = await crashOneCommand(h, { callId: `${label}-shell`, select: label,
+    requestId: `${label}-start`, shellArgs: { command: `${label} runs a program` } });
+  await crashed.release();
+  const originalRunRef = crashed.runRef;
 
   const created = await reviewOf(h, originalRunRef);
   expect(created.status).toBe('ready');
@@ -233,8 +199,11 @@ describe('K3-48 (二) capacity as a real review-round tool result', () => {
       // inventory; a single `shell` item with a long command alone stays far
       // below it). 155,169 bytes of `cwd` + the ~2,551-byte record overhead lands
       // ~1,000 bytes under B.
-      const originalRunRef = await crashOneCommandRun(h, label,
-        { command: `${label} runs a program`, cwd: 'p'.repeat(155_169) });
+      const crashed = await crashOneCommand(h, { callId: `${label}-shell`, select: label,
+        requestId: `${label}-start`,
+        shellArgs: { command: `${label} runs a program`, cwd: 'p'.repeat(155_169) } });
+      await crashed.release();
+      const originalRunRef = crashed.runRef;
 
       const before = await reviewOf(h, originalRunRef);
       expect(before.status).toBe('ready');

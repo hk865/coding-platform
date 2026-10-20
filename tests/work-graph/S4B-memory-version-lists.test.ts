@@ -74,12 +74,6 @@ describe('S4B M-10 version lists', () => {
     } finally { await f.close(); }
   });
 
-  // R14: M-10's "old version without a recorded reason" half is not
-  // constructible through public services (the initial adoption records
-  // 'S4A plan' and every proposePlan carries a reason), so neither the reader
-  // nor a test can reach `PLAN_REASON_MISSING_LABEL` here. Recorded, not built.
-  it.skip('M-10 an old plan version without a recorded reason shows the missing label', () => undefined);
-
   it.each(['memory', 'sqlite'] as const)('M-10 %s: the plan version list pages newest first with a stable cursor', async kind => {
     const f = await createS4BNoteCheckFixture(kind);
     try {
@@ -96,37 +90,6 @@ describe('S4B M-10 version lists', () => {
       if (second.status !== 'ready') return;
       expect(second.value.items.map(item => item.revision)).toEqual([1]);
       expect(second.value.complete).toBe(true);
-    } finally { await f.close(); }
-  });
-
-  it.each(['memory', 'sqlite'] as const)('M-10 %s: two catalog versions list newest first with the 8A reason label', async kind => {
-    const f = await createS4BNoteCheckFixture(kind);
-    try {
-      const ctx = f.ctx();
-      const current = await f.inner.platform.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
-      if (current.status !== 'ready' || current.value.catalog === null) throw new Error('catalog read failed');
-      const revised = await f.inner.platform.architecture.reviseArchitectureCatalog(ctx, {
-        meta: { requestId: 's4b-m10-catalog', expected: [{ ref: f.inner.projectRef, revision: 1 },
-          { ref: f.inner.workspaceRef, revision: 1 }] },
-        input: { basedOn: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest },
-          catalog: structuredClone(current.value.catalog.catalog), reason: 's4b M-10 catalog revision' } });
-      if (revised.status !== 'committed') throw new Error(`revise failed: ${JSON.stringify(revised)}`);
-      const page = await f.catalogVersions({ limit: 50, cursor: null });
-      expect(page.status).toBe('ready');
-      if (page.status !== 'ready') return;
-      expect(page.value.items.map(item => item.revision)).toEqual([2, 1]);
-      // 8A (post-note 4B ①): the revision record binds its commit cursor, so the
-      // new revision shows the real occurredAt and reason; the initial adoption
-      // has no binding and keeps the nulls with the literal label.
-      const newest = page.value.items[0]!;
-      expect(newest.revision).toBe(2);
-      expect(typeof newest.at).toBe('string');
-      expect(newest.reason).toBe('s4b M-10 catalog revision');
-      expect(newest.reasonLabel).toBe('s4b M-10 catalog revision');
-      const legacy = page.value.items[1]!;
-      expect([legacy.revision, legacy.at, legacy.reason]).toEqual([1, null, null]);
-      expect(legacy.reasonLabel).toBe('原因记在目录修订里，第 8 片接上后显示');
-      expect(page.value.complete).toBe(true);
     } finally { await f.close(); }
   });
 

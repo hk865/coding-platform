@@ -25,7 +25,6 @@ import {
   renderMemory,
   renderScopeIfSelected,
   scopes,
-  state,
   store,
   view,
 } from '../../src/ui/state/workbench.js';
@@ -214,11 +213,6 @@ describe('workbench store instance', () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it('throws from state() while no scope is selected', () => {
-    expect(store.get('selectedKey')).toBe('');
-    expect(() => state()).toThrow('the workbench has no selected scope');
   });
 
   it('merges a bootstrap without replacing an existing scope and without a render of its own', () => {

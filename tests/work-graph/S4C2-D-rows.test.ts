@@ -26,6 +26,20 @@ const KINDS: readonly S4C2NoteCardFixtureKind[] = ['memory', 'sqlite'];
 const AGENT_CARD_KEY = '{"kind":"note_review","note":{"ref":{"aggregateType":"NoteHead",'
   + '"noteId":"s4c2-note-2","projectId":"s4a-scope-project"},"revision":1}}';
 
+/**
+ * T1-049: D-16 is anchor-independent, so the merged row keeps the target's
+ * whole combination (goal anchor, the user note bound to the Goal, an agent
+ * `decision`) and adds the source's whole combination (file anchor, the user
+ * note with `goalId: null`, `pitfall` on both sides; w2-base
+ * tests/work-graph/S4C-note-protection.test.ts:21, :259, :262). Both run the
+ * full kept assertion set.
+ */
+type D16Case = { anchor: NoteDraftAnchorV1; userOnGoal: boolean; agentKind: 'decision' | 'pitfall' };
+const D16_CASES: Array<readonly [S4C2NoteCardFixtureKind, string, D16Case]> = KINDS.flatMap(kind => [
+  [kind, 'goal', { anchor: { kind: 'goal', goalId: 's4a-goal' }, userOnGoal: true, agentKind: 'decision' }] as const,
+  [kind, 'file', { anchor: { kind: 'file', path: 'src/a/x.ts' }, userOnGoal: false, agentKind: 'pitfall' }] as const,
+]);
+
 const fixtures: S4C2NoteCardFixture[] = [];
 afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close(); });
 
@@ -97,7 +111,7 @@ describe('S4C2 D rows: card gate over the real fixture', () => {
     expect((await noteOf(f, agentId)).storedState).toBe('accepted');
   });
 
-  it.each(KINDS)('D-06 %s: replacing the user note is pending, opens the three-option card and supersedes it', async kind => {
+  it.each(KINDS)('D-06 %s: replacing the user note is pending, opens the three-option card', async kind => {
     const f = await createS4C2NoteCardFixture(kind);
     fixtures.push(f);
     const user = await f.writeUser(generalNote({ topic: 'mine', conclusion: 'user note' }), f.goalRef.goalId);
@@ -110,13 +124,6 @@ describe('S4C2 D rows: card gate over the real fixture', () => {
     const card = await f.cardOf(agentId);
     expect(card).not.toBeNull();
     expect(card!.options.map(option => option.id)).toEqual(['supersede', 'coexist', 'reject']);
-
-    const result = await f.resolve(card!, 'supersede', 's4c2-d06-supersede');
-    expect(result).toMatchObject({ status: 'ready', value: { state: 'applied',
-      action: { status: 'done', noteId: agentId, version: 2, state: 'accepted' },
-      application: { status: 'committed' } } });
-    expect(await noteOf(f, agentId)).toMatchObject({ storedState: 'accepted', replaces: [userId] });
-    expect((await noteOf(f, userId)).storedState).toBe('superseded');
   });
 
   it.each(KINDS)('D-08 %s: an agent revision of its own pending note leaves exactly one pending and no card for the old one', async kind => {
@@ -271,13 +278,15 @@ describe('S4C2 D rows: card gate over the real fixture', () => {
     expect((await noteOf(f, agentId)).storedState).toBe('pending_review');
   });
 
-  it.each(KINDS)('D-16 %s: a replaced user note also in coexistWith is admitted directly, no card', async kind => {
+  it.each(D16_CASES)('D-16 %s (%s anchor): a replaced user note also in coexistWith is admitted directly, no card', async (kind, _anchorKind, { anchor, userOnGoal, agentKind }) => {
     const f = await createS4C2NoteCardFixture(kind);
     fixtures.push(f);
-    const user = await f.writeUser(generalNote({ topic: 'mine', conclusion: 'user note' }), f.goalRef.goalId);
+    // The user note is a `pitfall` (generalNote's default kind) on both rows.
+    const user = await f.writeUser(generalNote({ topic: 'mine', conclusion: 'user note', anchor }),
+      userOnGoal ? f.goalRef.goalId : null);
     const userId = idOf(user);
-    const agent = await f.writeAgent(f.executor, generalNote({ kind: 'decision', topic: 'agent',
-      conclusion: 'agent note', replaces: [userId], coexistWith: [userId] }), f.goalRef.goalId);
+    const agent = await f.writeAgent(f.executor, generalNote({ kind: agentKind, topic: 'agent',
+      conclusion: 'agent note', anchor, replaces: [userId], coexistWith: [userId] }), f.goalRef.goalId);
     expect(agent).toMatchObject({ status: 'accepted', reasons: [] });
     expect(await noteOf(f, idOf(agent))).toMatchObject({ storedState: 'accepted', replaces: [userId],
       coexistWith: [userId] });

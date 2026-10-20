@@ -10,11 +10,11 @@
  * most four attempts, a moving window -> `unavailable`).
  *
  * The page is read bounded. Segments are scanned in L12's order
- * (`runs_ended`, `runs_open`, `rounds_ended`, `rounds_open`, `rounds_unplaced`,
- * `queries`); each underlying index is read only until the page's `limit` is
- * full, and `next` is a segment-plus-index-position cursor that resumes exactly
- * after the last emitted bar. `unplaced`, `hostRestarts` and every bar's
- * enrichment are derived only from the rows that page's scan actually read.
+ * (`runs_ended`, `runs_open`, `rounds_ended`, `rounds_open`, `queries`); each
+ * underlying index is read only until the page's `limit` is full, and `next` is
+ * a segment-plus-index-position cursor that resumes exactly after the last
+ * emitted bar. `unplaced`, `hostRestarts` and every bar's enrichment are
+ * derived only from the rows that page's scan actually read.
  *
  * The factory returns only `readTrackBars`; the coordinator merges it with
  * `createActivityReadModel` into the one spec-§2 `ActivityReadPort`.
@@ -41,8 +41,6 @@ import { decodeNoticeOrigin } from '../persistence/decision-record-codecs.js';
 import {
   decodeVerificationRoundSnapshot,
   S2B_ROUND_BY_GOAL_FINALIZED_LOOKUP,
-  S2B_ROUND_BY_GOAL_LEGACY_LOOKUP,
-  S2B_ROUND_BY_GOAL_UNFINALIZED_LOOKUP,
   VERIFICATION_ROUND_BY_STATUS_LOOKUP,
 } from '../persistence/evidence-record-codecs.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
@@ -146,7 +144,7 @@ const REASON_MAX_CHARS = 500;
 /** L12's segment order. A page is ordered by segment, not by start time. */
 const SEGMENTS = [
   'runs_ended', 'runs_open:starting', 'runs_open:running', 'rounds_ended', 'rounds_open',
-  'rounds_unplaced', 'queries',
+  'queries',
 ] as const;
 type SegmentId = (typeof SEGMENTS)[number];
 
@@ -221,9 +219,8 @@ function decodeQueryCursor(value: unknown): QueryCursor | null {
   if (!isStringOrNull(c) || !isStringOrNull(o) || !isStringOrNull(k)) return null;
   if (p2 !== null && p2 !== 'copy_ended' && p2 !== 'copy_occ') return null;
   if (typeof occ !== 'boolean') return null;
-  // `ca` is absent on cursors written by earlier versions; tolerate it as null.
-  if (ca !== undefined && !isStringOrNull(ca)) return null;
-  return { a: a as number, p, c, p2, o, k, occ, ca: (ca ?? null) as string | null };
+  if (!isStringOrNull(ca)) return null;
+  return { a: a as number, p, c, p2, o, k, occ, ca };
 }
 
 function decodeCursor(cursor: string): TrackCursor | null {
@@ -699,8 +696,7 @@ async function scanRoundsEnded(
       const record = rows[index]!;
       const parsed = await readCheckStart(ctx, record);
       seenRounds.add(record.refKey);
-      if (parsed.since === null || parsed.finalizedAt === null) continue; // step 5 counts it
-      const event = await records.eventAt(parsed.since);
+      const event = await records.eventAt(parsed.since!);
       if (event.status !== 'ready') throw event;
       budget.spend(1);
       if (Date.parse(event.value.event.occurredAt) >= ctx.toMs) continue;
@@ -747,8 +743,7 @@ async function scanRoundsOpen(
       if (seenRounds.has(record.refKey)) continue;
       const parsed = await readCheckStart(ctx, record);
       if (parsed.round.ref.goalId !== goalRef.goalId) continue;
-      if (parsed.since === null) continue; // step 5 counts it
-      const event = await records.eventAt(parsed.since);
+      const event = await records.eventAt(parsed.since!);
       if (event.status !== 'ready') throw event;
       budget.spend(1);
       if (Date.parse(event.value.event.occurredAt) >= ctx.toMs) continue;
@@ -764,20 +759,6 @@ async function scanRoundsOpen(
     if (page.value.next === null) return { filled: false, done: true, cursor: null };
     after = page.value.next;
   }
-}
-
-async function scanRoundsUnplaced(ctx: SegmentContext, out: PageOut): Promise<ScanOutcome> {
-  const { records, budget, goalRef, workspaceId } = ctx;
-  const legacyRows = await readEqualityAll(records, S2B_ROUND_BY_GOAL_LEGACY_LOOKUP,
-    [goalRef.projectId, workspaceId, goalRef.goalId, null], budget);
-  out.unplacedRounds += legacyRows.length;
-  const unfinalizedRows = await readEqualityAll(records, S2B_ROUND_BY_GOAL_UNFINALIZED_LOOKUP,
-    [goalRef.projectId, workspaceId, goalRef.goalId, null], budget);
-  for (const record of unfinalizedRows) {
-    const parsed = await readCheckStart(ctx, record);
-    if (parsed.since !== null && parsed.round.status === 'finalized') out.unplacedRounds += 1;
-  }
-  return { filled: false, done: true, cursor: null };
 }
 
 type QueryCopy = { ref: SessionRef; from: SessionRef; key: string };
@@ -1021,8 +1002,6 @@ async function scanSegment(
       return scanRoundsEnded(ctx, start, need, out, seenRounds, subjectCache, gateCache);
     case 'rounds_open':
       return scanRoundsOpen(ctx, start, need, out, seenRounds, subjectCache, gateCache);
-    case 'rounds_unplaced':
-      return scanRoundsUnplaced(ctx, out);
     case 'queries':
       return scanQueries(ctx, start, need, out);
   }

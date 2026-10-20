@@ -117,7 +117,7 @@ type RoundHeadSignal = Exclude<RoundTaskSignalV1, { kind: 'none' } | { kind: 'in
 /** §4.1: a head opened by VR-14 adds `{ordinal, predecessorRoundRef}` to the detail. */
 function successorDetail(signal: RoundHeadSignal): TaskPhaseCauseDetailV1 {
   if (signal.ordinal <= 1) return {};
-  const predecessor = signal.head.chain?.predecessorRoundRef ?? null;
+  const predecessor = signal.head.chain.predecessorRoundRef;
   return predecessor === null ? { ordinal: signal.ordinal } : { ordinal: signal.ordinal, predecessorRoundRef: predecessor };
 }
 
@@ -216,8 +216,8 @@ function completedRunProjection(round: RoundTaskSignalV1): TaskPhaseProjection {
 
 /**
  * P20 (C5, §9 VD-15): a gate's own chain head mapped as the work rows map the
- * selected Run's head (open → P9/P12, FAIL → P7, INCONCLUSIVE or a legacy PASS
- * with gaps → P8, clean PASS → P13, invalid → P10), under the row P20 with
+ * selected Run's head (open → P9/P12, FAIL → P7, INCONCLUSIVE → P8, clean
+ * PASS → P13, invalid → P10), under the row P20 with
  * `detail.gate` and the head's `ordinal`; `null` without a chain (P16).
  */
 function gateChainProjection(round: RoundTaskSignalV1): TaskPhaseProjection | null {
@@ -1041,7 +1041,6 @@ export function taskCompletionRoundProblem(input: {
   if (!sameTask(round.subject, task)) return invalid('the round subject disagrees with the requested task');
   if (round.status !== 'finalized') return incomplete('the specified round is not finalized');
   if (round.outcome !== 'PASS') return incomplete('the specified round did not finalize as PASS');
-  if (round.gaps.length > 0) return incomplete('the specified round carries unresolved gaps');
   if (round.evidenceRefs.length === 0) return incomplete('the specified round admitted no Evidence');
   if (producerRun === null) return null;
   if (producerRun.ref.projectId !== task.projectId || producerRun.ref.goalId !== task.goalId) {

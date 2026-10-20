@@ -1,25 +1,19 @@
 /**
- * Slice K part A, group W (KE4, KA-12): the one Host setup no existing helper
- * gives — a real Host whose Kernel Store registration for the predecessor's
- * adapter is a read-only LEGACY locator (`kernelStores.legacyEntries`).
+ * Slice K part A, group W (KE4, KA-12): a real Host whose Kernel Store
+ * registration holds only the current workspace entry, never the predecessor's
+ * adapter.
  *
- * `tests/helpers/AG2b-collaboration-fixture.ts` only ever writes a `entries`
- * (current) registration, so it cannot exercise L4 step 5's first branch or L8's
- * "only the legacy reader" fallback cause. This helper boots the same public
- * Host over the same ledger/workspace files as `startAG2bHost`, but through a
- * startup file whose `kernelStores` the caller chooses:
- * - by default (and as described above) BOTH the predecessor's adapter
- *   (`ag2b-kernel`), pointing at the real predecessor store, registered under
- *   `legacyEntries` with its `expectedSessionId`; and one current entry for the
- *   workspace (a fresh Kernel file), which alone can carry the fallback's
- *   successor Session (creation pins `forWorkspace`).
- * - with `predecessorRegistration: 'absent'`, only the current entry: the
- *   predecessor's adapter is not registered at all, which is L4 step 5's
- *   "another adapter" cause.
+ * `tests/helpers/AG2b-collaboration-fixture.ts` writes the predecessor adapter
+ * as a current entry, so this helper boots the same public Host over the same
+ * ledger/workspace files as `startAG2bHost` but through a startup file whose
+ * `kernelStores` registers a fresh current Kernel file for the workspace only.
+ * The predecessor's adapter (`ag2b-kernel`) is therefore absent: L4 step 5's
+ * "another adapter" cause, where the close answers `unsupported` and the history
+ * read of the predecessor is honestly refused.
  *
- * The startup file is trusted Host-managed data, parsed by `src/app/main.ts`
- * (`kernelStores.legacyEntries`), never request or model input. Scripted model
- * replies only; no real model is called.
+ * The startup file is trusted Host-managed data, parsed by `src/app/main.ts`,
+ * never request or model input. Scripted model replies only; no real model is
+ * called.
  */
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -39,9 +33,6 @@ import {
 } from './AG2b-collaboration-fixture.js';
 import { createScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
 
-/** The predecessor adapter and store the first Host registered as a current entry. */
-export const K_LEGACY_ADAPTER = 'ag2b-kernel';
-export const K_LEGACY_STORE_KEY = 'ag2b-kernel-store';
 /** The current entry the fallback successor Session is created on. */
 export const K_CURRENT_ADAPTER = 'k-legacy-current';
 export const K_CURRENT_STORE_KEY = 'k-legacy-current-store';
@@ -51,34 +42,23 @@ export type KLegacyReaderOverrides = {
   root: string;
   /** The same ledger directory the predecessor Host used. */
   database: string;
-  /** The Kernel session ID the legacy locator is allowed to read (= the platform Session ID). */
-  expectedSessionId: string;
   replies?: readonly ScriptedReply[];
   actor?: WorkbenchActor;
   checkCommand?: string;
   /** The fresh current Kernel store file the successor Session is created on. */
   currentDatabasePath?: string;
-  /**
-   * How the predecessor adapter (`ag2b-kernel`) is registered on this start.
-   * `'legacy'` (the default) matches the header comment: it is registered under
-   * `legacyEntries` with its `expectedSessionId`, so `byAdapterId` finds a
-   * read-only locator. `'absent'` omits it entirely — the current `entries` are
-   * still written, so the workspace maps to `K_CURRENT_ADAPTER`, but
-   * `byAdapterId('ag2b-kernel')` is `null`. That is L4 step 5's "适配器不同"
-   * (another adapter) cause: the close answers `unsupported` and the history
-   * read of the predecessor is honestly refused.
-   */
-  predecessorRegistration?: 'legacy' | 'absent';
+  /** The predecessor adapter is never registered on this start. */
+  predecessorRegistration?: 'absent';
 };
 
 /**
- * One real Host over the same files, with the predecessor's adapter registered
- * as a legacy locator. The returned shape matches `AG2bHost`, so the existing
- * route helpers (`post`, `answer`, `readExecution`, `driveChecked`) work as they
- * do for the other KA-12 cases.
+ * One real Host over the same files, with only the current workspace entry
+ * registered. The returned shape matches `AG2bHost`, so the existing route
+ * helpers (`post`, `answer`, `readExecution`, `driveChecked`) work as they do
+ * for the other KA-12 cases.
  */
 export async function startKLegacyReaderHost(publicDir: string, overrides: KLegacyReaderOverrides): Promise<AG2bHost> {
-  const { root, database, expectedSessionId } = overrides;
+  const { root, database } = overrides;
   const configDir = await tempDir('k-legacy-config-');
   const skillsRoot = fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url));
   const actor: WorkbenchActor = overrides.actor ?? { kind: 'human', id: 'ag2b-operator' };
@@ -138,10 +118,6 @@ export async function startKLegacyReaderHost(publicDir: string, overrides: KLega
     kernelStores: {
       entries: [{ adapterId: K_CURRENT_ADAPTER, storeKey: K_CURRENT_STORE_KEY, workspace: AG2B_SCOPE,
         databasePath: overrides.currentDatabasePath ?? join(database, 'kernel-next.sqlite') }],
-      ...(overrides.predecessorRegistration === 'absent' ? {} : {
-        legacyEntries: [{ adapterId: K_LEGACY_ADAPTER, storeKey: K_LEGACY_STORE_KEY,
-          databasePath: join(database, 'kernel.sqlite'), expectedSessionId }],
-      }),
     },
     runtime,
     workflow,

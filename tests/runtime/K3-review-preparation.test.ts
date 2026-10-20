@@ -165,7 +165,7 @@ const EXPECTED_REVIEW_TOOLS = [
 ];
 
 describe('K3 L13 review-purpose prepare', () => {
-  it.each(['memory', 'sqlite'] as const)('(%s) K3-L13-5 prepares with the L13 tools, empty write scope, sessionBasis and the review section', async kind => {
+  it.each(['memory', 'sqlite'] as const)('(%s) K3-12 K3-L13-5 prepares with the L13 tools, empty write scope, sessionBasis and the review section', async kind => {
     const world = await openK3ReviewCardWorld(kind);
     try {
       const record = await createK3PendingReview(world);
@@ -173,6 +173,11 @@ describe('K3 L13 review-purpose prepare', () => {
       const { prepared, manifest } = await prepareReviewRun(world, claim);
       expect(manifest.permissions.tools).toEqual(EXPECTED_REVIEW_TOOLS);
       expect(manifest.permissions.writeScope).toEqual([]);
+      // K3-12: the written tools survive through the returned envelope too.
+      expect(prepared.envelope.permissions.tools).toEqual(EXPECTED_REVIEW_TOOLS);
+      expect(prepared.envelope.permissions.writeScope).toEqual([]);
+      // K3-12: the fixed tool list is rendered into the instruction.
+      expect(manifest.input).toContain('run_readonly_command');
       // L12: the review round in a fresh Session seeds the model history from
       // the ORIGINAL Run's Kernel history; the original Run's own record is the
       // expected source (the review record's `runRef` names that Run).

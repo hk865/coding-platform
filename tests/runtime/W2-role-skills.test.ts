@@ -89,6 +89,7 @@ function baseOptions(root: string, databasePath: string, sessionId: string, clie
       count: () => ({ tokens: 256, method: 'model_tokenizer', tokenizer: 'w2-labelled-local-counter' }),
     }),
     root, databasePath, sessionId, input: 'W2 role skill turn.', budget,
+    taskBudget: { tokenBudget: null, deadline: null },
     readOnly: true, signal: signal(),
     deniedPrefixes: [], processSandboxOptions: {}, publish: async () => {},
   };

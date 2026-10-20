@@ -68,9 +68,9 @@ export type UndeliveredReplyV1 = {
   kind: 'retired_reply'; messageRef: SessionMessageRef; sourceSessionRef: SessionRef;
   responseRef: ArtifactRef; respondedAt: string; hasContinuation: boolean;
   requiresUserRecipient: boolean; // 无 continuation 为 true。
-  /** Wiring package 2 (spec §2.3): the bound entry/reply commit cursors, or absent on legacy data. */
-  unavailableSince?: CommitCursor;
-  responseSince?: CommitCursor;
+  /** Wiring package 2 (spec §2.3): the bound entry/reply commit cursors. */
+  unavailableSince: CommitCursor;
+  responseSince: CommitCursor;
 };
 
 /**
@@ -147,7 +147,7 @@ export type MessageBody = {
 export interface SessionMailboxPort {
   sendMessage(
     ctx: CoreCallContext,
-    request: GraphWrite<{ recipient: SessionRef; text: string; replyMode?: 'wait' } & SessionMessageIntentFields>,
+    request: GraphWrite<{ recipient: SessionRef; text: string } & SessionMessageIntentFields>,
   ): Promise<WriteResult<SessionMessage>>;
   readMessage(ctx: CoreCallContext, ref: SessionMessageRef): Promise<ReadResult<SessionMessage>>;
   readMessageBody(

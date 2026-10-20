@@ -11,7 +11,7 @@ import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js
 import type { PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
 import type { GraphWrite, SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
 import type {
-  LegacySessionProvenancePort, SessionFactsPort, SessionResponsibilityBasisPort,
+  SessionFactsPort, SessionResponsibilityBasisPort,
 } from '../../core/work-graph/model/session-facts-contracts.js';
 import type { SessionLifecyclePort } from '../../core/work-graph/sessions/lifecycle-contracts.js';
 import type { SessionResponsibilityPort } from '../../core/work-graph/sessions/session-responsibility-service.js';
@@ -28,7 +28,7 @@ import type { RegisteredCheckRunner } from '../../core/agent-runtime/check-execu
 import type { SourceSnapshotReads } from '../../core/work-graph/source-authority-ports.js';
 import type { SessionMailboxPort } from '../../core/work-graph/model/communication-contracts.js';
 import type {
-  DecisionMessagePort, DecisionReadPort, DecisionSourceFactsPort, GoalExecutedFilesPort,
+  DecisionMessagePort, DecisionReadPort, GoalExecutedFilesPort,
   GoalSettingsPort, MessageDutiesFactsPort,
 } from '../../core/work-graph/model/decision-contracts.js';
 import type { ProjectRegistrationPort } from '../../core/work-graph/configuration/project-bootstrap-contracts.js';
@@ -39,7 +39,7 @@ import type { DecisionApplicationAdapter } from './decision-actions.js';
 import type { RunActivityPort } from '../../core/work-graph/tasks/run-activity-service.js';
 import type { ActivityBackfillBatchV1, ActivityBackfillInput, ActivityBackfillRangeInput,
   ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
-  N0GoalInput, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCloseEventReader } from './contracts.js';
+  ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCloseEventReader } from './contracts.js';
 
 /**
  * Trusted Host advancement policy. It is pure data snapshotted by the
@@ -134,12 +134,6 @@ export type WorkflowDependencies = {
    */
   responsibilityBasis?: SessionResponsibilityBasisPort;
   /**
-   * Slice 1 E14 (§2.2): the SAME legacy-provenance reader the Session directory
-   * uses; maintenance derives and backfills provenance-null Sessions of the
-   * current page. Optional; without it no legacy evidence is resolved.
-   */
-  legacyProvenance?: LegacySessionProvenancePort;
-  /**
    * Slice 1 §4.1 step 7: the trusted mailbox seam used to dispose an archive
    * wait (reply-handler transfer then wait cancel). Optional so old narrow
    * doubles stay type-compatible; without it an ordinary wait archive is
@@ -170,7 +164,6 @@ export type WorkflowDependencies = {
   goalSettings?: GoalSettingsPort;
   decisionMessages?: DecisionMessagePort;
   decisionReads?: DecisionReadPort;
-  decisionSources?: DecisionSourceFactsPort;
   decisionDuties?: MessageDutiesFactsPort;
   goalExecutedFiles?: GoalExecutedFilesPort;
   /**
@@ -218,12 +211,12 @@ export type ConsultationConsumerDependencies = {
 };
 
 /**
- * `handleGoalInput` keeps its N0 shape/unsupported behaviour and adds the two
- * narrow R5b.4 initial-planning inputs. `advanceWork` is the finite R5c.1
+ * `handleGoalInput` accepts the two narrow R5b.4 initial-planning inputs and
+ * rejects an unknown kind as unsupported. `advanceWork` is the finite R5c.1
  * advancement entry; each `perform` calls at most one owner.
  */
 export interface WorkflowPort {
-  handleGoalInput(ctx: CoreCallContext, input: N0GoalInput | InitialPlanningGoalInput): Promise<InitialPlanningGoalInputResult>;
+  handleGoalInput(ctx: CoreCallContext, input: InitialPlanningGoalInput): Promise<InitialPlanningGoalInputResult>;
   advanceWork(ctx: CoreCallContext, input: WorkflowAdvanceInput, internal?: WorkflowAdvanceInternal): Promise<WorkflowAdvanceResult>;
   /**
    * Explicitly process ONE received message: reuse the saved deterministic

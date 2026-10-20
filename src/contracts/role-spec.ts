@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 // ------------------------------------------------------------------------ //
 // 治理种类：RoleSpecRevision（与 CoordinationPolicy 同构）                    //
 // ------------------------------------------------------------------------ //
@@ -151,9 +150,6 @@ export type ProjectRoleSpecActiveSnapshot = {
     activeRevision: RoleSpecRevisionRef;
     revision: number;
 };
-export function roleSpecRevisionRefFor(projectId: string, roleId: string, revision: number = ROLE_SPEC_REVISION): RoleSpecRevisionRef {
-    return { aggregateType: "RoleSpecRevision", projectId, roleId, revision };
-}
 export function projectRoleSpecActiveRefFor(projectId: string, roleId: string): ProjectRoleSpecActiveRef {
     return { aggregateType: "ProjectRoleSpecActive", projectId, roleId };
 }

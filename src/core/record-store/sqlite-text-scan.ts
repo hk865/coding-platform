@@ -10,10 +10,6 @@
  * process's registration `code`, the `through` event id and a random
  * `generation` per (re)build.
  *
- * Route two removes FTS5 entirely: no window table, no probe. An inert legacy
- * `next_fts_%` table from a 4B-era file is dropped at open, each drop guarded
- * by a try/catch so a missing fts5 module is not an error.
- *
  * The read path believes the table (S1.8): it scans `text` directly, then the
  * backend reads the matched records once inside the same read transaction.
  *
@@ -51,13 +47,6 @@ const TABLE_EXISTS_SQL = "SELECT name FROM sqlite_master WHERE type = 'table' AN
  * prepared through the backend's statement cache on every call.
  */
 const ADVANCE_META_SQL = `UPDATE ${META_QUOTED} SET through = ? WHERE name = ? AND through IS ? AND code = ?`;
-/**
- * F7 (review item 6): only the legacy meta table and the FTS *virtual* tables.
- * The `next_fts_%` shadow tables are plain tables, so they do not match the
- * `CREATE VIRTUAL TABLE` filter and are dropped with their virtual table.
- */
-const LEGACY_TABLES_SQL = `SELECT name FROM sqlite_master WHERE type = 'table'
-  AND (name = 'next_fts_meta' OR (name LIKE 'next\\_fts\\_%' ESCAPE '\\' AND sql LIKE 'CREATE VIRTUAL TABLE%'))`;
 
 /** Deterministic short suffix so two index names cannot collide after sanitizing. */
 function tableSuffix(value: string): string {
@@ -131,33 +120,6 @@ export function createSqliteTextScan(
   prepare: StatementGetter,
 ): SqliteTextScan {
   db.exec(CREATE_META_SQL);
-
-  /**
-   * S1.5 legacy drop. Precondition: no 4B-era process has the file open during
-   * this upgrade. A virtual table whose fts5 module is missing cannot be
-   * dropped; the try/catch leaves it inert.
-   */
-  const legacy = prepare(LEGACY_TABLES_SQL).all() as unknown as { name: string }[];
-  if (legacy.length > 0) {
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      for (const row of legacy) {
-        try {
-          db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(row.name)}`);
-        } catch {
-          // A missing fts5 module leaves an inert table; not an error.
-        }
-      }
-      db.exec("COMMIT");
-    } catch (error) {
-      try {
-        db.exec("ROLLBACK");
-      } catch {
-        // no live transaction left to roll back - nothing else to do
-      }
-      throw error;
-    }
-  }
 
   const readMaxEventId = (): number | null => {
     const row = prepare(READ_MAX_EVENT_ID_SQL).get() as

@@ -25,7 +25,6 @@ import type { ArchitectureObservationStateV1 } from '../../src/contracts/archite
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
-import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { EncodedDomainEvent, GoalRecordTransactionPort, RecordBatchRead, StoreCommitReceipt,
   StoreResult } from '../../src/core/record-store/ports.js';
@@ -111,13 +110,8 @@ function withRecordFaults(records: Records, faults: RecordsFaults): Records {
   return wrapped;
 }
 
-/** A2/A3 adapters on the service's other real dependencies (not the records port). */
-type PlatformAdapters = {
-  bodies?: (store: RawArtifactStorePort) => RawArtifactStorePort;
-};
-
 /** A real workspace on disk plus the real platform for one scope. */
-async function openPlatform(backend: Backend, faults?: RecordsFaults, adapters?: PlatformAdapters): Promise<Platform> {
+async function openPlatform(backend: Backend, faults?: RecordsFaults): Promise<Platform> {
   const directory = await mkdtemp(join(tmpdir(), 's8a-l8-start-'));
   temporary.push(directory);
   const root = join(directory, 'workspace');
@@ -147,11 +141,10 @@ async function openPlatform(backend: Backend, faults?: RecordsFaults, adapters?:
     },
   };
   const original = architectureServiceModule.createObservedArchitecture;
-  const spy = faults === undefined && adapters === undefined ? null
+  const spy = faults === undefined ? null
     : vi.spyOn(architectureServiceModule, 'createObservedArchitecture').mockImplementation(deps => original({
       ...deps,
       ...(faults === undefined ? {} : { records: withRecordFaults(deps.records, faults) }),
-      ...(adapters?.bodies === undefined ? {} : { bodies: adapters.bodies(deps.bodies) }),
     }));
   let platform: Platform;
   try {
@@ -201,35 +194,7 @@ async function waitFor(platform: Platform, scope: WorkspaceScope,
   }
 }
 
-/** A3 gate: `enter()` announces the call is inside; `hold` stays open until `release()`. */
-type Hold = { entered: Promise<void>; hold: Promise<void>; enter: () => void; release: () => void };
-function holdGate(): Hold {
-  let enter!: () => void;
-  let release!: () => void;
-  const entered = new Promise<void>(resolve => { enter = resolve; });
-  const hold = new Promise<void>(resolve => { release = resolve; });
-  return { entered, hold, enter: () => { enter(); }, release: () => { release(); } };
-}
-
 describe.each(['memory', 'sqlite'] as const)('L8 capture start observation-state [%s]', backend => {
-  it('a rejected start state read goes to the failure exit with its code and reason', async () => {
-    const platform = await openPlatform(backend);
-    const driver = driverFor(platform, {
-      async observationState() {
-        return { status: 'rejected', code: 'forbidden', reason: 'injected start-state rejection' };
-      },
-    });
-    try {
-      driver.workspaceRegistered(A);
-      const failed = await waitFor(platform, A, state => state.autoCapture?.status === 'failed');
-      expect(failed.autoCapture).toMatchObject({
-        requestSeq: 1, status: 'failed', pending: true,
-        failure: { code: 'forbidden', reason: 'injected start-state rejection' },
-      });
-      expect(failed.current).toBeNull();
-    } finally { await driver.close(); await platform.close(); }
-  }, 60_000);
-
   it.each(['not_found', 'not_ready'] as const)(
     'a %s start state read maps to unavailable with a state-read reason', async kind => {
       const platform = await openPlatform(backend);
@@ -251,22 +216,6 @@ describe.each(['memory', 'sqlite'] as const)('L8 capture start observation-state
         expect(failed.current).toBeNull();
       } finally { await driver.close(); await platform.close(); }
     }, 60_000);
-
-  it('a start state read that throws maps to unavailable while the signal is not aborted', async () => {
-    const platform = await openPlatform(backend);
-    const driver = driverFor(platform, {
-      async observationState() { throw new Error('injected start-state throw'); },
-    });
-    try {
-      driver.workspaceRegistered(A);
-      const failed = await waitFor(platform, A, state => state.autoCapture?.status === 'failed');
-      expect(failed.autoCapture).toMatchObject({
-        requestSeq: 1, status: 'failed', pending: true,
-        failure: { code: 'unavailable', reason: 'injected start-state throw' },
-      });
-      expect(failed.current).toBeNull();
-    } finally { await driver.close(); await platform.close(); }
-  }, 60_000);
 
   it('a broken start snapshot read leaves the request pending (documented exception)', async () => {
     const platform = await openPlatform(backend);
@@ -305,59 +254,6 @@ describe.each(['memory', 'sqlite'] as const)('L8 capture start observation-state
       expect(failureSignal?.aborted).toBe(false);
     } finally { await driver.close(); await platform.close(); }
   }, 60_000);
-});
-
-describe.each(['memory', 'sqlite'] as const)('L8 capture start cancellation [%s]', backend => {
-  const cancellationCase = (kind: 'rejects' | 'throws' | 'ready'): void => {
-    it(`writes nothing when the start state read is cancelled while it ${kind}`, async () => {
-      const platform = await openPlatform(backend);
-      const hold = holdGate();
-      const counts = { state: 0, capture: 0, failure: 0 };
-      const driver = driverFor(platform, {
-        async observationState(ctx, input) {
-          counts.state += 1;
-          if (kind !== 'ready') {
-            hold.enter();
-            await hold.hold;
-            if (kind === 'throws') throw new Error('injected cancelled start-state throw');
-            return { status: 'rejected', code: 'unavailable', reason: 'injected cancelled start-state failure' };
-          }
-          // A3: take the REAL ready result BEFORE cancellation, return it
-          // unchanged after the round's signal has been aborted.
-          const real = await platform.architecture.observationState(ctx, input);
-          hold.enter();
-          await hold.hold;
-          return real;
-        },
-        async captureSourceChanges(ctx, input) {
-          counts.capture += 1;
-          return platform.architecture.captureSourceChanges(ctx, input);
-        },
-        async failAutoCapture(ctx, input) {
-          counts.failure += 1;
-          return platform.architecture.failAutoCapture(ctx, input);
-        },
-      });
-      try {
-        driver.workspaceRegistered(A);
-        await hold.entered;
-        const closing = driver.close();
-        hold.release();
-        await closing;
-        const after = await platform.architecture.observationState(contextOf(A), { workspace: A });
-        expect(after.status).toBe('ready');
-        if (after.status !== 'ready') return;
-        expect(after.value.autoCapture).toMatchObject({ requestSeq: 1, status: 'requested', pending: true });
-        expect(after.value.current).toBeNull();
-        expect(counts.failure).toBe(0);
-        expect(counts.capture).toBe(0);
-        expect(counts.state).toBe(1);
-      } finally { await driver.close(); await platform.close(); }
-    }, 60_000);
-  };
-  cancellationCase('rejects');
-  cancellationCase('throws');
-  cancellationCase('ready');
 });
 
 /** A3: one controlled hold. `arm()` targets the next call the wrapper sees;

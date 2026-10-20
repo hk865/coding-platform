@@ -25,10 +25,11 @@
  *   - the round is settled by the real `reviews.settleReview` (UCR-06/07/08).
  *
  * NO `newUnknownCallReview`, NO `transitionUnknownCallReview` and NO
- * hand-encoded record commit appears here. The one test seam is the D6
- * `readReviewDisplays` dependency: this fixture's items are never truncated, so
- * the settlement owner is wired to report every alias as `full` (the real
- * composition wires the prepared manifest).
+ * hand-encoded record commit appears here. The D6 `readReviewDisplays`
+ * dependency is wired exactly as `src/composition/create-platform.ts` does it:
+ * the settlement owner reads the round Run's real envelope, parses the prepared
+ * manifest with `readManifestFromEnvelope`, and returns each alias's real
+ * `item.display`.
  *
  * Typical use:
  *
@@ -37,7 +38,7 @@
  * const round = await claimK3ReviewRound(world, record); // (c) real TASK-03r
  * ...
  * const state = await reachK3AwaitingProposal(world);    // (h) needs_decision
- * const final = await reachK3AwaitingApproval(world);    // (h) awaiting_approval
+ * const settled = await runK3ReviewRound(world, record, { conclusions }); // (c)-(e)
  * ```
  *
  * API index (every step takes the opened world first; each throws on a refused
@@ -51,7 +52,7 @@
  *   proposeK3SaferMethodWithTool(world, round, input) / writeK3Proposal(world, round, input)
  *   writeK3Proposals(world, round, { mode: 'tool' | 'owner' })
  *   runK3ReviewRound(world, record, { conclusions, end?, settle? })
- *   reachK3AwaitingProposal(world, options) / reachK3AwaitingApproval(world, options)
+ *   reachK3AwaitingProposal(world, options)
  */
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -61,6 +62,7 @@ import type { ReadResult } from '../../src/contracts/core/results.js';
 import type {
   PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask,
 } from '../../src/contracts/plan.js';
+import type { GoalRef } from '../../src/contracts/ledger.js';
 import type {
   CrashSuspicionV1, SaferMethodProposalV1, UnknownCallObservationV1,
   UnknownCallReviewItemV1, UnknownCallReviewRef, UnknownCallReviewV1,
@@ -75,6 +77,7 @@ import {
 } from '../../src/core/agent-runtime/unknown-call-review-tools.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
+import { readManifestFromEnvelope } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { readGoalPlanWindow } from '../../src/core/work-graph/tasks/plan-readers.js';
 import type { ToolCall, ToolResult } from '../../vendor/coding-agent/dist/public-api.js';
 import { GOAL_B, PLAN_B2, T, WORKSPACE_SCOPE } from './S5-decision-fixture.js';
@@ -114,7 +117,7 @@ function usedTaskSet(world: K3ReviewCardWorld): Set<string> {
  * reserves). An explicit task is never refused here: the claim owner decides
  * whether that Task can open another Run.
  */
-export function k3TakeTaskId(world: K3ReviewCardWorld, taskId?: string): string {
+function k3TakeTaskId(world: K3ReviewCardWorld, taskId?: string): string {
   const used = usedTaskSet(world);
   const chosen = taskId ?? world.tasks.find(task => !used.has(task));
   if (chosen === undefined) throw new Error('K3 proposal fixture: every K3 review task is already used');
@@ -127,7 +130,7 @@ export function k3TakeTaskId(world: K3ReviewCardWorld, taskId?: string): string 
  * tool config: the round Run is the principal and the role binding comes from
  * the entered Run, never from the model.
  */
-export function k3WorkRunContext(
+function k3WorkRunContext(
   world: K3ReviewCardWorld, claim: TaskClaim, run: RunSnapshot,
 ): CoreCallContext {
   return {
@@ -151,7 +154,7 @@ export function k3TaskIdOfBytes(bytes: number): string {
   return 't'.repeat(bytes);
 }
 
-export type K3AdoptedPlan = {
+type K3AdoptedPlan = {
   /** The committed, active Plan revision (the next `claimRun` uses its ref). */
   plan: PlanRevisionSnapshot;
   planRef: PlanRevisionRef;
@@ -222,9 +225,13 @@ export async function adoptK3PlanTask(world: K3ReviewCardWorld, taskId: string):
 // The ONE real pending record (blocked record; no builder)                    //
 // --------------------------------------------------------------------------- //
 
-export type K3PendingReviewOptions = {
+type K3PendingReviewOptions = {
   /** The K3 review task id; defaults to the next unused one. */
   taskId?: string;
+  /** The Goal the blocked Run is claimed under; defaults to the world's `GOAL_B`. */
+  goalRef?: GoalRef;
+  /** The accepted Plan the blocked Run claims; defaults to `PLAN_B2`. */
+  planRef?: PlanRevisionRef;
   /** A per-record label for the real request ids and Session. */
   label?: string;
   /** The command the scripted model declares; the Kernel and the draft own it. */
@@ -262,7 +269,9 @@ export async function createK3PendingReview(
     callId: options.callId ?? `k3-pending-call-${label}`,
     command: options.command ?? 'npm run build',
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-  }], { dispose: false });
+  }], { dispose: false,
+    ...(options.goalRef === undefined ? {} : { goalRef: options.goalRef }),
+    ...(options.planRef === undefined ? {} : { planRef: options.planRef }) });
   if (record.items.length !== 1) {
     throw new Error(`K3 proposal fixture: the real pending record has ${String(record.items.length)} items, not 1`);
   }
@@ -367,10 +376,12 @@ export type K3Round = {
   context: CoreCallContext;
 };
 
-export type K3RoundOptions = {
+type K3RoundOptions = {
   phase?: 'review' | 'proposal';
   /** The accepted Plan the round's claim follows; defaults to `PLAN_B2`. */
   planRef?: PlanRevisionRef;
+  /** The Goal the round's claim follows; defaults to the world's `GOAL_B`. */
+  goalRef?: GoalRef;
 };
 
 /**
@@ -387,7 +398,7 @@ export async function claimK3ReviewRound(
   const f = world.fixture;
   const session = await f.createS5Session(`k3-proposal-round-${phase}-${String(k3RequestId(world, 'session'))}`);
   const claim = await f.claimRun({ requestId: k3RequestId(world, `${phase}-round-claim`),
-    goalRef: GOAL_B, planRef: options.planRef ?? PLAN_B2, taskId: record.task.taskId, sessionRef: session,
+    goalRef: options.goalRef ?? GOAL_B, planRef: options.planRef ?? PLAN_B2, taskId: record.task.taskId, sessionRef: session,
     review: { reviewRef: record.ref, expectedRevision: record.revision, phase } });
   const claimed = await readK3Review(world, record.ref);
   if (claimed.activeRound === null || claimed.activeRound.runRef.runId !== claim.runRef.runId) {
@@ -463,7 +474,7 @@ export async function claimK3ReviewRound(
   return { record: current, claim, run, context: k3WorkRunContext(world, claim, run) };
 }
 
-export type K3ConclusionInput = {
+type K3ConclusionInput = {
   item: number;
   verdict: 'done' | 'not_done' | 'partial' | 'undetermined';
   evidence: string;
@@ -486,7 +497,7 @@ export async function recordK3Conclusion(
   return result.value;
 }
 
-export type K3RunEndOptions = { error?: string };
+type K3RunEndOptions = { error?: string };
 
 /**
  * End the round's Run through the Runtime's own terminal and then read the
@@ -550,7 +561,7 @@ export async function endK3RunUnfinished(
   return await finishK3RoundRun(world, claim, 'crashed', start);
 }
 
-export type K3SettleOptions = {
+type K3SettleOptions = {
   cause?: 'round_ended' | 'review_unavailable';
   requestId?: string;
   /** Overrides the record pin (a test may deliberately send a stale one). */
@@ -559,18 +570,32 @@ export type K3SettleOptions = {
 
 /**
  * The production settlement owner over the SAME record store. The world's own
- * `reviews` has no D6 display reader; this fixture's commands are never
- * truncated, so the real owner is given `full` for exactly the record's own
- * aliases (the real composition wires the prepared manifest).
+ * `reviews` has no D6 display reader; this owner reads every writing review
+ * round's real prepared manifest exactly as `src/composition/create-platform.ts`
+ * does (`readExecution(roundRunRef)` then `readManifestFromEnvelope({ bodies })`)
+ * and returns the real per-alias `item.display`.
  */
-function settlementOwner(world: K3ReviewCardWorld, record: UnknownCallReviewV1): ReturnType<typeof createUnknownCallReviewService> {
+function settlementOwner(world: K3ReviewCardWorld): ReturnType<typeof createUnknownCallReviewService> {
   let sequence = 0;
+  const executionReader = createRunStateReader({ records: world.records });
   return createUnknownCallReviewService({
     records: world.records,
-    reads: createRunStateReader({ records: world.records }),
-    readReviewDisplays: async () => ({ status: 'ready' as const,
-      value: new Map<number, 'full' | 'truncated' | 'unexpanded'>(
-        record.items.map(item => [item.alias, 'full' as const])) }),
+    reads: executionReader,
+    readReviewDisplays: async (ctx, input) => {
+      const read = await executionReader.readExecution(ctx, input.roundRunRef);
+      if (read.status === 'not_found') return { status: 'not_found' };
+      if (read.status === 'not_ready') {
+        return { status: 'not_ready', observed: read.observed, required: read.required };
+      }
+      if (read.status === 'rejected') return read;
+      const envelope = read.value.run.envelope;
+      if (envelope === null) return { status: 'not_found' };
+      const manifest = await readManifestFromEnvelope({ bodies: world.fixture.bodies },
+        envelope as unknown as Record<string, unknown>, input.roundRunRef);
+      if (!manifest.ok) return manifest.rejection;
+      const items = manifest.value.manifest.unknownCallReview?.items ?? [];
+      return { status: 'ready', value: new Map(items.map(item => [item.alias, item.display])) };
+    },
     now: () => T,
     eventId: () => `k3-proposal-settle-event-${String(++sequence)}`,
   });
@@ -583,14 +608,14 @@ function settlementOwner(world: K3ReviewCardWorld, record: UnknownCallReviewV1):
  *
  * The world's own owner is used unless the record carries review-round
  * conclusions (D6 must read their prepared manifest); only then the same owner
- * is wired with the fixture's `full` display seam above.
+ * is wired with the real manifest display reader above.
  */
 export async function settleK3Review(
   world: K3ReviewCardWorld, record: UnknownCallReviewV1, options: K3SettleOptions = {},
 ): Promise<UnknownCallReviewV1> {
   const needsDisplayReader = record.items.some(item =>
     item.kind === 'process' && item.observed.by === 'review_round');
-  const owner = needsDisplayReader ? settlementOwner(world, record) : world.reviews;
+  const owner = needsDisplayReader ? settlementOwner(world) : world.reviews;
   const result = await owner.settleReview(world.fixture.ctx, {
     input: { reviewRef: record.ref, cause: options.cause ?? 'round_ended' },
     meta: { requestId: options.requestId ?? k3RequestId(world, 'settle'),
@@ -606,7 +631,7 @@ export async function settleK3Review(
 // Disposition cards (the real `resolveDecision`)                              //
 // --------------------------------------------------------------------------- //
 
-export type K3ReviewCard = {
+type K3ReviewCard = {
   card: DecisionCardV1;
   key: string;
   availability: 'available' | 'not_available';
@@ -641,7 +666,7 @@ export async function readK3ReviewCard(
   throw new Error(`K3 proposal fixture: the card ${key} was not found in 1,000 pages`);
 }
 
-export type K3AnswerOptions = {
+type K3AnswerOptions = {
   text?: string;
   requestId?: string;
 };
@@ -676,7 +701,7 @@ export async function answerK3Disposition(
 // Proposal writes: the real tool (scripted model) and the owner              //
 // --------------------------------------------------------------------------- //
 
-export type K3ProposalInput = {
+type K3ProposalInput = {
   item: number;
   command: string;
   cwd?: string | null;
@@ -686,7 +711,7 @@ export type K3ProposalInput = {
 };
 
 /** The real `propose_safer_method` tool definition, executed with the scripted arguments. */
-export async function proposeK3SaferMethodWithTool(
+async function proposeK3SaferMethodWithTool(
   world: K3ReviewCardWorld, round: K3Round, input: K3ProposalInput,
 ): Promise<ToolResult> {
   const handle: UnknownCallReviewToolsHandle = createUnknownCallReviewTools({
@@ -723,14 +748,14 @@ export async function writeK3Proposal(
   return result.value;
 }
 
-export type K3ProposalWriteOptions = {
+type K3ProposalWriteOptions = {
   mode?: 'tool' | 'owner';
   commandFor?: (item: UnknownCallReviewItemV1) => string;
   rationaleFor?: (item: UnknownCallReviewItemV1) => string;
   cwdFor?: (item: UnknownCallReviewItemV1) => string | null | undefined;
 };
 
-export type K3ProposalsWritten = {
+type K3ProposalsWritten = {
   record: UnknownCallReviewV1;
   proposals: SaferMethodProposalV1[];
   toolResults: ToolResult[];
@@ -780,7 +805,7 @@ export async function writeK3Proposals(
 // Review-round convenience (conclusions + end + settle)                      //
 // --------------------------------------------------------------------------- //
 
-export type K3ReviewRoundOptions = {
+type K3ReviewRoundOptions = {
   conclusions: readonly {
     item: number;
     verdict: 'done' | 'not_done' | 'partial' | 'undetermined';
@@ -789,9 +814,13 @@ export type K3ReviewRoundOptions = {
   }[];
   end?: 'completed' | 'unfinished';
   settle?: boolean;
+  /** The accepted Plan the round's claim follows; defaults to `PLAN_B2`. */
+  planRef?: PlanRevisionRef;
+  /** The Goal the round's claim follows; defaults to the world's `GOAL_B`. */
+  goalRef?: GoalRef;
 };
 
-export type K3ReviewRoundState = {
+type K3ReviewRoundState = {
   record: UnknownCallReviewV1;
   claim: TaskClaim;
   run: RunSnapshot;
@@ -807,7 +836,11 @@ export type K3ReviewRoundState = {
 export async function runK3ReviewRound(
   world: K3ReviewCardWorld, record: UnknownCallReviewV1, options: K3ReviewRoundOptions,
 ): Promise<K3ReviewRoundState> {
-  const round = await claimK3ReviewRound(world, record, { phase: 'review' });
+  const round = await claimK3ReviewRound(world, record, {
+    phase: 'review',
+    ...(options.planRef === undefined ? {} : { planRef: options.planRef }),
+    ...(options.goalRef === undefined ? {} : { goalRef: options.goalRef }),
+  });
   for (const conclusion of options.conclusions) {
     await recordK3Conclusion(world, round, conclusion);
   }
@@ -823,9 +856,11 @@ export async function runK3ReviewRound(
 // (h) One call to awaiting_proposal / awaiting_approval                      //
 // --------------------------------------------------------------------------- //
 
-export type K3ReachOptions = {
+type K3ReachOptions = {
   /** The K3 review task id; defaults to the next unused one. */
   taskId?: string;
+  /** The Goal the record/round claims follow; defaults to the world's `GOAL_B`. */
+  goalRef?: GoalRef;
   /** A per-record label for the real request ids and Session. */
   label?: string;
   /** The one process command the scripted model declares. */
@@ -842,7 +877,7 @@ export type K3ReachOptions = {
   rationaleFor?: (item: UnknownCallReviewItemV1) => string;
 };
 
-export type K3AwaitingProposalState = {
+type K3AwaitingProposalState = {
   /** The real `needs_decision` card record the safer-method answer was applied to. */
   dispositionRecord: UnknownCallReviewV1;
   /** The `awaiting_proposal` record with this round's `activeRound`. */
@@ -865,6 +900,8 @@ export async function reachK3AwaitingProposal(
 ): Promise<K3AwaitingProposalState> {
   const created = await createK3PendingReview(world, {
     ...(options.taskId === undefined ? {} : { taskId: options.taskId }),
+    ...(options.goalRef === undefined ? {} : { goalRef: options.goalRef }),
+    ...(options.planRef === undefined ? {} : { planRef: options.planRef }),
     ...(options.label === undefined ? {} : { label: options.label }),
     ...(options.command === undefined ? {} : { command: options.command }),
     ...(options.callId === undefined ? {} : { callId: options.callId }),
@@ -885,6 +922,7 @@ export async function reachK3AwaitingProposal(
   const round = await claimK3ReviewRound(world, proposed, {
     phase: 'proposal',
     ...(options.planRef === undefined ? {} : { planRef: options.planRef }),
+    ...(options.goalRef === undefined ? {} : { goalRef: options.goalRef }),
   });
   const written = await writeK3Proposals(world, round, {
     mode: options.writeMode ?? 'tool',
@@ -893,29 +931,4 @@ export async function reachK3AwaitingProposal(
   });
   return { dispositionRecord, proposalRecord: written.record, claim: round.claim, run: round.run,
     proposals: written.proposals, toolResults: written.toolResults };
-}
-
-export type K3AwaitingApprovalState = K3AwaitingProposalState & {
-  /** The Run's completed end (the production Runtime's own terminal). */
-  completedRun: RunSnapshot;
-  /** The committed `awaiting_approval` record. */
-  record: UnknownCallReviewV1;
-};
-
-/**
- * (h) The whole path in one call: `reachK3AwaitingProposal`, then the real
- * proposal Run's completed end and `settleReview{round_ended}`. The record must
- * be `awaiting_approval` with the proposals stored.
- */
-export async function reachK3AwaitingApproval(
-  world: K3ReviewCardWorld, options: K3ReachOptions = {},
-): Promise<K3AwaitingApprovalState> {
-  const proposal = await reachK3AwaitingProposal(world, options);
-  const completedRun = await endK3RunCompleted(world, proposal.claim);
-  const record = await settleK3Review(world, proposal.proposalRecord);
-  if (record.status !== 'awaiting_approval') {
-    throw new Error(`K3 proposal fixture: expected awaiting_approval, got ${record.status} `
-      + `(${record.decisionReasons.join(', ')})`);
-  }
-  return { ...proposal, completedRun, record };
 }

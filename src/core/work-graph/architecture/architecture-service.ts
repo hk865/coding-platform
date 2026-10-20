@@ -1023,7 +1023,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       if (revision.status === 'not_found') mappings = [];
       else if (revision.status === 'ready') {
-        mappings = revision.value.catalog === null ? [] : moduleMappingsOf(revision.value.catalog.catalog);
+        mappings = moduleMappingsOf(revision.value.catalog.catalog);
       } else if (revision.status === 'rejected') return revision;
       else return unavailable('the active architecture catalog revision is not readable');
     }
@@ -1727,10 +1727,9 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       return invalid('the catalog pin does not link its catalog ref to its baseline ref');
     }
     // Resolve the pin through the recorded baseline revision, never the raw ref:
-    // a baseline with no record (or with no catalog row) is `not_found`.
+    // a baseline with no record is `not_found`.
     const revision = await readRevisionByRef(records, catalog.baseline.ref);
     if (revision.status !== 'ready') return revision;
-    if (revision.value.catalog === null) return { status: 'not_found' };
     if (revision.value.baseline.contentDigest !== catalog.baseline.digest) {
       return invalid('the catalog pin baseline digest does not match the recorded baseline revision');
     }

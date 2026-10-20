@@ -40,7 +40,7 @@ import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { openK3ReviewCardWorld, type K3ReviewCardWorld } from '../helpers/K3-review-card-fixture.js';
 import { blockedRecord, realKernelCommandReaderOf, requestRerunOf, CRR_COMMAND } from '../helpers/B2-crr-world.js';
-import { createExecutedFilesStub } from '../helpers/executed-files-stub.js';
+import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { k3_35Configuration } from '../helpers/K3-35-runtime.js';
 import { GOAL_B, PLAN_B2, T, WORKSPACE_SCOPE } from '../helpers/S5-decision-fixture.js';
 
@@ -182,7 +182,7 @@ describe.each(['memory', 'sqlite'] as const)('F-076/F-101: cancellation stays ca
       noticeSources: [],
       conflicts: createGoalConflictAssembler({ records: world.fixture.records,
         catalog: createArchitectureCatalogService({ records: world.fixture.records }),
-        executedFiles: createExecutedFilesStub() }),
+        executedFiles: createGoalExecutedFilesReader({ records: world.fixture.records }) }),
       positions: createNoticePositionComparator(),
       displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
     });

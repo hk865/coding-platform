@@ -17,11 +17,11 @@
  * `shell` is the blocking seam (no host process).
  */
 import { expect } from 'vitest';
-import { HostScenario, hostCtx, performs } from '../harness.js';
+import { HostScenario, hostCtx, performs, type Platform } from '../harness.js';
 import { preparedOf } from './common.js';
 import { driveReviewUntil, openReviewWorkRoot } from './review-work-root.js';
 import { openShellWorkRoot, prepareOn } from './shell-work-root.js';
-import { createScriptedModel } from '../../helpers/B2-runtime-fixture.js';
+import { createScriptedModel, type ScriptedModel } from '../../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../../helpers/K3-tool-seams.js';
 import {
   AG2B_CONSUMER_ID, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite, plain,
@@ -54,34 +54,122 @@ export function cardOf(queue: DecisionQueueReadV1): DecisionCardV1 {
   return cards[0]!;
 }
 
-/** One `shell` call in flight, closed by RUN-25 on the crash restart; returns the original RunRef. */
-export async function crashOneCommand(h: HostScenario, label: string): Promise<RunRef> {
-  shellSeam.arm();
-  const modelA = createScriptedModel([{ kind: 'calls', calls: [
-    { callId: `${label}-shell`, name: 'shell', args: { command: `${label} runs a program` } }] }]);
-  const rootA = await openShellWorkRoot(h, modelA);
+/**
+ * One `shell` call in flight, closed by RUN-25 on the crash restart.
+ *
+ * The caller supplies the original identities and the exact `shell` arguments
+ * so every migrated copy keeps its own call, flow and request ids and its real
+ * restart report. The returned `release` is idempotent and also runs when the
+ * helper itself throws; an immediate-release caller awaits it where its old
+ * helper's `finally` released, while a deferred caller keeps it until its
+ * original cleanup (the K3-29/K3-44 recovery shapes).
+ */
+export interface CrashOneCommandOptions {
+  /** The scripted `shell` call's id. */
+  callId: string;
+  /** The `h.select` flow label that prepares the Run. */
+  select: string;
+  /** The Work task `h.select` binds; defaults to `AG2B_WORK_TASK_ID`. */
+  taskId?: string;
+  /** The Run start request id. */
+  requestId: string;
+  /** The exact `shell` tool arguments. */
+  shellArgs: Record<string, unknown>;
+}
+
+export interface CrashOneCommandResult {
+  runRef: RunRef;
+  prepared: ReturnType<typeof preparedOf>;
+  report: Awaited<ReturnType<HostScenario['restart']>>;
+  release(): Promise<void>;
+}
+
+export async function crashOneCommand(h: HostScenario,
+  options: CrashOneCommandOptions): Promise<CrashOneCommandResult> {
+  let rootA: Platform | null = null;
   let runningA: Promise<unknown> | null = null;
-  let preparedA: ReturnType<typeof preparedOf>;
-  try {
-    const startA = await prepareOn(rootA, h.select(`${label}-a`, AG2B_WORK_TASK_ID));
-    preparedA = preparedOf(startA);
-    runningA = rootA.runtime.startRun(hostCtx(), { prepared: preparedA, consumerId: AG2B_CONSUMER_ID,
-      requestId: `${label}-a-start` });
-    await shellSeam.waitForCall();
-    await h.restart({ crash: true });
-  } finally {
+  let released = false;
+  const release = async (): Promise<void> => {
+    if (released) return;
+    released = true;
     shellSeam.release();
     await runningA?.catch(() => undefined);
-    await rootA.close();
+    await rootA?.close();
+  };
+  try {
+    shellSeam.arm();
+    const modelA = createScriptedModel([{ kind: 'calls', calls: [
+      { callId: options.callId, name: 'shell', args: options.shellArgs }] }]);
+    rootA = await openShellWorkRoot(h, modelA);
+    const startA = await prepareOn(rootA, h.select(options.select, options.taskId ?? AG2B_WORK_TASK_ID));
+    const prepared = preparedOf(startA);
+    runningA = rootA.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID,
+      requestId: options.requestId });
+    await shellSeam.waitForCall();
+    const report = await h.restart({ crash: true });
+    return { runRef: prepared.claim.runRef, prepared, report, release };
+  } catch (error) {
+    await release();
+    throw error;
   }
-  return preparedA.claim.runRef;
+}
+
+/**
+ * The real proposal-phase round setup shared by K3-16 (proposal/approval) and
+ * K3-29 variant (c): open the read-only root, prepare the round, and assert the
+ * exact proposal tool set. `start` is bound to that prepared execution, so the
+ * caller keeps its manifest/writeScope checks between prepare and start; the
+ * answer card and settle stay in the caller.
+ */
+export interface ProposalRoundOptions {
+  /** The scripted model of the proposal round. */
+  model: ScriptedModel;
+  /** The `h.select` flow label that prepares the proposal Run. */
+  select: string;
+  /** The proposal Run start request id. */
+  requestId: string;
+  /** The Work task `h.select` binds; defaults to `AG2B_WORK_TASK_ID`. */
+  taskId?: string;
+}
+
+export interface ProposalRoundResult {
+  prepared: ReturnType<typeof preparedOf>;
+  runRef: RunRef;
+  model: ScriptedModel;
+  start(): ReturnType<Platform['runtime']['startRun']>;
+  close(): Promise<void>;
+}
+
+export async function proposalRound(h: HostScenario, options: ProposalRoundOptions): Promise<ProposalRoundResult> {
+  const root = await openReviewWorkRoot(h, options.model);
+  try {
+    const stop = await driveReviewUntil(root,
+      h.select(options.select, options.taskId ?? AG2B_WORK_TASK_ID), performs('start'));
+    const prepared = preparedOf(stop.stopped);
+    expect(prepared.envelope.permissions.tools)
+      .toEqual(['read', 'run_readonly_command', 'propose_safer_method']);
+    return {
+      prepared,
+      runRef: prepared.claim.runRef,
+      model: options.model,
+      start: () => root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID,
+        requestId: options.requestId }),
+      close: () => root.close(),
+    };
+  } catch (error) {
+    await root.close();
+    throw error;
+  }
 }
 
 /** A real review round settles the record to the `partial` card, read from the public queue. */
 export async function needsDecisionCard(h: HostScenario, label: string): Promise<{
   originalRunRef: RunRef; record: UnknownCallReviewV1; card: DecisionCardV1;
 }> {
-  const originalRunRef = await crashOneCommand(h, label);
+  const crashed = await crashOneCommand(h, { callId: `${label}-shell`, select: `${label}-a`,
+    requestId: `${label}-a-start`, shellArgs: { command: `${label} runs a program` } });
+  await crashed.release();
+  const originalRunRef = crashed.runRef;
   const created = await reviewOf(h, originalRunRef);
   expect(created.status).toBe('ready');
   if (created.status !== 'ready') throw new Error('the review record must read');

@@ -56,6 +56,8 @@ type Fixture = {
   /** The production Runtime the Workflow drives (its scripted model never runs here). */
   runtime: ReturnType<typeof createK3_35Runtime>['runtime'];
   model: ScriptedModel;
+  /** Every `settleReview` call the Workflow makes through the real owner. */
+  settleCalls(): number;
 };
 
 function unsupported(reason: string) {
@@ -124,6 +126,16 @@ async function makeWorld(kind: 'memory' | 'sqlite'): Promise<Fixture> {
     finalizeChecks: async () => unsupported('no finalize'),
   };
   const checks: RegisteredCheckRunner = { runRegisteredCheck: async () => unsupported('no checks') };
+  // A3: count the Workflow's real settlement calls, returning the owner result
+  // unchanged. The source row (K3 UR8) asserted the held record is not settled.
+  let settleCalls = 0;
+  const reviews = {
+    ...world.reviews,
+    settleReview: async (...args: Parameters<K3ReviewCardWorld['reviews']['settleReview']>) => {
+      settleCalls += 1;
+      return await world.reviews.settleReview(...args);
+    },
+  };
   const dependencies: WorkflowDependencies = {
     tasks: world.fixture.b2.base.goals, plans: world.fixture.b2.base.plans, sessions: world.fixture.b2.base.sessionsPort,
     claims: { ...world.fixture.b2.base.service, requeueTask: requeues.requeueTask }, executions: reads,
@@ -131,10 +143,10 @@ async function makeWorld(kind: 'memory' | 'sqlite'): Promise<Fixture> {
     configuration: configurationOf(world),
     sourceAuthority: createSourceAuthorityReader({ authority }),
     controls,
-    unknownCallReviews: world.reviews,
+    unknownCallReviews: reviews,
   };
   const workflow = createWorkflow(dependencies);
-  return { world, controls, workflow, runtime: runtimeService, model };
+  return { world, controls, workflow, runtime: runtimeService, model, settleCalls: () => settleCalls };
 }
 
 /** TASK-03r: the real claim owner writes `activeRound`; the Run stays unentered. */
@@ -200,7 +212,7 @@ afterEach(async () => {
 });
 
 describe('K3-15 (六) UR3h cancels a claimed-but-unentered review round', () => {
-  it.each(['memory', 'sqlite'] as const)('K3-15 (六) %s: hold then the next advance cancels the round (RUN-09(U)), UR4 settles it (UCR-08b), zero model calls', async kind => {
+  it.each(['memory', 'sqlite'] as const)('K3-15 (六) K3 UR8 %s: hold then the next advance cancels the round (RUN-09(U)), UR4 settles it (UCR-08b), zero model calls', async kind => {
     const f = await makeWorld(kind);
     fixtures.push(f);
     const created = await createK3PendingReview(f.world, {
@@ -220,6 +232,9 @@ describe('K3-15 (六) UR3h cancels a claimed-but-unentered review round', () => 
     const cancel = operationOf(await f.workflow.advanceWork(f.world.fixture.ctx, selectInput(created.task.taskId)));
     expect(cancel).toMatchObject({ kind: 'cancel_review_round', request: {
       input: { runRef: roundRef, kind: 'cancel' }, meta: { expected: [{ ref: roundRef, revision: roundBefore.revision }] } } });
+    // K3 UR8: the held record with a claimed round is not settled or prepared;
+    // the next advance only plans the automation's cancel.
+    expect(f.settleCalls(), 'the held record is not settled before the cancel').toBe(0);
     const cancelled = await f.workflow.advanceWork(f.world.fixture.ctx, performInput(cancel));
     expect(cancelled).toMatchObject({ status: 'ready', value: { state: 'advance',
       receipt: { kind: 'cancel_review_round', result: { status: 'committed' } } } });

@@ -718,7 +718,7 @@ function checkMessageResponse(value: unknown): Problem {
 
 const MESSAGE_KEYS: readonly string[] = [
   'ref', 'schemaVersion', 'revision', 'sender', 'recipient', 'bodyRef', 'sourceRef',
-  'createdAt', 'status', 'readAt', 'response', 'replyMode',
+  'createdAt', 'status', 'readAt', 'response',
   'intent', 'needsReply', 'waitAfterSend', 'consultationDerivation', 'acceptedInputs',
   'replyHandler', 'archiveWaitDisposition',
   // Slice 5 additive fields (SPEC §2.3, §2.5).
@@ -777,8 +777,6 @@ export function checkSessionMessageBody(body: UnknownRecord, requireBoundRespons
   }
   const readAt = body['readAt'];
   if (!(readAt === null || nonEmpty(readAt))) return 'SessionMessage readAt must be null or a non-empty string';
-  const replyMode = body['replyMode'];
-  if (replyMode !== undefined && replyMode !== 'wait') return 'SessionMessage replyMode must be omitted or wait';
   const intent = body['intent'];
   if (intent !== undefined && intent !== 'notify' && intent !== 'inquiry'
     && intent !== 'action_request' && intent !== 'decision_request') {

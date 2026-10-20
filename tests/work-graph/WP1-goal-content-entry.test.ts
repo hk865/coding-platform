@@ -76,14 +76,6 @@ describe.each(['memory', 'sqlite'] as const)('WP1 goal-content entry (%s)', (kin
     expect(f.authorizedEvents()).toEqual([]);
   });
 
-  it('GE03 commits the same unbound manifest when the stored Goal digest is null', async () => {
-    const f = await openGoalContentEntry(kind);
-    fixture = f;
-    const made = await makeUnboundGoalPrepared(f, { goalDigest: null });
-    const result = await f.authorize(made.prepared, 'ge03');
-    expect(result.status).toBe('committed');
-  });
-
   it('GE04 admits after an unrelated plan adoption, audits P2 and keeps a non-empty Goal digest', async () => {
     const f = await openGoalContentEntry(kind);
     fixture = f;

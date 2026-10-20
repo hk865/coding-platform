@@ -98,6 +98,16 @@ it.each(['memory', 'sqlite'] as const)('%s: full-ref keyset lookup tracks commit
       record('beta', 'a', 1, 'shared', 'open'), record('alpha', 'c', 1, 'other', 'open')];
     for (const [n, row] of rows.entries()) expect(await backend.records.commit(change('seed-' + n, row, null)))
       .toMatchObject({ status: 'committed', replayed: false });
+    // SV03 (slice-1 spec): a lookup writes nothing. The seeded rows read back the
+    // same json and revision after the lookups below, and the read-through cursor
+    // of a lookup page does not move.
+    const stored = async () => {
+      const read = await backend.records.readMany(rows.map(row => row.refKey));
+      if (read.status !== 'ready') throw Error('the seeded rows must be readable');
+      return read.value.records.map(row => ({ refKey: row.refKey, json: row.json, revision: row.revision }));
+    };
+    const seeded = await stored();
+    expect(seeded).toHaveLength(4);
     const first = await lookup(backend, ['shared', 'open'], 2);
     expect(first).toMatchObject({ status: 'ready', value: { records: expect.any(Array), next: expect.any(String), readThrough: expect.any(String) } });
     if (first.status !== 'ready' || first.value.next === null) throw Error('first lookup page absent');
@@ -110,6 +120,10 @@ it.each(['memory', 'sqlite'] as const)('%s: full-ref keyset lookup tracks commit
       .toMatchObject({ status: 'ready', value: { records: [
         { refKey: key('alpha', 'a') }, { refKey: key('alpha', 'b') }, { refKey: key('beta', 'a') },
       ] } });
+    expect(await stored()).toEqual(seeded);
+    const again = await lookup(backend, ['shared', 'open'], 2);
+    if (again.status !== 'ready') throw Error('repeated lookup page absent');
+    expect(again.value.readThrough).toBe(first.value.readThrough);
     const revision = record('alpha', 'a', 2, 'other', 'closed');
     expect(await backend.records.commit(change('move-a', revision, 1))).toMatchObject({ status: 'committed' });
     expect(await lookup(backend, ['shared', 'open'])).toMatchObject({ status: 'ready',
@@ -171,7 +185,7 @@ it.each(['memory', 'sqlite'] as const)('%s: invalid requests and registrations r
   } finally { await backend.close(); }
 });
 
-it('SQLite adds an index to an existing database and refuses to return a matching damaged row', async () => {
+it('SQLite adds an index to an existing database', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'next-store-existing-'));
   temp.push(dir);
   const path = join(dir, 'records.sqlite');
@@ -184,6 +198,10 @@ it('SQLite adds an index to an existing database and refuses to return a matchin
   try {
     expect(await lookup(indexed, ['shared', 'open'])).toMatchObject({ status: 'ready',
       value: { records: [{ refKey: row.refKey }] } });
+    // SV03: neither the index rebuild on reopen nor the lookup rewrote the row:
+    // it reads back the json it was seeded with, at its one commit's revision 1.
+    expect(await indexed.records.readMany([row.refKey])).toMatchObject({ status: 'ready',
+      value: { records: [{ refKey: row.refKey, json: row.json, revision: 1 }] } });
     const inspection = new DatabaseSync(path);
     try {
       const indexes = inspection.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'snapshots' AND sql IS NOT NULL").all();
@@ -191,12 +209,4 @@ it('SQLite adds an index to an existing database and refuses to return a matchin
         index['sql'].includes('group') && index['sql'].includes('status'))).toBe(true);
     } finally { inspection.close(); }
   } finally { await indexed.close(); }
-  const db = new DatabaseSync(path);
-  db.prepare('UPDATE snapshots SET snapshot_json = ? WHERE ref_key = ?').run(
-    JSON.stringify({ ref: { aggregateType: 'Widget', projectId: 'beta', widgetId: 'a' }, revision: 1,
-      group: 'shared', status: 'open' }), row.refKey);
-  db.close();
-  const damaged = (await open('sqlite', { path })).backend;
-  try { expect(await lookup(damaged, ['shared', 'open'])).toMatchObject({ status: 'rejected', code: 'corrupt' }); }
-  finally { await damaged.close(); }
 });

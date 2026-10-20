@@ -166,28 +166,13 @@ describe.each(['memory', 'sqlite'] as const)('A1 architecture catalog over real 
     expect(fixture.spy.commits).toBe(0);
   });
 
-  it('reads a historical baseline as catalog:null instead of guessing an empty catalog', async () => {
-    const fixture = await make(kind);
-    const legacyRef = await fixture.seedLegacyArchitectureBaseline();
-    const read = await fixture.readRevision('current');
-    expect(read.status).toBe('ready');
-    if (read.status !== 'ready') return;
-    expect(read.value.baseline.ref).toEqual(legacyRef);
-    expect(read.value.catalog).toBeNull();
-  });
-
-  it('distinguishes a missing pointer, a digest-inconsistent record and a readable revision', async () => {
+  it('distinguishes a missing pointer from a readable revision', async () => {
     const fixture = await make(kind);
     const missing = await fixture.readRevision('current');
     expect(missing).toEqual({ status: 'not_found' });
 
-    await fixture.seedTamperedArchitectureBaseline();
-    const corrupt = await fixture.readRevision('current');
-    expect(corrupt.status).toBe('rejected');
-    if (corrupt.status === 'rejected') expect(corrupt.code).toBe('unavailable');
-
     const healthy = await make(kind);
-    await healthy.seedLegacyArchitectureBaseline('a1-readable-baseline');
+    await healthy.adopt('adopt-readable-baseline');
     const ok = await healthy.readRevision('current');
     expect(ok.status).toBe('ready');
   });

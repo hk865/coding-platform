@@ -1,10 +1,12 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { WorkspaceRef } from '../../src/contracts/ledger.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
+import type { InitialPlanningGoalInput } from '../../src/business/workflow/contracts.js';
+import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 
 const at = '2026-09-24T00:00:00.000Z';
@@ -76,11 +78,6 @@ it.each(['memory', 'sqlite'] as const)('%s: public composition wires Host materi
     expect(f.calls.authorizations).toBeGreaterThan(0);
     expect(await platform.runtime.capabilities(ctx, { projectId: workspace.projectId, workspaceId: workspace.workspaceId }))
       .toMatchObject({ status: 'rejected', code: 'unsupported' });
-    expect(await platform.workflow.handleGoalInput(ctx, {
-      meta: { requestId: 'workflow-not-yet-ready', expected: [] },
-      goal: { goalId: 'goal-1', workspace: { projectId: workspace.projectId, workspaceId: workspace.workspaceId }, objective: 'Do work' },
-      requestBodyRef: stored.ref, text: 'Do work', action: { kind: 'request_work', executeWithinRequest: false },
-    })).toMatchObject({ status: 'rejected', code: 'unsupported' });
     await platform.close();
     closed = true;
     if (kind === 'sqlite') {
@@ -92,4 +89,65 @@ it.each(['memory', 'sqlite'] as const)('%s: public composition wires Host materi
       } finally { await reopened.close(); }
     }
   } finally { if (!closed) await platform.close(); }
+});
+
+const GOAL_REF = { aggregateType: 'Goal' as const, projectId: workspace.projectId, goalId: 'platform-goal' };
+const PROJECT_REF = { aggregateType: 'Project' as const, projectId: workspace.projectId };
+const WORKSPACE_REF = { aggregateType: 'Workspace' as const, projectId: workspace.projectId,
+  workspaceId: workspace.workspaceId };
+
+const PROPOSAL_DRAFT: PlanRevisionDraft = {
+  schemaVersion: 2, planId: 'platform-plan', planRevision: 1, goalId: GOAL_REF.goalId,
+  stages: [],
+  tasks: [{ taskId: 'platform-task', title: 'Check the platform goal input',
+    requirementLevel: 'required', taskKind: 'work', disposition: 'active', phase: 'pending',
+    scope: { kind: 'goal' }, executionIntent: 'plan_only' }],
+  assignments: [], obligations: [], taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] },
+  taskRelations: [], inputRequirements: [],
+};
+
+describe('rejects: the Workflow goal input kind', () => {
+  it.each(['memory', 'sqlite'] as const)('%s: an unknown kind is unsupported and changes nothing', async kind => {
+    const f = await fixture();
+    const platform = await createTargetPlatform({ storage: kind === 'memory' ? { kind: 'memory' } :
+      { kind: 'sqlite', directory: join(f.dir, 'storage') }, workspace: f.bindings, now: () => at });
+    try {
+      const ctx = context();
+      // Public prior state: a real Goal and a real candidate Plan.
+      expect(await platform.projects.createProject(ctx, { meta: { requestId: 'platform-project',
+        expected: [{ ref: PROJECT_REF, revision: 0 }] }, input: { projectId: workspace.projectId } }))
+        .toMatchObject({ status: 'committed' });
+      expect(await platform.projects.registerWorkspace(ctx, { meta: { requestId: 'platform-workspace',
+        expected: [{ ref: PROJECT_REF, revision: 1 }, { ref: WORKSPACE_REF, revision: 0 }] },
+        input: { workspace: { projectId: workspace.projectId, workspaceId: workspace.workspaceId } } }))
+        .toMatchObject({ status: 'committed' });
+      expect(await platform.goals.createGoal(ctx, { meta: { requestId: 'platform-goal',
+        expected: [{ ref: PROJECT_REF, revision: 1 }, { ref: WORKSPACE_REF, revision: 1 }] },
+        input: { goalId: GOAL_REF.goalId, workspace: { projectId: workspace.projectId,
+          workspaceId: workspace.workspaceId }, objective: 'Reject an unknown Workflow goal input kind' } }))
+        .toMatchObject({ status: 'committed' });
+      const proposed = await platform.plans.proposePlan(ctx, { meta: { requestId: 'platform-plan-propose',
+        expected: [] }, input: { goalRef: GOAL_REF, basedOn: null, draft: PROPOSAL_DRAFT,
+        reason: { text: 'The candidate Plan for the rejected continuation', sources: [] } } });
+      expect(proposed).toMatchObject({ status: 'committed', value: { kind: 'candidate_v2' } });
+      if (proposed.status !== 'committed') throw new Error('the candidate Plan must be committed');
+
+      const goalBefore = await platform.plans.queryGoal(ctx, GOAL_REF);
+      const proposalBefore = await platform.plans.readPlanProposal(ctx, proposed.value.ref);
+      expect(goalBefore).toMatchObject({ status: 'ready' });
+      expect(proposalBefore).toMatchObject({ status: 'ready', value: proposed.value });
+
+      // The complete valid `adopt_initial_plan` continuation; only the kind changes.
+      const valid = { schemaVersion: 1 as const, goalRef: GOAL_REF, flowId: 'platform-unknown-kind',
+        sessionHint: null, executeWithinRequest: true, kind: 'adopt_initial_plan' as const,
+        request: { meta: { requestId: 'platform-adopt-initial-plan', expected: [] },
+          input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision,
+            decisionRefs: [] } } };
+      const refused = await platform.workflow.handleGoalInput(ctx,
+        { ...valid, kind: 'unknown_goal_input' } as unknown as InitialPlanningGoalInput);
+      expect(refused).toMatchObject({ status: 'rejected', code: 'unsupported' });
+      expect(await platform.plans.queryGoal(ctx, GOAL_REF)).toEqual(goalBefore);
+      expect(await platform.plans.readPlanProposal(ctx, proposed.value.ref)).toEqual(proposalBefore);
+    } finally { await platform.close(); }
+  });
 });

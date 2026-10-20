@@ -16,50 +16,19 @@
  *    `initGitWorkspace` runs in the scenario's own temporary root before the
  *    first Host starts. `HostScenario.gitWorkspace` exposes the initial commit.
  *
- * 3. Crash points K3-01/K3-02 (spec §5.2). Both fit the existing
- *    `lockLedgerAfter` seam in `tests/scenarios/support/common.ts`; nothing else
- *    is needed. What later R1 tests must do (same shape as A8-3j,
- *    tests/scenarios/A8-host-restart.test.ts:220):
- *
- *    - K3-02 (crash BEFORE the message commit): open with
- *      `gitWorkspace: true`, drive to the prepared `start`, then
- *      `const lock = lockLedgerAfter(h.database, 'ModelRequestEvidenceRecorded', { kernelStore: true })`.
- *      The model-request evidence commit is the last ledger batch before the
- *      provider call that produces the `send_session_message` tool call, so the
- *      Run has entered, the model call really happens, and the send reaches the
- *      message commit, which fails: no `SessionMessageSent` event and no
- *      `SessionMessage` snapshot ever commit. Verified on the real flow: the lock
- *      is held with `model.calls() === 1` and 0 `SessionMessage` snapshots.
- *      Start the prepared Run through `openWorkRoot(h, model, lock.observer)`,
- *      release in `finally`, then `h.restart({ crash: true })`: the record is
- *      `not_done` and the continuation note says "没做".
- *      (`ModelRequestAuthorized` or `ExecutionEntryEntered` lock even earlier and
- *      also guarantee no message commit, but then the model call does not run;
- *      `(last) => last !== 'SessionMessageSent'` is the crudest form. Use
- *      `ModelRequestEvidenceRecorded` for the same shape as K3-01.)
- *
- *    - K3-01 (message committed, Kernel without a result): exactly A8-3j,
- *      `lockLedgerAfter(h.database, 'SessionMessageSent', { kernelStore: true })`;
- *      the message commits, the locked Kernel store keeps the send without a
- *      recorded result, and the restart resolves the review `done`.
- *
- * 4. Long commands/ids (K3-48): no new helper. Part 2 already covers them:
+ * 3. Long commands/ids (K3-48): no new helper. Part 2 already covers them:
  *    `tests/work-graph/K3-48-unknown-call-review-creation-budget.test.ts:19-29`
  *    builds a 512-byte callId/command/8-path item and the 513-byte callId is
  *    `tests/runtime/A2-reconcile-runtime.test.ts:920`.
  */
 import { existsSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
-import { cleanupRestart, tempDir } from '../helpers/A2-restart-fixture.js';
+import { cleanupRestart } from '../helpers/A2-restart-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
-import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
-import { AG2B_CONSUMER_ID, AG2B_QUERY_ROLE, AG2B_WORK_TASK_ID, createAG2bSession } from '../helpers/AG2b-collaboration-fixture.js';
-import { lockLedgerAfter, openWorkRoot, preparedOf, redrivePolicy, WORK_TARGET } from './support/common.js';
 import { gitIn } from './support/git-workspace.js';
-import { cleanupScenarios, HostScenario, hostCtx, performs, readSqlite } from './harness.js';
+import { cleanupScenarios, HostScenario } from './harness.js';
 
 // --- The self-test owns the hoisted state and the module mock. -------------
 const seams = vi.hoisted(() => ({ shellSeam: undefined as unknown }));
@@ -129,55 +98,5 @@ describe('K3 §5.1 git workspace option', () => {
     expect(tracked).not.toContain('.evaluator/hidden.ts');
     expect(existsSync(join(h.root, '.evaluator', 'hidden.ts'))).toBe(true);
     expect(existsSync(join(h.root, '.git'))).toBe(true);
-  });
-});
-
-// --- 3. Crash point recipes (tiny probe) ----------------------------------
-describe('K3 §5.2 crash point recipes', () => {
-  async function appendEvent(directory: string, eventType: string): Promise<void> {
-    const ledger = new DatabaseSync(join(directory, 'ledger.sqlite'));
-    try {
-      ledger.exec('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, event_json TEXT NOT NULL)');
-      ledger.prepare('INSERT INTO events (event_json) VALUES (?)').run(JSON.stringify({ eventType }));
-    } finally { ledger.close(); }
-  }
-
-  it('locks at ModelRequestEvidenceRecorded (K3-02, before the message) and at SessionMessageSent (K3-01)', async () => {
-    const directory = await tempDir('k3-r1-crash-');
-    await appendEvent(directory, 'ModelRequestEvidenceRecorded');
-    const beforeMessage = lockLedgerAfter(directory, 'ModelRequestEvidenceRecorded', { kernelStore: true });
-    beforeMessage.observer.started(null);
-    beforeMessage.observer.committed({ cursor: null as never, aggregates: [] });
-    expect(beforeMessage.locked(), 'K3-02 locks right after the model evidence, before the message').toBe(true);
-    beforeMessage.release();
-
-    await appendEvent(directory, 'SessionMessageSent');
-    const afterMessage = lockLedgerAfter(directory, 'SessionMessageSent', { kernelStore: true });
-    afterMessage.observer.started(null);
-    afterMessage.observer.committed({ cursor: null as never, aggregates: [] });
-    expect(afterMessage.locked(), 'K3-01 locks right after the message commit').toBe(true);
-    afterMessage.release();
-  });
-
-  it('K3-02 real flow: the evidence lock leaves the send model call but no message commit', async () => {
-    const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const recipient = (await createAG2bSession(h.host, 'k3-r1-before-message', AG2B_QUERY_ROLE,
-      [{ target: WORK_TARGET, relation: 'participates' }])).sessionRef;
-    const toStart = await h.advance(h.select('k3-r1', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
-    const prepared = preparedOf(toStart.next);
-    const lock = lockLedgerAfter(h.database, 'ModelRequestEvidenceRecorded', { kernelStore: true });
-    const model = createScriptedModel([{ kind: 'calls', calls: [{ callId: 'k3-r1-send', name: 'send_session_message',
-      args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: 'before the message', replyMode: 'wait' } }] }]);
-    const root = await openWorkRoot(h, model, lock.observer);
-    try {
-      await root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID, requestId: 'k3-r1-start' });
-    } finally { lock.release(); await root.close(); }
-    expect(lock.locked(), 'the lock was taken at the evidence commit').toBe(true);
-    expect(model.calls(), 'the provider produced the send').toBe(1);
-    expect(h.ledgerEventTypes()).toContain('ModelRequestEvidenceRecorded');
-    expect(h.ledgerEventTypes()).not.toContain('SessionMessageSent');
-    const messages = readSqlite(join(h.database, 'ledger.sqlite'), ledger => (ledger.prepare(
-      "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'SessionMessage'").all() as { ref_key: string }[]), []);
-    expect(messages, 'no SessionMessage snapshot ever committed').toEqual([]);
   });
 });

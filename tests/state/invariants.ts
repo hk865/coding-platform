@@ -33,7 +33,7 @@ import type { ExecutionRef } from '../../src/contracts/core/identity.js';
 import type { SessionRecord } from '../../src/contracts/core/session.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type {
-  ExecutionAuthorizationV1, ExecutionAuthorizationV2, RunOutcome, RunRef, RunSnapshot, TaskAttemptSnapshot, TaskLeaseSnapshot,
+  ExecutionAuthorizationV2, RunOutcome, RunRef, RunSnapshot, TaskAttemptSnapshot, TaskLeaseSnapshot,
 } from '../../src/contracts/dispatch.js';
 import { requirementKeyOf, type EvidenceSnapshot, type TaskEvidenceIndexSnapshot } from '../../src/contracts/evidence.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
@@ -109,13 +109,14 @@ import {
   type RoundChainHeadV1,
 } from '../../src/core/work-graph/state/verification-machine.js';
 
-function isAuthorizationV2(auth: ExecutionAuthorizationV1 | ExecutionAuthorizationV2 | undefined): auth is ExecutionAuthorizationV2 {
-  return auth !== undefined && 'schemaVersion' in auth && auth.schemaVersion === 2;
+function isAuthorizationV2(auth: ExecutionAuthorizationV2 | undefined): auth is ExecutionAuthorizationV2 {
+  return auth !== undefined;
 }
 
 /**
  * §6.1 "其他 V2 组合视为损坏": the problem of a Run outside the eight machine
- * states, or `null`. A V1 or pre-B2 Run is legacy history, not damage. Every
+ * states, or `null`. A pre-B2 Run without an authorization is legacy history,
+ * not damage. Every
  * record `transitionRun` produces passes it (§14.5); today's readers do not
  * cross-check (`record-readers.ts:313-314`), so it is the invariant check's tool.
  * Moved from `run-machine.ts` (A.2 step 4): no production path calls it.
@@ -750,8 +751,8 @@ function written<T extends { ref: object; revision: number }>(prev: readonly T[]
 
 /**
  * The D-14 row of one Attempt (§5.1): Run status/outcome, the V2 entry phase,
- * the Outbox and, when the Lease names this Attempt, the Lease. A V1 or
- * absent authorization is not judged (legacy, and `none` where the table
+ * the Outbox and, when the Lease names this Attempt, the Lease. An absent
+ * authorization is not judged (legacy, and `none` where the table
  * allows it). Returns one problem sentence per broken column.
  */
 export function checkAttemptPairing(

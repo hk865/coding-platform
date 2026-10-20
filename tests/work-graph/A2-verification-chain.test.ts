@@ -13,8 +13,8 @@
  *   a later adoption too; a gate without a chain has none.
  * - VR-07 read set: an adoption or a subject Run write committed while the
  *   finalize runs refuses it (`revision_conflict`) and writes nothing.
- * - VR-10..12: no index row for a zero-evidence finalize, a stored legacy @0
- *   index row is repaired.
+ * - VR-10..12: no index row for a zero-evidence finalize, an append from a
+ *   nonexistent index.
  * - Projection read (§4.1, VD-14): the chain is read in the Run's window (a
  *   round committed in between retries the read); an unreadable chain makes the
  *   task graph unavailable.
@@ -34,7 +34,7 @@ import { createWorkflow } from '../../src/business/workflow/workflow.js';
 import type { RuntimeExecutionPort } from '../../src/core/agent-runtime/ports.js';
 import type { EvidencePort } from '../../src/core/work-graph/model/evidence-contracts.js';
 import {
-  encodeTaskEvidenceIndexSnapshot, encodeVerificationRoundSnapshot, VERIFICATION_ROUND_ORIGINAL_LOOKUP,
+  VERIFICATION_ROUND_ORIGINAL_LOOKUP,
 } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
 import { createRegisteredCheckRunner, type RegisteredCheckRunner } from '../../src/core/agent-runtime/check-execution.js';
@@ -167,36 +167,6 @@ it.each(KINDS)('%s: VR-01 claims the subject slot, so a second root never commit
     .toEqual({ status: 'ready', value: first });
 });
 
-it('a legacy slot-less second root makes the chain invalid: no head, no new root, P10 and no completion', async () => {
-  const fixture = await openFixture();
-  const first = await finish(fixture, (await open(fixture)).ref);
-  expect(first).toMatchObject({ status: 'finalized', outcome: 'PASS', gaps: [] });
-  // Before A.2 a second request could open another round on the same Run; write one as it was (no chain, no slot).
-  const legacy: RoundSnapshot = { ...first, ref: { ...first.ref, roundId: 'a2-legacy-root' }, revision: 1, status: 'open',
-    outcome: null, gaps: [], evidenceRefs: [] };
-  delete legacy.chain;
-  expect(await fixture.b2.base.commitRaw([encodeVerificationRoundSnapshot(legacy)])).toMatchObject({ status: 'committed' });
-  const subject = { subject: fixture.subject, subjectRunRef: fixture.subjectRunRef };
-  expect(await fixture.evidence.queryRoundChainHead!(fixture.ctx, subject))
-    .toMatchObject({ status: 'rejected', code: 'incomplete' });
-  expect(await fixture.evidence.openVerification(fixture.ctx, fixture.openRequest()))
-    .toMatchObject({ status: 'rejected', code: 'incomplete' });
-  expect(await workRow(fixture)).toMatchObject({ effectivePhase: 'blocked', phaseCause: { code: 'round_ambiguous' } });
-  // TASK-14 reads the same projection: the PASS round is not the head of a valid chain.
-  const goal = await fixture.b2.base.plans.queryGoal(fixture.ctx, fixture.goalRef);
-  if (goal.status !== 'ready') throw Error('the Goal must be readable');
-  const complete = (roundRef: RoundSnapshot['ref'], requestId: string) => fixture.b2.base.goals.completeTask(fixture.ctx, {
-    input: { taskRef: fixture.subject, planRef: fixture.planRef, roundRef }, meta: { requestId, expected: [
-      { ref: fixture.goalRef, revision: goal.value.goal.revision },
-      { ref: { aggregateType: 'TaskReduction', projectId: fixture.scope.projectId, goalId: fixture.goalRef.goalId,
-        taskId: R3E_WORK_TASK_ID }, revision: 0 }] } });
-  expect(await complete(first.ref, 'a2-complete-ambiguous'))
-    .toMatchObject({ status: 'rejected', code: 'incomplete', reason: 'the task is blocked; a PASS round cannot complete it' });
-  // The owner stops on the projection before it reads the round (a round that does not exist is not read).
-  expect(await complete({ ...first.ref, roundId: 'a2-missing-round' }, 'a2-complete-missing'))
-    .toMatchObject({ status: 'rejected', code: 'incomplete', reason: 'the task is blocked; a PASS round cannot complete it' });
-});
-
 it('VD-14 / VD-7: the head reads by subject whatever Plan the caller names, after a later adoption too', async () => {
   const fixture = await openFixture();
   const round = await open(fixture);
@@ -266,7 +236,7 @@ it.each([
   expect(await readKeys(fixture, [indexKey])).toEqual([indexKey]);
 });
 
-it('VR-10..12: no index row for zero evidence, a legacy @0 row repaired', async () => {
+it('VR-10..12: no index row for zero evidence, an append from no index', async () => {
   const fixture = await openFixture();
   const indexRef = { aggregateType: 'TaskEvidenceIndex' as const, projectId: fixture.scope.projectId,
     goalId: fixture.goalRef.goalId, taskId: R3E_WORK_TASK_ID };
@@ -281,10 +251,8 @@ it('VR-10..12: no index row for zero evidence, a legacy @0 row repaired', async 
   const finalized = await fixture.evidence.finalizeChecks(fixture.ctx, fixture.finalizeRequest(round));
   expect(finalized).toMatchObject({ status: 'committed', value: { outcome: 'INCONCLUSIVE', evidence: [] } });
   expect(await readIndex()).toBeNull();
-  // VR-11: a stored legacy @0 row is guarded at 0 and repaired by the next append (the gate's own index).
+  // VR-11: the gate's own index starts absent and the append creates it.
   const gateIndexRef = { ...indexRef, taskId: R3E_GATE_TASK_ID };
-  expect(await fixture.b2.base.commitRaw([encodeTaskEvidenceIndexSnapshot({ ref: gateIndexRef, revision: 0, schemaVersion: 1,
-    evidenceIds: [] })])).toMatchObject({ status: 'committed' });
   const gate = await fixture.evidence.openVerification(fixture.ctx,
     fixture.openRequest({ subject: { ...fixture.subject, taskId: R3E_GATE_TASK_ID }, gateSubject: 'goal' }));
   if (gate.status !== 'committed') throw Error(`the gate round must open: ${JSON.stringify(gate)}`);

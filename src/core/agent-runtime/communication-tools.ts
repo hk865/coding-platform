@@ -315,8 +315,6 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
       needsReply: z.boolean().optional(),
       /** Independent of needsReply: yield after the message is durably saved. */
       waitAfterSend: z.boolean().optional(),
-      /** Legacy equivalent of waitAfterSend=true; normalized, never a second flow. */
-      replyMode: z.literal('wait').optional(),
     }).strict(),
     z.object({
       status: z.enum(['pending', 'read', 'responded']).optional(),
@@ -409,12 +407,12 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
               case 'send_session_message': {
                 const input = args as {
                   recipient: SessionRef; text: string; intent?: SessionMessageIntentV1;
-                  needsReply?: boolean; waitAfterSend?: boolean; replyMode?: 'wait';
+                  needsReply?: boolean; waitAfterSend?: boolean;
                 };
                 const result = await config.mailbox.sendMessage(context, sendSessionMessageRequest(input, requestId));
                 if (result.status !== 'committed') return mapWrite(call.callId, result);
                 // The historical fire-and-forget send keeps the untouched result.
-                const waitAfterSend = input.waitAfterSend === true || input.replyMode === 'wait';
+                const waitAfterSend = input.waitAfterSend === true;
                 if (!waitAfterSend) return mapWrite(call.callId, result);
                 // The message is ALREADY durably saved; registration never changes
                 // the send receipt and never starts a model or a poll loop.

@@ -56,9 +56,8 @@ export const TASK_REQUEUED_EVENT_TYPE = 'TaskRequeued';
 export const TASK_REWORK_REFUSED_EVENT_TYPE = 'TaskReworkRefused';
 export const TASK_REWORK_EVENT_SCHEMA_VERSION = 1;
 
-/** Slice 2A L4: the ordered and legacy requeue indexes on `TaskRequeue`. */
+/** Slice 2A L4: the ordered requeue index on `TaskRequeue`. */
 export const S2A_REQUEUE_BY_PROJECT_LOOKUP = 's2a-requeue-by-project';
-export const S2A_REQUEUE_LEGACY_LOOKUP = 's2a-requeue-legacy';
 /** Slice 2C L4 index 6: the latest (or paged) Work claim of a Session by generation. */
 export const S2C_WORK_CLAIM_BY_SESSION_GENERATION_LOOKUP = 's2c-work-claim-by-session-generation';
 export const S2A_REQUEUE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
@@ -67,11 +66,6 @@ export const S2A_REQUEUE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
     aggregateType: 'TaskRequeue',
     paths: ['ref.projectId'],
     orderBy: { path: 'since' },
-  },
-  {
-    name: S2A_REQUEUE_LEGACY_LOOKUP,
-    aggregateType: 'TaskRequeue',
-    paths: ['ref.projectId', 'since'],
   },
 ];
 
@@ -247,8 +241,11 @@ export function decodeTaskAttemptSnapshot(record: EncodedRecord): DecodeResult<T
   if (!(body['endedAt'] === null || typeof body['endedAt'] === 'string')) {
     return invalid('TaskAttempt endedAt must be a string or null');
   }
-  if (!(body['endOutcome'] === null || RUN_OUTCOMES.includes(body['endOutcome'] as RunOutcome))) {
-    return invalid('TaskAttempt endOutcome is not a RunOutcome or null');
+  const ended = body['status'] === 'ended';
+  if (ended
+    ? !RUN_OUTCOMES.includes(body['endOutcome'] as RunOutcome)
+    : !(body['endOutcome'] === null || RUN_OUTCOMES.includes(body['endOutcome'] as RunOutcome))) {
+    return invalid(ended ? 'TaskAttempt ended record requires a RunOutcome' : 'TaskAttempt endOutcome is not a RunOutcome or null');
   }
   // TASK-03: optional, only on the Attempt of a claim after a TaskRequeue of this Task.
   if (body['requeueRef'] !== undefined) {

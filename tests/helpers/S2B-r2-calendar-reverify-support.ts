@@ -9,7 +9,6 @@
  * the public `recordCheckResult` / `finalizeChecks` / `reverifyRound` all run on
  * the real owner. Nothing here writes a record directly.
  */
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { CheckExecutionTicket, CheckProcessObservation, RoundSnapshot, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
@@ -144,6 +143,3 @@ export async function openCalendarReverifyFixture(kind: 'memory' | 'sqlite'): Pr
 
   return { f, evidence, openRound, begin, recordFail, finalize, reverify };
 }
-
-/** The fixture's call context (a host principal), kept for callers. */
-export type CalendarReverifyContext = CoreCallContext;

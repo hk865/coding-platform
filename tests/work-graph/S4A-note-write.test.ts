@@ -696,7 +696,7 @@ describe('S4A N-10 review rules (non-scope cases)', () => {
     });
   });
 
-  it.each(KINDS)('N-10 accepting a pending note supersedes its current replaces targets', async kind => {
+  it.each(KINDS)('N-10 accepting a pending note supersedes its current replaces targets (N-06)', async kind => {
     await withFixture(kind, {}, async f => {
       const ctx = f.ctx();
       const g1 = await f.write(ctx, general({ topic: 'r', anchor: FILE_A }), null);

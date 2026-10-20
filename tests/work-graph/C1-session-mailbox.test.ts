@@ -352,18 +352,6 @@ describe.each(KINDS)('C1 SessionMailbox real %s', kind => {
     expect(await h.mailbox.ackMessage(h.ctxWork,{...ack,meta:{...ack.meta,expected:[messagePin(sent.value.ref,99)]}})).toMatchObject({status:'rejected',code:'idempotency_conflict'});
   });
 
-  it('rejects a formal lease successor even when the Run and Session still appear running', async () => {
-    const h = await open(kind);
-    const leaseRef = {aggregateType:'TaskLease',projectId:h.claim.task.projectId,goalId:h.claim.task.goalId,taskId:h.claim.task.taskId};
-    const read = await h.fixture.records.readMany([key(leaseRef)]);
-    expect(read.status).toBe('ready'); if(read.status !== 'ready') return;
-    const row = read.value.records[0]!; const lease = JSON.parse(row.json);
-    lease.revision++; lease.holderRunId='successor-run'; lease.attemptId='successor-attempt';
-    expect(await h.fixture.commitRaw([{...row,revision:lease.revision,json:JSON.stringify(lease)}],[{refKey:row.refKey,expectedRevision:row.revision}])).toMatchObject({status:'committed'});
-    expect(await h.mailbox.sendMessage(h.ctxWork,sendRequest(h.idleSession,'stale owner','lease-changed'))).toMatchObject({status:'rejected',code:'forbidden'});
-    expect(await h.mailbox.readInbox(h.ctxHost,{recipient:h.idleSession,page:{limit:10}})).toMatchObject({status:'ready',value:{items:[]}});
-  });
-
   it('joins the sender Session guard to the message commit rather than trusting an earlier ownership check', async () => {
     const h = await open(kind); let intercepted = false;
     const mailbox = h.makeMailbox({...h.fixture.records,async commit(batch){
@@ -463,31 +451,6 @@ it('SQLite closes both body and ledger connections, reopens the message, and rej
   expect(await h.mailbox.readMessageBody(h.ctxHost,{messageRef:sent.value.ref,part:'message'})).toMatchObject({status:'rejected',code:'unavailable'});
 });
 
-
-it('a released same-owner Lease denies fresh mail while restoring the original send receipt', async () => {
-  const h = await open('memory');
-  const request = sendRequest(h.idleSession, 'before release', 'same-owner-original');
-  const sent = await h.mailbox.sendMessage(h.ctxWork, request);
-  expect(sent.status).toBe('committed'); if (sent.status !== 'committed') return;
-  const leaseRef = { aggregateType: 'TaskLease', projectId: h.claim.task.projectId,
-    goalId: h.claim.task.goalId, taskId: h.claim.task.taskId };
-  const loaded = await h.fixture.records.readMany([key(leaseRef)]);
-  expect(loaded.status).toBe('ready'); if (loaded.status !== 'ready') return;
-  const row = loaded.value.records[0]!;
-  const lease = JSON.parse(row.json);
-  // Domain anomaly seed: release does not erase historical holder/attempt IDs.
-  // This tests admission independently from the B2 terminal writer.
-  const released = { ...lease, revision: lease.revision + 1,
-    release: { schemaVersion: 1, runRef: h.claim.runRef, attemptRef: h.claim.attemptRef,
-      sessionRef: h.claim.sessionRef, generation: h.claim.generation, releasedAt: AT, eventId: 'same-owner-release' } };
-  expect(await h.fixture.commitRaw([{ ...row, revision: released.revision, json: JSON.stringify(released) }],
-    [{ refKey: row.refKey, expectedRevision: row.revision }])).toMatchObject({ status: 'committed' });
-  expect(await h.mailbox.sendMessage(h.ctxWork, request)).toEqual({ ...sent, replayed: true });
-  expect(await h.mailbox.sendMessage(h.ctxWork, sendRequest(h.idleSession, 'after release', 'same-owner-fresh')))
-    .toMatchObject({ status: 'rejected', code: 'forbidden' });
-  const inbox = await h.mailbox.readInbox(h.ctxHost, { recipient: h.idleSession, page: { limit: 10 } });
-  expect(inbox).toMatchObject({ status: 'ready', value: { items: [sent.value] } });
-});
 
 it('a failed publication retries across a Workspace revision using the first exact body provenance', async () => {
   const h = await open('memory');

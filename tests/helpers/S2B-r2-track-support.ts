@@ -10,10 +10,6 @@
  * the public `readTrackBars`; expected values are hand literals.
  */
 import { TRACK_WORK_TASK_IDS, type S2BTrackFixture } from './S2B-track-fixture.js';
-import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
-import type { RunRef } from '../../src/contracts/dispatch.js';
-
-const RUN_SCHEMA_ID = 'RunSnapshot@1';
 
 /** The full 2026-10-14 UTC day, a quarter-aligned window. */
 export const R2_DAY_FROM = '2026-10-14T00:00:00.000Z';
@@ -37,46 +33,4 @@ export async function seedRealTrackRuns(fixture: S2BTrackFixture, count: number)
     ids.push(run.runId);
   }
   return ids;
-}
-
-/**
- * Commits one ended Run cloned from a real Run with the caller's `mutate`
- * applied, for the R5 classification cases no production flow can produce
- * (a V1 authorization, or a position record with no authorization). The clone
- * keeps the template's Plan/workspace/terminal shape.
- */
-export async function seedRawRunVariant(
-  fixture: S2BTrackFixture,
-  input: { taskId: string; runId: string; startedAt: string; endedAt: string;
-    mutate(body: Record<string, unknown>): void },
-): Promise<RunRef> {
-  const template = await fixture.runAndEnd('work-2', fixture.computeSessionRef(),
-    '2026-10-14T06:00:00.000Z', '2026-10-14T06:10:00.000Z');
-  const templateKey = canonicalJson(template as unknown as JsonValue);
-  const read = await fixture.records.readMany([templateKey]);
-  if (read.status !== 'ready') throw new Error(`S2B-r2 raw variant read failed: ${JSON.stringify(read)}`);
-  const record = read.value.records.find((candidate) => candidate.refKey === templateKey);
-  if (record === undefined) throw new Error('S2B-r2 raw variant template is missing');
-  const body = JSON.parse(record.json) as Record<string, unknown>;
-  const ref = { ...(body['ref'] as RunRef), runId: input.runId };
-  body['ref'] = ref;
-  body['task'] = { ...(body['task'] as Record<string, unknown>), taskId: input.taskId };
-  body['attemptId'] = `${input.runId}-attempt`;
-  body['revision'] = 1;
-  body['startedAt'] = input.startedAt;
-  body['endedAt'] = input.endedAt;
-  delete body['requeueRef'];
-  delete body['consumedWait'];
-  delete body['controlState'];
-  delete body['reconciliation'];
-  delete body['continuation'];
-  input.mutate(body);
-  const refKey = canonicalJson(ref as unknown as JsonValue);
-  const committed = await fixture.b2.base.commitRaw([
-    { refKey, schemaId: RUN_SCHEMA_ID, revision: 1, json: JSON.stringify(body) },
-  ]);
-  if (committed.status !== 'committed') {
-    throw new Error(`S2B-r2 raw variant commit failed: ${JSON.stringify(committed)}`);
-  }
-  return ref;
 }

@@ -1,16 +1,12 @@
 /**
  * Speed round 2 (R2-2/R2-3/R2-4, decision 66): one partial expression index per
  * registered lookup, each covering only its own aggregate type, plus the
- * open-time migration that swaps a ledger's old full indexes for them.
+ * open-time migration that creates any missing index.
  *
  * `migrateLookupIndexes` replaces round 1's `createLookupIndexes`. It plans
  * outside any transaction and only when there is work runs one
- * `BEGIN IMMEDIATE` ... `COMMIT` (drop first, then create) so a crash leaves no
- * half-migrated ledger; a steady-state open plans nothing and runs no
- * transaction. Dropping is deliberately conservative (R2-1 rule (C')): an
- * unregistered index survives unless it is a pre-round-2 full index or its
- * predicate's type is still registered by this backend, so a narrow open never
- * yanks another registration set's indexes from under it.
+ * `BEGIN IMMEDIATE` ... `COMMIT` so a crash leaves no half-created ledger; a
+ * steady-state open plans nothing and runs no transaction.
  *
  * This module imports no WorkGraph module, opens no connection and never
  * exposes SQL to a caller.
@@ -82,52 +78,39 @@ function expectedIndexes(lookups: RecordLookupRegistry): Map<string, ExpectedInd
   return expected;
 }
 
-type StoredIndex = { readonly name: string; readonly sql: string | null };
-
-/** The exact partial predicate a round-2 index stores at the end of its SQL. */
-const TYPE_PREDICATE = / WHERE json_extract\(ref_key, '\$\.aggregateType'\) = '([A-Za-z][A-Za-z0-9_]*)'$/;
+type StoredIndex = { readonly name: string };
 
 function existingLookupIndexes(db: DatabaseSync): StoredIndex[] {
   const rows = db.prepare(
-    "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'snapshots' AND name LIKE 'next\\_lookup\\_%' ESCAPE '\\'",
+    "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'snapshots' AND name LIKE 'next\\_lookup\\_%' ESCAPE '\\'",
   ).all() as unknown as StoredIndex[];
   return rows.filter((row) => row.name.startsWith("next_lookup_"));
 }
 
-type MigrationPlan = { readonly drop: readonly string[]; readonly create: readonly string[] };
+type MigrationPlan = { readonly create: readonly string[] };
 
-function planMigration(db: DatabaseSync, expected: Map<string, ExpectedIndex>, registry: RecordLookupRegistry): MigrationPlan {
-  const registeredTypes = new Set(registry.indexes.map((index) => index.aggregateType));
+function planMigration(db: DatabaseSync, expected: Map<string, ExpectedIndex>): MigrationPlan {
   const existing = new Set<string>();
-  const drop: string[] = [];
-  for (const row of existingLookupIndexes(db)) {
-    existing.add(row.name);
-    if (expected.has(row.name)) continue;
-    const predicate = typeof row.sql === "string" ? TYPE_PREDICATE.exec(row.sql) : null;
-    // R2-1 (C'): drop a legacy full index (no predicate) or a stale index of a
-    // type this backend still registers; keep another registration set's index.
-    if (predicate === null || registeredTypes.has(predicate[1]!)) drop.push(row.name);
-  }
+  for (const row of existingLookupIndexes(db)) existing.add(row.name);
   const create: string[] = [];
   for (const name of expected.keys()) if (!existing.has(name)) create.push(name);
-  return { drop, create };
+  return { create };
 }
 
 /**
  * Bring the `next_lookup_*` indexes on `snapshots` up to this backend's
- * registration. No work is no transaction; otherwise drop first, then create,
- * in one `BEGIN IMMEDIATE` transaction, re-planned inside it because another
- * process may have migrated meanwhile. A throw rolls back and rethrows, and the
- * SQLite factory closes the connection as it already does.
+ * registration. No work is no transaction; otherwise create every missing
+ * index in one `BEGIN IMMEDIATE` transaction, re-planned inside it because
+ * another process may have migrated meanwhile. A throw rolls back and
+ * rethrows, and the SQLite factory closes the connection as it already does.
  */
 export function migrateLookupIndexes(db: DatabaseSync, lookups: RecordLookupRegistry): void {
   const expected = expectedIndexes(lookups);
-  const before = planMigration(db, expected, lookups);
-  if (before.drop.length === 0 && before.create.length === 0) return;
+  const before = planMigration(db, expected);
+  if (before.create.length === 0) return;
   db.exec("BEGIN IMMEDIATE");
   try {
-    const inside = planMigration(db, expected, lookups);
-    for (const name of inside.drop) db.exec(`DROP INDEX IF EXISTS ${quoteIdentifier(name)}`);
+    const inside = planMigration(db, expected);
     for (const name of inside.create) db.exec(expected.get(name)!.create);
     db.exec("COMMIT");
   } catch (error) {

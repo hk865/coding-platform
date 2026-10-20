@@ -64,6 +64,7 @@ import type { HostTakeoverProofV1, UnknownCallReviewV1 } from '../../src/contrac
 import type { ContinuationUnknownCallReviewV1 } from '../../src/contracts/continuation-brief.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { PlanRevisionRef } from '../../src/contracts/plan.js';
+import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { SessionAnomalyAnchorV1 } from '../../src/contracts/session-anomaly.js';
 import type { TaskRequeueSnapshotV1 } from '../../src/contracts/task-requeue.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
@@ -107,7 +108,7 @@ import { initGitWorkspace } from '../scenarios/support/git-workspace.js';
 import { prepareContinuation } from './K3-35-prepare.js';
 import {
   adoptK3PlanTask, answerK3Disposition, claimK3ReviewRound, endK3RunCompleted, k3TaskIdOfBytes,
-  openK3ReviewCardWorld, readK3Review, recordK3Conclusion, settleK3Review, writeK3Proposal,
+  openK3ReviewCardWorld, readK3Review, runK3ReviewRound, settleK3Review, writeK3Proposal,
   type K3ReviewCardWorld,
 } from './K3-proposal-round.js';
 
@@ -116,9 +117,9 @@ import { APPROVED_COMMAND, at, P, W } from './K3-continuation-pure-fixture.js';
 // The pure construction, the fixed brief literals and `requiredReviewBlock`
 // now live in `K3-continuation-pure-fixture.ts` (F-014). Re-export them here so
 // this heavy helper's non-pure consumers keep their imports unchanged.
-export { at, P, W, APPROVED_COMMAND };
+export { APPROVED_COMMAND };
 export {
-  approvedMethodBlockBytes, baseBrief, G, K3_35_REQUIRED_REVIEW_BLOCK_ONE, sha, task,
+  approvedMethodBlockBytes, K3_35_REQUIRED_REVIEW_BLOCK_ONE,
 } from './K3-continuation-pure-fixture.js';
 
 export const WORST_REASON = WORST_ANOMALY_REASON;
@@ -127,7 +128,7 @@ export const WORST_REASON = WORST_ANOMALY_REASON;
 // The public-owner review record plus eight real archived anchors.          //
 // ------------------------------------------------------------------------ //
 /** The real answer text; the renderer clips it to 60 UTF-16 units + `…（已截断）`. */
-export const SAFER_NOTE = '稳'.repeat(2_000);
+const SAFER_NOTE = '稳'.repeat(2_000);
 
 /** 512 UTF-8 bytes (the L7/L8 callId ceiling): 170 three-byte characters plus two ASCII digits. */
 function longCallId(alias: number): string {
@@ -155,9 +156,9 @@ function emptyMailbox(): SessionMailboxPort {
 }
 
 export const K3_35_TASK_ID = 'k3-20-a';
-export const K3_35_ANCHORS = 8;
+const K3_35_ANCHORS = 8;
 
-export type K3_35PublicOptions = {
+type K3_35PublicOptions = {
   /**
    * When set, the K3 review world first adopts a REAL Plan revision on Goal B
    * with one Task whose id is `'t'.repeat(taskIdBytes)` (512 / 600), and the
@@ -196,7 +197,7 @@ export type K3_35PublicRecord = {
 };
 
 /** A §5.1 blocking seam the harness may be handed instead of the module singleton. */
-export type K3_35BlockingSeam = {
+type K3_35BlockingSeam = {
   readonly name?: string;
   readonly enabled: boolean;
   readonly calls: ReadonlyArray<{ callId: string; arguments: unknown }>;
@@ -209,7 +210,7 @@ export type K3_35BlockingSeam = {
  * identity, position, cursor, review item, observed item or `closed` value; the
  * harness reads every such fact from the platform itself.
  */
-export type K3_35RealRunHarnessOptions = {
+type K3_35RealRunHarnessOptions = {
   now?: () => string;
   eventId?: () => string;
   /** The claim owner's Run-id generator. */
@@ -233,7 +234,7 @@ export type K3_35RealRunHarnessOptions = {
 };
 
 /** The takeover proof a Host input carries for RUN-25 (a fault-injection input, never a record). */
-export type K3_35TakeoverOptions = { takeover?: HostTakeoverProofV1 };
+type K3_35TakeoverOptions = { takeover?: HostTakeoverProofV1 };
 
 /**
  * THE reusable real-Run harness of this fixture. It is the ONE path the K3
@@ -249,7 +250,9 @@ export type K3_35RealRunHarness = {
   kernelStores: KernelStoreRegistry;
   closeUnion(): Promise<void>;
   claimRun(input: { sessionRef: { projectId: string; sessionId: string }; planRef: PlanRevisionRef;
-    taskId: string; requeueRef?: TaskRequeueSnapshotV1['ref']; requestId: string }): Promise<TaskClaim>;
+    taskId: string; requeueRef?: TaskRequeueSnapshotV1['ref']; requestId: string;
+    /** The Goal the Run is claimed under; defaults to the K3-35 world's `GOAL_B`. */
+    goalRef?: GoalRef }): Promise<TaskClaim>;
   /**
    * The REAL entry of every K3-35 Run: production `prepareExecution` then
    * production `startRun`. With `blockOnShell` the scripted model's `shell`
@@ -428,8 +431,8 @@ export async function openRealRunHarness(
     if (card.status !== 'ready') throw new Error(`the Session is not readable: ${JSON.stringify(card)}`);
     return { ref: { aggregateType: 'Session' as const, ...sessionRef }, revision: card.value.record.revision };
   };
-  const goalRevision = async (): Promise<number> => {
-    const goal = await world.fixture.b2.base.plans.queryGoal(world.fixture.ctx, GOAL_B);
+  const goalRevision = async (goalRef: GoalRef = GOAL_B): Promise<number> => {
+    const goal = await world.fixture.b2.base.plans.queryGoal(world.fixture.ctx, goalRef);
     if (goal.status !== 'ready') throw new Error(`the Goal is not readable: ${JSON.stringify(goal)}`);
     return goal.value.goal.revision;
   };
@@ -442,12 +445,15 @@ export async function openRealRunHarness(
   };
 
   async function claimRun(input: { sessionRef: { projectId: string; sessionId: string }; planRef: PlanRevisionRef;
-    taskId: string; requeueRef?: TaskRequeueSnapshotV1['ref']; requestId: string }): Promise<TaskClaim> {
+    taskId: string; requeueRef?: TaskRequeueSnapshotV1['ref']; requestId: string;
+    /** The Goal the Run is claimed under; defaults to the K3-35 world's `GOAL_B`. */
+    goalRef?: GoalRef }): Promise<TaskClaim> {
+    const goalRef = input.goalRef ?? GOAL_B;
     const claimed = await claims.claimTask(world.fixture.ctx, { input: {
-      goalRef: GOAL_B, planRef: input.planRef, taskId: input.taskId, sessionRef: input.sessionRef,
+      goalRef, planRef: input.planRef, taskId: input.taskId, sessionRef: input.sessionRef,
       roleBinding: ROLE_BINDING, budget: BUDGET,
       ...(input.requeueRef === undefined ? {} : { requeueRef: input.requeueRef }),
-    }, meta: { requestId: input.requestId, expected: [{ ref: GOAL_B, revision: await goalRevision() },
+    }, meta: { requestId: input.requestId, expected: [{ ref: goalRef, revision: await goalRevision(goalRef) },
       { ref: { aggregateType: 'Workspace', projectId: P, workspaceId: W }, revision: await workspaceRevision() },
       await sessionPin(input.sessionRef)] } });
     if (claimed.status !== 'committed') throw new Error(`the public claim failed: ${JSON.stringify(claimed)}`);
@@ -921,15 +927,16 @@ export async function openK3_35PublicRecord(
     if (created.status !== 'pending_review') {
       throw new Error(`the RUN-22 record must be pending_review: ${JSON.stringify(created.status)}`);
     }
-    const reviewRound = await claimK3ReviewRound(world, created, { phase: 'review', planRef });
-    const concluded = await recordK3Conclusion(world, reviewRound, {
-      item: 1, verdict: 'done', evidence: '依据'.repeat(300),
-      crashSuspicion: { verdict: 'possible', evidence: '可疑'.repeat(300) },
+    const reviewRound = await runK3ReviewRound(world, created, {
+      planRef,
+      conclusions: [{
+        item: 1, verdict: 'done', evidence: '依据'.repeat(300),
+        crashSuspicion: { verdict: 'possible', evidence: '可疑'.repeat(300) },
+      }],
     });
-    await endK3RunCompleted(world, reviewRound.claim);
-    const decided = await settleK3Review(world, concluded);
-    if (decided.status !== 'needs_decision') {
-      throw new Error(`the real review round must settle needs_decision: ${JSON.stringify(decided.status)}`);
+    const decided = reviewRound.settled;
+    if (decided === null || decided.status !== 'needs_decision') {
+      throw new Error(`the real review round must settle needs_decision: ${JSON.stringify(decided?.status)}`);
     }
     // The review world's production Kernel reader returns the ORIGINAL command
     // text of the real Turn; the owner computes and writes `blockedCommands`

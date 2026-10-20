@@ -1,6 +1,10 @@
-/** SPEC §5.3 NR01–NR08. Real store, notice reader, display token and settings owner. */
+/** SPEC §5.3 NR01–NR07. Real store, notice reader, display token and settings owner. */
 import { afterEach, describe, expect, it } from 'vitest';
+import { join } from 'node:path';
 import type { NoticeCategoryV1, NoticePositionV1 } from '../../src/contracts/goal-decisions.js';
+import type { TaskAutomationPolicyV1 } from '../../src/contracts/task-requeue.js';
+import { createHostSettings, type HostSettingsAssembly } from '../../src/app/host-settings.js';
+import type { BootstrapResponse } from '../../src/app/core-http-types.js';
 import { makeCommitCursor } from '../../src/contracts/ledger.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { EncodedRecord } from '../../src/core/record-store/ports.js';
@@ -11,7 +15,7 @@ import { createDecisionSettingsService } from '../../src/core/work-graph/configu
 import { createDecisionReadModel } from '../../src/core/work-graph/views/decision-read-model.js';
 import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
-import { createExecutedFilesStub } from '../helpers/executed-files-stub.js';
+import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { createAutomaticReworkNoticeSource } from '../../src/core/work-graph/views/automatic-rework-notices.js';
 import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice-display-token.js';
 import { createNoticePositionComparator } from '../../src/core/work-graph/views/notice-position.js';
@@ -53,7 +57,8 @@ function harness(f: S5DecisionFixture, sources: readonly DecisionNoticeSourcePor
     displayTokens, positions, operatorActor: OPERATOR });
   const reads = createDecisionReadModel({ records: f.records, cardSources: [], noticeSources: sources,
     conflicts: createGoalConflictAssembler({ records: f.records,
-      catalog: createArchitectureCatalogService({ records: f.records }), executedFiles: createExecutedFilesStub() }), positions, displayTokens });
+      catalog: createArchitectureCatalogService({ records: f.records }),
+      executedFiles: createGoalExecutedFilesReader({ records: f.records }) }), positions, displayTokens });
   const page = async (options: { categories?: NoticeCategoryV1[]; limit?: number } = {}) => ready(await reads.queryDecisionQueue(f.ctx,
     { workspace: WORKSPACE_SCOPE, sections: ['notices'], ...(options.categories === undefined ? {} : { categories: options.categories }),
       page: { limit: options.limit ?? 50 } }));
@@ -64,6 +69,24 @@ function harness(f: S5DecisionFixture, sources: readonly DecisionNoticeSourcePor
   };
   return { page, mark, displayTokens };
 }
+/** The public Host settings step (C8 `automation/save`) installs the live policy. */
+async function saveAutomationPolicy(f: S5DecisionFixture,
+  holder: { current: TaskAutomationPolicyV1 }, autoReworkLimit: number): Promise<TaskAutomationPolicyV1> {
+  const assembly: HostSettingsAssembly = {
+    listWorkspaces: () => [], listProjectIds: () => [], secretConfigured: () => false,
+    bootstrap: () => ({}) as BootstrapResponse,
+    async openWorkspace() { return { status: 'rejected', code: 'unsupported', reason: 'not used by S5 notices' }; },
+  };
+  let installed: TaskAutomationPolicyV1 | null = null;
+  const settings = await createHostSettings({ settingsDirectory: join(f.base.directory, 'host-settings'), assembly },
+    { onConfigurationChanged(snapshot) { installed = snapshot.automation; } });
+  const saved = await settings.call('automation/save', { autoReworkLimit, resumeOnStartup: true });
+  if (saved.status !== 'ready') throw new Error(`automation/save was not ready: ${JSON.stringify(saved)}`);
+  if (installed === null) throw new Error('automation/save did not install the policy');
+  holder.current = installed;
+  return installed;
+}
+
 const readRework = async (f: S5DecisionFixture, records: DecisionReadRecordsPort & RecordOrderedLookupPort = f.records) =>
   createAutomaticReworkNoticeSource({ records }).readPage(f.ctx, { workspace: WORKSPACE_SCOPE, page: { limit: 50 } });
 
@@ -134,6 +157,14 @@ const CASES: readonly Case[] = [
         .toMatchObject({ sourceRef: ref, operation, actorClass, count: 1, cap: 3 });
     }
     expect(items.map(notice => key(notice.rework!.sourceRef))).not.toContain(key(human.ref));
+    // NR08 (TP-167): the automatic successor recorded cap 3; raising the current
+    // policy to 7 through the public settings step must not rewrite history.
+    const installed = await saveAutomationPolicy(f, work.automationPolicy, 7);
+    expect(installed.autoReworkLimit).toBe(7);
+    const after = ready(await readRework(f)).items;
+    expect(after).toEqual(items);
+    expect(after.find(notice => key(notice.rework!.sourceRef) === key(chain.head.ref))?.rework)
+      .toMatchObject({ operation: 'reverify', cap: 3 });
   }],
   ['NR02', 'marking a one-item member page leaves the later member and rework notices', async f => {
     const h = harness(f, pageSources(f));
@@ -192,21 +223,16 @@ const CASES: readonly Case[] = [
     expect(after).toEqual(original);
     expect(decodeNoticeOrigin(after)).toMatchObject({ status: 'decoded', value: { since: sent.cursor } });
   }],
-  ['NR05', 'legacy precedes a bound creation position and corrupt null origin is unavailable', async f => {
+  ['NR05', 'a bound creation position and a corrupt null origin is unavailable', async f => {
     const work = await noticeWork(f);
-    const old = await work.requeue('system', automationContext(f), true);
     const fresh = await work.requeue('agent', automationContext(f));
-    const oldWire = await storedRecord(f.records, old.ref);
-    expect(JSON.parse(oldWire.json)).not.toHaveProperty('since');
     const freshWire = await storedRecord(f.records, fresh.ref);
     const origin = decodeNoticeOrigin(freshWire);
     if (origin.status !== 'decoded') throw new Error(origin.reason);
     expect(origin.value.since).toEqual((await f.storeSnapshot()).lastCursor);
     const items = ready(await readRework(f)).items;
-    expect(items).toHaveLength(2);
-    expect(items.map(e => key(e.rework!.sourceRef))).toEqual([key(old.ref), key(fresh.ref)]);
-    expect(items[0]!.position).toEqual({ kind: 'legacy', occurredAt: old.requestedAt, itemKey: items[0]!.itemKey });
-    expect(items[1]!.position).toEqual({ kind: 'commit', cursor: origin.value.since, itemKey: items[1]!.itemKey });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.position).toEqual({ kind: 'commit', cursor: origin.value.since, itemKey: items[0]!.itemKey });
     const before = await f.storeSnapshot();
     expect(await readRework(f, corruptOrigin(f.records, key(fresh.ref)))).toMatchObject({ status: 'rejected', code: 'unavailable' });
     expect(await f.storeSnapshot()).toEqual(before);
@@ -267,20 +293,6 @@ const CASES: readonly Case[] = [
     expect(items.map(e => e.rework!.count)).toEqual([1, 2, 3]);
     expect(items.map(e => e.rework!.operation)).toEqual(['reverify', 'reverify', 'reverify']);
     expect(head.chain?.basisDigests).toEqual(history.slice(1).map(round => round.chain!.reverify!.basis.digest));
-  }],
-  ['NR08', 'legacy reverify retains an unknown cap after the current policy cap changes', async f => {
-    const work = await noticeWork(f, { legacyRounds: true });
-    const { head } = await work.rounds(1);
-    expect(JSON.parse((await storedRecord(f.records, head.ref)).json)).not.toHaveProperty('noticeAutomationCap');
-    const first = ready(await readRework(f)).items;
-    expect(first).toHaveLength(1);
-    expect(first[0]!.rework).toMatchObject({ sourceRef: head.ref, operation: 'reverify', actorClass: 'system', count: 1, cap: null });
-    expect(first[0]!.summary).toMatch(/^自动返工 · .+ · 第 1 次（上限未记录）$/);
-    // This is the actual Host policy resolver supplied to the evidence/requeue owners.
-    work.automationPolicy.current = { ...work.automationPolicy.current, autoReworkLimit: 7 };
-    expect(work.automationPolicy.current.autoReworkLimit).toBe(7);
-    const after = ready(await readRework(f)).items;
-    expect(after).toEqual(first);
   }],
 ];
 describe.each(['memory', 'sqlite'] as const)('S5 notices (%s)', kind => {

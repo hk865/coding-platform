@@ -95,6 +95,7 @@ function baseOptions(root: string, databasePath: string, sessionId: string, clie
       count: () => ({ tokens: 256, method: 'model_tokenizer', tokenizer: 'b1-labelled-local-counter' }),
     }),
     root, databasePath, sessionId, input: 'B1 local scripted turn.', budget,
+    taskBudget: { tokenBudget: null, deadline: null },
     readOnly: true, signal: new AbortController().signal,
     deniedPrefixes: [], processSandboxOptions: {}, publish: async () => {},
   };

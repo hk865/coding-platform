@@ -71,15 +71,4 @@ describe('SP-13 history confirmation across versions', () => {
         expect(history.value.items.map(item => item.confirmedByUser)).toEqual([true, true, false, false]);
       } finally { await f.close(); }
     });
-
-  // BLOCKED (book §5 item 13): head version >= 5 needs five versions on one
-  // note. `accept`/`reject` require `pending_review`, `review` requires
-  // `accepted`, and `withdraw`/`supersede` are the only transitions out of
-  // `reviewed` and land in a state no later transition accepts. The longest
-  // reachable chain is v1 pending_review -> v2 accept -> v3 review -> v4
-  // withdraw/supersede, which SP-13 exercises; no public interface can add a
-  // fifth version. The fixture has no raw note-version seeding option.
-  it.skip('SP-13b a head version >= 5 with a confirmation at version 3 lists every confirmedByUser', () => {
-    /* see the comment above */
-  });
 });

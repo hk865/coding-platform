@@ -14,18 +14,15 @@
  *
  * No record is written directly and no model is called.
  */
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
-import type { RoleConfigurationRef, SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
+import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
-import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
-import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
+import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-execution.js';
 import type { QueryJobAnswerV1 } from '../../src/contracts/query-job.js';
 import type { QueryEntryIdentity } from '../../src/core/work-graph/queries/contracts.js';
 import type { RunContinuationV1, RunRef, RunSnapshot, RuntimeEventV1 } from '../../src/contracts/dispatch.js';
-import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import type { QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
-import type { ControlIntentRef, ControlIntentSnapshotV1, SubmittedControl } from '../../src/contracts/control-intent.js';
+import type { ControlIntentRef, SubmittedControl } from '../../src/contracts/control-intent.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
@@ -36,12 +33,11 @@ import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execut
 import type { ExecutionEntryPort } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import type { ControlObservationPort, RunControlPort } from '../../src/core/work-graph/tasks/control-contracts.js';
 import type { ControlObservationV1 } from '../../src/contracts/control-intent.js';
-import type { SessionProbeVerdict } from '../../src/core/work-graph/state/session-availability.js';
 import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
-import { createExecutionEntryService, MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/tasks/execution-entry-service.js';
+import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
@@ -49,15 +45,12 @@ import { createSessionHealthService } from '../../src/core/work-graph/sessions/s
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createQueryExecution } from '../../src/core/work-graph/queries/query-execution.js';
-import { QUERY_MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/queries/query-execution.js';
-import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import { consultationQueryRefs } from '../../src/contracts/query-job.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
-import type { TaskClaimFixture } from './task-claim-fixture.js';
+import { preparationHost, prepareQueryForReal, prepareTaskForReal, type TaskClaimFixture } from './task-claim-fixture.js';
 
 export const L_HOST = {
   configurationRevision: 's2c-l-host@1',
@@ -126,36 +119,12 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
   }
 
   async function buildPrepared(claim: TaskClaim): Promise<PreparedTaskExecution> {
-    const target = await readExecution(claim);
-    const runRoleBinding = target.run.roleBinding;
-    const input = 'S2C-L line fixture task input.';
-    const inputDigest = artifactBodyDigest(input);
-    const roleFacts = await roles.resolveRoleBindingFacts(base.ctx, { roleBinding: runRoleBinding,
-      declaredPermissions: L_HOST.permissions });
-    if (roleFacts.result.status !== 'ready') throw new Error('S2C-L role facts are not ready');
-    const manifest: PreparedTaskManifestV1 = {
-      schemaVersion: 1, kind: 'task_execution', claim, role: roleFacts.result.value, hostTemplate: L_HOST.hostTemplate,
-      roleBinding: runRoleBinding, hostConfigurationRevision: L_HOST.configurationRevision,
-      sessionRole: target.session.role, workspaceSnapshot: { workspaceId: claim.workspaceId, revision: 1 },
-      permissions: L_HOST.permissions, budget: base.budget, selectedTaskInputs: [], materialBasis: null,
-      materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [], sourceRefs: [],
-      input, inputDigest,
-    };
-    const manifestJson = JSON.stringify(manifest);
-    const stored = await bodies.put({ body: manifestJson,
-      contentType: MANIFEST_CONTENT_TYPE,
-      sourceRefs: [{ kind: 'workspace', refId: claim.workspaceId, revision: '1' }],
-      origin: { kind: 'run', owner: claim.runRef }, requestedAt: now() });
-    if (stored.status !== 'ready') throw new Error(`S2C-L manifest store failed: ${JSON.stringify(stored)}`);
-    const envelope: TaskEnvelopeV1 = {
-      schemaVersion: 1, envelopeId: `s2c-l-envelope-${++seq}`, projectId: claim.task.projectId,
-      workspaceId: claim.workspaceId, goalId: claim.task.goalId, taskId: claim.task.taskId,
-      runRef: claim.runRef, attemptRef: claim.attemptRef, planRef: claim.planRef,
-      roleBinding: runRoleBinding, workspaceSnapshot: { workspaceId: claim.workspaceId, revision: 1 },
-      permissions: L_HOST.permissions, budget: base.budget, sourceRefs: [], bundleRef: stored.value.ref,
-    };
-    return { kind: 'task', claim, envelope, inputBinding: {
-      schemaVersion: 1, inputDigest, manifestDigest: artifactBodyDigest(manifestJson), materialAccessRefs: [], deliveryRefs: [] } };
+    const real = await prepareTaskForReal(base, {
+      bodies, runRef: claim.runRef, now, requestId: `s2c-l-prepare-${++seq}`,
+      host: preparationHost({ configurationRevision: L_HOST.configurationRevision,
+        permissions: L_HOST.permissions, hostTemplate: L_HOST.hostTemplate }),
+    });
+    return real.prepared;
   }
 
   async function kernelFor(claim: TaskClaim): Promise<{ adapterId: string; kernelSessionId: string; runId: string; turnId: string }> {
@@ -402,7 +371,7 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
     const execution = createQueryExecution({ records, roles, bodies, now: clock, eventId,
       sessionFacts: createSessionFactsService({ records }),
       authorizeConfiguration: async () => ({ status: 'ready', value: {
-        configurationRevision: 's2c-l-query-host@1', permissions, hostTemplate: null, budget: runtimeBudget } }) });
+        configurationRevision: 's2c-l-query-host@1', permissions, hostTemplate: L_HOST.hostTemplate, budget: runtimeBudget } }) });
     const queryJobRef: QueryJobRef = { aggregateType: 'QueryJob', projectId: queryRunRef.projectId,
       workspaceId: queryRunRef.workspaceId, queryJobId: queryRunRef.queryJobId };
     const queryPin = async (): Promise<VersionPin> => {
@@ -410,40 +379,23 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
       if (read.status !== 'ready') throw new Error('S2C-L query read failed');
       return { ref: queryRunRef, revision: read.value.run.revision };
     };
-    const read = await execution.readQueryExecution(base.ctx, queryRunRef);
-    if (read.status !== 'ready') throw new Error('S2C-L query read failed');
-    const state = read.value.run.run.executionState;
-    if (state === undefined) throw new Error('S2C-L claimed Query has no execution state');
     const facts = await execution.readPreparationFacts(base.ctx, queryRunRef);
     if (facts.status !== 'ready') throw new Error(`S2C-L query preparation facts failed: ${JSON.stringify(facts)}`);
-    const input = `S2C-L consultation input ${suffix}`;
-    const manifest: PreparedQueryManifestV1 = { schemaVersion: 1, kind: 'query_execution', queryRunRef, sessionRef: session,
-      sessionGeneration: state.sessionGeneration, roleBinding: state.roleBinding, sessionRole: state.role,
-      role: state.roleResolution, hostTemplate: null, hostConfigurationRevision: 's2c-l-query-host@1',
-      goal: { ref: facts.value.goal.ref, revision: facts.value.goal.revision },
-      workspace: { ref: facts.value.workspace.ref, revision: facts.value.workspace.revision },
-      focusPlan: facts.value.focusPlan === null ? null
-        : { ref: facts.value.focusPlan.ref, revision: facts.value.focusPlan.revision },
-      permissions, runtimeBudget, budget: { tokenBudget: null, deadline: null }, sourceRefs: [],
-      input, inputDigest: sha256Hex(input) };
-    const sourceRefs = [{ kind: 'workspace' as const, refId: base.scope.workspaceId,
-      revision: String(facts.value.workspace.revision) }];
-    const body = await bodies.put({ body: JSON.stringify(manifest), contentType: QUERY_MANIFEST_CONTENT_TYPE,
-      sourceRefs, origin: { kind: 'run', owner: queryRunRef }, requestedAt: now() });
-    if (body.status !== 'ready') throw new Error(`S2C-L query manifest store failed: ${JSON.stringify(body)}`);
-    const prepared = { queryRunRef, bundleRef: body.value.ref, inputDigest: manifest.inputDigest };
-    const bound = await execution.bindPreparedQuery(base.ctx, { input: { prepared },
-      meta: { requestId: `s2c-l-qbind-${suffix}-${++seq}`, expected: [
-        { ref: queryRunRef, revision: read.value.run.revision },
-        { ref: read.value.session.ref, revision: read.value.session.revision }] } });
-    if (bound.status !== 'committed') throw new Error(`S2C-L query bind failed: ${JSON.stringify(bound)}`);
-    const kernel = { adapterId: read.value.session.kernel.adapterId,
-      kernelSessionId: read.value.session.kernel.kernelSessionId, runId: `s2c-l-qkernel-${suffix}`, turnId: `s2c-l-qturn-${suffix}` };
+    const prepared = (await prepareQueryForReal(base, {
+      bodies, queryRunRef, queryExecution: execution, now, requestId: `s2c-l-qprepare-${suffix}-${++seq}`,
+      host: preparationHost({ configurationRevision: 's2c-l-query-host@1', permissions,
+        hostTemplate: L_HOST.hostTemplate, budget: runtimeBudget }),
+    })).prepared;
+    const preparedState = await execution.readQueryExecution(base.ctx, queryRunRef);
+    if (preparedState.status !== 'ready') throw new Error('S2C-L query read failed');
+    const kernel = { adapterId: preparedState.value.session.kernel.adapterId,
+      kernelSessionId: preparedState.value.session.kernel.kernelSessionId,
+      runId: `s2c-l-qkernel-${suffix}`, turnId: `s2c-l-qturn-${suffix}` };
     const ticket = await execution.beginQueryEntry(base.ctx, { input: { prepared, consumerId: `s2c-l-qconsumer-${suffix}`, kernel },
       meta: { requestId: `s2c-l-qbegin-${suffix}-${++seq}`, expected: [
-        { ref: queryJobRef, revision: bound.value.job.revision },
-        { ref: queryRunRef, revision: bound.value.run.revision },
-        { ref: bound.value.session.ref, revision: bound.value.session.revision }] } });
+        { ref: queryJobRef, revision: preparedState.value.job.revision },
+        { ref: queryRunRef, revision: preparedState.value.run.revision },
+        { ref: preparedState.value.session.ref, revision: preparedState.value.session.revision }] } });
     if (ticket.status !== 'committed') throw new Error(`S2C-L query begin failed: ${JSON.stringify(ticket)}`);
     const entry: QueryEntryIdentity = { queryRunRef, sessionRef: ticket.value.sessionRef,
       sessionGeneration: ticket.value.sessionGeneration, entryGeneration: 1, consumerId: ticket.value.consumerId, kernel: ticket.value.kernel };
@@ -462,6 +414,8 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
     if (entered.status !== 'committed') throw new Error(`S2C-L query entered failed: ${JSON.stringify(entered)}`);
     // 2C-17: stop at the real `entered` phase (a working Query).
     if (mode === 'entered') return;
+    const sourceRefs = [{ kind: 'workspace' as const, refId: base.scope.workspaceId,
+      revision: String(facts.value.workspace.revision) }];
     const answerText = `S2C-L answer ${suffix}`;
     const answerBody = await bodies.put({ body: answerText, contentType: 'text/plain; charset=utf-8', sourceRefs,
       origin: { kind: 'run', owner: queryRunRef }, requestedAt: now() });

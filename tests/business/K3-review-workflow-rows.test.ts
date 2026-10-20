@@ -98,6 +98,8 @@ type RealWorld = {
   answerReadFails: boolean;
   /** Every `settleReview` call the Workflow makes through the real owner. */
   settleCalls: number;
+  /** Every result the real `settleReview` owner returned through that wrapper. */
+  settleResults: Array<Awaited<ReturnType<K3ReviewCardWorld['reviews']['settleReview']>>>;
   /** Every ② application request the Workflow's real adapter handled. */
   applied: AppliedApplication[];
   /** Every ③ application record the Workflow's real adapter committed. */
@@ -220,7 +222,7 @@ async function makeRealWorld(
     cardWorld, b2, claim, record, ctx: cardWorld.fixture.ctx,
     workflow: undefined as unknown as ReturnType<typeof createWorkflow>,
     capability: 'available', reviewReadFails: false, answerReadFails: false,
-    settleCalls: 0, applied: [], recordedApplications: 0, mailbox: new Map(),
+    settleCalls: 0, settleResults: [], applied: [], recordedApplications: 0, mailbox: new Map(),
   };
   const runtime: RuntimeExecutionPort = options.runtime === undefined ? {
     capabilities: async () => unsupported('the review-row test never reads capabilities'),
@@ -299,7 +301,9 @@ async function makeRealWorld(
       settleReview: async (ctx: CoreCallContext,
         request: Parameters<K3ReviewCardWorld['reviews']['settleReview']>[1]) => {
         world.settleCalls += 1;
-        return cardWorld.reviews.settleReview(ctx, request);
+        const result = await cardWorld.reviews.settleReview(ctx, request);
+        world.settleResults.push(result);
+        return result;
       },
     } as never,
   };
@@ -557,23 +561,6 @@ it.each(['memory', 'sqlite'] as const)('K3 UR8 (%s): a held record without an ac
   expect(result.value.reason).toContain('unknown_call_review_held');
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR8 (%s): a held record with a claimed round is skipped, never prepared or settled', async kind => {
-  const w = await makeRealWorld(kind);
-  const round = await claimUnenteredRound(w);
-  await holdRecord(w);
-  // UR3h precedes UR8: the round was claimed but never entered, so the
-  // Workflow submits the automation's cancel (RUN-09(U)) instead of waiting on
-  // the held record. UR4 settles it on the next advance.
-  const result = await w.workflow.advanceWork(w.ctx, selectTask('k3-20-a'));
-  expect(result).toMatchObject({ status: 'ready', value: { state: 'advance', next: { kind: 'perform',
-    operation: { kind: 'cancel_review_round', request: {
-      input: { runRef: round.runRef, kind: 'cancel' } } } } } });
-  if (result.status !== 'ready' || result.value.next === null || result.value.next.kind !== 'perform') {
-    throw new Error(JSON.stringify(result));
-  }
-  expect(w.settleCalls).toBe(0);
-});
-
 it.each([
   { kind: 'memory' as const, status: 'needs_decision' as const },
   { kind: 'sqlite' as const, status: 'needs_decision' as const },
@@ -727,51 +714,8 @@ it.each(['memory', 'sqlite'] as const)('K3 UR7b (%s): one unreadable answer keep
   expect(w.applied[0]).toMatchObject({ source: saved.source });
 });
 
-const P = 'k3-review-rows-project', W = 'k3-review-rows-workspace', G = 'k3-review-rows-goal';
-const AT = '2026-10-20T00:00:00.000Z';
-const ctx: CoreCallContext = { projectId: P, workspaceId: W, principal: { kind: 'host', actor: { kind: 'system', id: 'h' } },
-  materialReader: { kind: 'host', projectId: P, workspaceId: W, actor: { kind: 'system', id: 'h' } }, signal: new AbortController().signal };
-const goalRef = { aggregateType: 'Goal' as const, projectId: P, goalId: G };
-function rawRun(over: Partial<RunSnapshot>): RunSnapshot {
-  return {
-    ref: { aggregateType: 'Run', projectId: P, goalId: G, runId: 'k3-rows-run' }, revision: 4, schemaVersion: 1,
-    task: { projectId: P, goalId: G, taskId: 'work-1' }, attemptId: 'a',
-    planRef: { aggregateType: 'PlanRevision', projectId: P, planId: 'p' },
-    roleBinding: { schemaVersion: 1, bindingId: 'b', templateId: 'builder', templateRevision: '1', bindingVersion: 1, policyRevision: 'p' },
-    budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1 },
-    status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 2, lastRuntimeEventId: 'rt', lastFactEventId: 'ev',
-    envelope: null, startedAt: AT, endedAt: AT, ...over,
-  } as unknown as RunSnapshot;
-}
 function untouched<T extends object>(name: string): T {
   return new Proxy({}, { get: (_t, member) => () => { throw new Error(`${name}.${String(member)} must not be called`); } }) as T;
-}
-/**
- * The frozen world of the F-045 receipt row (not an F-054 service row): a
- * hand-built Run snapshot and stub ports over no store, kept only for the
- * receipt-preservation assertion. The F-054 rows above use the real
- * `makeRealWorld`/`openK3ReviewCardWorld` owners on both backends.
- */
-function performWorld(run: RunSnapshot, settle: (request: unknown) => unknown, reviewRevision = 1) {
-  const reviewRef = run.purpose?.kind === 'unknown_call_review' ? run.purpose.reviewRef : null;
-  const deps: WorkflowDependencies = {
-    tasks: untouched('tasks'), plans: untouched('plans'), sessions: untouched('sessions'), claims: untouched('claims'),
-    executions: untouched('executions'), evidence: untouched('evidence'), checks: untouched('checks'),
-    sourceAuthority: untouched('sourceAuthority'),
-    runtime: { ...untouched<WorkflowDependencies['runtime']>('runtime'),
-      startRun: async () => ({ status: 'ready', value: { run } }) as never,
-      observeRun: async () => ({ status: 'ready', value: { run } }) as never },
-    unknownCallReviews: {
-      readReview: async () => reviewRef === null
-        ? { status: 'not_found' }
-        : { status: 'ready', value: { ref: reviewRef, revision: reviewRevision } },
-      settleReview: async (_ctx: unknown, request: unknown) => settle(request),
-    } as never,
-  };
-  return createWorkflow(deps);
-}
-function performOf(operation: WorkflowOperation, taskId = 'work-1'): WorkflowAdvanceInput {
-  return { schemaVersion: 1, goalRef, flowId: 'k3-rows-perform', sessionHint: null, taskId, kind: 'perform', operation };
 }
 
 /**
@@ -933,19 +877,136 @@ it.each(['memory', 'sqlite'] as const)('K3 L10 (%s): a review-purpose Run with a
   expect(w.settleCalls).toBe(0);
 });
 
-it('K3 settle_review: the owner receipt is preserved field for field and the next selection follows', async () => {
+it.each(['memory', 'sqlite'] as const)('K3 settle_review (%s): the owner receipt is preserved field for field and the next selection follows', async kind => {
   // F-045: the Workflow's receipt must carry the owner's whole result unchanged
-  // (status, replayed, value and cursor), not only its status.
-  const settled = { status: 'committed' as const, replayed: false,
-    value: { revision: 2 }, cursor: { seq: 1 } };
-  const workflow = performWorld(rawRun({}), () => settled);
-  const result = await workflow.advanceWork(ctx, performOf({ kind: 'settle_review',
-    request: { input: { reviewRef: { aggregateType: 'UnknownCallReview', projectId: P, goalId: G, runId: 'k3-rows-origin' },
-      cause: 'round_ended' }, meta: { requestId: 'settle', expected: [] } } } as unknown as WorkflowOperation));
-  expect(result).toMatchObject({ status: 'ready', value: { state: 'advance',
+  // (status, replayed, value and cursor), not only its status. The prior state
+  // is a real review round: the public blocked record, the real review claim and
+  // the Runtime's own completed end. The Workflow's own `select_work` plans the
+  // settlement (UR4: an active round whose Run ended known, `workflow.ts`
+  // reviewGate) and this row performs exactly the step it planned; the Runtime
+  // port is the world's default one (start/observe unsupported), so no Run entry
+  // is answered by a stand-in.
+  const w = await makeRealWorld(kind);
+  const round = await claimK3ReviewRound(w.cardWorld, w.record);
+  await endK3RunCompleted(w.cardWorld, round.claim);
+  const before = await readK3Review(w.cardWorld, w.record.ref);
+  // Revision 2 = created at 1 (UCR-01) + 1 for the round claim (activeRound).
+  expect(before).toMatchObject({ status: 'pending_review', revision: 2,
+    activeRound: { runRef: round.claim.runRef } });
+  expect(before.rounds).toEqual([]);
+  const item = before.items[0];
+  if (item === undefined || before.items.length !== 1) throw new Error('the K3 settle row needs its one process item');
+  if (before.workspace.status !== 'unavailable') {
+    throw new Error(`the K3 settle row expects the not_git capture: ${JSON.stringify(before.workspace)}`);
+  }
+
+  const selected = await w.workflow.advanceWork(w.ctx, selectTask('k3-20-a'));
+  if (selected.status !== 'ready' || selected.value.next === null || selected.value.next.kind !== 'perform'
+    || selected.value.next.operation.kind !== 'settle_review') {
+    throw new Error(`the ended round did not plan settle_review: ${JSON.stringify(selected)}`);
+  }
+  // Selecting plans the settlement and performs nothing.
+  expect(w.settleCalls).toBe(0);
+  const performed = await w.workflow.advanceWork(w.ctx, selected.value.next);
+  if (performed.status !== 'ready' || performed.value.state !== 'advance') throw new Error(JSON.stringify(performed));
+  expect(performed).toMatchObject({ status: 'ready', value: { state: 'advance',
     next: { kind: 'select_work' } } });
-  if (result.status !== 'ready' || result.value.state !== 'advance') throw new Error(JSON.stringify(result));
-  expect(result.value.receipt).toEqual({ kind: 'settle_review', result: settled });
+  expect(w.settleCalls).toBe(1);
+
+  // Hand-computed from the fixed input above and the settled transition
+  // (UCR-07, L15/L16/L17, SPEC §L16 line 409): a completed review round with no
+  // conclusion turns the pending process item into `undetermined` with the
+  // fixed evidence "核对轮没有给出结论" and the fixed self-check "没有自查依据"
+  // (SPEC line 1872), adds the finished round, and yields `undetermined` +
+  // `crash_undetermined` in the L17 order.
+  // Platform-issued values are used as the public steps returned them: the
+  // record ref (`w.record`, the blocked-record read), the origin Run, its Session
+  // and Task (`w.claim`, the public claim), the Kernel call ref, the arguments
+  // digest and the Kernel's wall-clock `tool.started` instant (`before`, the
+  // public review read), and the commit cursor (the owner's committed result).
+  const callId = `k3-rows-origin-call-${kind}`; // makeRealWorld's one declared call
+  const expectedValue: UnknownCallReviewV1 = {
+    ref: w.record.ref,
+    schemaVersion: 1,
+    // created 1 + round claimed 1 + settled 1.
+    revision: 3,
+    workspaceId: WORKSPACE_SCOPE.workspaceId,
+    task: w.claim.task,
+    runRef: w.claim.runRef,
+    sessionRef: w.claim.sessionRef,
+    // RUN-22 human attestation by the S5 fixture's operator, with the harness's
+    // own attestation text (`K3-35-continuation-fixture.ts` hostRecord).
+    origin: { kind: 'human_attested', attestedBy: { kind: 'human', id: 'operator' },
+      reason: 'the K3-35 record Run was attested from the real draft' },
+    // One declared call, within the 32-item cap (L7): complete, nothing omitted.
+    inventory: 'complete',
+    inventoryProblem: null,
+    items: [{
+      alias: 1, // the first call in Kernel order (D8)
+      callId,
+      toolName: 'shell', // the scripted model's one `shell` call (B2-crr-world)
+      kind: 'process', // L3 table row 7: `shell` -> process, contained
+      contained: true,
+      kernel: item.kernel,
+      argumentsDigest: item.argumentsDigest,
+      // `npm run build` (13 bytes <= 512) with no cwd; a process call has no
+      // mode and no paths.
+      summary: { command: 'npm run build', cwd: null, mode: null, paths: [], pathsOmitted: 0, truncated: false },
+      startedAt: item.startedAt,
+      observed: {
+        verdict: 'undetermined', by: 'settlement', evidence: '核对轮没有给出结论',
+        roundRunRef: null,
+        crashSuspicion: { verdict: 'undetermined', evidence: '没有自查依据' },
+        reviewerConclusion: null,
+      },
+    }],
+    itemsOmitted: 0,
+    // The world's temp root is not a git work tree and the continuation prepare
+    // wires no run-start baseline: `not_git`, baseline unknown. The spec fixes no
+    // wording for `detail` (SPEC line 976, `string ≤500`), so the platform's text
+    // is used as the public read returned it.
+    workspace: { status: 'unavailable', runBaselineKnown: false, reason: 'not_git',
+      detail: before.workspace.detail },
+    // The first record on this Task: no prior auto cleanup, no prior unknown
+    // process, no reset.
+    streak: { priorAutoCleanup: false, priorUnknownProcess: false, resetRunRef: null },
+    status: 'needs_decision',
+    open: 'yes',
+    decisionReasons: ['undetermined', 'crash_undetermined'],
+    // D7: the one process item is the disposition and the proposal target.
+    dispositionTargets: [callId],
+    proposalTargets: [callId],
+    // 1 at creation; no awaiting_proposal entry happened.
+    stateEntry: 1,
+    activeRound: null,
+    rounds: [{ runRef: round.claim.runRef, phase: 'review', round: 1, stateEntry: 1, result: 'finished' }],
+    proposals: [],
+    // L19a: written only when a disposition is applied; none is.
+    blockedCommands: [],
+    disposition: null,
+    // RUN-22 created the record at the harness Host clock, minute 8
+    // (`at(8)`, K3-continuation-pure-fixture); the settlement is written by the
+    // K3 world's review owner, whose clock is the S5 fixture's T.
+    createdAt: '2026-10-07T10:08:00.000Z',
+    updatedAt: '2026-10-08T00:00:00.000Z',
+  };
+  expect(w.settleResults).toHaveLength(1);
+  const ownerResult = w.settleResults[0]!;
+  if (ownerResult.status !== 'committed') throw new Error(`the settle owner did not commit: ${JSON.stringify(ownerResult)}`);
+  expect(ownerResult.cursor).toEqual(expect.any(String));
+  const expectedOwnerResult = {
+    status: 'committed' as const, replayed: false, value: expectedValue,
+    // The commit cursor is platform-issued (A1): the owner's committed result
+    // as returned; the receipt must carry the same one.
+    cursor: ownerResult.cursor,
+  };
+  // The owner's own result and the Workflow receipt, each compared whole and
+  // separately with the independent literal.
+  expect(ownerResult).toEqual(expectedOwnerResult);
+  const receipt = performed.value.receipt as { kind: string; result: unknown };
+  expect(receipt.result).toEqual(expectedOwnerResult);
+  // The receipt carries that exact owner result, cursor included, unchanged.
+  expect(receipt).toEqual({ kind: 'settle_review', result: ownerResult });
 });
 
 // -------------------------------------------------------------------------- //
@@ -969,28 +1030,8 @@ it.each(['memory', 'sqlite'] as const)('K3 UR7 real owner (%s): a real answered 
   expect(answered, JSON.stringify(answered)).toMatchObject({ status: 'committed' });
 
   const applied: unknown[] = [];
-  const workflow = createWorkflow({
-    tasks: f.b2.base.goals, plans: f.b2.base.plans, sessions: f.b2.base.sessionsPort,
-    claims: f.b2.base.service, executions: createRunStateReader({ records: f.records }),
-    runtime: untouched('runtime'), evidence: untouched('evidence'), checks: untouched('checks'),
-    sourceAuthority: untouched('sourceAuthority'),
-    configuration: { consumerId: 'k3-real-ur7', bindings: [{
-      workspace: f.base.scope,
-      sessionRole: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
-      roleBinding: f.b2.base.roleBinding, budget: f.b2.base.budget }] },
-    unknownCallReviews: world.reviews as never,
-    goalSettings: { readGoalSettings: async () => ({ status: 'ready',
-      value: { goal: { ref: GOAL_B }, settings: { order: 0 } } }) } as never,
-    decisionMessages: world.decisions as never,
-    decisionApplications: { unknown_call_review: { apply: async (ctx, input) => {
-      const result = await world.reviews.applyDisposition(ctx, { input: { source: input.source,
-        selection: input.selection, decisionMessageRef: input.answerRef },
-        meta: { requestId: input.requestId, expected: [...input.expected] } });
-      applied.push(result);
-      return { status: 'ready', value: { action: result, receipt: null } };
-    } } },
-    applicationReceipt: world.applicationReceipt,
-  });
+  const workflow = realOwnerWorkflow(world, { consumerId: 'k3-real-ur7',
+    onApplied: result => { applied.push(result); } });
 
   const selected = await workflow.advanceWork(f.ctx, { schemaVersion: 1, goalRef: GOAL_B,
     flowId: 'k3-real-ur7', sessionHint: null, taskId: 'k3-20-a', kind: 'select_work' });
@@ -1058,29 +1099,41 @@ it.each(['memory', 'sqlite'] as const)('K3 UR7 real owner (%s): a real answered 
 // REAL OWNERS: K3-17 in REVERSE order (the person applies ② first, then UR7)
 // -------------------------------------------------------------------------- //
 
-/** The real-owner Workflow over the K3 review-card world (the ~747 pattern). */
-function realOwnerWorkflow(world: K3ReviewCardWorld, flowId: string): ReturnType<typeof createWorkflow> {
+type RealOwnerWorkflowOptions = {
+  /** The Host consumer identity the Workflow configuration carries. */
+  consumerId: string;
+  /** Observe every real `applyDisposition` result the Workflow's adapter returns. */
+  onApplied?: (result: Awaited<ReturnType<K3ReviewCardWorld['reviews']['applyDisposition']>>) => void;
+  /** The real mailbox serving handed-over answer refs; defaults to the world's own. */
+  messages?: WorkflowDependencies['messages'];
+};
+
+/** The one real-owner Workflow over the K3 review-card world (the ~747 pattern). */
+function realOwnerWorkflow(world: K3ReviewCardWorld, options: RealOwnerWorkflowOptions): ReturnType<typeof createWorkflow> {
   const f = world.fixture;
   return createWorkflow({
     tasks: f.b2.base.goals, plans: f.b2.base.plans, sessions: f.b2.base.sessionsPort,
     claims: f.b2.base.service, executions: createRunStateReader({ records: f.records }),
     runtime: untouched('runtime'), evidence: untouched('evidence'), checks: untouched('checks'),
     sourceAuthority: untouched('sourceAuthority'),
-    configuration: { consumerId: flowId, bindings: [{
+    configuration: { consumerId: options.consumerId, bindings: [{
       workspace: f.base.scope,
       sessionRole: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
       roleBinding: f.b2.base.roleBinding, budget: f.b2.base.budget }] },
     unknownCallReviews: world.reviews as never,
-    goalSettings: { readGoalSettings: async () => ({ status: 'ready',
-      value: { goal: { ref: GOAL_B }, settings: { order: 0 } } }) } as never,
+    // F-100: the SAME real Goal settings owner the decision coordinator uses.
+    goalSettings: world.goalSettings,
     decisionMessages: world.decisions as never,
     decisionApplications: { unknown_call_review: { apply: async (ctx, input) => {
       const result = await world.reviews.applyDisposition(ctx, { input: { source: input.source,
         selection: input.selection, decisionMessageRef: input.answerRef },
         meta: { requestId: input.requestId, expected: [...input.expected] } });
+      options.onApplied?.(result);
       return { status: 'ready', value: { action: result, receipt: null } };
     } } },
     applicationReceipt: world.applicationReceipt,
+    // T3-034: the world's real committed answers, read through its ONE mailbox.
+    messages: options.messages ?? world.mailbox,
   });
 }
 
@@ -1126,7 +1179,7 @@ async function answeredUr7Selection(world: K3ReviewCardWorld, flowId: string) {
   const message = await readAnswerOf(world, card.source);
   const baseline = { revision: message.revision, application: message.application ?? null };
   if (baseline.application !== null) throw new Error('the answer was already applied before the row under test');
-  const workflow = realOwnerWorkflow(world, flowId);
+  const workflow = realOwnerWorkflow(world, { consumerId: flowId });
   const selected = await workflow.advanceWork(f.ctx, selectFor(flowId));
   return { workflow, record, card, lookupSource, baseline, perform: theUr7Perform(selected) };
 }
@@ -1248,38 +1301,8 @@ it.each(['memory', 'sqlite'] as const)('K3 UR7b (%s): two real handed-over answe
   // different cards, different request ids, no hand-made message/selection ref.
   const a = await answerOf('k3-20-a', 'k3-ur7b-real:answer-a');
   const b = await answerOf('k3-20-b', 'k3-ur7b-real:answer-b');
-  const byMessageId = new Map([a.message, b.message].map(message => [message.ref.messageId, message]));
 
-  const workflow = createWorkflow({
-    tasks: f.b2.base.goals, plans: f.b2.base.plans, sessions: f.b2.base.sessionsPort,
-    claims: f.b2.base.service, executions: createRunStateReader({ records: f.records }),
-    runtime: untouched('runtime'), evidence: untouched('evidence'), checks: untouched('checks'),
-    sourceAuthority: untouched('sourceAuthority'),
-    configuration: { consumerId: 'k3-ur7b-real', bindings: [{
-      workspace: f.base.scope,
-      sessionRole: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
-      roleBinding: f.b2.base.roleBinding, budget: f.b2.base.budget }] },
-    unknownCallReviews: world.reviews as never,
-    goalSettings: { readGoalSettings: async () => ({ status: 'ready',
-      value: { goal: { ref: GOAL_B }, settings: { order: 0 } } }) } as never,
-    decisionMessages: world.decisions as never,
-    decisionApplications: { unknown_call_review: { apply: async (ctx, input) => {
-      const result = await world.reviews.applyDisposition(ctx, { input: { source: input.source,
-        selection: input.selection, decisionMessageRef: input.answerRef },
-        meta: { requestId: input.requestId, expected: [...input.expected] } });
-      return { status: 'ready', value: { action: result, receipt: null } };
-    } } },
-    applicationReceipt: world.applicationReceipt,
-    // Real committed answer SessionMessages, looked up by the handed-over refs.
-    messages: {
-      readMessage: async (_ctx: CoreCallContext, ref: SessionMessageRef) => {
-        const message = byMessageId.get(ref.messageId);
-        return message === undefined
-          ? { status: 'not_found' as const }
-          : { status: 'ready' as const, value: message };
-      },
-    } as never,
-  });
+  const workflow = realOwnerWorkflow(world, { consumerId: 'k3-ur7b-real' });
 
   // ③ fails for BOTH, with distinct texts, in the order the answers are processed.
   world.failNextApplicationCommit('injected ③ failure one');

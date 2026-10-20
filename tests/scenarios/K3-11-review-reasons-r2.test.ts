@@ -28,6 +28,7 @@ import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.j
 import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
 import { preparedOf, readCall, redrivePolicy } from './support/common.js';
 import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
+import { crashOneCommand } from './support/review-card-round.js';
 import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
@@ -50,21 +51,8 @@ import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-gr
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 // The blocking `shell` stand-in (K3 §5.1): keeps the call in flight until the crash.
@@ -116,29 +104,6 @@ async function expectReviewCard(h: HostScenario, record: UnknownCallReviewV1): P
   expect(queue.capabilities).toContainEqual({ source: 'unknown_call_review', availability: 'available' });
 }
 
-/** One `shell` call in flight, closed by RUN-25 on the crash restart; returns the original RunRef. */
-async function crashOneCommand(h: HostScenario, label: string): Promise<RunRef> {
-  shellSeam.arm();
-  const modelA = createScriptedModel([{ kind: 'calls', calls: [
-    { callId: `${label}-shell`, name: 'shell', args: { command: `${label} runs a program` } }] }]);
-  const rootA = await openShellWorkRoot(h, modelA);
-  let runningA: Promise<unknown> | null = null;
-  let preparedA: ReturnType<typeof preparedOf>;
-  try {
-    const startA = await prepareOn(rootA, h.select(`${label}-a`, AG2B_WORK_TASK_ID));
-    preparedA = preparedOf(startA);
-    runningA = rootA.runtime.startRun(hostCtx(), { prepared: preparedA, consumerId: AG2B_CONSUMER_ID,
-      requestId: `${label}-a-start` });
-    await shellSeam.waitForCall();
-    await h.restart({ crash: true });
-  } finally {
-    shellSeam.release();
-    await runningA?.catch(() => undefined);
-    await rootA.close();
-  }
-  return preparedA.claim.runRef;
-}
-
 describe('K3-11 confirm_each_step through a real review round', () => {
   it('K3-11 R2: with the Goal autonomy every_step a full review round settles with exactly confirm_each_step', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
@@ -152,7 +117,10 @@ describe('K3-11 confirm_each_step through a real review round', () => {
     expect(set).toMatchObject({ status: 'committed' });
     expect(readGoalSettings(await readGoal(h.host)).autonomy).toBe('every_step');
 
-    const originalRunRef = await crashOneCommand(h, 'k3-11-confirm');
+    const crashed = await crashOneCommand(h, { callId: 'k3-11-confirm-shell', select: 'k3-11-confirm-a',
+      requestId: 'k3-11-confirm-a-start', shellArgs: { command: 'k3-11-confirm runs a program' } });
+    await crashed.release();
+    const originalRunRef = crashed.runRef;
     const created = await reviewOf(h, originalRunRef);
     expect(created.status).toBe('ready');
     if (created.status !== 'ready') return;
@@ -205,7 +173,10 @@ describe('K3-11 three reasons through the real two-round chain', () => {
       .toMatchObject({ status: 'committed' });
     expect(readGoalSettings(await readGoal(h.host)).autonomy).toBe('every_step');
 
-    const originalRunRef = await crashOneCommand(h, 'k3-11-three');
+    const crashed = await crashOneCommand(h, { callId: 'k3-11-three-shell', select: 'k3-11-three-a',
+      requestId: 'k3-11-three-a-start', shellArgs: { command: 'k3-11-three runs a program' } });
+    await crashed.release();
+    const originalRunRef = crashed.runRef;
     const created = await reviewOf(h, originalRunRef);
     expect(created.status).toBe('ready');
     if (created.status !== 'ready') return;
@@ -301,7 +272,10 @@ describe('K3-11 second_consecutive on the real continuation chain', () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
 
     // --- A: a shell call in flight, closed by RUN-25. -----------------------
-    const runA = await crashOneCommand(h, 'k3-11-second-a');
+    const crashed = await crashOneCommand(h, { callId: 'k3-11-second-a-shell', select: 'k3-11-second-a-a',
+      requestId: 'k3-11-second-a-a-start', shellArgs: { command: 'k3-11-second-a runs a program' } });
+    await crashed.release();
+    const runA = crashed.runRef;
     const recordA = await reviewOf(h, runA);
     expect(recordA).toMatchObject({ status: 'ready',
       value: { status: 'pending_review', items: [{ kind: 'process' }] } });

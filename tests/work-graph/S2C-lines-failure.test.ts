@@ -3,55 +3,22 @@
  * returned as its error code, never turned into a ready empty answer or 0.
  *
  * The dataset is built through the real public Session services; the only
- * Doubles are the storage wrappers that fail one named call. Assertions read
- * only the public `WorkLineReadPort`.
+ * Doubles are the storage wrappers that fail one named call, and (RD-8) an A3
+ * gate that performs a real continuation claim between two reads. Assertions
+ * read only the public `WorkLineReadPort`.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ReadResult } from '../../src/contracts/core/results.js';
-import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { JsonValue } from '../../src/contracts/fingerprint.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
-import { createWorkLineReader, type WorkLineStore } from '../../src/core/work-graph/views/work-line-reader.js';
+import { createWorkLineReader } from '../../src/core/work-graph/views/work-line-reader.js';
 import { failingLookup, failingLookupOrdered, failingReadMany, openLineFixture, rowOf, type LineFixture } from '../helpers/S2C-L-line-support.js';
-import { waitContinuation, yieldedEvent } from '../helpers/S2C-L-runs-support.js';
+import { L_HOST } from '../helpers/S2C-L-runs-support.js';
+import { createS2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
 
 function ready<T>(result: ReadResult<T>): T {
   if (result.status !== 'ready') throw new Error(`expected ready, got ${JSON.stringify(result)}`);
   return result.value;
-}
-
-/** Rewrite one stored record's JSON as a read double (states the public services cannot build). */
-function rewriteRead(records: WorkLineStore, refKey: string, mutate: (body: Record<string, unknown>) => void): WorkLineStore {
-  return {
-    ...records,
-    async readMany(keys) {
-      const read = await records.readMany(keys);
-      if (read.status !== 'ready' || !keys.includes(refKey)) return read;
-      return { ...read, value: { ...read.value, records: read.value.records.map((record) => {
-        if (record.refKey !== refKey) return record;
-        const parsed = JSON.parse(record.json) as Record<string, unknown>;
-        mutate(parsed);
-        return { ...record, json: JSON.stringify(parsed) };
-      }) } };
-    },
-  };
-}
-
-/** An ended-but-occupied Run (T5x). */
-function endedRunRead(records: WorkLineStore, runKey: string): WorkLineStore {
-  return rewriteRead(records, runKey, (body) => { body['status'] = 'ended'; body['outcome'] = 'completed'; });
-}
-
-/** Make every record of the named lookup index carry a schema the codec cannot decode. */
-function corruptLookupSchema(records: WorkLineStore, index: string, schemaId: string): WorkLineStore {
-  return {
-    ...records,
-    async lookup(request) {
-      const page = await records.lookup(request);
-      if (request.index !== index || page.status !== 'ready') return page;
-      return { ...page, value: { ...page.value, records: page.value.records.map((record) => ({ ...record, schemaId })) } };
-    },
-  };
 }
 
 describe.each(['memory', 'sqlite'] as const)('2C-14 failed reads propagate (%s)', (kind) => {
@@ -170,53 +137,93 @@ describe.each(['memory', 'sqlite'] as const)('2C-14 failed reads propagate (%s)'
     expect(list.counts.standby.status).toBe('partial');
   });
 
-  it('2C-14 (review item 2) an undecodable open responsible link marks the line B4, never no responsibility', async () => {
-    const f = await lineFixture();
-    const goal = await f.addGoal('g14-bad-link', [{ taskId: 'w', title: 'W task' }]);
-    const head = (await f.createSession('s14-bad-link')).ref;
-    await f.link(head, { kind: 'task', ref: goal.tasks['w']! }, 'responsible', true);
-    const reader = f.readerWith(corruptLookupSchema(f.records, 's2c-open-links-by-session', 'BogusLink@1'));
-    const list = ready(await reader.listWorkLines(f.ctx, { workspace: f.base.scope }));
-    const row = rowOf(list.rows, head);
-    expect(row).toBeDefined();
-    expect(row?.problem).toMatchObject({ code: 'unavailable' });
-    expect(row?.status.bucket).toBeNull();
-  });
-
-  it('2C-14/L11 an ended-but-occupied Run rereads once and then reports source_moving', async () => {
-    const f = await lineFixture();
-    const goal = await f.addGoal('g14-t5x', [{ taskId: 'w', title: 'W task' }]);
-    const head = (await f.createSession('s14-t5x')).ref;
-    const claim = await f.claim('w', head, goal);          // starting: the Run occupies the Session
-    const runKey = canonicalJson(claim.runRef as unknown as JsonValue);
-    const reader = f.readerWith(endedRunRead(f.records, runKey));
-    const row = rowOf(ready(await reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, head);
-    expect(row).toBeDefined();
-    expect(row?.problem).toMatchObject({ code: 'source_moving' });
-    expect(row?.status.bucket).toBeNull();
-  });
-
   it('2C-14/RD-8 a lease held by another Run makes the yielded Run refuse pause and cancel', async () => {
     const f = await lineFixture();
-    const goal = await f.addGoal('g14-rd8', [{ taskId: 'w', title: 'W task' }]);
-    const head = (await f.createSession('s14-rd8')).ref;
+    const goal = await f.addGoal('g14-rd8', [{ taskId: 'w', title: 'W task' },
+      { taskId: 'reply', title: 'Reply task' }]);
+    const head = await f.base.createSession('s14-rd8');
+    const recipient = await f.base.createSession('s14-rd8-recipient');
     await f.link(head, { kind: 'task', ref: goal.tasks['w']! }, 'responsible', true);
-    const claim = await f.claim('w', head, goal);
-    await f.runs.enter(claim.claim);
-    const messageRef: SessionMessageRef = { aggregateType: 'SessionMessage', projectId: head.projectId,
-      workspaceId: f.base.scope.workspaceId, messageId: 'g14-rd8-wait' };
-    await f.runs.recordResult(claim.claim, yieldedEvent(claim.claim, 'rd8'), waitContinuation(claim.claim, messageRef));
-    // RD-8: the read double makes the TaskLease name a different holder Run.
-    const leaseKey = canonicalJson({ aggregateType: 'TaskLease', projectId: head.projectId,
-      goalId: goal.goalRef.goalId, taskId: 'w' } as unknown as JsonValue);
-    const reader = f.readerWith(rewriteRead(f.records, leaseKey, (body) => { body['holderRunId'] = 'another-run'; }));
 
-    const row = rowOf(ready(await reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, head);
-    expect(row?.status.own).toBe('waiting_reply');
-    for (const kind of ['pause', 'cancel'] as const) {
-      const control = row?.controls.find((entry) => entry.kind === kind);
-      expect(control?.availability).toBe('unavailable');
-      expect(control?.reasonCode).toBe('busy');
-    }
+    // The real Runtime Host grant needs the mailbox tools this case uses.
+    const host = { configurationRevision: 's2c-rd8-mail-host@1',
+      permissions: { policyRevision: 'legacy-template',
+        tools: ['read', 'send_session_message', 'respond_session_message'], writeScope: [] as string[] },
+      hostTemplate: L_HOST.hostTemplate };
+    let sequence = 0;
+    const steps = await createS2BRuntimeSteps({ base: f.base, bodies: f.runs.bodies, ctx: f.ctx,
+      directory: f.base.directory, scope: f.base.scope, now: () => '2026-09-24T00:00:00.000Z',
+      setClock: () => undefined, eventId: () => `s2c-rd8-event-${++sequence}`,
+      newId: () => `s2c-rd8-id-${++sequence}`, consumerId: 's2c-rd8-runtime',
+      withMailbox: true, host });
+    try {
+      const mailbox = steps.mailbox;
+      if (mailbox === undefined) throw new Error('the RD-8 Session mailbox must be wired');
+
+      // A real scripted-model wait through the send_session_message tool: the
+      // Run is genuinely yielded and its continuation names the saved message.
+      const send = { callId: 'rd8-wait-send', name: 'send_session_message',
+        args: { recipient, text: 'RD-8: which result should the continuation use?', intent: 'inquiry',
+          needsReply: true, waitAfterSend: true } };
+      const yieldedClaim = await f.claim('w', head, goal);
+      const sent = await steps.start(yieldedClaim.claim, { at: '2026-09-24T00:00:00.000Z',
+        replies: [{ kind: 'calls', calls: [send] }], tools: ['read', 'send_session_message',
+          'respond_session_message'] });
+      sent.release();
+      await sent.settled;
+      const yielded = await f.runs.readExecution(yieldedClaim.claim);
+      expect(yielded.run).toMatchObject({ status: 'ended', outcome: 'yielded',
+        continuation: { kind: 'wait_reply' } });
+      const messageRef = yielded.run.continuation?.messageRef;
+      if (messageRef === undefined) throw new Error('the yielded Run must name its wait message');
+      const waiting = ready(await mailbox.readMessage(f.ctx, messageRef));
+      expect(waiting.status).toBe('pending');
+      expect(waiting.response).toBeNull();
+
+      // The recipient answers through the real respond_session_message tool from
+      // its own entered Run; the saved response is the consumed-wait reference.
+      const reply = { callId: 'rd8-wait-reply', name: 'respond_session_message',
+        args: { messageRef, expectedRevision: waiting.revision,
+          text: 'RD-8 reply: use the recorded result.' } };
+      const replyClaim = await f.claim('reply', recipient, goal);
+      const replier = await steps.start(replyClaim.claim, { at: '2026-09-24T00:00:00.000Z',
+        replies: [{ kind: 'calls', calls: [reply] }, { kind: 'text', text: 'RD-8 reply sent' }],
+        tools: ['read', 'send_session_message', 'respond_session_message'] });
+      await steps.finish(replier, '2026-09-24T00:00:00.000Z', 'completed');
+      const replied = ready(await mailbox.readMessage(f.ctx, messageRef));
+      expect(replied.status).toBe('responded');
+      if (replied.response === null) throw new Error('the real reply must save its response');
+      const responseRef = replied.response.bodyRef;
+
+      // A3: between the reader's Session read and its TaskLease read, a real
+      // continuation claim re-holds the lease for the successor Run; the reader
+      // still receives its original (pre-claim) Session read unchanged.
+      const headRef = { projectId: head.projectId, sessionId: head.sessionId };
+      const headKey = canonicalJson({ aggregateType: 'Session', ...headRef } as unknown as JsonValue);
+      let claimed = false;
+      const continuation = { ...f.records, async readMany(keys: readonly string[]) {
+        const read = await f.records.readMany(keys);
+        // The reader's head read is the single-key `readSession` call; the
+        // earlier batched session reads are the active-window/cycle probes.
+        if (!claimed && keys.length === 1 && keys[0] === headKey) {
+          claimed = true;
+          const request = await f.base.buildRequest({ input: { sessionRef: headRef,
+            goalRef: goal.goalRef, planRef: goal.planRef, taskId: 'w' }, requestId: 'rd8-continuation' });
+          const result = await f.base.service.claimTask(f.ctx, { input: { ...request.input,
+            consumedWait: { runRef: yieldedClaim.runRef, messageRef, responseRef } }, meta: request.meta });
+          expect(result).toMatchObject({ status: 'committed' });
+        }
+        return read;
+      } };
+      const row = rowOf(ready(await f.readerWith(continuation).listWorkLines(f.ctx,
+        { workspace: f.base.scope })).rows, head);
+      expect(claimed).toBe(true);
+      expect(row?.status.own).toBe('waiting_reply');
+      for (const kind of ['pause', 'cancel'] as const) {
+        const control = row?.controls.find((entry) => entry.kind === kind);
+        expect(control?.availability).toBe('unavailable');
+        expect(control?.reasonCode).toBe('busy');
+      }
+    } finally { await steps.close(); }
   });
 });

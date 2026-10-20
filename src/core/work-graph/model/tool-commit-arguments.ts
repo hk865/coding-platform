@@ -25,7 +25,6 @@ export type SessionMessageSendInput = {
   intent?: SessionMessageIntentV1;
   needsReply?: boolean;
   waitAfterSend?: boolean;
-  replyMode?: 'wait';
 };
 
 export type SessionMessageAckInput = { messageRef: SessionMessageRef };
@@ -95,7 +94,6 @@ GraphWrite<SessionMessageSendInput> {
       ...(input.intent === undefined ? {} : { intent: input.intent }),
       ...(input.needsReply === undefined ? {} : { needsReply: input.needsReply }),
       ...(input.waitAfterSend === undefined ? {} : { waitAfterSend: input.waitAfterSend }),
-      ...(input.replyMode === undefined ? {} : { replyMode: input.replyMode }),
     },
     meta: { requestId, expected: [] },
   };
@@ -175,11 +173,6 @@ export function toolCommitLookupResult(
   }
   if (result.code === 'not_found') return { status: 'not_committed' };
   return { status: 'undetermined', reason: result.reason.length === 0 ? result.code : `${result.code}: ${result.reason}` };
-}
-
-/** Q2: a row-4 name whose owner published no lookup. */
-export function toolCommitLookupNotPublished(): ToolCommitLookupResult {
-  return { status: 'undetermined', reason: 'lookup_not_published' };
 }
 
 /** An owner lookup called with a tool name it does not own. */

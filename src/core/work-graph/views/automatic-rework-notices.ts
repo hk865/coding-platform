@@ -5,20 +5,18 @@
  * One `DecisionNoticeSourcePort` for category `automatic_rework`. It reads the
  * ordered commit-position window:
  *   - requeues come from `s2a-requeue-by-project` (bound at the saved seen
- *     commit position) plus the `s2a-requeue-legacy` equality group (`since`
- *     absent);
+ *     commit position);
  *   - reverify rounds come from `s2a-round-reverify` (equality on project,
- *     workspace and the system/member actor class) plus its legacy group. The
- *     ordered index only names the SUBJECT; every subject's whole chain is read
- *     once through `VerificationRoundBySubject` and rechecked with
- *     `roundChainHead`. Earlier rounds and human rechecks in the chain are used
- *     for verification only and never become notices (D2).
+ *     workspace and the system/member actor class). The ordered index only
+ *     names the SUBJECT; every subject's whole chain is read once through
+ *     `VerificationRoundBySubject` and rechecked with `roundChainHead`. Earlier
+ *     rounds and human rechecks in the chain are used for verification only and
+ *     never become notices (D2).
  *
  * One `DecisionNoticeSourcePort` deduplicates by the exact
  * `TaskRequeueRef`/`VerificationRoundRef`, keeps only system/agent rework, and
- * projects the frozen `自动返工 · …` summary with the creation-time cap (`null`
- * when the old wire had no `noticeAutomationCap`). It never schedules work,
- * wakes an agent or writes a Notification.
+ * projects the frozen `自动返工 · …` summary with the creation-time cap. It
+ * never schedules work, wakes an agent or writes a Notification.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
@@ -40,7 +38,6 @@ import type {
 import { decodeNoticeOrigin } from '../persistence/decision-record-codecs.js';
 import {
   decodeVerificationRoundSnapshot,
-  S2A_ROUND_REVERIFY_LEGACY_LOOKUP,
   S2A_ROUND_REVERIFY_LOOKUP,
   VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT,
   VERIFICATION_ROUND_ORIGINAL_LOOKUP,
@@ -49,7 +46,6 @@ import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import {
   decodeTaskRequeueSnapshot,
   S2A_REQUEUE_BY_PROJECT_LOOKUP,
-  S2A_REQUEUE_LEGACY_LOOKUP,
 } from '../tasks/claim-record-codecs.js';
 import { roundChainHead } from '../state/verification-machine.js';
 import { compareNoticePositions } from './notice-position.js';
@@ -115,24 +111,6 @@ export async function readOrderedToEnd(
   return all;
 }
 
-/** One plain equality lookup to the end (the legacy `since`-absent group). */
-async function readEqualityToEnd(
-  records: DecisionReadRecordsPort,
-  index: string,
-  values: readonly (string | number | boolean | null)[],
-): Promise<EncodedRecord[]> {
-  const all: EncodedRecord[] = [];
-  let after: string | undefined;
-  for (;;) {
-    const page = await records.lookup({ index, values, limit: 200, ...(after === undefined ? {} : { after }) });
-    if (page.status !== 'ready') throw page;
-    for (const record of page.value.records) all.push(record);
-    if (page.value.next === null) break;
-    after = page.value.next;
-  }
-  return all;
-}
-
 /**
  * P9: a row returned by an ordered index whose decoded order value is missing
  * or outside the request is a read failure, never silently skipped. `bound` is
@@ -153,24 +131,6 @@ function orderedSince(
     return { ok: false, rejection: rejected('unavailable', `automatic rework ordered record ${record.refKey} is outside the requested window`) };
   }
   return { ok: true, since };
-}
-
-/**
- * M1: a record read from a legacy (since-null) equality group still decodes its
- * notice origin. A decode failure — for example the persisted `since: null`
- * PreparedCommit placeholder — is a read failure with the same reason style as
- * `orderedSince`; only a genuinely absent `since` is a legacy position.
- */
-function legacySince(
-  record: EncodedRecord,
-  label: string,
-): { ok: true; since: null } | { ok: false; rejection: { status: 'rejected'; code: 'unavailable'; reason: string } } {
-  const origin = decodeNoticeOrigin(record);
-  if (origin.status !== 'decoded') return { ok: false, rejection: rejected('unavailable', `${label}: ${origin.reason}`) };
-  if (origin.value.since !== undefined) {
-    return { ok: false, rejection: rejected('unavailable', `${label} record ${record.refKey} unexpectedly carries a commit position`) };
-  }
-  return { ok: true, since: null };
 }
 
 /** The `automatic_rework` page: the saved seen position decides the window. */
@@ -194,21 +154,12 @@ async function readAutomaticReworkPage(
   const items: NoticeItemV1[] = [];
   const after = input.after;
   // L4: a saved commit position reads the ordered part with the inclusive lower
-  // bound and skips the legacy group (legacy positions always order before any
-  // commit position); no saved position — or a legacy one — reads the legacy
-  // group and the ordered part from its start.
-  const seenCursor: CommitCursor | null = after !== undefined && after.kind === 'commit' ? after.cursor : null;
+  // bound; no saved position reads the ordered part from its start.
+  const seenCursor: CommitCursor | null = after === undefined ? null : after.cursor;
 
   try {
-    // ---- requeues: the ordered window plus the legacy group ----------------
-    const requeueRecords: { record: EncodedRecord; since: CommitCursor | null }[] = [];
-    if (seenCursor === null) {
-      for (const record of await readEqualityToEnd(records, S2A_REQUEUE_LEGACY_LOOKUP, [projectId, null])) {
-        const legacy = legacySince(record, 'automatic rework origin');
-        if (!legacy.ok) return legacy.rejection;
-        requeueRecords.push({ record, since: legacy.since });
-      }
-    }
+    // ---- requeues: the ordered window -------------------------------------
+    const requeueRecords: { record: EncodedRecord; since: CommitCursor }[] = [];
     for (const record of await readOrderedToEnd(records, S2A_REQUEUE_BY_PROJECT_LOOKUP, [projectId],
       seenCursor === null ? null : { value: seenCursor, inclusive: true })) {
       const since = orderedSince(record, seenCursor);
@@ -236,12 +187,18 @@ async function readAutomaticReworkPage(
         ? { ok: true as const, hit: null }
         : await triggerRoundCapHit(records, requeue.afterRoundRef);
       if (!triggerCap.ok) return triggerCap.rejection;
+      const cap = requeue.automation.cap;
+      let summary: string;
+      if (exempt) summary = recoverySummary(requeue.task);
+      else {
+        if (cap === null) return rejected('unavailable', `automatic rework requeue ${itemKey} has no automation cap`);
+        summary = reworkSummary(requeue.task, requeue.automation.autoCount, cap);
+      }
       items.push(withResourceCapHit({
         itemKey, category: 'automatic_rework',
         goalRef: { aggregateType: 'Goal', projectId: requeue.ref.projectId, goalId: requeue.ref.goalId },
-        position: noticePositionOf(since, itemKey, requeue.requestedAt),
-        summary: exempt ? recoverySummary(requeue.task)
-          : reworkSummary(requeue.task, requeue.automation.autoCount, requeue.automation.cap),
+        position: noticePositionOf(since, itemKey),
+        summary,
         objects: [],
         rework: { operation: 'requeue', actorClass, taskRef: requeue.task,
           count: requeue.automation.autoCount, cap: requeue.automation.cap, reason: requeue.reason,
@@ -252,14 +209,6 @@ async function readAutomaticReworkPage(
     // ---- reverify: the ordered index names the subject, the chain verifies -
     const subjectCandidates = new Map<string, SubjectCandidate>();
     for (const actorClass of ['system', 'agent'] as const) {
-      if (seenCursor === null) {
-        for (const record of await readEqualityToEnd(records, S2A_ROUND_REVERIFY_LEGACY_LOOKUP, [projectId, workspaceId, actorClass, null])) {
-          const legacy = legacySince(record, 'automatic rework round origin');
-          if (!legacy.ok) return legacy.rejection;
-          const added = await addRoundCandidate(subjectCandidates, record, legacy.since, input, projectId, workspaceId);
-          if (added !== null) return added;
-        }
-      }
       for (const record of await readOrderedToEnd(records, S2A_ROUND_REVERIFY_LOOKUP, [projectId, workspaceId, actorClass],
         seenCursor === null ? null : { value: seenCursor, inclusive: true })) {
         const since = orderedSince(record, seenCursor);
@@ -293,7 +242,7 @@ async function readAutomaticReworkPage(
         }
         const ordinal = round.chain?.ordinal ?? 0;
         const itemKey = `automatic_rework:${String(ordinal).padStart(4, '0')}:${refKey}`;
-        const cap = candidate.cap ?? null;
+        const cap = candidate.cap;
         const count = round.chain?.autoCount ?? 0;
         const summary = reverify.exemption !== 'none'
           ? `自动恢复 · ${round.subject.taskId}（不计次）`
@@ -301,7 +250,7 @@ async function readAutomaticReworkPage(
         items.push(withResourceCapHit({
           itemKey, category: 'automatic_rework',
           goalRef: { aggregateType: 'Goal', projectId: round.ref.projectId, goalId: round.ref.goalId },
-          position: noticePositionOf(candidate.since, itemKey, reverify.requestedAt),
+          position: noticePositionOf(candidate.since, itemKey),
           summary, objects: [],
           rework: { operation: 'reverify', actorClass: reverify.actorClass, taskRef: round.subject,
             count, cap, reason: reverify.reason ?? '', sourceRef: round.ref },
@@ -357,7 +306,7 @@ type SubjectCandidate = {
   goalId: string;
   taskId: string;
   runId: string;
-  candidates: Map<string, { since: CommitCursor | null; cap: number | null }>;
+  candidates: Map<string, { since: CommitCursor; cap: number }>;
 };
 
 function goalKeyOf(projectId: string, goalId: string): string {
@@ -392,11 +341,11 @@ async function readGoalWorkspaces(
   return result;
 }
 
-/** Decodes one ordered/legacy reverify candidate into its subject's candidate set. */
+/** Decodes one ordered reverify candidate into its subject's candidate set. */
 async function addRoundCandidate(
   subjects: Map<string, SubjectCandidate>,
   record: EncodedRecord,
-  since: CommitCursor | null,
+  since: CommitCursor,
   input: ReadPageInput,
   projectId: string,
   workspaceId: string,
@@ -419,19 +368,22 @@ async function addRoundCandidate(
 }
 
 /**
- * The creation-time cap reads through `decodeNoticeOrigin`. A decoded origin
- * without `noticeAutomationCap` is the legitimate legacy unknown cap (`null`,
- * NR08); an origin that cannot be decoded (for example the persisted
- * `since: null` PreparedCommit placeholder) is a read failure, never a silent
- * `null` cap.
+ * The creation-time cap reads through `decodeNoticeOrigin`. Every automatic
+ * successor carries `noticeAutomationCap`; a missing cap or an origin that
+ * cannot be decoded (for example the persisted `since: null` PreparedCommit
+ * placeholder) is a read failure, never a silent `null` cap.
  */
 function decodeCapOf(record: EncodedRecord):
-  { ok: true; cap: number | null } | { ok: false; rejection: { status: 'rejected'; code: 'unavailable'; reason: string } } {
+  { ok: true; cap: number } | { ok: false; rejection: { status: 'rejected'; code: 'unavailable'; reason: string } } {
   const origin = decodeNoticeOrigin(record);
   if (origin.status !== 'decoded') {
     return { ok: false, rejection: rejected('unavailable', `automatic rework round origin: ${origin.reason}`) };
   }
-  return { ok: true, cap: origin.value.noticeAutomationCap ?? null };
+  const cap = origin.value.noticeAutomationCap;
+  if (cap === undefined) {
+    return { ok: false, rejection: rejected('unavailable', `automatic rework round origin ${record.refKey} has no automation cap`) };
+  }
+  return { ok: true, cap };
 }
 
 /** Reads and revalidates one subject's whole chain (domain limit stays, L10). */
@@ -523,14 +475,12 @@ function withResourceCapHit(
     actions: [{ kind: 'raise_memory_cap' }] };
 }
 
-function noticePositionOf(since: CommitCursor | null | undefined, itemKey: string, occurredAt: string): NoticeItemV1['position'] {
-  if (since === undefined || since === null) return { kind: 'legacy', occurredAt, itemKey };
+function noticePositionOf(since: CommitCursor, itemKey: string): NoticeItemV1['position'] {
   return { kind: 'commit', cursor: since, itemKey };
 }
 
-function reworkSummary(task: TaskTriple, count: number, cap: number | null): string {
-  const capText = cap === null ? '上限未记录' : `${count}/${cap}`;
-  return `自动返工 · ${task.taskId} · 第 ${count} 次（${capText}）`;
+function reworkSummary(task: TaskTriple, count: number, cap: number): string {
+  return `自动返工 · ${task.taskId} · 第 ${count} 次（${count}/${cap}）`;
 }
 
 /** §4.4 line 840: the exempt automatic recovery label, without a count. */

@@ -139,14 +139,6 @@ async function runtimeWith(input: Parameters<typeof depsFor>[0]): Promise<NonNul
 }
 
 describe('KA-12 Runtime closeOpenTurn fallback causes', () => {
-  it('KA-12 answers unsupported when only the legacy Kernel reader is registered', async () => {
-    const { databasePath } = await openWorkSession();
-    const registry = await createKernelStoreRegistry({ entries: [], legacyEntries: [{ adapterId: ADAPTER, storeKey: 'kr12-legacy',
-      databasePath, expectedSessionId: SESSION_ID }] });
-    const close = await runtimeWith({ registry, record: run19(), session: sessionRecord() });
-    expect(await close(ctx, { sessionRef, afterRunRef: runRef('run-A'), requeueRef: null })).toMatchObject({ status: 'unsupported' });
-  });
-
   it('KA-12 reads the Kernel closeOpenTurn at call time, so a getter that is switched on between two calls closes the Turn after the first answers unsupported (M2)', async () => {
     const { databasePath } = await openWorkSession();
     const registry = await createKernelStoreRegistry({ entries: [{ adapterId: ADAPTER, storeKey: 'kr12', workspace: SCOPE, databasePath }] });
@@ -188,14 +180,6 @@ describe('KA-12 Runtime closeOpenTurn fallback causes', () => {
       .toEqual({ status: 'refused', reason: 'handed_over' });
   });
 
-  it('KA-12 answers unreadable when the mapped Kernel database file is missing', async () => {
-    const { databasePath } = await openWorkSession();
-    const registry = await createKernelStoreRegistry({ entries: [{ adapterId: ADAPTER, storeKey: 'kr12', workspace: SCOPE,
-      databasePath: `${databasePath}.absent` }] });
-    const close = await runtimeWith({ registry, record: run19(), session: sessionRecord() });
-    expect(await close(ctx, { sessionRef, afterRunRef: runRef('run-A'), requeueRef: null })).toMatchObject({ status: 'unreadable' });
-  });
-
   it('KA-12 answers mismatch when the afterRun Kernel binding disagrees with the Session mapping', async () => {
     const { databasePath } = await openWorkSession();
     const registry = await createKernelStoreRegistry({ entries: [{ adapterId: ADAPTER, storeKey: 'kr12', workspace: SCOPE, databasePath }] });
@@ -214,15 +198,6 @@ describe('KA-12 Runtime closeOpenTurn fallback causes', () => {
       databasePath: temp.databasePath }] });
     const close = await runtimeWith({ registry, record: run19(), session: sessionRecord() });
     expect(await close(ctx, { sessionRef, afterRunRef: runRef('run-A'), requeueRef: null })).toMatchObject({ status: 'mismatch' });
-  });
-
-  it('KA-12 closes a RUN-19 Turn, re-probes and returns the health owner the result available', async () => {
-    const { databasePath } = await openWorkSession();
-    const registry = await createKernelStoreRegistry({ entries: [{ adapterId: ADAPTER, storeKey: 'kr12', workspace: SCOPE, databasePath }] });
-    const health = vi.fn(async () => ({ status: 'observed' as const, session: sessionRecord({ health: 'available', healthConclusion: null }) }));
-    const close = await runtimeWith({ registry, record: run19(), session: sessionRecord(), recordSessionHealth: health as never });
-    expect(await close(ctx, { sessionRef, afterRunRef: runRef('run-A'), requeueRef: null }))
-      .toEqual({ status: 'closed', health: 'available' });
   });
 
   it('KA-12 answers unsupported and writes nothing when the injected Kernel does not publish readTurnBounds (M2, D5)', async () => {

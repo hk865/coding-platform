@@ -30,8 +30,8 @@ import {
   deferred, moveKernelAside, post, publicDirectory, readExecution, tempDir, writeStaleLock,
 } from '../helpers/A2-restart-fixture.js';
 import {
-  archivedLineContaining, lineArchived, lineConversation, lineList, ready, requireControl, requireLine, runMaintenance,
-  sessionCard,
+  archivedLineContaining, crashedUnknownKernel, lineArchived, lineConversation, lineList, ready, requireControl,
+  requireLine, runMaintenance, sessionCard,
 } from '../helpers/S2C-K-scenario-support.js';
 import { NO_REDRIVE } from './support/common.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
@@ -200,30 +200,6 @@ async function damageKernel(database: string): Promise<void> {
 }
 
 /**
- * One crash mid-Turn after the Kernel store was moved aside (`missing`) or its
- * rows corrupted (`damaged`): the Run ends `outcome_unknown` and the Session
- * retires with the unreadable conclusion.
- */
-async function crashedUnknownKernel(h: HostScenario, flowId: string, kernel: 'missing' | 'damaged'):
-Promise<{ runRef: NonNullable<Awaited<ReturnType<HostScenario['taskRow']>>['execution']>; head: string }> {
-  const held = h.holdReply(1);
-  const toStart = await h.advance(h.select(flowId, 'ag2b-work'), { stopBefore: performs('start') });
-  if (toStart.next === null) throw new Error('the Workflow must reach the start');
-  void h.post('workflow/advance', plain(AG2B_SCOPE, toStart.next)).catch(() => undefined);
-  await held.reached;
-  const runRef = (await h.taskRow()).execution;
-  if (runRef === null) throw new Error('the work Run must be selected');
-  const head = (await readExecution(h.host, runRef)).session.ref.sessionId;
-  if (kernel === 'missing') await moveKernelAside(h.database);
-  else await damageKernel(h.database);
-  await h.restart({ crash: true });
-  const unknown = await readExecution(h.host, runRef);
-  expect(unknown.run).toMatchObject({ status: 'ended', outcome: 'outcome_unknown' });
-  expect(unknown.session).toMatchObject({ health: 'unavailable', healthConclusion: kernel });
-  return { runRef, head };
-}
-
-/**
  * 2C-21 (2), two examples: a Work line whose Kernel store is `missing`/`damaged`
  * and which the Host restart left retired with the unreadable conclusion; its
  * original history is unreadable.
@@ -240,12 +216,13 @@ Promise<{ runRef: NonNullable<Awaited<ReturnType<HostScenario['taskRow']>>['exec
  * two later undelivered replies, and the legacy overlay) are not built here.
  */
 function retiredUnknownCase(name: string, kernel: 'missing' | 'damaged'): void {
-  it(`2C-21 (2) a ${name} Kernel leaves the line retired with an unreadable history; the probe then retires it and maintenance archives it (SES-19a)`, async () => {
+  it(`2C-21 (2) / 2C-22 (2) / 2C-22 (4) a ${name} Kernel leaves the line retired with an unreadable history; the probe then retires it and maintenance archives it (SES-19a)`, async () => {
     const h = await openHostScenario({ script: { replies: [
       { kind: 'calls', calls: [{ callId: `s2c21${kernel}-g1`, name: 'read', args: { path: 'src/module.ts' } }] },
       { kind: 'text', text: `2C-21 (2): the ${name}-Kernel Turn is never answered` },
     ] } });
-    const { runRef, head } = await crashedUnknownKernel(h, `s2c21${kernel}-run1`, kernel);
+    const { runRef, head } = await crashedUnknownKernel(h, `s2c21${kernel}-run1`, kernel,
+      kernel === 'missing' ? () => moveKernelAside(h.database) : () => damageKernel(h.database));
 
     // Before the attestation: retired with the unreadable conclusion + attention unknown.
     const retired = requireLine(ready(await lineList(h), 'lines/list after the crash'), head, 'the retired line');

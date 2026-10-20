@@ -50,6 +50,7 @@ import { createSourceAuthorityReader } from '../../src/core/work-graph/source-au
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { createTaskClaimFixture, type ClaimFixtureKind, type TaskClaimFixture } from './task-claim-fixture.js';
 
 export const B2_AT = '2026-09-26T00:00:00.000Z';
@@ -113,6 +114,8 @@ export type B2RuntimeFixtureOverrides = {
 export type B2RuntimeFixture = {
   claimFixture: TaskClaimFixture;
   claim: TaskClaim;
+  /** The live store handle; reassigned by `reopen()` for SQLite. */
+  records: TaskClaimFixture['records'];
   deps: RuntimeExecutionDependencies;
   runtime: AgentRuntimeService;
   host: RuntimeHostBindings;
@@ -171,10 +174,15 @@ export async function createB2RuntimeFixture(options: {
   taskBudget?:import('../../src/contracts/dispatch.js').TaskBudgetV1;
   host?: RuntimeHostBindings;
   beforeReply?: (request: ModelRequest,index:number,signal:AbortSignal)=>Promise<void>;
+  /** Extra registrations (for example `CONTROL_RECORD_SCHEMAS` for the R4 renderer). */
+  additionalSchemas?: RecordBackendSchemas;
 } = {}): Promise<B2RuntimeFixture> {
   const kind = options.kind ?? 'memory';
   const schemas=[EXECUTION_ENTRY_RECORD_SCHEMAS,MODEL_REQUEST_RECORD_SCHEMAS];
-  const claimFixture = await createTaskClaimFixture(kind,{records:schemas.flatMap(s=>s.records),events:schemas.flatMap(s=>s.events),lookups:schemas.flatMap(s=>s.lookups??[])});
+  const additional=options.additionalSchemas;
+  const claimFixture = await createTaskClaimFixture(kind,{records:[...schemas.flatMap(s=>s.records),...(additional?.records??[])],
+    events:[...schemas.flatMap(s=>s.events),...(additional?.events??[])],
+    lookups:[...schemas.flatMap(s=>s.lookups??[]),...(additional?.lookups??[])]});
   const skillRoot=join(claimFixture.directory,'skills');
   await mkdir(join(skillRoot,'b2-trusted-skill'),{recursive:true});
   await writeFile(join(skillRoot,'b2-trusted-skill','skill.json'),JSON.stringify({schemaVersion:1,id:'b2-trusted-skill',title:'B2 trusted skill',kind:'instruction',priority:10,contentFile:'content.md'}));
@@ -195,8 +203,14 @@ export async function createB2RuntimeFixture(options: {
   const snapshots=[{ref:policyRef,revision:1,schemaVersion:1,policyId,contentRevision:1,content:policy,contentDigest:coordinationPolicyContentDigest(policy,policyId,1),installedAt:B2_AT},{ref:{aggregateType:'ProjectCoordinationPolicyActive',projectId},revision:1,projectId,activeRevision:policyRef}];
   const matrix=await f.commitRaw(snapshots.map(snapshot=>({refKey:refKey(snapshot.ref),schemaId:`${snapshot.ref.aggregateType}Snapshot@1`,revision:snapshot.revision,json:JSON.stringify(snapshot)})));
   if(matrix.status!=='committed')throw Error(`B2 matrix seed: ${JSON.stringify(matrix)}`);
-  await f.overwriteSession(f.sessions.first,record=>({...record,role:{kind:'role_spec',pin}}));
-  const request = await claimFixture.buildRequest(options.taskBudget?{input:{budget:options.taskBudget}}:{});
+  // Create the Session through the real Session owner with the installed role_spec already bound.
+  const kernelStores=await createKernelStoreRegistry({entries:[{adapterId:'r4c-claim-kernel',storeKey:'r4c-claim-kernel-store',workspace:claimFixture.scope,databasePath:join(claimFixture.directory,'kernel.sqlite')}]});
+  const sessionOperations=createSessionOperations({sessions:claimFixture.sessionsPort,kernelStores});
+  const created=await sessionOperations.createSession(f.ctx,{workspace:f.scope,role:{kind:'role_spec',pin},
+    recommendedRefs:[],initialLinks:[],meta:{requestId:'b2-runtime-session',expected:[]}});
+  if(created.status!=='completed')throw Error(`B2 Runtime Session creation failed: ${JSON.stringify(created)}`);
+  const sessionRef={projectId:created.value.ref.projectId,sessionId:created.value.ref.sessionId};
+  const request = await claimFixture.buildRequest({input:{sessionRef,...(options.taskBudget?{budget:options.taskBudget}:{})}});
   const claimed = await claimFixture.service.claimTask(claimFixture.ctx, request);
   if (claimed.status !== 'committed') throw new Error(`B2 fixture claim failed: ${JSON.stringify(claimed)}`);
   const claim = claimed.value;
@@ -214,7 +228,6 @@ export async function createB2RuntimeFixture(options: {
   const card=await claimFixture.sessionsPort.readSession(claimFixture.ctx,claim.sessionRef);
   if(card.status!=='ready')throw Error('B2 mapped Session unavailable');
   const host=options.host??createRuntimeHostDouble({runRefs:allowedRuns,scripted,root:claimFixture.directory,skillRoot,scope:claimFixture.scope,role:card.value.record.role});
-  const kernelStores=await createKernelStoreRegistry({entries:[{adapterId:'r4c-claim-kernel',storeKey:'r4c-claim-kernel-store',workspace:claimFixture.scope,databasePath:join(claimFixture.directory,'kernel.sqlite')}]});
   let entry!:ExecutionEntryPort;let modelRequests!:ModelRequestPort;
   function buildDeps(overrides:B2RuntimeFixtureOverrides={}):RuntimeExecutionDependencies {
     const executions=createRunStateReader({records});
@@ -292,7 +305,7 @@ export async function createB2RuntimeFixture(options: {
   const deps = buildDeps();
   let secondary:Awaited<ReturnType<TaskClaimFixture['reopenService']>>|undefined;
   const fixture:B2RuntimeFixture={
-    claimFixture,claim,deps,runtime:createAgentRuntime(deps),host,entry,modelRequests,scripted,ctx:claimFixture.ctx,scope:claimFixture.scope,directory:claimFixture.directory,
+    claimFixture,claim,records,deps,runtime:createAgentRuntime(deps),host,entry,modelRequests,scripted,ctx:claimFixture.ctx,scope:claimFixture.scope,directory:claimFixture.directory,
     allowRun:ref=>{allowedRuns.add(refKey(ref));},setNow:at=>{clock=at;},
     rebuild:overrides=>createAgentRuntime(buildDeps(overrides)),
     rebuildDeps:overrides=>buildDeps(overrides),
@@ -301,6 +314,7 @@ export async function createB2RuntimeFixture(options: {
       await claimFixture.closeBackend();if('close' in bodies)await bodies.close();
       secondary=await claimFixture.reopenService();records=secondary.records;
       bodies=createSqliteRawArtifactStore(join(claimFixture.directory,'artifacts.sqlite'));
+      fixture.records=records;
       fixture.deps=buildDeps();fixture.entry=entry;fixture.modelRequests=modelRequests;fixture.runtime=createAgentRuntime(fixture.deps);
     },
     async close(){await secondary?.close();if('close' in bodies)await bodies.close();await claimFixture.close();},

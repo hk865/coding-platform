@@ -13,7 +13,7 @@ import type { RuntimeBudget } from './model-budget.js';
  * absolute `deadline` is turned into the remaining wall-clock budget against the
  * same trusted `now()` clock the meter uses; the earlier of the relative
  * `timeoutMs` and the absolute remainder wins. A null deadline contributes
- * nothing and a missing task budget keeps the exact legacy mapping.
+ * nothing.
  */
 export type KernelRunLimits = {
   maxModelRequests: number | null;
@@ -28,8 +28,8 @@ export type KernelRunLimits = {
 /** Shared deadline evaluation: the remaining milliseconds until the persistent
  * task deadline, or null when no absolute deadline is pinned. A passed deadline
  * yields 0 (never a negative Kernel limit). */
-export function remainingTaskDeadlineMs(taskBudget: ModelTokenBudget | null | undefined, now: () => string): number | null {
-  if (taskBudget === null || taskBudget === undefined || taskBudget.deadline === null) return null;
+export function remainingTaskDeadlineMs(taskBudget: ModelTokenBudget, now: () => string): number | null {
+  if (taskBudget.deadline === null) return null;
   const currentMs = Date.parse(now());
   const deadlineMs = Date.parse(taskBudget.deadline);
   if (!Number.isFinite(currentMs) || !Number.isFinite(deadlineMs)) {
@@ -38,10 +38,10 @@ export function remainingTaskDeadlineMs(taskBudget: ModelTokenBudget | null | un
   return Math.max(0, deadlineMs - currentMs);
 }
 
-export function kernelRunLimits(budget: RuntimeBudget, taskBudget?: ModelTokenBudget, now?: () => string): KernelRunLimits {
-  const maxTotalTokens = taskBudget === undefined ? null : taskBudget.tokenBudget;
+export function kernelRunLimits(budget: RuntimeBudget, taskBudget: ModelTokenBudget, now?: () => string): KernelRunLimits {
+  const maxTotalTokens = taskBudget.tokenBudget;
   let deadlineMs = budget.timeoutMs;
-  if (taskBudget !== undefined && taskBudget.deadline !== null) {
+  if (taskBudget.deadline !== null) {
     if (now === undefined) throw new Error('unsupported: evaluating a persistent task deadline requires the trusted now() clock');
     const remaining = remainingTaskDeadlineMs(taskBudget, now)!;
     deadlineMs = deadlineMs === null ? remaining : Math.min(deadlineMs, remaining);

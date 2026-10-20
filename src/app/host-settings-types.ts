@@ -29,17 +29,15 @@ export type HostSettingsSnapshot = {
    * installs it in the Host at once, unless `automation/save` answered
    * `unavailable` (saved, Host configuration not confirmed); then the Host
    * may still apply the previous policy until a retry of the same save
-   * installs it. Optional so older snapshots and test literals stay valid;
-   * the backend publishes it since A.2 step 5.8 (`automation/save`).
+   * installs it. The backend publishes it since A.2 step 5.8 (`automation/save`).
    */
-  automation?: TaskAutomationPolicyV1;
+  automation: TaskAutomationPolicyV1;
   /**
    * L13/决定 55: the Host resource-cap setting as stored, its machine-computed
    * defaults, the effective values and this machine's Kernel capability status.
-   * Optional so older snapshots and test literals stay valid; the backend
-   * publishes it since `resource-caps/save`.
+   * The backend publishes it since `resource-caps/save`.
    */
-  resourceCaps?: SettingsResourceCaps;
+  resourceCaps: SettingsResourceCaps;
 };
 /**
  * L13: the resource-cap setting projection. `memoryMaxMiB`/`tasksMax` are the

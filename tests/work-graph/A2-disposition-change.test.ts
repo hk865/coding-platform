@@ -12,12 +12,10 @@
  * - The plan owner: an untraced disposition-only Task keeps its source definition and basis and is recorded
  *   (`traced:false`); a later unrelated adoption carries the record; a traced superseded Task may name a
  *   new replacement (recorded `from === to`), and an explicit `replacedByTaskId: null` where the source has
- *   none is no change; a traced Task leaving an obligation is refused with the hint; a traced Task whose
- *   lease is held, whose Run is live or ended unknown is `busy`, one with Runs but no Lease record
- *   `unavailable`, a satisfied one `invalid`; a gate cannot change its disposition; deferring the only
- *   carrier of a required obligation is `invalid`. Every refusal writes nothing. A claim committed between
- *   the TASK-19 read and the adoption commit moves the pinned Lease: the adoption is `revision_conflict`,
- *   and read again `busy`. A paused Goal still adopts (W16 is no rework).
+ *   none is no change; a traced Task leaving an obligation is refused with the hint; a traced Task whose Run
+ *   is live or ended unknown is `busy`, a satisfied one `invalid`; a gate cannot change its disposition;
+ *   deferring the only carrier of a required obligation is `invalid`. Every refusal writes nothing. A paused
+ *   Goal still adopts (W16 is no rework).
  * - Guard 7 and guard 9 by adopter class (§1 `reworkActorClassOf(principal, actor)`): a Host started as
  *   `kind:'system'` is an operator (class `human`) and supersedes a human-stopped Task; the platform
  *   automation actor (class `system`) may not, nor add a parallel carrier beside it. A human stop committed
@@ -28,44 +26,65 @@
  *   human-stopped sibling (guard 7) nor add a carrier beside it (guard 9), while an operator adopts the same
  *   candidate.
  *
- * Fixture note: the Runs, Leases, Reductions and human stops (a queued operator cancel the Run's pointer
- * names) are seeded directly as read-side fixtures (as in
- * W1-future-plan.test.ts); the adoptions use the public plan service. The real platform path (Workflow,
- * Kernel, human stop, requeue) is tests/scenarios/C7-supersede-failed-task.test.ts and C7-defer-reactivate.test.ts.
+ * Fixture note: every reachable Run is produced by `claimTask`, production prepare and the real Runtime
+ * start/finish; a human stop is the real `submitControl` + delivery; a satisfied Task is the real
+ * `openVerification` → `runRegisteredCheck` → `finalizeChecks` → `completeTask` chain. No Run, Lease,
+ * Reduction or human-stop fact is written by the test where that public chain exists.
+ *
+ * Guard 2's unknown outcome is a real Run held at the model gate whose Kernel database is moved aside, then
+ * the restarted Host's start-up reconcile (RUN-20(ii)): the Run ends `outcome_unknown` and keeps its Lease.
+ * The guard-9 race is a real operator cancel (`submitControl`) of the carrier's running Run while the
+ * adoption commit waits at an A3 wrapper. Refusal rows sit in `rejects:` blocks with a public read before
+ * and after; every service-layer row runs on the memory and the SQLite record backend.
  */
-import { describe, expect, it } from 'vitest';
-import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
-import type {
-  EncodedRecord, EncodedRecordSchema, PreparedCommit, RecordBackendSchemas, StoreCommitReceipt,
-} from '../../src/core/record-store/ports.js';
-import {
-  GOAL_RECORD_SCHEMAS, canonicalRefKey, encodeProjectSnapshot, encodeWorkspaceSnapshot,
-} from '../../src/core/work-graph/persistence/record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS, readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
-import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
-import { CONTROL_RECORD_SCHEMAS, encodeControlIntentSnapshot } from '../../src/core/work-graph/persistence/control-record-codecs.js';
-import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
-import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
+import { createS2BRuntimeSteps, type S2BRunHandle, type S2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
+import { cleanupRestart, moveKernelAside } from '../helpers/A2-restart-fixture.js';
+import type { ClaimTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
+import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
+import type { PlanProposal, PlanTaskPort, TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
+import type { ClaimFixtureKind, Records, TaskClaimFixture } from '../helpers/task-claim-fixture.js';
+import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
+import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
+import { reconcileRunAtStartup } from '../../src/core/agent-runtime/run-reconcile.js';
+import { createSessionHistoryCursorOwner } from '../../src/core/agent-runtime/session-operations.js';
+import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
+import { readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
+import { createRegisteredCheckRunner } from '../../src/core/agent-runtime/check-execution.js';
+import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
+import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
+import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
+import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import { deriveFuturePlanDelta, validateFutureObligationCoverage } from '../../src/core/work-graph/tasks/plan-validation.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ActorRef } from '../../src/contracts/command-event.js';
-import type { ControlIntentSnapshotV1 } from '../../src/contracts/control-intent.js';
+import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
+import type { WriteResult } from '../../src/contracts/core/results.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
-import type { GoalRef, ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
-import type { PlanRevisionDraft, PlanRevisionSnapshot, RuntimeTask } from '../../src/contracts/plan.js';
-import type { RunSnapshot, TaskLeaseSnapshot } from '../../src/contracts/dispatch.js';
-import type { TaskReductionSnapshot } from '../../src/contracts/reduction.js';
+import type { GoalRef } from '../../src/contracts/ledger.js';
+import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../src/contracts/plan.js';
+import type { RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
+import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
+import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createW2WhiteboardFixture, type W2WhiteboardFixture } from '../helpers/W2-whiteboard-fixture.js';
 
 const AT = '2026-10-06T00:00:00.000Z';
-const projectId = 'a2-c7-project';
-const workspaceId = 'a2-c7-workspace';
+// The accepted claim fixture's fixed scope; `setup` verifies it before use.
+const projectId = 'r4c-claim-project';
+const workspaceId = 'r4c-claim-workspace';
 const actor = { kind: 'human' as const, id: 'a2-c7-operator' };
-const project: ProjectSnapshot = { ref: { aggregateType: 'Project', projectId }, revision: 1 };
-const workspace: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projectId, workspaceId }, revision: 1 };
+const goalRef: GoalRef = { aggregateType: 'Goal', projectId, goalId: 'a2-c7-goal' };
 /** A Host call context acting as `as` (the operator by default). */
 const hostCtx = (as: Extract<ActorRef, { kind: 'human' | 'system' }>): CoreCallContext => ({ projectId, workspaceId,
   principal: { kind: 'host', actor: as }, materialReader: { kind: 'host', projectId, workspaceId, actor: as },
@@ -74,43 +93,23 @@ const ctx = hostCtx(actor);
 /** The platform automation actor (rework class `system`) and a Host operator started as `kind:'system'` (class `human`). */
 const automation = hostCtx({ ...WORKFLOW_AUTOMATION_ACTOR });
 const hostOperator = { kind: 'system' as const, id: 'a2-c7-host-op' };
-const goalRef: GoalRef = { aggregateType: 'Goal', projectId, goalId: 'a2-c7-goal' };
 type DraftV2 = Extract<PlanRevisionDraft, { schemaVersion: 2 }>;
 type SnapshotV2 = Extract<PlanRevisionSnapshot, { schemaVersion: 2 }>;
 
-const digest = (value: JsonValue) => sha256Hex(canonicalJson(value));
-const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId, policyId: 'a2-c7-policy', revision: 1 };
-const architectureRef = { aggregateType: 'ArchitectureBaselineRevision' as const, projectId, baselineId: 'a2-c7-baseline', revision: 1 };
-const policyFixture = { schemaVersion: 1, identity: { policyId: 'a2-c7-policy' }, revision: 1,
-  content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } };
-const architectureFixture = { schemaVersion: 1, identity: { baselineId: 'a2-c7-baseline' }, revision: 1,
-  content: { schemaVersion: 1, description: 'C7 baseline', constraints: [] } };
-const governance = [
-  { ref: policyRef, revision: 1, schemaVersion: 1, policyId: 'a2-c7-policy', contentRevision: 1,
-    contentDigest: digest(policyFixture as unknown as JsonValue), content: policyFixture.content },
-  { ref: architectureRef, revision: 1, schemaVersion: 1, baselineId: 'a2-c7-baseline', contentRevision: 1,
-    contentDigest: digest(architectureFixture as unknown as JsonValue), content: architectureFixture.content },
-  { ref: { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId }, projectId, revision: 1, activeRevision: policyRef },
-  { ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId }, projectId, revision: 1, activeRevision: architectureRef },
-];
-const governanceSchemas: EncodedRecordSchema[] = governance.map(snapshot => ({
-  aggregateType: snapshot.ref.aggregateType, schemaId: `${snapshot.ref.aggregateType}Snapshot@1`,
-  validate: record => record.refKey === canonicalJson(snapshot.ref as unknown as JsonValue)
-    && record.schemaId === `${snapshot.ref.aggregateType}Snapshot@1`
-    ? { status: 'decoded', value: record } : { status: 'invalid', reason: 'wrong test prerequisite' },
-}));
-const schemas: RecordBackendSchemas = {
-  records: [...GOAL_RECORD_SCHEMAS.records, ...governanceSchemas, ...PLAN_RECORD_SCHEMAS.records,
-    ...PLAN_STATE_RECORD_SCHEMAS.records, ...materialRecordSchemas().records.filter(record => record.aggregateType === 'Run'),
-    ...CONTROL_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records],
-  events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_RECORD_SCHEMAS.events,
-    { eventType: 'C7Seed', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) }],
-  lookups: [...PLAN_RECORD_SCHEMAS.lookups, ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? [])],
+/** Extra record groups the real evidence/completion/control owners write; the claim fixture owns the rest. */
+const A2_SCHEMAS: RecordBackendSchemas = {
+  records: [...EVIDENCE_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records],
+  events: [...(EVIDENCE_RECORD_SCHEMAS.events ?? []), ...(COMPLETION_RECORD_SCHEMAS.events ?? []),
+    ...(CONTROL_RECORD_SCHEMAS.events ?? [])],
+  lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []),
+    ...(CONTROL_RECORD_SCHEMAS.lookups ?? [])],
 };
 
 const work = (taskId: string, title = `Task ${taskId}`): RuntimeTask => ({ taskId, title, requirementLevel: 'required',
   taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } });
-const check = (requirementId: string) => ({ requirementId, requirementLevel: 'required' as const, kind: 'test', description: 'Tests pass' });
+/** The fixture's only executable registered check kind is `static`. */
+const check = (requirementId: string) => ({ requirementId, requirementLevel: 'required' as const, kind: 'static',
+  description: 'Tests pass' });
 
 /** A and B are work, the gate carries o-core with them; B alone carries o-solo. */
 function initialDraft(): DraftV2 {
@@ -134,155 +133,295 @@ function futureDraft(source: PlanRevisionSnapshot, planId: string, edit: (draft:
 const disposed = (draft: DraftV2, taskId: string, patch: Partial<RuntimeTask>): DraftV2 =>
   ({ ...draft, tasks: draft.tasks.map(task => task.taskId === taskId ? { ...task, ...patch } : task) });
 
-async function setup() {
-  const backend = createInMemoryRecordBackend({ schemas });
-  let sequence = 0;
-  const seedCommit = async (records: readonly EncodedRecord[]): Promise<StoreCommitReceipt> => {
-    const n = ++sequence;
-    const event = { eventId: `c7-seed-${n}`, eventType: 'C7Seed', schemaVersion: 1, occurredAt: AT };
-    return backend.records.commit({ identityKey: `c7-seed-identity-${n}`, fingerprint: `c7-seed-fingerprint-${n}`,
-      guards: records.map(record => ({ refKey: record.refKey, expectedRevision: null })), records: [...records],
-      events: [{ ...event, json: JSON.stringify(event) }], claims: [], indexGuards: [], indexChanges: [] });
-  };
-  const scopeSeed: PreparedCommit = { identityKey: 'c7-scope-seed', fingerprint: 'c7-scope-seed-v1',
-    guards: [{ refKey: canonicalRefKey(project.ref), expectedRevision: null }, { refKey: canonicalRefKey(workspace.ref), expectedRevision: null },
-      ...governance.map(snapshot => ({ refKey: canonicalJson(snapshot.ref as unknown as JsonValue), expectedRevision: null }))],
-    records: [encodeProjectSnapshot(project), encodeWorkspaceSnapshot(workspace), ...governance.map(snapshot => ({
-      refKey: canonicalJson(snapshot.ref as unknown as JsonValue), schemaId: `${snapshot.ref.aggregateType}Snapshot@1`,
-      revision: snapshot.revision, json: JSON.stringify(snapshot) }))],
-    events: [{ eventId: 'c7-scope-seed-event', eventType: 'C7Seed', schemaVersion: 1, occurredAt: AT,
-      json: JSON.stringify({ eventId: 'c7-scope-seed-event', eventType: 'C7Seed', schemaVersion: 1, occurredAt: AT }) }],
-    claims: [], indexGuards: [], indexChanges: [] };
-  if ((await backend.records.commit(scopeSeed)).status !== 'committed') throw new Error('C7 scope seed failed');
-  const goals = createGoalService({ records: backend.records, now: () => AT, eventId: () => `c7-goal-${++sequence}` }).tasks;
-  const plans = createPlanService({ records: backend.records, now: () => AT, eventId: () => `c7-plan-${++sequence}` });
-  const created = await goals.createGoal(ctx, { meta: { requestId: 'c7-create-goal',
-    expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },
-    input: { goalId: goalRef.goalId, workspace: { projectId, workspaceId }, objective: 'C7 disposition changes' } });
-  if (created.status !== 'committed') throw new Error(`C7 Goal creation failed: ${JSON.stringify(created)}`);
-  let requests = 0;
-  /** Proposes `draft` on the active Plan as `caller` (the operator by default). */
-  async function propose(draft: PlanRevisionDraft, basedOn: PlanRevisionSnapshot | null, affectedTaskIds?: string[],
-    caller: CoreCallContext = ctx) {
-    const n = ++requests;
-    const proposed = await plans.proposePlan(caller, { meta: { requestId: `c7-propose-${n}`, expected: [] },
-      input: { goalRef, basedOn: basedOn?.ref ?? null, draft,
-        reason: { text: `C7 change ${n}`, sources: [], ...(affectedTaskIds === undefined ? {} : { affectedTaskIds }) } } });
-    if (proposed.status !== 'committed') throw new Error(`C7 proposal ${n} failed: ${JSON.stringify(proposed)}`);
-    return { n, ref: proposed.value.ref, revision: proposed.value.revision };
-  }
-  /** Applies a proposed candidate as `caller` (the operator by default). */
-  const apply = (proposal: { ref: { aggregateType: 'PlanProposal'; projectId: string; workspaceId: string; proposalId: string };
-    revision: number }, requestId: string, caller: CoreCallContext = ctx, over = plans) =>
-    over.applyPlanChange(caller, { meta: { requestId, expected: [] },
-      input: { proposalRef: proposal.ref, expectedProposalRevision: proposal.revision, decisionRefs: [] } });
-  /** Proposes `draft` on the active Plan and applies it, both as `caller` (the operator by default). */
-  async function adopt(draft: PlanRevisionDraft, basedOn: PlanRevisionSnapshot | null, affectedTaskIds?: string[],
-    caller: CoreCallContext = ctx) {
-    const proposed = await propose(draft, basedOn, affectedTaskIds, caller);
-    return apply(proposed, `c7-apply-${proposed.n}`, caller);
-  }
-  const initial = await adopt(initialDraft(), null);
-  if (initial.status !== 'committed') throw new Error(`C7 initial adoption failed: ${JSON.stringify(initial)}`);
-  const plan = initial.value;
-  const key = (ref: object) => canonicalJson(ref as JsonValue);
+/** Every fixture of a row is closed even when an assertion fails (held Runs are released by `steps.close`). */
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  for (const close of cleanups.splice(0).reverse()) await close();
+  await cleanupRestart();
+});
 
-  async function seedRun(taskId: string, overrides: Partial<RunSnapshot> = {}): Promise<RunSnapshot> {
-    const run: RunSnapshot = { ref: { aggregateType: 'Run', projectId, goalId: goalRef.goalId, runId: `c7-run-${taskId}` },
-      revision: 1, schemaVersion: 1, task: { projectId, goalId: goalRef.goalId, taskId }, attemptId: `c7-attempt-${taskId}`,
-      planRef: plan.ref, roleBinding: { schemaVersion: 1, bindingId: 'c7-binding', templateId: 'builder', templateRevision: '1',
-        bindingVersion: 1, policyRevision: '1' },
-      budget: { tokenBudget: 100, deadline: null }, workspaceSnapshot: { workspaceId, revision: 1 },
-      status: 'ended', outcome: 'failed', exitCode: 1, lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null,
-      startedAt: AT, endedAt: AT, ...overrides };
-    const result = await seedCommit([{ refKey: key(run.ref), schemaId: 'RunSnapshot@1', revision: 1, json: JSON.stringify(run) }]);
-    if (result.status !== 'committed') throw new Error(`C7 Run seed failed: ${JSON.stringify(result)}`);
-    return run;
-  }
-  async function seedLease(taskId: string, released: boolean): Promise<void> {
-    const ref = { aggregateType: 'TaskLease' as const, projectId, goalId: goalRef.goalId, taskId };
-    const runRef = { aggregateType: 'Run' as const, projectId, goalId: goalRef.goalId, runId: `c7-run-${taskId}` };
-    const lease: TaskLeaseSnapshot = { ref, revision: 1, schemaVersion: 1, holderRunId: runRef.runId, attemptId: `c7-attempt-${taskId}`,
-      grantedAt: AT, expiresAt: null, ...(released ? { release: { schemaVersion: 1, runRef,
-        attemptRef: { aggregateType: 'TaskAttempt', projectId, goalId: goalRef.goalId, taskId, attemptId: `c7-attempt-${taskId}` },
-        sessionRef: { projectId, sessionId: 'c7-session' }, generation: 1, releasedAt: AT, eventId: `c7-release-${taskId}` } } : {}) };
-    const result = await seedCommit([{ refKey: key(ref), schemaId: 'TaskLeaseSnapshot@1', revision: 1, json: JSON.stringify(lease) }]);
-    if (result.status !== 'committed') throw new Error(`C7 Lease seed failed: ${JSON.stringify(result)}`);
-  }
-  async function seedReduction(taskId: string): Promise<void> {
-    const reduction: TaskReductionSnapshot = {
-      ref: { aggregateType: 'TaskReduction', projectId, goalId: goalRef.goalId, taskId }, revision: 1, schemaVersion: 1,
-      planRef: plan.ref, planRevision: plan.planRevision, taskKind: 'work', requirementLevel: 'required', disposition: 'active',
-      phase: 'satisfied', currentAnchor: { schemaVersion: 1, planRef: plan.ref, planRevision: plan.planRevision, workspaceRevision: 1,
-        pinnedCompletionPolicy: plan.effectiveCompletionPolicy, pinnedArchitectureBaseline: plan.effectiveArchitectureBaseline },
-      effectiveEvidenceIds: ['c7-evidence'], blockingEvidenceIds: [], staleEvidenceIds: [], outOfScopeEvidenceIds: [],
-      satisfiedObligationIds: ['o-core', 'o-solo'], causes: [], reducedAt: AT };
-    const result = await seedCommit([{ refKey: key(reduction.ref), schemaId: 'TaskReductionSnapshot@1', revision: 1,
-      json: JSON.stringify(reduction) }]);
-    if (result.status !== 'committed') throw new Error(`C7 Reduction seed failed: ${JSON.stringify(result)}`);
-  }
-  async function activePlan(): Promise<PlanRevisionSnapshot['ref'] | null> {
-    const read = await plans.queryGoal(ctx, goalRef);
-    if (read.status !== 'ready') throw new Error('the Goal must be readable');
-    return read.value.goal.activePlanRevision;
-  }
-  async function row(taskId: string) {
-    const graph = await plans.queryTaskGraph(ctx, { goalRef });
-    if (graph.status !== 'ready') throw new Error(`the graph must be readable: ${JSON.stringify(graph)}`);
-    return graph.value.tasks.find(candidate => candidate.ref.taskId === taskId);
-  }
-  /** A claim's lease row in place of the released one (@1 → @2, held again): what a concurrent claim writes. */
-  async function reholdLease(taskId: string): Promise<void> {
-    const ref = { aggregateType: 'TaskLease' as const, projectId, goalId: goalRef.goalId, taskId };
-    const lease: TaskLeaseSnapshot = { ref, revision: 2, schemaVersion: 1, holderRunId: `c7-run-${taskId}-2`,
-      attemptId: `c7-attempt-${taskId}-2`, grantedAt: AT, expiresAt: null };
-    const n = ++sequence;
-    const event = { eventId: `c7-seed-${n}`, eventType: 'C7Seed', schemaVersion: 1, occurredAt: AT };
-    const result = await backend.records.commit({ identityKey: `c7-seed-identity-${n}`, fingerprint: `c7-seed-fingerprint-${n}`,
-      guards: [{ refKey: key(ref), expectedRevision: 1 }],
-      records: [{ refKey: key(ref), schemaId: 'TaskLeaseSnapshot@1', revision: 2, json: JSON.stringify(lease) }],
-      events: [{ ...event, json: JSON.stringify(event) }], claims: [], indexGuards: [], indexChanges: [] });
-    if (result.status !== 'committed') throw new Error(`C7 Lease re-hold failed: ${JSON.stringify(result)}`);
-  }
+type Proposal = { n: number; ref: PlanProposal['ref']; revision: number };
+
+type Fixture = {
+  b2: B2ExecutionFixture;
+  steps: S2BRuntimeSteps;
+  plans: TaskClaimFixture['plans'];
+  records: Records;
+  plan: PlanRevisionSnapshot;
+  propose(draft: PlanRevisionDraft, basedOn: PlanRevisionSnapshot | null, affectedTaskIds?: string[],
+    caller?: CoreCallContext): Promise<Proposal>;
+  apply(proposal: Proposal, requestId: string, caller?: CoreCallContext,
+    over?: PlanTaskPort): Promise<WriteResult<PlanRevisionSnapshot>>;
+  adopt(draft: PlanRevisionDraft, basedOn: PlanRevisionSnapshot | null, affectedTaskIds?: string[],
+    caller?: CoreCallContext): Promise<WriteResult<PlanRevisionSnapshot>>;
+  activePlan(): Promise<PlanRevisionRef | null>;
+  row(taskId: string): Promise<TaskRow | undefined>;
+  pauseGoal(): Promise<void>;
+  planServiceOver(records: Records): PlanTaskPort;
+  readRun(ref: RunRef): Promise<RunSnapshot>;
+  /** A real claimed and entered Run, held at the Runtime's model gate. */
+  startHeld(taskId: string, onPlan?: PlanRevisionRef): Promise<{ claim: TaskClaim; run: RunSnapshot; handle: S2BRunHandle }>;
+  /** A real claimed Run that ends with a normal final reply. */
+  endRun(taskId: string, onPlan?: PlanRevisionRef): Promise<RunSnapshot>;
+  /** A real claimed Run a human stops through `submitControl` + delivery. */
+  stopRun(taskId: string, onPlan?: PlanRevisionRef): Promise<RunSnapshot>;
+  /** A real ended Run plus the real check chain and the formal reduction. */
+  satisfy(taskId: string, onPlan?: PlanRevisionRef): Promise<RunSnapshot>;
   /**
-   * An operator's cancel of `run` (a human stop, `reworkFenceOf = human_only`): a queued cancel intent and the
-   * Run's pointer to it (Run @k → @k+1) in one commit, as `submitControl` writes them.
+   * A real claimed Run held at the model gate, its Kernel database moved aside, then the restarted Host's
+   * start-up reconcile (RUN-20(ii)); answers the execution record read after it.
    */
-  async function humanStop(run: RunSnapshot): Promise<void> {
-    const intent: ControlIntentSnapshotV1 = { schemaVersion: 1,
-      ref: { aggregateType: 'ControlIntent', projectId, workspaceId, intentId: `c7-cancel-${run.ref.runId}` }, runRef: run.ref,
-      kind: 'cancel', desiredState: 'cancelled', reason: 'an operator stopped it', requestedAt: AT, requestedBy: actor,
-      revision: 1, status: 'queued' };
-    const stopped: RunSnapshot = { ...run, revision: run.revision + 1,
-      controlState: { intentRef: intent.ref, desiredState: 'cancelled' } };
-    const encoded = encodeControlIntentSnapshot(intent);
-    const n = ++sequence;
-    const event = { eventId: `c7-seed-${n}`, eventType: 'C7Seed', schemaVersion: 1, occurredAt: AT };
-    const result = await backend.records.commit({ identityKey: `c7-seed-identity-${n}`, fingerprint: `c7-seed-fingerprint-${n}`,
-      guards: [{ refKey: encoded.refKey, expectedRevision: null }, { refKey: key(run.ref), expectedRevision: run.revision }],
-      records: [encoded, { refKey: key(run.ref), schemaId: 'RunSnapshot@1', revision: stopped.revision, json: JSON.stringify(stopped) }],
-      events: [{ ...event, json: JSON.stringify(event) }], claims: [], indexGuards: [], indexChanges: [] });
-    if (result.status !== 'committed') throw new Error(`C7 human stop failed: ${JSON.stringify(result)}`);
+  unknownOutcome(taskId: string, onPlan?: PlanRevisionRef): Promise<TaskExecutionRecord>;
+  close(): Promise<void>;
+};
+
+async function setup(kind: ClaimFixtureKind): Promise<Fixture> {
+  const b2 = await createB2ExecutionFixture(kind, A2_SCHEMAS);
+  const base = b2.base;
+  if (base.scope.projectId !== projectId || base.scope.workspaceId !== workspaceId) {
+    throw new Error(`A2 C7 fixture scope changed: ${JSON.stringify(base.scope)}`);
   }
-  /** GOAL-04: the operator pauses the Goal, pinning the Goal and its GoalPhase as read (decision 29). */
-  async function pauseGoal(): Promise<void> {
-    const read = await plans.queryGoal(ctx, goalRef);
-    if (read.status !== 'ready') throw new Error('the Goal must be readable');
-    const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: goalRef.projectId, goalId: goalRef.goalId };
-    const phase = await readGoalPhase(backend.records, phaseRef);
-    if (phase.status !== 'ready') throw new Error('the GoalPhase must be readable');
-    const paused = await goals.setGoalControl(ctx, { meta: { requestId: 'c7-pause-goal',
-      expected: [{ ref: goalRef, revision: read.value.goal.revision }, { ref: phaseRef, revision: phase.snapshot?.revision ?? 0 }] },
-      input: { goalRef, control: 'pause', reason: null } });
-    if (paused.status !== 'committed' || paused.value.desiredState !== 'paused') throw new Error(`C7 pause failed: ${JSON.stringify(paused)}`);
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'next-a2-c7-'));
+  await mkdir(join(workspaceRoot, 'src'));
+  await writeFile(join(workspaceRoot, 'src', 'a2-c7.txt'), 'a2 c7 verification source v1\n');
+  const records = base.records;
+  const plans = base.plans;
+  const goals = base.goals;
+  const executions = createRunStateReader({ records });
+  let sequence = 0;
+  let clock = AT;
+  const now = (): string => clock;
+  const eventId = (): string => `a2-c7-event-${++sequence}`;
+  const newId = (): string => `a2-c7-id-${++sequence}`;
+  const requestId = (label: string): string => `a2-c7-${label}-${++sequence}`;
+  let steps!: S2BRuntimeSteps;
+  try {
+    steps = await createS2BRuntimeSteps({
+      base, bodies: b2.bodies, ctx, directory: base.directory, scope: base.scope,
+      now, setClock: (at) => { clock = at; }, eventId, newId, consumerId: 'a2-c7-runtime',
+    });
+    // The plan's required requirement kind is `static`; install and activate the
+    // matching policy through the public bootstrap before the first adoption.
+    await steps.installStaticCompletionPolicy('a2-c7-static-policy');
+
+    const created = await goals.createGoal(ctx, { meta: { requestId: 'a2-c7-create-goal',
+      expected: [{ ref: base.projectRef, revision: 1 }, { ref: base.workspaceRef, revision: 1 }] },
+      input: { goalId: goalRef.goalId, workspace: { projectId, workspaceId }, objective: 'C7 disposition changes' } });
+    if (created.status !== 'committed') throw new Error(`A2 C7 Goal creation failed: ${JSON.stringify(created)}`);
+    let requests = 0;
+    /** Proposes `draft` on the active Plan as `caller` (the operator by default). */
+    async function propose(draft: PlanRevisionDraft, basedOn: PlanRevisionSnapshot | null, affectedTaskIds?: string[],
+      caller: CoreCallContext = ctx): Promise<Proposal> {
+      const n = ++requests;
+      const proposed = await plans.proposePlan(caller, { meta: { requestId: `c7-propose-${n}`, expected: [] },
+        input: { goalRef, basedOn: basedOn?.ref ?? null, draft,
+          reason: { text: `C7 change ${n}`, sources: [], ...(affectedTaskIds === undefined ? {} : { affectedTaskIds }) } } });
+      if (proposed.status !== 'committed') throw new Error(`A2 C7 proposal ${n} failed: ${JSON.stringify(proposed)}`);
+      return { n, ref: proposed.value.ref, revision: proposed.value.revision };
+    }
+    /** Applies a proposed candidate as `caller` (the operator by default). */
+    const apply = (proposal: Proposal, requestId: string, caller: CoreCallContext = ctx, over: PlanTaskPort = plans) =>
+      over.applyPlanChange(caller, { meta: { requestId, expected: [] },
+        input: { proposalRef: proposal.ref, expectedProposalRevision: proposal.revision, decisionRefs: [] } });
+    /** Proposes `draft` on the active Plan and applies it, both as `caller` (the operator by default). */
+    async function adopt(draft: PlanRevisionDraft, basedOn: PlanRevisionSnapshot | null, affectedTaskIds?: string[],
+      caller: CoreCallContext = ctx) {
+      const proposed = await propose(draft, basedOn, affectedTaskIds, caller);
+      return apply(proposed, `c7-apply-${proposed.n}`, caller);
+    }
+    const initial = await adopt(initialDraft(), null);
+    if (initial.status !== 'committed') throw new Error(`A2 C7 initial adoption failed: ${JSON.stringify(initial)}`);
+    const plan = initial.value;
+
+    async function currentGoal() {
+      const read = await plans.queryGoal(ctx, goalRef);
+      if (read.status !== 'ready') throw new Error(`A2 C7 Goal read failed: ${JSON.stringify(read)}`);
+      return read.value.goal;
+    }
+    async function activePlan(): Promise<PlanRevisionRef | null> {
+      return (await currentGoal()).activePlanRevision;
+    }
+    async function row(taskId: string): Promise<TaskRow | undefined> {
+      const graph = await plans.queryTaskGraph(ctx, { goalRef });
+      if (graph.status !== 'ready') throw new Error(`the graph must be readable: ${JSON.stringify(graph)}`);
+      return graph.value.tasks.find(candidate => candidate.ref.taskId === taskId);
+    }
+    async function readRun(ref: RunRef): Promise<RunSnapshot> {
+      const read = await executions.readExecution(ctx, ref);
+      if (read.status !== 'ready') throw new Error(`A2 C7 Run read failed: ${JSON.stringify(read)}`);
+      return read.value.run;
+    }
+
+    /** A real claim over a fresh mapped Session and the current Goal/Workspace/Session pins. */
+    async function claim(taskId: string, onPlan: PlanRevisionRef = plan.ref): Promise<TaskClaim> {
+      const session = await base.createSession(`a2-c7-session-${taskId}-${++sequence}`);
+      const goal = await currentGoal();
+      const card = await base.sessionsPort.readSession(ctx, session);
+      if (card.status !== 'ready') throw new Error(`A2 C7 Session read failed: ${JSON.stringify(card)}`);
+      const request: GraphWrite<ClaimTaskInput> = { input: {
+        goalRef, planRef: onPlan, taskId, sessionRef: session,
+        roleBinding: base.roleBinding, budget: base.budget },
+      meta: { requestId: requestId(`claim-${taskId}`), expected: [
+        { ref: goalRef, revision: goal.revision },
+        { ref: base.workspaceRef, revision: 1 },
+        { ref: plainSessionRefToAggregate(session), revision: card.value.record.revision },
+      ] } };
+      const claimed = await base.service.claimTask(ctx, request);
+      if (claimed.status !== 'committed') throw new Error(`A2 C7 claim failed: ${JSON.stringify(claimed)}`);
+      return claimed.value;
+    }
+    async function startHeld(taskId: string, onPlan: PlanRevisionRef = plan.ref) {
+      const claimed = await claim(taskId, onPlan);
+      const handle = await steps.start(claimed, { at: AT,
+        replies: [{ kind: 'text', text: `A2 C7 ${taskId} is held at the real gate` }] });
+      await handle.entered;
+      return { claim: claimed, run: await readRun(claimed.runRef), handle };
+    }
+    async function endRun(taskId: string, onPlan: PlanRevisionRef = plan.ref): Promise<RunSnapshot> {
+      const claimed = await claim(taskId, onPlan);
+      const handle = await steps.start(claimed, { at: AT,
+        replies: [{ kind: 'text', text: `A2 C7 ${taskId} finished` }] });
+      await steps.finish(handle, AT, 'completed');
+      return readRun(claimed.runRef);
+    }
+    async function stopRun(taskId: string, onPlan: PlanRevisionRef = plan.ref): Promise<RunSnapshot> {
+      const claimed = await claim(taskId, onPlan);
+      const handle = await steps.start(claimed, { at: AT,
+        replies: [{ kind: 'text', text: `A2 C7 ${taskId} stopped` }] });
+      await steps.finish(handle, AT, 'cancelled');
+      return readRun(claimed.runRef);
+    }
+
+    const configuration: TrustedCheckConfiguration = {
+      configurationRevision: 'a2-c7-checks-1', workspace: base.workspaceRef, executor: actor,
+      permissionRevision: 'a2-c7-permission-1', sourceAccess: 'verification_workspace',
+      processAccess: 'all_except_denied', deniedPrefixes: [],
+      checks: [{ checkId: 'a2-c7-static-check', kind: 'static', command: 'echo A2_C7_CHECKS_OK',
+        cwd: '.', timeoutMs: 60_000, taskIds: 'all' }],
+    };
+    const workspaceHost = {
+      async resolveRoot(requested: { projectId: string; workspaceId: string }) {
+        return requested.projectId === projectId && requested.workspaceId === workspaceId
+          ? { status: 'ready' as const, value: { root: workspaceRoot, workspaceRevision: 1 } }
+          : { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the A2 C7 fixture workspace is not registered' };
+      },
+      async authorize(authCtx: CoreCallContext, requested: { projectId: string; workspaceId: string }) {
+        return authCtx.principal.kind === 'host' && requested.projectId === projectId && requested.workspaceId === workspaceId
+          ? { status: 'ready' as const, value: { subjectKey: 'host:a2-c7', permissionRevision: 'a2-c7-permission-1',
+            allowsRead: () => true } }
+          : { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the A2 C7 Host does not authorize verification source' };
+      },
+    };
+    const materials = createMaterialService({ bodies: b2.bodies,
+      authority: createMaterialRecordReaders(records).authority, now });
+    const evidence = createEvidenceService({ records, materials, executions, workspaceHost,
+      source: new VerificationWorkspaceReader(), configuration, now, newId });
+    const runner = createRegisteredCheckRunner({ evidence, workspaceHost, kernel, now });
+
+    async function satisfy(taskId: string, onPlan: PlanRevisionRef = plan.ref): Promise<RunSnapshot> {
+      const run = await endRun(taskId, onPlan);
+      const opened = await evidence.openVerification(ctx, {
+        input: { subjectRunRef: run.ref, subject: { projectId, goalId: goalRef.goalId, taskId }, planRef: onPlan },
+        meta: { requestId: requestId(`open-${taskId}`), expected: [] },
+      });
+      if (opened.status !== 'committed') throw new Error(`A2 C7 round open failed: ${JSON.stringify(opened)}`);
+      let round = opened.value;
+      for (const check of round.checks) {
+        const started = await runner.runRegisteredCheck(ctx, {
+          input: { roundRef: round.ref, checkId: check.checkId },
+          meta: { requestId: requestId(`run-${taskId}-${check.checkId}`), expected: [{ ref: round.ref, revision: round.revision }] },
+        });
+        if (started.status !== 'ready') throw new Error(`A2 C7 registered check ${check.checkId} did not run: ${JSON.stringify(started)}`);
+        round = started.value;
+      }
+      const finalized = await evidence.finalizeChecks(ctx, {
+        input: { roundRef: round.ref },
+        meta: { requestId: requestId(`finalize-${taskId}`), expected: [{ ref: round.ref, revision: round.revision }] },
+      });
+      if (finalized.status !== 'committed') throw new Error(`A2 C7 finalize failed: ${JSON.stringify(finalized)}`);
+      const goal = await currentGoal();
+      const done = await goals.completeTask(ctx, {
+        input: { taskRef: { projectId, goalId: goalRef.goalId, taskId }, planRef: onPlan,
+          roundRef: finalized.value.snapshot.ref },
+        meta: { requestId: requestId(`complete-${taskId}`), expected: [
+          { ref: goalRef, revision: goal.revision },
+          { ref: { aggregateType: 'TaskReduction', projectId, goalId: goalRef.goalId, taskId }, revision: 0 },
+        ] },
+      });
+      if (done.status !== 'committed') throw new Error(`A2 C7 completeTask failed: ${JSON.stringify(done)}`);
+      return run;
+    }
+
+    /**
+     * Guard 2 (RUN-20(ii)): the Host is abandoned with a real Run held at the model gate (its Kernel Turn
+     * open), the mapped Kernel database is moved aside (`tests/helpers/A2-restart-fixture.ts` `moveKernelAside`),
+     * and the restarted Host reconciles at start-up over the same stores, as
+     * `tests/helpers/S2B-runtime-tools-support.ts` `restartedHost`: a new Host instance holding the instance
+     * lease, its Kernel Store registry for the same configured store (`S2B-runtime-steps-fixture.ts:219-220`),
+     * the real probe (`missing`) and `reconcileRunAtStartup`. Unlike `restartedHost`, which rebuilds `entry` under
+     * the new Host, the `entry` passed here is the B2 fixture's (`b2.entry`): it is not used on this W-14 missing
+     * path (`src/core/agent-runtime/run-reconcile.ts:303-308`; only the Kernel-terminal branch records through
+     * it, `:397`).
+     */
+    async function unknownOutcome(taskId: string, onPlan: PlanRevisionRef = plan.ref): Promise<TaskExecutionRecord> {
+      const held = await startHeld(taskId, onPlan);
+      await moveKernelAside(base.directory);
+      const hostInstanceId = 'a2-c7-restarted-host';
+      const kernelStores = await createKernelStoreRegistry({ entries: [{ adapterId: 'r4c-claim-kernel',
+        storeKey: 'r4c-claim-kernel-store', workspace: base.scope, databasePath: join(base.directory, 'kernel.sqlite') }] });
+      const owner = createSessionHistoryCursorOwner({ kernelStores });
+      const reconcile = createRunReconcileService({ records, reads: executions,
+        hostInstance: { hostInstanceId, lease: 'owned' }, now, eventId });
+      const executionRecord = async (): Promise<TaskExecutionRecord> => {
+        const read = await executions.readExecution(ctx, held.claim.runRef);
+        if (read.status !== 'ready') throw new Error(`A2 C7 Run read failed: ${JSON.stringify(read)}`);
+        return read.value;
+      };
+      const before = await executionRecord();
+      const probe = await owner.probe({ session: before.session, signal: ctx.signal });
+      const report = await reconcileRunAtStartup({ owner, controls: steps.controls, entry: b2.entry, reconcile, now, newId },
+        ctx, { record: before, hostInstanceId, probe });
+      if (report.status !== 'reconciled') throw new Error(`A2 C7 start-up reconcile did not book the Run: ${JSON.stringify(report)}`);
+      return executionRecord();
+    }
+
+    /** GOAL-04: the operator pauses the Goal, pinning the Goal and its GoalPhase as read (decision 29). */
+    async function pauseGoal(): Promise<void> {
+      const read = await plans.queryGoal(ctx, goalRef);
+      if (read.status !== 'ready') throw new Error('the Goal must be readable');
+      const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: goalRef.projectId, goalId: goalRef.goalId };
+      const phase = await readGoalPhase(records, phaseRef);
+      if (phase.status !== 'ready') throw new Error('the GoalPhase must be readable');
+      const paused = await goals.setGoalControl(ctx, { meta: { requestId: 'c7-pause-goal',
+        expected: [{ ref: goalRef, revision: read.value.goal.revision }, { ref: phaseRef, revision: phase.snapshot?.revision ?? 0 }] },
+        input: { goalRef, control: 'pause', reason: null } });
+      if (paused.status !== 'committed' || paused.value.desiredState !== 'paused') throw new Error(`C7 pause failed: ${JSON.stringify(paused)}`);
+    }
+    const planServiceOver = (target: Records): PlanTaskPort =>
+      createPlanService({ records: target, now, eventId });
+
+    let closed = false;
+    const close = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      await steps.close();
+      await b2.close();
+      await rm(workspaceRoot, { recursive: true, force: true });
+    };
+    cleanups.push(close);
+    return { b2, steps, plans, records, plan, propose, apply, adopt, activePlan, row, pauseGoal, planServiceOver,
+      readRun, startHeld, endRun, stopRun, satisfy, unknownOutcome, close };
+  } catch (error) {
+    await steps?.close().catch(() => undefined);
+    await rm(workspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+    await b2.close().catch(() => undefined);
+    throw error;
   }
-  const planServiceOver = (records: typeof backend.records) =>
-    createPlanService({ records, now: () => AT, eventId: () => `c7-plan-${++sequence}` });
-  return { plans, plan, adopt, propose, apply, seedRun, seedLease, seedReduction, reholdLease, humanStop, pauseGoal, activePlan,
-    row, records: backend.records, planServiceOver };
 }
 
 describe('deriveFuturePlanDelta and the replacedByTaskId rule (pure, §3.3)', () => {
+  const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId, policyId: 'a2-c7-policy', revision: 1 };
+  const architectureRef = { aggregateType: 'ArchitectureBaselineRevision' as const, projectId, baselineId: 'a2-c7-baseline', revision: 1 };
   const source = { ...initialDraft(), ref: { aggregateType: 'PlanRevision', projectId, planId: 'c7-plan-1' }, revision: 1,
     goalRef, acceptedAt: AT, effectiveCompletionPolicy: { ref: policyRef, digest: 'a'.repeat(64) },
     effectiveArchitectureBaseline: { ref: architectureRef, digest: 'b'.repeat(64) } } as unknown as SnapshotV2;
@@ -348,9 +487,12 @@ describe('deriveFuturePlanDelta and the replacedByTaskId rule (pure, §3.3)', ()
   });
 });
 
-describe('W16 disposition-only adoptions at the plan owner (C7, TASK-18/19)', () => {
+/** Every service-layer row runs on both record backends (rule sheet v1, "Every row also"). */
+const BACKENDS: readonly ClaimFixtureKind[] = ['memory', 'sqlite'];
+
+describe.each(BACKENDS)('W16 disposition-only adoptions at the plan owner (C7, TASK-18/19) [%s]', kind => {
   it('an untraced Task changes only its disposition: source definition and basis kept, recorded traced:false, carried on', async () => {
-    const f = await setup();
+    const f = await setup(kind);
     const deferred = await f.adopt(futureDraft(f.plan, 'c7-plan-2', draft => disposed(draft, 'A', { disposition: 'deferred', title: 'Task A v2' })),
       f.plan);
     // A title change too makes A a changed (untraced) Task: it takes the candidate definition and a new basis, and is recorded.
@@ -382,9 +524,8 @@ describe('W16 disposition-only adoptions at the plan owner (C7, TASK-18/19)', ()
   });
 
   it('a traced Task (ended Run, released lease) is superseded through TASK-19; listed, its basis and records stay', async () => {
-    const f = await setup();
-    const run = await f.seedRun('B');
-    await f.seedLease('B', true);
+    const f = await setup(kind);
+    const run = await f.endRun('B');
     const replace = futureDraft(f.plan, 'c7-plan-2', draft => ({ ...disposed(draft, 'B', { disposition: 'superseded', replacedByTaskId: 'B2' }),
       tasks: [...disposed(draft, 'B', { disposition: 'superseded', replacedByTaskId: 'B2' }).tasks, work('B2')],
       assignments: [...(draft.assignments ?? []), { taskId: 'B2', role: 'builder', instruction: 'Run B2' }],
@@ -400,8 +541,7 @@ describe('W16 disposition-only adoptions at the plan owner (C7, TASK-18/19)', ()
       dispositionChange: { traced: true, replacedByTaskId: 'B2' } });
 
     // An explicit `replacedByTaskId: null` on the traced, unlisted A (the source has none) is no change.
-    await f.seedRun('A');
-    await f.seedLease('A', true);
+    await f.endRun('A', adopted.value.ref);
     const noop = await f.adopt(futureDraft(adopted.value, 'c7-plan-3', draft => disposed(draft, 'A', { replacedByTaskId: null })),
       adopted.value);
     if (noop.status !== 'committed' || noop.value.schemaVersion !== 2) throw new Error(JSON.stringify(noop));
@@ -427,9 +567,8 @@ describe('W16 disposition-only adoptions at the plan owner (C7, TASK-18/19)', ()
   });
 
   it('a paused Goal still adopts a traced disposition change (W16 is a plan adoption, not a rework; S17)', async () => {
-    const f = await setup();
-    await f.seedRun('B');
-    await f.seedLease('B', true);
+    const f = await setup(kind);
+    await f.endRun('B');
     await f.pauseGoal();
     const deferB = futureDraft(f.plan, 'c7-plan-2', draft => ({ ...disposed(draft, 'B', { disposition: 'deferred' }),
       tasks: [...disposed(draft, 'B', { disposition: 'deferred' }).tasks, work('B2')],
@@ -439,76 +578,53 @@ describe('W16 disposition-only adoptions at the plan owner (C7, TASK-18/19)', ()
       value: { dispositionRecord: { entries: [expect.objectContaining({ taskId: 'B', from: 'active', to: 'deferred', traced: true })] } } });
   });
 
-  it.each<[string, (f: Awaited<ReturnType<typeof setup>>) => Promise<unknown>, object]>([
-    ['a running Run (guard 1)', async f => { await f.seedRun('B', { status: 'running', outcome: null, exitCode: null, endedAt: null }); },
-      { code: 'busy', reason: 'task B still has an unfinished execution: run c7-run-B is running' }],
-    ['an unknown outcome (guard 2)', async f => { await f.seedRun('B', { outcome: 'outcome_unknown', exitCode: null });
-      await f.seedLease('B', true); }, { code: 'busy', reason: 'task B: resolve the unknown outcome of run c7-run-B first' }],
-    ['a lease still held (guard 4)', async f => { await f.seedRun('B'); await f.seedLease('B', false); },
-      { code: 'busy', reason: 'task B still holds its TaskLease' }],
-    ['Runs without a Lease record (guard 4, legacy data)', async f => { await f.seedRun('B'); },
-      { code: 'unavailable', reason: 'task B has Runs but no TaskLease record; its execution facts are inconsistent (legacy data)' }],
-    ['a satisfied Task (guard 5)', async f => { await f.seedRun('B', { outcome: 'completed', exitCode: 0 }); await f.seedLease('B', true);
-      await f.seedReduction('B'); }, { code: 'invalid', reason: 'task B is satisfied; the disposition of a satisfied task is final' }],
-  ])('TASK-19 refuses %s, zero writes', async (_name, seed, refusal) => {
-    const f = await setup();
-    await seed(f);
-    const cancelB = futureDraft(f.plan, 'c7-plan-2', draft => ({ ...disposed(draft, 'B', { disposition: 'cancelled' }),
-      tasks: [...disposed(draft, 'B', { disposition: 'cancelled' }).tasks, work('B2')],
-      assignments: [...(draft.assignments ?? []), { taskId: 'B2', role: 'builder', instruction: 'Run B2' }],
-      obligations: draft.obligations.map(obligation => ({ ...obligation, taskIds: [...obligation.taskIds, 'B2'] })) }));
-    expect(await f.adopt(cancelB, f.plan, ['B'])).toMatchObject({ status: 'rejected', ...refusal });
-    expect(await f.activePlan()).toEqual(f.plan.ref);
-  });
+  describe('rejects: TASK-19 and the untraced rule refuse a traced Task, zero writes', () => {
+    it.each<[string, (f: Fixture) => Promise<{ runId: string }>, (seeded: { runId: string }) => object]>([
+      ['a running Run (guard 1)', async f => ({ runId: (await f.startHeld('B')).run.ref.runId }),
+        seeded => ({ code: 'busy', reason: `task B still has an unfinished execution: run ${seeded.runId} is running` })],
+      // RUN-20(ii): the restarted Host ends the held Run `outcome_unknown` and the Lease stays held, so guard 4
+      // would refuse too; guard 2 runs before it and names the unknown outcome.
+      ['an unknown outcome (guard 2)', async f => {
+        const record = await f.unknownOutcome('B');
+        expect(record.run).toMatchObject({ status: 'ended', outcome: 'outcome_unknown' });
+        expect(record.lease).not.toBeNull();
+        expect(record.lease?.release).toBeUndefined();
+        return { runId: record.run.ref.runId };
+      }, seeded => ({ code: 'busy', reason: `task B: resolve the unknown outcome of run ${seeded.runId} first` })],
+      ['a satisfied Task (guard 5)', async f => ({ runId: (await f.satisfy('B')).ref.runId }),
+        () => ({ code: 'invalid', reason: 'task B is satisfied; the disposition of a satisfied task is final' })],
+    ])('TASK-19 refuses %s, zero writes', async (_name, seed, refusal) => {
+      const f = await setup(kind);
+      const seeded = await seed(f);
+      const cancelB = futureDraft(f.plan, 'c7-plan-2', draft => ({ ...disposed(draft, 'B', { disposition: 'cancelled' }),
+        tasks: [...disposed(draft, 'B', { disposition: 'cancelled' }).tasks, work('B2')],
+        assignments: [...(draft.assignments ?? []), { taskId: 'B2', role: 'builder', instruction: 'Run B2' }],
+        obligations: draft.obligations.map(obligation => ({ ...obligation, taskIds: [...obligation.taskIds, 'B2'] })) }));
+      const before = await f.activePlan();
+      expect(before).toEqual(f.plan.ref);
+      expect(await f.adopt(cancelB, f.plan, ['B'])).toMatchObject({ status: 'rejected', ...refusal(seeded) });
+      expect(await f.activePlan()).toEqual(f.plan.ref);
+    });
 
-  it('a traced Task that leaves an obligation is changed: the untraced rule refuses it and says how to keep it', async () => {
-    const f = await setup();
-    await f.seedRun('B');
-    await f.seedLease('B', true);
-    const moved = futureDraft(f.plan, 'c7-plan-2', draft => ({ ...disposed(draft, 'B', { disposition: 'superseded', replacedByTaskId: 'B2' }),
-      tasks: [...disposed(draft, 'B', { disposition: 'superseded', replacedByTaskId: 'B2' }).tasks, work('B2')],
-      assignments: [...(draft.assignments ?? []), { taskId: 'B2', role: 'builder', instruction: 'Run B2' }],
-      obligations: draft.obligations.map(obligation => obligation.obligationId === 'o-solo' ? { ...obligation, taskIds: ['B2'] }
-        : { ...obligation, taskIds: [...obligation.taskIds, 'B2'] }) }));
-    expect(await f.adopt(moved, f.plan, ['B'])).toEqual({ status: 'rejected', code: 'revision_conflict',
-      reason: 'task B already has a Run and is no longer a future task; a traced task may change only its disposition or '
-        + 'replacedByTaskId: keep it in obligations[o-solo].taskIds and add the replacement task as another carrier' });
-    expect(await f.activePlan()).toEqual(f.plan.ref);
-  });
-
-  it('a claim between the TASK-19 read and the adoption commit moves the Lease: revision_conflict, zero writes; a re-read is busy', async () => {
-    const f = await setup();
-    await f.seedRun('B');
-    await f.seedLease('B', true);
-    const cancelB = futureDraft(f.plan, 'c7-plan-2', draft => ({ ...disposed(draft, 'B', { disposition: 'cancelled' }),
-      tasks: [...disposed(draft, 'B', { disposition: 'cancelled' }).tasks, work('B2')],
-      assignments: [...(draft.assignments ?? []), { taskId: 'B2', role: 'builder', instruction: 'Run B2' }],
-      obligations: draft.obligations.map(obligation => ({ ...obligation, taskIds: [...obligation.taskIds, 'B2'] })) }));
-    const proposed = await f.plans.proposePlan(ctx, { meta: { requestId: 'c7-race-propose', expected: [] },
-      input: { goalRef, basedOn: f.plan.ref, draft: cancelB, reason: { text: 'cancel B', sources: [], affectedTaskIds: ['B'] } } });
-    if (proposed.status !== 'committed') throw new Error(JSON.stringify(proposed));
-    let raced = false;
-    const racing: typeof f.records = { ...f.records, async commit(prepared) {
-      if (!raced && prepared.identityKey.startsWith('plan-apply:')) {
-        raced = true;
-        await f.reholdLease('B');
-      }
-      return f.records.commit(prepared);
-    } };
-    const applyRequest = (requestId: string) => ({ meta: { requestId, expected: [] },
-      input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
-    // The adoption pinned B's Lease@1 (TASK-19 guard 4 read it released): the claim's Lease@2 makes it stale.
-    expect(await f.planServiceOver(racing).applyPlanChange(ctx, applyRequest('c7-race-apply-1')))
-      .toMatchObject({ status: 'rejected', code: 'revision_conflict' });
-    expect(raced).toBe(true);
-    expect(await f.activePlan()).toEqual(f.plan.ref);
-    // Read again, the Lease is held: TASK-19 guard 4.
-    expect(await f.plans.applyPlanChange(ctx, applyRequest('c7-race-apply-2')))
-      .toMatchObject({ status: 'rejected', code: 'busy', reason: 'task B still holds its TaskLease' });
+    it('a traced Task that leaves an obligation is changed: the untraced rule refuses it and says how to keep it', async () => {
+      const f = await setup(kind);
+      await f.endRun('B');
+      const moved = futureDraft(f.plan, 'c7-plan-2', draft => ({ ...disposed(draft, 'B', { disposition: 'superseded', replacedByTaskId: 'B2' }),
+        tasks: [...disposed(draft, 'B', { disposition: 'superseded', replacedByTaskId: 'B2' }).tasks, work('B2')],
+        assignments: [...(draft.assignments ?? []), { taskId: 'B2', role: 'builder', instruction: 'Run B2' }],
+        obligations: draft.obligations.map(obligation => obligation.obligationId === 'o-solo' ? { ...obligation, taskIds: ['B2'] }
+          : { ...obligation, taskIds: [...obligation.taskIds, 'B2'] }) }));
+      const before = await f.activePlan();
+      expect(before).toEqual(f.plan.ref);
+      expect(await f.adopt(moved, f.plan, ['B'])).toEqual({ status: 'rejected', code: 'revision_conflict',
+        reason: 'task B already has a Run and is no longer a future task; a traced task may change only its disposition or '
+          + 'replacedByTaskId: keep it in obligations[o-solo].taskIds and add the replacement task as another carrier' });
+      expect(await f.activePlan()).toEqual(f.plan.ref);
+    });
   });
 
   it('a gate never changes its disposition; deferring the only carrier of a required obligation is invalid', async () => {
-    const f = await setup();
+    const f = await setup(kind);
     expect(await f.adopt(futureDraft(f.plan, 'c7-plan-2', draft => disposed(draft, 'gate', { disposition: 'cancelled' })), f.plan))
       .toMatchObject({ status: 'rejected', code: 'invalid', reason: expect.stringContaining('source gate task gate changed its definition') });
     expect(await f.adopt(futureDraft(f.plan, 'c7-plan-2b', draft => disposed(draft, 'B', { disposition: 'deferred' })), f.plan))
@@ -518,7 +634,7 @@ describe('W16 disposition-only adoptions at the plan owner (C7, TASK-18/19)', ()
   });
 });
 
-describe('guards 7 and 9 by the adopter class (§1 reworkActorClassOf(principal, actor); LA-3)', () => {
+describe.each(BACKENDS)('guards 7 and 9 by the adopter class (§1 reworkActorClassOf(principal, actor); LA-3) [%s]', kind => {
   /** B superseded by a new B2 that joins every obligation. */
   const supersedeB = (source: PlanRevisionSnapshot, planId: string) => futureDraft(source, planId, draft => ({
     ...disposed(draft, 'B', { disposition: 'superseded', replacedByTaskId: 'B2' }),
@@ -532,114 +648,150 @@ describe('guards 7 and 9 by the adopter class (§1 reworkActorClassOf(principal,
     obligations: draft.obligations.map(obligation => obligation.obligationId === 'o-solo'
       ? { ...obligation, taskIds: [...obligation.taskIds, 'B2'] } : obligation) }));
 
-  it('a human-stopped Task: the automation actor may not supersede it (guard 7); a Host started as kind:system is an operator (S21)', async () => {
-    const f = await setup();
-    const run = await f.seedRun('B');
-    await f.seedLease('B', true);
-    await f.humanStop(run);
-    const candidate = await f.propose(supersedeB(f.plan, 'c7-plan-2'), f.plan, ['B'], automation);
-    expect(await f.apply(candidate, 'c7-s21-auto', automation)).toEqual({ status: 'rejected', code: 'forbidden',
-      reason: 'only an operator may change the disposition of task B: a human paused or cancelled it' });
-    expect(await f.activePlan()).toEqual(f.plan.ref);
-    // The same candidate adopted by a Host operator whose actor is kind:'system' (not an automation actor): class human.
-    const adopted = await f.apply(candidate, 'c7-s21-host-op', hostCtx(hostOperator));
-    if (adopted.status !== 'committed' || adopted.value.schemaVersion !== 2) throw new Error(JSON.stringify(adopted));
-    expect(adopted.value.dispositionRecord?.entries).toEqual([expect.objectContaining({ taskId: 'B', to: 'superseded', traced: true,
-      actor: hostOperator })]);
-  });
-
-  it('guard 9: the automation actor may not add a carrier beside a human-stopped one; an unstopped one is no limit', async () => {
-    const f = await setup();
-    await f.seedRun('B');
-    await f.seedLease('B', true);
+  it('guard 9: a carrier no human stopped is no limit: the automation actor adds a parallel carrier beside it', async () => {
+    const f = await setup(kind);
+    await f.endRun('B');
     // B ended unfenced: the automation actor adds B2 beside it.
     const unfenced = await f.adopt(parallelToB(f.plan, 'c7-plan-2'), f.plan, undefined, automation);
     expect(unfenced).toMatchObject({ status: 'committed' });
-    const g = await setup();
-    const stoppedRun = await g.seedRun('B');
-    await g.seedLease('B', true);
-    await g.humanStop(stoppedRun);
-    expect(await g.adopt(parallelToB(g.plan, 'c7-plan-2'), g.plan, undefined, automation)).toEqual({ status: 'rejected',
-      code: 'forbidden', reason: 'obligation o-solo: a human stopped this work; only an operator may add the parallel carrier B2' });
-    // The operator is never limited by guard 9.
-    expect(await g.adopt(parallelToB(g.plan, 'c7-plan-2'), g.plan)).toMatchObject({ status: 'committed' });
   });
 
-  it('a human stop between the guard 9 read and the adoption commit moves the carrier\'s pinned Run: revision_conflict, zero writes; a re-read is forbidden', async () => {
-    const f = await setup();
-    const run = await f.seedRun('B');
-    await f.seedLease('B', true);
-    const candidate = await f.propose(parallelToB(f.plan, 'c7-plan-2'), f.plan, undefined, automation);
-    let raced = false;
-    const racing: typeof f.records = { ...f.records, async commit(prepared) {
-      if (!raced && prepared.identityKey.startsWith('plan-apply:')) {
-        raced = true;
-        await f.humanStop(run);
-      }
-      return f.records.commit(prepared);
-    } };
-    // Guard 9 read B (its only active work carrier) unfenced and pinned its Run@1: the stop's Run@2 makes it stale.
-    expect(await f.apply(candidate, 'c7-g9-race-1', automation, f.planServiceOver(racing)))
-      .toMatchObject({ status: 'rejected', code: 'revision_conflict' });
-    expect(raced).toBe(true);
-    expect(await f.activePlan()).toEqual(f.plan.ref);
-    // Read again, B is fenced: guard 9.
-    expect(await f.apply(candidate, 'c7-g9-race-2', automation)).toEqual({ status: 'rejected', code: 'forbidden',
-      reason: 'obligation o-solo: a human stopped this work; only an operator may add the parallel carrier B2' });
-    expect(await f.activePlan()).toEqual(f.plan.ref);
+  describe('rejects: a human stop fences the automation actor (guards 7 and 9); an operator adopts', () => {
+    it('a human-stopped Task: the automation actor may not supersede it (guard 7); a Host started as kind:system is an operator (S21)', async () => {
+      const f = await setup(kind);
+      await f.stopRun('B');
+      const candidate = await f.propose(supersedeB(f.plan, 'c7-plan-2'), f.plan, ['B'], automation);
+      const before = await f.activePlan();
+      expect(before).toEqual(f.plan.ref);
+      expect(await f.apply(candidate, 'c7-s21-auto', automation)).toEqual({ status: 'rejected', code: 'forbidden',
+        reason: 'only an operator may change the disposition of task B: a human paused or cancelled it' });
+      expect(await f.activePlan()).toEqual(f.plan.ref);
+      // The same candidate adopted by a Host operator whose actor is kind:'system' (not an automation actor): class human.
+      const adopted = await f.apply(candidate, 'c7-s21-host-op', hostCtx(hostOperator));
+      if (adopted.status !== 'committed' || adopted.value.schemaVersion !== 2) throw new Error(JSON.stringify(adopted));
+      expect(adopted.value.dispositionRecord?.entries).toEqual([expect.objectContaining({ taskId: 'B', to: 'superseded', traced: true,
+        actor: hostOperator })]);
+    });
+
+    it('guard 9: the automation actor may not add a carrier beside a human-stopped one; the operator may', async () => {
+      const f = await setup(kind);
+      await f.stopRun('B');
+      const before = await f.activePlan();
+      expect(before).toEqual(f.plan.ref);
+      expect(await f.adopt(parallelToB(f.plan, 'c7-plan-2'), f.plan, undefined, automation)).toEqual({ status: 'rejected',
+        code: 'forbidden', reason: 'obligation o-solo: a human stopped this work; only an operator may add the parallel carrier B2' });
+      // Nothing changed between the refusal and the operator adoption.
+      expect(await f.activePlan()).toEqual(f.plan.ref);
+      // The operator is never limited by guard 9.
+      expect(await f.adopt(parallelToB(f.plan, 'c7-plan-2'), f.plan)).toMatchObject({ status: 'committed' });
+    });
+
+    it('a human stop between the guard 9 read and the adoption commit moves the carrier\'s pinned Run: revision_conflict, zero writes; a re-read is forbidden', async () => {
+      const f = await setup(kind);
+      // B's real Run is running and nobody stopped it when guard 9 reads it.
+      const { run } = await f.startHeld('B');
+      const candidate = await f.propose(parallelToB(f.plan, 'c7-plan-2'), f.plan, undefined, automation);
+      const before = await f.activePlan();
+      expect(before).toEqual(f.plan.ref);
+      let raced = false;
+      const racing: typeof f.records = { ...f.records, async commit(prepared) {
+        if (!raced && prepared.identityKey.startsWith('plan-apply:')) {
+          raced = true;
+          // A3: the adoption commit waits while the operator really cancels B's running Run, pinned at the
+          // revision a public read returns now.
+          const current = await f.readRun(run.ref);
+          const stopped = await f.steps.controls.submitControl(ctx, {
+            input: { runRef: run.ref, kind: 'cancel', reason: 'an operator stopped it' },
+            meta: { requestId: 'c7-g9-race-cancel', expected: [{ ref: run.ref, revision: current.revision }] } });
+          if (stopped.status !== 'committed') throw new Error(`A2 C7 race cancel failed: ${JSON.stringify(stopped)}`);
+        }
+        return f.records.commit(prepared);
+      } };
+      // Guard 9 read B (its only active work carrier) unfenced and pinned its Run: the cancel moved that Run, so the pin is stale.
+      expect(await f.apply(candidate, 'c7-g9-race-1', automation, f.planServiceOver(racing)))
+        .toMatchObject({ status: 'rejected', code: 'revision_conflict' });
+      expect(raced).toBe(true);
+      expect(await f.activePlan()).toEqual(f.plan.ref);
+      // Read again, B is fenced: guard 9.
+      expect(await f.apply(candidate, 'c7-g9-race-2', automation)).toEqual({ status: 'rejected', code: 'forbidden',
+        reason: 'obligation o-solo: a human stopped this work; only an operator may add the parallel carrier B2' });
+      expect(await f.activePlan()).toEqual(f.plan.ref);
+    });
   });
 });
 
-describe('an Agent adoption (W2 apply_future_plan, adopter class agent)', () => {
-  it('cannot change the disposition of its own running Task (TASK-19 guard 1: busy), zero writes', async () => {
-    const f = await createW2WhiteboardFixture('memory');
-    try {
-      const draft = f.futureDraft('c7-w2-defer-own', base => ({ ...base,
-        tasks: base.tasks.map(task => task.taskId === 'implement-a' ? { ...task, disposition: 'deferred' as const } : task) }));
-      const candidate = await f.seedAgentCandidate({ draft, basedOn: f.planRef, proposalId: 'c7-w2-defer-own' });
-      const before = await f.goalPin();
-      expect(await f.applyAsWorkRun(candidate.ref, candidate.revision, { requestId: 'c7-w2-defer-own-apply' })).toMatchObject({
-        status: 'rejected', code: 'busy', reason: expect.stringMatching(/^task implement-a still has an unfinished execution: run .* is running$/) });
-      expect(await f.goalPin()).toEqual(before);
-    } finally {
-      await f.close();
-    }
+describe.each(BACKENDS)('an Agent adoption (W2 apply_future_plan, adopter class agent) [%s]', kind => {
+  describe('rejects: an Agent cannot change its own running Task', () => {
+    it('cannot change the disposition of its own running Task (TASK-19 guard 1: busy), zero writes', async () => {
+      const f = await createW2WhiteboardFixture(kind);
+      try {
+        const draft = f.futureDraft('c7-w2-defer-own', base => ({ ...base,
+          tasks: base.tasks.map(task => task.taskId === 'implement-a' ? { ...task, disposition: 'deferred' as const } : task) }));
+        const proposed = await f.proposeAsWorkRun(draft, f.planRef, { requestId: 'c7-w2-defer-own' });
+        if (proposed.status !== 'committed') throw new Error(`C7 W2 own-task proposal failed: ${JSON.stringify(proposed)}`);
+        const candidate = proposed.value;
+        const before = await f.goalPin();
+        expect(await f.applyAsWorkRun(candidate.ref, candidate.revision, { requestId: 'c7-w2-defer-own-apply' })).toMatchObject({
+          status: 'rejected', code: 'busy', reason: expect.stringMatching(/^task implement-a still has an unfinished execution: run .* is running$/) });
+        expect(await f.goalPin()).toEqual(before);
+      } finally {
+        await f.close();
+      }
+    });
   });
 
-  /** The W2 fixture with the ControlIntent schema, so a sibling's Run can carry an operator's cancel. */
-  const W2_CONTROL_SCHEMAS = { records: CONTROL_RECORD_SCHEMAS.records, events: [] };
+  /** The W2 fixture with every ControlIntent group, so a real human stop can be submitted. */
+  const W2_CONTROL_SCHEMAS = { records: CONTROL_RECORD_SCHEMAS.records, events: CONTROL_RECORD_SCHEMAS.events,
+    lookups: CONTROL_RECORD_SCHEMAS.lookups };
   const implementC: RuntimeTask = { taskId: 'implement-c', title: 'Implement C', requirementLevel: 'required', taskKind: 'work',
     disposition: 'active', phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'request_execution' };
+
+  /** The shared S2B Runtime over the W2 fixture's own real backend: sibling Runs are real claims + real starts. */
+  async function siblingRuntime(f: W2WhiteboardFixture): Promise<S2BRuntimeSteps> {
+    let sequence = 0;
+    let clock = AT;
+    return createS2BRuntimeSteps({
+      base: f.base, bodies: f.b2.bodies, ctx: f.base.ctx, directory: f.base.directory, scope: f.base.scope,
+      now: () => clock, setClock: (at) => { clock = at; },
+      eventId: () => `a2-c7-w2-event-${++sequence}`, newId: () => `a2-c7-w2-id-${++sequence}`,
+      consumerId: 'a2-c7-w2-sibling',
+    });
+  }
+  /** A Host adoption of a future revision that detaches implement-b from implement-a, so it can really be claimed. */
+  async function detachSibling(f: W2WhiteboardFixture, requestIdBase: string, edit?: (draft: DraftV2) => DraftV2) {
+    const draft = f.futureDraft(requestIdBase, base => edit === undefined
+      ? { ...base, executionDag: { dependsOn: [] } }
+      : edit({ ...base, executionDag: { dependsOn: [] } }));
+    const proposed = await f.proposeAsHost(draft, f.planRef, { requestId: requestIdBase });
+    if (proposed.status !== 'committed') throw new Error(JSON.stringify(proposed));
+    const applied = await f.applyAsHost(proposed.value.ref, proposed.value.revision, { requestId: `${requestIdBase}-apply` });
+    if (applied.status !== 'committed' || applied.value.schemaVersion !== 2) throw new Error(JSON.stringify(applied));
+    return applied.value;
+  }
   /**
-   * A sibling Task's ended (failed) Run on `planRef` (the Plan its basis is in) in the W2 Goal with its released
-   * Lease; when `stopped`, the Run's pointer names an operator's queued cancel (`reworkFenceOf = human_only`).
+   * A real sibling Run of `taskId` on `planRef`: the formal claim over a fresh
+   * Session, the production prepare/start, and either a normal final reply or
+   * the real `submitControl` cancel (`stopped`). No Run/Lease is hand-written.
    */
-  async function seedEndedSibling(f: W2WhiteboardFixture, taskId: string, planRef: PlanRevisionSnapshot['ref'],
-    stopped: boolean): Promise<void> {
-    const { projectId: p, goalId } = f.goalRef;
-    const ws = f.base.scope.workspaceId;
-    const runRef = { aggregateType: 'Run' as const, projectId: p, goalId, runId: `c7-w2-run-${taskId}` };
-    const intentRef = { aggregateType: 'ControlIntent' as const, projectId: p, workspaceId: ws, intentId: `c7-w2-cancel-${taskId}` };
-    const run: RunSnapshot = { ref: runRef, revision: 1, schemaVersion: 1, task: { projectId: p, goalId, taskId },
-      attemptId: `c7-w2-attempt-${taskId}`, planRef, roleBinding: f.roleBinding, budget: f.base.budget,
-      workspaceSnapshot: { workspaceId: ws, revision: 1 }, status: 'ended', outcome: 'failed', exitCode: 1, lastEventSeq: 0,
-      lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: AT, endedAt: AT,
-      ...(stopped ? { controlState: { intentRef, desiredState: 'cancelled' as const } } : {}) };
-    const leaseRef = { aggregateType: 'TaskLease' as const, projectId: p, goalId, taskId };
-    const lease: TaskLeaseSnapshot = { ref: leaseRef, revision: 1, schemaVersion: 1, holderRunId: runRef.runId,
-      attemptId: run.attemptId, grantedAt: AT, expiresAt: null, release: { schemaVersion: 1, runRef,
-        attemptRef: { aggregateType: 'TaskAttempt', projectId: p, goalId, taskId, attemptId: run.attemptId },
-        sessionRef: { projectId: p, sessionId: 'c7-w2-session' }, generation: 1, releasedAt: AT, eventId: `c7-w2-release-${taskId}` } };
-    const records: EncodedRecord[] = [
-      { refKey: canonicalJson(runRef as unknown as JsonValue), schemaId: 'RunSnapshot@1', revision: 1, json: JSON.stringify(run) },
-      { refKey: canonicalJson(leaseRef as unknown as JsonValue), schemaId: 'TaskLeaseSnapshot@1', revision: 1, json: JSON.stringify(lease) },
-    ];
-    if (stopped) {
-      records.push(encodeControlIntentSnapshot({ schemaVersion: 1, ref: intentRef, runRef, kind: 'cancel', desiredState: 'cancelled',
-        reason: 'an operator stopped it', requestedAt: AT, requestedBy: actor, revision: 1, status: 'queued' }));
-    }
-    const committed = await f.base.commitRaw(records);
-    if (committed.status !== 'committed') throw new Error(`C7 W2 sibling seed failed: ${JSON.stringify(committed)}`);
+  async function endSibling(f: W2WhiteboardFixture, steps: S2BRuntimeSteps, taskId: string,
+    planRef: PlanRevisionRef, stopped: boolean): Promise<void> {
+    const session = await f.base.createSession(`a2-c7-w2-sibling-${taskId}-${stopped ? 'stopped' : 'ended'}`);
+    const goal = await f.goalPin(f.goalRef);
+    const card = await f.base.sessionsPort.readSession(f.base.ctx, session);
+    if (card.status !== 'ready') throw new Error(`C7 W2 sibling Session read failed: ${JSON.stringify(card)}`);
+    const request: GraphWrite<ClaimTaskInput> = { input: {
+      goalRef: f.goalRef, planRef, taskId, sessionRef: session,
+      roleBinding: f.base.roleBinding, budget: f.base.budget },
+    meta: { requestId: `a2-c7-w2-claim-${taskId}-${stopped ? 'stopped' : 'ended'}`, expected: [
+      goal,
+      { ref: f.base.workspaceRef, revision: 1 },
+      { ref: plainSessionRefToAggregate(session), revision: card.value.record.revision },
+    ] } };
+    const claimed = await f.base.service.claimTask(f.base.ctx, request);
+    if (claimed.status !== 'committed') throw new Error(`C7 W2 sibling claim failed: ${JSON.stringify(claimed)}`);
+    const handle = await steps.start(claimed.value, { at: AT,
+      replies: [{ kind: 'text', text: `A2 C7 W2 sibling ${taskId}` }] });
+    await steps.finish(handle, AT, stopped ? 'cancelled' : 'completed');
   }
   /** The Agent's own `propose_future_plan` on `basedOn`, with `reason.affectedTaskIds` when given. */
   async function proposeAsAgent(f: W2WhiteboardFixture, draft: PlanRevisionDraft, basedOn: PlanRevisionSnapshot, requestId: string,
@@ -652,12 +804,15 @@ describe('an Agent adoption (W2 apply_future_plan, adopter class agent)', () => 
   }
 
   it('defers a sibling whose Run ended (TASK-19, class agent): committed, recorded with the agent actor, shown on the row', async () => {
-    const f = await createW2WhiteboardFixture('memory', W2_CONTROL_SCHEMAS);
+    const f = await createW2WhiteboardFixture(kind, { ...W2_CONTROL_SCHEMAS, lookups: W2_CONTROL_SCHEMAS.lookups ?? [] });
+    const steps = await siblingRuntime(f);
     try {
-      await seedEndedSibling(f, 'implement-b', f.planRef, false);
-      const draft = f.futureDraft('c7-w2-defer-b', base => ({ ...base,
+      // The sibling is detached from implement-a through the public future revision, then really claimed and ended.
+      const p2 = await detachSibling(f, 'c7-w2-detach-b');
+      await endSibling(f, steps, 'implement-b', p2.ref, false);
+      const draft = f.futureDraftFor(p2, 'c7-w2-defer-b', base => ({ ...base,
         tasks: base.tasks.map(task => task.taskId === 'implement-b' ? { ...task, disposition: 'deferred' as const } : task) }));
-      const candidate = await proposeAsAgent(f, draft, f.plan, 'c7-w2-defer-b', ['implement-b']);
+      const candidate = await proposeAsAgent(f, draft, p2, 'c7-w2-defer-b', ['implement-b']);
       const applied = await f.applyAsWorkRun(candidate.ref, candidate.revision, { requestId: 'c7-w2-defer-b-apply' });
       if (applied.status !== 'committed' || applied.value.schemaVersion !== 2) throw new Error(JSON.stringify(applied));
       const entry = expect.objectContaining({ taskId: 'implement-b', from: 'active', to: 'deferred', traced: true,
@@ -668,53 +823,72 @@ describe('an Agent adoption (W2 apply_future_plan, adopter class agent)', () => 
       expect(graph.value.tasks.find(row => row.ref.taskId === 'implement-b')).toMatchObject({ disposition: 'deferred',
         dispositionChange: entry });
     } finally {
+      await steps.close();
       await f.close();
     }
   });
 
-  it('may neither change a human-stopped sibling (guard 7) nor add a carrier beside it (guard 9); an operator adopts the same candidate', async () => {
-    const f = await createW2WhiteboardFixture('memory', W2_CONTROL_SCHEMAS);
-    try {
-      // The operator first gives implement-b (still untraced) an obligation it alone carries.
-      const own = f.futureDraft('c7-w2-own-b', base => ({ ...base, obligations: [...base.obligations,
-        { obligationId: 'obligation-b', title: 'Deliver B', requirementLevel: 'required', taskIds: ['implement-b'],
-          verificationRequirements: [{ requirementId: 'check-b', requirementLevel: 'required', kind: 'test', description: 'Tests pass' }] }] }));
-      const ownProposal = await f.proposeAsHost(own, f.planRef, { requestId: 'c7-w2-own-b' });
-      if (ownProposal.status !== 'committed') throw new Error(JSON.stringify(ownProposal));
-      const p2 = await f.applyAsHost(ownProposal.value.ref, ownProposal.value.revision, { requestId: 'c7-w2-own-b-apply' });
-      if (p2.status !== 'committed') throw new Error(JSON.stringify(p2));
-      // Its Run is on P2, where its execution definition (now carrying obligation-b) has its basis.
-      await seedEndedSibling(f, 'implement-b', p2.value.ref, true);
-      const pins = await f.callerPins(f.goalRef, p2.value.ref);
-      const before = await f.goalPin();
+  /**
+   * The human-stopped sibling world: the operator first gives implement-b (still untraced) an obligation it
+   * alone carries, and detaches it so it can be claimed; its Run is on P2, where its execution definition
+   * (now carrying obligation-b) has its basis, and a real human stop ends it.
+   */
+  async function stoppedSiblingWorld(f: W2WhiteboardFixture, steps: S2BRuntimeSteps) {
+    const p2 = await detachSibling(f, 'c7-w2-own-b', base => ({ ...base, obligations: [...base.obligations,
+      { obligationId: 'obligation-b', title: 'Deliver B', requirementLevel: 'required', taskIds: ['implement-b'],
+        verificationRequirements: [{ requirementId: 'check-b', requirementLevel: 'required', kind: 'test', description: 'Tests pass' }] }] }));
+    await endSibling(f, steps, 'implement-b', p2.ref, true);
+    return { p2, pins: await f.callerPins(f.goalRef, p2.ref) };
+  }
 
-      // Guard 7: an Agent may not supersede what a human stopped.
-      const supersede = f.futureDraftFor(p2.value, 'c7-w2-supersede-b', base => ({ ...base,
-        tasks: [...base.tasks.map(task => task.taskId === 'implement-b'
-          ? { ...task, disposition: 'superseded' as const, replacedByTaskId: 'implement-c' } : task), implementC],
-        assignments: [...(base.assignments ?? []), { taskId: 'implement-c', role: 'builder', instruction: 'Implement C' }],
-        obligations: base.obligations.map(obligation => ({ ...obligation, taskIds: [...obligation.taskIds, 'implement-c'] })) }));
-      const superseding = await proposeAsAgent(f, supersede, p2.value, 'c7-w2-supersede-b', ['implement-b']);
-      expect(await f.applyAsWorkRun(superseding.ref, superseding.revision, { requestId: 'c7-w2-supersede-b-apply', expected: pins }))
-        .toEqual({ status: 'rejected', code: 'forbidden',
-          reason: 'only an operator may change the disposition of task implement-b: a human paused or cancelled it' });
+  describe('rejects: a human-stopped sibling fences the Agent (guards 7 and 9); an operator adopts', () => {
+    it('may not change a human-stopped sibling (guard 7), zero writes', async () => {
+      const f = await createW2WhiteboardFixture(kind, { ...W2_CONTROL_SCHEMAS, lookups: W2_CONTROL_SCHEMAS.lookups ?? [] });
+      const steps = await siblingRuntime(f);
+      try {
+        const { p2, pins } = await stoppedSiblingWorld(f, steps);
+        const before = await f.goalPin();
+        // Guard 7: an Agent may not supersede what a human stopped.
+        const supersede = f.futureDraftFor(p2, 'c7-w2-supersede-b', base => ({ ...base,
+          tasks: [...base.tasks.map(task => task.taskId === 'implement-b'
+            ? { ...task, disposition: 'superseded' as const, replacedByTaskId: 'implement-c' } : task), implementC],
+          assignments: [...(base.assignments ?? []), { taskId: 'implement-c', role: 'builder', instruction: 'Implement C' }],
+          obligations: base.obligations.map(obligation => ({ ...obligation, taskIds: [...obligation.taskIds, 'implement-c'] })) }));
+        const superseding = await proposeAsAgent(f, supersede, p2, 'c7-w2-supersede-b', ['implement-b']);
+        expect(await f.applyAsWorkRun(superseding.ref, superseding.revision, { requestId: 'c7-w2-supersede-b-apply', expected: pins }))
+          .toEqual({ status: 'rejected', code: 'forbidden',
+            reason: 'only an operator may change the disposition of task implement-b: a human paused or cancelled it' });
+        expect(await f.goalPin()).toEqual(before);
+      } finally {
+        await steps.close();
+        await f.close();
+      }
+    });
 
-      // Guard 9: nor keep it and add a parallel carrier to the obligation it alone carries.
-      const parallel = f.futureDraftFor(p2.value, 'c7-w2-parallel-b', base => ({ ...base, tasks: [...base.tasks, implementC],
-        assignments: [...(base.assignments ?? []), { taskId: 'implement-c', role: 'builder', instruction: 'Implement C' }],
-        obligations: base.obligations.map(obligation => obligation.obligationId === 'obligation-b'
-          ? { ...obligation, taskIds: [...obligation.taskIds, 'implement-c'] } : obligation) }));
-      const adding = await proposeAsAgent(f, parallel, p2.value, 'c7-w2-parallel-b');
-      expect(await f.applyAsWorkRun(adding.ref, adding.revision, { requestId: 'c7-w2-parallel-b-apply', expected: pins }))
-        .toEqual({ status: 'rejected', code: 'forbidden',
-          reason: 'obligation obligation-b: a human stopped this work; only an operator may add the parallel carrier implement-c' });
-      expect(await f.goalPin()).toEqual(before);
+    it('may not add a carrier beside a human-stopped sibling (guard 9), zero writes; an operator adopts the same candidate', async () => {
+      const f = await createW2WhiteboardFixture(kind, { ...W2_CONTROL_SCHEMAS, lookups: W2_CONTROL_SCHEMAS.lookups ?? [] });
+      const steps = await siblingRuntime(f);
+      try {
+        const { p2, pins } = await stoppedSiblingWorld(f, steps);
+        const before = await f.goalPin();
+        // Guard 9: nor keep it and add a parallel carrier to the obligation it alone carries.
+        const parallel = f.futureDraftFor(p2, 'c7-w2-parallel-b', base => ({ ...base, tasks: [...base.tasks, implementC],
+          assignments: [...(base.assignments ?? []), { taskId: 'implement-c', role: 'builder', instruction: 'Implement C' }],
+          obligations: base.obligations.map(obligation => obligation.obligationId === 'obligation-b'
+            ? { ...obligation, taskIds: [...obligation.taskIds, 'implement-c'] } : obligation) }));
+        const adding = await proposeAsAgent(f, parallel, p2, 'c7-w2-parallel-b');
+        expect(await f.applyAsWorkRun(adding.ref, adding.revision, { requestId: 'c7-w2-parallel-b-apply', expected: pins }))
+          .toEqual({ status: 'rejected', code: 'forbidden',
+            reason: 'obligation obligation-b: a human stopped this work; only an operator may add the parallel carrier implement-c' });
+        expect(await f.goalPin()).toEqual(before);
 
-      // The operator adopts the same candidate through plans/apply (class human: guard 9 does not apply).
-      expect(await f.applyAsHost(adding.ref, adding.revision, { requestId: 'c7-w2-parallel-b-host', expected: pins }))
-        .toMatchObject({ status: 'committed' });
-    } finally {
-      await f.close();
-    }
+        // The operator adopts the same candidate through plans/apply (class human: guard 9 does not apply).
+        expect(await f.applyAsHost(adding.ref, adding.revision, { requestId: 'c7-w2-parallel-b-host', expected: pins }))
+          .toMatchObject({ status: 'committed' });
+      } finally {
+        await steps.close();
+        await f.close();
+      }
+    });
   });
 });

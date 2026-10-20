@@ -4,464 +4,422 @@
     {
       "file": "src/app/core-http-types.ts",
       "name": "ProjectsCreateBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the projects/create route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "WorkspacesRegisterBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the workspaces/register route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "CompletionPoliciesInstallBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the completion-policies/install route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "CompletionPoliciesActivateBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the completion-policies/activate route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "CompletionPoliciesReadBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the completion-policies/read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "CompletionPoliciesReadResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the completion-policies/read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "GoalsCreateBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the goals/create route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "GoalsReadBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the goals/read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "GoalsReadResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the goals/read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "ArchitectureAdoptInitialBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the architecture/adopt-initial route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "ArchitectureReadResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the architecture/read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "ArchitectureCaptureBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the architecture/capture route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "ArchitectureCaptureResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the architecture/capture route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "ArchitectureQueryBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the architecture/query route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "ArchitectureQueryResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the architecture/query route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "PlansProposeBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the plans/propose route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "PlansApplyBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the plans/apply route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "PlansProposalBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the plans/proposal route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "PlansProposalResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the plans/proposal route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "TasksQueryBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the tasks/query route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "TasksQueryResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the tasks/query route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "FilesReadBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the files/read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "FilesListBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the files/list route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "FilesListResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the files/list route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "SourceCaptureBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the source/capture route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "SourceQueryBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the source/query route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "SessionsFindBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the sessions/find route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "SessionsReadBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the sessions/read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "SessionsOperationBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the sessions/operation route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "RuntimeCapabilitiesBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the runtime/capabilities route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "SessionsCreateBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the sessions/create route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "SessionsHistoryBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the sessions/history route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "MessagesSendBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the messages/send route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "MessagesInboxBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the messages/inbox route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "MessagesReadBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the messages/read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "MessagesBodyBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the messages/body route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "MessagesOutboxBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the messages/outbox route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "MessagesOutboxResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the messages/outbox route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "WorkspacesRegistrationBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the workspaces/registration route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "QueriesReadBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the queries/read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "QueriesClaimBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the queries/claim route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "QueriesClaimResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the queries/claim route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "QueriesPrepareBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the queries/prepare route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "QueriesStartBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the queries/start route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "QueriesObserveBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the queries/observe route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "QueriesObserveResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the queries/observe route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "MaterialsOpenBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the materials/open route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "WorkflowGoalInputResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the workflow/goal-input route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "WorkflowAdvanceResponse",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the workflow/advance route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "WorkflowDriverReadBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the workflow/driver-read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "WorkflowDriverStopBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the workflow/driver-stop route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "ExecutionsReadBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the executions/read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "ExecutionsHistoryBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the executions/history route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "ExecutionsListBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the executions/list route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "ProjectsReadBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the projects/read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "FilesSaveBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the files/save route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "FilesCompareBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the files/compare route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "CommandsStartBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the commands/start route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "CommandsReadBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the commands/read route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/core-http-types.ts",
       "name": "CommandsStopBody",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the commands/stop route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
     },
     {
       "file": "src/app/main.ts",
       "name": "WorkbenchCliWorkspace",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; only reached from WorkbenchCliConfig"
+      "reason": "wire-format",
+      "note": "the workbench startup JSON shape; its reader is parseWorkbenchCliConfig (src/app/main.ts:72) and README.md:59 documents it"
     },
     {
       "file": "src/app/main.ts",
       "name": "WorkbenchCliConfig",
-      "reason": "pre-batch",
-      "note": "unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/contracts/human-role-collaboration.ts",
-      "name": "CoordinationPolicyPin",
-      "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; referenced nowhere"
-    },
-    {
-      "file": "src/contracts/role-material-channels.ts",
-      "name": "RoleSourceIndexRequestV1",
-      "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from WorkspaceSourceIndexReader"
-    },
-    {
-      "file": "src/contracts/role-material-channels.ts",
-      "name": "RoleSourceIndexEntryV1",
-      "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from WorkspaceSourceIndexReader"
-    },
-    {
-      "file": "src/contracts/role-material-channels.ts",
-      "name": "RoleSourceIndexExcerptV1",
-      "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from WorkspaceSourceIndexReader"
-    },
-    {
-      "file": "src/contracts/role-material-channels.ts",
-      "name": "RoleSourceIndexResultV1",
-      "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from WorkspaceSourceIndexReader"
-    },
-    {
-      "file": "src/contracts/role-material-channels.ts",
-      "name": "RoleSourceIndexPort",
-      "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from WorkspaceSourceIndexReader"
+      "reason": "wire-format",
+      "note": "the workbench startup JSON shape; its reader is parseWorkbenchCliConfig (src/app/main.ts:72) and README.md:59 documents it"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "ROLE_SPEC_REVISION",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
-    },
-    {
-      "file": "src/contracts/role-spec.ts",
-      "name": "roleSpecRevisionRefFor",
-      "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; referenced nowhere"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "InstallRoleSpecRevisionCommand",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "ActivateRoleSpecRevisionCommand",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "InstallRoleSpecRevisionReceipt",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "ActivateRoleSpecRevisionReceipt",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "installRoleSpecRevisionFingerprint",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "activateRoleSpecRevisionFingerprint",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
       "name": "RoleSpecInstalledEvent",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/contracts/role-spec.ts",
@@ -545,97 +503,91 @@
       "file": "src/core/work-graph/model/configuration-contracts.ts",
       "name": "RoleConfigurationPort.installRoleSpec",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/helpers/C2-runtime-platform-fixture.ts, tests/work-graph/R3g-role-spec.test.ts, tests/work-graph/R4c-task-claim-boundaries.test.ts"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/helpers/C2-runtime-platform-fixture.ts, tests/work-graph/R3g-role-spec.test.ts, tests/work-graph/R4c-task-claim-boundaries.test.ts"
     },
     {
       "file": "src/core/work-graph/model/configuration-contracts.ts",
       "name": "RoleConfigurationPort.activateRoleSpec",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/helpers/C2-runtime-platform-fixture.ts, tests/work-graph/R3g-role-spec.test.ts, tests/work-graph/R4c-task-claim-boundaries.test.ts"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; used only by tests: tests/composition/R3d-R3g-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/helpers/C2-runtime-platform-fixture.ts, tests/work-graph/R3g-role-spec.test.ts, tests/work-graph/R4c-task-claim-boundaries.test.ts"
     },
     {
       "file": "src/core/work-graph/model/configuration-contracts.ts",
       "name": "RoleConfigurationPort.resolveRoleBinding",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/B2-runtime-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/work-graph/R3g-role-spec.test.ts"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; used only by tests: tests/composition/B2-runtime-platform.test.ts, tests/helpers/B2-runtime-fixture.ts, tests/work-graph/R3g-role-spec.test.ts, tests/helpers/S1-runtime-scenario-fixture.ts, tests/helpers/S2B-runtime-store-fixture.ts"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "CommittedStoreReceipt",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec, RoleConfigurationPort.activateRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.installRoleSpec, RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "ROLE_INSTALL_IDENTITY_PREFIX",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "ROLE_ACTIVATE_IDENTITY_PREFIX",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "actorRefEquals",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec, RoleConfigurationPort.activateRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.installRoleSpec, RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "roleInstallIdentityKey",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "roleActivateIdentityKey",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "mapInstallStoreFailure",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.installRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-memory-service.ts",
       "name": "mapActivateStoreFailure",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
       "file": "src/core/work-graph/configuration/role-record-codecs.ts",
       "name": "encodeRoleSpecRevisionSnapshot",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; called by RoleConfigurationPort.installRoleSpec; no direct test caller"
     },
     {
       "file": "src/core/work-graph/configuration/role-record-codecs.ts",
       "name": "encodeProjectRoleSpecActiveSnapshot",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; called by RoleConfigurationPort.activateRoleSpec; no direct test caller"
     },
     {
       "file": "src/core/work-graph/configuration/role-record-codecs.ts",
       "name": "encodeRoleSpecInstalledEvent",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.installRoleSpec"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; called by RoleConfigurationPort.installRoleSpec; no direct test caller"
     },
     {
       "file": "src/core/work-graph/configuration/role-record-codecs.ts",
       "name": "encodeRoleSpecActivatedEvent",
       "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
-    },
-    {
-      "file": "src/core/workspace/role-source-reader.ts",
-      "name": "WorkspaceSourceIndexReader",
-      "reason": "kept-for",
-      "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; used only by tests: tests/data/workspace-path-boundary.test.ts"
+      "note": "role specs are kept unwired by decision 6 (HANDOFF: kept for picking members by meaning); MVP-BEHAVIOR.md B01 lists the formal Role writer; unwired today; called by RoleConfigurationPort.activateRoleSpec; no direct test caller"
     },
     {
       "file": "src/app/core-http-types.ts",
@@ -782,18 +734,6 @@
       "note": "the frozen \u00a74.5 messages/user-send route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
     },
     {
-      "file": "src/core/work-graph/persistence/decision-record-codecs.ts",
-      "name": "GOAL_SETTINGS_CHANGED_SCHEMA_ID",
-      "reason": "wire-format",
-      "note": "the persisted GoalSettingsChanged@1 schema selector; its reader is DECISION_RECORD_SCHEMAS / decodeGoalSettingsChangedEvent"
-    },
-    {
-      "file": "src/core/work-graph/persistence/decision-record-codecs.ts",
-      "name": "WORKSPACE_NOTICE_SEEN_CHANGED_SCHEMA_ID",
-      "reason": "wire-format",
-      "note": "the persisted WorkspaceNoticeSeenChanged@1 schema selector; its reader is DECISION_RECORD_SCHEMAS / decodeWorkspaceNoticeSeenChangedEvent"
-    },
-    {
       "file": "src/core/work-graph/sessions/message-body-envelope.ts",
       "name": "UserDecisionBodyEnvelopeV1",
       "reason": "wire-format",
@@ -858,12 +798,6 @@
       "name": "ActivityBackfillResponse",
       "reason": "wire-format",
       "note": "the frozen \u00a72B L15 activity/backfill route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
-    },
-    {
-      "file": "src/core/work-graph/model/note-contracts.ts",
-      "name": "NOTE_BODY_PAGE_MAX_BYTES",
-      "reason": "kept-for",
-      "note": "kept for slice 4 of the orchestration design; the body-page reader is the 4C notes/* body route, which bounds a requested body page by NOTE_BODY_PAGE_MAX_BYTES (4 KiB); 4B's own body paging slices at NOTE_BODY_PAGE_BYTES (2 KiB) and never needs the max"
     },
     {
       "file": "src/app/core-http-types.ts",
@@ -940,12 +874,6 @@
     {
       "file": "src/contracts/architecture-inspection.ts",
       "name": "FileGraphPageV1",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/architecture-record-codecs.ts",
-      "name": "FILE_GRAPH_CHUNK_SCHEMA_ID",
       "reason": "kept-for",
       "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
     },
@@ -1056,42 +984,6 @@
       "name": "impactPage",
       "reason": "kept-for",
       "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/model/tool-commit-arguments.ts",
-      "name": "toolCommitLookupNotPublished",
-      "reason": "kept-for",
-      "note": "K3 group 2 wires it; kept for slice 9 of the orchestration design (K3 state/contract, decision 56)"
-    },
-    {
-      "file": "src/core/work-graph/state/command-normalization.ts",
-      "name": "ShellActionsResult",
-      "reason": "kept-for",
-      "note": "K3 group 4 wires it; kept for slice 9 of the orchestration design (K3 state/contract, decision 56)"
-    },
-    {
-      "file": "src/core/work-graph/state/command-normalization.ts",
-      "name": "parseShellActions",
-      "reason": "kept-for",
-      "note": "K3 group 4 wires it; kept for slice 9 of the orchestration design (K3 state/contract, decision 56)"
-    },
-    {
-      "file": "src/core/work-graph/state/unknown-call-kinds.ts",
-      "name": "kernelToolNameOf",
-      "reason": "kept-for",
-      "note": "K3 group 2 wires it; kept for slice 9 of the orchestration design (K3 state/contract, decision 56)"
-    },
-    {
-      "file": "src/core/work-graph/state/unknown-call-review.ts",
-      "name": "UNKNOWN_CALL_REVIEW_RESERVED_BYTES",
-      "reason": "kept-for",
-      "note": "K3 group 3 wires it; kept for slice 9 of the orchestration design (K3 state/contract, decision 56)"
-    },
-    {
-      "file": "src/core/work-graph/state/unknown-call-review.ts",
-      "name": "UnknownCallReviewEvent",
-      "reason": "kept-for",
-      "note": "K3 group 3 wires it; kept for slice 9 of the orchestration design (K3 state/contract, decision 56)"
     }
   ]
 }

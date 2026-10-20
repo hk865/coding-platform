@@ -62,9 +62,8 @@ export function createCandidateRequestFactsReader(
   }
 
   async function submittedActor(
-    job: { submission?: { identityKey: string; fingerprint: string } },
+    job: { submission: { identityKey: string; fingerprint: string } },
   ): Promise<{ kind: string; id: string } | null> {
-    if (job.submission === undefined) return null;
     const receipt = await records.lookupCommit({ identityKey: job.submission.identityKey, fingerprint: job.submission.fingerprint });
     if (receipt.status !== 'ready') return null;
     const at = await records.eventAt(receipt.value.cursor);
@@ -98,7 +97,7 @@ export function createCandidateRequestFactsReader(
       const root = job.goalId === input.goalRef.goalId
         && job.projectId === input.goalRef.projectId && job.workspaceId === input.requestRef.workspaceId;
       // The real actor from the formal submission locator decides the operator
-      // fact; an old snapshot without the locator is never guessed as operator.
+      // fact; an unreadable locator never guesses an operator.
       const actor = await submittedActor(decoded.value);
       const bound = boundActor(ctx);
       const initiatedByOperator = actor !== null && bound !== null && sameActor(actor, bound);

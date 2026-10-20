@@ -2,7 +2,7 @@
  * AG2b Stage-1 continuous-communication contract tests.
  *
  * The frozen shape (docs/refactor/tasks/AG2b-continuous-communication-2026-09-28.md):
- *   - A's original Work Run sends `send_session_message(replyMode='wait')` and
+ *   - A's original Work Run sends `send_session_message` with an explicit inquiry wait and
  *     waits; the Host drives B's original Session through the AG2a consumer;
  *     the saved answer returns to A's SAME Run as the original tool result;
  *   - a busy B makes A wait with NO replacement Session; when the real occupying
@@ -77,7 +77,7 @@ afterAll(async () => {
 // Small provider/tool assertions reused by the scenarios.
 // --------------------------------------------------------------------------
 
-/** The frozen `send_session_message(replyMode='wait')` tool result. */
+/** The frozen explicit inquiry wait `send_session_message` tool result. */
 type WaitToolResult = { message: SessionMessage; response: { text: string } | null };
 
 function toolMessage(request: ModelRequest, callId: string) {
@@ -164,9 +164,9 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       { kind: 'calls', calls: [{ callId: 'ag2b-find', name: 'find_related_sessions', args: { target: {}, page: { limit: 10 } } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-card', name: 'read_session_card', args: { sessionRef: {} } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-send-1', name: 'send_session_message',
-        args: { recipient: {}, text: firstQuestion, replyMode: 'wait' } }] },
+        args: { recipient: {}, text: firstQuestion, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-send-2', name: 'send_session_message',
-        args: { recipient: {}, text: secondQuestion, replyMode: 'wait' } }] },
+        args: { recipient: {}, text: secondQuestion, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-edit', name: 'edit',
         args: { mode: 'create', path: AG2B_RESULT_FILE, newText: AG2B_RESULT_TEXT } }] },
       { kind: 'text', text: 'AG2b work complete' },
@@ -387,7 +387,7 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       { kind: 'calls', calls: [{ callId: 'ag2b-busy-find', name: 'find_related_sessions', args: { target: {}, page: { limit: 10 } } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-busy-card', name: 'read_session_card', args: { sessionRef: {} } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-busy-send', name: 'send_session_message',
-        args: { recipient: {}, text: question, replyMode: 'wait' } }] },
+        args: { recipient: {}, text: question, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] },
     ];
     const started = await startAG2bHost(publicDir, {
       replies,
@@ -484,7 +484,7 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       { kind: 'calls', calls: [{ callId: 'ag2b-reopen-find', name: 'find_related_sessions', args: { target: {}, page: { limit: 10 } } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-reopen-card', name: 'read_session_card', args: { sessionRef: {} } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-reopen-send', name: 'send_session_message',
-        args: { recipient: {}, text: question, replyMode: 'wait' } }] },
+        args: { recipient: {}, text: question, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-reopen-edit', name: 'edit',
         args: { mode: 'create', path: AG2B_RESULT_FILE, newText: AG2B_RESULT_TEXT } }] },
       { kind: 'text', text: 'AG2b reopen work complete' },

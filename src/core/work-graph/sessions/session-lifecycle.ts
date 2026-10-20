@@ -966,7 +966,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     const verdict = decide(session, { kind: 'archive_requested', archive }, {
       archive: {
         requestMatches: true, choicesValid: true, authorityValid: true, wait: 'not_read', retired: false,
-        sourceExecutionStopped: true, stopQueued: false, failedDisposal: false, provenanceBasisValid: false,
+        sourceExecutionStopped: true, stopQueued: false, failedDisposal: false,
       },
     });
     if (!verdict.ok) return reject(verdict.code, verdict.detail);
@@ -1159,7 +1159,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
       openResponsibleLink: openResponsibleLinkOf(links.links),
       archive: {
         requestMatches: true, choicesValid: true, authorityValid: true, wait, retired,
-        sourceExecutionStopped: true, stopQueued: false, failedDisposal: false, provenanceBasisValid: false,
+        sourceExecutionStopped: true, stopQueued: false, failedDisposal: false,
       },
     });
     if (!verdict.ok) return reject(verdict.code, verdict.detail);
@@ -1315,7 +1315,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     const verdict = decide(session, { kind: 'archive_request_released', archiveRequestId: input.archiveRequestId }, {
       archive: {
         requestMatches: true, choicesValid: true, authorityValid: true, wait: 'not_read', retired: false,
-        sourceExecutionStopped, stopQueued, failedDisposal: true, provenanceBasisValid: false,
+        sourceExecutionStopped, stopQueued, failedDisposal: true,
       },
     });
     if (!verdict.ok) return reject(verdict.code, verdict.detail);

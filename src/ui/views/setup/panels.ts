@@ -89,7 +89,7 @@ function renderPlan(): string {
     + `<div class="buttons">${actionButton('adopt-architecture', '采用初始架构', current.project !== null && current.workspace !== null && architectures.length > 0, architectures.length === 0 ? '没有可用初始架构' : '本页尚未取得项目与工作区的正式版本')}</div>`
     + (current.adopted === null ? '<p class="muted">采用架构：尚未采用</p>'
       : `<p>采用架构：已采用，版本 ${escapeHtml(current.adopted.baseline.revision)}`
-        + (current.adopted.catalog === null ? '（该基线早于目录，未记录模块）' : `，模块 ${current.adopted.catalog.catalog.modules.length}`) + `</p>`
+        + `，模块 ${current.adopted.catalog.catalog.modules.length}` + `</p>`
         + detailsBlock('查看版本与摘要', `<pre>${escapeHtml(JSON.stringify({ baselineId: current.adopted.baseline.baselineId, revision: current.adopted.baseline.revision, contentDigest: current.adopted.baseline.contentDigest }, null, 2))}</pre>`))
     + advanced
     + `<h3>计划</h3>`

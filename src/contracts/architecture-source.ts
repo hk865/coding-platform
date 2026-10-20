@@ -1,4 +1,3 @@
-// Migrated contract declarations; source provenance is recorded in the N0 transfer manifest.
 import type { CodeGraphNode, CodeGraphEdge } from './architecture-inspection.js';
 /** Explicit, versioned mapping; a directory name is not implicitly a product Module. */
 export type ArchitectureSourceMapping = {

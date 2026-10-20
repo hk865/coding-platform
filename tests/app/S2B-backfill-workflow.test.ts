@@ -30,7 +30,7 @@ import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execut
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createActivityBackfill } from '../../src/business/workflow/activity-backfill.js';
 import {
-  countedFacts, openS2BActivityFixture, WORK_TASK_IDS, type S2BActivityFixture,
+  countedFacts, openS2BActivityFixture, viewOf, WORK_TASK_IDS, type S2BActivityFixture,
 } from '../helpers/S2B-activity-fixture.js';
 
 const DAY = 86_400_000;
@@ -88,18 +88,6 @@ async function commitLegacyRun(f: S2BActivityFixture, runId: string, endedAt: st
   return ref;
 }
 
-function viewOf(read: { status: string; value?: unknown }, runId: string) {
-  if (read.status !== 'ready') throw new Error(`the activity read was not ready: ${JSON.stringify(read)}`);
-  const views = (read.value as { runRef: RunRef }[]);
-  const found = views.find(view => (view.runRef as RunRef).runId === runId) as never;
-  if (found === undefined) throw new Error(`no activity view for ${runId}`);
-  return found as {
-    runRef: RunRef; status: string; reason: string | null; error: boolean;
-    totals: { steps: number; edits: number; editsUnknown: number } | null;
-    recordedBy: string | null; recordedAt: string | null;
-    countedThroughTurnEnd: boolean | null; unresolvedCalls: number | null;
-  };
-}
 
 /** One public `readExecution` snapshot, used to prove the backfill changed no Run or Task. */
 async function executionOf(f: S2BActivityFixture, reader: ReturnType<typeof createRunStateReader>,

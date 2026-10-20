@@ -37,7 +37,7 @@ import {
 import { isUnenteredReviewRoundForCancellation, reviewRoundEndedKnown } from '../../core/work-graph/state/review-lease.js';
 import type { ReverifyRoundInput } from '../../core/work-graph/model/evidence-contracts.js';
 import type { CommandRerunRequestRef } from '../../contracts/command-rerun-request.js';
-import type { ConsultationInput, ConsultationResult, FailedCardRefV1, InitialPlanningGoalInput, InitialPlanningGoalInputResult, N0GoalInput, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCalls, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview, WorkflowStepReceipt } from './contracts.js';
+import type { ConsultationInput, ConsultationResult, FailedCardRefV1, InitialPlanningGoalInput, InitialPlanningGoalInputResult, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCalls, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview, WorkflowStepReceipt } from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import { createConsultationConsumer } from './consultation.js';
@@ -807,15 +807,15 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
    * `adopt_initial_plan` continuation with the original flow identity; a real
    * adoption hands off to the existing `advanceWork.select_work` and never
    * starts a second control loop. `needs_decision`/waiting never fake success;
-   * the N0 branch stays explicitly unsupported.
+   * an unknown input kind stays explicitly unsupported.
    */
   const handleGoalInput = async (
-    ctx: CoreCallContext, input: N0GoalInput | InitialPlanningGoalInput,
+    ctx: CoreCallContext, input: InitialPlanningGoalInput,
   ): Promise<InitialPlanningGoalInputResult> => {
     const kind = isRecord(input) ? (input as { kind?: unknown }).kind : undefined;
     if (kind !== 'planning_answer' && kind !== 'adopt_initial_plan') {
       return { status: 'rejected', code: 'unsupported',
-        reason: 'N0 Workflow goal input is a source boundary skeleton; no business action is implemented' };
+        reason: 'the Workflow goal input kind is not supported' };
     }
     let isolated: InitialPlanningGoalInput;
     try { isolated = structuredClone(input as InitialPlanningGoalInput); }
@@ -1129,7 +1129,7 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     // proven non-entry (RUN-16), is re-driven with the SAME claim: `prepare` only rehydrates the bound
     // input (I-19) and the start re-authorizes a revoked binding (RUN-03). Every other phase entered or
     // may have entered the Kernel and is never restarted.
-    return 'schemaVersion' in auth && auth.schemaVersion === 2 && (auth.phase === 'authorized' || auth.phase === 'revoked')
+    return (auth.phase === 'authorized' || auth.phase === 'revoked')
       && run.envelope !== null && run.inputBinding !== undefined;
   }
 
@@ -2879,7 +2879,6 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
       readDecisionAnswer: deps.decisionMessages.readDecisionAnswer.bind(deps.decisionMessages),
       recordDecisionApplication: deps.decisionMessages.recordDecisionApplication.bind(deps.decisionMessages),
     } }),
-    ...(deps.decisionSources === undefined ? {} : { decisionSources: deps.decisionSources }),
     ...(deps.decisionDuties === undefined ? {} : { decisionDuties: deps.decisionDuties }),
     ...(deps.goalExecutedFiles === undefined ? {} : { goalExecutedFiles: deps.goalExecutedFiles }),
     ...(deps.decisionApplications === undefined ? {} : { decisionApplications: deps.decisionApplications }),

@@ -7,7 +7,7 @@
  * is claimed through the public claim owner and its Run is entered by the
  * production Runtime (`createK3_35Runtime` / `runtime.port.startRun` after the
  * production `prepareContinuation`). The scripted model calls the REAL
- * `send_session_message` mailbox tool with `replyMode: 'wait'`, so the Runtime
+ * `send_session_message` mailbox tool with an explicit inquiry wait, so the Runtime
  * itself saves the message and books the yielded `wait_reply` terminal. The
  * recipient's Run is a second real claim, entered by the same Runtime path and
  * held in flight by §5.1's read stand-in; it answers through the real mailbox
@@ -141,7 +141,7 @@ describe.each(['memory', 'sqlite'] as const)(
         const yieldTools = ['send_session_message'];
         const yieldModel = createScriptedModel([
           { kind: 'calls', calls: [{ callId: 'k3-47-continuation-send', name: 'send_session_message',
-            args: { recipient: replySession, text: 'Which file should this work use?', replyMode: 'wait' } }] },
+            args: { recipient: replySession, text: 'Which file should this work use?', intent: 'inquiry', needsReply: true, waitAfterSend: true } }] },
           { kind: 'text', text: 'the inquiry is durably saved' },
         ]);
         const yieldRuntime = createK3_35Runtime(world, {

@@ -231,19 +231,12 @@ const NOTICE_CATEGORIES: readonly string[] = [
 ];
 
 /**
- * Pure `NoticePositionV1` shape check. A legacy position is ordered by its
- * `occurredAt`; a commit position carries the ledger cursor bound at creation.
- * Neither is a new aggregate and neither is written back to an old record.
+ * Pure `NoticePositionV1` shape check. A commit position carries the ledger
+ * cursor bound at creation. It is not a new aggregate and is never written back
+ * to an old record.
  */
 function noticePositionProblem(value: unknown): string | null {
   if (!isRecord(value)) return "Workspace decisionSettings notice position must be an object";
-  if (value["kind"] === "legacy") {
-    if (!hasExactKeys(value, ["kind", "occurredAt", "itemKey"])) {
-      return "a legacy notice position must carry exactly kind, occurredAt and itemKey";
-    }
-    if (!nonEmpty(value["occurredAt"])) return "a legacy notice position occurredAt must be a non-empty string";
-    return nonEmpty(value["itemKey"]) ? null : "a notice position itemKey must be a non-empty string";
-  }
   if (value["kind"] === "commit") {
     if (!hasExactKeys(value, ["kind", "cursor", "itemKey"])) {
       return "a commit notice position must carry exactly kind, cursor and itemKey";
@@ -254,7 +247,7 @@ function noticePositionProblem(value: unknown): string | null {
     }
     return nonEmpty(value["itemKey"]) ? null : "a notice position itemKey must be a non-empty string";
   }
-  return 'a notice position kind must be "legacy" or "commit"';
+  return 'a notice position kind must be "commit"';
 }
 
 /** Pure `WorkspaceDecisionSettingsV1` shape check (missing field is handled by the caller). */
@@ -321,7 +314,7 @@ function isGoalDesiredState(value: unknown): value is GoalDesiredState {
  * Pure shape check of one Goal snapshot body, shared by the record validator
  * and the `GoalDesiredStateChanged` replay event. D-9: `desiredState` is any of
  * the three stored values; `desiredStateRevision` and `desiredStateRequestedBy`
- * are absent on records written before A.2 (read as 1 / null).
+ * are required (1 / null at creation).
  */
 export function goalSnapshotProblem(parsed: UnknownRecord): string | null {
   const ref = goalRefFromValue(parsed["ref"]);
@@ -346,12 +339,11 @@ export function goalSnapshotProblem(parsed: UnknownRecord): string | null {
     return "Goal snapshot revision must be a safe integer >= 1";
   }
   const desiredStateRevision = parsed["desiredStateRevision"];
-  if (desiredStateRevision !== undefined
-    && (!isNonNeg(desiredStateRevision) || desiredStateRevision < 1 || desiredStateRevision > revision)) {
+  if (!isNonNeg(desiredStateRevision) || desiredStateRevision < 1 || desiredStateRevision > revision) {
     return "Goal snapshot desiredStateRevision must be a safe integer between 1 and the Goal revision";
   }
   const requestedBy = parsed["desiredStateRequestedBy"];
-  if (requestedBy !== undefined && requestedBy !== null) {
+  if (requestedBy !== null) {
     const actor = actorFromValue(requestedBy);
     if (actor === null || actor.kind === "agent") {
       return "Goal snapshot desiredStateRequestedBy must be null or a Host (human/system) actor";
@@ -705,25 +697,15 @@ export function encodeWorkspaceSnapshot(snapshot: WorkspaceSnapshot): EncodedRec
 
 /**
  * Encodes the ORIGINAL `GoalSnapshot` JSON. The object is stringified exactly
- * as given (no added `schemaId`, no re-normalization), so a value produced by
- * the compiler stays byte-compatible with the legacy writer.
- */
-/**
- * A Goal whose desired state never changed (`desiredStateRevision` 1 or absent,
- * no requester) is written in its pre-A.2 shape, without the two D-9 fields.
- * Decoding reads them back as 1 / null, so the value round-trips, and a plan
- * adoption over a decoded legacy Goal keeps writing legacy bytes until
- * GOAL-04…06 record a real change (§15 step 1: no new values written yet).
+ * as given (no added `schemaId`, no re-normalization), including both D-9
+ * fields, so an unchanged Goal keeps its current written shape.
  */
 export function encodeGoalSnapshot(snapshot: GoalSnapshot): EncodedRecord {
-  const { desiredStateRevision, desiredStateRequestedBy, ...legacyShape } = snapshot;
-  const neverChanged = (desiredStateRevision === undefined || desiredStateRevision === 1)
-    && (desiredStateRequestedBy === undefined || desiredStateRequestedBy === null);
   return {
     refKey: canonicalRefKey(snapshot.ref),
     schemaId: GOAL_SNAPSHOT_SCHEMA_ID,
     revision: snapshot.revision,
-    json: JSON.stringify(neverChanged ? legacyShape : snapshot),
+    json: JSON.stringify(snapshot),
   };
 }
 
@@ -776,11 +758,8 @@ export function decodeGoalSnapshot(record: EncodedRecord): DecodeResult<GoalSnap
       objective: parsed.objective,
       // D-9: the stored value; GoalCreated still writes only "active".
       desiredState: parsed.desiredState,
-      // Absent before A.2: the Goal never changed its desired state (epoch 1,
-      // no requester), so a legacy record reads as 1 / null (LA-7).
-      desiredStateRevision: parsed.desiredStateRevision ?? 1,
-      desiredStateRequestedBy:
-        requestedBy === undefined || requestedBy === null ? null : actorFromValue(requestedBy),
+      desiredStateRevision: parsed.desiredStateRevision,
+      desiredStateRequestedBy: requestedBy === null ? null : actorFromValue(requestedBy),
       activePlanRevision:
         active === null ? null : planRevisionRefFromValue(active, ref.projectId),
       revision: record.revision,
@@ -857,6 +836,8 @@ export function goalSnapshotFromCreatedEvent(event: GoalCreatedEvent): GoalSnaps
     },
     objective: event.payload.objective,
     desiredState: event.payload.desiredState,
+    desiredStateRevision: 1,
+    desiredStateRequestedBy: null,
     activePlanRevision: event.payload.activePlanRevision,
     revision: 1,
   };

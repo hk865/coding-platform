@@ -267,7 +267,7 @@ describe.each<S4ANoteFixtureKind>(['memory', 'sqlite'])('S4C2 rework M1 on %s', 
           { ref: f.projectRef, revision: 1 }, { ref: f.workspaceRef, revision: 1 }] },
         input: { goalId: goal2Ref.goalId, workspace: f.scope, objective: 'second goal' } }));
       const plan2Ref = { aggregateType: 'PlanRevision' as const, projectId: f.scope.projectId, planId: 's4a-plan-2' };
-      const draft: PlanRevisionDraft = { schemaVersion: 1, planId: plan2Ref.planId, planRevision: 1,
+      const draft: PlanRevisionDraft = { schemaVersion: 2, planId: plan2Ref.planId, planRevision: 1,
         goalId: goal2Ref.goalId, stages: [{ stageId: 's2', title: 'Stage two' }],
         tasks: [{ taskId: 't9', stageId: 's2', title: 'Other work', requirementLevel: 'required',
           taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },

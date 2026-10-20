@@ -33,7 +33,7 @@ import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.j
 import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
 import { preparedOf, readCall, redrivePolicy } from './support/common.js';
 import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
-import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
+import { crashOneCommand } from './support/review-card-round.js';
 import { createScriptedModel, type ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { cleanupRestart, readControl, readExecution } from '../helpers/A2-restart-fixture.js';
@@ -52,21 +52,8 @@ import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-revie
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 // The blocking `shell` stand-in (K3 §5.1): keeps the call in flight until the crash.
@@ -126,34 +113,14 @@ async function expectReviewIncompleteCard(h: HostScenario, record: UnknownCallRe
     rounds: [{ result: 'unfinished' }, { result: 'unfinished' }] } });
 }
 
-/** One `shell` call in flight, closed by RUN-25 on the crash restart; returns the original RunRef. */
-async function crashOneCommand(h: HostScenario, label: string): Promise<RunRef> {
-  shellSeam.arm();
-  const modelA = createScriptedModel([{ kind: 'calls', calls: [
-    { callId: `${label}-shell`, name: 'shell', args: { command: `${label} runs a program` } }] }]);
-  const rootA = await openShellWorkRoot(h, modelA);
-  let runningA: Promise<unknown> | null = null;
-  let preparedA: ReturnType<typeof preparedOf>;
-  try {
-    const startA = await prepareOn(rootA, h.select(`${label}-a`, AG2B_WORK_TASK_ID));
-    preparedA = preparedOf(startA);
-    runningA = rootA.runtime.startRun(hostCtx(), { prepared: preparedA, consumerId: AG2B_CONSUMER_ID,
-      requestId: `${label}-a-start` });
-    await shellSeam.waitForCall();
-    await h.restart({ crash: true });
-  } finally {
-    shellSeam.release();
-    await runningA?.catch(() => undefined);
-    await rootA.close();
-  }
-  return preparedA.claim.runRef;
-}
-
 describe('K3-45 (一) review_incomplete through the real two-round R2 chain', () => {
-  it('K3-45 (一) R2: two rounds that each wrote every conclusion then were interrupted with no call in flight settle needs_decision with exactly review_incomplete', async () => {
+  it('K3-45 (一) R2/K3-37 (三): two rounds that each wrote every conclusion then were interrupted with no call in flight settle needs_decision with exactly review_incomplete', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
 
-    const originalRunRef = await crashOneCommand(h, 'k3-45-r2');
+    const crashed = await crashOneCommand(h, { callId: 'k3-45-r2-shell', select: 'k3-45-r2-a',
+      requestId: 'k3-45-r2-a-start', shellArgs: { command: 'k3-45-r2 runs a program' } });
+    await crashed.release();
+    const originalRunRef = crashed.runRef;
     const created = await reviewOf(h, originalRunRef);
     expect(created.status).toBe('ready');
     if (created.status !== 'ready') return;
@@ -229,6 +196,15 @@ describe('K3-45 (一) review_incomplete through the real two-round R2 chain', ()
       expect(afterRound1.value.items[0]?.observed).toMatchObject({ verdict: 'done', by: 'review_round',
         roundRunRef: roundRunRef1, evidence: 'K3-45 round 1 the shell call reached its end' });
 
+      // --- While the Goal is still paused, no second round opens. ------------
+      const beforeResume = await h.advance(h.select('k3-45-r2-before-resume', AG2B_WORK_TASK_ID));
+      const staleClaims = beforeResume.steps.flatMap(step =>
+        step.next !== null && step.next.kind === 'perform' && step.next.operation.kind === 'claim_task'
+          ? [(step.next.operation.request.input as { review?: unknown }).review] : []);
+      expect(staleClaims.every(review => review === undefined)).toBe(true);
+      expect((await reviewOf(h, originalRunRef))).toMatchObject({ status: 'ready',
+        value: { status: 'pending_review', activeRound: null, rounds: [{ result: 'unfinished' }] } });
+
       // --- Round 2 after the Goal resumes: same chain, then final settlement. -
       expect(await goalControl(h.host, 'resume', 'k3-45-r2-goal-resume')).toMatchObject({ status: 'committed' });
       const startStop2 = await driveReviewUntil(reviewRoot, h.select('k3-45-r2-r2', AG2B_WORK_TASK_ID),
@@ -248,6 +224,8 @@ describe('K3-45 (一) review_incomplete through the real two-round R2 chain', ()
       // Round 2's conclusion really reached the record through the tool.
       expect(await reviewOf(h, originalRunRef)).toMatchObject({ status: 'ready', value: {
         status: 'pending_review', activeRound: { phase: 'review', round: 2 },
+        // K3-37 (三): while round 2 is active, `rounds` still holds only round 1's entry.
+        rounds: [{ result: 'unfinished', round: 1 }],
         items: [{ observed: { verdict: 'done', by: 'review_round', roundRunRef: roundRunRef2,
           evidence: 'K3-45 round 2 the shell call reached its end' } }] } });
 
@@ -266,6 +244,7 @@ describe('K3-45 (一) review_incomplete through the real two-round R2 chain', ()
       expect(record.status).toBe('ready');
       if (record.status !== 'ready') return;
       expect(record.value.status).toBe('needs_decision');
+      expect(record.value.open).toBe('yes');
       expect(record.value.activeRound).toBe(null);
       expect(record.value.decisionReasons).toEqual(['review_incomplete']);
       expect(record.value.rounds.map(round => round.result)).toEqual(['unfinished', 'unfinished']);

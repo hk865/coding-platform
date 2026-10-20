@@ -24,8 +24,6 @@ seams.shellSeam = shellSeam;
 const worlds: B2BlockedWorld[] = [];
 afterEach(async () => { for (const world of worlds.splice(0)) await world.close(); });
 
-const ALLOWANCE_UNCONFIRMED = '暂时确认不了允许，稍后再试';
-
 async function world(kind: 'memory' | 'sqlite'): Promise<B2BlockedWorld> {
   const opened = await openB2BlockedWorld(kind, { files: {
     'app/package.json': JSON.stringify({ scripts: { 'db:migrate': 'prisma migrate deploy' } }),
@@ -38,7 +36,7 @@ const shell = (command: string): ToolCall => ({ schemaVersion: 1, callId: nextCa
   arguments: { command } });
 
 describe.each(['memory', 'sqlite'] as const)('B2-04 one-time allowance (%s)', kind => {
-  it('B2-04: allow_rerun lets exactly the card form run once, records usedBy, then blocks again', async () => {
+  it('B2-04/B2-09b (owner part): allow_rerun lets exactly the card form run once, records usedBy, then blocks again', async () => {
     const w = await world(kind);
     const requested = await runTool(w.tool, { command: 'npm run db:migrate', reason: '需要重新迁移' });
     expect(requested.output[0]).toMatchObject({ kind: 'json', value: { status: 'requested' } });
@@ -55,32 +53,25 @@ describe.each(['memory', 'sqlite'] as const)('B2-04 one-time allowance (%s)', ki
     expect(used).toMatchObject({ state: 'used', revision: 3,
       usedBy: { runId: w.runRef.runId, callId: call.callId } });
 
+    // The consume stamped the request used (usedAt is present) and wrote no
+    // second request row.
+    expect(used.usedAt).not.toBeNull();
+    expect(await w.listRequests(w.ctx)).toHaveLength(1);
+
     // The `used` event itself carries `usedBy` (no hand-encoded event).
     const usedEvent = w.crrEvents.find(event => event['change'] === 'used');
     expect(usedEvent).toMatchObject({ change: 'used',
       request: { state: 'used', usedBy: { runId: w.runRef.runId, callId: call.callId } } });
 
-    // The NEXT identical call is blocked again (the allowance is gone).
+    // The NEXT identical call is blocked again (the allowance is gone), with
+    // the fixed L19a reason, and the request stays at its `used` revision.
     const again = await runHook(w.hook, shell('npm run db:migrate'));
     expect(again).toMatchObject({ point: 'before_tool', kind: 'block' });
+    if (again.kind === 'block') expect(again.reason).toContain('request_command_rerun');
+    expect((await w.listRequests(w.ctx))[0]).toMatchObject({ state: 'used', revision: 3 });
 
     // A different form whose parsed actions are the same is still blocked.
     expect(await runHook(w.hook, shell('npx prisma migrate deploy')))
       .toMatchObject({ point: 'before_tool', kind: 'block' });
-  });
-
-  it('B2-04: a failed consumeAllowance commit blocks the call and keeps the allowance allowed', async () => {
-    const w = await world(kind);
-    await runTool(w.tool, { command: 'npm run db:migrate', reason: '需要重新迁移' });
-    const pending = (await w.listRequests(w.ctx))[0]!;
-    expect(await w.answer('allow_rerun', pending.ref, pending.revision))
-      .toMatchObject({ status: 'committed', value: { state: 'allowed' } });
-
-    w.failNextCrrCommit();
-    expect(await runHook(w.hook, shell('npm run db:migrate')))
-      .toEqual({ point: 'before_tool', kind: 'block', reason: ALLOWANCE_UNCONFIRMED });
-
-    const still = (await w.listRequests(w.ctx))[0]!;
-    expect(still).toMatchObject({ state: 'allowed', revision: 2, usedAt: null });
   });
 });

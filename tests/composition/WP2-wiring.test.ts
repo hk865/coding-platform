@@ -20,6 +20,7 @@ import {
   claimSuccessorRun, createWP2Platform, decisionRequestArgs, observeStage, preparedBundle,
   preparedBundleInput, requestText, type WP2PlatformFixture,
 } from '../helpers/WP2-platform-support.js';
+import { moveKernelAside, restoreKernel } from '../helpers/A2-restart-fixture.js';
 
 const GOAL: GoalRef = { aggregateType: 'Goal', projectId: 'r4c-claim-project', goalId: 'r4c-claim-goal' };
 
@@ -127,12 +128,21 @@ async function openReplyWorld(label: string, options: Parameters<typeof createWP
     return { cursor: cursor!, responded: responded! };
   };
   /** Record the real health observation and return the commit-log cursor of the
-   * one new Session-record commit (the spec's independent R source). */
+   * one new Session-record commit (the spec's independent R source). A
+   * `missing` Kernel is reached by moving the real database aside and probing
+   * it; the mapped database is restored before the next Kernel step. */
   const recordHealth = async (verdict: 'missing' | 'ready'): Promise<string> => {
     const before = f.commits().length;
-    const observed = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef: f.sessionRef,
-      probe: { verdict, activeRunId: null } });
-    if ((observed as { status?: string }).status === 'rejected') throw new Error(`${label} health: ${JSON.stringify(observed)}`);
+    const aside = verdict === 'missing' ? await moveKernelAside(f.directory) : null;
+    try {
+      const card = await f.platform.sessions.readSession(f.ctx, f.sessionRef);
+      if (card.status !== 'ready') throw new Error(`${label} health Session read: ${JSON.stringify(card)}`);
+      const probe = await f.platform.reconcile.probe(card.value.record, f.ctx.signal);
+      const observed = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef: f.sessionRef, probe });
+      if ((observed as { status?: string }).status === 'rejected') throw new Error(`${label} health: ${JSON.stringify(observed)}`);
+    } finally {
+      if (aside !== null) await restoreKernel(f.directory, aside);
+    }
     const healthCommits = f.commits().slice(before)
       .filter(notice => notice.aggregates.some(aggregate => aggregate.aggregateType === 'Session'));
     if (healthCommits.length !== 1) throw new Error(`${label} health commits: ${JSON.stringify(f.commits().slice(before))}`);
@@ -764,9 +774,19 @@ it.each(['memory', 'sqlite'] as const)('F11 [%s] marking one displayed notice le
     rep1 = await reply(sent[0]!, 'm1');
     rep2 = await reply(sent[1]!, 'm2');
     const before = f.commits().length;
-    const observed = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef: f.sessionRef,
-      probe: { verdict: 'missing', activeRunId: null } });
-    if ((observed as { status?: string }).status === 'rejected') throw new Error(`F11 health: ${JSON.stringify(observed)}`);
+    // F11's shared position R: the real health observation of an unreadable
+    // Kernel. The mapped database is moved aside, probed, observed, and restored
+    // before the next reply Turn (m3) reads or writes the Kernel.
+    const aside = await moveKernelAside(f.directory);
+    try {
+      const card = await f.platform.sessions.readSession(f.ctx, f.sessionRef);
+      if (card.status !== 'ready') throw new Error(`F11 health Session read: ${JSON.stringify(card)}`);
+      const probe = await f.platform.reconcile.probe(card.value.record, f.ctx.signal);
+      const observed = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef: f.sessionRef, probe });
+      if ((observed as { status?: string }).status === 'rejected') throw new Error(`F11 health: ${JSON.stringify(observed)}`);
+    } finally {
+      await restoreKernel(f.directory, aside);
+    }
     const healthCommits = f.commits().slice(before).filter(notice =>
       notice.aggregates.some(aggregate => aggregate.aggregateType === 'Session'));
     if (healthCommits.length !== 1) throw new Error(`F11 health commits: ${JSON.stringify(f.commits().slice(before))}`);
@@ -868,7 +888,7 @@ it.each(['memory', 'sqlite'] as const)('F11 [%s] marking one displayed notice le
 
 it.each(['memory', 'sqlite'] as const)('F13 [%s] the real responsible link and wait transfer keep the notice; a successor execution accepting the reply removes it', async (kind) => {
   let action: (() => Promise<void>) | null = null;
-  const sendArgs: Record<string, unknown> = { recipient: {}, text: 'F13 which file?', replyMode: 'wait' };
+  const sendArgs: Record<string, unknown> = { recipient: {}, text: 'F13 which file?', intent: 'inquiry', needsReply: true, waitAfterSend: true };
   const f = await open({
     kind,
     duty: 'secretary',
@@ -930,10 +950,19 @@ it.each(['memory', 'sqlite'] as const)('F13 [%s] the real responsible link and w
   if (messageRef === undefined) throw new Error('F13 S Run must name its wait message');
   expect(await notices()).toBe(0);
 
-  // S really becomes unavailable, then D saves the reply (reply AFTER R).
-  const observed = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef,
-    probe: { verdict: 'missing', activeRunId: null } });
-  expect((observed as { status?: string }).status).not.toBe('rejected');
+  // S really becomes unavailable, then D saves the reply (reply AFTER R). The
+  // real Kernel database is moved aside for the probe and restored before D's
+  // preparation reads it.
+  const aside = await moveKernelAside(f.directory);
+  try {
+    const card = await f.platform.sessions.readSession(f.ctx, sessionRef);
+    if (card.status !== 'ready') throw new Error(`F13 health Session read: ${JSON.stringify(card)}`);
+    const probe = await f.platform.reconcile.probe(card.value.record, f.ctx.signal);
+    const observed = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef, probe });
+    expect((observed as { status?: string }).status).not.toBe('rejected');
+  } finally {
+    await restoreKernel(f.directory, aside);
+  }
   const preparedD = await observeStage(f, () => f.platform.runtime.prepareExecution(f.ctx, { runRef: f.secondRunRef!, requestId: 'f13-prepare-d' }));
   if (preparedD.status !== 'ready') throw new Error(`F13 prepare D: ${JSON.stringify(preparedD)}`);
   action = async () => {
@@ -1035,10 +1064,19 @@ it.each(['memory', 'sqlite'] as const)('F15 [%s] a failed reply or health commit
     out['replied'] = await f.platform.messages.respondMessage(workD, replyRequest);
 
     // 3. the health commit fails: the Session stays available with no position.
-    f.failNextWrite();
-    try { out['failedHealth'] = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef,
-      probe: { verdict: 'missing', activeRunId: null } }); }
-    catch (error) { out['failedHealth'] = error; }
+    // The mapped Kernel is moved aside for the real probe and restored before
+    // step 4 and the retried reply Turn touch it again.
+    const failedAside = await moveKernelAside(f.directory);
+    try {
+      const card = await f.platform.sessions.readSession(f.ctx, sessionRef);
+      if (card.status !== 'ready') throw new Error(`F15 health Session read: ${JSON.stringify(card)}`);
+      const probe = await f.platform.reconcile.probe(card.value.record, f.ctx.signal);
+      f.failNextWrite();
+      try { out['failedHealth'] = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef, probe }); }
+      catch (error) { out['failedHealth'] = error; }
+    } finally {
+      await restoreKernel(f.directory, failedAside);
+    }
     const afterHealthFail = await f.platform.sessions.readSession(f.ctx, sessionRef);
     out['sessionAfterHealthFail'] = afterHealthFail.status === 'ready'
       ? afterHealthFail.value.record
@@ -1046,8 +1084,15 @@ it.each(['memory', 'sqlite'] as const)('F15 [%s] a failed reply or health commit
     out['noticesAfterHealthFail'] = await readNotices();
 
     // 4. the health commit succeeds: exactly one notice.
-    out['observed'] = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef,
-      probe: { verdict: 'missing', activeRunId: null } });
+    const observedAside = await moveKernelAside(f.directory);
+    try {
+      const card = await f.platform.sessions.readSession(f.ctx, sessionRef);
+      if (card.status !== 'ready') throw new Error(`F15 observed Session read: ${JSON.stringify(card)}`);
+      const probe = await f.platform.reconcile.probe(card.value.record, f.ctx.signal);
+      out['observed'] = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef, probe });
+    } finally {
+      await restoreKernel(f.directory, observedAside);
+    }
     out['noticesAfterUnavailable'] = await readNotices();
 
     // 5. the retried reply replays exactly once; the response slot is unchanged.
@@ -1180,9 +1225,18 @@ it.each(['memory', 'sqlite'] as const)('F14 [%s] the Work reply position equals 
   // of the two positions and §5.2 F14's expected value is the command's cursor.
   // R is the ONE new Session-record commit, read from the commit log.
   const beforeHealth = f.commits().length;
-  const observed = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef,
-    probe: { verdict: 'missing', activeRunId: null } });
-  if ((observed as { status?: string }).status === 'rejected') throw new Error(`F14 health: ${JSON.stringify(observed)}`);
+  // The real unreadable-Kernel probe: move the mapped database aside, observe,
+  // then restore it before D's preparation reads it.
+  const aside = await moveKernelAside(f.directory);
+  try {
+    const card = await f.platform.sessions.readSession(f.ctx, sessionRef);
+    if (card.status !== 'ready') throw new Error(`F14 health Session read: ${JSON.stringify(card)}`);
+    const probe = await f.platform.reconcile.probe(card.value.record, f.ctx.signal);
+    const observed = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef, probe });
+    if ((observed as { status?: string }).status === 'rejected') throw new Error(`F14 health: ${JSON.stringify(observed)}`);
+  } finally {
+    await restoreKernel(f.directory, aside);
+  }
   const healthCommits = f.commits().slice(beforeHealth)
     .filter(notice => notice.aggregates.some(aggregate => aggregate.aggregateType === 'Session'));
   expect(healthCommits).toHaveLength(1);
@@ -1399,8 +1453,9 @@ it.each(['memory', 'sqlite'] as const)('F10 [%s] (Work reconcile) the real recon
   if (record.status !== 'ready') throw new Error(`F10r record: ${JSON.stringify(record)}`);
   expect(record.value.run.status).toBe('running');
   const beforeReconcile = f.commits().length;
+  const probe = await f.platform.reconcile.probe(record.value.session, f.ctx.signal);
   const reconciled = await f.platform.reconcile.reconcileRun(f.ctx, { record: record.value,
-    hostInstanceId: 'wp2-host', probe: { verdict: 'ready', activeRunId: f.runRef!.runId, reason: 'F10r takeover check' } });
+    hostInstanceId: 'wp2-host', probe });
   expect(reconciled).toMatchObject({ row: 'W-11', status: 'reconciled' });
   // R is the ONE new Session-record commit of the real reconcile, from the log.
   const healthCommits = f.commits().slice(beforeReconcile)
@@ -1539,9 +1594,18 @@ it.each(['memory', 'sqlite'] as const)('F14 [%s] the user-answer writer preserve
   // Spec §2.3/L7/L8 (finding 2): the mailbox DTO carries both stored positions
   // for every qualifying original work_run message, whatever the reply sender.
   const beforeHealth = f.commits().length;
-  const health = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef: f.sessionRef,
-    probe: { verdict: 'missing', activeRunId: null } });
-  expect((health as { status?: string }).status).not.toBe('rejected');
+  // The real unreadable-Kernel observation: the mapped database is moved aside,
+  // probed, observed, and restored for the reads that follow.
+  const answerAside = await moveKernelAside(f.directory);
+  try {
+    const card = await f.platform.sessions.readSession(f.ctx, f.sessionRef);
+    if (card.status !== 'ready') throw new Error(`F14 answer health Session read: ${JSON.stringify(card)}`);
+    const probe = await f.platform.reconcile.probe(card.value.record, f.ctx.signal);
+    const health = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef: f.sessionRef, probe });
+    expect((health as { status?: string }).status).not.toBe('rejected');
+  } finally {
+    await restoreKernel(f.directory, answerAside);
+  }
   const healthCommits = f.commits().slice(beforeHealth)
     .filter(notice => notice.aggregates.some(aggregate => aggregate.aggregateType === 'Session'));
   expect(healthCommits).toHaveLength(1);
@@ -1634,9 +1698,18 @@ it.each(['memory', 'sqlite'] as const)('F14 [%s] (Query Answer) a consultation a
 
   // R: the real health writer makes S unavailable, taken from the commit log.
   const beforeHealth = f.commits().length;
-  const health = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef: f.sessionRef,
-    probe: { verdict: 'missing', activeRunId: null } });
-  expect((health as { status?: string }).status).not.toBe('rejected');
+  // The real unreadable-Kernel observation: the mapped database is moved aside,
+  // probed, observed, and restored for the reads that follow.
+  const queryAside = await moveKernelAside(f.directory);
+  try {
+    const card = await f.platform.sessions.readSession(f.ctx, f.sessionRef);
+    if (card.status !== 'ready') throw new Error(`F14q health Session read: ${JSON.stringify(card)}`);
+    const probe = await f.platform.reconcile.probe(card.value.record, f.ctx.signal);
+    const health = await f.platform.reconcile.recordSessionHealth(f.ctx, { sessionRef: f.sessionRef, probe });
+    expect((health as { status?: string }).status).not.toBe('rejected');
+  } finally {
+    await restoreKernel(f.directory, queryAside);
+  }
   const healthCommits = f.commits().slice(beforeHealth)
     .filter(notice => notice.aggregates.some(aggregate => aggregate.aggregateType === 'Session'));
   expect(healthCommits).toHaveLength(1);
@@ -1805,8 +1878,9 @@ it.each(['memory', 'sqlite'] as const)('F10 [%s] (Query recovery) the real Query
   if (read.status !== 'ready') throw new Error(`F10q read: ${JSON.stringify(read)}`);
   expect(read.value.run.run.executionState?.phase).toBe('entered');
   const beforeRecovery = f.commits().length;
+  const probe = await f.platform.reconcile.probe(read.value.session, f.ctx.signal);
   const reconciled = await f.platform.reconcile.reconcileQuery(f.ctx, { record: read.value,
-    hostInstanceId: 'wp2-host', probe: { verdict: 'ready', activeRunId: null, reason: 'F10q recovery check' } });
+    hostInstanceId: 'wp2-host', probe });
   expect(reconciled).toMatchObject({ row: 'Q-04', status: 'reconciled' });
   // R is the ONE new Session-record commit of the real recovery, from the log.
   const healthCommits = f.commits().slice(beforeRecovery)
@@ -1818,8 +1892,9 @@ it.each(['memory', 'sqlite'] as const)('F10 [%s] (Query recovery) the real Query
   expect(querySession.value.record).toMatchObject({ health: 'unavailable', unavailableSince: r });
 
   // The identical recovery request replays: the stored position does not move.
+  const retryProbe = await f.platform.reconcile.probe(read.value.session, f.ctx.signal);
   const replayed = await f.platform.reconcile.reconcileQuery(f.ctx, { record: read.value,
-    hostInstanceId: 'wp2-host', probe: { verdict: 'ready', activeRunId: null, reason: 'F10q recovery check' } });
+    hostInstanceId: 'wp2-host', probe: retryProbe });
   expect(replayed).toMatchObject({ status: 'reconciled' });
   const afterRetry = await f.platform.sessions.readSession(f.ctx, queryCard.ref);
   expect(afterRetry.status === 'ready' ? afterRetry.value.record.unavailableSince : null).toBe(r);
@@ -1947,9 +2022,18 @@ it.each(['memory', 'sqlite'] as const)('F10 [%s] (Query recovery, positive) a st
   // commit. R is the ONE new Session-record commit of the recognition writer.
   const read = await f.platform.reconcile.readQueryExecution(f.ctx, qref);
   if (read.status !== 'ready') throw new Error(`F10p read: ${JSON.stringify(read)}`);
-  const unknown = await f.platform.reconcile.reconcileQuery(f.ctx, { record: read.value,
-    hostInstanceId: 'wp2-host', probe: { verdict: 'missing', activeRunId: null, reason: 'F10p unknown check' } });
-  expect(unknown).toMatchObject({ row: 'Q-05', status: 'reconciled' });
+  // The real unreadable-Kernel path: move the mapped database aside, probe the
+  // Query's own Session, record the unknown end, and restore the database before
+  // the recognition writer reads the Kernel.
+  const aside = await moveKernelAside(f.directory);
+  try {
+    const probe = await f.platform.reconcile.probe(read.value.session, f.ctx.signal);
+    const unknown = await f.platform.reconcile.reconcileQuery(f.ctx, { record: read.value,
+      hostInstanceId: 'wp2-host', probe });
+    expect(unknown).toMatchObject({ row: 'Q-05', status: 'reconciled' });
+  } finally {
+    await restoreKernel(f.directory, aside);
+  }
   const unknownRead = await f.platform.reconcile.readQueryExecution(f.ctx, qref);
   if (unknownRead.status !== 'ready') throw new Error(`F10p unknown read: ${JSON.stringify(unknownRead)}`);
   const beforeRecovery = f.commits().length;
@@ -2040,12 +2124,20 @@ it.each(['memory', 'sqlite'] as const)('F10 [%s] (Work recognition) attesting th
   expect(await readNotices()).toEqual([]);
 
   // The Host's real reconcile cannot read the Kernel: the Run becomes
-  // `outcome_unknown` (row W-14) and the Session is still available.
+  // `outcome_unknown` (row W-14) and the Session is still available. The mapped
+  // database is moved aside for the probe and restored before the recognition
+  // writer reads it.
   const inFlight = await f.platform.executions.readExecution(f.ctx, f.runRef!);
   if (inFlight.status !== 'ready') throw new Error(`F10n record: ${JSON.stringify(inFlight)}`);
-  const unknown = await f.platform.reconcile.reconcileRun(f.ctx, { record: inFlight.value,
-    hostInstanceId: 'wp2-host', probe: { verdict: 'missing', activeRunId: null, reason: 'F10n unknown check' } });
-  expect(unknown).toMatchObject({ row: 'W-14', status: 'reconciled' });
+  const aside = await moveKernelAside(f.directory);
+  try {
+    const probe = await f.platform.reconcile.probe(inFlight.value.session, f.ctx.signal);
+    const unknown = await f.platform.reconcile.reconcileRun(f.ctx, { record: inFlight.value,
+      hostInstanceId: 'wp2-host', probe });
+    expect(unknown).toMatchObject({ row: 'W-14', status: 'reconciled' });
+  } finally {
+    await restoreKernel(f.directory, aside);
+  }
   const unknownRun = await f.platform.executions.readExecution(f.ctx, f.runRef!);
   if (unknownRun.status !== 'ready') throw new Error(`F10n unknown record: ${JSON.stringify(unknownRun)}`);
   expect(unknownRun.value.run).toMatchObject({ status: 'ended', outcome: 'outcome_unknown' });

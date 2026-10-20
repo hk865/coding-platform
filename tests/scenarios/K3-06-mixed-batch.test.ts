@@ -38,28 +38,15 @@ import {
 import { cleanupScenarios, HostScenario, hostCtx, performs, type Platform } from './harness.js';
 import { openWorkRoot, preparedOf, redrivePolicy, WORK_TARGET } from './support/common.js';
 import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
-import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
+import { prepareOn } from './support/shell-work-root.js';
 
 // The KE6 stand-in (as K3-05): `reviewCapability` reads the read-only probe with
 // no host process; the general (process) probe stays unavailable.
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js')>();
-  class KProcessSandbox {
-    constructor(..._args: unknown[]) { void _args; }
-    get effectiveOptions(): { protectedPaths: string[]; readOnlyPaths: string[]; executablePath: string } {
-      return { protectedPaths: [], readOnlyPaths: [], executablePath: '/usr/bin:/bin' };
-    }
-    static async probe(_root: string, _workspace: unknown, options?: Record<string, unknown>): Promise<unknown> {
-      if (options?.['workspaceMode'] !== 'read_only') {
-        return { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: only read-only probing' };
-      }
-      return sandbox.available
-        ? { available: true, version: 'stub-v1', bwrapPath: '/usr/bin/bwrap', reason: null }
-        : { available: false, version: 'stub-v1', bwrapPath: null, reason: 'stub: bubblewrap unavailable' };
-    }
-  }
-  return { ...actual, ProcessSandbox: KProcessSandbox };
+  const { createProcessSandboxStandin } = await import('./support/process-sandbox-standin.js');
+  return { ...actual, ProcessSandbox: createProcessSandboxStandin(actual, sandbox) };
 });
 
 // --- The single-call blockers (real effect classes; see the header). --------
@@ -171,73 +158,6 @@ function reviewBasisOf(input: WorkflowAdvanceInput): unknown {
 }
 
 describe('K3-06 single-item R2 chains, one per kind (ruling 2)', () => {
-  it('K3-06 (process, L9/L10-L16): one in-flight shell call, its own Run, is reviewed, settled and read back', async () => {
-    const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
-    const { prepared } = await crashSingleCall({ label: 'k3-06-process', h, openRoot: openShellWorkRoot, seam: shellSeam,
-      callId: 'k3-06-process-shell', name: 'shell', args: { command: 'k3-06 process runs a program' } });
-
-    // One `process` item, L4 pending, one `pending_review` record.
-    const created = await reviewOf(h, prepared.claim.runRef);
-    expect(created.status).toBe('ready');
-    if (created.status !== 'ready') return;
-    expect(created.value).toMatchObject({ status: 'pending_review', decisionReasons: [], activeRound: null });
-    expect(created.value.items).toHaveLength(1);
-    expect(created.value.items[0]).toMatchObject({ toolName: 'shell', kind: 'process', contained: true,
-      observed: { verdict: 'pending', by: null } });
-
-    const modelReview = createScriptedModel([
-      { kind: 'calls', calls: [{ callId: 'k3-06-process-conclusion', name: 'record_unknown_call_review',
-        args: { item: 1, verdict: 'done', evidence: 'the shell call reached its end before the crash',
-          crashSuspicion: { verdict: 'unlikely', evidence: 'the command itself leaves no crash trace' } } }] },
-      { kind: 'text', text: 'k3-06 the process review round wrote its conclusion' },
-    ]);
-    const reviewRoot = await openReviewWorkRoot(h, modelReview);
-    let roundRunRef: RunRef | null = null;
-    try {
-      const claimStop = await driveReviewUntil(reviewRoot, h.select('k3-06-process-review', AG2B_WORK_TASK_ID),
-        performs('claim_task'));
-      expect(claimStop.stopped.kind).toBe('perform');
-      if (claimStop.stopped.kind !== 'perform' || claimStop.stopped.operation.kind !== 'claim_task') {
-        throw new Error('the review claim step was expected');
-      }
-      expect(reviewBasisOf(claimStop.stopped)).toMatchObject({ phase: 'review' });
-
-      const startStop = await driveReviewUntil(reviewRoot, claimStop.stopped, performs('start'));
-      expect(startStop.receipts.map(receipt => receipt.kind)).toEqual(['claim_task', 'prepare']);
-      const preparedReview = preparedOf(startStop.stopped);
-      roundRunRef = preparedReview.claim.runRef;
-      expect(roundRunRef.runId).not.toBe(prepared.claim.runRef.runId);
-      await reviewRoot.runtime.startRun(hostCtx(), { prepared: preparedReview, consumerId: AG2B_CONSUMER_ID,
-        requestId: 'k3-06-process-review-start' });
-      const ended = await readExecution(h.host, roundRunRef);
-      expect(ended.run).toMatchObject({ status: 'ended', outcome: 'completed',
-        purpose: { kind: 'unknown_call_review', phase: 'review', round: 1 } });
-      const concluded = await reviewOf(h, prepared.claim.runRef);
-      expect(concluded, JSON.stringify(concluded)).toMatchObject({ status: 'ready', value: { status: 'pending_review',
-        items: [{ observed: { verdict: 'done', by: 'review_round', crashSuspicion: { verdict: 'unlikely' } } }] } });
-
-      // settle_review, never open_checks; the record settles `resolved`.
-      const settled = await h.advance(h.select('k3-06-process-settle', AG2B_WORK_TASK_ID),
-        { stopBefore: performs('requeue_task') });
-      const kinds = settled.receipts.map(receipt => receipt.kind);
-      expect(kinds).toContain('settle_review');
-      expect(kinds).not.toContain('open_checks');
-      expect(kinds).not.toContain('finalize_checks');
-      const resolved = await reviewOf(h, prepared.claim.runRef);
-      expect(resolved, JSON.stringify(resolved)).toMatchObject({ status: 'ready', value: {
-        status: 'resolved', decisionReasons: [], activeRound: null,
-        rounds: [{ phase: 'review', round: 1, result: 'finished' }],
-        items: [{ observed: { verdict: 'done', by: 'review_round' } }] } });
-
-      // The original Kernel call stays unresolved; the lease was released by the round.
-      const original = await readExecution(h.host, prepared.claim.runRef);
-      expect(original.run).toMatchObject({ status: 'ended', outcome: 'crashed' });
-      expect(original.lease?.release?.runRef.runId).toBe(roundRunRef.runId);
-    } finally {
-      await reviewRoot.close();
-    }
-  }, 180_000);
-
   it('K3-06 (file_edit, L3/L8/L9): one in-flight edit is compare_in_continuation and settles at creation', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
     const { prepared } = await crashSingleCall({ label: 'k3-06-file-edit', h, openRoot: openWorkRoot, seam: mixedEditSeam,

@@ -1,7 +1,5 @@
 /** Slice 5 TU01–TU07: real mailbox/decision owners and Runtime input supply. */
 import { afterEach, describe, expect, it } from 'vitest';
-import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
-import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import type { UserDecisionBodyV1 } from '../../src/contracts/goal-decisions.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
@@ -9,23 +7,18 @@ import { DEFAULT_RUNTIME_BUDGET } from '../../src/contracts/runtime-budget.js';
 import type { RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
-import { createExecutionEntryService, MANIFEST_CONTENT_TYPE } from '../../src/core/work-graph/tasks/execution-entry-service.js';
-import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
-import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
-import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
-import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createSessionMailboxTools, USER_DECISION_TOOL_NAMES, type SessionMailboxToolsConfig } from '../../src/core/agent-runtime/communication-tools.js';
 import { createMailboxInputSupply, deriveInputId, formatDecisionResponseInput } from '../../src/core/agent-runtime/execution-inputs.js';
-import { createConsultationConsumer } from '../../src/business/workflow/consultation.js';
-import type { ConsultationInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
-import type { RuntimeExecutionPort } from '../../src/core/agent-runtime/ports.js';
-import { createCollaborationDriver, type CollaborationDriver, type CollaborationDriverDependencies,
+import type { WorkflowPort } from '../../src/business/workflow/ports.js';
+import { createCollaborationDriver, type CollaborationDriver,
   type CollaborationStartInput, type CollaborationState } from '../../src/app/collaboration-driver.js';
 import type { WorkbenchQueryProfile } from '../../src/app/runtime-configuration.js';
 import { WorkspaceSandbox, type ToolCall, type ToolResult } from '../../vendor/coding-agent/dist/public-api.js';
-import { GOAL_B, T, openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
+import { T, openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
 import { committed, ready, realOwners, workContext, refKey, sendDecision, answerPins,
   decisionInput, modelRequests, type RealOwners } from '../helpers/S5-user-message-support.js';
+import { createWP2Platform, decisionRequestArgs, type WP2PlatformFixture } from '../helpers/WP2-platform-support.js';
+import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 
 const signal = (): AbortSignal => new AbortController().signal;
 const fixtures: S5DecisionFixture[] = [];
@@ -241,215 +234,230 @@ describe('S5 user-decision runtime tools', () => {
   });
 });
 
-// TU07 keeps the matching-profile positive control and drives the real pump.
-// RB is authorized before start; the workflow callback enters it and sends its
-// message while the pump is running, matching the driver's freshStart guard.
-async function preparePumpRun(f: S5DecisionFixture) {
-  const templateEnvelope = f.runRA.envelope;
-  if (templateEnvelope === null) throw new Error('entered RA has no saved envelope');
-  const raw = await f.bodies.read(templateEnvelope.bundleRef);
-  if (raw.status !== 'ready') throw new Error('entered RA manifest missing');
-  const template: PreparedTaskManifestV1 = JSON.parse(raw.value.body);
-  const claim = f.claimRB;
-  const manifest: PreparedTaskManifestV1 = { ...template, claim };
-  const json = JSON.stringify(manifest);
-  const stored = await f.bodies.put({ body: json, contentType: MANIFEST_CONTENT_TYPE,
-    sourceRefs: [{ kind: 'workspace', refId: 'W', revision: '3' }],
-    origin: { kind: 'run', owner: claim.runRef }, requestedAt: T });
-  if (stored.status !== 'ready') throw new Error('RB manifest could not be stored');
-  const prepared: PreparedTaskExecution = {
-    kind: 'task', claim,
-    envelope: { ...templateEnvelope, taskId: claim.task.taskId, runRef: claim.runRef,
-      attemptRef: claim.attemptRef, planRef: claim.planRef, bundleRef: stored.value.ref },
-    inputBinding: { schemaVersion: 1, inputDigest: manifest.inputDigest,
-      manifestDigest: artifactBodyDigest(json), materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [] },
-  };
-  const reads = createRunStateReader({ records: f.records });
-  const entry = createExecutionEntryService({ records: f.records, reads,
-    roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),
-    bodies: f.bodies, now: f.now, eventId: f.newId, newId: f.newId,
-    authorizeConfiguration: async (_ctx, input) => ({ status: 'ready', value: {
-      configurationRevision: input.configurationRevision,
-      permissions: structuredClone(input.permissions), hostTemplate: structuredClone(input.hostTemplate),
-    } }),
-  });
-  const read = () => reads.readExecution(f.ctx, claim.runRef).then(ready);
-  const before = await read();
-  expect(before.run).toMatchObject({ status: 'starting', revision: 1 });
-  const authorized = committed(await entry.authorizeRuntimeEntry(f.ctx, {
-    input: { prepared, consumerId: 'tu07-work' },
-    meta: { requestId: 'tu07-authorize', expected: [{ ref: claim.runRef, revision: before.run.revision }] },
-  }));
-  expect((await read()).run.executionAuthorization).toMatchObject({ phase: 'authorized' });
-  return { prepared, reads, async enter() {
-    const current = await read();
-    const kernel = { adapterId: current.session.kernel.adapterId, kernelSessionId: current.session.kernel.kernelSessionId,
-      runId: 'tu07-kernel-run', turnId: 'tu07-kernel-turn' };
-    const begun = committed(await entry.beginRuntimeEntry(f.ctx, {
-      input: { permit: authorized.value, kernel },
-      meta: { requestId: 'tu07-begin', expected: [{ ref: claim.runRef, revision: current.run.revision }] },
-    }));
-    const entering = await read();
-    return committed(await entry.recordExecutionEntered(f.ctx, {
-      input: { permit: { ...authorized.value, authorizationRevision: begun.value.authorization.revision },
-        enteredAt: T, kernelSource: { ...kernel, position: 3 },
-        history: { kernel, startPosition: 2, observedThroughPosition: 3, endPosition: null } },
-      meta: { requestId: 'tu07-enter', expected: [{ ref: claim.runRef, revision: entering.run.revision }] },
-    })).value;
-  } };
-}
-
-const unused = async (): Promise<never> => { throw new Error('TU07 reached an unused dependency'); };
-function observedRuntime() {
-  let queryStarts = 0;
-  const runtime: RuntimeExecutionPort = {
-    capabilities: unused, createSession: unused, readSessionHistory: unused, readExecutionHistory: unused,
-    readTaskExecutionHistory: unused, prepareExecution: unused, startRun: unused, observeRun: unused,
-    prepareQuery: unused, observeQuery: unused,
-    startQuery: async () => { queryStarts++; throw new Error('TU07 must not start a Query model'); },
-  };
-  return { runtime, queryStarts: () => queryStarts };
-}
-
-function completedAdvance(): WorkflowAdvanceResult {
-  return { status: 'ready', value: { state: 'completed', receipt: null, next: null, reason: 'pump scope finished' } };
-}
-
-async function pumpHarness(f: S5DecisionFixture, recipient: 'user' | 'session') {
-  const prepared = await preparePumpRun(f);
-  const owners = realOwners(f, ['adviser']);
-  const sessions = createSessionDirectory({ records: f.records, lookups: f.records });
-  // The profile exists and matches a real idle recipient in BOTH branches.
-  const recipientSession = await f.createS5Session('tu07-recipient');
-  const recipientCard = ready(await sessions.readSession(f.ctx, recipientSession));
-  const profile: WorkbenchQueryProfile = {
-    id: 'tu-profile', label: 'TU profile', scope: f.base.scope,
-    runtimeBindingId: 'tu-binding', sessionRole: recipientCard.record.role, roleBinding: f.runRB.roleBinding,
-    runtimeBudget: DEFAULT_RUNTIME_BUDGET, budget: { maxTokens: null, deadline: null }, consumerId: 'tu-consumer',
-  };
-  const observed = observedRuntime();
-  let consumeCalls = 0;
-  let message: SessionMessage | undefined;
-  let resolveMessage!: (value: SessionMessage) => void;
-  let rejectMessage!: (error: unknown) => void;
-  const sent = new Promise<SessionMessage>((resolve, reject) => { resolveMessage = resolve; rejectMessage = reject; });
-  let finish!: (result: WorkflowAdvanceResult) => void;
-  const ongoing = new Promise<WorkflowAdvanceResult>(resolve => { finish = resolve; });
-  const dependencies: CollaborationDriverDependencies = {
-    workflow: {
-      handleGoalInput: unused,
-      async advanceWork() {
-        try {
-          const run = await prepared.enter();
-          message = recipient === 'user'
-            ? (await sendDecision(f, owners, 'tu07-user-send', run)).message
-            : committed(await owners.mailbox.sendMessage(workContext(f, run), {
-              input: { recipient: recipientSession, text: 'Please inspect this.', intent: 'inquiry', needsReply: true, waitAfterSend: true },
-              meta: { requestId: 'tu07-inquiry-send', expected: [] },
-            })).value;
-          resolveMessage(message);
-          return await ongoing;
-        } catch (error) {
-          // Surface a setup stub directly to the test, never as a pump timeout.
-          rejectMessage(error);
-          throw error;
-        }
-      },
-      async consumeConsultation() {
-        consumeCalls++;
-        if (message === undefined) throw new Error('consultation before the real send');
-        // Hold the first consultation until the assertion finishes, so a slow
-        // test runner cannot turn the positive control into repeated polls.
-        await ongoing;
-        return { status: 'ready', value: { state: 'waiting', message, query: null, answer: null,
-          reason: 'ordinary Session consultation reached its consumer' } };
-      },
+// TU07 drives the real Runtime and the real Workflow: the scripted model sends
+// its wait through the real tool and is then held at a real gate; the driver's
+// consultation pump is the only consumer of a Session wait, and the real
+// consultation consumer refuses the user-recipient message.
+type ChangeFeed = { onChange: () => void; version: () => number; wait: (seen: number) => Promise<void> };
+function changeFeed(): ChangeFeed {
+  let version = 0;
+  const waiters: Array<() => void> = [];
+  return {
+    onChange() { version += 1; for (const resolve of waiters.splice(0)) resolve(); },
+    version: () => version,
+    wait(seen) {
+      if (version > seen) return Promise.resolve();
+      return new Promise<void>(resolve => { waiters.push(resolve); });
     },
-    runtime: observed.runtime, sessions, executions: prepared.reads, mailbox: owners.mailbox,
-    controls: { submitControl: unused, readControl: unused }, profiles: [profile],
   };
-  const input: CollaborationStartInput = {
-    advance: { schemaVersion: 1, goalRef: GOAL_B, flowId: 'tu-flow', sessionHint: f.claimRB.sessionRef,
-      kind: 'perform', operation: { kind: 'start', request: {
-        prepared: prepared.prepared, consumerId: 'tu07-work', requestId: 'tu07-start',
-      } } },
-    queryProfileIds: ['tu-profile'],
-  };
-  return { f, owners, sessions, input, sent, finish, ...observed,
-    driver: createCollaborationDriver(dependencies), consumeCalls: () => consumeCalls };
 }
 
-async function waitForState(f: S5DecisionFixture, driver: CollaborationDriver, wanted: CollaborationState) {
-  const deadline = Date.now() + 5_000;
-  for (;;) {
-    const read = ready(await driver.read(f.ctx, { goalRef: GOAL_B }));
-    if (read.state === wanted) return;
-    if (read.state === 'failed' || Date.now() > deadline) throw new Error(`TU07 expected ${wanted}: ${JSON.stringify(read)}`);
-    await new Promise(resolve => setTimeout(resolve, 20));
+type PumpWorld = {
+  p: WP2PlatformFixture;
+  claim: NonNullable<WP2PlatformFixture['claim']>;
+  roleBinding: RunSnapshot['roleBinding'];
+  driver: CollaborationDriver;
+  feed: ChangeFeed;
+  input: CollaborationStartInput;
+  replyReached: Promise<void>;
+  releaseReply: () => void;
+  consultReached: Promise<void>;
+  releaseConsult: () => void;
+  consultFinished: Promise<void>;
+  consumeCalls: () => number;
+  advanceCalls: () => number;
+};
+
+/**
+ * One real WP2 world: the composition's real Runtime/Workflow, the claimed Run's
+ * real prepared value, an idle recipient Session and the scripted model's real
+ * `send_user_message`/`send_session_message` call. Every wrapper only counts,
+ * holds the real dependency at a gate, and returns its result unchanged.
+ */
+async function openPump(recipient: 'user' | 'session'): Promise<PumpWorld> {
+  let releaseReply!: () => void;
+  const replyGate = new Promise<void>(resolve => { releaseReply = resolve; });
+  let replyReached!: () => void;
+  const replyReachedPromise = new Promise<void>(resolve => { replyReached = resolve; });
+  const scriptedReplies: ScriptedReply[] = [];
+  const p = await createWP2Platform({
+    kind: 'memory', duty: 'secretary', check: true, checkRequirementKind: 'static',
+    workflowBound: true, ownedHost: true, allowAnyRun: true,
+    allowSourceRead: true,
+    scriptedReplies,
+    queryReplies: [{ kind: 'text', text: 'TU07 consultation answer' }],
+    // The user wait does not yield: the model's next request after the real send
+    // is the controlled gate. A Session wait does yield (the real Runtime's
+    // after-group barrier), so its own saved wait is the controlled hold.
+    ...(recipient === 'user' ? {
+      beforeReply: async (_request: unknown, index: number) => {
+        if (index === 1) { replyReached(); await replyGate; }
+      },
+    } : {}),
+  });
+  try {
+    const claim = p.claim;
+    if (claim === null) throw new Error('TU07 needs a claimed Run');
+    const source = ready(await p.platform.sessions.readSession(p.ctx, p.sessionRef));
+    const run = ready(await p.platform.executions.readExecution(p.ctx, claim.runRef));
+    const created = await p.platform.runtime.createSession(p.ctx, {
+      workspace: p.scope, role: source.record.role, recommendedRefs: [], initialLinks: [],
+      meta: { requestId: 'tu07-recipient', expected: [] } });
+    if (created.status !== 'completed') throw new Error(`TU07 recipient Session: ${JSON.stringify(created)}`);
+    const recipientRef = { projectId: created.value.ref.projectId, sessionId: created.value.ref.sessionId };
+    scriptedReplies.push(
+      { kind: 'calls', calls: [recipient === 'user'
+        ? { callId: 'tu07-user-send', name: 'send_user_message',
+          args: decisionRequestArgs(p.goalRef, { waitAfterSend: false }) }
+        : { callId: 'tu07-inquiry-send', name: 'send_session_message',
+          args: { recipient: recipientRef, text: 'Please inspect this.', intent: 'inquiry',
+            needsReply: true, waitAfterSend: true } }] },
+      { kind: 'text', text: 'TU07 final reply' },
+    );
+    const prepared = await p.platform.runtime.prepareExecution(p.ctx, {
+      runRef: claim.runRef, requestId: 'tu07-prepare' });
+    if (prepared.status !== 'ready') throw new Error(`TU07 prepareExecution: ${JSON.stringify(prepared)}`);
+
+    const real = p.platform.workflow;
+    const consume = real.consumeConsultation;
+    if (consume === undefined) throw new Error('TU07 the real Workflow has no consultation consumer');
+    let consumeCalls = 0;
+    let advanceCalls = 0;
+    let releaseConsult!: () => void;
+    const consultGate = new Promise<void>(resolve => { releaseConsult = resolve; });
+    let consultReached!: () => void;
+    const consultReachedPromise = new Promise<void>(resolve => { consultReached = resolve; });
+    let consultFinished!: () => void;
+    const consultFinishedPromise = new Promise<void>(resolve => { consultFinished = resolve; });
+    const workflow: WorkflowPort = {
+      handleGoalInput: real.handleGoalInput,
+      async advanceWork(ctx, input, internal) {
+        advanceCalls += 1;
+        return real.advanceWork(ctx, input, internal);
+      },
+      async consumeConsultation(ctx, input) {
+        consumeCalls += 1;
+        consultReached();
+        await consultGate;
+        try { return await consume.call(real, ctx, input); }
+        finally { consultFinished(); }
+      },
+    };
+    const profile: WorkbenchQueryProfile = {
+      id: 'tu-profile', label: 'TU profile', scope: p.scope,
+      runtimeBindingId: 'tu-binding', sessionRole: source.record.role, roleBinding: run.run.roleBinding,
+      runtimeBudget: DEFAULT_RUNTIME_BUDGET, budget: { maxTokens: null, deadline: null },
+      consumerId: 'tu-consumer',
+    };
+    const feed = changeFeed();
+    const driver = createCollaborationDriver({
+      workflow, runtime: p.platform.runtime, sessions: p.platform.sessions,
+      executions: p.platform.executions, mailbox: p.platform.messages,
+      controls: p.platform.controls, profiles: [profile], onChange: feed.onChange,
+    });
+    const input: CollaborationStartInput = {
+      advance: { schemaVersion: 1, goalRef: p.goalRef, flowId: 'tu-flow', sessionHint: claim.sessionRef,
+        taskId: claim.task.taskId,
+        kind: 'perform', operation: { kind: 'start', request: {
+          prepared: prepared.value, consumerId: 'tu07-work', requestId: 'tu07-start',
+        } } },
+      queryProfileIds: ['tu-profile'],
+    };
+    return { p, claim, roleBinding: run.run.roleBinding, driver, feed, input,
+      replyReached: replyReachedPromise, releaseReply,
+      consultReached: consultReachedPromise, releaseConsult,
+      consultFinished: consultFinishedPromise,
+      consumeCalls: () => consumeCalls, advanceCalls: () => advanceCalls };
+  } catch (error) {
+    await p.close();
+    throw error;
   }
 }
-async function waitUntil(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  while (!predicate()) {
-    if (Date.now() > deadline) throw new Error('TU07 ordinary consultation never reached its consumer');
-    await new Promise(resolve => setTimeout(resolve, 20));
+
+/** Read the real saved wait through the sender Run's public outbox. */
+async function outboxMessage(world: PumpWorld): Promise<SessionMessage> {
+  const readOutbox = world.p.platform.messages.readOutbox;
+  if (readOutbox === undefined) throw new Error('TU07 the mailbox has no readOutbox');
+  const read = ready(await readOutbox.call(world.p.platform.messages,
+    world.p.workCtx(world.claim.runRef), { senderRun: world.claim.runRef, page: { limit: 10 } }));
+  const message = read.items.find(candidate => candidate.sender.kind === 'work_run');
+  if (message === undefined) throw new Error('TU07 the real send saved no wait message');
+  return message;
+}
+
+/** The public reads a no-op consumer call must leave untouched, plus the real commit log. */
+async function publicState(world: PumpWorld, message: SessionMessage) {
+  return {
+    message: ready(await world.p.platform.messages.readMessage(world.p.ctx, message.ref)),
+    session: ready(await world.p.platform.sessions.readSession(world.p.ctx, world.p.sessionRef)),
+    goal: ready(await world.p.platform.plans.queryGoal(world.p.ctx, world.p.goalRef)),
+    commits: world.p.commits().length,
+  };
+}
+
+/** Wait on the driver's real change feed (never a sleep) for one public state. */
+async function waitForDriverState(world: PumpWorld, wanted: CollaborationState): Promise<void> {
+  let seen = world.feed.version();
+  for (;;) {
+    const read = ready(await world.driver.read(world.p.ctx, { goalRef: world.p.goalRef }));
+    if (read.state === wanted) return;
+    if (read.state === 'failed'
+      || (wanted === 'waiting_for_reply' && read.state !== 'running')
+      || (wanted === 'completed' && read.state !== 'running' && read.state !== 'waiting_for_reply')) {
+      throw new Error(`TU07 expected ${wanted}: ${JSON.stringify(read)}`);
+    }
+    await world.feed.wait(seen);
+    seen = world.feed.version();
   }
 }
 
 describe('S5 user-decision consultation pump', () => {
   it('TU07 keeps a user decision wait out of the real Session consultation consumer and pump', async () => {
-    const f = await openFixture();
-    const userPump = await pumpHarness(f, 'user');
+    const user = await openPump('user');
     try {
-      ready(await userPump.driver.start(f.ctx, userPump.input));
-      const message = await userPump.sent;
-      await waitForState(f, userPump.driver, 'waiting_for_reply');
-      expect(userPump.consumeCalls()).toBe(0);
-      expect(userPump.queryStarts()).toBe(0);
-      const before = await f.storeSnapshot();
-      const recordDerivation = userPump.owners.mailbox.recordConsultationDerivation;
-      if (recordDerivation === undefined) throw new Error('real mailbox lacks consultation derivation');
-      const consumer = createConsultationConsumer({
-        sessions: userPump.sessions,
-        plans: createPlanService({ records: f.records, now: f.now, eventId: f.newId }),
-        runtime: userPump.runtime,
-        consultations: {
-          messages: {
-            readMessage: userPump.owners.mailbox.readMessage,
-            readMessageBody: userPump.owners.mailbox.readMessageBody,
-            respondFromQueryAnswer: userPump.owners.mailbox.respondFromQueryAnswer,
-            recordConsultationDerivation: recordDerivation,
-          },
-          queries: createQueryJobService({ records: f.records, now: f.now, eventId: f.newId }),
-          projects: { createProject: unused, registerWorkspace: unused, readWorkspaceRegistration: unused },
-        },
-      });
-      const input: ConsultationInput = { schemaVersion: 1, messageRef: message.ref, goalRef: GOAL_B,
-        roleBinding: f.runRB.roleBinding, runtimeBudget: DEFAULT_RUNTIME_BUDGET,
-        budget: { maxTokens: null, deadline: null }, consumerId: 'tu07-consumer' };
-      expect(await consumer(f.ctx, input)).toMatchObject({ status: 'rejected', code: 'unsupported' });
-      expect(userPump.queryStarts()).toBe(0);
-      expect(await f.storeSnapshot()).toEqual(before);
-      userPump.finish(completedAdvance());
-      await waitForState(f, userPump.driver, 'completed');
+      ready(await user.driver.start(user.p.ctx, user.input));
+      await user.replyReached;
+      await waitForDriverState(user, 'waiting_for_reply');
+      const message = await outboxMessage(user);
+      expect(user.consumeCalls()).toBe(0);
+      expect(user.p.queryScripted.calls()).toBe(0);
+      const before = await publicState(user, message);
+      const consume = user.p.platform.workflow.consumeConsultation;
+      if (consume === undefined) throw new Error('TU07 the real Workflow has no consultation consumer');
+      const refused = await consume.call(user.p.platform.workflow, user.p.ctx, {
+        schemaVersion: 1, messageRef: message.ref, goalRef: user.p.goalRef,
+        roleBinding: user.roleBinding, runtimeBudget: DEFAULT_RUNTIME_BUDGET,
+        budget: { maxTokens: null, deadline: null }, consumerId: 'tu07-consumer' });
+      expect(refused).toMatchObject({ status: 'rejected', code: 'unsupported' });
+      expect(user.p.queryScripted.calls()).toBe(0);
+      expect(await publicState(user, message)).toEqual(before);
+      expect(user.p.commits().length).toBe(before.commits);
+      user.releaseReply();
+      await waitForDriverState(user, 'completed');
+      expect(user.advanceCalls()).toBeGreaterThan(0);
     } finally {
-      userPump.finish(completedAdvance());
-      await userPump.driver.close();
+      user.releaseReply();
+      await user.driver.close();
+      await user.p.close();
     }
 
-    const other = await openFixture();
-    const sessionPump = await pumpHarness(other, 'session');
+    const other = await openPump('session');
     try {
-      ready(await sessionPump.driver.start(other.ctx, sessionPump.input));
-      await sessionPump.sent;
-      await waitForState(other, sessionPump.driver, 'waiting_for_reply');
-      await waitUntil(() => sessionPump.consumeCalls() > 0);
-      expect(sessionPump.consumeCalls()).toBe(1);
-      sessionPump.finish(completedAdvance());
-      await waitForState(other, sessionPump.driver, 'completed');
+      ready(await other.driver.start(other.p.ctx, other.input));
+      await waitForDriverState(other, 'waiting_for_reply');
+      await other.consultReached;
+      expect(other.consumeCalls()).toBe(1);
+      other.releaseConsult();
+      await other.consultFinished;
+      expect(other.consumeCalls()).toBe(1);
+      expect(other.p.queryScripted.calls()).toBe(1);
+      other.releaseReply();
+      await waitForDriverState(other, 'completed');
     } finally {
-      sessionPump.finish(completedAdvance());
-      await sessionPump.driver.close();
+      other.releaseConsult();
+      other.releaseReply();
+      await other.driver.close();
+      await other.p.close();
     }
   });
 });

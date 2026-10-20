@@ -1,10 +1,9 @@
 /**
  * Slice 5 §2.5/§2.8/§4.1: the ONE `NoticePositionV1` order and page point (F45).
  *
- * Ordering (spec §2.5): a legacy position is before any commit position; legacy
- * pairs order by ISO `occurredAt` then `itemKey`; commit pairs order by ledger
- * cursor then `itemKey`. This file is the only ReadModelIndex comparison point:
- * it is the only place allowed to call `contracts/ledger.ts:seqOfCommitCursor`.
+ * Ordering (spec §2.5): pairs order by ledger cursor then `itemKey`. This file
+ * is the only ReadModelIndex comparison point: it is the only place allowed to
+ * call `contracts/ledger.ts:seqOfCommitCursor`.
  * Other layers never parse a cursor; `state/` receives the service-computed
  * movement.
  */
@@ -44,18 +43,9 @@ export function compareNoticePositions(
   a: NoticePositionV1,
   b: NoticePositionV1,
 ): -1 | 0 | 1 {
-  if (a.kind === 'legacy' && b.kind === 'commit') return -1;
-  if (a.kind === 'commit' && b.kind === 'legacy') return 1;
-  if (a.kind === 'legacy' && b.kind === 'legacy') {
-    const byTime = compareText(a.occurredAt, b.occurredAt);
-    return byTime !== 0 ? byTime : compareText(a.itemKey, b.itemKey);
-  }
-  if (a.kind === 'commit' && b.kind === 'commit') {
-    // The one permitted cursor parse: compare by ledger sequence, then itemKey.
-    const bySequence = seqOfCommitCursor(a.cursor) - seqOfCommitCursor(b.cursor);
-    return bySequence !== 0 ? (bySequence < 0 ? -1 : 1) : compareText(a.itemKey, b.itemKey);
-  }
-  return 0;
+  // The one permitted cursor parse: compare by ledger sequence, then itemKey.
+  const bySequence = seqOfCommitCursor(a.cursor) - seqOfCommitCursor(b.cursor);
+  return bySequence !== 0 ? (bySequence < 0 ? -1 : 1) : compareText(a.itemKey, b.itemKey);
 }
 
 /**

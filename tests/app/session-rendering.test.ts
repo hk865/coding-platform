@@ -411,6 +411,17 @@ describe('Session history tool-card identity and honest state', () => {
       toolStarted('agent:start', 3, 'run-1', 'call-1', 'read_file', { path: 'a.ts' }),
       toolCompleted('agent:done', 4, 'run-1', 'call-1', outputParts('OUT')),
       agentEvent({ recordId: 'agent:unknown', position: 5, runId: 'run-1', type: 'future.event', payload: { note: 'unknown' } }),
+      // An ArtifactRef record: its body is a reference, never the artifact's text.
+      { recordId: 'artifact:1', cursor: 'kernhist1.6', recordedAt: EVENT_TIME, kind: 'agent_event' as const,
+        source: { adapterId: 'adapter-1', kernelSessionId: 'session-1', position: 6 },
+        body: { kind: 'artifact' as const, contentType: 'text/plain', digest: 'b'.repeat(64), sizeBytes: 12,
+          source: { kind: 'workspace' as const, refId: 'README.md', revision: '1' } } },
+      // A saved record of an unknown record type (not `agent.event`): it is
+      // still identifiable and its raw text stays available on demand.
+      { recordId: 'record:unknown', cursor: 'kernhist1.7', recordedAt: EVENT_TIME, kind: 'agent_event' as const,
+        source: { adapterId: 'adapter-1', kernelSessionId: 'session-1', position: 7 },
+        body: { encoding: 'kernel_session_record_json' as const,
+          text: JSON.stringify({ recordType: 'future.unknown', payload: { note: 'unknown' } }) } },
     ];
     const saved = JSON.parse((entries[1]!.body as { text: string }).text);
     saved.payload.event.payload.message.reasoningContent = '**已保存的判断**';
@@ -418,6 +429,11 @@ describe('Session history tool-card identity and honest state', () => {
     const html = renderSessionHistoryTimeline(page(entries));
     expect(html).toContain('<strong>已保存的判断</strong>');
     expect(html).toMatch(/<details class="history-reasoning">/);
+    // The saved original record is available through an explicitly collapsed disclosure.
+    const savedRaw = html.match(/<details\b[^>]*data-history-raw="agent:a"[^>]*>[\s\S]*?<\/details>/)?.[0] ?? '';
+    expect(savedRaw).toContain('已保存的判断');
+    expect(savedRaw).toContain('reasoningContent');
+    expect(savedRaw).not.toMatch(/<details\b[^>]*\sopen(?:[=\s>])/);
     for (const entry of entries) {
       expect(html).toContain(`data-history="${entry.recordId}"`);
       expect(html).toContain(`data-history-raw="${entry.recordId}"`);
@@ -428,8 +444,14 @@ describe('Session history tool-card identity and honest state', () => {
     expect(taggedBlocks(html, 'data-history-raw="agent:unknown"')[0]?.text ?? '').toContain('unknown');
     expect(taggedBlocks(html, 'data-history-raw="agent:start"')[0]?.text ?? '').toContain('read_file');
     expect(taggedBlocks(html, 'data-history-raw="agent:done"')[0]?.text ?? '').toContain('OUT');
+    expect(html).toContain('未识别记录 · <code>future.unknown</code>');
+    expect(taggedBlocks(html, 'data-history-raw="record:unknown"')[0]?.text ?? '').toContain('future.unknown');
     const order = entries.map(entry => html.indexOf(`data-history="${entry.recordId}"`));
     expect(order).toEqual([...order].sort((left, right) => left - right));
+    expect(html).toContain('kernhist1.1'); // cursor preserved
+    expect(html).toContain('position 1'); // source.position preserved
+    expect(html).toContain('data-history-body="artifact"'); // ArtifactRef is not read as text
+    expect(html).toContain('正文未读取');
   });
 
   // UI-progressive Stage-1 contract (docs/refactor/tasks/UI-progressive-session-2026-09-29.md):

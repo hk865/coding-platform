@@ -3,13 +3,14 @@ import { createHash } from 'node:crypto';
 import { lstat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SourceAccess } from './source-index.js';
+import type { TypeScriptSourceQuery } from './typescript-source-query.js';
 import { WORKSPACE_DENIED_PREFIXES } from './denied-prefixes.js';
 
 /**
  * WorkspaceTools — the single live projection of permission-filtered project inputs.
  *
  * This file owns every disk/inventory/identity read used by the TypeScript project
- * service. `typescript-source-query.ts` and `project-source-index.ts` only ever see
+ * service. `typescript-source-query.ts` only ever sees
  * the frozen material published here, so a capture can be analysed repeatedly with
  * no further I/O and an older capture cannot be changed by a newer one.
  */
@@ -26,6 +27,13 @@ export type ProjectSourceAccess = SourceAccess & {
     { source: 'git'; paths: string[] } | { source: 'skip_list'; reason: string }>;
   /** §11.4, optional: only a git work tree has a second, ignored-database listing. */
   listIgnoredCompileDatabases?(signal: AbortSignal): Promise<readonly string[]>;
+};
+
+/** Public tool query: the original fields plus request-scoped pagination and snapshot pinning. */
+export type ProjectSourceQuery = TypeScriptSourceQuery & {
+  expectedSnapshot?: string;
+  offset?: number;
+  limit?: number;
 };
 
 /** One frozen project input; `path` is the normalized workspace-relative path. */

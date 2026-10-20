@@ -237,7 +237,7 @@ Promise<{ goalRef: GoalRef; plan: PlanRevisionSnapshot }> {
     input: { goalId: GOAL2, workspace: f.scope, objective: 'second goal' } });
   if (created.status !== 'committed') throw new Error(`create goal2 failed: ${JSON.stringify(created)}`);
   const draft: PlanRevisionDraft = {
-    schemaVersion: 1, planId: 's4c2-plan-2', planRevision: 1, goalId: GOAL2,
+    schemaVersion: 2, planId: 's4c2-plan-2', planRevision: 1, goalId: GOAL2,
     stages: [{ stageId: 's1', title: 'Second stage' }],
     tasks: [{ taskId: 't1', stageId: 's1', title: 'Second work', requirementLevel: 'required', taskKind: 'work',
       disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },

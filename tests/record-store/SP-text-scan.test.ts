@@ -9,11 +9,8 @@
  * here, never a product comparison.
  */
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { rm } from 'node:fs/promises';
 import { keyOf, open, plainIndex, refs, search, seed, textIndex, widget, withLookups, withTextIndex, type OpenOptions, type TextBackend } from '../helpers/S4B-text-search-support.js';
-import { addLegacyFtsArtifacts } from '../helpers/SP-storage-migration-fixture.js';
 import type { RecordLookupIndex } from '../../src/core/record-store/lookup-ports.js';
 
 const dirs: string[] = [];
@@ -394,43 +391,6 @@ it('SP-11B sqlite: another connection rebuilds with a changed registration and t
       .toMatchObject({ status: 'rejected', code: 'unavailable', reason: 'index_not_ready' });
   } finally {
     await first.backend.close();
-  }
-});
-
-it('SP-12 sqlite: the 4B-era file upgrade-compatibility check (results through the ports)', async () => {
-  const eraDir = await mkdtemp(join(tmpdir(), 'sp-era-'));
-  dirs.push(eraDir);
-  const legacyPath = join(eraDir, 'legacy.sqlite');
-  const plainPath = join(eraDir, 'plain.sqlite');
-  const eraRows = [
-    widget('p1', 'n1', { topic: '架构图需要重画' }),
-    widget('p1', 'n2', { topic: '令牌刷新' }),
-  ];
-  for (const [name, path] of [['legacy', legacyPath], ['plain', plainPath]] as const) {
-    const built = await open('sqlite', { schemas: withLookups([]), path });
-    await seed(built.backend, eraRows, `sp12-${name}`);
-    await built.backend.close();
-  }
-  // The allowed storage-migration fixture: legacy FTS tables and `next_fts_meta`.
-  addLegacyFtsArtifacts(legacyPath, ['next_fts_sp_legacy']);
-  const legacy = await open('sqlite', { path: legacyPath });
-  const plain = await open('sqlite', { path: plainPath });
-  try {
-    const queries: readonly PageRequest[] = [
-      { index: 's4b-text', values: ['p1'], terms: ['架构'], limit: 20 },
-      { index: 's4b-text', values: ['p1'], terms: ['令牌'], limit: 20 },
-    ];
-    const expected: readonly string[][] = [[keyOf('p1', 'n1')], [keyOf('p1', 'n2')]];
-    for (const [position, query] of queries.entries()) {
-      const legacyPage = await search(legacy.backend, query);
-      const plainPage = await search(plain.backend, query);
-      expect(refs(legacyPage)).toEqual(expected[position]);
-      expect({ refs: refs(legacyPage), next: legacyPage.next, complete: legacyPage.complete })
-        .toEqual({ refs: refs(plainPage), next: plainPage.next, complete: plainPage.complete });
-    }
-  } finally {
-    await legacy.backend.close();
-    await plain.backend.close();
   }
 });
 
