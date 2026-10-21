@@ -39,6 +39,21 @@
       "mentionsTools": [
         "propose_safer_method"
       ]
+    },
+    "work-input": {
+      "file": "templates/work-input.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "query-planning-input": {
+      "file": "templates/query-planning-input.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "query-copy-input": {
+      "file": "templates/query-copy-input.txt",
+      "version": 1,
+      "mentionsTools": []
     }
   },
   "strings": "strings.json",

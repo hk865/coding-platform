@@ -21,6 +21,7 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteAnchorV1, NoteDraftAnchorV1, NoteHeadSnapshot, NoteState, NoteVersionSnapshot } from '../../../contracts/note.js';
 import { NOTE_GENERAL_KINDS, renderNoteHeader } from '../../../contracts/note.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../../contracts/prompts/platform-pack.generated.js';
 import type { GoalRecordTransactionPort, EncodedRecord } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort, RecordTextSearchPort } from '../../record-store/lookup-ports.js';
 import { decodeTextSearchAfter, normalizeSearchText, searchTextFrom } from '../../record-store/lookup-index.js';
@@ -1844,10 +1845,11 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
 
   /** L20: one warning line or none; the conclusion and its warning never split. */
   function generalWarningLabel(item: NoteItemV1, head: NoteHeadSnapshot): string | null {
-    const word = item.freshness === 'stale' ? '需复查'
-      : item.conflicting ? '冲突'
-      : item.sourceUnavailable ? '来源不可用' : null;
-    return word === null ? null : `${word}：${head.noteId} ${head.conclusion}，不能当现行结论`;
+    const S = PLATFORM_PROMPT_PACK_V1.strings;
+    const word = item.freshness === 'stale' ? S['note.warning.stale']
+      : item.conflicting ? S['note.warning.conflict']
+      : item.sourceUnavailable ? S['note.warning.sourceUnavailable'] : null;
+    return word === null ? null : `${word}${S['note.warning.separator']}${head.noteId} ${head.conclusion}${S['note.warning.suffix']}`;
   }
 
   /**

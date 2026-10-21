@@ -53,11 +53,11 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "20f903996aeafa428884c6aab8f5fde49533cba6e6e8a93fd6c87684482647f4"
+    "sha256": "ea3d3018da772012915bc23db4217ae68c3101968faccbd0947d51d88a6533b8"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "f504e0115f4c0a78d5a78c056c3372842257e4633cdd73e483424ede541edeb4"
+    "sha256": "25c399e0bd9983bbbd99d99c1d5613597218549dbb9a9a5485ede64119bc51ad"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
@@ -86,6 +86,18 @@
   {
     "path": "resources/prompts/platform/templates/unknown-call-proposal.txt",
     "sha256": "25312493c04d0312852c64164e473c7a17fb467b5bbb1d86db68aba3916ea849"
+  },
+  {
+    "path": "resources/prompts/platform/templates/work-input.txt",
+    "sha256": "9692b55ea1dfd41e55768b9d3db29e0a52ba7b8d0b87fd6bff5953b39eab5e12"
+  },
+  {
+    "path": "resources/prompts/platform/templates/query-planning-input.txt",
+    "sha256": "ac29545b215361ea2ce479007f2c3ffcc3daa87a2bbacaf89957b49aa4022a77"
+  },
+  {
+    "path": "resources/prompts/platform/templates/query-copy-input.txt",
+    "sha256": "89ee28b2dc868787a7e41a063edadf9765e474e93b3bb477b038f93909808e20"
   },
   {
     "path": "resources/prompts/platform/tools/query_task_graph.json",
