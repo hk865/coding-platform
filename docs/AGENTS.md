@@ -1,6 +1,6 @@
 # 文档工作入口
 
-更新：2026-10-21。本文件只约束 `docs/` 的阅读和维护，不改变产品或源码架构。仓库根就是施工工程；旧证据里的绝对路径和 scope 按[根 AGENTS](../AGENTS.md)第 2 条映射。（2026-10-21 补注：T 后小修已合入（`aab1a8fd`…`4a8a1400`，决定 86）。下一步是用户定规模测试的拆分（决定 86-6），然后决定 83。）
+更新：2026-10-21。本文件只约束 `docs/` 的阅读和维护，不改变产品或源码架构。仓库根就是施工工程；旧证据里的绝对路径和 scope 按[根 AGENTS](../AGENTS.md)第 2 条映射。（2026-10-21 补注：T 后小修已合入（`aab1a8fd`…`4a8a1400`，决定 86）。下一步：规模测试拆分（决定 86-6，用户 10-21 已定）施工，同时写决定 83 那一节。）
 
 先读 [README](README.md) → [STATUS](refactor/STATUS.md)（当前状态）→ [HANDOFF 顶部](refactor/HANDOFF.md)（决定 1–86）→ [编排设计目录](refactor/design/orchestration-2026-10/README.md)。按任务读对应分片，界面工作读[冻结原型](ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](UI-WORKBENCH.md#ui-decisions-2026-10)。
 
