@@ -1,0 +1,8 @@
+{
+  "base": "edge-base-e1.jsonl",
+  "result": "edge-merge-e1.jsonl",
+  "cases": 308,
+  "differences": 0,
+  "errors": 0,
+  "details": []
+}

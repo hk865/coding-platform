@@ -1,0 +1,37 @@
+{
+  "probes": [
+    { "probe": "assembler:task", "required": true },
+    { "probe": "assembler:query", "required": true },
+    { "probe": "assembler:attention", "required": false },
+    { "probe": "deps", "required": true },
+    { "probe": "stored:task", "required": true },
+    { "probe": "stored:task:put", "required": true },
+    { "probe": "stored:query", "required": true },
+    { "probe": "stored:query:put", "required": true }
+  ],
+  "readPoints": [
+    { "method": "executions.readExecution", "file": "src/core/agent-runtime/context-assembler.ts", "line": 1406 },
+    { "method": "executions.readContinuationBasis", "file": "src/core/agent-runtime/context-assembler.ts", "line": 1573 },
+    { "method": "roles.resolveRoleBindingFacts", "file": "src/core/agent-runtime/context-assembler.ts", "line": "no call site (deps member never read)" },
+    { "method": "materials.storeArtifact", "file": "src/core/agent-runtime/context-assembler.ts", "line": "no call site (deps member never read)" },
+    { "method": "materials.openArtifact", "file": "src/core/agent-runtime/context-assembler.ts", "line": "no call site (deps member never read)" },
+    { "method": "bodies.read", "file": "src/core/agent-runtime/context-assembler.ts", "line": "1053, 1061 (via workspace-baseline-artifact.ts:38,47,64)" },
+    { "method": "graphContext.readContextFacts", "file": "src/core/agent-runtime/context-assembler.ts", "line": "1696, 1793, 1981" },
+    { "method": "graphContext.readAttentionFacts", "file": "src/core/agent-runtime/context-assembler.ts", "line": 2033 },
+    { "method": "taskInputs.readTaskInputPage", "file": "src/core/agent-runtime/context-assembler.ts", "line": 1823 },
+    { "method": "architectureReminders.read", "file": "src/core/agent-runtime/context-assembler.ts", "line": 1753 },
+    { "method": "unknownCallReviews.readReview", "file": "src/core/agent-runtime/context-assembler.ts", "line": 1394 },
+    { "method": "commandRerunRequests.listRequests", "file": "src/core/agent-runtime/context-assembler.ts", "line": 1518 },
+    { "method": "workspaceHost.resolveRoot", "file": "src/core/agent-runtime/context-assembler.ts", "line": "989, 1083" },
+    { "method": "workspaceSource.captureDigest", "file": "src/core/agent-runtime/context-assembler.ts", "line": 1000 },
+    { "method": "workspaceSource.capture", "file": "src/core/agent-runtime/context-assembler.ts", "line": 1006 },
+    { "method": "workspaceSource.readBaselineBlob", "file": "src/core/agent-runtime/context-assembler.ts", "line": 1111 },
+    { "method": "workspaceSource.readCurrentFile", "file": "src/core/agent-runtime/context-assembler.ts", "line": 1112 },
+    { "method": "sessions", "file": "src/core/agent-runtime/context-assembler.ts", "line": "no call site (deps member never read)" },
+    { "method": "kernelStores.byAdapterId", "file": "src/core/agent-runtime/session-operations.ts", "line": "900, 1008, 1025 (entry context-assembler.ts:1179, 1238, 1279, 1358)" },
+    { "method": "kernelStores.withStore", "file": "src/core/agent-runtime/session-operations.ts", "line": "903, 1013, 1040 (entry as above)" },
+    { "method": "kernelStores.forWorkspace", "file": "src/core/agent-runtime/session-operations.ts", "line": "584, 762" },
+    { "method": "plans", "file": "src/core/agent-runtime/context-assembler.ts", "line": "no call site (deps member never read)" },
+    { "method": "now", "file": "src/core/agent-runtime/context-assembler.ts", "line": "1670 (read), 1768, 1863; briefWorkspaceFactsFor:975" }
+  ]
+}

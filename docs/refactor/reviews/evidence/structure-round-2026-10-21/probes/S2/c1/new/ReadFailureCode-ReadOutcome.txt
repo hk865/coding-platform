@@ -1,0 +1,4 @@
+/** The note-port failure codes a store/record read can produce (all in NoteErrorCode). */
+export type ReadFailureCode = 'invalid' | 'not_found' | 'revision_conflict' | 'unavailable';
+
+export type ReadOutcome<T> = { ok: true; value: T } | { ok: false; code: ReadFailureCode; reason: string };

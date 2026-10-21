@@ -1,0 +1,92 @@
+export function renderUnknownCallReviewZh(input: UnknownCallReviewInputV1): string {
+  const workspace = input.workspace;
+  const omitted = (count: number): string => count > 0
+    ? `${STR['k3.workspace.omittedLead']}${String(count)}${STR['k3.workspace.omittedSuffix']}` : '';
+  const workspaceLines: string[] = [];
+  workspaceLines.push(`${STR['k3.workspace.statusLead']}${workspace.status}${STR['k3.workspace.baselineMiddle']}`
+    + `${workspace.runBaselineKnown ? STR['k3.workspace.yes'] : STR['k3.workspace.no']}`);
+  workspaceLines.push(`${STR['k3.workspace.notVisibleLead']}`
+    + `${workspace.notVisible.length === 0 ? STR['k3.none']
+      : workspace.notVisible.join(STR['k3.list.separator']) + omitted(workspace.notVisibleOmitted)}`);
+  workspaceLines.push(`${STR['k3.workspace.changedLead']}`
+    + `${workspace.changedSample.length === 0 ? STR['k3.none']
+      : workspace.changedSample.map(path => `${path.path}（${path.change}）`).join(STR['k3.list.separator'])
+        + omitted(workspace.changedOmitted)}`);
+  workspaceLines.push(STR['k3.workspace.disclaimer']);
+  const writtenLines: string[] = [];
+  const written = input.items.filter(item => item.current !== null
+    && (item.current.by === 'review_round' || item.current.by === 'settlement'));
+  if (written.length === 0) {
+    writtenLines.push(STR['k3.none']);
+  } else {
+    for (const item of written) {
+      const current = item.current;
+      if (current === null || (current.by !== 'review_round' && current.by !== 'settlement')) continue;
+      writtenLines.push(`${STR['k3.written.lineLead']}${String(item.alias)}${STR['k3.written.verdictLead']}`
+        + `${current.verdict}${STR['k3.written.evidenceLead']}${current.evidence}`);
+    }
+  }
+  // L20: the proposal phase lists the proposal targets and the person's note and
+  // annotations. The review-only item list and its two questions would ask the
+  // model to review instead of propose, so they are not rendered here.
+  if (input.phase === 'proposal') {
+    const indent = (text: string): string => text.replace(/\r\n|\n/g, STR['k3.proposal.newlineIndent']);
+    const targetLines: string[] = [];
+    const targets = [...(input.targets ?? [])].sort((left, right) => left - right);
+    for (const alias of targets) {
+      const item = input.items.find(entry => entry.alias === alias);
+      if (item === undefined) continue;
+      // L20/lead answer 3: trimming makes an item `unexpanded` only to fit the
+      // prepared manifest. The proposal must still show the record's own cut,
+      // marked as a cut, never "（无）". Truncated items keep their 4 KiB cut.
+      const original = item.display === 'unexpanded'
+        ? indent(item.summaryCommand ?? '') + STR['k3.proposal.summarySuffix']
+        : indent(item.command?.text ?? STR['k3.none']);
+      targetLines.push(`${STR['k3.proposal.targetLead']}${String(alias)}（${item.toolName}）`
+        + `${STR['k3.proposal.commandLead']}${original}`);
+    }
+    const personNote = input.personText !== null && input.personText !== ''
+      ? `${STR['k3.proposal.personLead']}${input.personText}` : '';
+    const annotationLines = input.annotations.map(annotation =>
+      `${STR['k3.proposal.annotationLead']}${annotation.path ?? STR['k3.proposal.annotationRecord']}`
+      + `${STR['k3.proposal.annotationMiddle']}${annotation.text}`);
+    const platformLines: string[] = [];
+    if (input.platformTargets.length !== 0) {
+      const aliases = [...input.platformTargets].sort((left, right) => left - right)
+        .map(alias => `#${String(alias)}`).join(STR['k3.list.separator']);
+      platformLines.push(`${STR['k3.proposal.platformLead']}${aliases}${STR['k3.proposal.platformSuffix']}`);
+    }
+    const slotLines = (lines: readonly string[]): string => (lines.length === 0 ? '' : `\n${lines.join('\n')}`);
+    return renderTemplate(PLATFORM_PROMPT_PACK_V1, 'unknown-call-proposal', {
+      workspaceLines: workspaceLines.join('\n'),
+      writtenLines: writtenLines.join('\n'),
+      targets: slotLines(targetLines),
+      personNote,
+      annotations: slotLines(annotationLines),
+      platformTargets: slotLines(platformLines),
+    }, []).text;
+  }
+  const itemLines: string[] = [];
+  for (const item of input.items) {
+    if (item.display === 'unexpanded') {
+      itemLines.push(`${STR['k3.review.itemLead']}${String(item.alias)} ${item.toolName}`
+        + `${STR['k3.review.unexpandedSuffix']}`);
+    } else {
+      const batch = item.sameBatch.length === 0 ? STR['k3.none']
+        : `#${item.sameBatch.join(STR['k3.review.batchSeparator'])}`;
+      itemLines.push(`${STR['k3.review.itemLead']}${String(item.alias)} ${item.toolName}`
+        + `${STR['k3.review.commandLead']}${item.command?.text ?? STR['k3.none']}`
+        + `${STR['k3.review.cwdLead']}${item.cwd ?? STR['k3.none']}`
+        + `${STR['k3.review.startedLead']}${item.startedAt ?? STR['k3.unknown']}`
+        + `${STR['k3.review.batchLead']}${batch}`);
+    }
+    if (item.display === 'truncated' || item.display === 'unexpanded') {
+      itemLines.push(STR['k3.review.noFullText']);
+    }
+  }
+  return renderTemplate(PLATFORM_PROMPT_PACK_V1, 'unknown-call-review', {
+    workspaceLines: workspaceLines.join('\n'),
+    writtenLines: writtenLines.join('\n'),
+    items: itemLines.join('\n'),
+  }, []).text;
+}

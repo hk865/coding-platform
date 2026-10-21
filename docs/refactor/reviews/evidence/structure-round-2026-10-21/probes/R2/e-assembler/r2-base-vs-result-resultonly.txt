@@ -1,0 +1,66 @@
+tests__business__S1-archive-flow.test.ts.jsonl: records 50/50, payload-differing 0, raw-bytes-equal true
+tests__business__WP1-start-refusal.test.ts.jsonl: records 4/4, payload-differing 0, raw-bytes-equal true
+tests__composition__WP1-session-duty.test.ts.jsonl: records 6/6, payload-differing 0, raw-bytes-equal true
+tests__runtime__K3-35-T-by-hand.test.ts.jsonl: records 460/460, payload-differing 0, raw-bytes-equal true
+tests__runtime__K3-35-approved-methods-brief.test.ts.jsonl: records 178/178, payload-differing 0, raw-bytes-equal true
+tests__runtime__K3-35-workspace-baseline-prepare.test.ts.jsonl: records 12/12, payload-differing 0, raw-bytes-equal true
+tests__runtime__K3-B3-cancellation-cancelled.test.ts.jsonl: records 56/56, payload-differing 0, raw-bytes-equal true
+tests__runtime__K3-B3-newest-request-order.test.ts.jsonl: records 104/104, payload-differing 0, raw-bytes-equal true
+tests__runtime__K3-B3-runtime-fail-closed.test.ts.jsonl: records 3/3, payload-differing 0, raw-bytes-equal true
+tests__runtime__K3-merge-cancel-propagation.test.ts.jsonl: records 124/124, payload-differing 0, raw-bytes-equal true
+tests__runtime__K3-review-preparation.test.ts.jsonl: records 174/174, payload-differing 0, raw-bytes-equal true
+tests__runtime__S1-archive-files-brief.test.ts.jsonl: records 231/231, payload-differing 0, raw-bytes-equal true
+tests__runtime__S3-context-assembler.test.ts.jsonl: records 30/30, payload-differing 0, raw-bytes-equal false
+tests__runtime__S4C2-assembly.test.ts.jsonl: records 56/56, payload-differing 0, raw-bytes-equal false
+tests__runtime__WP1-context-assembly.test.ts.jsonl: records 6/6, payload-differing 0, raw-bytes-equal true
+tests__scenarios__S3-context-and-inputs.test.ts.jsonl: records 22/22, payload-differing 0, raw-bytes-equal false
+tests__scenarios__S3-query-graph.test.ts.jsonl: records 20/20, payload-differing 0, raw-bytes-equal false
+tests__work-graph__K3-35-owner-manifest-trim.test.ts.jsonl: records 38/38, payload-differing 0, raw-bytes-equal true
+tests__work-graph__K3-47-continuation-gate.test.ts.jsonl: records 18/18, payload-differing 0, raw-bytes-equal true
+tests__work-graph__R3c-plan-adoption.test.ts.jsonl: records 12/12, payload-differing 0, raw-bytes-equal true
+tests__work-graph__R5b-initial-plan.test.ts.jsonl: records 4/4, payload-differing 0, raw-bytes-equal true
+tests__work-graph__S3-prepared-context-admission.test.ts.jsonl: records 156/156, payload-differing 0, raw-bytes-equal true
+tests__work-graph__S3-role-profiles.test.ts.jsonl: records 10/10, payload-differing 0, raw-bytes-equal true
+tests__work-graph__S5-goal-settings.test.ts.jsonl: records 102/102, payload-differing 0, raw-bytes-equal true
+tests__work-graph__WP1-context-anomalies.test.ts.jsonl: records 8/8, payload-differing 0, raw-bytes-equal true
+tests__work-graph__WP1-goal-content-entry.test.ts.jsonl: records 48/48, payload-differing 0, raw-bytes-equal true
+unknown.jsonl: records 208/208, payload-differing 0, raw-bytes-equal false
+
+probe counts (left):
+  assembler:attention: 1
+  assembler:query: 10
+  assembler:task: 314
+  deps: 720
+  direct: 191
+  kernel: 322
+  stored:query: 6
+  stored:query:put: 6
+  stored:task: 285
+  stored:task:put: 285
+deps method counts (left):
+  architectureReminders.read: 10
+  bodies.read: 4
+  commandRerunRequests.listRequests: 8
+  executions.readContinuationBasis: 72
+  executions.readExecution: 24
+  graphContext.readAttentionFacts: 1
+  graphContext.readContextFacts: 81
+  kernelStores.byAdapterId: 165
+  kernelStores.withStore: 164
+  now: 82
+  taskInputs.readTaskInputPage: 14
+  unknownCallReviews.readReview: 24
+  workspaceHost.resolveRoot: 25
+  workspaceSource.capture: 23
+  workspaceSource.captureDigest: 23
+  zero-capture read point: roles.resolveRoleBindingFacts (src/core/agent-runtime/context-assembler.ts:no call site (deps member never read))
+  zero-capture read point: materials.storeArtifact (src/core/agent-runtime/context-assembler.ts:no call site (deps member never read))
+  zero-capture read point: materials.openArtifact (src/core/agent-runtime/context-assembler.ts:no call site (deps member never read))
+  zero-capture read point: workspaceSource.readBaselineBlob (src/core/agent-runtime/context-assembler.ts:1111)
+  zero-capture read point: workspaceSource.readCurrentFile (src/core/agent-runtime/context-assembler.ts:1112)
+  zero-capture read point: sessions (src/core/agent-runtime/context-assembler.ts:no call site (deps member never read))
+  zero-capture read point: kernelStores.forWorkspace (src/core/agent-runtime/session-operations.ts:584, 762)
+  zero-capture read point: plans (src/core/agent-runtime/context-assembler.ts:no call site (deps member never read))
+
+files: 27 (22 raw-byte-equal), records compared: 2140, runIndex differences: 0, payload differences: 0
+RESULT: equal

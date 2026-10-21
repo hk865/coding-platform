@@ -1,0 +1,54 @@
+per-probe totals (base1 / result)
+  assembler:attention: 1 / 1
+  assembler:query: 10 / 10
+  assembler:task: 314 / 314
+  deps: 720 / 720
+  direct: 191 / 191
+  kernel: 322 / 322
+  stored:query: 6 / 6
+  stored:query:put: 6 / 6
+  stored:task: 285 / 285
+  stored:task:put: 285 / 285
+  TOTAL: 2140 / 2140
+
+per-file captures (base1 / result), probe breakdown base1
+   50 /    50  tests/business/S1-archive-flow.test.ts  assembler:query=2 assembler:task=8 deps=8 direct=8 kernel=4 stored:query=2 stored:query:put=2 stored:task=8 stored:task:put=8
+    4 /     4  tests/business/WP1-start-refusal.test.ts  assembler:task=2 deps=2
+    6 /     6  tests/composition/WP1-session-duty.test.ts  assembler:task=2 stored:task=2 stored:task:put=2
+  460 /   460  tests/runtime/K3-35-T-by-hand.test.ts  assembler:task=52 deps=159 direct=57 kernel=90 stored:task=51 stored:task:put=51
+  178 /   178  tests/runtime/K3-35-approved-methods-brief.test.ts  assembler:task=26 deps=53 direct=19 kernel=30 stored:task=25 stored:task:put=25
+   12 /    12  tests/runtime/K3-35-workspace-baseline-prepare.test.ts  assembler:task=4 stored:task=4 stored:task:put=4
+   56 /    56  tests/runtime/K3-B3-cancellation-cancelled.test.ts  assembler:task=10 deps=16 direct=4 kernel=10 stored:task=8 stored:task:put=8
+  104 /   104  tests/runtime/K3-B3-newest-request-order.test.ts  assembler:task=6 deps=38 direct=16 kernel=32 stored:task=6 stored:task:put=6
+    3 /     3  tests/runtime/K3-B3-runtime-fail-closed.test.ts  deps=1 direct=2
+  124 /   124  tests/runtime/K3-merge-cancel-propagation.test.ts  assembler:task=26 deps=42 direct=4 kernel=16 stored:task=18 stored:task:put=18
+  174 /   174  tests/runtime/K3-review-preparation.test.ts  assembler:task=26 deps=50 direct=10 kernel=36 stored:task=26 stored:task:put=26
+  231 /   231  tests/runtime/S1-archive-files-brief.test.ts  assembler:task=15 deps=119 direct=31 kernel=36 stored:task=15 stored:task:put=15
+   30 /    30  tests/runtime/S3-context-assembler.test.ts  assembler:query=1 assembler:task=8 deps=15 stored:task=3 stored:task:put=3
+   56 /    56  tests/runtime/S4C2-assembly.test.ts  assembler:query=2 assembler:task=12 deps=18 stored:task=12 stored:task:put=12
+    6 /     6  tests/runtime/WP1-context-assembly.test.ts  assembler:query=1 assembler:task=2 deps=3
+   22 /    22  tests/scenarios/S3-context-and-inputs.test.ts  assembler:task=3 deps=13 stored:task=3 stored:task:put=3
+   20 /    20  tests/scenarios/S3-query-graph.test.ts  assembler:attention=1 assembler:query=1 assembler:task=2 deps=10 stored:query=1 stored:query:put=1 stored:task=2 stored:task:put=2
+   38 /    38  tests/work-graph/K3-35-owner-manifest-trim.test.ts  assembler:task=6 deps=12 kernel=8 stored:task=6 stored:task:put=6
+   18 /    18  tests/work-graph/K3-47-continuation-gate.test.ts  assembler:task=6 stored:task=6 stored:task:put=6
+   12 /    12  tests/work-graph/R3c-plan-adoption.test.ts  assembler:task=4 stored:task=4 stored:task:put=4
+    4 /     4  tests/work-graph/R5b-initial-plan.test.ts  assembler:query=1 deps=1 stored:query=1 stored:query:put=1
+  156 /   156  tests/work-graph/S3-prepared-context-admission.test.ts  assembler:query=2 assembler:task=36 deps=42 stored:query=2 stored:query:put=2 stored:task=36 stored:task:put=36
+   10 /    10  tests/work-graph/S3-role-profiles.test.ts  assembler:task=10
+  102 /   102  tests/work-graph/S5-goal-settings.test.ts  assembler:task=34 stored:task=34 stored:task:put=34
+    8 /     8  tests/work-graph/WP1-context-anomalies.test.ts  assembler:task=2 direct=2 stored:task=2 stored:task:put=2
+   48 /    48  tests/work-graph/WP1-goal-content-entry.test.ts  assembler:task=12 deps=12 stored:task=12 stored:task:put=12
+  208 /   208  unknown  deps=106 direct=38 kernel=60 stored:task=2 stored:task:put=2
+
+zero-capture test files: 10
+  tests/app/S3-attention-context.test.ts
+  tests/contracts/A2-rework-contract-helpers.test.ts
+  tests/runtime/K3-16-proposal-input.test.ts
+  tests/runtime/K3-16-review-extremes-pure.test.ts
+  tests/runtime/K3-35-manifest-trim-pure.test.ts
+  tests/runtime/K3-review-input-pure.test.ts
+  tests/runtime/K3-unknown-call-review-section.test.ts
+  tests/work-graph/S4C2-memory-material.test.ts
+  tests/work-graph/S4C2-project-set-shared.test.ts
+  tests/work-graph/S4C2-read-counts.test.ts
+unknown-context records (beforeAll fixture calls): 208 / 208

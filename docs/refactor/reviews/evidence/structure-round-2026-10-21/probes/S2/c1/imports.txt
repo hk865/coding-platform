@@ -1,0 +1,61 @@
+# C1 import changes — five existing note files
+
+Base: git show s85-base:<path>  |  After: working tree
+
+## note-read-model.ts
+BEFORE:
+58:import { renderUnderstandingBody } from './note-service.js';
+62:import { asOutcome, mapStoreFailure } from './store-failures.js';
+64:export { mapStoreFailure, type MappedStoreFailure } from './store-failures.js';
+AFTER:
+58:import { readAllHeads, readAllRecords, type ReadFailureCode, type ReadOutcome } from './note-base-reader.js';
+59:import { renderUnderstandingBody } from './note-rendering.js';
+63:import { asOutcome, mapStoreFailure } from './store-failures.js';
+65:export { readAllHeads, readAllRecords, type ReadFailureCode } from './note-base-reader.js';
+66:export { mapStoreFailure, type MappedStoreFailure } from './store-failures.js';
+
+## note-service.ts
+BEFORE:
+36:import { mapStoreFailure, readAllHeads, type ReadFailureCode } from './note-read-model.js';
+AFTER:
+36:import { readAllHeads, type ReadFailureCode } from './note-base-reader.js';
+37:import { renderUnderstandingBody } from './note-rendering.js';
+38:import { mapStoreFailure } from './store-failures.js';
+354:export { renderUnderstandingBody } from './note-rendering.js';
+
+## scribe-scope.ts
+BEFORE:
+37:import { readAllHeads, readAllRecords, mapStoreFailure, type ReadFailureCode } from './note-read-model.js';
+AFTER:
+37:import { readAllHeads, readAllRecords, type ReadFailureCode } from './note-base-reader.js';
+38:import { mapStoreFailure } from './store-failures.js';
+
+## note-decision-source.ts
+BEFORE:
+44:import { readAllHeads } from './note-read-model.js';
+47:import type { NotePlanWindowFactsV1 } from './note-service.js';
+AFTER:
+44:import { readAllHeads } from './note-base-reader.js';
+47:import type { NotePlanWindowFactsV1 } from './note-service.js';
+
+## note-scribe-todos.ts
+BEFORE:
+40:import type { NotePlanWindowFactsV1, NoteUserReasonFactsPort } from './note-service.js';
+47:import { readAllHeads } from './note-read-model.js';
+AFTER:
+40:import type { NotePlanWindowFactsV1, NoteUserReasonFactsPort } from './note-service.js';
+47:import { readAllHeads } from './note-base-reader.js';
+
+## Runtime import graph (static, type-only imports excluded; './x.js' -> './x.ts')
+
+BEFORE (s85-base notes/): 3 runtime cycles
+  scribe-scope -> note-read-model -> note-related-scope -> scribe-scope
+  note-read-model -> note-service -> note-read-model
+  scribe-scope -> note-read-model -> note-service -> scribe-scope
+
+AFTER (working tree notes/): 0 runtime cycles
+
+Reproduce: python3 /tmp/cyclecheck2.py <notes dir>
+Base mirror used: /tmp/base-notes/src/core/work-graph/notes (git show of s85-base)
+AFTER output:
+cycles: 0

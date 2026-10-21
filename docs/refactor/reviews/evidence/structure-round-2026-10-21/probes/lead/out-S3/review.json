@@ -1,0 +1,1200 @@
+[
+ {
+  "session": "session-1830aae5-70e6-40f3-bd0b-d1e985bbb84f.jsonl",
+  "time": 1792591151178,
+  "kind": "bash that may write",
+  "command": "S=/home/han001/dsh-work/s85-scratch/S3; mkdir -p $S/base $S/probes $S/handoff && echo ok > $S/probes/.write-test && cat $S/probes/.write-test && ls -ld $S"
+ },
+ {
+  "session": "session-1830aae5-70e6-40f3-bd0b-d1e985bbb84f.jsonl",
+  "time": 1792591153192,
+  "kind": "bash that may write",
+  "command": "S=/home/han001/dsh-work/s85-scratch/S3; mkdir -p $S/base $S/probes $S/handoff && echo ok > $S/probes/.write-test && cat $S/probes/.write-test && ls -ld $S"
+ },
+ {
+  "session": "session-1830aae5-70e6-40f3-bd0b-d1e985bbb84f.jsonl",
+  "time": 1792591157328,
+  "kind": "bash that may write",
+  "command": "S=/tmp/s85-scratch/S3; mkdir -p $S/base $S/probes $S/handoff && cd /home/han001/dsh-work/slices/s9s85-S3 && git archive s85-base | tar -x -C $S/base && cp -al node_modules $S/base/node_modules && cp -al vendor/coding-agent/node_modules $S/base/vendor/coding-agent/node_modules && ls $S/base | head && du -sh $S/base"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591305978,
+  "kind": "bash with heredoc and more",
+  "command": "mkdir -p /tmp/s85-scratch/S3/handoff/tools-1/tools /tmp/s85-scratch/S3/probes && cat > /tmp/s85-scratch/S3/probes/extract-s3.js <<'EOF'\nconst ts = require('/home/han001/dsh-work/slices/s9s85-S3/node_modules/typescript');\nconst fs = require('fs');\nconst path = require('path');\n\nfunction evalLiteral(node) {\n  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;\n  if (ts.isParenthesizedExpression(node)) return evalLiteral(node.expression);\n  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {\n    return evalLiteral(node.left) + evalLiteral(node.right);\n  }\n  throw new Error('unsupported expression kind ' + ts.SyntaxKind[node.kind] + ' at ' + node.getStart());\n}\n\nfunction lineOf(sf, node) {\n  return sf.getLineAndCharacterOfPosition(node.getStart()).line + 1;\n}\n\nfunction walk(node, fn) {\n  fn(node);\n  ts.forEachChild(node, c => walk(c, fn));\n}\n\nconst files = process.argv.slice(2);\nconst out = {};\nfor (const file of files) {\n  const text = fs.readFileSync(file, 'utf8');\n  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);\n  const describes = [];\n  let descProp = [];\n  walk(sf, node => {\n    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'describe') {\n      describes.push({ line: lineOf(sf, node), text: evalLiteral(node.arguments[0]) });\n    }\n    if (ts.isPropertyAssignment(node) && ((ts.isIdentifier(node.name) && node …"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591311181,
+  "kind": "bash with heredoc and more",
+  "command": "cat > /tmp/s85-scratch/S3/probes/extract-s3b.js <<'EOF'\nconst ts = require('/home/han001/dsh-work/slices/s9s85-S3/node_modules/typescript');\nconst fs = require('fs');\nconst path = require('path');\nfunction evalLiteral(node) {\n  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;\n  if (ts.isParenthesizedExpression(node)) return evalLiteral(node.expression);\n  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) return evalLiteral(node.left) + evalLiteral(node.right);\n  throw new Error('unsupported ' + ts.SyntaxKind[node.kind]);\n}\nconst lineOf = (sf, n) => sf.getLineAndCharacterOfPosition(n.getStart()).line + 1;\nconst walk = (n, fn) => { fn(n); ts.forEachChild(n, c => walk(c, fn)); };\nconst base = '/home/han001/dsh-work/slices/s9s85-S3/src/core/agent-runtime/';\nconst read = f => ts.createSourceFile(f, fs.readFileSync(f, 'utf8'), ts.ScriptTarget.Latest, true);\n\n// whiteboard descriptions record\n{\n  const file = base + 'whiteboard-tools.ts';\n  const sf = read(file); const out = {};\n  walk(sf, n => {\n    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === 'descriptions' && ts.isObjectLiteralExpression(n.initializer)) {\n      for (const p of n.initializer.properties) {\n        if (ts.isPropertyAssignment(p)) out[p.name.text] = { line: lineOf(sf, p), text: evalLiteral(p.initializer) };\n      }\n    }\n  });\n  console.log(JSON.stringify({ 'whiteboard-tools.ts': out }));\n}\n// note descri …"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591314912,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && node -e \"\nconst d=require('/tmp/s85-scratch/S3/probes/extracted.json');\nconst wb=d['whiteboard-tools.ts'].describes;\nconsole.log('--- draft:');console.log(JSON.stringify(wb[2].text));\nconsole.log('--- reason:');console.log(JSON.stringify(wb[3].text));\nconsole.log('--- ack:');console.log(JSON.stringify(wb[9].text));\nconsole.log('--- propose desc:');console.log(JSON.stringify(require('/tmp/s85-scratch/S3/probes/extracted2.jsonl')));\n\" | head -20"
+ },
+ {
+  "session": "2e26031e-87db-441f-a4d8-fe1dd75a0e55.jsonl",
+  "time": 1792591322949,
+  "kind": "bash with heredoc and more",
+  "command": "mkdir -p /tmp/s85-scratch/S3/handoff/tools-2/tools && cat > /tmp/s85-scratch/S3/handoff/tools-2/gen.cjs <<'EOF'\nconst fs = require('fs');\nconst path = require('path');\nconst repo = '/home/han001/dsh-work/slices/s9s85-S3';\nconst out = '/tmp/s85-scratch/S3/handoff/tools-2/tools';\nconst read = p => fs.readFileSync(path.join(repo, p), 'utf8');\nconst ev = s => Function('\"use strict\";return (' + s + ');')();\n\n// graph-tools descriptions\nconst graph = read('src/core/agent-runtime/graph-tools.ts');\nconst start = graph.indexOf('const descriptions = {');\nconst end = graph.indexOf('} as const;', start) + '}'.length;\nconst graphDescs = ev(graph.slice(start + 'const descriptions = '.length, end));\n\n// session discovery descriptions\nconst sd = read('src/core/agent-runtime/session-discovery-tools.ts');\nconst sdStart = sd.indexOf(\"description: name === 'find_related_sessions'\");\nconst sdEnd = sd.indexOf(\",\\n      inputSchema\", sdStart + 10);\nconst sdExpr = sd.slice(sdStart + 'description: '.length, sdEnd);\nconst sdDescs = { find_related_sessions: ev('(' + sdExpr + ').find_related_sessions'), read_session_card: ev('(' + sdExpr + ').read_session_card') };\n// The ternary has no property; evaluate properly\nsdDescs.find_related_sessions = ev(sdExpr);\n// second branch: swap condition via regex\nconst sdElse = sdExpr.replace(\"name === 'find_related_sessions'\", \"name === 'read_session_card'\");\nsdDescs.read_session_card = ev(sdElse);\n\n// unknown-call-review descriptions + describes\nconst uc = read('sr …"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792591324197,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/base-e1 && node -e \"console.log(require('./node_modules/vitest/package.json').version)\" && grep -n '\"test\"\\|\"vitest\"' package.json | head"
+ },
+ {
+  "session": "2e26031e-87db-441f-a4d8-fe1dd75a0e55.jsonl",
+  "time": 1792591327409,
+  "kind": "bash with heredoc and more",
+  "command": "cat > /tmp/s85-scratch/S3/handoff/tools-2/gen.cjs <<'EOF'\nconst fs = require('fs');\nconst path = require('path');\nconst repo = '/home/han001/dsh-work/slices/s9s85-S3';\nconst out = '/tmp/s85-scratch/S3/handoff/tools-2/tools';\nconst read = p => fs.readFileSync(path.join(repo, p), 'utf8');\nconst ev = s => Function('\"use strict\";return (' + s + ');')();\n\n// graph-tools descriptions\nconst graph = read('src/core/agent-runtime/graph-tools.ts');\nconst start = graph.indexOf('const descriptions = {');\nconst end = graph.indexOf('} as const;', start) + '}'.length;\nconst graphDescs = ev(graph.slice(start + 'const descriptions = '.length, end));\n\n// session discovery descriptions\nconst sd = read('src/core/agent-runtime/session-discovery-tools.ts');\nconst sdStart = sd.indexOf(\"description: name === 'find_related_sessions'\");\nconst sdEnd = sd.indexOf(\",\\n      inputSchema\", sdStart + 10);\nconst sdExpr = sd.slice(sdStart + 'description: '.length, sdEnd);\nconst sdEval = Function('name', '\"use strict\";return (' + sdExpr + ');');\nconst sdDescs = {\n  find_related_sessions: sdEval('find_related_sessions'),\n  read_session_card: sdEval('read_session_card'),\n};\n\n// unknown-call-review descriptions + describes\nconst uc = read('src/core/agent-runtime/unknown-call-review-tools.ts');\nfunction extractDesc(marker, nextMarker) {\n  const i = uc.indexOf(marker);\n  const j = uc.indexOf(nextMarker, i);\n  const expr = uc.slice(i + 'description: '.length, j).trim().replace(/,$/, '');\n  return ev(expr);\n}\nconst re …"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591332745,
+  "kind": "bash with heredoc and more",
+  "command": "mkdir -p /tmp/s85-scratch/S3/handoff/rest/templates && cat > /tmp/s85-scratch/S3/probes/extract-rest.js <<'EOF'\nconst fs = require('fs');\nconst base = '/tmp/s85-scratch/S3/base';\nconst read = p => fs.readFileSync(base + '/' + p, 'utf8');\nconst outDir = '/tmp/s85-scratch/S3/handoff/rest';\nconst strings = {};\nconst manifest = { strings: {}, templates: {}, tools: {}, notes: [] };\nfunction lit(src, re, name) {\n  const m = src.match(re);\n  if (!m) throw new Error('no match ' + name);\n  return eval(m[1]);\n}\nfunction put(key, value, loc) { strings[key] = value; manifest.strings[key] = loc; }\n\n// role profiles\nconst roleSrc = read('src/core/agent-runtime/role-profiles.ts');\nfor (const duty of ['executor','secretary','adviser','scribe','reviewer']) {\n  const re = new RegExp(\"duty: '\" + duty + \"',\\\\n    label: ('(?:[^'\\\\\\\\]|\\\\\\\\.)*'),\\\\n    purpose: (\\\"(?:[^\\\"\\\\\\\\]|\\\\\\\\.)*\\\"|'(?:[^'\\\\\\\\]|\\\\\\\\.)*')\");\n  const m = roleSrc.match(re);\n  if (!m) throw new Error('role ' + duty);\n  put('role.'+duty+'.label', eval(m[1]), 'src/core/agent-runtime/role-profiles.ts:' + (roleSrc.slice(0,m.index).split('\\n').length+1));\n  put('role.'+duty+'.purpose', eval(m[2]), 'src/core/agent-runtime/role-profiles.ts:' + (roleSrc.slice(0,m.index).split('\\n').length+2));\n}\n\n// architecture\nconst archSrc = read('src/core/agent-runtime/architecture-reminders.ts');\nconst lines = archSrc.split('\\n');\nconst lineOf = (needle, start=0) => { const i = lines.findIndex((l,idx)=>idx>=start && l.includes(needle)); if(i<0) thro …"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591334930,
+  "kind": "bash with heredoc and more",
+  "command": "cat > /tmp/s85-scratch/S3/probes/build-handoff-s3.js <<'EOF'\nconst ts = require('/home/han001/dsh-work/slices/s9s85-S3/node_modules/typescript');\nconst fs = require('fs');\nconst path = require('path');\nconst SF = '/home/han001/dsh-work/slices/s9s85-S3';\nconst BASE = '/tmp/s85-scratch/S3/base';\nconst OUT = '/tmp/s85-scratch/S3/handoff/tools-1';\n\nfunction evalLiteral(node) {\n  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;\n  if (ts.isParenthesizedExpression(node)) return evalLiteral(node.expression);\n  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) return evalLiteral(node.left) + evalLiteral(node.right);\n  throw new Error('unsupported ' + ts.SyntaxKind[node.kind] + ' at ' + node.getStart());\n}\nconst lineOf = (sf, n) => sf.getLineAndCharacterOfPosition(n.getStart()).line + 1;\nconst walk = (n, fn) => { fn(n); ts.forEachChild(n, fn2 => walk(fn2, fn)); };\nconst rel = f => 'src/core/agent-runtime/' + path.basename(f);\nconst read = f => ts.createSourceFile(f, fs.readFileSync(f, 'utf8'), ts.ScriptTarget.Latest, true);\n\nconst toolDocs = {};    // name -> { description, parameters }\nconst paramLoc = {};    // `${tool}.${path}` -> { file, line }\nconst descLoc = {};     // name -> { file, line }\nconst strings = {};\nconst stringLoc = {};\n\nfunction addParam(tool, p, text, file, line) {\n  toolDocs[tool].parameters[p] = text;\n  paramLoc[tool + '.' + p] = rel(file) + ':' + line;\n}\n\n// whiteboard\n{\n  const fil …"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591350465,
+  "kind": "bash with heredoc and more",
+  "command": "cat > /tmp/s85-scratch/S3/probes/probe-base.ts <<'EOF'\nimport { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from '/tmp/s85-scratch/S3/base/src/core/agent-runtime/whiteboard-tools.js';\nimport { createNoteTools } from '/tmp/s85-scratch/S3/base/src/core/agent-runtime/note-tool.js';\nimport { createProjectSourceTool } from '/tmp/s85-scratch/S3/base/src/core/agent-runtime/project-source-tool.js';\nimport { createReadonlyCommandTool } from '/tmp/s85-scratch/S3/base/src/core/agent-runtime/readonly-command-tool.js';\nimport { createCommandRerunTools } from '/tmp/s85-scratch/S3/base/src/core/agent-runtime/command-rerun-tools.js';\n\nconst ctx = { projectId: 'p', workspaceId: 'w', principal: { kind: 'user' }, materialReader: {} } as never;\nconst ws = {} as never;\nconst out: Record<string, unknown> = {};\nconst wb = createWhiteboardTools({ plans: {} as never, context: ctx, goalRef: { aggregateType: 'Goal', projectId: 'p', goalId: 'g' } as never, requestIdForCall: () => 'r' });\nfor (const d of wb.create(ws)) out[d.name] = { description: d.description, schema: (d.inputSchema as never as { toJSONSchema(): unknown }).toJSONSchema() };\nconst nt = createNoteTools({ context: ctx, notes: {} as never, check: {} as never, requestIdForCall: () => 'r' });\nfor (const d of nt.create(ws)) out[d.name] = { description: d.description, schema: (d.inputSchema as never as { toJSONSchema(): unknown }).toJSONSchema() };\nconst ps = createProjectSourceTool({ access: {} as never, requireVisible: () => {} });\nout[ps …"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591354267,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && ./node_modules/.bin/esbuild /tmp/s85-scratch/S3/probes/probe-base.ts --bundle --platform=node --format=esm --outfile=/tmp/s85-scratch/S3/probes/probe-base.mjs --log-level=warning && node /tmp/s85-scratch/S3/probes/probe-base.mjs > /tmp/s85-scratch/S3/probes/base-definitions.json && node -e \"const o=require('/tmp/s85-scratch/S3/probes/base-definitions.json');console.log(Object.keys(o).length, Object.keys(o).join(','))\""
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591357515,
+  "kind": "bash with heredoc and more",
+  "command": "cat >> /tmp/s85-scratch/S3/probes/probe-base.ts <<'EOF'\nimport { createExplorationTools } from '/tmp/s85-scratch/S3/base/src/core/agent-runtime/exploration-tools.js';\nconst ews = { identity: 'ws', deniedPrefixes: [], listFiles: async () => ({ paths: [], truncated: false }), read: async () => { throw new Error('no'); } } as never;\nconst ex = createExplorationTools(ews, { includeReadSource: true });\nfor (const d of ex.tools) out[d.name] = { description: d.description, schema: (d.inputSchema as never as { toJSONSchema(): unknown }).toJSONSchema() };\nprocess.stdout.write(JSON.stringify(out, null, 2));\nEOF\ncd /home/han001/dsh-work/slices/s9s85-S3 && ./node_modules/.bin/esbuild /tmp/s85-scratch/S3/probes/probe-base.ts --bundle --platform=node --format=esm --outfile=/tmp/s85-scratch/S3/probes/probe-base.mjs --log-level=warning && node /tmp/s85-scratch/S3/probes/probe-base.mjs > /tmp/s85-scratch/S3/probes/base-definitions.json && node -e \"const o=require('/tmp/s85-scratch/S3/probes/base-definitions.json');console.log(Object.keys(o).length, Object.keys(o).join(','))\""
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591360096,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && ./node_modules/.bin/esbuild /tmp/s85-scratch/S3/probes/probe-base.ts --bundle --platform=node --format=esm --external:typescript --outfile=/tmp/s85-scratch/S3/probes/probe-base.mjs --log-level=warning && node /tmp/s85-scratch/S3/probes/probe-base.mjs > /tmp/s85-scratch/S3/probes/base-definitions.json && node -e \"const o=require('/tmp/s85-scratch/S3/probes/base-definitions.json');console.log(Object.keys(o).length, Object.keys(o).join(','))\""
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591362797,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && ./node_modules/.bin/esbuild /tmp/s85-scratch/S3/probes/probe-base.ts --bundle --platform=node --format=esm --external:typescript --outfile=/tmp/s85-scratch/S3/base/probe-base.mjs --log-level=warning && node /tmp/s85-scratch/S3/base/probe-base.mjs > /tmp/s85-scratch/S3/probes/base-definitions.json && node -e \"const o=require('/tmp/s85-scratch/S3/probes/base-definitions.json');console.log(Object.keys(o).length, Object.keys(o).join(','))\""
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591366598,
+  "kind": "bash that may write",
+  "command": "sed -i '20d' /tmp/s85-scratch/S3/probes/probe-base.ts && cd /home/han001/dsh-work/slices/s9s85-S3 && ./node_modules/.bin/esbuild /tmp/s85-scratch/S3/probes/probe-base.ts --bundle --platform=node --format=esm --external:typescript --outfile=/tmp/s85-scratch/S3/base/probe-base.mjs --log-level=warning && node /tmp/s85-scratch/S3/base/probe-base.mjs > /tmp/s85-scratch/S3/probes/base-definitions.json && node -e \"const o=require('/tmp/s85-scratch/S3/probes/base-definitions.json');console.log(Object.keys(o).length, Object.keys(o).join(','))\""
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591370655,
+  "kind": "bash that may write",
+  "command": "node -e \"\nconst o=require('/tmp/s85-scratch/S3/probes/base-definitions.json');\nconsole.log(JSON.stringify(o.request_command_rerun.schema,null,2));\n\" | head -80"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591372891,
+  "kind": "bash that may write",
+  "command": "node -e \"\nconst o=require('/tmp/s85-scratch/S3/probes/base-definitions.json');\nconsole.log(JSON.stringify(o.apply_future_plan.schema,null,2).slice(0,2500));\n\""
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591378771,
+  "kind": "bash with heredoc and more",
+  "command": "cat > /tmp/s85-scratch/S3/probes/compare-handoff.js <<'EOF'\nconst fs = require('fs');\nconst path = require('path');\nconst defs = require('/tmp/s85-scratch/S3/probes/base-definitions.json');\nconst dir = '/tmp/s85-scratch/S3/handoff/tools-1/tools';\nconst strings = require('/tmp/s85-scratch/S3/handoff/tools-1/strings.json');\n\nfunction lookup(schema, keyPath) {\n  let node = schema;\n  for (const seg of keyPath.split('.')) {\n    const arr = seg.endsWith('[]');\n    const name = arr ? seg.slice(0, -2) : seg;\n    if (node.properties === undefined || node.properties[name] === undefined) throw new Error('no property ' + name + ' in ' + keyPath);\n    node = node.properties[name];\n    if (arr) node = node.items;\n  }\n  return node;\n}\n// collect every description path in a schema\nfunction collect(schema, prefix, out) {\n  if (schema === null || typeof schema !== 'object') return;\n  if (typeof schema.description === 'string') out[(prefix || '<root>')] = schema.description;\n  if (schema.properties) for (const [k, v] of Object.entries(schema.properties)) collect(v, prefix ? prefix + '.' + k : k, out);\n  if (schema.items) collect(schema.items, prefix + '[]', out);\n  // anyOf/oneOf branches: only recurse when the node itself has no description (avoid duplicate shape noise)\n  for (const key of ['anyOf', 'oneOf']) if (Array.isArray(schema[key])) for (const branch of schema[key]) collect(branch, prefix, out);\n}\nlet failures = 0;\nconst sharedPaths = { 'propose_future_plan': ['expected[].ref', 'expect …"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591394781,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2/smoke && python3 - <<'EOF'\nimport json,collections\nc=collections.Counter()\nnames=[]\nfor line in open('tests__runtime__C2-runtime-platform-tools.test.ts.jsonl'):\n    o=json.loads(line)\n    c[o['kind']]+=1\n    if o['kind']=='tools-additional': names=[t['name'] for t in o['payload']['tools']]\n    if o['kind']=='model-client-tools': names2=[t['name'] for t in o['payload']['tools']]\nprint(c)\nprint('additional',names)\nprint('client',names2)\nEOF"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591397320,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2/smoke && python3 - <<'EOF'\nimport json\nfor line in open('tests__runtime__C2-runtime-platform-tools.test.ts.jsonl'):\n    o=json.loads(line)\n    if o['kind']=='tool-lists':\n        print(o['testName'], o['payload'])\n    if o['kind']=='tools-additional':\n        print('ADD', o['testName'], [t['name'] for t in o['payload']['tools']])\nEOF"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792591408053,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1/payload && printf 'export const EDGE_CASES: Array<{ name: string; probe: string; args: unknown[] }> = [];\\n' > edge-inputs.ts && printf \"import { describe, expect, it } from 'vitest';\\nimport { EDGE_CASES } from './edge-inputs.js';\\ndescribe('edge', () => { it('runs', () => { expect(EDGE_CASES.length).toBe(0); }); });\\n\" > edge.test.ts && node ../apply-probe.mjs /tmp/s85-scratch/S3/base-e1"
+ },
+ {
+  "session": "2e26031e-87db-441f-a4d8-fe1dd75a0e55.jsonl",
+  "time": 1792591409971,
+  "kind": "bash with heredoc and more",
+  "command": "cat > /tmp/s85-scratch/S3/handoff/tools-2/verify.cjs <<'EOF'\nconst fs = require('fs');\nconst path = require('path');\nconst base = '/tmp/s85-scratch/S3/base';\nconst handoff = '/tmp/s85-scratch/S3/handoff/tools-2/tools';\nconst read = p => fs.readFileSync(path.join(base, p), 'utf8');\nconst ev = s => Function('\"use strict\";return (' + s + ');')();\nconst load = n => JSON.parse(fs.readFileSync(path.join(handoff, n + '.json'), 'utf8'));\nlet fails = 0;\nfunction eq(label, got, want) {\n  if (got !== want) { fails++; console.log('MISMATCH ' + label + '\\n  got  ' + JSON.stringify(got) + '\\n  want ' + JSON.stringify(want)); }\n}\n\nconst comm = read('src/core/agent-runtime/communication-tools.ts');\nconst mailboxNames = ev(comm.slice(comm.indexOf('export const SESSION_MAILBOX_TOOL_NAMES = ') + 'export const SESSION_MAILBOX_TOOL_NAMES = '.length, comm.indexOf('] as const;') + 1));\nconst decisionNames = ev(comm.slice(comm.indexOf('export const USER_DECISION_TOOL_NAMES = ') + 'export const USER_DECISION_TOOL_NAMES = '.length, comm.indexOf('] as const;', comm.indexOf('export const USER_DECISION_TOOL_NAMES = ')) + 1));\nif (!comm.includes('`Session mailbox: ${name}`') || !comm.includes('`User decision: ${name}`')) throw new Error('prefix shape');\nfor (const n of mailboxNames) { const j = load(n); eq(n + '.description', j.description, 'Session mailbox: ' + n); eq(n + '.parameters', JSON.stringify(j.parameters), '{}'); }\nfor (const n of decisionNames) { const j = load(n); eq(n + '.description', j.des …"
+ },
+ {
+  "session": "2e26031e-87db-441f-a4d8-fe1dd75a0e55.jsonl",
+  "time": 1792591424445,
+  "kind": "bash that may write",
+  "command": "mkdir -p /tmp/s85-scratch/S3/probes/tools-2 && mv /tmp/s85-scratch/S3/handoff/tools-2/gen.cjs /tmp/s85-scratch/S3/handoff/tools-2/verify.cjs /tmp/s85-scratch/S3/probes/tools-2/ && node /tmp/s85-scratch/S3/probes/tools-2/verify.cjs && find /tmp/s85-scratch/S3/handoff/tools-2 -type f | sort"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792591425348,
+  "kind": "bash that may write",
+  "command": "rm -rf /tmp/s85-scratch/S3/base-e1 && mkdir -p /tmp/s85-scratch/S3/base-e1 && cd /home/han001/dsh-work/slices/s9s85-S3 && git archive s85-base | tar -x -C /tmp/s85-scratch/S3/base-e1 && ln -sfn /home/han001/dsh-work/slices/s9s85-S3/node_modules /tmp/s85-scratch/S3/base-e1/node_modules && ln -sfn /home/han001/dsh-work/slices/s9s85-S3/vendor/coding-agent/node_modules /tmp/s85-scratch/S3/base-e1/vendor/coding-agent/node_modules && node /tmp/s85-scratch/S3/probes/e1/apply-probe.mjs /tmp/s85-scratch/S3/base-e1 && cd /tmp/s85-scratch/S3/base-e1 && rm -f /tmp/s85-scratch/S3/probes/e1/base-run1.*.jsonl && S85_PROBE_LOG=/tmp/s85-scratch/S3/probes/e1/base-run1 npx vitest run --maxWorkers=2 tests/runtime/K3-15-blocked-sentence-pure.test.ts 2>&1 | tail -12; ls -la /tmp/s85-scratch/S3/probes/e1/base-run1.*.jsonl 2>/dev/null"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591425752,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes && node -e \"const esbuild=require('/home/han001/dsh-work/slices/s9s85-S3/node_modules/esbuild'); console.log(esbuild.version)\""
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591428860,
+  "kind": "bash with heredoc and more",
+  "command": "cat > /tmp/s85-scratch/S3/probes/rewrite-exploration.js <<'EOF'\nconst ts = require('/home/han001/dsh-work/slices/s9s85-S3/node_modules/typescript');\nconst fs = require('fs');\nconst p = '/home/han001/dsh-work/slices/s9s85-S3/src/core/agent-runtime/exploration-tools.ts';\nlet text = fs.readFileSync(p, 'utf8');\nconst sf = ts.createSourceFile(p, text, ts.ScriptTarget.Latest, true);\nconst edits = [];\nconst walk = (n, fn) => { fn(n); ts.forEachChild(n, c => walk(c, fn)); };\nconst describes = [];\nwalk(sf, n => {\n  if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'tool' && n.arguments.length >= 2) {\n    const name = ts.isStringLiteral(n.arguments[0]) ? n.arguments[0].text : null;\n    if (!name) throw new Error('non-literal tool name');\n    const arg = n.arguments[1];\n    edits.push({ start: arg.getStart(sf), end: arg.getEnd(), replacement: `PLATFORM_PROMPT_PACK_V1.tools['${name}'].description` });\n  }\n  if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'describe') {\n    describes.push(n);\n  }\n});\nif (describes.length !== 2) throw new Error('describe count ' + describes.length);\nconst prefixes = [\n  \"PLATFORM_PROMPT_PACK_V1.tools['list_files'].parameters['prefix']\",\n  \"PLATFORM_PROMPT_PACK_V1.tools['search'].parameters['prefix']\",\n];\ndescribes.forEach((n, i) => {\n  const arg = n.arguments[0];\n  edits.push({ start: arg.getStart(sf), end: arg.getEnd(), replacement: prefixes[i] });\n});\nedits.sort((a, …"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591429704,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes && cat > make-stub.js <<'EOF'\nconst fs = require('fs');\nconst dir = '/tmp/s85-scratch/S3/handoff/rest';\nconst strings = JSON.parse(fs.readFileSync(dir + '/strings.json', 'utf8'));\nconst templates = {};\nfor (const id of fs.readdirSync(dir + '/templates')) {\n  if (id.endsWith('.txt')) templates[id.slice(0, -4)] = fs.readFileSync(dir + '/templates/' + id, 'utf8');\n}\nfs.writeFileSync('/tmp/s85-scratch/S3/probes/stub-pack.mjs',\n  'export const PLATFORM_PROMPT_PACK_V1 = ' + JSON.stringify({ templates, strings }) + ';\\n');\nfs.writeFileSync('/tmp/s85-scratch/S3/probes/stub-render.mjs', `\nconst OPTIONAL = { 'scribe-reminder': new Set(['anchors']) };\nexport function renderTemplate(resolved, templateId, slots, finalToolNames) {\n  const source = resolved.templates[templateId];\n  if (source === undefined) throw new Error('unknown template ' + templateId);\n  const optional = OPTIONAL[templateId] ?? new Set();\n  const text = source.replace(/\\\\{\\\\{([A-Za-z0-9_.-]+)\\\\}\\\\}/g, (m, name) => {\n    const value = slots[name];\n    if (value === undefined || value === '') {\n      if (optional.has(name)) return '';\n      throw new Error('missing required slot ' + name);\n    }\n    return value;\n  });\n  return { text, sectionRanges: {} };\n}\n`);\nconsole.log('stub written', Object.keys(strings).length, Object.keys(templates).length);\nEOF\nnode make-stub.js"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792591430394,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && wc -l base-run1.*.jsonl && node -e \"\nconst fs=require('fs');\nconst lines=fs.readFileSync(require('fs').readdirSync('.').filter(f=>f.startsWith('base-run1.')&&f.endsWith('.jsonl'))[0],'utf8').trim().split('\\n');\nconst counts={};\nfor(const l of lines){const r=JSON.parse(l);counts[r.probe]=(counts[r.probe]||0)+1;}\nconsole.log(counts);\nconst r=JSON.parse(lines[0]); console.log(r.testPath, '|', r.testName, '|', r.probe, r.index, JSON.stringify(r.args).slice(0,120), '=>', JSON.stringify(r.out).slice(0,120));\n\""
+ },
+ {
+  "session": "2e26031e-87db-441f-a4d8-fe1dd75a0e55.jsonl",
+  "time": 1792591431031,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/tools-2/tools && for f in send_session_message read_session_inbox read_session_message read_session_message_body ack_session_message respond_session_message send_user_message read_user_decision record_decision_application; do printf '%-30s ' \"$f\"; python3 -c \"import json,sys;print(json.load(open('$f.json'))['description'])\"; done"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591432482,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes && cat > build-entries.js <<'EOF'\nconst esbuild = require('/home/han001/dsh-work/slices/s9s85-S3/node_modules/esbuild');\nconst fs = require('fs');\nconst base = '/tmp/s85-scratch/S3/base/src';\nconst repo = '/home/han001/dsh-work/slices/s9s85-S3/src';\nfunction entry(root) {\n  return [\n    `export { platformRoleProfile } from '${root}/core/agent-runtime/role-profiles.ts';`,\n    `export { renderNoteHeader } from '${root}/contracts/note.ts';`,\n    `export { architectureReminderRowEntries } from '${root}/core/agent-runtime/architecture-reminders.ts';`,\n    `export { formatDecisionResponseInput } from '${root}/core/agent-runtime/execution-inputs.ts';`,\n  ].join('\\n');\n}\nconst plugin = {\n  name: 'stub-pack',\n  setup(build) {\n    build.onResolve({ filter: /prompts\\/platform-pack\\.generated(\\.js)?$/ }, () => ({ path: '/tmp/s85-scratch/S3/probes/stub-pack.mjs' }));\n    build.onResolve({ filter: /prompts\\/render-template(\\.js)?$/ }, () => ({ path: '/tmp/s85-scratch/S3/probes/stub-render.mjs' }));\n  },\n};\nasync function build(name, root, file) {\n  fs.writeFileSync('/tmp/s85-scratch/S3/probes/entry-' + name + '.ts', entry(root));\n  await esbuild.build({\n    entryPoints: ['/tmp/s85-scratch/S3/probes/entry-' + name + '.ts'],\n    bundle: true, format: 'esm', platform: 'node', outfile: file,\n    plugins: [plugin], logLevel: 'warning', absWorkingDir: '/tmp/s85-scratch/S3/probes',\n  });\n}\n(async () => {\n  await build('base', base, '/tmp/s85-scratch/S3/probes/bundle- …"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591433062,
+  "kind": "bash with heredoc and more",
+  "command": "cat > /tmp/s85-scratch/S3/probes/rewrite-readonly.js <<'EOF'\nconst ts = require('/home/han001/dsh-work/slices/s9s85-S3/node_modules/typescript');\nconst fs = require('fs');\nconst p = '/home/han001/dsh-work/slices/s9s85-S3/src/core/agent-runtime/readonly-command-tool.ts';\nlet text = fs.readFileSync(p, 'utf8');\nconst sf = ts.createSourceFile(p, text, ts.ScriptTarget.Latest, true);\nconst edits = [];\nconst describes = [];\nconst walk = (n, fn) => { fn(n); ts.forEachChild(n, c => walk(c, fn)); };\nwalk(sf, n => {\n  if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'describe') describes.push(n);\n  if (ts.isPropertyAssignment(n) && ts.isIdentifier(n.name) && n.name.text === 'description') {\n    edits.push({ start: n.initializer.getStart(sf), end: n.initializer.getEnd(), replacement: \"PLATFORM_PROMPT_PACK_V1.tools['run_readonly_command'].description\" });\n  }\n});\nif (describes.length !== 3) throw new Error('describe count ' + describes.length);\nconst keys = ['command', 'cwd', 'timeoutMs'];\ndescribes.forEach((n, i) => {\n  const arg = n.arguments[0];\n  edits.push({ start: arg.getStart(sf), end: arg.getEnd(), replacement: `PLATFORM_PROMPT_PACK_V1.tools['run_readonly_command'].parameters['${keys[i]}']` });\n});\nedits.sort((a, b) => b.start - a.start);\nfor (const e of edits) text = text.slice(0, e.start) + e.replacement + text.slice(e.end);\nfs.writeFileSync(p, text, 'utf8');\nconsole.log('applied', edits.length, 'edits');\nEOF\nnode /tmp/s85-s …"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591439657,
+  "kind": "bash with heredoc and more",
+  "command": "mkdir -p /tmp/s85-scratch/S3/render-probe && cat > /tmp/s85-scratch/S3/render-probe/entry.ts <<'EOF'\nimport { renderTemplate } from '/home/han001/dsh-work/slices/s9s85-S3/src/contracts/prompts/render-template.ts';\n\nconst base: any = {\n  manifest: { schemaVersion: 1, packId: 'platform', extends: null, templates: {}, strings: 'strings.json', tools: {} },\n  templates: {}, strings: {}, tools: {},\n};\nconst render = (source: string, slots: Record<string, string | undefined>, tools: string[] = []) => {\n  const pack = { ...base, templates: { 'continuation-brief': source } };\n  return renderTemplate(pack, 'continuation-brief', slots, tools);\n};\nconst show = (label: string, value: unknown) => console.log(label, JSON.stringify(value));\n\nshow('plain', render('标题\\n{{marker}}\\n尾', { marker: '中😀' }));\nshow('block present', render('头\\n\\n{{#body}}\\n正文\\n{{/body}}\\n尾', { marker: 'm', body: 'x' }));\nshow('block absent', render('头\\n\\n{{#body}}\\n正文\\n{{/body}}\\n尾', { marker: 'm' }));\nshow('block inline present', render('A{{#body}}[{{body}}]{{/body}}Z', { marker: 'm', body: 'v' }));\nshow('block inline absent', render('A{{#body}}[{{body}}]{{/body}}Z', { marker: 'm' }));\nshow('optional plain absent', render('A{{body}}Z', { marker: 'm' }));\nshow('tool present', render('A{{#tool:read_source}}T{{/tool:read_source}}Z', { marker: 'm' }, ['read_source']));\nshow('tool absent', render('A{{#tool:read_source}}T{{/tool:read_source}}Z', { marker: 'm' }));\nshow('value not parsed', render('A{{body}}Z', { marker: ' …"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591442182,
+  "kind": "bash with heredoc and more",
+  "command": "cat > /tmp/s85-scratch/S3/probes/rewrite-rerun.js <<'EOF'\nconst ts = require('/home/han001/dsh-work/slices/s9s85-S3/node_modules/typescript');\nconst fs = require('fs');\nconst p = '/home/han001/dsh-work/slices/s9s85-S3/src/core/agent-runtime/command-rerun-tools.ts';\nlet text = fs.readFileSync(p, 'utf8');\nconst sf = ts.createSourceFile(p, text, ts.ScriptTarget.Latest, true);\nconst edits = [];\nconst describes = [];\nconst walk = (n, fn) => { fn(n); ts.forEachChild(n, c => walk(c, fn)); };\nwalk(sf, n => {\n  if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'describe') describes.push(n);\n  if (ts.isPropertyAssignment(n) && ts.isIdentifier(n.name) && n.name.text === 'description') {\n    edits.push({ start: n.initializer.getStart(sf), end: n.initializer.getEnd(), replacement: \"PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].description\" });\n  }\n});\nif (describes.length !== 5) throw new Error('describe count ' + describes.length);\nconst keys = ['command', 'reason', 'rewriteOf', 'rewriteOf.review', 'rewriteOf.alias'];\ndescribes.forEach((n, i) => {\n  const arg = n.arguments[0];\n  edits.push({ start: arg.getStart(sf), end: arg.getEnd(), replacement: `PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].parameters['${keys[i]}']` });\n});\nedits.sort((a, b) => b.start - a.start);\nfor (const e of edits) text = text.slice(0, e.start) + e.replacement + text.slice(e.end);\nfs.writeFileSync(p, text, 'utf8');\nconsole.log('applied', edit …"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591449007,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes && cat > compare-pure.mjs <<'EOF'\nimport assert from 'node:assert/strict';\nimport * as base from './bundle-base.mjs';\nimport * as result from './bundle-result.mjs';\n\nlet checks = 0;\nfunction same(label, a, b) {\n  checks += 1;\n  try { assert.deepStrictEqual(b, a); }\n  catch (e) { console.error('DIFF', label, '\\nbase=', JSON.stringify(a), '\\nresult=', JSON.stringify(b)); throw e; }\n}\n\nfor (const duty of ['executor', 'secretary', 'adviser', 'scribe', 'reviewer']) {\n  same('role ' + duty, base.platformRoleProfile(duty), result.platformRoleProfile(duty));\n}\n\nconst kinds = ['convention','pitfall','tradeoff','open_question','preference','decision','understanding','repair'];\nconst anchors = [\n  { kind: 'module', moduleId: 'mod' },\n  { kind: 'interface', moduleId: 'mod', interfaceId: 'iface' },\n  { kind: 'file', path: 'src/a.ts' },\n  { kind: 'file', path: 'src/a.ts', deleted: true },\n  { kind: 'file', path: 'src/a.ts', symbol: { qualifiedName: 'ns.Thing.run' } },\n  { kind: 'file', path: 'src/a.ts', symbol: { qualifiedName: 'ns.Thing' }, deleted: true },\n  { kind: 'goal', goalId: 'goal-1' },\n  { kind: 'stage', goalId: 'goal-1', planRevision: 2, stageId: 'stage-1' },\n  { kind: 'task', goalId: 'goal-1', taskId: 'task-1' },\n  { kind: 'project' },\n];\nfor (const kind of kinds) for (const anchor of anchors) for (const structural of [false, true]) {\n  const note = { kind, anchor, structural, conclusion: '结论 with {{slot}} `code`\\r\\n第二行 🚀' };\n  same('note ' + kind …"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792591452235,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node -e \"\nconst fs=require('fs');const files=fs.readdirSync('.').filter(f=>/^base-run1\\..*jsonl$/.test(f));\nconst counts={};const tests={};\nfor(const f of files)for(const l of fs.readFileSync(f,'utf8').trim().split('\\n')){if(!l)continue;const r=JSON.parse(l);counts[r.probe]=(counts[r.probe]||0)+1;(tests[r.probe]??=new Set()).add(r.testPath.split('/base-e1/')[1]);}\nconsole.log(counts);for(const k in tests)console.log(k, [...tests[k]]);\n\""
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591452309,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2/base-run1 && ls -la | head -30; echo ===; python3 - <<'EOF'\nimport json,glob,collections,os\nkinds=collections.Counter(); addnames=collections.Counter(); clientnames=collections.Counter(); files=collections.Counter()\nquery=[]; guide=[]\nfor f in sorted(glob.glob('*.jsonl')):\n    n=0\n    for line in open(f):\n        o=json.loads(line); n+=1; kinds[o['kind']]+=1\n        if o['kind']=='tools-additional':\n            for t in o['payload']['tools']: addnames[t['name']]+=1\n        if o['kind']=='model-client-tools':\n            for t in o['payload']['tools']: clientnames[t['name']]+=1\n        if o['kind']=='query-input': query.append((o['testPath'],o['testName'],o['payload']['kind'],len(o['payload']['question'])))\n        if o['kind']=='guide-constant': guide.append((o['testPath'],o['testName'],o['payload']['byteLength']))\n    files[f]=n\nprint('kinds',kinds)\nprint('files',len(files),'lines',sum(files.values()))\nprint('ADD unique',len(addnames),sorted(addnames))\nprint('CLIENT unique',len(clientnames),sorted(clientnames))\nprint('query inputs:')\nfor q in query: print(' ',q)\nprint('guide const file count',len(guide),'lengths',set(x[2] for x in guide))\nEOF"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591452782,
+  "kind": "patch failed part-way on the rebuilt files",
+  "command": "cd /tmp/s85-scratch/S3/probes && python3 - <<'EOF'\np='compare-pure.mjs'\ns=open(p).read()\ns=s.replace(\"\"\"for (const [label, input, ref] of cases) {\n  if (ref === null) input.taskModuleRef = null; else input.taskModuleRef = ref;\n  input.now = '2026-01-01T00:00:00.000Z';\n  same('arch ' + label, base.architectureReminderRowEntries(input), result.architectureReminderRowEntries(input));\n}\"\"\",\n\"\"\"for (const [label, f, ref] of cases) {\n  const input = { facts: f, taskModuleRef: ref, now: '2026-01-01T00:00:00.000Z' };\n  same('arch ' + label, base.architectureReminderRowEntries(input), result.architectureReminderRowEntries(input));\n}\"\"\")\nopen(p,'w').write(s)\nEOF\nnode compare-pure.mjs",
+  "stderr": "Traceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: 'compare-pure.mjs'\n"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591458740,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes && cat > compare-slots.js <<'EOF'\nconst fs = require('fs');\nconst assert = require('assert/strict');\nconst dir = '/tmp/s85-scratch/S3/handoff/rest';\nconst strings = JSON.parse(fs.readFileSync(dir + '/strings.json', 'utf8'));\nconst tpl = id => fs.readFileSync(dir + '/templates/' + id + '.txt', 'utf8');\nfunction render(id, slots) {\n  return tpl(id).replace(/\\{\\{([A-Za-z0-9_.-]+)\\}\\}/g, (m, name) => {\n    const v = slots[name];\n    if (v === undefined) throw new Error('missing ' + name);\n    return v;\n  });\n}\nconst base = '/tmp/s85-scratch/S3/base/';\nconst read = p => fs.readFileSync(base + p, 'utf8');\nlet n = 0;\nfunction same(label, a, b) { n++; try { assert.equal(a, b); } catch (e) { console.error('DIFF', label, '\\nold=', JSON.stringify(a), '\\nnew=', JSON.stringify(b)); throw e; } }\n\n// guide\nconst q = read('src/core/agent-runtime/query-preparation.ts');\nconst guide = eval(q.match(/export const INITIAL_COORDINATION_RESPONSE_GUIDE = (`[\\s\\S]*?`);\\n/)[1]);\nsame('guide', guide, tpl('initial-planning-answer'));\n\n// consultation\nconst c = read('src/business/workflow/consultation.ts').split('\\n')[446];\nconst raw = c.match(/: `([\\s\\S]*)`,$/)[1];\nconst oldQuestion = (message) => new Function('message', 'return `' + raw + '`;')(message);\nfor (const message of [\n  { ref: { messageId: 'm-1' }, sourceRef: { kind: 'session_message', projectId: 'p', sessionId: 's', messageId: 'm-1' } },\n  { ref: { messageId: '消息 {{x}}' }, sourceRef: { kind: 'user', key: 'k', ex …"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591464092,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3 && node - <<'EOF'\nconst fs=require('fs');\nconst strings=JSON.parse(fs.readFileSync('handoff/rest/strings.json','utf8'));\nconst manifest=JSON.parse(fs.readFileSync('handoff/rest/MANIFEST.json','utf8'));\nlet bad=0;\nfor (const [k,v] of Object.entries(strings)) {\n  const loc=manifest.strings[k]; const file=loc.split(':')[0];\n  const src=fs.readFileSync('base/'+file,'utf8');\n  if (!src.includes(v)) { console.error('MISSING',k,JSON.stringify(v)); bad++; }\n}\nconsole.log('string substring check bad=',bad, 'total=',Object.keys(strings).length);\nfor (const f of fs.readdirSync('handoff/rest/templates')) {\n  const b=fs.readFileSync('handoff/rest/templates/'+f);\n  console.log(f, 'bytes=',b.length, 'last=',JSON.stringify(b.slice(-24).toString()), 'endsLF=', b[b.length-1]===10);\n}\nEOF\ntail -c 40 /tmp/s85-scratch/S3/handoff/rest/templates/initial-planning-answer.txt | od -c | tail -3"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591469775,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && node - <<'EOF'\nconst fs=require('fs');\nconst files=[\n 'src/core/agent-runtime/role-profiles.ts','src/core/agent-runtime/query-preparation.ts',\n 'src/core/agent-runtime/execution-inputs.ts','src/core/agent-runtime/architecture-reminders.ts',\n 'src/contracts/note.ts','src/core/work-graph/views/context-extensions.ts',\n 'src/business/workflow/consultation.ts','src/app/host.ts'];\nconst h=JSON.parse(fs.readFileSync('/tmp/s85-scratch/S3/handoff/rest/strings.json','utf8'));\nconst used=new Set(); const tpl=new Set(); let bad=[];\nfor(const f of files){const s=fs.readFileSync(f,'utf8');\n for(const m of s.matchAll(/strings\\['([^']+)'\\]/g)) { used.add(m[1]); if(!(m[1] in h)) bad.push('missing key '+m[1]+' in '+f); }\n for(const m of s.matchAll(/renderTemplate\\([^,]+,\\s*'([^']+)'/g)) tpl.add(m[1]);\n for(const m of s.matchAll(/templates\\['([^']+)'\\]/g)) tpl.add(m[1]);\n}\nconst unused=Object.keys(h).filter(k=>!used.has(k));\nconsole.log('used keys',used.size,'declared',Object.keys(h).length,'unused',unused);\nconsole.log('templates', [...tpl].sort());\nconsole.log('bad',bad);\nEOF"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591472028,
+  "kind": "bash that may write",
+  "command": "set -e\nrm -rf /tmp/s85-scratch/S3/result\ncp -a /tmp/s85-scratch/S3/base /tmp/s85-scratch/S3/result\nrm -f /tmp/s85-scratch/S3/result/probe-base.mjs\nmkdir -p /tmp/s85-scratch/S3/result/src/contracts/prompts\ncd /home/han001/dsh-work/slices/s9s85-S3\nfor f in whiteboard-tools note-tool project-source-tool exploration-tools readonly-command-tool command-rerun-tools; do cp src/core/agent-runtime/$f.ts /tmp/s85-scratch/S3/result/src/core/agent-runtime/$f.ts; done\nnode - <<'EOF'\nconst fs=require('fs');\nconst dir='/tmp/s85-scratch/S3/handoff/tools-1';\nconst tools={};\nfor (const f of fs.readdirSync(dir+'/tools')) tools[f.replace(/\\.json$/,'')]=JSON.parse(fs.readFileSync(dir+'/tools/'+f,'utf8'));\nconst strings=JSON.parse(fs.readFileSync(dir+'/strings.json','utf8'));\nconst body = `// generated probe stand-in for the result-copy byte proof\\nexport const PLATFORM_PROMPT_PACK_V1 = ${JSON.stringify({ tools, strings }, null, 2)} as const;\\n`;\nfs.writeFileSync('/tmp/s85-scratch/S3/result/src/contracts/prompts/platform-pack.generated.ts', body);\nconsole.log('wrote stand-in generated module with', Object.keys(tools).length, 'tools');\nEOF\nsed 's#/tmp/s85-scratch/S3/base/#/tmp/s85-scratch/S3/result/#g' /tmp/s85-scratch/S3/probes/probe-base.ts > /tmp/s85-scratch/S3/probes/probe-result.ts\n./node_modules/.bin/esbuild /tmp/s85-scratch/S3/probes/probe-result.ts --bundle --platform=node --format=esm --external:typescript --outfile=/tmp/s85-scratch/S3/result/probe-result.mjs --log-level=warning\nnode /tmp/ …"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591476658,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2/base-run1 && python3 - <<'EOF'\nimport json,glob\nfor f in glob.glob('*.jsonl'):\n    names=set()\n    for line in open(f):\n        o=json.loads(line)\n        if o['kind']=='tools-additional':\n            for t in o['payload']['tools']: names.add(t['name'])\n    print(f.replace('.jsonl',''), len(names), sorted(names))\nEOF"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591480004,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && node - <<'EOF'\nconst fs=require('fs');\nconst files=['whiteboard-tools','note-tool','project-source-tool','exploration-tools','readonly-command-tool','command-rerun-tools'];\nconst man=JSON.parse(fs.readFileSync('/tmp/s85-scratch/S3/handoff/tools-1/MANIFEST.json','utf8'));\nconst strings=JSON.parse(fs.readFileSync('/tmp/s85-scratch/S3/handoff/tools-1/strings.json','utf8'));\nlet bad=0;\nfor(const f of files){\n  const t=fs.readFileSync('src/core/agent-runtime/'+f+'.ts','utf8');\n  for(const m of t.matchAll(/PLATFORM_PROMPT_PACK_V1\\.strings\\['([^']+)'\\]/g)) if(!(m[1] in strings)){console.log('missing string',f,m[1]);bad++;}\n  for(const m of t.matchAll(/tools\\['([^']+)'\\]/g)) if(!(m[1] in man.tools)){console.log('missing tool',f,m[1]);bad++;}\n  for(const m of t.matchAll(/parameters\\['([^']+)'\\]/g)) {\n    const tools=[...t.matchAll(/tools\\['([^']+)'\\]/g)].map(x=>x[1]);\n    // can't map reliably; just check key exists in some tool json\n    const dir='/tmp/s85-scratch/S3/handoff/tools-1/tools';\n    const found=fs.readdirSync(dir).some(n=>{const j=JSON.parse(fs.readFileSync(dir+'/'+n,'utf8'));return m[1] in j.parameters;});\n    if(!found){console.log('missing parameter key',f,m[1]);bad++;}\n  }\n}\nconsole.log(bad===0?'all pack references have handoff keys':'MISSING '+bad);\nEOF\necho \"--- numstat\"; git diff --numstat -- src/core/agent-runtime/whiteboard-tools.ts src/core/agent-runtime/note-tool.ts src/core/agent-runtime/project-source-tool.ts src/co …"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591480504,
+  "kind": "edit on a file not rebuilt",
+  "path": "handoff/rest/MANIFEST.json"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591483160,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/tools-1 && for f in tools/*.json strings.json MANIFEST.json; do node -e \"JSON.parse(require('fs').readFileSync('$f','utf8'))\" || echo \"BAD $f\"; done; echo \"all json ok\"; echo \"--- request_command_rerun\"; cat tools/request_command_rerun.json; echo \"--- run_readonly_command params\"; node -e \"console.log(JSON.stringify(require('/tmp/s85-scratch/S3/handoff/tools-1/tools/run_readonly_command.json').parameters,null,2))\""
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591491354,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/rest && wc -l templates/*.txt && wc -c templates/*.txt && node -e \"const fs=require('fs');for(const f of fs.readdirSync('templates')){const b=fs.readFileSync('templates/'+f);console.log(f,'lines',b.toString().split('\\n').length,'lastLF',b[b.length-1]===10)}\""
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591507119,
+  "kind": "edit on a file not rebuilt",
+  "path": "handoff/rest/MANIFEST.json"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792591509150,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/rest && node -e \"const m=require('./MANIFEST.json'); console.log('manifest ok; strings',Object.keys(m.strings).length,'templates',Object.keys(m.templates).length,'notes',m.notes.length)\" && find . -type f -printf '%P %s bytes\\n' | sort"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591510350,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && python3 - <<'PY'\nfrom pathlib import Path\np = Path('src/contracts/continuation-brief.ts')\ntext = p.read_text()\nstart_marker = '// ------------------------------------------------------------------------ //\\n// Chinese renderer'\nend_marker = '// ------------------------------------------------------------------------ //\\n// Shape validator'\nstart = text.index(start_marker)\nend = text.index(end_marker)\nnew = Path('/tmp/s85-scratch/S3/probes/continuation-renderer.txt').read_text()\np.write_text(text[:start] + new + text[end:])\nprint('old start/end', start, end, 'new len', len(new))\nPY\nwc -l src/contracts/continuation-brief.ts && grep -n \"Shape validator\\|renderBriefTemplateZh\\|const STR\" src/contracts/continuation-brief.ts | head"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591514412,
+  "kind": "bash that may write",
+  "command": "set -e\nT=/tmp/s85-scratch/S3/build-probe\nrm -rf \"$T\"; mkdir -p \"$T/scripts\" \"$T/resources/prompts/platform/templates\" \"$T/resources/prompts/platform/tools\" \"$T/src/contracts/prompts\"\ncp /home/han001/dsh-work/slices/s9s85-S3/scripts/build-platform-prompts.mjs \"$T/scripts/\"\ncp /home/han001/dsh-work/slices/s9s85-S3/src/contracts/prompts/prompt-pack.ts \"$T/src/contracts/prompts/\"\ncat > \"$T/resources/prompts/platform/pack.json\" <<'EOF'\n{\"schemaVersion\":1,\"packId\":\"platform\",\"extends\":null,\"templates\":{\"continuation-brief\":{\"file\":\"templates/continuation-brief.txt\",\"version\":1,\"mentionsTools\":[\"read_source\",\"search\"]},\"user-decision-response\":{\"file\":\"templates/user-decision-response.txt\",\"version\":2,\"mentionsTools\":[]}},\"strings\":\"strings.json\",\"tools\":{\"read_source\":\"tools/read_source.json\"}}\nEOF\nprintf '标题\\n{{marker}}\\n{{#body}}正文{{/body}}\\n尾' > \"$T/resources/prompts/platform/templates/continuation-brief.txt\"\nprintf '用户答复\\n{{bodyJson}}' > \"$T/resources/prompts/platform/templates/user-decision-response.txt\"\nprintf '{\"a\":\"第一\",\"b\":\"line\\\\nquote \\\\\"x\\\\\" tab\\\\t\"}' > \"$T/resources/prompts/platform/strings.json\"\nprintf '{\"description\":\"读文件\",\"parameters\":{\"path\":\"路径\",\"targets[].path\":\"目标\"}}' > \"$T/resources/prompts/platform/tools/read_source.json\"\ncd \"$T\" && node scripts/build-platform-prompts.mjs && cat src/contracts/prompts/platform-pack.generated.ts\necho \"=== check ok ===\"; node scripts/build-platform-prompts.mjs --check\necho \"=== stale ===\"; printf '\\n// tamper\\n' >> src/contracts/p …"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591526351,
+  "kind": "patch failed part-way on the rebuilt files",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2 && python3 - <<'EOF'\np='driver.test.ts'\ns=open(p).read()\ns=s.replace(\"import { mkdtemp, rm } from 'node:fs/promises';\",\"import { mkdir, mkdtemp, rm } from 'node:fs/promises';\")\ns=s.replace(\"  await (await import('node:fs/promises')).mkdir(root, { recursive: true });\",\"  await mkdir(root, { recursive: true });\")\ns=s.replace(\"sessionId: `e2-${Math.random().toString(36).slice(2)}`,\",\"sessionId: 'e2-probe-session',\")\nopen(p,'w').write(s)\n\n# remove requestId from model-client payload in the application script and the base copy\nfor p in ['apply-probes.mjs','/tmp/s85-scratch/S3/base-e2/src/core/agent-runtime/observed-model-run.ts']:\n    s=open(p).read()\n    s=s.replace(\"\"\"        probeLog('model-client-tools', {\n          requestId: request.requestId,\n          tools: request.tools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema })),\n        });\"\"\",\"\"\"        probeLog('model-client-tools', {\n          tools: request.tools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema })),\n        });\"\"\")\n    open(p,'w').write(s)\nEOF\ngrep -n \"sessionId\\|mkdir\\|requestId\" /tmp/s85-scratch/S3/probes/e2/driver.test.ts | head; grep -n \"requestId\" /tmp/s85-scratch/S3/base-e2/src/core/agent-runtime/observed-model-run.ts | head",
+  "stderr": "Traceback (most recent call last):\n  File \"<stdin>\", line 10, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: '/tmp/s85-scratch/S3/base-e2/src/core/agent-runtime/observed-model-run.ts'\n"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591527497,
+  "kind": "bash with heredoc and more",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && cat > /tmp/s85-scratch/S3/probes/k3-renderer.txt <<'EOF'\nexport function renderUnknownCallReviewZh(input: UnknownCallReviewInputV1): string {\n  const workspace = input.workspace;\n  const omitted = (count: number): string => count > 0\n    ? `${STR['k3.workspace.omittedLead']}${String(count)}${STR['k3.workspace.omittedSuffix']}` : '';\n  const workspaceLines: string[] = [];\n  workspaceLines.push(`${STR['k3.workspace.statusLead']}${workspace.status}${STR['k3.workspace.baselineMiddle']}`\n    + `${workspace.runBaselineKnown ? STR['k3.workspace.yes'] : STR['k3.workspace.no']}`);\n  workspaceLines.push(`${STR['k3.workspace.notVisibleLead']}`\n    + `${workspace.notVisible.length === 0 ? STR['k3.none']\n      : workspace.notVisible.join(STR['k3.list.separator']) + omitted(workspace.notVisibleOmitted)}`);\n  workspaceLines.push(`${STR['k3.workspace.changedLead']}`\n    + `${workspace.changedSample.length === 0 ? STR['k3.none']\n      : workspace.changedSample.map(path => `${path.path}（${path.change}）`).join(STR['k3.list.separator'])\n        + omitted(workspace.changedOmitted)}`);\n  workspaceLines.push(STR['k3.workspace.disclaimer']);\n  const writtenLines: string[] = [];\n  const written = input.items.filter(item => item.current !== null\n    && (item.current.by === 'review_round' || item.current.by === 'settlement'));\n  if (written.length === 0) {\n    writtenLines.push(STR['k3.none']);\n  } else {\n    for (const item of written) {\n      const current  …"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591533447,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2/driver-smoke && python3 - <<'EOF'\nimport json,glob\nfor f in glob.glob('*.jsonl'):\n    print(f)\n    for line in open(f):\n        o=json.loads(line)\n        if o['kind']=='tools-additional':\n            print(o['testName'], [t['name'] for t in o['payload']['tools']])\nEOF"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591534809,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/tools-1 && node - <<'EOF'\nconst fs=require('fs');\nconst p='MANIFEST.json';\nconst m=JSON.parse(fs.readFileSync(p,'utf8'));\nm.notes = m.notes.filter(n=>!n.startsWith('tool resources:'));\nm.notes.unshift(...Object.entries(m.tools).map(([n,loc])=>`${n} | tools/${n}.json | ${loc}`));\nfs.writeFileSync(p, JSON.stringify(m,null,2)+'\\n');\nconsole.log(m.notes.slice(0,4).join('\\n'));\nEOF"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591536531,
+  "kind": "bash that may write",
+  "command": "/tmp/s85-scratch/S3/probes/e2/run-capture.sh /tmp/s85-scratch/S3/base-e2 /tmp/s85-scratch/S3/probes/e2/base-run1 /tmp/s85-scratch/S3/probes/e2/base-run1.log > /tmp/s85-scratch/S3/probes/e2/base-run1.stdout 2>&1; echo RUN1=$?; grep -E \"^status=|Test Files|Tests  \" /tmp/s85-scratch/S3/probes/e2/base-run1.log | tail -20"
+ },
+ {
+  "session": "f49cd777-72b6-484b-a587-384638c65712.jsonl",
+  "time": 1792591538806,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && git status --short tests/ docs/ resources/ package.json runtime-assets.json scripts/ 2>/dev/null | head; echo \"--- handoff json valid\"; for f in /tmp/s85-scratch/S3/handoff/tools-1/*.json /tmp/s85-scratch/S3/handoff/tools-1/tools/*.json; do node -e \"JSON.parse(require('fs').readFileSync('$f','utf8'))\" || echo BAD $f; done; echo ok; node /tmp/s85-scratch/S3/probes/compare-handoff.js"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591555224,
+  "kind": "bash with heredoc and more",
+  "command": "mkdir -p /tmp/s85-scratch/S3/handoff/brief-k3/templates && cat > /tmp/s85-scratch/S3/probes/build-strings.mjs <<'EOF'\nimport { writeFileSync } from 'node:fs';\nconst S = {\n  'brief.failureClass.interrupted': '平台中断',\n  'brief.failureClass.cancelled': '已取消',\n  'brief.failureClass.check_failed': '检查未通过',\n  'brief.failureClass.run_failed': '执行失败',\n  'brief.failureClass.check_incomplete': '检查不完整',\n  'brief.actorClass.human': '人工',\n  'brief.actorClass.system': '系统自动',\n  'brief.actorClass.agent': 'Agent',\n  'brief.stopRequester.human': '人工',\n  'brief.stopRequester.goal_fan_out': '目标级控制',\n  'brief.stopRequester.system': '系统',\n  'brief.stopRequester.none': '无',\n  'brief.toolResult.success': '成功',\n  'brief.toolResult.error': '出错',\n  'brief.toolResult.cancelled': '已取消',\n  'brief.toolResult.not_started': '未开始',\n  'brief.toolResult.outcome_unknown': '结果未知',\n  'brief.sideEffect.none': '无副作用',\n  'brief.sideEffect.possible': '可能有副作用',\n  'brief.sideEffect.confirmed': '有副作用',\n  'brief.waitStatus.pending': '尚未读取',\n  'brief.waitStatus.read': '已读、未回复',\n  'brief.waitStatus.responded': '已回复',\n  'brief.checkpoint.round_open': '检查轮次开始',\n  'brief.checkpoint.requeue': '重新入队',\n  'brief.checkpoint.brief': '本次执行开始前',\n  'brief.omitted.prefix': '……（接续说明超过 ',\n  'brief.omitted.between': ' 字节，其余 ',\n  'brief.omitted.suffix': ' 行已省略）',\n  'brief.clip.truncatedSuffix': '…（已截断）',\n  'brief.clip.newlineIndent': '\\n  ',\n  'brief.list.none': '无',\n  'brief.list.separator': '、',\n  'brief.list.morePrefix': '（另有 ',\n  'brief …"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591559162,
+  "kind": "bash with heredoc and more",
+  "command": "cat > /tmp/s85-scratch/S3/probes/build-templates.mjs <<'EOF'\nimport { writeFileSync } from 'node:fs';\nconst dir = '/tmp/s85-scratch/S3/handoff/brief-k3/templates/';\nconst brief = [\n  '## 接续说明',\n  '{{marker}}{{body}}{{blockedOmission}}{{bodyOmission}}{{anomalies}}{{review}}{{blocked}}',\n  '',\n  '### 继续之前',\n  '- 文件可能已经变化，编辑前先重新读取。',\n  '- “结果未知”的工具调用可能已经产生副作用，重做之前先核实当前状态。',\n  '- “没有执行”的工具调用没有产生结果，需要时重新发起。',\n  '- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。',\n].join('\\n');\nconst review = [\n  '## Unknown-call review',\n  '这一轮只核对，不做任务，不改工作区；不许重跑下面的命令。',\n  '',\n  '### 工作区采集',\n  '{{workspaceLines}}',\n  '',\n  '### 已经写过的结论',\n  '{{writtenLines}}',\n  '',\n  '### 要核对的调用',\n  '{{items}}',\n  '',\n  '### 每条要回答两件事',\n  '1. 做没做完：已做 / 没做 / 做了一半 / 判断不了，附依据；',\n  '2. 会不会就是 Host 崩溃的原因：不太可能 / 可能 / 判断不了，附依据（命令本身、留下的痕迹）。',\n].join('\\n');\nconst proposal = [\n  '## Unknown-call review',\n  '这一轮只核对，不做任务，不改工作区；不许重跑下面的命令。',\n  '',\n  '### 工作区采集',\n  '{{workspaceLines}}',\n  '',\n  '### 已经写过的结论',\n  '{{writtenLines}}',\n  '',\n  '### 提方案',\n  '- 这一轮只给下面的条目提方案：每条调用一次 propose_safer_method，命令要能原样执行；不要跑原命令。{{targets}}{{personNote}}{{annotations}}{{platformTargets}}',\n].join('\\n');\nwriteFileSync(dir + 'continuation-brief.txt', brief);\nwriteFileSync(dir + 'unknown-call-review.txt', review);\nwriteFileSync(dir + 'unknown-call-proposal.txt', proposal);\nfor (const name of ['continuation-brief', 'unknown-call-review', 'unknown-call-proposal']) {\n  const { readFileSync } = await import('node:fs');\n  const b = readFileSync(dir + name + '.txt');\n   …"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591561217,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && python3 - <<'PY'\nimport re, json\nfrom pathlib import Path\nS = json.loads(Path('/tmp/s85-scratch/S3/handoff/brief-k3/strings.json').read_text())\nused = set()\nfor f in ['src/contracts/continuation-brief.ts', 'src/contracts/core/prepared-execution.ts']:\n    t = Path(f).read_text()\n    used.update(re.findall(r\"STR\\['([^']+)'\\]\", t))\nprint('used', len(used), 'strings', len(S))\nprint('missing from strings:', sorted(used - set(S)))\nprint('unused strings:', sorted(set(S) - used))\nPY"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792591570526,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node -e \"\nconst fs=require('fs');const files=fs.readdirSync('.').filter(f=>/^base-run1\\..*jsonl$/.test(f));\nconst counts={};const tests={};\nfor(const f of files)for(const l of fs.readFileSync(f,'utf8').trim().split('\\n')){if(!l)continue;const r=JSON.parse(l);counts[r.probe]=(counts[r.probe]||0)+1;(tests[r.probe]??=new Set()).add(r.testPath.split('/base-e1/')[1]);}\nconsole.log(counts);for(const k in tests)console.log(k, [...tests[k]]);\n\""
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591570631,
+  "kind": "bash that may write",
+  "command": "/tmp/s85-scratch/S3/probes/e2/run-capture.sh /tmp/s85-scratch/S3/base-e2 /tmp/s85-scratch/S3/probes/e2/base-run2 /tmp/s85-scratch/S3/probes/e2/base-run2.log > /tmp/s85-scratch/S3/probes/e2/base-run2.stdout 2>&1; echo RUN2=$?; grep -E \"^status=|Test Files|Tests  \" /tmp/s85-scratch/S3/probes/e2/base-run2.log | tail -20"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591586868,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3 && rm -rf result && cp -a base result && cp /home/han001/dsh-work/slices/s9s85-S3/src/contracts/continuation-brief.ts result/src/contracts/continuation-brief.ts && cp /home/han001/dsh-work/slices/s9s85-S3/src/contracts/core/prepared-execution.ts result/src/contracts/core/prepared-execution.ts && echo copied && diff -q base/src/contracts/continuation-brief.ts result/src/contracts/continuation-brief.ts; echo status=$?"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591597640,
+  "kind": "bash with heredoc and more",
+  "command": "mkdir -p /tmp/s85-scratch/S3/result/src/contracts/prompts && node - <<'EOF'\nconst fs = require('fs');\nconst dir = '/tmp/s85-scratch/S3/handoff/brief-k3';\nconst strings = JSON.parse(fs.readFileSync(dir + '/strings.json', 'utf8'));\nconst templates = {};\nfor (const id of ['continuation-brief', 'unknown-call-review', 'unknown-call-proposal']) {\n  templates[id] = fs.readFileSync(dir + '/templates/' + id + '.txt', 'utf8');\n}\nfs.writeFileSync('/tmp/s85-scratch/S3/result/src/contracts/prompts/platform-pack.generated.js',\n  'export const PLATFORM_PROMPT_PACK_V1 = ' + JSON.stringify({ templates, strings }) + ';\\n');\nfs.writeFileSync('/tmp/s85-scratch/S3/result/src/contracts/prompts/render-template.js', `\nconst OPTIONAL = {\n  'continuation-brief': new Set(['body', 'blockedOmission', 'bodyOmission', 'anomalies', 'review', 'blocked']),\n  'unknown-call-review': new Set(['items']),\n  'unknown-call-proposal': new Set(['targets', 'personNote', 'annotations', 'platformTargets']),\n};\nconst REQUIRED = { 'continuation-brief': ['marker'], 'unknown-call-review': ['workspaceLines', 'writtenLines'], 'unknown-call-proposal': ['workspaceLines', 'writtenLines'] };\nexport function renderTemplate(resolved, templateId, slots, finalToolNames) {\n  const source = resolved.templates[templateId];\n  if (source === undefined) throw new Error('unknown template ' + templateId);\n  const optional = OPTIONAL[templateId] ?? new Set();\n  const required = REQUIRED[templateId] ?? [];\n  for (const name of required) if (typ …"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591606736,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3 && node probes/compare-handoff.js; echo \"exit=$?\""
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591606770,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3 && node probes/tools-2/verify.cjs; echo \"exit=$?\""
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591619589,
+  "kind": "bash with heredoc and more",
+  "command": "cat > /tmp/s85-scratch/S3/probes/s3-brief-k3-compare.mjs <<'EOF'\nimport assert from 'node:assert/strict';\nimport { createHash } from 'node:crypto';\nimport * as base from './bundle-base-brief.mjs';\nimport * as result from './bundle-result-brief.mjs';\n\nlet checks = 0;\nfunction firstDiff(a, b) {\n  const ab = Buffer.from(a, 'utf8'); const bb = Buffer.from(b, 'utf8');\n  if (ab.equals(bb)) return null;\n  const n = Math.min(ab.length, bb.length);\n  let i = 0; while (i < n && ab[i] === bb[i]) i += 1;\n  return { offset: i, baseLength: ab.length, resultLength: bb.length,\n    baseAround: ab.subarray(Math.max(0, i - 8), i + 16).toString('hex'),\n    resultAround: bb.subarray(Math.max(0, i - 8), i + 16).toString('hex') };\n}\nfunction sameString(label, a, b) {\n  checks += 1;\n  if (a === b) return;\n  const d = firstDiff(a, b);\n  console.error('DIFF', label, d);\n  console.error('base=', JSON.stringify(a.slice(Math.max(0, d.offset - 40), d.offset + 80)));\n  console.error('result=', JSON.stringify(b.slice(Math.max(0, d.offset - 40), d.offset + 80)));\n  throw new Error('string diff ' + label);\n}\nfunction sameArray(label, a, b) {\n  checks += 1;\n  assert.deepStrictEqual(b, a);\n}\nconst sha = (c) => c.repeat(64);\nconst digestOf = (brief) => base.continuationBriefDigest(brief);\nconst renderBoth = (label, brief) => {\n  const d = digestOf(brief);\n  sameString(label, base.renderContinuationBriefZh(brief, d), result.renderContinuationBriefZh(brief, d));\n};\n\nconst P = 'k3r-project';\nconst G = 'k3r-goal';\nc …"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591621618,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2/base-run1 && python3 - <<'EOF'\nimport json,glob,collections\nadd=collections.Counter(); cli=collections.Counter(); addrecs=0; clirecs=0\nfor f in glob.glob('*.jsonl'):\n    for line in open(f):\n        o=json.loads(line)\n        if o['kind']=='tools-additional':\n            addrecs+=1\n            for t in o['payload']['tools']: add[t['name']]+=1\n        if o['kind']=='model-client-tools':\n            clirecs+=1\n            for t in o['payload']['tools']: cli[t['name']]+=1\nprint('tools-additional calls',addrecs,'model-client calls',clirecs)\nprint('add unique',len(add))\nfor n in sorted(add): print(' ',n,add[n])\nprint('client unique',len(cli), sorted(set(cli)-set(add)))\nEOF"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591625810,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2/base-run1 && python3 - <<'EOF'\nimport json,glob\nfor f in glob.glob('*.jsonl'):\n    for line in open(f):\n        o=json.loads(line)\n        if o['kind']=='tool-lists':\n            p=o['payload']; en=p['enabledNames']; ha=p['hostAuthorizedTools']\n            if not ha:\n                print('NO-AUTH',f,o['testName'],en[:6])\n            if not any(x in en for x in ['send_session_message','read_session_inbox','query_task_graph','look_graph','record_note','find_related_sessions','send_user_message']):\n                pass\nEOF\necho '--- query kinds'; python3 - <<'EOF'\nimport json,glob,collections\nc=collections.Counter()\nfor f in glob.glob('*.jsonl'):\n    for line in open(f):\n        o=json.loads(line)\n        if o['kind']=='query-input': c[o['payload']['kind']]+=1\nprint(c)\nEOF"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591635294,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && python3 - <<'PY'\nfrom pathlib import Path\np=Path('src/contracts/core/prepared-execution.ts')\nt=p.read_text()\nold=\"\"\"    const personNote = input.personText !== null && input.personText !== ''\n      ? `${STR['k3.proposal.personLead']}${input.personText}` : '';\"\"\"\nnew=\"\"\"    const personNote = input.personText !== null && input.personText !== ''\n      ? `\\\\n${STR['k3.proposal.personLead']}${input.personText}` : '';\"\"\"\nassert old in t\np.write_text(t.replace(old,new))\nprint('patched')\nPY\ncp src/contracts/core/prepared-execution.ts /tmp/s85-scratch/S3/result/src/contracts/core/prepared-execution.ts && ./node_modules/.bin/esbuild /tmp/s85-scratch/S3/probes/entry-result-brief.ts --bundle --format=esm --platform=node --outfile=/tmp/s85-scratch/S3/probes/bundle-result-brief.mjs --log-level=warning && cd /tmp/s85-scratch/S3/probes && node s3-brief-k3-compare.mjs"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591638498,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3 && node probes/compare-slots.js; echo \"exit=$?\""
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591640907,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2/base-run1 && python3 - <<'EOF'\nimport json,glob,collections\nkinds=collections.Counter(); add=collections.Counter(); cli=collections.Counter()\nquery=collections.Counter(); guide=collections.Counter()\nfor f in glob.glob('*.jsonl'):\n    for line in open(f):\n        o=json.loads(line); kinds[o['kind']]+=1\n        if o['kind']=='tools-additional':\n            for t in o['payload']['tools']: add[t['name']]+=1\n        if o['kind']=='model-client-tools':\n            for t in o['payload']['tools']: cli[t['name']]+=1\n        if o['kind']=='query-input': query[o['payload']['kind']]+=1\n        if o['kind']=='guide-constant': guide[o['payload']['byteLength']]+=1\nprint('kinds',dict(kinds))\nprint('tool-lists calls', kinds['tool-lists'], 'additional calls', kinds['tools-additional'], 'client calls', kinds['model-client-tools'])\nprint('add unique',len(add),'client unique',len(cli))\nprint('query',dict(query),'total',sum(query.values()))\nprint('guide byteLengths',dict(guide),'records',sum(guide.values()))\n# files with query\nfor f in sorted(glob.glob('*.jsonl')):\n    n=sum(1 for l in open(f) if json.loads(l)['kind']=='query-input')\n    if n: print('query-file',f,n)\nEOF"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591646835,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff && node -e \"\nconst fs=require('fs');\nconst names=[...Object.keys(require('./tools-1/MANIFEST.json').tools),...Object.keys(require('./tools-2/MANIFEST.json').tools)];\nconst tdir='rest/templates';\nfor(const f of fs.readdirSync(tdir)){\n  const t=fs.readFileSync(tdir+'/'+f,'utf8');\n  // strip tool blocks\n  const plain=t.replace(/\\{\\{#tool:([^}]+)\\}\\}[\\s\\S]*?\\{\\{\\/tool:\\1\\}\\}/g,'');\n  const hits=names.filter(n=>{\n    const re=new RegExp('(^|[^A-Za-z0-9_])'+n.replace(/[.*+?^\\${}()|[\\]\\\\\\\\]/g,'\\\\\\\\$&')+'([^A-Za-z0-9_]|$)');\n    return re.test(plain);\n  });\n  console.log(f, JSON.stringify(hits));\n}\n\""
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591648629,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff && node -e \"\nconst m1=require('./tools-1/MANIFEST.json').tools,m2=require('./tools-2/MANIFEST.json').tools;\nconst names=[...Object.keys(m1),...Object.keys(m2)];\nconsole.log('count',names.length,'unique',new Set(names).size);\nconsole.log(names.join('\\n'));\n\""
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591651107,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && python3 - <<'PY'\nimport json\nfrom pathlib import Path\nS = json.loads(Path('/tmp/s85-scratch/S3/handoff/brief-k3/strings.json').read_text())\nbase = {\n 'brief': Path('/tmp/s85-scratch/S3/base/src/contracts/continuation-brief.ts').read_text().split('\\n'),\n 'k3': Path('/tmp/s85-scratch/S3/base/src/contracts/core/prepared-execution.ts').read_text().split('\\n'),\n}\nmissing=[]\nloc={}\nfor key,text in S.items():\n    lines = base['k3'] if key.startswith('k3.') else base['brief']\n    hits=[i+1 for i,line in enumerate(lines) if text in line]\n    if hits:\n        loc[key]=hits\n    else:\n        missing.append(key)\nprint('missing', len(missing))\nfor k in missing: print(k, repr(S[k]))\nPY"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591651355,
+  "kind": "bash that may write",
+  "command": "set -e\ncd /tmp/s85-scratch/S3/probes/e2\nmkdir -p artifacts\npython3 - <<'EOF'\nimport json,glob,hashlib,os\nguide=None\nfor f in sorted(glob.glob('base-run1/*.jsonl')):\n    for line in open(f):\n        o=json.loads(line)\n        if o['kind']=='guide-constant':\n            text=o['payload']['text']\n            if guide is None: guide=text\n            assert guide==text, f\nassert guide is not None\nopen('artifacts/guide-base.txt','wb').write(guide.encode('utf-8'))\nprint('guide bytes',len(guide.encode('utf-8')),'sha256',hashlib.sha256(guide.encode('utf-8')).hexdigest())\nEOF\ncat base-run1/*.jsonl > base-run1.jsonl\ncat base-run2/*.jsonl > base-run2.jsonl\ncmp base-run1.jsonl base-run2.jsonl && echo 'combined cmp: identical'\nsha256sum base-run1.jsonl base-run2.jsonl artifacts/guide-base.txt | tee artifacts/sha256.txt\nwc -l base-run1.jsonl\n"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591654186,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && python3 - <<'PY'\nimport json\nfrom pathlib import Path\nS = json.loads(Path('/tmp/s85-scratch/S3/handoff/brief-k3/strings.json').read_text())\nbase = {\n 'brief': Path('/tmp/s85-scratch/S3/base/src/contracts/continuation-brief.ts').read_text().split('\\n'),\n 'k3': Path('/tmp/s85-scratch/S3/base/src/contracts/core/prepared-execution.ts').read_text().split('\\n'),\n}\nfor key,text in S.items():\n    lines = base['k3'] if key.startswith('k3.') else base['brief']\n    hits=[i+1 for i,line in enumerate(lines) if text in line]\n    if len(hits)>1 or len(hits)==0:\n        print(key, repr(text), hits)\nPY"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591655001,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2 && python3 - <<'EOF'\nimport json,glob,collections,hashlib\nsummary={'run1_dir':'base-run1','run2_dir':'base-run2','records':0,'files':{},'kinds':{},'tools_additional':{},'tools_client':{},'query_inputs':{},'guide_byte_length':None,'guide_sha256':None,'guide_records':0}\nfor run in ['base-run1','base-run2']:\n    pass\nfor f in sorted(glob.glob('base-run1/*.jsonl')):\n    n=0\n    for line in open(f):\n        o=json.loads(line); n+=1\n        k=o['kind']; summary['kinds'][k]=summary['kinds'].get(k,0)+1\n        if k=='tools-additional':\n            for t in o['payload']['tools']:\n                summary['tools_additional'][t['name']]=summary['tools_additional'].get(t['name'],0)+1\n        if k=='model-client-tools':\n            for t in o['payload']['tools']:\n                summary['tools_client'][t['name']]=summary['tools_client'].get(t['name'],0)+1\n        if k=='query-input':\n            q=o['payload']['kind']; summary['query_inputs'][q]=summary['query_inputs'].get(q,0)+1\n        if k=='guide-constant':\n            text=o['payload']['text']; summary['guide_records']+=1\n            summary['guide_byte_length']=len(text.encode('utf-8'))\n            summary['guide_sha256']=hashlib.sha256(text.encode('utf-8')).hexdigest()\n    summary['files'][f.split('/')[-1]]=n\n    summary['records']+=n\nsummary['tools_additional_unique']=len(summary['tools_additional'])\nsummary['tools_client_unique']=len(summary['tools_client'])\njson.dump(summary,open('artifacts/captur …"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591659179,
+  "kind": "bash with heredoc and more",
+  "command": "cat > /tmp/s85-scratch/S3/probes/verify-handoff-owner.js <<'EOF'\nconst fs = require('fs');\nconst path = require('path');\nconst ts = require('/home/han001/dsh-work/slices/s9s85-S3/node_modules/typescript');\nconst BASE = '/tmp/s85-scratch/S3/base';\nconst HAND = '/tmp/s85-scratch/S3/handoff';\nconst TMP = '/tmp/s85-scratch/S3/probes/rest-recheck';\nlet failures = 0;\n\nfunction fail(msg) { failures++; console.log('FAIL', msg); }\nfunction readBase(rel) { return fs.readFileSync(path.join(BASE, rel), 'utf8'); }\nfunction source(rel) {\n  const text = readBase(rel);\n  return { text, sf: ts.createSourceFile(path.join(BASE, rel), text, ts.ScriptTarget.Latest, true) };\n}\nfunction walk(node, fn) { fn(node); ts.forEachChild(node, child => walk(child, fn)); }\n\nfunction compareBytes(label, expected, actualPath) {\n  const a = Buffer.from(expected, 'utf8');\n  const b = fs.readFileSync(actualPath);\n  if (a.equals(b)) return;\n  let i = 0;\n  while (i < Math.min(a.length, b.length) && a[i] === b[i]) i++;\n  const around = (buf) => JSON.stringify(buf.subarray(Math.max(0, i - 16), i + 16).toString('utf8'));\n  fail(`${label}: byte mismatch at offset ${i}; expected ${a.length} bytes ${around(a)}; actual ${b.length} bytes ${around(b)}`);\n}\n\n// ---------- rest re-extraction from the base copy ----------\nconst extractor = fs.readFileSync('/tmp/s85-scratch/S3/probes/extract-rest.js', 'utf8')\n  .replace(\"const outDir = '/tmp/s85-scratch/S3/handoff/rest';\", `const outDir = '${TMP}';`);\nfs.mkdirSync(TMP + '/templ …"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591665443,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3 && node -e \"\nconst fs=require('fs'),ts=require('/home/han001/dsh-work/slices/s9s85-S3/node_modules/typescript');\nconst sf=ts.createSourceFile('h.ts',fs.readFileSync('base/src/app/host.ts','utf8'),ts.ScriptTarget.Latest,true);\nfunction walk(n){ if(ts.isBinaryExpression(n)&&n.operatorToken.kind===ts.SyntaxKind.PlusToken){ const l=ts.isTemplateExpression(n.left)?JSON.stringify(n.left.head.text.slice(-20)):ts.SyntaxKind[n.left.kind]; const r=ts.isTemplateExpression(n.right)?JSON.stringify(n.right.head.text.slice(0,20)):ts.SyntaxKind[n.right.kind]; if(String(l).includes('待审')||String(r).includes('锚点')) console.log(sf.getLineAndCharacterOfPosition(n.getStart()).line+1,l,r);} ts.forEachChild(n,walk);} walk(sf);\n\""
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591672009,
+  "kind": "bash that may write",
+  "command": "chmod +x /tmp/s85-scratch/S3/probes/e2/run-result.sh /tmp/s85-scratch/S3/probes/e2/run-capture.sh\nls -la /tmp/s85-scratch/S3/probes/e2; echo ===; ls -la /tmp/s85-scratch/S3/probes/e2/artifacts\n# final base-vs-base check from saved dirs\nnode /tmp/s85-scratch/S3/probes/e2/compare.mjs /tmp/s85-scratch/S3/probes/e2/base-run1 /tmp/s85-scratch/S3/probes/e2/base-run2 | tail -3"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591672881,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && python3 - <<'PY'\nimport json\nfrom pathlib import Path\nS = json.loads(Path('/tmp/s85-scratch/S3/handoff/brief-k3/strings.json').read_text())\nbase = {\n 'brief': Path('/tmp/s85-scratch/S3/base/src/contracts/continuation-brief.ts').read_text().split('\\n'),\n 'k3': Path('/tmp/s85-scratch/S3/base/src/contracts/core/prepared-execution.ts').read_text().split('\\n'),\n}\noverrides = {\n 'brief.failureClass.cancelled': 337, 'brief.actorClass.human': 340, 'brief.actorClass.agent': 340,\n 'brief.stopRequester.human': 351, 'brief.stopRequester.system': 351, 'brief.stopRequester.none': 351,\n 'brief.toolResult.cancelled': 353, 'brief.toolResult.outcome_unknown': 353, 'brief.checkpoint.requeue': 360,\n 'brief.clip.truncatedSuffix': 548, 'brief.clip.newlineIndent': 550, 'brief.list.none': 557,\n 'brief.list.separator': 557, 'brief.separator.semicolon': 982, 'brief.summary.afterMode': 571,\n 'brief.mode.rework': 571, 'brief.summary.requeueLead': 572, 'brief.summary.beforeActor': 573,\n 'brief.section.previous': 583, 'brief.previous.sessionOpen': 584, 'brief.previous.factsFromHopsSuffix': 586,\n 'brief.interruption.reached': 591, 'brief.interruption.notReached': 591, 'brief.section.stoppedAt': 606,\n 'brief.stoppedAt.turnLead': 609, 'brief.unknown': 609, 'brief.stoppedAt.windowRange': 619,\n 'brief.section.toolCalls': 623, 'brief.toolCalls.countSuffix': 635, 'brief.section.checks': 641,\n 'brief.section.requeue': 651, 'brief.requeue.reasonMiddle': 652, 'brief.reque …"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591675691,
+  "kind": "bash that may write",
+  "command": "rm -rf /tmp/s85-scratch/S3/probes/e2/smoke /tmp/s85-scratch/S3/probes/e2/driver-smoke /tmp/s85-scratch/S3/probes/e2/base-run1.stdout /tmp/s85-scratch/S3/probes/e2/base-run2.stdout\nnode /tmp/s85-scratch/S3/probes/e2/apply-probes.mjs /tmp/s85-scratch/S3/base-e2\ncd /tmp/s85-scratch/S3/base-e2 && grep -c \"probeLog('query-input'\" src/core/agent-runtime/query-preparation.ts; grep -c \"probeLog('tools-additional'\" src/core/agent-runtime/observed-model-run.ts; grep -c \"probeLog('model-client-tools'\" src/core/agent-runtime/observed-model-run.ts; grep -c \"setupFiles\" vitest.config.ts"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591677900,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && node - <<'EOF'\nconst fs = require('fs');\nconst path = require('path');\nconst REPO = '/home/han001/dsh-work/slices/s9s85-S3';\nconst HAND = '/tmp/s85-scratch/S3/handoff';\nconst PACK = path.join(REPO, 'resources/prompts/platform');\nconst toolNames = [...Object.keys(JSON.parse(fs.readFileSync(HAND + '/tools-1/MANIFEST.json', 'utf8')).tools),\n  ...Object.keys(JSON.parse(fs.readFileSync(HAND + '/tools-2/MANIFEST.json', 'utf8')).tools)];\nconst templateIds = Object.keys(JSON.parse(fs.readFileSync(HAND + '/rest/MANIFEST.json', 'utf8')).templates);\n\n// strings: tools-1 then rest; tools-2 is empty. Key order is the authoring order.\nconst merged = {\n  ...JSON.parse(fs.readFileSync(HAND + '/tools-1/strings.json', 'utf8')),\n  ...JSON.parse(fs.readFileSync(HAND + '/tools-2/strings.json', 'utf8')),\n  ...JSON.parse(fs.readFileSync(HAND + '/rest/strings.json', 'utf8')),\n};\nfs.writeFileSync(PACK + '/strings.json', JSON.stringify(merged, null, 2) + '\\n');\n\nfor (const id of templateIds) fs.copyFileSync(HAND + '/rest/templates/' + id + '.txt', PACK + '/templates/' + id + '.txt');\nfor (const name of toolNames) {\n  const dir = fs.existsSync(HAND + '/tools-1/tools/' + name + '.json') ? 'tools-1' : 'tools-2';\n  fs.copyFileSync(HAND + '/' + dir + '/tools/' + name + '.json', PACK + '/tools/' + name + '.json');\n}\n\n// mentionsTools: tool names that appear as plain text outside {{#tool:…}} blocks.\nconst mentionsOutsideToolBlocks = (text) => {\n  const plain = text …"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591679105,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && python3 - <<'PY'\nimport json\nfrom pathlib import Path\nS = json.loads(Path('/tmp/s85-scratch/S3/handoff/brief-k3/strings.json').read_text())\nbase = {\n 'brief': Path('/tmp/s85-scratch/S3/base/src/contracts/continuation-brief.ts').read_text().split('\\n'),\n 'k3': Path('/tmp/s85-scratch/S3/base/src/contracts/core/prepared-execution.ts').read_text().split('\\n'),\n}\noverrides = {\n 'brief.failureClass.cancelled': 337, 'brief.actorClass.human': 340, 'brief.actorClass.agent': 340,\n 'brief.stopRequester.human': 351, 'brief.stopRequester.system': 351, 'brief.stopRequester.none': 351,\n 'brief.toolResult.cancelled': 353, 'brief.toolResult.outcome_unknown': 353, 'brief.checkpoint.requeue': 360,\n 'brief.clip.truncatedSuffix': 548, 'brief.clip.newlineIndent': 550, 'brief.list.none': 557,\n 'brief.list.separator': 557, 'brief.separator.semicolon': 982, 'brief.summary.afterMode': 571,\n 'brief.mode.rework': 571, 'brief.summary.requeueLead': 572, 'brief.summary.beforeActor': 573,\n 'brief.section.previous': 583, 'brief.previous.sessionOpen': 584, 'brief.previous.factsFromHopsSuffix': 586,\n 'brief.interruption.reached': 591, 'brief.interruption.notReached': 591, 'brief.section.stoppedAt': 606,\n 'brief.stoppedAt.turnLead': 609, 'brief.unknown': 609, 'brief.stoppedAt.windowRange': 619,\n 'brief.section.toolCalls': 623, 'brief.toolCalls.countSuffix': 635, 'brief.section.checks': 641,\n 'brief.section.requeue': 651, 'brief.requeue.reasonMiddle': 652, 'brief.reque …"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591681532,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && node - <<'EOF'\nconst fs=require('fs'),path=require('path');\nconst HAND='/tmp/s85-scratch/S3/handoff',PACK='/home/han001/dsh-work/slices/s9s85-S3/resources/prompts/platform';\nlet bad=0;\nconst cmp=(a,b,label)=>{const x=fs.readFileSync(a),y=fs.readFileSync(b); if(!x.equals(y)){bad++;let i=0;while(i<Math.min(x.length,y.length)&&x[i]===y[i])i++;console.log('DIFF',label,'offset',i);} };\nfor(const f of fs.readdirSync(PACK+'/templates')) cmp(HAND+'/rest/templates/'+f,PACK+'/templates/'+f,'template '+f);\nfor(const dir of ['tools-1','tools-2']) for(const f of fs.readdirSync(HAND+'/'+dir+'/tools')) cmp(HAND+'/'+dir+'/tools/'+f,PACK+'/tools/'+f,'tool '+f);\nconst expected={...JSON.parse(fs.readFileSync(HAND+'/tools-1/strings.json')),...JSON.parse(fs.readFileSync(HAND+'/tools-2/strings.json')),...JSON.parse(fs.readFileSync(HAND+'/rest/strings.json'))};\nconst actual=JSON.parse(fs.readFileSync(PACK+'/strings.json'));\nif(JSON.stringify(expected)!==JSON.stringify(actual)){bad++;console.log('DIFF strings.json');}\nconsole.log(bad===0?'OK: pack copies are byte-identical to handoffs':'FAILURES '+bad);\nEOF"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591681843,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2 && python3 - <<'EOF'\nimport json,glob\nguide=open('artifacts/guide-base.txt','rb').read()\nok=0; bad=0; sem=0\nfor f in glob.glob('base-run1/*.jsonl'):\n    for line in open(f):\n        o=json.loads(line)\n        if o['kind']!='query-input': continue\n        q=o['payload']['question'].encode('utf-8')\n        if o['payload']['kind']=='initial_coordination':\n            suffix=b'\\n\\n'+guide\n            if q.endswith(suffix):\n                ok+=1\n                # the part before the guide must be the original question, i.e. no extra separator\n                pre=q[:-len(suffix)]\n                if pre.endswith(b'\\n\\n'): print('UNEXPECTED pre suffix',f,o['testName'])\n            else:\n                bad+=1; print('BAD',f,o['testName'],len(q))\n        else:\n            sem+=1\n            if guide in q: print('GUIDE LEAKED',f,o['testName'])\nprint('initial with exact guide:',ok,'bad:',bad,'semantic:',sem)\nEOF"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591691552,
+  "kind": "bash that may write",
+  "command": "set -e\nd=/tmp/s85-scratch/S3/probes/e2/compare-selftest\nrm -rf \"$d\"; mkdir -p \"$d/a\" \"$d/b\"\nprintf '%s\\n' '{\"schema\":1,\"testPath\":\"t\",\"testName\":\"n\",\"runIndex\":0,\"kind\":\"k\",\"callIndex\":0,\"payload\":{\"s\":\"abc\",\"a\":[1,2],\"o\":{\"x\":null,\"y\":1},\"n\":1}}' > \"$d/a/t.jsonl\"\nprintf '%s\\n' '{\"schema\":1,\"testPath\":\"t\",\"testName\":\"n\",\"runIndex\":0,\"kind\":\"k\",\"callIndex\":0,\"payload\":{\"s\":\"abd\",\"a\":[1],\"o\":{\"x\":null},\"n\":1}}' > \"$d/b/t.jsonl\"\nnode /tmp/s85-scratch/S3/probes/e2/compare.mjs \"$d/a\" \"$d/b\" || true\nrm -rf \"$d\""
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591700996,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && grep -rho \"PLATFORM_PROMPT_PACK_V1\\.strings\\[[^]]*\\]\" src | sed \"s/.*\\['//;s/'\\]//\" | sort > /tmp/s85-scratch/S3/refs.txt && wc -l /tmp/s85-scratch/S3/refs.txt && node -e \"\nconst fs=require('fs');const refs=fs.readFileSync('/tmp/s85-scratch/S3/refs.txt','utf8').trim().split('\\n');const pack=JSON.parse(fs.readFileSync('resources/prompts/platform/strings.json'));\nconst missing=refs.filter(k=>!(k in pack));const unused=Object.keys(pack).filter(k=>!refs.includes(k));\nconsole.log('missing',missing);console.log('unused',unused);\n\" && echo \"--- brief refs? ---\" && grep -rn \"strings\\['brief\\|templates\\['continuation\" src/contracts/continuation-brief.ts | head"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591702271,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/brief-k3 && wc -w README.md && find . -type f -printf '%p %s bytes\\n' | sort && echo \"--- trailing bytes ---\" && for f in templates/*.txt; do printf '%s: ' \"$f\"; tail -c 1 \"$f\" | od -An -tu1; done && python3 -c \"import json;json.load(open('MANIFEST.json'));json.load(open('strings.json'));print('json ok')\""
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591712680,
+  "kind": "bash with heredoc and more",
+  "command": "mkdir -p /tmp/s85-scratch/S3/pack-probe && cat > /tmp/s85-scratch/S3/pack-probe/entry.ts <<'EOF'\nimport { PLATFORM_PROMPT_PACK_V1 } from '/home/han001/dsh-work/slices/s9s85-S3/src/contracts/prompts/platform-pack.generated.ts';\nimport { renderTemplate } from '/home/han001/dsh-work/slices/s9s85-S3/src/contracts/prompts/render-template.ts';\nimport { TEMPLATE_SLOTS } from '/home/han001/dsh-work/slices/s9s85-S3/src/contracts/prompts/slot-tables.ts';\n\nlet failures = 0;\nconst check = (label: string, actual: string, expected: string) => {\n  if (actual !== expected) { failures++; console.log('DIFF', label, JSON.stringify(actual), '!=', JSON.stringify(expected)); }\n  else console.log('ok', label, actual.length, 'bytes');\n};\nconst all = (id: string) => Object.fromEntries(Object.keys(TEMPLATE_SLOTS[id]!).map(name => [name, 'X']));\nfor (const id of Object.keys(TEMPLATE_SLOTS)) {\n  const slots = id === 'initial-planning-answer' ? {} : all(id);\n  const rendered = renderTemplate(PLATFORM_PROMPT_PACK_V1, id, slots, []);\n  console.log('render', id, rendered.text.length, 'ranges', Object.keys(rendered.sectionRanges).join(','));\n}\ncheck('initial-planning-answer', PLATFORM_PROMPT_PACK_V1.templates['initial-planning-answer'],\n  PLATFORM_PROMPT_PACK_V1.templates['initial-planning-answer']);\ncheck('consultation', renderTemplate(PLATFORM_PROMPT_PACK_V1, 'consultation-received-input',\n  { messageId: 'm-1', sourceJson: '{\"kind\":\"user\",\"key\":\"k\"}' }, []).text,\n  'Process the original received input m-1. …"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591713605,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2/group-e-smoke && python3 - <<'EOF'\nimport json,glob,collections\nfor f in glob.glob('*.jsonl'):\n    k=collections.Counter(); q=[]\n    for line in open(f):\n        o=json.loads(line); k[o['kind']]+=1\n        if o['kind']=='query-input': q.append((o['payload']['kind'],len(o['payload']['question'])))\n    print(f,dict(k),'query',q)\nEOF"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591713791,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && rm -f /tmp/s85-scratch/S3/result/src/contracts/prompts/render-template.js && cp src/contracts/prompts/render-template.ts src/contracts/prompts/slot-tables.ts src/contracts/prompts/prompt-pack.ts /tmp/s85-scratch/S3/result/src/contracts/prompts/ && ./node_modules/.bin/esbuild /tmp/s85-scratch/S3/probes/entry-result-brief.ts --bundle --format=esm --platform=node --outfile=/tmp/s85-scratch/S3/probes/bundle-result-brief.mjs --log-level=warning && cd /tmp/s85-scratch/S3/probes && node s3-brief-k3-compare.mjs && echo \"=== rerun actual tests against real renderer ===\" && cd /tmp/s85-scratch/S3/result && timeout 900 npx vitest run --maxWorkers=2 tests/contracts/A2-rework-contract-helpers.test.ts tests/runtime/K3-15-blocked-sentence-pure.test.ts tests/runtime/K3-15-blocked-sentence.test.ts tests/runtime/K3-15-blocked-omission.test.ts tests/runtime/K3-15-disposition-effects-pure.test.ts tests/runtime/K3-16-approved-method-lines.test.ts tests/runtime/K3-16-proposal-input.test.ts tests/runtime/K3-16-review-extremes-pure.test.ts tests/runtime/K3-35-renderer-boundary-pure.test.ts tests/runtime/K3-35-approved-methods-brief.test.ts 2>&1 | tail -20"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591741649,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/brief-k3 && wc -w README.md && ls -la templates/ && echo \"counts:\" && python3 -c \"import json;s=json.load(open('strings.json'));m=json.load(open('MANIFEST.json'));print('strings',len(s),'manifest',len(m['strings']),'templates',len(m['templates']))\""
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792591751708,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/brief-k3 && python3 - <<'PY'\nimport json\ns=json.load(open('strings.json'))\nbad=[k for k in s if not (k.startswith('brief.') or k.startswith('k3.'))]\nprint('bad prefixes', bad)\nprint('brief', sum(k.startswith('brief.') for k in s), 'k3', sum(k.startswith('k3.') for k in s))\n# no key with a newline in key, no undefined/non-string values\nprint('non-string', [k for k,v in s.items() if not isinstance(v,str)])\nPY\necho \"--- grep markers in templates ---\"; grep -n \"{{#\" templates/*.txt || echo \"no block markers\""
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591795977,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff && node -e \"\nconst m1=require('./tools-1/MANIFEST.json'),m2=require('./tools-2/MANIFEST.json'),r=require('./rest/MANIFEST.json');\nconst byFile=(obj)=>{const out={};for(const [k,v] of Object.entries(obj)){const f=v.split(':')[0];(out[f]??=[]).push(k);}return out;};\nconsole.log('STRINGS');for(const [f,ks] of Object.entries(byFile({...m1.strings,...r.strings})))console.log(f+' :: '+ks.join(', '));\nconsole.log('TOOLS');for(const [f,ks] of Object.entries(byFile({...m1.tools,...m2.tools})))console.log(f+' :: '+ks.join(', '));\nconsole.log('TEMPLATES');for(const [k,v] of Object.entries(r.templates))console.log(v+' :: '+k);\n\""
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591798597,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2\nnode compare.mjs base-run1 base-run2 | tail -6\ncat base-run1/*.jsonl > base-run1.jsonl\ncat base-run2/*.jsonl > base-run2.jsonl\ncmp base-run1.jsonl base-run2.jsonl && echo 'combined cmp: identical'\nsha256sum base-run1.jsonl base-run2.jsonl artifacts/guide-base.txt\nwc -l base-run1.jsonl\npython3 - <<'EOF'\nimport json,glob,collections,hashlib\nsummary={'run1_dir':'base-run1','run2_dir':'base-run2','records':0,'files':{},'kinds':{},'tools_additional':{},'tools_client':{},'query_inputs':{},'guide_byte_length':None,'guide_sha256':None,'guide_records':0}\nguide=None\nfor f in sorted(glob.glob('base-run1/*.jsonl')):\n    n=0\n    for line in open(f):\n        o=json.loads(line); n+=1\n        k=o['kind']; summary['kinds'][k]=summary['kinds'].get(k,0)+1\n        if k=='tools-additional':\n            for t in o['payload']['tools']: summary['tools_additional'][t['name']]=summary['tools_additional'].get(t['name'],0)+1\n        if k=='model-client-tools':\n            for t in o['payload']['tools']: summary['tools_client'][t['name']]=summary['tools_client'].get(t['name'],0)+1\n        if k=='query-input':\n            q=o['payload']['kind']; summary['query_inputs'][q]=summary['query_inputs'].get(q,0)+1\n        if k=='guide-constant':\n            text=o['payload']['text']; summary['guide_records']+=1\n            if guide is None: guide=text\n            assert guide==text\n            summary['guide_byte_length']=len(text.encode('utf-8'))\n            summary['guide_sha256 …"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591802858,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2 && python3 - <<'EOF'\nimport json,glob\nguide=open('artifacts/guide-base.txt','rb').read()\nok=bad=sem=0\nfor f in glob.glob('base-run1/*.jsonl'):\n    for line in open(f):\n        o=json.loads(line)\n        if o['kind']!='query-input': continue\n        q=o['payload']['question'].encode('utf-8')\n        if o['payload']['kind']=='initial_coordination':\n            if q.endswith(b'\\n\\n'+guide): ok+=1\n            else: bad+=1; print('BAD',f,o['testName'],len(q))\n        else:\n            sem+=1\n            if guide in q: print('LEAK',f,o['testName'])\nprint('initial exact',ok,'bad',bad,'semantic',sem)\n# tool names\nnames=set()\nfor f in glob.glob('base-run1/*.jsonl'):\n    for line in open(f):\n        o=json.loads(line)\n        if o['kind']=='tools-additional':\n            for t in o['payload']['tools']: names.add(t['name'])\nprint('add unique',len(names))\nEOF"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591805941,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2 && python3 - <<'EOF'\nimport json,glob,collections\nadd=collections.Counter()\nfor f in glob.glob('base-run1/*.jsonl'):\n    for line in open(f):\n        o=json.loads(line)\n        if o['kind']=='tools-additional':\n            for t in o['payload']['tools']: add[t['name']]+=1\nfor n in ['project_source','read_source','record_unknown_call_review','propose_safer_method','request_command_rerun','query_ready_tasks','send_user_message']:\n    print(n,add[n])\nEOF"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792591822896,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2 && ls -1; echo '---'; wc -l base-run1.jsonl base-run2.jsonl; echo '---'; node compare.mjs base-run1 base-run2 | tail -2"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792591842745,
+  "kind": "bash that may write",
+  "command": "rm -rf /tmp/s85-scratch/S3/base-e1 && mkdir -p /tmp/s85-scratch/S3/base-e1 && cd /home/han001/dsh-work/slices/s9s85-S3 && git archive s85-base | tar -x -C /tmp/s85-scratch/S3/base-e1 && ln -sfn /home/han001/dsh-work/slices/s9s85-S3/node_modules /tmp/s85-scratch/S3/base-e1/node_modules && ln -sfn /home/han001/dsh-work/slices/s9s85-S3/vendor/coding-agent/node_modules /tmp/s85-scratch/S3/base-e1/vendor/coding-agent/node_modules && node /tmp/s85-scratch/S3/probes/e1/apply-probe.mjs /tmp/s85-scratch/S3/base-e1 && cd /tmp/s85-scratch/S3/base-e1 && S85_PROBE_LOG=/tmp/s85-scratch/S3/probes/e1/pilot npx vitest run --maxWorkers=2 tests/app/S4C2-scribe-reminders.test.ts -t \"D-03 sends the literal requestId\" 2>&1 | tail -8; grep -c 'scribe.reminder' /tmp/s85-scratch/S3/probes/e1/pilot.*.jsonl 2>/dev/null"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792591876504,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && grep -h '\"probe\":\"decisionResponseInput\"' base-run1.*.jsonl | node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{for(const l of s.trim().split('\\n')){const r=JSON.parse(l);console.log(r.testName);console.log(JSON.stringify(r.args));console.log('=>',JSON.stringify(r.out));}})\""
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792591905542,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node -e \"\nconst fs=require('fs');const files=fs.readdirSync('.').filter(f=>/^base-run1\\..*jsonl$/.test(f));\nconst counts={};const tests={};\nfor(const f of files)for(const l of fs.readFileSync(f,'utf8').trim().split('\\n')){if(!l)continue;const r=JSON.parse(l);counts[r.probe]=(counts[r.probe]||0)+1;(tests[r.probe]??=new Set()).add(r.testPath.split('/base-e1/')[1]);}\nconsole.log('files',files);console.log(counts);for(const k in tests)console.log(k, [...tests[k]]);\n\""
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591921531,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/brief-k3 && node -e \"\nconst s=require('./strings.json');\nconsole.log('keys',Object.keys(s).length,'brief',Object.keys(s).filter(k=>k.startsWith('brief.')).length,'k3',Object.keys(s).filter(k=>k.startsWith('k3.')).length);\n\" && grep -rln \"brief-k3\" /tmp/s85-scratch/S3/probes --include='*.js' --include='*.mjs' --include='*.cjs' | head"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591921571,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/brief-k3 && node -e \"\nconst fs=require('fs');\nconst names=[...Object.keys(require('../tools-1/MANIFEST.json').tools),...Object.keys(require('../tools-2/MANIFEST.json').tools)];\nfor(const f of fs.readdirSync('templates')){\n const t=fs.readFileSync('templates/'+f,'utf8');\n const plain=t.replace(/\\{\\{#tool:([^}]+)\\}\\}[\\s\\S]*?\\{\\{\\/tool:\\1\\}\\}/g,'');\n const hits=names.filter(n=>new RegExp('(^|[^A-Za-z0-9_])'+n+'([^A-Za-z0-9_]|$)').test(plain));\n console.log(f,JSON.stringify(hits));\n}\""
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591931502,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/brief-k3 && node - <<'EOF'\nconst fs=require('fs');\nconst s=JSON.parse(fs.readFileSync('strings.json','utf8'));\nconst m=JSON.parse(fs.readFileSync('MANIFEST.json','utf8'));\nconst base='/tmp/s85-scratch/S3/base/';\nlet missing=[],multiline=[];\nfor(const [k,v] of Object.entries(s)){\n  if(v.includes('\\n')) multiline.push(k);\n  const [file,line]=m.strings[k].split(/:(?=\\d+$)/);\n  const text=fs.readFileSync(base+file,'utf8').split('\\n')[Number(line)-1]??'';\n  if(!text.includes(v)) missing.push([k,JSON.stringify(v),JSON.stringify(text)]);\n}\nconsole.log('multiline',multiline.length,multiline.slice(0,5));\nconsole.log('not line-includes',missing.length);\nfor(const m of missing.slice(0,20)) console.log(m[0],m[1],'LINE',m[2]);\nEOF"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591952981,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/brief-k3 && node - <<'EOF'\nconst fs=require('fs');\nconst s=JSON.parse(fs.readFileSync('strings.json','utf8'));\nconst m=JSON.parse(fs.readFileSync('MANIFEST.json','utf8'));\nconst BASE='/tmp/s85-scratch/S3/base/';\nconst cache={};\nconst fileText=f=>cache[f]??=fs.readFileSync(BASE+f,'utf8');\nconst normalized=f=>fileText(f).replace(/\\n\\s*\\+\\s*/g,'');\nlet bad=[];\nfor(const [k,v] of Object.entries(s)){\n  const loc=m.strings[k]; const idx=loc.lastIndexOf(':'); const file=loc.slice(0,idx); const line=Number(loc.slice(idx+1));\n  const lineText=fileText(file).split('\\n')[line-1]??'';\n  const ok = lineText.includes(v) || normalized(file).includes(v)\n    || (v==='\\n  ' && /'\\\\n  '/.test(fileText(file)));\n  if(!ok) bad.push([k,v]);\n}\nconsole.log('strings checked',Object.keys(s).length,'unexplained',bad.length);\nif(bad.length) console.log(bad);\n// targeted composite checks\nfor(const [k,left,right] of [\n  ['brief.summary.beforeActor','，','发起方：'],\n  ['brief.stoppedAt.turnLead','，','Turn 状态：'],\n  ['brief.anomaly.reasonMiddle','）：','原因：'],\n  ['brief.review.annotationMiddle','）：',''],\n]) console.log(k, JSON.stringify(s[k]), 'pieces', JSON.stringify(left), JSON.stringify(right), s[k]===left+right?'MATCH':'MISMATCH');\nfor(const k of ['brief.clip.newlineIndent','brief.approved.newlineIndent','k3.proposal.newlineIndent']) console.log(k, JSON.stringify(s[k]), s[k]==='\\n  '?'OK':'MISMATCH');\nEOF"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591957917,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3 && mkdir -p probes/brief-k3-recheck/templates && node - <<'EOF'\nconst fs=require('fs');\nconst src=fs.readFileSync('probes/build-templates.mjs','utf8')\n  .replace(\"const dir = '/tmp/s85-scratch/S3/handoff/brief-k3/templates/';\",\"const dir = '/tmp/s85-scratch/S3/probes/brief-k3-recheck/templates/';\");\nfs.writeFileSync('probes/build-templates-recheck.mjs',src);\nEOF\nnode probes/build-templates-recheck.mjs >/dev/null && node - <<'EOF'\nconst fs=require('fs');\nconst BASE='/tmp/s85-scratch/S3/base/';\nlet bad=0;\nfor(const f of fs.readdirSync('/tmp/s85-scratch/S3/probes/brief-k3-recheck/templates')){\n  const a=fs.readFileSync('/tmp/s85-scratch/S3/probes/brief-k3-recheck/templates/'+f);\n  const b=fs.readFileSync('/tmp/s85-scratch/S3/handoff/brief-k3/templates/'+f);\n  if(!a.equals(b)){bad++;let i=0;while(i<Math.min(a.length,b.length)&&a[i]===b[i])i++;console.log('DIFF',f,'offset',i);}\n  // every fixed line must exist in a base source file, or be a slot-only line\n  const text=b.toString('utf8');\n  const files=['src/contracts/continuation-brief.ts','src/contracts/core/prepared-execution.ts'];\n  const all=files.map(f=>fs.readFileSync(BASE+f,'utf8')).join('\\n');\n  const norm=all.replace(/\\n\\s*\\+\\s*/g,'');\n  for(const line of text.split('\\n')){\n    if(line.includes('{{')||line==='') continue;\n    if(!all.includes(line) && !norm.includes(line)){bad++;console.log('LINE NOT IN BASE',f,JSON.stringify(line));}\n  }\n}\nconsole.log(bad===0?'OK: 3 templates byte-equal to base-der …"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792591960355,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node combine.mjs . base-run1 base-run1.jsonl && node combine.mjs . base-run2 base-run2.jsonl && cmp base-run1.jsonl base-run2.jsonl && echo \"BYTE-EQUAL\" || echo \"DIFFERS\"; wc -c base-run1.jsonl base-run2.jsonl"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591962963,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && grep -rho \"PLATFORM_PROMPT_PACK_V1\\.strings\\[[^]]*\\]\" src | sed \"s/.*\\['//;s/'\\]//\" | sort -u > /tmp/s85-scratch/S3/refs-before.txt && wc -l /tmp/s85-scratch/S3/refs-before.txt && grep -n \"strings\\['brief\\.\\|strings\\['k3\\.\" src/contracts/continuation-brief.ts src/contracts/core/prepared-execution.ts | head -5 && echo \"---templates refs---\" && grep -rn \"PLATFORM_PROMPT_PACK_V1.templates\" src"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792591970410,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node -e \"\nconst fs=require('fs');\nconst a=fs.readFileSync('base-run1.jsonl','utf8').trim().split('\\n');\nconst b=fs.readFileSync('base-run2.jsonl','utf8').trim().split('\\n');\nconsole.log(a.length,b.length);\nlet shown=0;\nfor(let i=0;i<a.length;i++){\n if(a[i]!==b[i]){\n   const ra=JSON.parse(a[i]), rb=JSON.parse(b[i]);\n   console.log('line',i+1,'probe',ra.probe,'test',ra.testPath.split('/base-e1/')[1],'|',ra.testName,'index',ra.index);\n   let p=0;while(p<a[i].length&&a[i][p]===b[i][p])p++;\n   console.log(' first char',p,'A:',a[i].slice(Math.max(0,p-80),p+120));\n   console.log('            B:',b[i].slice(Math.max(0,p-80),p+120));\n   if(++shown>=6)break;\n }\n}\nconsole.log('total differing lines', a.filter((x,i)=>x!==b[i]).length);\n\""
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591974466,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && node - <<'EOF'\nconst fs=require('fs');\nconst PACK='resources/prompts/platform';\nconst HAND='/tmp/s85-scratch/S3/handoff/brief-k3';\nconst existing=JSON.parse(fs.readFileSync(PACK+'/strings.json','utf8'));\nconst incoming=JSON.parse(fs.readFileSync(HAND+'/strings.json','utf8'));\nconst merged={...existing};\nconst conflicts=[];\nfor(const [k,v] of Object.entries(incoming)){\n  if(k in merged){ if(merged[k]!==v) conflicts.push(k); }\n  else merged[k]=v;\n}\nif(conflicts.length){ console.error('CONFLICTING DUPLICATE KEYS',conflicts); process.exit(1); }\nfs.writeFileSync(PACK+'/strings.json',JSON.stringify(merged,null,2)+'\\n');\nconst ids=['continuation-brief','unknown-call-review','unknown-call-proposal'];\nfor(const id of ids) fs.copyFileSync(HAND+'/templates/'+id+'.txt',PACK+'/templates/'+id+'.txt');\nconsole.log('string keys',Object.keys(merged).length,'existing',Object.keys(existing).length,'incoming',Object.keys(incoming).length,'conflicts',conflicts.length);\nEOF"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591989172,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && node - <<'EOF'\nconst fs=require('fs'),path=require('path'),crypto=require('crypto');\nconst PACK='resources/prompts/platform';\nconst pack=JSON.parse(fs.readFileSync(PACK+'/pack.json','utf8'));\nconst strings=JSON.parse(fs.readFileSync(PACK+'/strings.json','utf8'));\nconst templates=Object.keys(pack.templates),tools=Object.keys(pack.tools);\nconsole.log('templates',templates.length,'tools',tools.length,'strings',Object.keys(strings).length);\n// every manifest file exists and is an asset with the right hash\nconst assets=new Map(JSON.parse(fs.readFileSync('runtime-assets.json','utf8')).map(a=>[a.path,a.sha256]));\nlet bad=0;\nconst paths=['pack.json','strings.json',...Object.values(pack.templates).map(t=>t.file),...Object.values(pack.tools)];\nfor(const rel of paths){\n  const p='resources/prompts/platform/'+rel;\n  const hash=crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');\n  if(assets.get(p)!==hash){bad++;console.log('ASSET MISMATCH',p);}\n}\nconsole.log('pack file assets',paths.length,'mismatches',bad);\n// heading/tail derivation for continuation-brief\nconst brief=fs.readFileSync(PACK+'/templates/continuation-brief.txt','utf8');\nconst heading=brief.slice(0,brief.indexOf('\\n'));\nconst tail=brief.slice(brief.lastIndexOf('\\n\\n')+2).split('\\n');\nconst base=fs.readFileSync('/tmp/s85-scratch/S3/base/src/contracts/continuation-brief.ts','utf8');\nconsole.log('brief heading',JSON.stringify(heading),'tail lines',tail.length,'first', …"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792591992648,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && ./node_modules/.bin/esbuild /tmp/s85-scratch/S3/pack-probe/entry.ts --bundle --platform=node --format=esm --outfile=/tmp/s85-scratch/S3/pack-probe/entry.mjs >/dev/null && node /tmp/s85-scratch/S3/pack-probe/entry.mjs"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792592016518,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && node - <<'EOF'\nconst fs=require('fs');\nconst ts=require('typescript');\nconst HAND='/tmp/s85-scratch/S3/handoff/brief-k3';\nconst strings=JSON.parse(fs.readFileSync(HAND+'/strings.json','utf8'));\nconst manifest=JSON.parse(fs.readFileSync(HAND+'/MANIFEST.json','utf8'));\nconst BASE='/tmp/s85-scratch/S3/base/';\nconst atomCache={};\nfunction atoms(file){\n  if(atomCache[file]) return atomCache[file];\n  const sf=ts.createSourceFile(file,fs.readFileSync(BASE+file,'utf8'),ts.ScriptTarget.Latest,true);\n  const out=[];\n  (function walk(n){\n    if(ts.isStringLiteral(n)||ts.isNoSubstitutionTemplateLiteral(n)) out.push(n.text);\n    else if(ts.isTemplateExpression(n)){ out.push(n.head.text); for(const s of n.templateSpans) out.push(s.literal.text); }\n    ts.forEachChild(n,walk);\n  })(sf);\n  return atomCache[file]=out;\n}\nlet notAtom=[];\nfor(const [k,v] of Object.entries(strings)){\n  const file=manifest.strings[k].slice(0,manifest.strings[k].lastIndexOf(':'));\n  if(!atoms(file).includes(v)) notAtom.push([k,v]);\n}\nconsole.log('values not equal to any literal atom',notAtom.length);\nfor(const [k,v] of notAtom) console.log(k,JSON.stringify(v));\nEOF"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592020124,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node -e \"\nconst fs=require('fs');\nconst a=fs.readFileSync('base-run1.jsonl','utf8').trim().split('\\n').map(JSON.parse);\nconst b=fs.readFileSync('base-run2.jsonl','utf8').trim().split('\\n').map(JSON.parse);\nlet argOnly=0,outDiff=0,other=0;const byProbe={};\nconst argPaths=new Set(), outPaths=new Set();\nfunction walk(x,y,p,acc){ if(x===y) return; if(typeof x!=='object'||typeof y!=='object'||x===null||y===null||Array.isArray(x)!==Array.isArray(y)){acc.add(p);return;} if(Array.isArray(x)){for(let i=0;i<Math.max(x.length,y.length);i++)walk(x[i],y[i],p+'['+i+']',acc);return;} const ks=new Set([...Object.keys(x),...Object.keys(y)]);for(const k of ks)walk(x[k],y[k],p+'.'+k,acc);}\nfor(let i=0;i<a.length;i++){const A=a[i],B=b[i];const key=A.probe;byProbe[key]??={lines:0,argOnly:0,outDiff:0};if(JSON.stringify(A)===JSON.stringify(B))continue;byProbe[key].lines++;const aa=new Set();walk(A.args,B.args,'args',aa);const oo=new Set();walk(A.out,B.out,'out',oo);for(const p of aa)argPaths.add(key+p);for(const p of oo)outPaths.add(key+p);if(oo.size===0){argOnly++;byProbe[key].argOnly++;}else{outDiff++;byProbe[key].outDiff++;}}\nconsole.log('argOnly',argOnly,'outDiff',outDiff);console.log(byProbe);console.log('argPaths',[...argPaths].slice(0,20));console.log('outPaths',[...outPaths].slice(0,20));\n\""
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792592029658,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && node - <<'EOF'\nconst fs=require('fs');\nlet bad=0;\nfor(const id of ['continuation-brief','unknown-call-review','unknown-call-proposal']){\n  const a=fs.readFileSync('/tmp/s85-scratch/S3/handoff/brief-k3/templates/'+id+'.txt');\n  const b=fs.readFileSync('resources/prompts/platform/templates/'+id+'.txt');\n  if(!a.equals(b)){bad++;console.log('DIFF',id);}\n  else console.log(id,a.length,'bytes last',b[b.length-1]);\n}\n// strings exact merge check\nconst existing=JSON.parse(fs.readFileSync('/tmp/s85-scratch/S3/handoff/brief-k3/strings.json','utf8'));\nconst merged=JSON.parse(fs.readFileSync('resources/prompts/platform/strings.json','utf8'));\nconst subset=Object.fromEntries(Object.entries(merged).filter(([k])=>k.startsWith('brief.')||k.startsWith('k3.')));\nconsole.log('brief-k3 strings identical',JSON.stringify(existing)===JSON.stringify(subset),'count',Object.keys(subset).length,'template diffs',bad);\nEOF"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792592037988,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && git diff --numstat runtime-assets.json && node scripts/build-platform-prompts.mjs --check && node scripts/check-boundaries.mjs >/tmp/s85-scratch/S3/boundaries.out 2>&1; echo \"check exit=$?\"; tail -1 /tmp/s85-scratch/S3/boundaries.out"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592117751,
+  "kind": "bash that may write",
+  "command": "cp /tmp/s85-scratch/S3/probes/e1/payload/edge-inputs.ts /tmp/s85-scratch/S3/probes/e1/payload/edge.test.ts /tmp/s85-scratch/S3/base-e1/tests/probes/ && cd /tmp/s85-scratch/S3/base-e1 && S85_EDGE_OUT=/tmp/s85-scratch/S3/probes/e1/edge-base.jsonl S85_EDGE_LABEL=base npx vitest run --maxWorkers=2 tests/probes/edge.test.ts 2>&1 | tail -30"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592123182,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && wc -l edge-base.jsonl && node -e \"\nconst fs=require('fs');const rs=fs.readFileSync('edge-base.jsonl','utf8').trim().split('\\n').map(JSON.parse);\nconst by={};let errs=0;for(const r of rs){by[r.probe]=(by[r.probe]||0)+1;if(r.error){errs++;console.log('ERROR',r.case,r.error);}}\nconsole.log(by,'errors',errs);\n\""
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592134299,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/base-e1 && sed -i 's/error = caught instanceof Error ? caught.message : String(caught);/error = caught instanceof Error ? (caught.stack ?? caught.message) : String(caught);/' tests/probes/edge.test.ts && S85_EDGE_OUT=/tmp/s85-scratch/S3/probes/e1/edge-base-stack.jsonl S85_EDGE_LABEL=base npx vitest run --maxWorkers=2 tests/probes/edge.test.ts >/dev/null 2>&1; node -e \"\nconst fs=require('fs');for(const l of fs.readFileSync('/tmp/s85-scratch/S3/probes/e1/edge-base-stack.jsonl','utf8').split('\\n')){if(!l)continue;const r=JSON.parse(l);if(r.error)console.log('\\n###',r.case,'\\n',r.error);}\n\" | head -60"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592142664,
+  "kind": "bash that may write",
+  "command": "cp /tmp/s85-scratch/S3/probes/e1/payload/edge-inputs.ts /tmp/s85-scratch/S3/probes/e1/payload/edge.test.ts /tmp/s85-scratch/S3/base-e1/tests/probes/ && cd /tmp/s85-scratch/S3/base-e1 && S85_EDGE_OUT=/tmp/s85-scratch/S3/probes/e1/edge-base.jsonl S85_EDGE_LABEL=base npx vitest run --maxWorkers=2 tests/probes/edge.test.ts 2>&1 | tail -6 && node -e \"\nconst fs=require('fs');const rs=fs.readFileSync('/tmp/s85-scratch/S3/probes/e1/edge-base.jsonl','utf8').trim().split('\\n').map(JSON.parse);\nlet errs=0;for(const r of rs)if(r.error){errs++;console.log('ERROR',r.case,r.error);}console.log('cases',rs.length,'errors',errs);\n\""
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592148378,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node replay.mjs /tmp/s85-scratch/S3/base-e1 base-run1.jsonl --out /tmp/s85-scratch/S3/probes/e1/replayed-base.jsonl --report /tmp/s85-scratch/S3/probes/e1/replay-base-report.json --label base 2>&1 | tail -40"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592173745,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/base-e1 && S85_EDGE_OUT=/tmp/s85-scratch/S3/probes/e1/edge-base2.jsonl S85_EDGE_LABEL=base npx vitest run --maxWorkers=2 tests/probes/edge.test.ts >/dev/null 2>&1; cmp /tmp/s85-scratch/S3/probes/e1/edge-base.jsonl /tmp/s85-scratch/S3/probes/e1/edge-base2.jsonl && echo \"EDGE-BYTE-EQUAL\" || echo \"EDGE-DIFFERS\"; wc -c /tmp/s85-scratch/S3/probes/e1/edge-base.jsonl"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592184852,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node --max-old-space-size=4096 determinism.mjs base-run1.jsonl base-run2.jsonl --report base-determinism.json"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592193484,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node compare-edge.mjs edge-base.jsonl edge-base2.jsonl --report edge-base-determinism.json"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592195992,
+  "kind": "bash that may write",
+  "command": "rm -rf /tmp/s85-scratch/S3/base-e2 && mkdir -p /tmp/s85-scratch/S3/base-e2 && cd /home/han001/dsh-work/slices/s9s85-S3 && git archive s85-base | tar -x -C /tmp/s85-scratch/S3/base-e2 && ln -sfn /home/han001/dsh-work/slices/s9s85-S3/node_modules /tmp/s85-scratch/S3/base-e2/node_modules && ln -sfn /home/han001/dsh-work/slices/s9s85-S3/vendor/coding-agent/node_modules /tmp/s85-scratch/S3/base-e2/vendor/coding-agent/node_modules && node /tmp/s85-scratch/S3/probes/e1/apply-probe.mjs /tmp/s85-scratch/S3/base-e2 && cd /tmp/s85-scratch/S3/base-e2 && S85_EDGE_OUT=/tmp/s85-scratch/S3/probes/e1/edge-base-e2.jsonl S85_EDGE_LABEL=base-e2 npx vitest run --maxWorkers=2 tests/probes/edge.test.ts 2>&1 | tail -5"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592202870,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node compare-edge.mjs edge-base.jsonl edge-base-e2.jsonl --report edge-base-vs-e2.json"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592205337,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && time node replay.mjs /tmp/s85-scratch/S3/base-e2 base-run1.jsonl --out /tmp/s85-scratch/S3/probes/e1/replayed-base-e2.jsonl --report /tmp/s85-scratch/S3/probes/e1/replay-base-e2-report.json --label base-e2 2>&1 | tail -20"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792592233455,
+  "kind": "edit on a file not rebuilt",
+  "path": "handoff/rest/strings.json"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792592233465,
+  "kind": "edit on a file not rebuilt",
+  "path": "handoff/rest/MANIFEST.json"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792592239605,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && timeout 900 npx vitest run --maxWorkers=2 tests/scenarios/C3-brief-idempotency.test.ts > /tmp/s85-scratch/S3/probes/c3-idem.log 2>&1; echo exit=$?; grep -n \"FAIL\\|AssertionError\\|Error:\\|bwrap\\|ENOENT\\|capacity\\|rejection\\|invalid\" /tmp/s85-scratch/S3/probes/c3-idem.log | head -60"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592247663,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node apply-probe.mjs /tmp/s85-scratch/S3/base-p1 --check && node apply-probe.mjs /tmp/s85-scratch/S3/base-p1 && cd /tmp/s85-scratch/S3/base-p1 && S85_EDGE_OUT=/tmp/s85-scratch/S3/probes/e1/edge-base-p1.jsonl S85_EDGE_LABEL=base-p1 npx vitest run --maxWorkers=2 tests/probes/edge.test.ts 2>&1 | tail -4 && cd /tmp/s85-scratch/S3/probes/e1 && node compare-edge.mjs edge-base.jsonl edge-base-p1.jsonl --report edge-base-vs-p1.json"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792592248251,
+  "kind": "patch failed part-way on the rebuilt files",
+  "command": "cd /tmp/s85-scratch/S3/probes && python3 - <<'EOF'\np='compare-slots.js'\ns=open(p).read()\ns=s.replace(\"`${strings['contextExtension.decisionPrefix']}${card.source.kind}；source=${card.source.key}`\",\n            \"`${strings['contextExtension.decisionPrefix']}${card.source.kind}${strings['contextExtension.sourceSeparator']}${card.source.key}`\")\nopen(p,'w').write(s)\nEOF\nnode compare-slots.js",
+  "stderr": "Traceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: 'compare-slots.js'\n"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792592255397,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3 && rm -rf isolate && mkdir isolate && (command -v rsync >/dev/null && rsync -a --exclude node_modules --exclude .git /home/han001/dsh-work/slices/s9s85-S3/ isolate/ || (cd /home/han001/dsh-work/slices/s9s85-S3 && tar --exclude=node_modules --exclude=.git -cf - . | (cd /tmp/s85-scratch/S3/isolate && tar xf -))) && ln -s /home/han001/dsh-work/slices/s9s85-S3/node_modules /tmp/s85-scratch/S3/isolate/node_modules && cp /tmp/s85-scratch/S3/base/src/contracts/continuation-brief.ts isolate/src/contracts/continuation-brief.ts && cp /tmp/s85-scratch/S3/base/src/contracts/core/prepared-execution.ts isolate/src/contracts/core/prepared-execution.ts && echo isolated && cd isolate && timeout 900 npx vitest run --maxWorkers=2 tests/scenarios/C3-brief-idempotency.test.ts 2>&1 | tail -18"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792592255765,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && node - <<'EOF'\nconst fs=require('fs');\nconst files=[\n 'src/core/agent-runtime/role-profiles.ts','src/core/agent-runtime/query-preparation.ts',\n 'src/core/agent-runtime/execution-inputs.ts','src/core/agent-runtime/architecture-reminders.ts',\n 'src/contracts/note.ts','src/core/work-graph/views/context-extensions.ts',\n 'src/business/workflow/consultation.ts','src/app/host.ts'];\nconst h=JSON.parse(fs.readFileSync('/tmp/s85-scratch/S3/handoff/rest/strings.json','utf8'));\nconst used=new Set(); let bad=[];\nfor(const f of files){const s=fs.readFileSync(f,'utf8');\n for(const m of s.matchAll(/strings\\['([^']+)'\\]/g)) { used.add(m[1]); if(!(m[1] in h)) bad.push('missing key '+m[1]+' in '+f); }\n}\nconsole.log('used',used.size,'declared',Object.keys(h).length,'unused',Object.keys(h).filter(k=>!used.has(k)),'bad',bad);\nconsole.log('sourceSeparator',JSON.stringify(h['contextExtension.sourceSeparator']));\nEOF\nnode -e \"const esbuild=require('./node_modules/esbuild');esbuild.build({entryPoints:['src/core/work-graph/views/context-extensions.ts'],bundle:true,format:'esm',platform:'node',outfile:'/tmp/s85-scratch/S3/probes/ctx-check.mjs',plugins:[{name:'s',setup(b){b.onResolve({filter:/prompts\\\\/platform-pack\\\\.generated(\\\\.js)?$/},()=>({path:'/tmp/s85-scratch/S3/probes/stub-pack.mjs'}));b.onResolve({filter:/prompts\\\\/render-template(\\\\.js)?$/},()=>({path:'/tmp/s85-scratch/S3/probes/stub-render.mjs'}));}}]}).then(()=>console.log('ctx bundle ok')).catch(e …"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792592257959,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && git diff -- src/core/work-graph/views/context-extensions.ts | sed -n '1,60p'; git diff --numstat -- src/core/work-graph/views/context-extensions.ts; cd /tmp/s85-scratch/S3/handoff/rest && node -e \"const s=require('./strings.json'),m=require('./MANIFEST.json');console.log('strings',Object.keys(s).length,'manifest',Object.keys(m.strings).length,'sep',m.strings['contextExtension.sourceSeparator'])\""
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792592259501,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3 && rm -rf isolate && mkdir isolate && rsync -a --exclude=/node_modules --exclude=/.git /home/han001/dsh-work/slices/s9s85-S3/ isolate/ && ln -s /home/han001/dsh-work/slices/s9s85-S3/node_modules /tmp/s85-scratch/S3/isolate/node_modules && cp /tmp/s85-scratch/S3/base/src/contracts/continuation-brief.ts isolate/src/contracts/continuation-brief.ts && cp /tmp/s85-scratch/S3/base/src/contracts/core/prepared-execution.ts isolate/src/contracts/core/prepared-execution.ts && echo isolated && cd isolate && timeout 900 npx vitest run --maxWorkers=2 tests/scenarios/C3-brief-idempotency.test.ts 2>&1 | tail -18"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792592267077,
+  "kind": "edit on a file not rebuilt",
+  "path": "handoff/rest/MANIFEST.json"
+ },
+ {
+  "session": "11732b15-dff7-4b88-a296-a64b97251b06.jsonl",
+  "time": 1792592268814,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/rest && node -e \"const s=require('./strings.json'),m=require('./MANIFEST.json');console.log('strings',Object.keys(s).length,'manifest',Object.keys(m.strings).length,'notes',m.notes.length,'sep',JSON.stringify(s['contextExtension.sourceSeparator']),m.strings['contextExtension.sourceSeparator'])\" && node /tmp/s85-scratch/S3/probes/compare-slots.js"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592270985,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node apply-probe.mjs /tmp/s85-scratch/S3/result --check 2>&1 | head -5"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592280873,
+  "kind": "bash that may write",
+  "command": "rm -rf /tmp/s85-scratch/S3/result-e1 && cp -a /tmp/s85-scratch/S3/result /tmp/s85-scratch/S3/result-e1 && node /tmp/s85-scratch/S3/probes/e1/apply-probe.mjs /tmp/s85-scratch/S3/result-e1 && cd /tmp/s85-scratch/S3/result-e1 && S85_EDGE_OUT=/tmp/s85-scratch/S3/probes/e1/edge-result-e1.jsonl S85_EDGE_LABEL=result-e1 npx vitest run --maxWorkers=2 tests/probes/edge.test.ts 2>&1 | tail -8"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592286849,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node compare-edge.mjs edge-base.jsonl edge-result-e1.jsonl --report edge-base-vs-result-e1.json"
+ },
+ {
+  "session": "acb3a461-3947-4a33-a797-5147a5ba9bb4.jsonl",
+  "time": 1792592288956,
+  "kind": "patch failed part-way on the rebuilt files",
+  "command": "cd /tmp/s85-scratch/S3/isolate && python3 - <<'PY'\nfrom pathlib import Path\nsrc=Path('tests/scenarios/C3-brief-idempotency.test.ts').read_text()\nold=\"\"\"async function requeuedRunPrepared(h: HostScenario, flowId: string) {\n  const stopped = await h.advance(h.select(flowId, AG2B_WORK_TASK_ID), { stopBefore: performsAfterRequeues(h, 'start', 1) });\n  expect(stopped.state).toBe('stopped');\"\"\"\nnew=\"\"\"async function requeuedRunPrepared(h: HostScenario, flowId: string) {\n  const stopped = await h.advance(h.select(flowId, AG2B_WORK_TASK_ID), { stopBefore: performsAfterRequeues(h, 'start', 1) });\n  console.log('DBG state', stopped.state, 'reason', JSON.stringify(stopped.reason));\n  console.log('DBG steps', JSON.stringify(stopped.steps.map(s => [s.state, s.reason, s.receipt?.kind ?? null, s.next?.kind ?? null, s.next?.operation?.kind ?? null])));\n  console.log('DBG requeues', (h.lastWorld?.requeues ?? []).length);\n  expect(stopped.state).toBe('stopped');\"\"\"\nassert old in src\nPath('tests/scenarios/DEBUG-c3.test.ts').write_text(src.replace(old,new))\nPY\ntimeout 900 npx vitest run --maxWorkers=1 tests/scenarios/DEBUG-c3.test.ts -t 'C3-R1 (W-24), W-02' 2>&1 | grep -E \"DBG|FAIL|Tests |✓|×\" | head -20",
+  "stderr": "Traceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\n  File \"/usr/lib/python3.12/pathlib.py\", line 1029, in read_text\n    with self.open(mode='r', encoding=encoding, errors=errors) as f:\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/pathlib.py\", line 1015, in open\n    return io.open(self, mode, buffering, encoding, errors, newline)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nFileNotFoundError: [Errno 2] No such file or directory: 'tests/scenarios/C3-brief-idempotency.test.ts'\n"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592289055,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node replay.mjs /tmp/s85-scratch/S3/result-e1 base-run1.jsonl --out /tmp/s85-scratch/S3/probes/e1/replayed-result-e1.jsonl --report /tmp/s85-scratch/S3/probes/e1/replay-result-e1-report.json --label result-e1 2>&1 | tail -20"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592300552,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && cmp replayed-base.jsonl replayed-result-e1.jsonl && echo REPLAY-RESULT-EQUAL; node -e \"const r=require('./replay-result-e1-report.json');console.log('calls',r.calls,'missing',r.missing,'differences',r.differences)\""
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592314991,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/result && sha256sum src/contracts/continuation-brief.ts src/contracts/core/prepared-execution.ts src/core/agent-runtime/role-profiles.ts src/core/agent-runtime/execution-inputs.ts src/core/agent-runtime/architecture-reminders.ts src/contracts/note.ts src/business/workflow/consultation.ts src/app/host.ts src/core/work-graph/views/context-extensions.ts vitest.config.ts > /tmp/s85-scratch/S3/probes/e1/result-snapshot.sha256 && cat /tmp/s85-scratch/S3/probes/e1/result-snapshot.sha256"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592331120,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && printf '%s\\n' \\\n'tests/runtime/K3-15-blocked-sentence-pure.test.ts' \\\n'tests/runtime/K3-15-blocked-omission.test.ts' \\\n'tests/runtime/K3-16-approved-method-lines.test.ts' \\\n'tests/runtime/K3-16-proposal-input.test.ts' \\\n'tests/runtime/K3-16-proposal-tool.test.ts' \\\n'tests/runtime/K3-35-renderer-boundary-pure.test.ts' \\\n'tests/runtime/S5-user-message-tools.test.ts' \\\n'tests/work-graph/S3-role-profiles.test.ts' \\\n'tests/work-graph/S8A-L8-reminders-public.test.ts' \\\n'tests/work-graph/S4A-note-history.test.ts' \\\n'tests/work-graph/S8A-L8-reminders-pure.test.ts' \\\n'tests/app/AG2-consultation.test.ts' \\\n'tests/app/S4C2-scribe-reminders.test.ts' \\\n'tests/work-graph/WP2-context-extensions.test.ts' \\\n'tests/work-graph/WP1-context-anomalies.test.ts' \\\n'tests/work-graph/K3-35-owner-manifest-trim.test.ts' \\\n'tests/runtime/K3-review-input-pure.test.ts' \\\n'tests/runtime/K3-35-manifest-trim-pure.test.ts' \\\n'tests/runtime/K3-15-disposition-effects-pure.test.ts' \\\n'tests/runtime/K3-16-review-extremes-pure.test.ts' > tests.txt; wc -l tests.txt; cd /tmp/s85-scratch/S3/result && sha256sum -c /tmp/s85-scratch/S3/probes/e1/result-snapshot.sha256"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592343191,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node apply-probe.mjs /tmp/s85-scratch/S3/result --check; node apply-probe.mjs /tmp/s85-scratch/S3/base-e1 --check 2>&1 | head -3"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792592367106,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node replay.mjs /tmp/s85-scratch/S3/result-e1 base-run1.jsonl --out /tmp/s85-scratch/S3/probes/e1/replayed-result-e1.jsonl --report /tmp/s85-scratch/S3/probes/e1/replay-result-e1-report.json --label result-e1 2>&1 | tail -4; cmp replayed-base.jsonl replayed-result-e1.jsonl && echo REPLAY-RESULT-EQUAL"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792592483974,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/rest && node -e \"const s=require('./strings.json');console.log('count',Object.keys(s).length);console.log('new',JSON.stringify(s['contextExtension.sourceSeparator']));\" && cd /home/han001/dsh-work/slices/s9s85-S3 && node -e \"const s=require('./resources/prompts/platform/strings.json');console.log('pack count',Object.keys(s).length,'has',s['contextExtension.sourceSeparator']);\""
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792592486357,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/rest && node -e \"const s=require('./strings.json');const k=Object.keys(s);console.log(k.slice(k.indexOf('contextExtension.anchorPrefix'),k.indexOf('contextExtension.anchorPrefix')+5));\""
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792592489852,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff/rest && node -e \"const s=require('./strings.json');const k=Object.keys(s);console.log('index',k.indexOf('contextExtension.sourceSeparator'),'of',k.length);console.log(k.slice(38,48));\" && grep -n \"sourceSeparator\" /tmp/s85-scratch/S3/handoff/rest/MANIFEST.json"
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792592493536,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && node - <<'EOF'\nconst fs=require('fs');\nconst PACK='resources/prompts/platform';\nconst pack=JSON.parse(fs.readFileSync(PACK+'/strings.json','utf8'));\nconst hand=JSON.parse(fs.readFileSync('/tmp/s85-scratch/S3/handoff/rest/strings.json','utf8'));\nconst key='contextExtension.sourceSeparator';\nif(key in pack && pack[key]!==hand[key]) throw new Error('conflicting text for '+key);\nif(!(key in pack)){\n  const out={};\n  for(const [k,v] of Object.entries(pack)){ out[k]=v; if(k==='contextExtension.decisionPrefix') out[key]=hand[key]; }\n  if(!(key in out)) out[key]=hand[key];\n  fs.writeFileSync(PACK+'/strings.json',JSON.stringify(out,null,2)+'\\n');\n}\nconst merged=JSON.parse(fs.readFileSync(PACK+'/strings.json','utf8'));\nconsole.log('count',Object.keys(merged).length,'value',JSON.stringify(merged[key]));\nEOF\nnode -e \"const b=require('fs').readFileSync('/tmp/s85-scratch/S3/base/src/core/work-graph/views/context-extensions.ts','utf8').split('\\n');console.log('base124 includes',b[123].includes('；source='));\""
+ },
+ {
+  "session": "60216c3d-03a4-4823-a2f5-2f6bed3d494f.jsonl",
+  "time": 1792592498255,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && node scripts/build-platform-prompts.mjs >/dev/null && node - <<'EOF'\nconst fs=require('fs'); const crypto=require('crypto');\nconst assets=JSON.parse(fs.readFileSync('runtime-assets.json','utf8'));\nconst p='resources/prompts/platform/strings.json';\nconst entry=assets.find(a=>a.path===p);\nconst before=entry.sha256;\nentry.sha256=crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');\nfs.writeFileSync('runtime-assets.json',JSON.stringify(assets,null,2)+'\\n');\nconsole.log('strings sha before',before,'after',entry.sha256);\nEOF\nnode scripts/build-platform-prompts.mjs --check; echo \"build-check exit=$?\"; node scripts/check-boundaries.mjs >/tmp/s85-scratch/S3/boundaries.out 2>&1; echo \"boundaries exit=$?\"; tail -1 /tmp/s85-scratch/S3/boundaries.out"
+ },
+ {
+  "session": "2e26031e-87db-441f-a4d8-fe1dd75a0e55.jsonl",
+  "time": 1792592540177,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && timeout 900 npx vitest run --maxWorkers=2 tests/work-graph/S4C-note-related-find.test.ts tests/runtime/S4C-note-related-find.test.ts tests/scenarios/K3-17-review-answer-shape.test.ts tests/work-graph/S5-goal-settings.test.ts tests/runtime/S5-user-message-tools.test.ts tests/app/AG2-consultation.test.ts tests/app/orchestration-mechanism.test.ts tests/runtime/S5R2-agent-application.test.ts tests/scenarios/A4-duplicate-receipts.test.ts tests/work-graph/B2-01-blocked-commands.test.ts > /tmp/s85-scratch/S3/probes/tools-2/batch2.log 2>&1; echo \"EXIT $?\"; grep -n \"FAIL \\|✓ tests\\|❯ tests\" /tmp/s85-scratch/S3/probes/tools-2/batch2.log | head -60"
+ },
+ {
+  "session": "2e26031e-87db-441f-a4d8-fe1dd75a0e55.jsonl",
+  "time": 1792592571006,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/base && timeout 900 npx vitest run --maxWorkers=2 tests/scenarios/A4-duplicate-receipts.test.ts > /tmp/s85-scratch/S3/probes/tools-2/base-a4.log 2>&1; echo \"EXIT $?\"; grep -n \"Test Files\\|Tests \\|FAIL \" /tmp/s85-scratch/S3/probes/tools-2/base-a4.log | head -20"
+ },
+ {
+  "session": "2e26031e-87db-441f-a4d8-fe1dd75a0e55.jsonl",
+  "time": 1792592588079,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/base && timeout 900 npx vitest run --maxWorkers=2 tests/app/orchestration-mechanism.test.ts tests/runtime/S5-user-message-tools.test.ts > /tmp/s85-scratch/S3/probes/tools-2/base-b2-extra.log 2>&1; echo \"EXIT $?\"; grep -n \"Test Files\\|Tests \\|FAIL \\|bwrap\" /tmp/s85-scratch/S3/probes/tools-2/base-b2-extra.log | head -20"
+ },
+ {
+  "session": "2e26031e-87db-441f-a4d8-fe1dd75a0e55.jsonl",
+  "time": 1792592598791,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && timeout 900 npx vitest run --maxWorkers=2 tests/scenarios/K3-06-mixed-batch.test.ts tests/scenarios/K3-09-restart-between-calls.test.ts tests/scenarios/K3-29-recovery-round.test.ts tests/scenarios/K3-R1-restart-flows.test.ts > /tmp/s85-scratch/S3/probes/tools-2/batch3.log 2>&1; echo \"EXIT $?\"; grep -n \"Test Files\\|Tests \\|FAIL \\|✓ tests\\|❯ tests\\|bwrap\" /tmp/s85-scratch/S3/probes/tools-2/batch3.log | head -30"
+ },
+ {
+  "session": "session-1830aae5-70e6-40f3-bd0b-d1e985bbb84f.jsonl",
+  "time": 1792592835018,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && sed -n '1,83p' .dsh-ref/s85-tests.txt > /tmp/s85-scratch/S3/test-list-A.txt && sed -n '84,165p' .dsh-ref/s85-tests.txt > /tmp/s85-scratch/S3/test-list-B.txt && wc -l /tmp/s85-scratch/S3/test-list-A.txt /tmp/s85-scratch/S3/test-list-B.txt"
+ },
+ {
+  "session": "d98d4152-7e22-44a3-9ce3-008fbf66eb1f.jsonl",
+  "time": 1792592844774,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/base && git status --short 2>/dev/null | head -5; ls node_modules >/dev/null 2>&1 && echo \"node_modules ok\"; ls .git >/dev/null 2>&1 && echo \".git ok\"; cat package.json | grep -A3 '\"test\"' | head"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792592845243,
+  "kind": "bash that may write",
+  "command": "touch /tmp/s85-scratch/S3/probes/final-B.log && echo ok; ls -l /tmp/s85-scratch/S3/probes/final-B.log; node -v; ls /tmp/s85-scratch/S3/base | head"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792592847428,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && { echo \"===== BATCH 1 =====\"; timeout 900 npx vitest run --maxWorkers=2 tests/scenarios/K3-R1-restart-flows.test.ts tests/work-graph/A2-step1-manifest.test.ts tests/work-graph/B2-01-blocked-commands.test.ts tests/work-graph/C1-session-mailbox.test.ts tests/work-graph/K3-14-unknown-call-review-tool.test.ts tests/work-graph/K3-35-owner-manifest-trim.test.ts tests/work-graph/K3-39-record-note-lookup.test.ts tests/work-graph/R5b-initial-plan.test.ts tests/work-graph/S3-prepared-context-admission.test.ts tests/work-graph/S3-role-profiles.test.ts; echo \"EXIT=$?\"; } 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-B.log"
+ },
+ {
+  "session": "d98d4152-7e22-44a3-9ce3-008fbf66eb1f.jsonl",
+  "time": 1792592848211,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && timeout 900 npx vitest run --maxWorkers=2 tests/app/A2-requeue-route.test.ts tests/app/AG2-consultation.test.ts tests/app/K3-19-review-capability-host.test.ts tests/app/MVP-ui-entry.test.ts tests/app/R6-host.test.ts tests/app/RL-34-wiring-resource-caps.test.ts tests/app/RL-44-host-restart-resource-caps.test.ts tests/app/S1-session-routes.test.ts tests/app/S2B-35-activity-routes.test.ts tests/app/S2B-backfill-host.test.ts 2>&1 | tee /tmp/s85-scratch/S3/probes/final-A.log | tail -40"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792592867386,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && { echo \"===== BATCH 2 =====\"; timeout 900 npx vitest run --maxWorkers=2 tests/work-graph/S4A-note-caps.test.ts tests/work-graph/S4A-note-concurrency.test.ts tests/work-graph/S4A-note-failures.test.ts tests/work-graph/S4A-note-history.test.ts tests/work-graph/S4A-note-scope.test.ts tests/work-graph/S4A-note-symbol.test.ts tests/work-graph/S4A-note-write.test.ts tests/work-graph/S4B-memory-anchor-not-found.test.ts tests/work-graph/S4B-memory-conflicts-read.test.ts tests/work-graph/S4B-memory-coverage.test.ts; echo \"EXIT=$?\"; } 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-B.log"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792592882386,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && { echo \"===== BATCH 3 =====\"; timeout 900 npx vitest run --maxWorkers=2 tests/work-graph/S4B-memory-current-filter.test.ts tests/work-graph/S4B-memory-find-stale.test.ts tests/work-graph/S4B-memory-history.test.ts tests/work-graph/S4B-memory-l12-bounds.test.ts tests/work-graph/S4B-memory-observation.test.ts tests/work-graph/S4B-memory-paging.test.ts tests/work-graph/S4B-memory-ranking.test.ts tests/work-graph/S4B-memory-similar.test.ts tests/work-graph/S4B-memory-version-lists.test.ts tests/work-graph/S4B-note-anchor-goals.test.ts; echo \"EXIT=$?\"; } 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-B.log"
+ },
+ {
+  "session": "d98d4152-7e22-44a3-9ce3-008fbf66eb1f.jsonl",
+  "time": 1792592884449,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && timeout 900 npx vitest run --maxWorkers=2 tests/app/S2B-r2-backfill-real-kernel.test.ts tests/app/S4C-note-routes.test.ts tests/app/S4C-record-note-host.test.ts tests/app/S4C2-scribe-reminders.test.ts tests/app/S8A-L8-host-close-restart.test.ts tests/app/change-commit-observer.test.ts tests/app/exploration-tools.test.ts tests/app/host-settings.test.ts tests/app/orchestration-mechanism.test.ts tests/app/project-source-tool.test.ts 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-A.log | tail -30"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792592892348,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && { echo \"===== BATCH 4 =====\"; timeout 900 npx vitest run --maxWorkers=2 tests/work-graph/S4B-note-anchor-status.test.ts tests/work-graph/S4B-note-basis-path.test.ts tests/work-graph/S4B-note-budget-check.test.ts tests/work-graph/S4B-note-check-head-version.test.ts tests/work-graph/S4B-note-check-isolation.test.ts tests/work-graph/S4B-note-check-observation.test.ts tests/work-graph/S4B-note-conflicts.test.ts tests/work-graph/S4B-note-definitions.test.ts tests/work-graph/S4B-note-facts.test.ts tests/work-graph/S4B-note-freshness.test.ts; echo \"EXIT=$?\"; } 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-B.log"
+ },
+ {
+  "session": "d98d4152-7e22-44a3-9ce3-008fbf66eb1f.jsonl",
+  "time": 1792592897702,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && timeout 900 npx vitest run --maxWorkers=2 tests/app/reviewer-source-tools.test.ts tests/business/K3-41-release-hold.test.ts tests/business/S1-archive-flow.test.ts tests/composition/A2-requeue-platform.test.ts tests/composition/S4C2-platform.test.ts tests/composition/W2-future-intent-platform.test.ts tests/contracts/A2-rework-contract-helpers.test.ts tests/data/R2e-git-operations.test.ts tests/data/S8D-A21-python-config.test.ts tests/data/S8D-exploration-regressions.test.ts 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-A.log | tail -30"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792592904021,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && { echo \"===== BATCH 5 =====\"; timeout 900 npx vitest run --maxWorkers=2 tests/work-graph/S4B-note-hints.test.ts tests/work-graph/S4B-note-invalid.test.ts tests/work-graph/S4B-note-missing-flows.test.ts tests/work-graph/S4B-note-read-failures.test.ts tests/work-graph/S4B-note-symbol-recheck.test.ts tests/work-graph/S4C-default-states.test.ts tests/work-graph/S4C-find-byte-trim.test.ts tests/work-graph/S4C-find-read-bounds.test.ts tests/work-graph/S4C-node-notes.test.ts tests/work-graph/S4C-note-protection.test.ts; echo \"EXIT=$?\"; } 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-B.log"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792592913659,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && { echo \"===== BATCH 6 =====\"; timeout 900 npx vitest run --maxWorkers=2 tests/work-graph/S4C-note-related-find.test.ts tests/work-graph/S4C-note-supersede-race.test.ts tests/work-graph/S4C-per-call-cache.test.ts tests/work-graph/S4C-project-understanding-write.test.ts tests/work-graph/S4C-project-understanding.test.ts tests/work-graph/S4C-related-scope.test.ts tests/work-graph/S4C-resolution-order.test.ts tests/work-graph/S4C-write-read-bounds.test.ts tests/work-graph/S4C2-D-rows.test.ts tests/work-graph/S4C2-disposition-core.test.ts; echo \"EXIT=$?\"; } 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-B.log"
+ },
+ {
+  "session": "d98d4152-7e22-44a3-9ce3-008fbf66eb1f.jsonl",
+  "time": 1792592920844,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && timeout 900 npx vitest run --maxWorkers=2 tests/data/cpp-source-index.test.ts tests/runtime/B1-kernel-assembly.test.ts tests/runtime/B2-02-recognition-unified.test.ts tests/runtime/B2-03-request-tool.test.ts tests/runtime/B2-runtime-execution.test.ts tests/runtime/C1-communication-tools.test.ts tests/runtime/C2-runtime-platform-tools.test.ts tests/runtime/C3-brief-timeline.test.ts tests/runtime/K-readonly-command.test.ts tests/runtime/K3-12-review-round-tools.test.ts 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-A.log | tail -25"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792592924324,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && { echo \"===== BATCH 7 =====\"; timeout 900 npx vitest run --maxWorkers=2 tests/work-graph/S4C2-m12h-store-fault.test.ts tests/work-graph/S4C2-memory-material.test.ts tests/work-graph/S4C2-notice-class.test.ts tests/work-graph/S4C2-pending-understanding-overridden.test.ts tests/work-graph/S4C2-project-set-shared.test.ts tests/work-graph/S4C2-proof-changes.test.ts tests/work-graph/S4C2-read-counts.test.ts tests/work-graph/S4C2-rework-staleness.test.ts tests/work-graph/S4C2-scribe-user-reason.test.ts tests/work-graph/S4C2-task-window.test.ts; echo \"EXIT=$?\"; } 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-B.log"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792592936201,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && { echo \"===== BATCH 8 =====\"; timeout 900 npx vitest run --maxWorkers=2 tests/work-graph/S4C2-update-due-fold.test.ts tests/work-graph/S4C2-update-due.test.ts tests/work-graph/S5-goal-settings.test.ts tests/work-graph/S8A-L8-reminders-public.test.ts tests/work-graph/S8A-L8-reminders-pure.test.ts tests/work-graph/SP-memory-check-scoped.test.ts tests/work-graph/SP-memory-history-confirm.test.ts tests/work-graph/SP-memory-scoped-find.test.ts tests/work-graph/SP-note-reuse.test.ts tests/work-graph/WP1-context-anomalies.test.ts; echo \"EXIT=$?\"; } 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-B.log"
+ },
+ {
+  "session": "d98d4152-7e22-44a3-9ce3-008fbf66eb1f.jsonl",
+  "time": 1792592939652,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && timeout 900 npx vitest run --maxWorkers=2 tests/runtime/K3-14-record-unknown-call-review-tool.test.ts tests/runtime/K3-15-blocked-omission.test.ts tests/runtime/K3-15-blocked-sentence-pure.test.ts tests/runtime/K3-15-blocked-sentence.test.ts tests/runtime/K3-15-disposition-effects-pure.test.ts tests/runtime/K3-16-approved-method-lines.test.ts tests/runtime/K3-16-proposal-input.test.ts tests/runtime/K3-16-proposal-tool.test.ts tests/runtime/K3-16-review-extremes-pure.test.ts tests/runtime/K3-34-tool-name-constants.test.ts 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-A.log | tail -25"
+ },
+ {
+  "session": "d98d4152-7e22-44a3-9ce3-008fbf66eb1f.jsonl",
+  "time": 1792592947839,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && timeout 900 npx vitest run --maxWorkers=2 tests/runtime/K3-35-manifest-trim-pure.test.ts tests/runtime/K3-35-renderer-boundary-pure.test.ts tests/runtime/K3-35-review-input-size.test.ts tests/runtime/K3-continuation-review-note.test.ts tests/runtime/K3-review-input-pure.test.ts tests/runtime/K3-review-preparation.test.ts tests/runtime/S1-archive-files-brief.test.ts tests/runtime/S1-routed-replies.test.ts tests/runtime/S3-context-assembler.test.ts tests/runtime/S3-graph-tools.test.ts 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-A.log | tail -25"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792592948395,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && { echo \"===== BATCH 9 =====\"; timeout 900 npx vitest run --maxWorkers=2 tests/work-graph/WP2-context-extensions.test.ts tests/work-graph/WP2-message-duties.test.ts; echo \"EXIT=$?\"; } 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-B.log"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792592956320,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && { echo \"===== ARCHITECTURE =====\"; timeout 900 npx vitest run --maxWorkers=2 tests/architecture; echo \"EXIT=$?\"; } 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-B.log"
+ },
+ {
+  "session": "d98d4152-7e22-44a3-9ce3-008fbf66eb1f.jsonl",
+  "time": 1792592963519,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && timeout 900 npx vitest run --maxWorkers=2 tests/runtime/S4C-note-related-find.test.ts tests/runtime/S4C-note-tools.test.ts tests/runtime/S4C2-assembly.test.ts tests/runtime/S5-user-message-tools.test.ts tests/runtime/S5R2-agent-application.test.ts tests/runtime/W2-role-skills.test.ts tests/runtime/W2-whiteboard-tools.test.ts tests/runtime/source-tool-lifecycle.test.ts tests/scenarios/A1-rework-same-session.test.ts tests/scenarios/A8-host-restart-entry.test.ts 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-A.log | tail -30"
+ },
+ {
+  "session": "d98d4152-7e22-44a3-9ce3-008fbf66eb1f.jsonl",
+  "time": 1792592985730,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && timeout 900 npx vitest run --maxWorkers=2 tests/scenarios/A8-host-restart-paused.test.ts tests/scenarios/C3-brief-idempotency.test.ts tests/scenarios/C3-not-entered-chain.test.ts tests/scenarios/C3-reply-other-session.test.ts tests/scenarios/C3-workspace-changed.test.ts tests/scenarios/K-W-workflow-close.test.ts tests/scenarios/K3-06-mixed-batch.test.ts tests/scenarios/K3-09-restart-between-calls.test.ts tests/scenarios/K3-16-approval-round.test.ts tests/scenarios/K3-17-review-answer-shape.test.ts 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-A.log | tail -30"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792593000287,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3 && grep -E \"^\\s*(✓|×|✗|FAIL)\" probes/final-B.log | sed -E 's/^[[:space:]]*[✓×✗][[:space:]]+//' | grep -oE 'tests/[^ ]+\\.test\\.ts' | sort > /tmp/ran.txt; sed 's/[[:space:]]*$//' test-list-B.txt | sort > /tmp/want.txt; echo \"ran=$(wc -l < /tmp/ran.txt) want=$(wc -l < /tmp/want.txt)\"; echo \"--- diff (missing/extra):\"; diff /tmp/want.txt /tmp/ran.txt; echo \"diffexit=$?\"; echo \"--- any failures:\"; grep -cE \"FAIL|×|failed\" probes/final-B.log || true; echo \"--- summaries:\"; grep -E \"Test Files|Tests  \" probes/final-B.log"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792593006287,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && for f in tests/architecture/production-reach-allowlist.json tests/architecture/production-reach.ts tests/architecture/production-reach.test.ts tests/architecture/state-writes.test.ts tests/architecture/boundaries.test.ts tests/architecture/record-store-literal-type.test.ts; do if diff -q \"$f\" \"/tmp/s85-scratch/S3/base/$f\" >/dev/null 2>&1; then echo \"SAME $f\"; else echo \"DIFF $f\"; diff \"$f\" \"/tmp/s85-scratch/S3/base/$f\" | head -40; fi; done"
+ },
+ {
+  "session": "531ea381-8492-4c52-8df7-e09ff220ee80.jsonl",
+  "time": 1792593009203,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3 && { echo; echo \"===== SUMMARY (B half, run S3 / D3a) =====\"; echo \"file-list B: 82 files; tests 965 passed, 0 failed, 2 skipped (967)\"; echo \"architecture dir: 4 files; tests 53 passed, 0 failed, 0 skipped\"; echo \"combined: 86 files; 1018 passed, 0 failed, 2 skipped\"; echo \"failures: none; no base-copy re-runs needed\"; echo \"watched: production-reach.test.ts PASS (4 tests); state-writes.test.ts PASS (19 tests); architecture test files & allowlist byte-identical to base\"; } >> probes/final-B.log; tail -8 probes/final-B.log"
+ },
+ {
+  "session": "d98d4152-7e22-44a3-9ce3-008fbf66eb1f.jsonl",
+  "time": 1792593035707,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && timeout 900 npx vitest run --maxWorkers=2 tests/scenarios/K3-29-recovery-round.test.ts tests/scenarios/K3-R1-continuation-protection.test.ts tests/scenarios/K3-R1-file-change.test.ts 2>&1 | tee -a /tmp/s85-scratch/S3/probes/final-A.log | tail -25"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792593303721,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node apply-probe.mjs /tmp/s85-scratch/S3/result-final --check 2>&1 | head -3"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792593305468,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node apply-probe.mjs /tmp/s85-scratch/S3/result-final --check 2>&1 | grep -m1 \"Error:\""
+ },
+ {
+  "session": "session-1830aae5-70e6-40f3-bd0b-d1e985bbb84f.jsonl",
+  "time": 1792593307846,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff && python3 - <<'EOF'\nimport json,glob,os\nfor d in sorted(glob.glob('/tmp/s85-scratch/S3/handoff/*/MANIFEST.json')):\n    m=json.load(open(d))\n    print('==',d)\n    print(json.dumps(m.get('tools',{}),ensure_ascii=False,indent=0)[:3000])\nEOF"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792593308284,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2 && ./run-result.sh /tmp/s85-scratch/S3/result-final /tmp/s85-scratch/S3/probes/e2/result > /tmp/s85-result.out 2>&1; echo EXIT=$?; tail -40 /tmp/s85-result.out"
+ },
+ {
+  "session": "session-1830aae5-70e6-40f3-bd0b-d1e985bbb84f.jsonl",
+  "time": 1792593310918,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/handoff && python3 - <<'EOF'\nimport json\nfor f in ['tools-1','tools-2']:\n m=json.load(open(f'/tmp/s85-scratch/S3/handoff/{f}/MANIFEST.json'))\n print(f, list(m.keys()))\n print(json.dumps({k:v for k,v in m.items() if k!='tools'},ensure_ascii=False)[:2500])\nEOF"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792593336580,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2 && cat result/*.jsonl > result.jsonl && sha256sum result.jsonl base-run1.jsonl && cmp result.jsonl base-run1.jsonl && echo 'combined result == base-run1'\npython3 - <<'EOF'\nimport json,glob,collections,hashlib\nc=collections.Counter(); add=set(); cli=set(); q=collections.Counter(); guide=None; grecs=0\nfor f in glob.glob('result/*.jsonl'):\n    for line in open(f):\n        o=json.loads(line); c[o['kind']]+=1\n        if o['kind']=='tools-additional': add|={t['name'] for t in o['payload']['tools']}\n        if o['kind']=='model-client-tools': cli|={t['name'] for t in o['payload']['tools']}\n        if o['kind']=='query-input': q[o['payload']['kind']]+=1\n        if o['kind']=='guide-constant':\n            grecs+=1; t=o['payload']['text'].encode(); guide=guide or t; assert guide==t\nprint('kinds',dict(c)); print('add',len(add),'client',len(cli)); print('query',dict(q)); print('guide',len(guide),hashlib.sha256(guide).hexdigest(),grecs)\nprint('missing',sorted({'send_session_message','read_session_inbox','read_session_message','read_session_message_body','ack_session_message','respond_session_message','send_user_message','read_user_decision','record_decision_application','query_task_graph','query_ready_tasks','propose_future_plan','apply_future_plan','record_note','project_source','read_source','cpp_index','python_index','code_index','source_excerpt','list_files','search','symbols','run_readonly_command','look_graph','find_graph','find_related_sessions','re …"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792593346243,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2 && python3 - <<'EOF'\nimport json,glob,collections,hashlib\ns={'source':'/tmp/s85-scratch/S3/result-final','commit':'6b8c80f','records':0,'files':{},'kinds':{},'tools_additional':{},'tools_client':{},'query_inputs':{},'guide_byte_length':None,'guide_sha256':None,'guide_records':0}\nguide=None\nfor f in sorted(glob.glob('result/*.jsonl')):\n    n=0\n    for line in open(f):\n        o=json.loads(line); n+=1; s['kinds'][o['kind']]=s['kinds'].get(o['kind'],0)+1\n        if o['kind']=='tools-additional':\n            for t in o['payload']['tools']: s['tools_additional'][t['name']]=s['tools_additional'].get(t['name'],0)+1\n        if o['kind']=='model-client-tools':\n            for t in o['payload']['tools']: s['tools_client'][t['name']]=s['tools_client'].get(t['name'],0)+1\n        if o['kind']=='query-input':\n            q=o['payload']['kind']; s['query_inputs'][q]=s['query_inputs'].get(q,0)+1\n        if o['kind']=='guide-constant':\n            t=o['payload']['text'].encode(); s['guide_records']+=1; s['guide_byte_length']=len(t); s['guide_sha256']=hashlib.sha256(t).hexdigest(); guide=guide or t; assert guide==t\n    s['files'][f.split('/')[-1]]=n; s['records']+=n\ns['tools_additional_unique']=len(s['tools_additional']); s['tools_client_unique']=len(s['tools_client'])\njson.dump(s,open('artifacts/capture-summary-result.json','w'),indent=2,ensure_ascii=False)\nprint(s['records'],s['kinds'],s['tools_additional_unique'],s['tools_client_unique'],s['guide_byte_length …"
+ },
+ {
+  "session": "be1abd13-483a-44b9-a7ee-acf05cd52f65.jsonl",
+  "time": 1792593348181,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e2 && sha256sum base-run1.jsonl base-run2.jsonl result.jsonl artifacts/guide-base.txt > artifacts/sha256.txt && cat artifacts/sha256.txt"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792593348347,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node apply-probe.mjs /tmp/s85-scratch/S3/base --check 2>&1 | head -3"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792593350798,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node apply-probe.mjs /tmp/s85-scratch/S3/result-final && cd /tmp/s85-scratch/S3/result-final && S85_EDGE_OUT=/tmp/s85-scratch/S3/probes/e1/edge-result-final.jsonl S85_EDGE_LABEL=result-final npx vitest run --maxWorkers=2 tests/probes/edge.test.ts 2>&1 | tail -8"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792593355815,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node compare-edge.mjs edge-base.jsonl edge-result-final.jsonl --report edge-base-vs-result-final.json"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792593357731,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && node replay.mjs /tmp/s85-scratch/S3/result-final base-run1.jsonl --out /tmp/s85-scratch/S3/probes/e1/replayed-result-final.jsonl --report /tmp/s85-scratch/S3/probes/e1/replay-result-final-report.json --label result-final 2>&1 | tail -25"
+ },
+ {
+  "session": "3ece8aaf-5c5c-4d70-bb1e-1af94b0f95f9.jsonl",
+  "time": 1792593369261,
+  "kind": "bash that may write",
+  "command": "cd /tmp/s85-scratch/S3/probes/e1 && cmp replayed-base.jsonl replayed-result-final.jsonl && echo REPLAY-FINAL-EQUAL; node -e \"const r=require('./replay-result-final-report.json');console.log(JSON.stringify({calls:r.calls,missing:r.missing,differences:r.differences}))\"; ls /tmp/s85-scratch/S3/result-final/tests/probes/"
+ },
+ {
+  "session": "session-1830aae5-70e6-40f3-bd0b-d1e985bbb84f.jsonl",
+  "time": 1792593679575,
+  "kind": "bash that may write",
+  "command": "cd /home/han001/dsh-work/slices/s9s85-S3 && git status --porcelain; git log --oneline -1; git show --stat --oneline HEAD | tail -5; node scripts/build-platform-prompts.mjs --check; node -e \"const a=require('/tmp/s85-scratch/S3/probes/e2/result.jsonl');\" 2>/dev/null || true; wc -l .dsh-ref/s85-reply-S3.md"
+ }
+]

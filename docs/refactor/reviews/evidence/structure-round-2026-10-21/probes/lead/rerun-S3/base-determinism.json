@@ -1,0 +1,108 @@
+{
+  "run1": "base-run1.jsonl",
+  "run2": "base-run2.jsonl",
+  "records": 2034,
+  "byteIdentical": 2001,
+  "differing": 33,
+  "argOnly": 25,
+  "outDiff": 8,
+  "argPaths": [
+    "noteHeaderargs[0].ref.noteId",
+    "noteHeaderargs[0].noteId",
+    "noteHeaderargs[0].source.runRef.runId",
+    "unknownCallReview.renderargs[0].items[0].startedAt",
+    "architectureReminderRowsargs[0].facts.state.current.captureRef.captureId",
+    "architectureReminderRowsargs[0].facts.state.current.persistedRef.capture.captureId",
+    "architectureReminderRowsargs[0].facts.state.current.persistedRef.capture.sourceDigest",
+    "architectureReminderRowsargs[0].facts.state.current.persistedRef.material.digest",
+    "architectureReminderRowsargs[0].facts.state.current.persistedRef.material.source.digest",
+    "architectureReminderRowsargs[0].facts.state.current.observedAt",
+    "architectureReminderRowsargs[0].facts.state.previous.captureId",
+    "architectureReminderRowsargs[0].facts.state.previousPersistedRef.capture.captureId",
+    "architectureReminderRowsargs[0].facts.state.previousPersistedRef.capture.sourceDigest",
+    "architectureReminderRowsargs[0].facts.state.previousPersistedRef.material.digest",
+    "architectureReminderRowsargs[0].facts.state.previousPersistedRef.material.source.digest",
+    "architectureReminderRowsargs[0].facts.state.autoCapture.requestedAt",
+    "architectureReminderRowsargs[0].facts.latest.observedAt",
+    "architectureReminderRowsargs[0].facts.previous.observedAt",
+    "architectureReminderRowsargs[0].now",
+    "architectureReminderRowsargs[0].facts.state.autoCapture.failure.reason"
+  ],
+  "outPaths": [
+    "unknownCallReview.renderout"
+  ],
+  "probes": {
+    "architectureReminderRows": {
+      "records": 49,
+      "differing": 24,
+      "argOnly": 24,
+      "outDiff": 0
+    },
+    "brief.approvedMethods": {
+      "records": 300,
+      "differing": 0,
+      "argOnly": 0,
+      "outDiff": 0
+    },
+    "brief.blockedCommands": {
+      "records": 47,
+      "differing": 0,
+      "argOnly": 0,
+      "outDiff": 0
+    },
+    "brief.render": {
+      "records": 30,
+      "differing": 0,
+      "argOnly": 0,
+      "outDiff": 0
+    },
+    "contextExtensions.anomalyAnchor": {
+      "records": 156,
+      "differing": 0,
+      "argOnly": 0,
+      "outDiff": 0
+    },
+    "contextExtensions.decisionRow": {
+      "records": 75,
+      "differing": 0,
+      "argOnly": 0,
+      "outDiff": 0
+    },
+    "contextExtensions.notAvailableRow": {
+      "records": 88,
+      "differing": 0,
+      "argOnly": 0,
+      "outDiff": 0
+    },
+    "decisionResponseInput": {
+      "records": 3,
+      "differing": 0,
+      "argOnly": 0,
+      "outDiff": 0
+    },
+    "noteHeader": {
+      "records": 10,
+      "differing": 1,
+      "argOnly": 1,
+      "outDiff": 0
+    },
+    "roleProfile": {
+      "records": 988,
+      "differing": 0,
+      "argOnly": 0,
+      "outDiff": 0
+    },
+    "scribe.reminder": {
+      "records": 11,
+      "differing": 0,
+      "argOnly": 0,
+      "outDiff": 0
+    },
+    "unknownCallReview.render": {
+      "records": 277,
+      "differing": 8,
+      "argOnly": 0,
+      "outDiff": 8
+    }
+  }
+}

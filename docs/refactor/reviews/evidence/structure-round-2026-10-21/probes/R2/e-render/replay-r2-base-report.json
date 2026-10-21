@@ -1,0 +1,91 @@
+{
+  "copy": "/home/han001/dsh-work/slices/s9s85r2/.dsh-scratch/R2/base-e",
+  "log": "/home/han001/dsh-work/slices/s9s85r2/.dsh-ref/s85-probes-S4/e-render/base-run1.jsonl",
+  "replayed": "/home/han001/dsh-work/slices/s9s85r2/.dsh-scratch/R2/probes/e-render/replayed-r2-base.jsonl",
+  "label": "r2-base",
+  "calls": 2156,
+  "missing": 0,
+  "differences": 0,
+  "probes": {
+    "fact.annotations": {
+      "calls": 228,
+      "differences": 0,
+      "details": []
+    },
+    "fact.declarationsForTask": {
+      "calls": 222,
+      "differences": 0,
+      "details": []
+    },
+    "fact.effectiveDuty": {
+      "calls": 251,
+      "differences": 0,
+      "details": []
+    },
+    "fact.goalPayload": {
+      "calls": 141,
+      "differences": 0,
+      "details": []
+    },
+    "fact.missingInputReminder": {
+      "calls": 7,
+      "differences": 0,
+      "details": []
+    },
+    "fact.notImplementedExtensions": {
+      "calls": 109,
+      "differences": 0,
+      "details": []
+    },
+    "fact.noteSourcesOf": {
+      "calls": 228,
+      "differences": 0,
+      "details": []
+    },
+    "fact.optionalRowsFromExtensions": {
+      "calls": 232,
+      "differences": 0,
+      "details": []
+    },
+    "fact.queryFocusLines": {
+      "calls": 14,
+      "differences": 0,
+      "details": []
+    },
+    "fact.queryPlanSummary": {
+      "calls": 1,
+      "differences": 0,
+      "details": []
+    },
+    "fact.rolePayload": {
+      "calls": 248,
+      "differences": 0,
+      "details": []
+    },
+    "fact.taskPayload": {
+      "calls": 222,
+      "differences": 0,
+      "details": []
+    },
+    "fact.topLevelModuleCards": {
+      "calls": 2,
+      "differences": 0,
+      "details": []
+    },
+    "note.generalWarningLabel": {
+      "calls": 3,
+      "differences": 0,
+      "details": []
+    },
+    "renderAttentionChanges": {
+      "calls": 12,
+      "differences": 0,
+      "details": []
+    },
+    "renderContext": {
+      "calls": 236,
+      "differences": 0,
+      "details": []
+    }
+  }
+}

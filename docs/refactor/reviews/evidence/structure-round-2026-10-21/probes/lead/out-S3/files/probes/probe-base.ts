@@ -1,0 +1,25 @@
+import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from '/tmp/s85-scratch/S3/base/src/core/agent-runtime/whiteboard-tools.js';
+import { createNoteTools } from '/tmp/s85-scratch/S3/base/src/core/agent-runtime/note-tool.js';
+import { createProjectSourceTool } from '/tmp/s85-scratch/S3/base/src/core/agent-runtime/project-source-tool.js';
+import { createReadonlyCommandTool } from '/tmp/s85-scratch/S3/base/src/core/agent-runtime/readonly-command-tool.js';
+import { createCommandRerunTools } from '/tmp/s85-scratch/S3/base/src/core/agent-runtime/command-rerun-tools.js';
+
+const ctx = { projectId: 'p', workspaceId: 'w', principal: { kind: 'user' }, materialReader: {} } as never;
+const ws = {} as never;
+const out: Record<string, unknown> = {};
+const wb = createWhiteboardTools({ plans: {} as never, context: ctx, goalRef: { aggregateType: 'Goal', projectId: 'p', goalId: 'g' } as never, requestIdForCall: () => 'r' });
+for (const d of wb.create(ws)) out[d.name] = { description: d.description, schema: (d.inputSchema as never as { toJSONSchema(): unknown }).toJSONSchema() };
+const nt = createNoteTools({ context: ctx, notes: {} as never, check: {} as never, requestIdForCall: () => 'r' });
+for (const d of nt.create(ws)) out[d.name] = { description: d.description, schema: (d.inputSchema as never as { toJSONSchema(): unknown }).toJSONSchema() };
+const ps = createProjectSourceTool({ access: {} as never, requireVisible: () => {} });
+out[ps.name] = { description: ps.description, schema: (ps.inputSchema as never as { toJSONSchema(): unknown }).toJSONSchema() };
+const ro = createReadonlyCommandTool({ workspace: ws, workspaceRoot: '/w', authorization: { permissionRevision: '1', current: async () => ({ status: 'rejected', reason: 'x' }) } } as never);
+out[ro.name] = { description: ro.description, schema: (ro.inputSchema as never as { toJSONSchema(): unknown }).toJSONSchema() };
+const rr = createCommandRerunTools({ requests: {} as never, context: ctx, task: {} as never, requestIdForCall: () => 'r' });
+for (const d of rr.create(ws)) out[d.name] = { description: d.description, schema: (d.inputSchema as never as { toJSONSchema(): unknown }).toJSONSchema() };
+process.stdout.write(JSON.stringify(out, null, 2));
+import { createExplorationTools } from '/tmp/s85-scratch/S3/base/src/core/agent-runtime/exploration-tools.js';
+const ews = { identity: 'ws', deniedPrefixes: [], listFiles: async () => ({ paths: [], truncated: false }), read: async () => { throw new Error('no'); } } as never;
+const ex = createExplorationTools(ews, { includeReadSource: true });
+for (const d of ex.tools) out[d.name] = { description: d.description, schema: (d.inputSchema as never as { toJSONSchema(): unknown }).toJSONSchema() };
+process.stdout.write(JSON.stringify(out, null, 2));

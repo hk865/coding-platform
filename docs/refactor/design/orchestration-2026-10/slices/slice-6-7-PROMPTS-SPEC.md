@@ -2,6 +2,8 @@
 
 **状态：已冻结（lead，2026-10-21）。** 经 Codex 两轮完整审查（第一轮 23 条、第二轮复核加 9 条新问题）和一次快速核对（7 条），都已照改，处理见 [证据](../../../reviews/evidence/prompts-context-d83-2026-10-21/handling.md)；你 10-21 定了五件事（§0.1），并确认了测试入口（§3.1）。施工顺序：结构一轮（含 D3）→ PC-1、PC-2 → 6A（§5）。
 
+**后注（决定 85-1，lead 2026-10-22）：** D3 已在 6A 之前的结构一轮里做完（`55541fee`、`eee7503f`），发出的字节不变。PC-1、PC-2 在这个结构上写：包的格式、槽位表和渲染器在 `src/contracts/prompts/`（`prompt-pack.ts`、`slot-tables.ts`、`render-template.ts`），平台包第 1 版在 `resources/prompts/platform/`（`pack.json`、`strings.json`、`templates/`、`tools/`），由 `scripts/build-platform-prompts.mjs` 生成静态模块 `src/contracts/prompts/platform-pack.generated.ts`（构建前核对，运行时不读盘）；上下文装配拆在 `src/core/agent-runtime/context-*`（`context-work-recipe.ts`、`context-query-recipe.ts`、`context-continuation-recipe.ts`、`context-review-recipe.ts`、`context-rendering.ts`、`context-fact-text.ts` 等），`context-assembler.ts` 只留出口和工厂。正文原样保留，只加此注。经过见 [证据](../../../reviews/evidence/structure-round-2026-10-21/README.md)。
+
 第 6、7 片已冻结（决定 64），这一节是冻结后的补充，不改它们已定的行为。它定这几件事：
 - 提示词放在哪、谁能改、按什么选；
 - 超长时怎么删；

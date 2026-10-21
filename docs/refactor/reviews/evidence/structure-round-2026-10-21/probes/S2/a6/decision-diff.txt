@@ -1,0 +1,44 @@
+# A6 static byte proof 1: old decision expression vs new decideActivityOutcome body
+
+Base: `git show s85-base:src/core/work-graph/tasks/run-activity-service.ts` lines 138-167 (old function at 151-167, comment at 138-150).
+New: `src/core/work-graph/state/activity-replacement.ts` lines 10-39 (comment at 10-22, function at 23-39).
+
+## Full old vs new
+
+```diff
+--- old/run-activity-service.ts:138-167
++++ new/state/activity-replacement.ts:10-39
+@@ -11,13 +11,13 @@
+  * 6. old `unknown`, new `unknown` with a different reason → replaced;
+  * 7. old `unknown`, new `unknown` with the same reason → unchanged.
+  */
+-export function decideRunActivityOutcome(
+-  existing: RunActivitySnapshot | null,
++export function decideActivityOutcome(
++  existing: RunActivityFactsV1 | null,
+   incoming: RunActivityFactsV1,
+   endCommit: boolean,
+-): RunActivityWriteOutcome {
++): ActivityWriteOutcome {
+   if (existing === null) return 'created';
+-  const old = existing.facts;
++  const old = existing;
+   if (old.ruleVersion < incoming.ruleVersion) return 'replaced';
+   if (old.status === 'counted') {
+     if (!endCommit || incoming.status !== 'counted') return 'unchanged';
+```
+
+The diff above shows exactly the required move: the comment is byte-identical; the export name, the parameter type (facts instead of snapshot) and the return type name follow the book; the only line of the decision expression that changes is the facts read.
+
+## Expression-only proof (six-step body)
+
+Old expression = old lines 19-30 of the extract, i.e. base lines 156-167, from `if (existing === null)` through the closing `}`. New expression = new lines 19-30 of the extract, i.e. module lines 28-39. The old text is normalized only by replacing `const old = existing.facts;` with `const old = existing;` (the one required facts-read change); no other byte is touched.
+
+```diff
+```
+
+- normalized old sha256: `e49eb47ac86bab62a6603fff2d35b7b4d821b5fbd5b12087f83177d8b1bf7780`
+- new expression sha256: `e49eb47ac86bab62a6603fff2d35b7b4d821b5fbd5b12087f83177d8b1bf7780`
+- `cmp` exit code: 0 (0 = byte-identical)
+
+So after the single, mandated facts-read substitution, the six-step expression is textually identical: same row order, same short-circuits, no added check, no detail/totals comparison.

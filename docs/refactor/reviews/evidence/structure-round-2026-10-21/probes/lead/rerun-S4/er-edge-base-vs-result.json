@@ -1,0 +1,8 @@
+{
+  "base": "/home/han001/dsh-work/s85-scratch/S4-rerun/er-edge-base-r.jsonl",
+  "result": "/home/han001/dsh-work/s85-scratch/S4-rerun/er-edge-result-r.jsonl",
+  "cases": 140,
+  "differences": 0,
+  "errors": 0,
+  "details": []
+}

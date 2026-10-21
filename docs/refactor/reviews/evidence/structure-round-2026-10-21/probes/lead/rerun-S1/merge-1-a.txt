@@ -1,0 +1,92 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/home/han001/dsh-work/s85-scratch/S1-rerun/merge[39m
+
+ [32m✓[39m tests/runtime/K-readonly-command.test.ts [2m([22m[2m33 tests[22m[2m)[22m[33m 35336[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-07 authorized Query sees run_readonly_command, runs it and stores the output in this execution [33m 1477[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-07 the run_readonly_command description discloses timeout retention, cancellation replacement, read-only git and hidden denied paths [33m 1130[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-07 authorized empty-write Work sees run_readonly_command, runs it and stores the output in this execution [33m 464[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-08 the real Host startup with the switch off hides run_readonly_command from a Query [33m 386[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-08 the real Host settings rebuild with the switch off hides run_readonly_command from a Query [33m 1320[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-08 the real Host startup with the switch on still grants run_readonly_command (positive control) [33m 372[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-08 the real Host narrows a programmatic runtime that lists run_readonly_command [33m 360[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-08 a Query from the real Host with the switch off does not see run_readonly_command [33m 1214[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-08 a read-only Work started by the real Host with the switch off never sees run_readonly_command [33m 1688[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-08 the same real Host Work with the switch on still sees run_readonly_command (positive control) [33m 1581[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-08 a Query with only a partial read prefix does not see run_readonly_command [33m 1136[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-08 a Work whose RoleSpec ceiling omits run_readonly_command does not see it [33m 378[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-08 a Work with a non-empty write scope does not see run_readonly_command [33m 358[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-08 a Query whose Host read permission changed during execution gets forbidden and starts nothing [33m 1273[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-09 an authorized Query granted shell, edit and write still sees none of them [33m 1176[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 a non-zero exit maps to execution_failed with the captured output [33m 1384[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 a subprocess timeout maps to timeout with the captured output [33m 1466[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 an out-of-range timeoutMs is invalid_arguments and never starts a command [33m 1423[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 an unavailable sandbox is rejected by the dispatcher before the handler and starts nothing [33m 1321[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 the read-only sandbox capability is probed with the command's actual options [33m 1305[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 a read-only capability probe that does not match the command options refuses and starts nothing [33m 1267[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 more than 100 external changed paths are named 100 in byte order plus the omitted count [33m 1302[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 long external changed paths name a literal byte-ordered prefix and bound the COMPLETE result at 128 KiB [33m 1389[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 the complete serialized handler result stays within the 128 KiB definition limit [33m 1354[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 an oversized launch-failure message is bounded and still reaches the model [33m 1323[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 a provider call identity larger than the budget never shortens a bounded launch diagnostic [33m 1362[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 an early permission refusal with an oversized input is bounded and names the public code [33m 1383[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 a sandbox-reported cancellation reports empty output, not the captured text [33m 1404[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-10 a real Query whose execution is cancelled mid-command stores cancelled with empty output [33m 1233[2mms[22m[39m
+   [33m[2m✓[22m[39m KB-11 (KE6) an external change during the command is reported as a path, never as this command's effect [33m 1359[2mms[22m[39m
+ [32m✓[39m tests/runtime/S3-graph-tools.test.ts [2m([22m[2m24 tests[22m[2m)[22m[33m 16003[2mms[22m[39m
+     [33m[2m✓[22m[39m GT05 keeps the RT8 page/scannedCount and forwards the trusted Query scope and this tool signal to history [33m 2063[2mms[22m[39m
+     [33m[2m✓[22m[39m GT07 reports the input page fixed at this look version while using historical usage (memory) [33m 460[2mms[22m[39m
+     [33m[2m✓[22m[39m GT07 reports the input page fixed at this look version while using historical usage (sqlite) [33m 1755[2mms[22m[39m
+     [33m[2m✓[22m[39m GT08 pages A / 中 / B by maxBytes=3 and keeps every page digest at H(A中B) (memory) [33m 436[2mms[22m[39m
+     [33m[2m✓[22m[39m GT08 pages A / 中 / B by maxBytes=3 and keeps every page digest at H(A中B) (sqlite) [33m 1656[2mms[22m[39m
+     [33m[2m✓[22m[39m GT09 rejects continuing r1 with a cursor minted for the r2 declaration and returns no body (memory) [33m 431[2mms[22m[39m
+     [33m[2m✓[22m[39m GT09 rejects continuing r1 with a cursor minted for the r2 declaration and returns no body (sqlite) [33m 1452[2mms[22m[39m
+     [33m[2m✓[22m[39m GT10 sends find then look through the real Query Kernel seam and reports no workspace change and no write tool [33m 1543[2mms[22m[39m
+     [33m[2m✓[22m[39m GT11 does not let send/note/shell into the Query grant; only explicitly granted look/find appear [33m 1103[2mms[22m[39m
+     [33m[2m✓[22m[39m GT12 the graph read itself writes no message ack, no acceptedInputs, no record and calls no Workflow [33m 1176[2mms[22m[39m
+     [33m[2m✓[22m[39m GT13 rejects a zero-progress maxBytes=1 continuation as capacity, and still reads 中 with the original cursor (memory) [33m 302[2mms[22m[39m
+     [33m[2m✓[22m[39m GT13 rejects a zero-progress maxBytes=1 continuation as capacity, and still reads 中 with the original cursor (sqlite) [33m 1334[2mms[22m[39m
+     [33m[2m✓[22m[39m GT19 C1.3 a real work Run is granted the registered record_note tool [33m 1215[2mms[22m[39m
+     [33m[2m✓[22m[39m GT20 G-03 a read-only Query granted record_note never receives it [33m 1049[2mms[22m[39m
+ [32m✓[39m tests/runtime/B2-01-shell-hook.test.ts [2m([22m[2m24 tests[22m[2m)[22m[33m 55880[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: npm run db:migrate is blocked with the fixed action text [33m 894[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: bash -c "cd app && npm run db:migrate" is blocked with the fixed action text [33m 657[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: FOO=1 npm run db:migrate 2>&1 | tee log is blocked with the fixed action text [33m 658[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: npx prisma migrate deploy is blocked with the fixed action text [33m 646[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: prisma migrate deploy is blocked with the fixed action text [33m 620[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: ./node_modules/.bin/prisma migrate deploy is blocked with the fixed action text [33m 604[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: npm run migrate:prod is blocked with the fixed action text [33m 677[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: a whitespace-only difference and a different cwd block (whole-text exact) [33m 684[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: the not-blocked rows run [33m 681[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: an extra argument is not recognised statically [33m 691[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: an UNPARSED stored command keeps one whole-normalized action [33m 676[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: an ALL-IRRELEVANT stored command keeps one whole-normalized action [33m 687[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: npm run db:migrate is blocked with the fixed action text [33m 4233[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: bash -c "cd app && npm run db:migrate" is blocked with the fixed action text [33m 4494[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: FOO=1 npm run db:migrate 2>&1 | tee log is blocked with the fixed action text [33m 4351[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: npx prisma migrate deploy is blocked with the fixed action text [33m 4182[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: prisma migrate deploy is blocked with the fixed action text [33m 4315[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: ./node_modules/.bin/prisma migrate deploy is blocked with the fixed action text [33m 4407[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: npm run migrate:prod is blocked with the fixed action text [33m 4515[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: a whitespace-only difference and a different cwd block (whole-text exact) [33m 4295[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: the not-blocked rows run [33m 3814[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: an extra argument is not recognised statically [33m 3332[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: an UNPARSED stored command keeps one whole-normalized action [33m 3153[2mms[22m[39m
+     [33m[2m✓[22m[39m B2-01: an ALL-IRRELEVANT stored command keeps one whole-normalized action [33m 2612[2mms[22m[39m
+ [32m✓[39m tests/runtime/B1-kernel-assembly.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 1578[2mms[22m[39m
+     [33m[2m✓[22m[39m uses the trusted skill resource config verbatim, including an explicit empty list, and snapshots it before awaits [33m 419[2mms[22m[39m
+     [33m[2m✓[22m[39m reports a lazy open failure as a real tool result, reuses the one failed factory attempt in the next round, and keeps project_index out [33m 304[2mms[22m[39m
+ [32m✓[39m tests/runtime/C2-runtime-platform-tools.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 4947[2mms[22m[39m
+     [33m[2m✓[22m[39m runs a real inbox -> body -> respond round through the model with the three deployed skills (RED) [33m 1858[2mms[22m[39m
+     [33m[2m✓[22m[39m exposes only the granted platform tools, skips the source authorization, and honors an explicit empty Skill set (RED) [33m 1048[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects an ungranted builtin at the real Kernel boundary, with no source authorization and no file body (RED) [33m 1314[2mms[22m[39m
+     [33m[2m✓[22m[39m refuses a Run granted the two rework tool names at the start, before any provider call (GAP-46) [33m 718[2mms[22m[39m
+ [32m✓[39m tests/runtime/source-tool-lifecycle.test.ts [2m([22m[2m16 tests[22m[2m)[22m[33m 1069[2mms[22m[39m
+ [32m✓[39m tests/runtime/K3-16-proposal-tool.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m tests/runtime/K3-14-record-unknown-call-review-tool.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 354[2mms[22m[39m
+   [33m[2m✓[22m[39m K3-14 the driver never registers record_unknown_call_review on an ordinary Run [33m 348[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m8 passed[39m[22m[90m (8)[39m
+[2m      Tests [22m [1m[32m121 passed[39m[22m[90m (121)[39m
+[2m   Start at [22m 23:01:37
+[2m   Duration [22m 63.96s[2m (transform 6.19s, setup 0ms, import 11.94s, tests 115.18s, environment 0ms)[22m
+

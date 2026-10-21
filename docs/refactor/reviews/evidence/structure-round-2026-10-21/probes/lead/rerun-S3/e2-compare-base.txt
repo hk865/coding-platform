@@ -1,0 +1,25 @@
+tests__app__R6-host.test.ts.jsonl: records 12/12, payload-differing 0, raw-bytes-equal true
+tests__app__exploration-tools.test.ts.jsonl: records 1/1, payload-differing 0, raw-bytes-equal true
+tests__app__host-settings.test.ts.jsonl: records 14/14, payload-differing 0, raw-bytes-equal true
+tests__app__project-source-tool.test.ts.jsonl: records 1/1, payload-differing 0, raw-bytes-equal true
+tests__app__reviewer-source-tools.test.ts.jsonl: records 1/1, payload-differing 0, raw-bytes-equal true
+tests__business__R5b-initial-planning-workflow.test.ts.jsonl: records 12/12, payload-differing 0, raw-bytes-equal true
+tests__composition__R5b-query-job-platform.test.ts.jsonl: records 1/1, payload-differing 0, raw-bytes-equal true
+tests__probe-e2__driver.test.ts.jsonl: records 7/7, payload-differing 0, raw-bytes-equal true
+tests__runtime__B1-kernel-assembly.test.ts.jsonl: records 27/27, payload-differing 0, raw-bytes-equal true
+tests__runtime__C1-communication-tools.test.ts.jsonl: records 19/19, payload-differing 0, raw-bytes-equal true
+tests__runtime__C2-runtime-platform-tools.test.ts.jsonl: records 15/15, payload-differing 0, raw-bytes-equal true
+tests__runtime__K-readonly-command.test.ts.jsonl: records 133/133, payload-differing 0, raw-bytes-equal true
+tests__runtime__K3-14-record-unknown-call-review-tool.test.ts.jsonl: records 5/5, payload-differing 0, raw-bytes-equal true
+tests__runtime__K3-16-proposal-tool.test.ts.jsonl: records 1/1, payload-differing 0, raw-bytes-equal true
+tests__runtime__R5b-query-session-loop.test.ts.jsonl: records 15/15, payload-differing 0, raw-bytes-equal true
+tests__runtime__S3-context-assembler.test.ts.jsonl: records 1/1, payload-differing 0, raw-bytes-equal true
+tests__runtime__S3-graph-tools.test.ts.jsonl: records 60/60, payload-differing 0, raw-bytes-equal true
+tests__runtime__source-tool-lifecycle.test.ts.jsonl: records 25/25, payload-differing 0, raw-bytes-equal true
+tests__work-graph__R5b-initial-plan.test.ts.jsonl: records 6/6, payload-differing 0, raw-bytes-equal true
+tests__work-graph__R5b-query-execution.test.ts.jsonl: records 5/5, payload-differing 0, raw-bytes-equal true
+tests__work-graph__R5b-query-job.test.ts.jsonl: records 1/1, payload-differing 0, raw-bytes-equal true
+tests__work-graph__S3-prepared-context-admission.test.ts.jsonl: records 43/43, payload-differing 0, raw-bytes-equal true
+
+files: 22 (22 raw-byte-equal), records compared: 405, runIndex differences: 0, payload differences: 0
+RESULT: equal

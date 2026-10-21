@@ -1,0 +1,396 @@
+[
+ {
+  "path": "CONVENTIONS.md",
+  "bytes": 6372,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "handoff/brief-k3/README.md",
+  "bytes": 2008,
+  "how": {
+   "write": 2
+  }
+ },
+ {
+  "path": "handoff/rest/README.md",
+  "bytes": 2333,
+  "how": {
+   "write": 1,
+   "edit-failed": 2,
+   "edit": 3
+  }
+ },
+ {
+  "path": "handoff/tools-1/README.md",
+  "bytes": 2734,
+  "how": {
+   "write": 1,
+   "sed-patch": 1,
+   "python-patch": 1
+  }
+ },
+ {
+  "path": "handoff/tools-2/MANIFEST.json",
+  "bytes": 2021,
+  "how": {
+   "write": 1,
+   "python-patch": 1
+  }
+ },
+ {
+  "path": "handoff/tools-2/README.md",
+  "bytes": 2357,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "handoff/tools-2/gen.cjs",
+  "bytes": 4121,
+  "how": {
+   "heredoc": 2
+  }
+ },
+ {
+  "path": "handoff/tools-2/verify.cjs",
+  "bytes": 4291,
+  "how": {
+   "heredoc": 1
+  }
+ },
+ {
+  "path": "pack-probe/entry.ts",
+  "bytes": 2739,
+  "how": {
+   "heredoc": 1,
+   "sed-patch": 1,
+   "python-patch": 1
+  }
+ },
+ {
+  "path": "probes/build-handoff-s3.js",
+  "bytes": 9890,
+  "how": {
+   "heredoc": 1,
+   "sed-patch": 1,
+   "python-patch": 1
+  }
+ },
+ {
+  "path": "probes/build-strings.mjs",
+  "bytes": 16473,
+  "how": {
+   "heredoc": 1,
+   "sed-patch": 1
+  }
+ },
+ {
+  "path": "probes/build-templates.mjs",
+  "bytes": 2155,
+  "how": {
+   "heredoc": 1
+  }
+ },
+ {
+  "path": "probes/compare-handoff.js",
+  "bytes": 3216,
+  "how": {
+   "heredoc": 1
+  }
+ },
+ {
+  "path": "probes/continuation-renderer.txt",
+  "bytes": 45167,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/REPORT.md",
+  "bytes": 10053,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/apply-probe.mjs",
+  "bytes": 17983,
+  "how": {
+   "write": 2,
+   "sed-patch": 1,
+   "python-patch": 2,
+   "write-failed": 1
+  }
+ },
+ {
+  "path": "probes/e1/combine.mjs",
+  "bytes": 2029,
+  "how": {
+   "write": 1,
+   "python-patch": 1
+  }
+ },
+ {
+  "path": "probes/e1/compare-edge.mjs",
+  "bytes": 2251,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/determinism.mjs",
+  "bytes": 3839,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/lib/compare.mjs",
+  "bytes": 4046,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/payload/consultation-guidance-final.ts",
+  "bytes": 1006,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/payload/consultation-guidance.ts",
+  "bytes": 1088,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/payload/context-extension-texts-final.ts",
+  "bytes": 1757,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/payload/context-extension-texts.ts",
+  "bytes": 1590,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/payload/edge-inputs.ts",
+  "bytes": 33386,
+  "how": {
+   "write-failed": 1,
+   "write": 1,
+   "python-patch": 1
+  }
+ },
+ {
+  "path": "probes/e1/payload/edge.test.ts",
+  "bytes": 3365,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/payload/probe-hook.ts",
+  "bytes": 2060,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/payload/probe-setup.ts",
+  "bytes": 497,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/payload/scribe-reminder-final.ts",
+  "bytes": 1207,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/payload/scribe-reminder.ts",
+  "bytes": 1125,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/e1/replay.mjs",
+  "bytes": 8760,
+  "how": {
+   "write": 1,
+   "python-patch": 1
+  }
+ },
+ {
+  "path": "probes/e2/REPORT.md",
+  "bytes": 8366,
+  "how": {
+   "write": 1,
+   "python-patch": 6
+  }
+ },
+ {
+  "path": "probes/e2/apply-probes.mjs",
+  "bytes": 9275,
+  "how": {
+   "write": 1,
+   "python-patch": 4,
+   "python-patch-partial": 1
+  }
+ },
+ {
+  "path": "probes/e2/compare.mjs",
+  "bytes": 8577,
+  "how": {
+   "write": 1,
+   "python-patch": 1
+  }
+ },
+ {
+  "path": "probes/e2/driver.test.ts",
+  "bytes": 7355,
+  "how": {
+   "write": 1,
+   "python-patch-partial": 1
+  }
+ },
+ {
+  "path": "probes/e2/run-capture.sh",
+  "bytes": 2506,
+  "how": {
+   "write": 1,
+   "python-patch": 3
+  }
+ },
+ {
+  "path": "probes/e2/run-result.sh",
+  "bytes": 708,
+  "how": {
+   "write": 1
+  }
+ },
+ {
+  "path": "probes/entry-$which-brief.ts",
+  "bytes": 461,
+  "how": {
+   "heredoc": 1
+  }
+ },
+ {
+  "path": "probes/extract-rest.js",
+  "bytes": 9222,
+  "how": {
+   "heredoc": 1,
+   "python-patch": 3
+  }
+ },
+ {
+  "path": "probes/extract-s3.js",
+  "bytes": 1844,
+  "how": {
+   "heredoc": 1
+  }
+ },
+ {
+  "path": "probes/extract-s3b.js",
+  "bytes": 2320,
+  "how": {
+   "heredoc": 1
+  }
+ },
+ {
+  "path": "probes/final-A.log",
+  "bytes": 1976,
+  "how": {
+   "heredoc-append": 1
+  }
+ },
+ {
+  "path": "probes/k3-renderer.txt",
+  "bytes": 5289,
+  "how": {
+   "heredoc": 1
+  }
+ },
+ {
+  "path": "probes/probe-base.ts",
+  "bytes": 2771,
+  "how": {
+   "heredoc": 1,
+   "heredoc-append": 1
+  }
+ },
+ {
+  "path": "probes/rewrite-exploration.js",
+  "bytes": 1635,
+  "how": {
+   "heredoc": 1
+  }
+ },
+ {
+  "path": "probes/rewrite-readonly.js",
+  "bytes": 1420,
+  "how": {
+   "heredoc": 1
+  }
+ },
+ {
+  "path": "probes/rewrite-rerun.js",
+  "bytes": 1462,
+  "how": {
+   "heredoc": 1
+  }
+ },
+ {
+  "path": "probes/s3-brief-k3-compare.mjs",
+  "bytes": 23234,
+  "how": {
+   "heredoc": 1,
+   "python-patch": 3,
+   "sed-patch": 1
+  }
+ },
+ {
+  "path": "probes/verify-handoff-owner.js",
+  "bytes": 8007,
+  "how": {
+   "heredoc": 1,
+   "python-patch": 2
+  }
+ },
+ {
+  "path": "render-probe/entry.ts",
+  "bytes": 2467,
+  "how": {
+   "heredoc": 1,
+   "sed-patch": 2
+  }
+ },
+ {
+  "path": "handoff/rest/MANIFEST.json",
+  "bytes": null,
+  "how": {
+   "edit-failed": 1,
+   "edit-unknown-base": 4
+  }
+ },
+ {
+  "path": "handoff/rest/strings.json",
+  "bytes": null,
+  "how": {
+   "edit-unknown-base": 1
+  }
+ }
+]

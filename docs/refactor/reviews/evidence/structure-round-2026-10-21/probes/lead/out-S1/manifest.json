@@ -1,0 +1,41 @@
+[
+ {
+  "path": "probes/README.md",
+  "bytes": 8403,
+  "how": {
+   "write": 1,
+   "python-patch": 1
+  }
+ },
+ {
+  "path": "probes/apply-probe.py",
+  "bytes": 6233,
+  "how": {
+   "write": 1,
+   "python-patch": 1
+  }
+ },
+ {
+  "path": "probes/compare.py",
+  "bytes": 6461,
+  "how": {
+   "write": 1,
+   "python-patch": 1
+  }
+ },
+ {
+  "path": "probes/probe-cases.test.ts",
+  "bytes": 10765,
+  "how": {
+   "write": 1,
+   "python-patch": 1
+  }
+ },
+ {
+  "path": "probes/probe-log.ts",
+  "bytes": 3747,
+  "how": {
+   "write": 1
+  }
+ }
+]

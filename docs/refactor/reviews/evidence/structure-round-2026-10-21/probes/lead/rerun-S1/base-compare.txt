@@ -1,0 +1,7 @@
+run A: logs/base-1 (321 captures)
+run B: logs/base-2 (321 captures)
+per kind:
+  additional-tools: captures=95 maxRunIndex=3 tests=89 differences=0
+  model-client-tools: captures=128 maxRunIndex=5 tests=88 differences=0
+  observed-lists: captures=98 maxRunIndex=3 tests=92 differences=0
+RESULT: zero differences

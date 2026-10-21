@@ -1,0 +1,26 @@
+method	calls	status	base file:line
+executions.readExecution	12	reached	src/core/agent-runtime/context-assembler.ts:1406
+executions.readContinuationBasis	16	reached	src/core/agent-runtime/context-assembler.ts:1573
+roles.resolveRoleBindingFacts	0	ZERO-CAPTURE	src/core/agent-runtime/context-assembler.ts:no call site (deps member never read)
+materials.storeArtifact	0	ZERO-CAPTURE	src/core/agent-runtime/context-assembler.ts:no call site (deps member never read)
+materials.openArtifact	0	ZERO-CAPTURE	src/core/agent-runtime/context-assembler.ts:no call site (deps member never read)
+bodies.read	4	reached	src/core/agent-runtime/context-assembler.ts:1053, 1061 (via workspace-baseline-artifact.ts:38,47,64)
+graphContext.readContextFacts	35	reached	src/core/agent-runtime/context-assembler.ts:1696, 1793, 1981
+graphContext.readAttentionFacts	1	reached	src/core/agent-runtime/context-assembler.ts:2033
+taskInputs.readTaskInputPage	4	reached	src/core/agent-runtime/context-assembler.ts:1823
+architectureReminders.read	10	reached	src/core/agent-runtime/context-assembler.ts:1753
+unknownCallReviews.readReview	12	reached	src/core/agent-runtime/context-assembler.ts:1394
+commandRerunRequests.listRequests	0	ZERO-CAPTURE	src/core/agent-runtime/context-assembler.ts:1518
+workspaceHost.resolveRoot	14	reached	src/core/agent-runtime/context-assembler.ts:989, 1083
+workspaceSource.captureDigest	12	reached	src/core/agent-runtime/context-assembler.ts:1000
+workspaceSource.capture	12	reached	src/core/agent-runtime/context-assembler.ts:1006
+workspaceSource.readBaselineBlob	0	ZERO-CAPTURE	src/core/agent-runtime/context-assembler.ts:1111
+workspaceSource.readCurrentFile	0	ZERO-CAPTURE	src/core/agent-runtime/context-assembler.ts:1112
+sessions	0	ZERO-CAPTURE	src/core/agent-runtime/context-assembler.ts:no call site (deps member never read)
+kernelStores.byAdapterId	48	reached	src/core/agent-runtime/session-operations.ts:900, 1008, 1025 (entry context-assembler.ts:1179, 1238, 1279, 1358)
+kernelStores.withStore	48	reached	src/core/agent-runtime/session-operations.ts:903, 1013, 1040 (entry as above)
+kernelStores.forWorkspace	0	ZERO-CAPTURE	src/core/agent-runtime/session-operations.ts:584, 762
+plans	0	ZERO-CAPTURE	src/core/agent-runtime/context-assembler.ts:no call site (deps member never read)
+now	26	reached	src/core/agent-runtime/context-assembler.ts:1670 (read), 1768, 1863; briefWorkspaceFactsFor:975
+
+zero-capture read points: 9

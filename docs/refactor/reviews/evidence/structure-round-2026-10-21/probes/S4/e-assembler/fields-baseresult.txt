@@ -1,0 +1,10 @@
+20	deps.outcome.value.entries[].body.text	"{\"recordId\":\"turn:kturn-ace17473a191df4aa1eb13d7ed4311981cec5b89dd8d5d2ae361207061eb29e9\",\"ses	"{\"recordId\":\"turn:kturn-ace17473a191df4aa1eb13d7ed4311981cec5b89dd8d5d2ae361207061eb29e9\",\"ses
+11	assembler:task.args[].configuration.skills.resourceRoot	"/home/han001/dsh-work/slices/s9s85-S4/.dsh-scratch/S4/base-e2/resources/skills"	"/home/han001/dsh-work/slices/s9s85-S4/.dsh-scratch/S4/result-e-assembler/resources/skills"
+2	deps.outcome.value.sourceDigest	"4c004ec30cc50b64f4bece9aaa78d73fbcd19cc0681d7b7e08f8268c0913e3b6"	"1e209a320e3f030948ffdccb940594febffa41110e40583b0d573092679c5aa7"
+1	deps.outcome.value.value.requeue.basis.source.sourceDigest	"b837c78699aa04f4493536e10478c5f1531ecf9bde46e6b382d21574c8b50576"	"6def5603fb6306474f250e215453b10ce1e61ce905ee35547298e1645edfd735"
+1	deps.outcome.value.value.requeue.basis.digest	"ee65f8f0739db172c6b05a1edd0e78c68c7660e1c335bda42f13af21138472d2"	"92c26fe010d30edd975ece25b7b4cfb79d3e6925182d36d05d544ae9342f8022"
+1	deps.outcome.value.value.allRequeues[].basis.source.sourceDigest	"b837c78699aa04f4493536e10478c5f1531ecf9bde46e6b382d21574c8b50576"	"6def5603fb6306474f250e215453b10ce1e61ce905ee35547298e1645edfd735"
+1	deps.outcome.value.value.allRequeues[].basis.digest	"ee65f8f0739db172c6b05a1edd0e78c68c7660e1c335bda42f13af21138472d2"	"92c26fe010d30edd975ece25b7b4cfb79d3e6925182d36d05d544ae9342f8022"
+1	assembler:query.args[].configuration.skills.resourceRoot	"/home/han001/dsh-work/slices/s9s85-S4/.dsh-scratch/S4/base-e2/vendor/coding-agent/resources/skills"	"/home/han001/dsh-work/slices/s9s85-S4/.dsh-scratch/S4/result-e-assembler/vendor/coding-agent/resour
+
+distinct differing leaf paths: 8
