@@ -5,6 +5,13 @@
 - “人工采用入口”（§0 的初始化分支、§3 的 L8、§4 第 13 条、§5 的 R-14）指旧界面 `ui/views/execution/planning.ts:274` 的 `adoptInitialPlanSetup`。它不是一条路由，而是浏览器把一串后端路由串起来：`workspaces/registration`、`architecture/read`、`architecture/adopt-initial`、`completion-policies/read`、`completion-policies/install`、`completion-policies/activate`、`checks/approve`、`workflow/goal-input`。这些路由都还在，串它们的代码随旧界面删了。“采用仍是你的动作”不变；由谁来串（新界面，还是服务端一个组合动作），lead 在 6A 冻结前和决定 83 那一节一起定（决定 86-5：有能力，也要有入口）。
 - §1“界面（E3）；旧界面的主对话照旧”：旧界面已没有；主对话的人用入口随 E3。
 
+**后注（决定 83-4，lead 2026-10-21）：** 下面那条后注说的“提示词和上下文”一节已冻结：[slice-6-7-PROMPTS-SPEC](slice-6-7-PROMPTS-SPEC.md)。提示词和上下文以那一节为准，本片别的行为不变。和本片有关的：
+- **秘书接它 Session 的完整历史（P6）。** L8 的“这个请求以前的轮次”只补跑在**别的** Session 上的执行轮（最多 10 轮，回答各截到 2 KiB），跑在本 Session 上的已在历史里，不重复；合批的同请求输入按原文全放。
+- **6A：** `secretary-round`、`secretary-answer` 两个模板，用那一节的模板包和渲染器，放在守卫给秘书定的段里，不加新段。
+- **6B：** L10 换手不写 `sessionBasis`，前任按 `handoff-write-understanding-secretary` 写当前理解，接任者拿 `handoff-brief-secretary` 简报加记忆指针和工具（P7）；R-14 的采用改由 Host 一个组合动作串，6B 开工前 lead 补一份、经 Codex 审后冻结（P11）。
+- 秘书自己觉得不匹配就转给新秘书：不加（那一节 §0.1 第 5 条）。
+- 6A 之前先做结构一轮（含 D3）和 PC-1、PC-2（那一节 §5）。
+
 **后注（决定 83，lead 2026-10-18 晚）：** 本片冻结后要补一节“提示词和上下文”：秘书、派活、等待、转交、干预的提示词做成可配置的模板，按提供方和型号选版本，不写死在代码里；超长时保住当前任务和角色说明；思考带不带回按模型定；记下每次实际发出的整套提示词。见 [HANDOFF 决定 83](../../../HANDOFF.md)。这一节在 K3、C1、T 之后由 lead 起草，冻结后再开 6A；在那之前不要按本稿施工提示词部分。
 
 **后注（决定 72 的复用盘点，lead 2026-10-16 夜）：** Codex 把第 6、7、8 片和 K3、4C 剩下的部分放在一起找共用机制，两个 Claude 子 agent 逐条核过引用和代码，lead 裁定。和正文冲突时以本后注为准；产品范围不变。和本片有关的：
