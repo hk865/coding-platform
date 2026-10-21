@@ -1,0 +1,10 @@
+{
+  "description": "Ask a person to allow one blocked command to run again. Give the exact command and a reason they can read; the platform discovers the blocked alias. If the platform does not recognise your rewrite of a blocked command, name its review run and alias with `rewriteOf`. The result says whether the request is waiting, allowed for one use, refused, or not recognised; it is not the command running.",
+  "parameters": {
+    "command": "The exact command you want to run; 1-4000 UTF-8 bytes",
+    "reason": "Why a person should allow it; 1-2000 code points",
+    "rewriteOf": "Only for a rewrite the platform did not recognise",
+    "rewriteOf.review": "The blocked command's UnknownCallReview runId (or its unique 8-character prefix)",
+    "rewriteOf.alias": "The blocked command's alias #n"
+  }
+}

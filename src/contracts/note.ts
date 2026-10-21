@@ -8,6 +8,7 @@ import type { SessionMessageRef } from './core/session-message.js';
 import type { RunRef } from './dispatch.js';
 import type { ContextSourceV1 } from './graph-context.js';
 import type { PlatformDutyV1 } from './platform-duty.js';
+import { PLATFORM_PROMPT_PACK_V1 } from './prompts/platform-pack.generated.js';
 
 /** P9: the three aggregate refs the ledger adds (`ledger.ts` `AggregateRef`). */
 export type NoteHeadRef = { aggregateType: 'NoteHead'; projectId: string; noteId: string };
@@ -109,24 +110,30 @@ export type PendingNoteVersionSnapshot = Omit<NoteVersionSnapshot, 'since'> & { 
 export function renderNoteHeader(note: { kind: NoteKind; anchor: NoteAnchorV1; structural: boolean; conclusion: string }): string {
   // Display label per kind. The first six are frozen by §2; understanding/repair are the spec's own names.
   const labels: Record<NoteKind, string> = {
-    convention: '约定', pitfall: '坑', tradeoff: '取舍', open_question: '待解问题', preference: '偏好',
-    decision: '决定', understanding: '当前理解', repair: '修补',
+    convention: PLATFORM_PROMPT_PACK_V1.strings['note.kind.convention'],
+    pitfall: PLATFORM_PROMPT_PACK_V1.strings['note.kind.pitfall'],
+    tradeoff: PLATFORM_PROMPT_PACK_V1.strings['note.kind.tradeoff'],
+    open_question: PLATFORM_PROMPT_PACK_V1.strings['note.kind.open_question'],
+    preference: PLATFORM_PROMPT_PACK_V1.strings['note.kind.preference'],
+    decision: PLATFORM_PROMPT_PACK_V1.strings['note.kind.decision'],
+    understanding: PLATFORM_PROMPT_PACK_V1.strings['note.kind.understanding'],
+    repair: PLATFORM_PROMPT_PACK_V1.strings['note.kind.repair'],
   };
   const anchor = note.anchor;
   let display = '';
   switch (anchor.kind) {
-    case 'module': display = `模块 ${anchor.moduleId}`; break;
-    case 'interface': display = `接口 ${anchor.moduleId}/${anchor.interfaceId}`; break;
+    case 'module': display = `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.modulePrefix']}${anchor.moduleId}`; break;
+    case 'interface': display = `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.interfacePrefix']}${anchor.moduleId}/${anchor.interfaceId}`; break;
     case 'file': {
-      const symbol = anchor.symbol === undefined ? '' : `#${anchor.symbol.qualifiedName}`;
-      const deleted = anchor.deleted === true ? '（已删）' : '';
+      const symbol = anchor.symbol === undefined ? '' : `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.symbolPrefix']}${anchor.symbol.qualifiedName}`;
+      const deleted = anchor.deleted === true ? PLATFORM_PROMPT_PACK_V1.strings['note.anchor.deletedSuffix'] : '';
       display = `${anchor.path}${symbol}${deleted}`;
       break;
     }
-    case 'goal': display = `目标 ${anchor.goalId}`; break;
-    case 'stage': display = `阶段 ${anchor.stageId}`; break;
-    case 'task': display = `任务 ${anchor.taskId}`; break;
-    case 'project': display = '项目'; break;
+    case 'goal': display = `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.goalPrefix']}${anchor.goalId}`; break;
+    case 'stage': display = `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.stagePrefix']}${anchor.stageId}`; break;
+    case 'task': display = `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.taskPrefix']}${anchor.taskId}`; break;
+    case 'project': display = PLATFORM_PROMPT_PACK_V1.strings['note.anchor.project']; break;
   }
   const marker = note.structural ? '!' : '';
   return `${labels[note.kind]}(${display})${marker}：${note.conclusion}`;

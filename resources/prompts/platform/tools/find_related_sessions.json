@@ -1,0 +1,4 @@
+{
+  "description": "List the current Session cards linked to a required Task/Module/WorkContext target. Only open links and active Sessions are returned; archived Sessions are excluded. Read-only discovery: it starts no Run, loads no history and wakes no Session.",
+  "parameters": {}
+}

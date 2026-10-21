@@ -3,6 +3,7 @@ import { resolve, relative, dirname, extname, sep, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { createHash } from 'node:crypto';
+import { PLATFORM_PACK_GENERATED_PATH, readPlatformPack, renderPlatformPackModule } from './build-platform-prompts.mjs';
 
 /** The single source of the module and submodule rules (task C, 2026-10-02). */
 export const MODULE_TARGET_PATH = 'docs/refactor/module-target.json';
@@ -198,6 +199,43 @@ async function loadSubmodules(project, module, value, fail) {
   return submodules;
 }
 
+/**
+ * The platform prompt pack is a build-time asset closure: pack.json names the
+ * string table, each template file and each tool text file. Every referenced
+ * file must be hashed in runtime-assets.json so the generic asset loop catches
+ * a missing or edited pack file. This check is deliberately narrow: it reads
+ * the pack of the directory it is given and says nothing about the generated
+ * module, because the boundaries fixtures copy resources but not src.
+ */
+async function checkPlatformPromptPackClosure(project, assetPaths, issues) {
+  if (assetPaths === null) return;
+  const packRoot = resolve(project, 'resources/prompts/platform');
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(resolve(packRoot, 'pack.json'), 'utf8'));
+  } catch (error) {
+    // A tree without a platform pack has no closure to check; a malformed one
+    // is reported rather than silently passing.
+    if (error?.code === 'ENOENT') return;
+    issues.push('platform prompt pack is missing or not valid JSON: resources/prompts/platform/pack.json');
+    return;
+  }
+  if (!isObject(manifest) || typeof manifest.strings !== 'string'
+    || !isObject(manifest.templates) || !isObject(manifest.tools)) {
+    issues.push('platform prompt pack is missing or invalid: resources/prompts/platform/pack.json');
+    return;
+  }
+  const references = [manifest.strings];
+  for (const entry of Object.values(manifest.templates))
+    if (isObject(entry) && typeof entry.file === 'string') references.push(entry.file);
+  for (const file of Object.values(manifest.tools)) if (typeof file === 'string') references.push(file);
+  for (const reference of references) {
+    const asset = relative(project, resolve(packRoot, reference)).split(sep).join('/');
+    if (!assetPaths.has(asset))
+      issues.push(`platform prompt pack references a file not listed in runtime-assets.json: ${asset}`);
+  }
+}
+
 /** Owner of a path relative to the module directory, compared without extension. */
 function submoduleOwner(module, pathInModule) {
   if (!module.submodules) return null;
@@ -231,8 +269,10 @@ export async function inspectSourceTree(projectDir) {
   // Executable helpers and skills are runtime dependencies even though they
   // are not JavaScript imports. Keep the frozen asset closure physical and
   // complete, so a successful typecheck cannot hide a missing runtime file.
+  let runtimeAssetPaths = null;
   try {
     const assets = JSON.parse(await readFile(resolve(project, 'runtime-assets.json'), 'utf8'));
+    if (Array.isArray(assets)) runtimeAssetPaths = new Set(assets.map(asset => asset.path));
     for (const asset of assets) {
       const path = resolve(project, asset.path);
       if (!inside(project, path)) { issues.push(`runtime asset escapes next: ${asset.path}`); continue; }
@@ -245,6 +285,7 @@ export async function inspectSourceTree(projectDir) {
       } catch { issues.push(`runtime asset missing or not physical: ${asset.path}`); }
     }
   } catch { issues.push('runtime asset manifest is missing or invalid'); }
+  await checkPlatformPromptPackClosure(project, runtimeAssetPaths, issues);
   const packageJson = JSON.parse(await readFile(resolve(project, 'package.json'), 'utf8'));
   const dependencies = new Set([...Object.keys(packageJson.dependencies ?? {}),
     ...Object.keys(packageJson.devDependencies ?? {})]);
@@ -531,8 +572,22 @@ export async function auditSourceTree(projectDir) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const { issues, modules, submodules, allowedEdgeCount, pureSubmodules, observedEdges, observedSubmoduleEdges } =
-    await inspectSourceTree(resolve(dirname(fileURLToPath(import.meta.url)), '..'));
+    await inspectSourceTree(project);
+  // This branch only runs on a real repository, so it may compare the committed
+  // generated module with a fresh generation. The boundaries fixtures do not
+  // copy src and must keep inspectSourceTree free of that comparison.
+  try {
+    const expected = renderPlatformPackModule(await readPlatformPack(project));
+    let committed;
+    try { committed = await readFile(resolve(project, PLATFORM_PACK_GENERATED_PATH), 'utf8'); }
+    catch { issues.push(`platform prompt pack generated module is missing: ${PLATFORM_PACK_GENERATED_PATH}`); }
+    if (committed !== undefined && committed !== expected)
+      issues.push(`platform prompt pack generated module is stale: run node scripts/build-platform-prompts.mjs`);
+  } catch (error) {
+    issues.push(`platform prompt pack cannot be generated: ${error?.message ?? String(error)}`);
+  }
   for (const module of modules) process.stdout.write(`${module.name}: directory=${module.directory}, sourceFiles=${module.sourceFiles}\n`);
   process.stdout.write(`observed module edges: ${observedEdges.length}/${allowedEdgeCount} allowed (${observedEdges.join(', ') || 'none'})\n`);
   for (const submodule of submodules) process.stdout.write(`  ${submodule.name}: sourceFiles=${submodule.sourceFiles}\n`);

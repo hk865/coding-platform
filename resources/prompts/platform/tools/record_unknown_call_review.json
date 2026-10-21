@@ -1,0 +1,9 @@
+{
+  "description": "Record one review-round conclusion for a process item, given by its alias #n. State whether the command finished (done / not_done / partial / undetermined) and whether it could have caused the Host crash (unlikely / possible / undetermined), each with its evidence. The reviewed record and this review round are bound by the platform; you cannot choose them. A new call may overwrite the same item conclusion until the round ends; the last commit wins.",
+  "parameters": {
+    "item": "The alias #n of the process item being reviewed; never a Kernel callId",
+    "verdict": "Whether the reviewed command finished",
+    "evidence": "The evidence for the verdict, 1-2000 characters",
+    "crashSuspicion": "The crash self-check: verdict and its evidence, 1-1000 characters"
+  }
+}

@@ -26,6 +26,7 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import type { SessionMessageIntentV1, SessionMessageRef } from '../../contracts/core/session-message.js';
 import { decisionSourceKey } from '../../contracts/goal-decisions.js';
 import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { ReadResult, WriteResult } from '../../contracts/core/results.js';
 import {
   toolSchema as z,
@@ -61,6 +62,19 @@ export const USER_DECISION_TOOL_NAMES = [
   'read_user_decision',
   'record_decision_application',
 ] as const;
+
+/** The final expanded description of each tool, from platform pack v1. */
+const TOOL_DESCRIPTIONS = {
+  send_session_message: PLATFORM_PROMPT_PACK_V1.tools.send_session_message.description,
+  read_session_inbox: PLATFORM_PROMPT_PACK_V1.tools.read_session_inbox.description,
+  read_session_message: PLATFORM_PROMPT_PACK_V1.tools.read_session_message.description,
+  read_session_message_body: PLATFORM_PROMPT_PACK_V1.tools.read_session_message_body.description,
+  ack_session_message: PLATFORM_PROMPT_PACK_V1.tools.ack_session_message.description,
+  respond_session_message: PLATFORM_PROMPT_PACK_V1.tools.respond_session_message.description,
+  send_user_message: PLATFORM_PROMPT_PACK_V1.tools.send_user_message.description,
+  read_user_decision: PLATFORM_PROMPT_PACK_V1.tools.read_user_decision.description,
+  record_decision_application: PLATFORM_PROMPT_PACK_V1.tools.record_decision_application.description,
+} as const;
 
 export type SessionMailboxToolsConfig = {
   mailbox: SessionMailboxPort;
@@ -388,7 +402,7 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
     const readOnly = name.startsWith('read_');
     return {
       name,
-      description: `Session mailbox: ${name}`,
+      description: TOOL_DESCRIPTIONS[name],
       inputSchema: schema,
       effectClass: readOnly ? 'read_only' : 'workspace_write',
       // Read-only extension tools register through the Kernel read-only seam; a
@@ -483,7 +497,7 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
     const readOnly = name === 'read_user_decision';
     return {
       name,
-      description: `User decision: ${name}`,
+      description: TOOL_DESCRIPTIONS[name],
       inputSchema: schema,
       effectClass: readOnly ? 'read_only' : 'workspace_write',
       requiredCapabilities: readOnly ? ['workspace_read'] : [],

@@ -30,6 +30,8 @@ import { mkdirSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { canonicalJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
+import { renderTemplate } from '../contracts/prompts/render-template.js';
 import { createTargetPlatform, type TargetPlatformOptions } from '../composition/create-platform.js';
 import type { RecordCommitNotice, RecordCommitObserver } from '../composition/commit-observer.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
@@ -187,7 +189,7 @@ const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.
 const SCRIBE_PENDING_THRESHOLD = 10;
 const SCRIBE_UPDATE_DUE_THRESHOLD = 5;
 const SCRIBE_REMINDER_PERIOD_MS = 60_000;
-const SCRIBE_REMINDER_MARKER = '书记提醒：';
+const SCRIBE_REMINDER_MARKER = PLATFORM_PROMPT_PACK_V1.strings['scribe.marker'];
 
 /** Segment-aware prefix match for trusted read prefixes; `'.'` means the whole
  * readable workspace. An empty prefix never matches. */
@@ -1431,8 +1433,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const requestId = 'scribe-reminder:' + scope.workspaceId + ':' + recipientRef.sessionId + ':'
       + sha256Hex(canonicalJson([...identities].sort() as never));
     if (state.sentRequestId === requestId) return;
-    const text = `${SCRIBE_REMINDER_MARKER}待审 ${String(pendingCount)} 条，该更新 ${String(updateDueCount)} 条。`
-      + `锚点：${[...anchorNames].slice(0, 20).join('、')}`;
+    const text = renderTemplate(PLATFORM_PROMPT_PACK_V1, 'scribe-reminder', {
+      marker: SCRIBE_REMINDER_MARKER,
+      pendingCount: String(pendingCount),
+      updateDueCount: String(updateDueCount),
+      anchors: [...anchorNames].slice(0, 20).join('、'),
+    }, []).text;
     state.pendingSend = { requestId, input: { recipient: recipientRef, text, intent: 'notify' } };
     await sendPendingScribeReminder(ctx, state);
   }

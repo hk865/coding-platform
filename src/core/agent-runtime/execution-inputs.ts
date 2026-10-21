@@ -18,6 +18,8 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import type { SessionRecord as KernelSessionRecord } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
 import type { RunRef } from '../../contracts/dispatch.js';
@@ -56,7 +58,8 @@ export function deriveInputId(messageRef: SessionMessage['ref'], part: InputPart
  * Part 1 fixes the signature only; Part 2 supplies the canonical encoding.
  */
 export function formatDecisionResponseInput(body: UserDecisionBodyV1): string {
-  return '用户答复\n' + canonicalJson(body as unknown as JsonValue);
+  return renderTemplate(PLATFORM_PROMPT_PACK_V1, 'user-decision-response',
+    { bodyJson: canonicalJson(body as unknown as JsonValue) }, []).text;
 }
 
 /**

@@ -1,0 +1,4 @@
+{
+  "description": "Query TS/JS declarations, definitions or semantic references within explicit readable files. Coordinates are one-based UTF-16. Returns source digests and partial coverage; no project config or external dependencies. Not a complete call graph. Use source_excerpt with a returned digest to fetch material.",
+  "parameters": {}
+}

@@ -1,0 +1,4 @@
+{
+  "description": "Read a bounded source range within the pinned candidate source. Paths excluded from the candidate are unavailable. Returns the full-file digest and exact line range; use further ranges when truncated.",
+  "parameters": {}
+}

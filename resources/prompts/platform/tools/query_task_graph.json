@@ -1,0 +1,4 @@
+{
+  "description": "Read the current Plan task graph for the bound Goal. Optional planRef selects a PlanRevision; optional atLeastCursor is a source cursor.",
+  "parameters": {}
+}

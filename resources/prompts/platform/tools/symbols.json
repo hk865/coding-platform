@@ -1,0 +1,4 @@
+{
+  "description": "Parse a file into declarations, imports and syntactic call sites using TypeScript/JavaScript AST or Python AST. Does not execute project code or resolve runtime behavior. Unsupported languages explicitly return text fallback.",
+  "parameters": {}
+}

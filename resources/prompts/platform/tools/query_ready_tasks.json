@@ -1,0 +1,4 @@
+{
+  "description": "Read the ready candidate tasks for the bound Goal. includeBlocked selects blocked rows too; roleIds filters by Role; page paginates.",
+  "parameters": {}
+}

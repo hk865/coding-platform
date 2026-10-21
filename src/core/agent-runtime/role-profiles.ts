@@ -6,6 +6,7 @@
 import type { RoleConfigurationRef } from '../../contracts/core/identity.js';
 import type { PlatformDutyV1 } from '../../contracts/graph-context.js';
 import type { RoleResponsibilityV1 } from '../../contracts/role-spec.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 
 export type PlatformRoleProfileV1 = {
   duty: PlatformDutyV1;
@@ -19,40 +20,40 @@ export type PlatformRoleProfileV1 = {
 const PLATFORM_ROLE_PROFILES: Readonly<Record<PlatformDutyV1, PlatformRoleProfileV1>> = {
   executor: {
     duty: 'executor',
-    label: 'Executor',
-    purpose: 'Execute the assigned task.',
+    label: PLATFORM_PROMPT_PACK_V1.strings['role.executor.label'],
+    purpose: PLATFORM_PROMPT_PACK_V1.strings['role.executor.purpose'],
     responsibility: ['execution'],
     behaviorSkillId: 'platform-work',
     template: { kind: 'legacy_template', templateId: 'platform-executor', templateRevision: 's3.1' },
   },
   secretary: {
     duty: 'secretary',
-    label: 'Secretary',
-    purpose: "Handle the user's bounded request.",
+    label: PLATFORM_PROMPT_PACK_V1.strings['role.secretary.label'],
+    purpose: PLATFORM_PROMPT_PACK_V1.strings['role.secretary.purpose'],
     responsibility: ['human_decision_support', 'planning'],
     behaviorSkillId: 'platform-secretary',
     template: { kind: 'legacy_template', templateId: 'platform-secretary', templateRevision: 's3.1' },
   },
   adviser: {
     duty: 'adviser',
-    label: 'Adviser',
-    purpose: 'Investigate technical choices and coordinate work.',
+    label: PLATFORM_PROMPT_PACK_V1.strings['role.adviser.label'],
+    purpose: PLATFORM_PROMPT_PACK_V1.strings['role.adviser.purpose'],
     responsibility: ['investigation', 'integration'],
     behaviorSkillId: 'platform-adviser',
     template: { kind: 'legacy_template', templateId: 'platform-adviser', templateRevision: 's3.1' },
   },
   scribe: {
     duty: 'scribe',
-    label: 'Scribe',
-    purpose: 'Check and consolidate project facts.',
+    label: PLATFORM_PROMPT_PACK_V1.strings['role.scribe.label'],
+    purpose: PLATFORM_PROMPT_PACK_V1.strings['role.scribe.purpose'],
     responsibility: ['fact_consolidation'],
     behaviorSkillId: 'platform-scribe',
     template: { kind: 'legacy_template', templateId: 'platform-scribe', templateRevision: 's3.1' },
   },
   reviewer: {
     duty: 'reviewer',
-    label: 'Reviewer',
-    purpose: 'Review the assigned work independently.',
+    label: PLATFORM_PROMPT_PACK_V1.strings['role.reviewer.label'],
+    purpose: PLATFORM_PROMPT_PACK_V1.strings['role.reviewer.purpose'],
     responsibility: ['verification'],
     behaviorSkillId: 'platform-reviewer',
     template: { kind: 'legacy_template', templateId: 'platform-reviewer', templateRevision: 's3.1' },

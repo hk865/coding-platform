@@ -31,6 +31,11 @@ import type {
   CapturedPathV1, UnknownCallObservationV1, UnknownCallReviewRef, WorkspaceCaptureV1,
 } from '../unknown-call-review.js';
 import type { BoundedTextV1 } from '../continuation-brief.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../prompts/platform-pack.generated.js';
+import { renderTemplate } from '../prompts/render-template.js';
+
+/** The fixed v1 platform texts; every key is literal so a missing one is a type error. */
+const STR = PLATFORM_PROMPT_PACK_V1.strings;
 
 /**
  * K3: the review-round input handed to the Kernel (spec §2). Only the review /
@@ -95,40 +100,39 @@ export type UnknownCallReviewInputV1 = {
  * it reads only the input and returns one string.
  */
 export function renderUnknownCallReviewZh(input: UnknownCallReviewInputV1): string {
-  const lines: string[] = [];
-  lines.push('## Unknown-call review');
-  lines.push('这一轮只核对，不做任务，不改工作区；不许重跑下面的命令。');
-  lines.push('');
-  lines.push('### 工作区采集');
   const workspace = input.workspace;
-  lines.push(`状态：${workspace.status}；基准已知：${workspace.runBaselineKnown ? '是' : '否'}`);
-  const omitted = (count: number): string => count > 0 ? `（另有 ${String(count)} 条）` : '';
-  lines.push(`看不见的部分：${workspace.notVisible.length === 0 ? '（无）'
-    : workspace.notVisible.join('、') + omitted(workspace.notVisibleOmitted)}`);
-  lines.push(`变了的前 200 条：${workspace.changedSample.length === 0 ? '（无）'
-    : workspace.changedSample.map(path => `${path.path}（${path.change}）`).join('、') + omitted(workspace.changedOmitted)}`);
-  lines.push('不在清单里不证明没做。');
-  lines.push('');
-  lines.push('### 已经写过的结论');
+  const omitted = (count: number): string => count > 0
+    ? `${STR['k3.workspace.omittedLead']}${String(count)}${STR['k3.workspace.omittedSuffix']}` : '';
+  const workspaceLines: string[] = [];
+  workspaceLines.push(`${STR['k3.workspace.statusLead']}${workspace.status}${STR['k3.workspace.baselineMiddle']}`
+    + `${workspace.runBaselineKnown ? STR['k3.workspace.yes'] : STR['k3.workspace.no']}`);
+  workspaceLines.push(`${STR['k3.workspace.notVisibleLead']}`
+    + `${workspace.notVisible.length === 0 ? STR['k3.none']
+      : workspace.notVisible.join(STR['k3.list.separator']) + omitted(workspace.notVisibleOmitted)}`);
+  workspaceLines.push(`${STR['k3.workspace.changedLead']}`
+    + `${workspace.changedSample.length === 0 ? STR['k3.none']
+      : workspace.changedSample.map(path => `${path.path}（${path.change}）`).join(STR['k3.list.separator'])
+        + omitted(workspace.changedOmitted)}`);
+  workspaceLines.push(STR['k3.workspace.disclaimer']);
+  const writtenLines: string[] = [];
   const written = input.items.filter(item => item.current !== null
     && (item.current.by === 'review_round' || item.current.by === 'settlement'));
   if (written.length === 0) {
-    lines.push('（无）');
+    writtenLines.push(STR['k3.none']);
   } else {
     for (const item of written) {
       const current = item.current;
       if (current === null || (current.by !== 'review_round' && current.by !== 'settlement')) continue;
-      lines.push(`- #${String(item.alias)}：做没做完=${current.verdict}；依据=${current.evidence}`);
+      writtenLines.push(`${STR['k3.written.lineLead']}${String(item.alias)}${STR['k3.written.verdictLead']}`
+        + `${current.verdict}${STR['k3.written.evidenceLead']}${current.evidence}`);
     }
   }
-  lines.push('');
   // L20: the proposal phase lists the proposal targets and the person's note and
   // annotations. The review-only item list and its two questions would ask the
   // model to review instead of propose, so they are not rendered here.
   if (input.phase === 'proposal') {
-    lines.push('### 提方案');
-    lines.push('- 这一轮只给下面的条目提方案：每条调用一次 propose_safer_method，命令要能原样执行；不要跑原命令。');
-    const indent = (text: string): string => text.replace(/\r\n|\n/g, '\n  ');
+    const indent = (text: string): string => text.replace(/\r\n|\n/g, STR['k3.proposal.newlineIndent']);
+    const targetLines: string[] = [];
     const targets = [...(input.targets ?? [])].sort((left, right) => left - right);
     for (const alias of targets) {
       const item = input.items.find(entry => entry.alias === alias);
@@ -137,39 +141,55 @@ export function renderUnknownCallReviewZh(input: UnknownCallReviewInputV1): stri
       // prepared manifest. The proposal must still show the record's own cut,
       // marked as a cut, never "（无）". Truncated items keep their 4 KiB cut.
       const original = item.display === 'unexpanded'
-        ? indent(item.summaryCommand ?? '') + '（只是摘要：全文太长，没有放进这一轮的说明）'
-        : indent(item.command?.text ?? '（无）');
-      lines.push(`- #${String(alias)}（${item.toolName}）原命令：${original}`);
+        ? indent(item.summaryCommand ?? '') + STR['k3.proposal.summarySuffix']
+        : indent(item.command?.text ?? STR['k3.none']);
+      targetLines.push(`${STR['k3.proposal.targetLead']}${String(alias)}（${item.toolName}）`
+        + `${STR['k3.proposal.commandLead']}${original}`);
     }
-    if (input.personText !== null && input.personText !== '') lines.push(`- 附言：${input.personText}`);
-    for (const annotation of input.annotations) {
-      lines.push(`- 批注（${annotation.path ?? '记录'}）：${annotation.text}`);
-    }
+    const personNote = input.personText !== null && input.personText !== ''
+      ? `\n${STR['k3.proposal.personLead']}${input.personText}` : '';
+    const annotationLines = input.annotations.map(annotation =>
+      `${STR['k3.proposal.annotationLead']}${annotation.path ?? STR['k3.proposal.annotationRecord']}`
+      + `${STR['k3.proposal.annotationMiddle']}${annotation.text}`);
+    const platformLines: string[] = [];
     if (input.platformTargets.length !== 0) {
       const aliases = [...input.platformTargets].sort((left, right) => left - right)
-        .map(alias => `#${String(alias)}`).join('、');
-      lines.push(`- 平台条目 ${aliases}：结果查不清，不提方案；接续说明里写“结果查不清，重做前先核实”。`);
+        .map(alias => `#${String(alias)}`).join(STR['k3.list.separator']);
+      platformLines.push(`${STR['k3.proposal.platformLead']}${aliases}${STR['k3.proposal.platformSuffix']}`);
     }
-    return lines.join('\n');
+    const slotLines = (lines: readonly string[]): string => (lines.length === 0 ? '' : `\n${lines.join('\n')}`);
+    return renderTemplate(PLATFORM_PROMPT_PACK_V1, 'unknown-call-proposal', {
+      workspaceLines: workspaceLines.join('\n'),
+      writtenLines: writtenLines.join('\n'),
+      targets: slotLines(targetLines),
+      personNote,
+      annotations: slotLines(annotationLines),
+      platformTargets: slotLines(platformLines),
+    }, []).text;
   }
-  lines.push('### 要核对的调用');
+  const itemLines: string[] = [];
   for (const item of input.items) {
     if (item.display === 'unexpanded') {
-      lines.push(`- #${String(item.alias)} ${item.toolName}：没展开，按判断不了处理。`);
+      itemLines.push(`${STR['k3.review.itemLead']}${String(item.alias)} ${item.toolName}`
+        + `${STR['k3.review.unexpandedSuffix']}`);
     } else {
-      const batch = item.sameBatch.length === 0 ? '（无）' : `#${item.sameBatch.join('、#')}`;
-      lines.push(`- #${String(item.alias)} ${item.toolName}：命令 ${item.command?.text ?? '（无）'}；cwd ${item.cwd ?? '（无）'}`
-        + `；开始时间 ${item.startedAt ?? '（未知）'}；同批调用：${batch}`);
+      const batch = item.sameBatch.length === 0 ? STR['k3.none']
+        : `#${item.sameBatch.join(STR['k3.review.batchSeparator'])}`;
+      itemLines.push(`${STR['k3.review.itemLead']}${String(item.alias)} ${item.toolName}`
+        + `${STR['k3.review.commandLead']}${item.command?.text ?? STR['k3.none']}`
+        + `${STR['k3.review.cwdLead']}${item.cwd ?? STR['k3.none']}`
+        + `${STR['k3.review.startedLead']}${item.startedAt ?? STR['k3.unknown']}`
+        + `${STR['k3.review.batchLead']}${batch}`);
     }
     if (item.display === 'truncated' || item.display === 'unexpanded') {
-      lines.push('  这条命令没有全文，两个结论（做没做完、会不会是崩溃的原因）一律按判断不了处理；你看到的痕迹照样写进依据。');
+      itemLines.push(STR['k3.review.noFullText']);
     }
   }
-  lines.push('');
-  lines.push('### 每条要回答两件事');
-  lines.push('1. 做没做完：已做 / 没做 / 做了一半 / 判断不了，附依据；');
-  lines.push('2. 会不会就是 Host 崩溃的原因：不太可能 / 可能 / 判断不了，附依据（命令本身、留下的痕迹）。');
-  return lines.join('\n');
+  return renderTemplate(PLATFORM_PROMPT_PACK_V1, 'unknown-call-review', {
+    workspaceLines: workspaceLines.join('\n'),
+    writtenLines: writtenLines.join('\n'),
+    items: itemLines.length === 0 ? '' : '\n' + itemLines.join('\n'),
+  }, []).text;
 }
 
 export type PreparedTaskManifestV1 = {

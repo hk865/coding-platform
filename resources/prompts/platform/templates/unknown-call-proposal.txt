@@ -1,0 +1,11 @@
+## Unknown-call review
+这一轮只核对，不做任务，不改工作区；不许重跑下面的命令。
+
+### 工作区采集
+{{workspaceLines}}
+
+### 已经写过的结论
+{{writtenLines}}
+
+### 提方案
+- 这一轮只给下面的条目提方案：每条调用一次 propose_safer_method，命令要能原样执行；不要跑原命令。{{targets}}{{personNote}}{{annotations}}{{platformTargets}}

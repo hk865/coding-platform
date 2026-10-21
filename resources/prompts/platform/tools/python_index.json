@@ -1,0 +1,4 @@
+{
+  "description": "Query readable Python project symbols, definitions, references, imports and static call candidates using Jedi on an isolated source snapshot. Includes source digests, commit and unresolved relations. Workspace pyrightconfig.json, pyproject.toml and setup.cfg import roots and readable .py/.pyi dependencies are parsed as data. Source and config changes invalidate results. Project code never executes; external interpreter environments and complete dynamic call graphs are not covered. In an observation, file-level edges come from a static Python import scan only: runtime-only links are not edges, while the standard library, external packages and git-ignored files are unresolved or absent.",
+  "parameters": {}
+}

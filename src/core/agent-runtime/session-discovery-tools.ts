@@ -21,6 +21,7 @@ import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef, WorkLinkTarget } from '../../contracts/core/identity.js';
 import type { ReadResult } from '../../contracts/core/results.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import {
   toolSchema as z,
   type ToolCall,
@@ -32,6 +33,12 @@ import type { SessionDirectoryPort } from '../work-graph/model/session-contracts
 
 /** Fixed production tool names. The Kernel host-authorization list comes from here. */
 export const SESSION_DISCOVERY_TOOL_NAMES = ['find_related_sessions', 'read_session_card'] as const;
+
+/** The final expanded description of each tool, from platform pack v1. */
+const DESCRIPTIONS = {
+  find_related_sessions: PLATFORM_PROMPT_PACK_V1.tools.find_related_sessions.description,
+  read_session_card: PLATFORM_PROMPT_PACK_V1.tools.read_session_card.description,
+} as const;
 
 export type SessionDiscoveryToolsConfig = {
   sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession'>;
@@ -134,9 +141,7 @@ export function createSessionDiscoveryTools(config: SessionDiscoveryToolsConfig)
     const schema = schemas[index]!;
     return {
       name,
-      description: name === 'find_related_sessions'
-        ? 'List the current Session cards linked to a required Task/Module/WorkContext target. Only open links and active Sessions are returned; archived Sessions are excluded. Read-only discovery: it starts no Run, loads no history and wakes no Session.'
-        : 'Read the current Session card (record, availability and work links) for one exact SessionRef. Read-only: it does not wake the Session, change occupancy, start a Run or load history.',
+      description: DESCRIPTIONS[name],
       inputSchema: schema,
       effectClass: 'read_only',
       // A platform directory read is not a workspace file read, but

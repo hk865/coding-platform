@@ -11,6 +11,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../../contracts/prompts/platform-pack.generated.js';
 import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import type {
   ContextExtensionsV1, ContextIndexRowV1, ContextSourceV1, NotesUnderstandingRowV1,
@@ -121,7 +122,7 @@ function decisionRows(
     rows.push({
       key: `decision:${card.cardKey}`,
       node: { kind: 'goal', ref: request.goalRef },
-      text: `待决定：${card.source.kind}；source=${card.source.key}`,
+      text: `${PLATFORM_PROMPT_PACK_V1.strings['contextExtension.decisionPrefix']}${card.source.kind}${PLATFORM_PROMPT_PACK_V1.strings['contextExtension.sourceSeparator']}${card.source.key}`,
       sources: recordSourcesOf(card.source.pins),
     });
   }
@@ -131,7 +132,7 @@ function decisionRows(
     rows.push({
       key: `decision:not_available:${capability.source}`,
       node: { kind: 'goal', ref: request.goalRef },
-      text: `待决来源尚未接入：${capability.source}`,
+      text: `${PLATFORM_PROMPT_PACK_V1.strings['contextExtension.unavailablePrefix']}${capability.source}`,
       sources: [],
     });
   }
@@ -175,8 +176,10 @@ function messageOf(error: unknown): string {
 
 /** L9: the one deterministic index line for an anchor, never UI wording. */
 function anchorText(anchor: SessionAnomalyAnchorV1): string {
-  const interruption = anchor.cause === 'retired_archive' ? '因线退役被归档中断' : '被归档中断';
-  return `中断，待核对：任务 ${anchor.task.taskId} 的执行 ${anchor.runRef.runId} ${interruption}，改动没撤销也没核对`;
+  const interruption = anchor.cause === 'retired_archive'
+    ? PLATFORM_PROMPT_PACK_V1.strings['contextExtension.interruption.retiredArchive']
+    : PLATFORM_PROMPT_PACK_V1.strings['contextExtension.interruption.archive'];
+  return `${PLATFORM_PROMPT_PACK_V1.strings['contextExtension.anchorPrefix']}${anchor.task.taskId}${PLATFORM_PROMPT_PACK_V1.strings['contextExtension.anchorRunSeparator']}${anchor.runRef.runId} ${interruption}${PLATFORM_PROMPT_PACK_V1.strings['contextExtension.anchorSuffix']}`;
 }
 
 function anchorRow(item: SessionAnomalyViewV1): ContextIndexRowV1 {

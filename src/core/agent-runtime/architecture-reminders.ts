@@ -19,15 +19,16 @@ import type {
 import type { FormalObservedFindingV1 } from '../../contracts/architecture-inspection.js';
 import type { ModuleRef } from '../../contracts/core/identity.js';
 import { bestModuleDirectoryPrefixLength, pathOwnershipOf } from '../../contracts/path-ownership.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 
 /** One rendered reminder row with the deterministic key ruling 11 asks for. */
 export type ArchitectureReminderRow = { key: string; text: string };
 
 const KIND_LABELS = [
-  '声明的依赖没有 import',
-  'import 没有声明的依赖',
-  '新文件没归组',
-  '可能移动',
+  PLATFORM_PROMPT_PACK_V1.strings['architecture.kind.dependencyMissing'],
+  PLATFORM_PROMPT_PACK_V1.strings['architecture.kind.importUndeclared'],
+  PLATFORM_PROMPT_PACK_V1.strings['architecture.kind.ungrouped'],
+  PLATFORM_PROMPT_PACK_V1.strings['architecture.kind.move'],
 ] as const;
 const MAX_ROWS = 10;
 
@@ -114,7 +115,7 @@ function moveRows(previous: ArchitectureReminderObservationV1, latest: Architect
     const oldPath = deleted[0]!;
     const newPath = added[0]!;
     const content = `${oldPath} → ${newPath}`;
-    rows.push({ kindIndex: 3, path: oldPath, content, text: `${KIND_LABELS[3]}：${content}（${now}的观测）` });
+    rows.push({ kindIndex: 3, path: oldPath, content, text: `${KIND_LABELS[3]}：${content}（${now}${PLATFORM_PROMPT_PACK_V1.strings['architecture.observationSuffix']}` });
   }
   return rows;
 }
@@ -125,10 +126,10 @@ function elapsedText(now: string, observedAt: string): string {
   const minute = 60_000;
   const hour = 60 * minute;
   const day = 24 * hour;
-  if (elapsed < minute) return '刚才';
-  if (elapsed < hour) return `${String(Math.floor(elapsed / minute))} 分钟前`;
-  if (elapsed < day) return `${String(Math.floor(elapsed / hour))} 小时前`;
-  return `${String(Math.floor(elapsed / day))} 天前`;
+  if (elapsed < minute) return PLATFORM_PROMPT_PACK_V1.strings['architecture.time.justNow'];
+  if (elapsed < hour) return `${String(Math.floor(elapsed / minute))}${PLATFORM_PROMPT_PACK_V1.strings['architecture.time.minutesAgo']}`;
+  if (elapsed < day) return `${String(Math.floor(elapsed / hour))}${PLATFORM_PROMPT_PACK_V1.strings['architecture.time.hoursAgo']}`;
+  return `${String(Math.floor(elapsed / day))}${PLATFORM_PROMPT_PACK_V1.strings['architecture.time.daysAgo']}`;
 }
 
 function bodyRows(facts: ArchitectureReminderFactsV1, taskModuleRef: ModuleRef | null,
@@ -145,16 +146,16 @@ function bodyRows(facts: ArchitectureReminderFactsV1, taskModuleRef: ModuleRef |
       if (!dependencyTouchesTask(finding, taskModuleRef, catalog)) continue;
       const content = `${finding.detail}，${finding.path ?? ''}`;
       rows.push({ kindIndex: 0, path: finding.path ?? '', content,
-        text: `${KIND_LABELS[0]}：${content}${finding.certainty === 'unknown' ? '，不确定' : ''}（${time}的观测）` });
+        text: `${KIND_LABELS[0]}：${content}${finding.certainty === 'unknown' ? PLATFORM_PROMPT_PACK_V1.strings['architecture.certaintyUnknown'] : ''}（${time}${PLATFORM_PROMPT_PACK_V1.strings['architecture.observationSuffix']}` });
     } else if (finding.kind === 'import_undeclared') {
       if (!importTouchesTask(finding, taskModuleRef, catalog)) continue;
       const content = `${finding.path ?? ''} → ${finding.detail}`;
       rows.push({ kindIndex: 1, path: finding.path ?? '', content,
-        text: `${KIND_LABELS[1]}：${content}（${time}的观测）` });
+        text: `${KIND_LABELS[1]}：${content}（${time}${PLATFORM_PROMPT_PACK_V1.strings['architecture.observationSuffix']}` });
     } else if (finding.kind === 'ungrouped') {
       const path = finding.path ?? '';
       if (!ungroupedBelongsToTask(path, taskModuleRef, catalog)) continue;
-      rows.push({ kindIndex: 2, path, content: path, text: `${KIND_LABELS[2]}：${path}（${time}的观测）` });
+      rows.push({ kindIndex: 2, path, content: path, text: `${KIND_LABELS[2]}：${path}（${time}${PLATFORM_PROMPT_PACK_V1.strings['architecture.observationSuffix']}` });
     }
   }
   rows.push(...moveRows(facts.previous ?? latest, latest, time));
@@ -189,7 +190,7 @@ export function architectureReminderRowEntries(input: {
   facts: ArchitectureReminderFactsV1; taskModuleRef: ModuleRef | null; now: string;
 }): ArchitectureReminderRow[] {
   if (input.facts.state.current === null || input.facts.latest === null) {
-    return [{ key: sequenceKey(0), text: '还没有观测' }];
+    return [{ key: sequenceKey(0), text: PLATFORM_PROMPT_PACK_V1.strings['architecture.noObservation'] }];
   }
   const rows = bodyRows(input.facts, input.taskModuleRef, input.now).sort(compareRows);
   if (rows.length === 0) return [];
@@ -197,7 +198,7 @@ export function architectureReminderRowEntries(input: {
   const entries = kept.map((row, index) => ({ key: sequenceKey(index), text: row.text }));
   const omitted = rows.length - kept.length;
   if (omitted > 0) {
-    const text = `另有 ${String(omitted)} 条架构提醒没列出`;
+    const text = `${PLATFORM_PROMPT_PACK_V1.strings['architecture.omissionPrefix']}${String(omitted)}${PLATFORM_PROMPT_PACK_V1.strings['architecture.omissionSuffix']}`;
     entries.push({ key: sequenceKey(kept.length), text });
   }
   return entries;

@@ -23,6 +23,7 @@ import type { RunRef, TaskTriple } from '../../contracts/dispatch.js';
 import type { GraphNodeRefV1, TaskInputPageRequestV1 } from '../../contracts/graph-context.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../contracts/plan.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import { MEMORY_PAGE_DEFAULT, TEXT_SEARCH_MAX_TERMS } from '../work-graph/model/note-contracts.js';
 import type {
   MemoryConflictsRequest, MemoryFindRequest, MemoryHistoryRequest, MemoryLookupRequest,
@@ -324,8 +325,8 @@ const findSchema: z.ZodType = z.union([findGraphSchema, findMemorySchema]);
 const lookSchema: z.ZodType = z.union([lookGraphSchema, lookMemorySchema]);
 
 const descriptions = {
-  look_graph: 'Read one graph node/path card or page (relation card/children/neighbours/executions/checks), the original execution history of one Run, or the exact declared task input body by page. Or read notes: `{ memory: { v: 1, op: lookup|neighbors|history|conflicts, ... } }`. The Goal, scope and identity are bound by the platform; do not send them.',
-  find_graph: 'Search the bound Goal graph case-insensitively (NFC + ASCII-lowercased): node names and summaries by substring; module paths when the path equals the query, is the query\'s longest directory-boundary owner, or lies under `query + \'/\'`. Or search notes: `{ memory: { v: 1, op: find|stale, ... } }`. The Goal, scope and identity are bound by the platform; do not send them.',
+  look_graph: PLATFORM_PROMPT_PACK_V1.tools.look_graph.description,
+  find_graph: PLATFORM_PROMPT_PACK_V1.tools.find_graph.description,
 } as const;
 
 export function createGraphTools(config: GraphToolsConfig): {

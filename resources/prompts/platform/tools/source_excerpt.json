@@ -1,0 +1,4 @@
+{
+  "description": "Read a bounded source range at an exact content digest from code_index or symbols. Returns stale if content changed; never silently substitutes newer source.",
+  "parameters": {}
+}

@@ -1,0 +1,9 @@
+{
+  "description": "Adopt your own W2 candidate proposal for the bound Goal. decisionRefs are supplied by the platform. Pass acknowledgementRef only when the user answered a card for this candidate; the plan owner re-reads that formal answer and derives the decision source itself. Only a real committed plan revision is reported as success.",
+  "parameters": {
+    "proposalRef": "Your own candidate_v2 proposal ref; the plan service refuses another Run/author candidate.",
+    "expectedProposalRevision": "The exact revision of proposalRef, as read.",
+    "expected": "The exact W1 version pins the caller saw; omit a pin rather than guessing a fresh revision.",
+    "acknowledgementRef": "The user answer message this adoption is attributed to, when the user answered a card for this candidate. Attribution only; the plan owner re-reads the formal answer and derives the decision source itself. Omit it when the adoption is not attributed to a user answer."
+  }
+}

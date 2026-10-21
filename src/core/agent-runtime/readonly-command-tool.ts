@@ -17,6 +17,7 @@ import { ProcessSandbox, ProcessSandboxError, normalizeWorkspacePath, toolSchema
 import type {
   ResourceCapSource, ResourceCapsReport, ToolDefinition, ToolResult, WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 
 export const READONLY_COMMAND_TOOL_NAME = 'run_readonly_command';
 
@@ -56,10 +57,10 @@ const NONE_EFFECTS = {
 
 const inputSchema = z
   .object({
-    command: z.string().min(1).describe('Non-interactive bash command to run in the read-only sandbox'),
-    cwd: z.string().optional().describe('Workspace-relative working directory; defaults to the workspace root'),
+    command: z.string().min(1).describe(PLATFORM_PROMPT_PACK_V1.tools['run_readonly_command'].parameters['command']),
+    cwd: z.string().optional().describe(PLATFORM_PROMPT_PACK_V1.tools['run_readonly_command'].parameters['cwd']),
     timeoutMs: z.number().int().min(READONLY_MIN_TIMEOUT_MS).max(READONLY_MAX_TIMEOUT_MS)
-      .describe('Command timeout in milliseconds, 1000-120000; defaults to 30000').optional(),
+      .describe(PLATFORM_PROMPT_PACK_V1.tools['run_readonly_command'].parameters['timeoutMs']).optional(),
   })
   .strict();
 type ReadonlyCommandArguments = z.infer<typeof inputSchema>;
@@ -351,12 +352,7 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
   };
   return {
     name: READONLY_COMMAND_TOOL_NAME,
-    description: 'Run a non-interactive bash command in a network-disabled, read-only bubblewrap sandbox. '
-      + 'The workspace is mounted read-only at /workspace; Host-denied paths are hidden (for example .env, credentials and the Host hidden prefixes), and ordinary .git is readable but read-only. '
-      + 'Git can read history and diffs, but any operation that writes .git (for example commit) fails with git\'s own error, and a linked worktree (.git is a file) has no usable git. '
-      + 'A subprocess timeout keeps the captured output; a cancellation or the dispatcher timeout replaces it with empty output. '
-      + 'Only paths under the workspace root are visible; deeper files with a protected basename are still readable, exactly as with the read tool. '
-      + 'There is no host-shell fallback: when bubblewrap or the read-only mounts are unavailable the call fails.',
+    description: PLATFORM_PROMPT_PACK_V1.tools['run_readonly_command'].description,
     inputSchema,
     handler,
     effectClass: 'process',

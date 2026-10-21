@@ -1,0 +1,4 @@
+{
+  "description": "Search the bound Goal graph case-insensitively (NFC + ASCII-lowercased): node names and summaries by substring; module paths when the path equals the query, is the query's longest directory-boundary owner, or lies under `query + '/'`. Or search notes: `{ memory: { v: 1, op: find|stale, ... } }`. The Goal, scope and identity are bound by the platform; do not send them.",
+  "parameters": {}
+}

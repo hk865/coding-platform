@@ -1,0 +1,4 @@
+{
+  "description": "Query C/C++ project symbols, definitions, references, includes and static call candidates with libclang 18 and a required compile_commands.json. Compiler commands never execute; unknown flags and external include paths return explicit gaps. Only permission-filtered workspace files are exposed through a redirect-only VFS. One-based UTF-16 coordinates, source digests and analyzer identity accompany partial semantic results. In an observation, file-level edges come from a static C/C++ include scan only: runtime-only links are not edges, while system headers and git-ignored files are unresolved or absent. C/C++ is read for one target platform (x86_64-pc-linux-gnu when the database names none).",
+  "parameters": {}
+}

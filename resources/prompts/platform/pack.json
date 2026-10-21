@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "packId": "platform",
+  "extends": null,
+  "templates": {
+    "initial-planning-answer": {
+      "file": "templates/initial-planning-answer.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "consultation-received-input": {
+      "file": "templates/consultation-received-input.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "user-decision-response": {
+      "file": "templates/user-decision-response.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "scribe-reminder": {
+      "file": "templates/scribe-reminder.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "continuation-brief": {
+      "file": "templates/continuation-brief.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "unknown-call-review": {
+      "file": "templates/unknown-call-review.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "unknown-call-proposal": {
+      "file": "templates/unknown-call-proposal.txt",
+      "version": 1,
+      "mentionsTools": [
+        "propose_safer_method"
+      ]
+    }
+  },
+  "strings": "strings.json",
+  "tools": {
+    "query_task_graph": "tools/query_task_graph.json",
+    "query_ready_tasks": "tools/query_ready_tasks.json",
+    "propose_future_plan": "tools/propose_future_plan.json",
+    "apply_future_plan": "tools/apply_future_plan.json",
+    "record_note": "tools/record_note.json",
+    "project_source": "tools/project_source.json",
+    "read_source": "tools/read_source.json",
+    "cpp_index": "tools/cpp_index.json",
+    "python_index": "tools/python_index.json",
+    "code_index": "tools/code_index.json",
+    "source_excerpt": "tools/source_excerpt.json",
+    "list_files": "tools/list_files.json",
+    "search": "tools/search.json",
+    "symbols": "tools/symbols.json",
+    "run_readonly_command": "tools/run_readonly_command.json",
+    "request_command_rerun": "tools/request_command_rerun.json",
+    "send_session_message": "tools/send_session_message.json",
+    "read_session_inbox": "tools/read_session_inbox.json",
+    "read_session_message": "tools/read_session_message.json",
+    "read_session_message_body": "tools/read_session_message_body.json",
+    "ack_session_message": "tools/ack_session_message.json",
+    "respond_session_message": "tools/respond_session_message.json",
+    "send_user_message": "tools/send_user_message.json",
+    "read_user_decision": "tools/read_user_decision.json",
+    "record_decision_application": "tools/record_decision_application.json",
+    "look_graph": "tools/look_graph.json",
+    "find_graph": "tools/find_graph.json",
+    "find_related_sessions": "tools/find_related_sessions.json",
+    "read_session_card": "tools/read_session_card.json",
+    "record_unknown_call_review": "tools/record_unknown_call_review.json",
+    "propose_safer_method": "tools/propose_safer_method.json"
+  }
+}

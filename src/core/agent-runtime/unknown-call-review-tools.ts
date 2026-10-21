@@ -18,6 +18,7 @@
  */
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type {
   UnknownCallReviewPort, UnknownCallReviewReadPort,
 } from '../work-graph/model/unknown-call-review-contracts.js';
@@ -48,15 +49,15 @@ export const UNKNOWN_CALL_PROPOSAL_RATIONALE_MAX_CHARS = 2000;
 const inputSchema = z
   .object({
     item: z.number().int().min(1).max(UNKNOWN_CALL_REVIEW_MAX_ITEMS)
-      .describe('The alias #n of the process item being reviewed; never a Kernel callId'),
+      .describe(PLATFORM_PROMPT_PACK_V1.tools.record_unknown_call_review.parameters.item),
     verdict: z.enum(['done', 'not_done', 'partial', 'undetermined'])
-      .describe('Whether the reviewed command finished'),
+      .describe(PLATFORM_PROMPT_PACK_V1.tools.record_unknown_call_review.parameters.verdict),
     evidence: z.string().min(1).max(UNKNOWN_CALL_REVIEW_EVIDENCE_MAX_CHARS)
-      .describe('The evidence for the verdict, 1-2000 characters'),
+      .describe(PLATFORM_PROMPT_PACK_V1.tools.record_unknown_call_review.parameters.evidence),
     crashSuspicion: z.object({
       verdict: z.enum(['unlikely', 'possible', 'undetermined']),
       evidence: z.string().min(1).max(UNKNOWN_CALL_REVIEW_CRASH_EVIDENCE_MAX_CHARS),
-    }).strict().describe('The crash self-check: verdict and its evidence, 1-1000 characters'),
+    }).strict().describe(PLATFORM_PROMPT_PACK_V1.tools.record_unknown_call_review.parameters.crashSuspicion),
   })
   .strict();
 type RecordUnknownCallReviewArguments = z.infer<typeof inputSchema>;
@@ -65,13 +66,13 @@ type RecordUnknownCallReviewArguments = z.infer<typeof inputSchema>;
 const proposalInputSchema = z
   .object({
     item: z.number().int().min(1).max(UNKNOWN_CALL_REVIEW_MAX_ITEMS)
-      .describe('The alias #n of a proposalTargets (process) item; never a Kernel callId'),
+      .describe(PLATFORM_PROMPT_PACK_V1.tools.propose_safer_method.parameters.item),
     command: z.string().min(1)
-      .describe('The replacement command, run exactly as written; 1-4000 UTF-8 bytes'),
+      .describe(PLATFORM_PROMPT_PACK_V1.tools.propose_safer_method.parameters.command),
     cwd: z.string().optional()
-      .describe('Optional working directory, at most 512 UTF-8 bytes; absent renders as .'),
+      .describe(PLATFORM_PROMPT_PACK_V1.tools.propose_safer_method.parameters.cwd),
     rationale: z.string().min(1).max(UNKNOWN_CALL_PROPOSAL_RATIONALE_MAX_CHARS)
-      .describe('Why this replacement is safer; 1-2000 characters'),
+      .describe(PLATFORM_PROMPT_PACK_V1.tools.propose_safer_method.parameters.rationale),
   })
   .strict();
 type ProposeSaferMethodArguments = z.infer<typeof proposalInputSchema>;
@@ -209,11 +210,7 @@ export function createUnknownCallReviewTools(config: UnknownCallReviewToolsConfi
   function reviewDefinition(): ToolDefinition {
     return {
       name: RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
-      description: 'Record one review-round conclusion for a process item, given by its alias #n. '
-        + 'State whether the command finished (done / not_done / partial / undetermined) and whether it could have '
-        + 'caused the Host crash (unlikely / possible / undetermined), each with its evidence. '
-        + 'The reviewed record and this review round are bound by the platform; you cannot choose them. '
-        + 'A new call may overwrite the same item conclusion until the round ends; the last commit wins.',
+      description: PLATFORM_PROMPT_PACK_V1.tools.record_unknown_call_review.description,
       inputSchema,
       // A platform-state write: the Kernel permission policy and the Host
       // authorization list apply, but no workspace write or process capability
@@ -295,12 +292,7 @@ export function createUnknownCallReviewTools(config: UnknownCallReviewToolsConfi
   function proposalDefinition(): ToolDefinition {
     return {
       name: PROPOSE_SAFER_METHOD_TOOL_NAME,
-      description: 'Propose one safer replacement command for a proposalTargets (process) item, given by its '
-        + 'alias #n. The command is run exactly as written, never the original; it is 1-4000 UTF-8 bytes, the '
-        + 'optional cwd is at most 512 bytes and the rationale is 1-2000 characters. The reviewed record and this '
-        + 'proposal round are bound by the platform; you cannot choose them. A later call for the same item '
-        + 'replaces the earlier proposal until the round ends. If the result says capacity, shorten the command, '
-        + 'the directory or the rationale.',
+      description: PLATFORM_PROMPT_PACK_V1.tools.propose_safer_method.description,
       inputSchema: proposalInputSchema,
       effectClass: 'workspace_write',
       requiredCapabilities: [],

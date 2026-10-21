@@ -1,0 +1,8 @@
+{
+  "description": "Run a non-interactive bash command in a network-disabled, read-only bubblewrap sandbox. The workspace is mounted read-only at /workspace; Host-denied paths are hidden (for example .env, credentials and the Host hidden prefixes), and ordinary .git is readable but read-only. Git can read history and diffs, but any operation that writes .git (for example commit) fails with git's own error, and a linked worktree (.git is a file) has no usable git. A subprocess timeout keeps the captured output; a cancellation or the dispatcher timeout replaces it with empty output. Only paths under the workspace root are visible; deeper files with a protected basename are still readable, exactly as with the read tool. There is no host-shell fallback: when bubblewrap or the read-only mounts are unavailable the call fails.",
+  "parameters": {
+    "command": "Non-interactive bash command to run in the read-only sandbox",
+    "cwd": "Workspace-relative working directory; defaults to the workspace root",
+    "timeoutMs": "Command timeout in milliseconds, 1000-120000; defaults to 30000"
+  }
+}

@@ -28,6 +28,11 @@ import {
   REWORK_FAILURE_CLASSES, type ReworkActorClass, type ReworkFailureClass, type StopRequester, type TaskRequeueRef,
 } from './task-requeue.js';
 import { ROUND_CHECK_INCOMPLETE_CAUSES, type VerificationRoundRef } from './verification.js';
+import { PLATFORM_PROMPT_PACK_V1 } from './prompts/platform-pack.generated.js';
+import { renderTemplate } from './prompts/render-template.js';
+
+/** The fixed v1 platform texts; every key is literal so a missing one is a type error. */
+const STR = PLATFORM_PROMPT_PACK_V1.strings;
 
 // ------------------------------------------------------------------------ //
 // Shapes                                                                    //
@@ -334,34 +339,81 @@ function because(stamp: SourceCheckpointStampV1): string {
  * that the copies agree.
  */
 export const REWORK_FAILURE_CLASS_LABELS_ZH: Readonly<Record<ReworkFailureClass, string>> = Object.freeze({
-  interrupted: '平台中断', cancelled: '已取消', check_failed: '检查未通过', run_failed: '执行失败', check_incomplete: '检查不完整',
+  interrupted: STR['brief.failureClass.interrupted'],
+  cancelled: STR['brief.failureClass.cancelled'],
+  check_failed: STR['brief.failureClass.check_failed'],
+  run_failed: STR['brief.failureClass.run_failed'],
+  check_incomplete: STR['brief.failureClass.check_incomplete'],
 });
 export const REWORK_ACTOR_CLASS_LABELS_ZH: Readonly<Record<ReworkActorClass, string>> = Object.freeze({
-  human: '人工', system: '系统自动', agent: 'Agent',
+  human: STR['brief.actorClass.human'],
+  system: STR['brief.actorClass.system'],
+  agent: STR['brief.actorClass.agent'],
 });
-/** The fixed block of `standingInstructionVersion: 1`, always kept; changing its text is a new version. */
-export const CONTINUATION_STANDING_INSTRUCTIONS_ZH_V1: readonly string[] = Object.freeze([
-  '### 继续之前',
-  '- 文件可能已经变化，编辑前先重新读取。',
-  '- “结果未知”的工具调用可能已经产生副作用，重做之前先核实当前状态。',
-  '- “没有执行”的工具调用没有产生结果，需要时重新发起。',
-  '- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。',
-]);
+/**
+ * The fixed block of `standingInstructionVersion: 1`, always kept; changing its
+ * text is a new version. The `continuation-brief` template is the ONE source:
+ * everything after its last blank line is this always-kept closing block, so
+ * the template and this array cannot drift apart. The tag above the block is
+ * the template's first line; the marker is passed as a slot.
+ */
+const CONTINUATION_BRIEF_TEMPLATE_TEXT = PLATFORM_PROMPT_PACK_V1.templates['continuation-brief'];
+const CONTINUATION_BRIEF_HEADING_ZH = CONTINUATION_BRIEF_TEMPLATE_TEXT.slice(
+  0, CONTINUATION_BRIEF_TEMPLATE_TEXT.indexOf('\n'));
+export const CONTINUATION_STANDING_INSTRUCTIONS_ZH_V1: readonly string[] = Object.freeze(
+  CONTINUATION_BRIEF_TEMPLATE_TEXT.slice(CONTINUATION_BRIEF_TEMPLATE_TEXT.lastIndexOf('\n\n') + 2).split('\n'),
+);
 
-const STOP_REQUESTER_ZH: Readonly<Record<StopRequester, string>> = { human: '人工', goal_fan_out: '目标级控制', system: '系统', none: '无' };
+const STOP_REQUESTER_ZH: Readonly<Record<StopRequester, string>> = {
+  human: STR['brief.stopRequester.human'], goal_fan_out: STR['brief.stopRequester.goal_fan_out'],
+  system: STR['brief.stopRequester.system'], none: STR['brief.stopRequester.none'],
+};
 const TOOL_RESULT_ZH: Readonly<Record<ContinuationToolCallV1['result'], string>> = {
-  success: '成功', error: '出错', cancelled: '已取消', not_started: '未开始', outcome_unknown: '结果未知',
+  success: STR['brief.toolResult.success'], error: STR['brief.toolResult.error'],
+  cancelled: STR['brief.toolResult.cancelled'], not_started: STR['brief.toolResult.not_started'],
+  outcome_unknown: STR['brief.toolResult.outcome_unknown'],
 };
 const SIDE_EFFECT_ZH: Readonly<Record<NonNullable<ContinuationToolCallV1['sideEffect']>, string>> = {
-  none: '无副作用', possible: '可能有副作用', confirmed: '有副作用',
+  none: STR['brief.sideEffect.none'], possible: STR['brief.sideEffect.possible'], confirmed: STR['brief.sideEffect.confirmed'],
 };
-const WAIT_STATUS_ZH: Readonly<Record<'pending' | 'read' | 'responded', string>> = { pending: '尚未读取', read: '已读、未回复', responded: '已回复' };
+const WAIT_STATUS_ZH: Readonly<Record<'pending' | 'read' | 'responded', string>> = {
+  pending: STR['brief.waitStatus.pending'], read: STR['brief.waitStatus.read'], responded: STR['brief.waitStatus.responded'],
+};
 const CHECKPOINT_ZH: Readonly<Record<ContinuationSourceCheckpointV1['kind'], string>> = {
-  round_open: '检查轮次开始', requeue: '重新入队', brief: '本次执行开始前',
+  round_open: STR['brief.checkpoint.round_open'], requeue: STR['brief.checkpoint.requeue'],
+  brief: STR['brief.checkpoint.brief'],
 };
 /** Successively shorter caps (UTF-16 code units) tried on every text before body items are left out. */
 const RENDER_TEXT_CAPS: readonly number[] = [CONTINUATION_BRIEF_LIMITS.textChars, 1000, 250, 60];
 const UTF8 = new TextEncoder();
+
+/** The arrays the template renders; every non-empty part carries the leading LF its joined layout had. */
+type ContinuationBriefTemplateParts = {
+  body: readonly string[];
+  blockedOmission: readonly string[];
+  bodyOmission: readonly string[];
+  anomalies: readonly string[];
+  review: readonly string[];
+  blocked: readonly string[];
+};
+/**
+ * Renders the selected parts through the pack template. The title, the marker
+ * position and the fixed closing block are the template's; a non-empty part is
+ * prefixed with the single LF the old array join supplied, so an empty part
+ * renders no bytes at all. `sectionRanges` is not part of the brief output.
+ */
+function renderBriefTemplateZh(marker: string, parts: ContinuationBriefTemplateParts): string {
+  const slot = (lines: readonly string[]): string => (lines.length === 0 ? '' : `\n${lines.join('\n')}`);
+  return renderTemplate(PLATFORM_PROMPT_PACK_V1, 'continuation-brief', {
+    marker,
+    body: slot(parts.body),
+    blockedOmission: slot(parts.blockedOmission),
+    bodyOmission: slot(parts.bodyOmission),
+    anomalies: slot(parts.anomalies),
+    review: slot(parts.review),
+    blocked: slot(parts.blocked),
+  }, []).text;
+}
 
 /**
  * Renders the brief as the last section of `manifest.input` (spec §6.1 (e)):
@@ -380,7 +432,8 @@ const UTF8 = new TextEncoder();
  * the in-process wording).
  */
 export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: string): string {
-  const head = ['## 接续说明', continuationBriefMarker(digest)];
+  const marker = continuationBriefMarker(digest);
+  const head = [CONTINUATION_BRIEF_HEADING_ZH, marker];
   const tail = ['', ...CONTINUATION_STANDING_INSTRUCTIONS_ZH_V1];
   const limit = CONTINUATION_BRIEF_LIMITS.renderedBytes;
   const anomalies = brief.anomalies;
@@ -403,16 +456,21 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
     const fullBody = briefBodyZh(brief, firstCap);
     const fullAnomaly = anomalyLinesZh(brief, firstCap, allPaths);
     const fullReview = unknownCallReviewLinesZh(brief, firstCap, allReviewLines);
-    const full = [...head, ...fullBody, ...fullAnomaly, ...fullReview];
     // K3 B3 item 9: the count line is its own last entry (present only while all
     // 16 lines are shown and the Task has more), and every candidate is measured
     // WITH the note for the command lines it just removed — the count line itself
     // is never counted. Removing all command lines also removes the empty line
-    // and heading, so the whole section is gone at `keep === 0`.
+    // and heading, so the whole section is gone at `keep === 0`. The note stays
+    // inside the `blocked` part here: it follows the section's last line and
+    // precedes the fixed closing block, and the template's separate
+    // `blockedOmission` slot is the position used once the section is gone.
     const candidate = (keep: number, withCountLine: boolean): string => {
       const removed = blockedKeepMax - keep;
       const note = removed > 0 ? [omittedNoteZh(removed)] : [];
-      return [...full, ...blockedCommandsLinesZh(blockedAll, keep, withCountLine), ...note, ...tail].join('\n');
+      return renderBriefTemplateZh(marker, {
+        body: fullBody, blockedOmission: [], bodyOmission: [], anomalies: fullAnomaly, review: fullReview,
+        blocked: [...blockedCommandsLinesZh(blockedAll, keep, withCountLine), ...note],
+      });
     };
     if (blockedAll.length > blockedKeepMax) {
       const text = candidate(blockedKeepMax, true);
@@ -433,7 +491,9 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
     // The removed blocked command lines are already owed a note; measure every
     // cap candidate WITH it and return that measured text (never a shorter one).
     const note = blockedOmitted > 0 ? [omittedNoteZh(blockedOmitted)] : [];
-    const text = [...head, ...body, ...note, ...anomaly, ...reviewLines, ...tail].join('\n');
+    const text = renderBriefTemplateZh(marker, {
+      body, blockedOmission: note, bodyOmission: [], anomalies: anomaly, review: reviewLines, blocked: [],
+    });
     if (utf8Length(text) <= limit) return text;
   }
   if (anomalies === undefined && review === null && blockedAll.length === 0) {
@@ -448,7 +508,10 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
       used = next;
       kept += 1;
     }
-    return [...head, ...body.slice(0, kept), omittedNoteZh(body.length - kept), ...tail].join('\n');
+    return renderBriefTemplateZh(marker, {
+      body: body.slice(0, kept), blockedOmission: [], bodyOmission: [omittedNoteZh(body.length - kept)],
+      anomalies: [], review: [], blocked: [],
+    });
   }
   // Still too long with the shortest texts. Every present mandatory section is
   // kept in full (spec §2.7; K3 L20 "必需部分"); only its optional lines are
@@ -495,13 +558,16 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
     used = next;
     kept += 1;
   }
-  const withNote = [...head, ...body.slice(0, kept),
-    omittedNoteZh(body.length - kept + blockedOmitted), ...suffix].join('\n');
+  const withNote = renderBriefTemplateZh(marker, {
+    body: body.slice(0, kept), blockedOmission: [], bodyOmission: [omittedNoteZh(body.length - kept + blockedOmitted)],
+    anomalies: suffixMandatory, review: [], blocked: [],
+  });
   return kept === 0 && utf8Length(withNote) > limit ? [...head, ...suffix].join('\n') : withNote;
 }
 
 function omittedNoteZh(lines: number): string {
-  return `……（接续说明超过 ${String(CONTINUATION_BRIEF_LIMITS.renderedBytes)} 字节，其余 ${String(lines)} 行已省略）`;
+  return `${STR['brief.omitted.prefix']}${String(CONTINUATION_BRIEF_LIMITS.renderedBytes)}`
+    + `${STR['brief.omitted.between']}${String(lines)}${STR['brief.omitted.suffix']}`;
 }
 function utf8Length(text: string): number {
   return UTF8.encode(text).length;
@@ -520,8 +586,9 @@ function blockedCommandsLinesZh(
   if (entries.length === 0 || keep <= 0) return [];
   const lines: string[] = ['', BLOCKED_COMMANDS_TITLE_ZH];
   for (const entry of entries.slice(0, Math.min(16, keep))) {
-    let line = `- #${String(entry.alias)}@${entry.reviewRunId.slice(0, 8)}：被拦`;
-    if (entry.requestState !== null) line += `；${BLOCKED_COMMAND_STATE_ZH[entry.requestState]}`;
+    let line = `${STR['brief.blocked.lineLead']}${String(entry.alias)}${STR['brief.blocked.lineMiddle']}`
+      + `${entry.reviewRunId.slice(0, 8)}${STR['brief.blocked.lineSuffix']}`;
+    if (entry.requestState !== null) line += `${STR['brief.blocked.stateLead']}${BLOCKED_COMMAND_STATE_ZH[entry.requestState]}`;
     const forms: string[] = [];
     const seen = new Set<string>();
     for (const raw of entry.declaredForms) {
@@ -530,13 +597,13 @@ function blockedCommandsLinesZh(
       forms.push(truncateUtf8(raw, 160));
     }
     if (forms.length > 0) {
-      line += `；注明过的写法：${forms.slice(0, 3).join('、')}`;
-      if (forms.length > 3) line += `，等 ${String(forms.length)} 种写法`;
+      line += `${STR['brief.blocked.formsLead']}${forms.slice(0, 3).join(STR['brief.list.separator'])}`;
+      if (forms.length > 3) line += `${STR['brief.blocked.formsMoreLead']}${String(forms.length)}${STR['brief.blocked.formsMoreSuffix']}`;
     }
     lines.push(line);
   }
   if (withCountLine && entries.length > 16) {
-    lines.push(`- 另有 ${String(entries.length - 16)} 条被拦的命令；跑之前先用 request_command_rerun 请求。`);
+    lines.push(`${STR['brief.blocked.omittedLead']}${String(entries.length - 16)}${STR['brief.blocked.omittedSuffix']}`);
   }
   return lines;
 }
@@ -545,19 +612,21 @@ function clip(text: string, cap: number): string {
   let cut = text;
   if (text.length > cap) {
     const end = cap > 0 && /[\uD800-\uDBFF]/.test(text.charAt(cap - 1)) ? cap - 1 : cap;
-    cut = `${text.slice(0, end)}…（已截断）`;
+    cut = `${text.slice(0, end)}${STR['brief.clip.truncatedSuffix']}`;
   }
-  return cut.replace(/\r?\n/g, '\n  ');
+  return cut.replace(/\r?\n/g, STR['brief.clip.newlineIndent']);
 }
 function boundedZh(value: BoundedTextV1, cap: number): string {
   const text = clip(value.text, cap);
-  return value.truncated && !text.endsWith('…（已截断）') ? `${text}…（已截断）` : text;
+  const truncated = STR['brief.clip.truncatedSuffix'];
+  return value.truncated && !text.endsWith(truncated) ? `${text}${truncated}` : text;
 }
 function listZh(items: readonly string[], cap: number): string {
-  return items.length === 0 ? '无' : items.map((item) => clip(item, cap)).join('、');
+  return items.length === 0
+    ? STR['brief.list.none'] : items.map((item) => clip(item, cap)).join(STR['brief.list.separator']);
 }
 function moreZh(omitted: number): string {
-  return omitted > 0 ? `（另有 ${String(omitted)} 项未列出）` : '';
+  return omitted > 0 ? `${STR['brief.list.morePrefix']}${String(omitted)}${STR['brief.list.moreSuffix']}` : '';
 }
 
 function briefBodyZh(brief: ContinuationBriefV1, cap: number): string[] {
@@ -568,147 +637,183 @@ function briefBodyZh(brief: ContinuationBriefV1, cap: number): string[] {
   const previous = brief.previous;
   const stoppedAt = brief.stoppedAt;
 
-  let summary = `这是任务 ${brief.task.taskId} 的接续执行（${brief.mode === 'rework' ? '返工' : '中断后继续'}）：`
-    + `第 ${String(trigger.requeueNumber)} 次重新入队，失败类别：${REWORK_FAILURE_CLASS_LABELS_ZH[brief.failureClass]}，`
-    + `发起方：${REWORK_ACTOR_CLASS_LABELS_ZH[trigger.actorClass]}`;
-  if (trigger.goalResume) summary += '，随目标恢复接续';
-  if (trigger.autoRework !== null) summary += `，自动返工 ${String(trigger.autoRework.count)}/${String(trigger.autoRework.cap)}`;
+  let summary = `${STR['brief.summary.lead']}${brief.task.taskId}${STR['brief.summary.afterTask']}`
+    + `${brief.mode === 'rework' ? STR['brief.mode.rework'] : STR['brief.mode.resumeAfterInterruption']}${STR['brief.summary.afterMode']}`
+    + `${STR['brief.summary.requeueLead']}${String(trigger.requeueNumber)}${STR['brief.summary.beforeFailureClass']}`
+    + `${REWORK_FAILURE_CLASS_LABELS_ZH[brief.failureClass]}${STR['brief.summary.beforeActor']}`
+    + `${REWORK_ACTOR_CLASS_LABELS_ZH[trigger.actorClass]}`;
+  if (trigger.goalResume) summary += STR['brief.summary.goalResume'];
+  if (trigger.autoRework !== null) {
+    summary += `${STR['brief.summary.autoRework']}${String(trigger.autoRework.count)}/${String(trigger.autoRework.cap)}`;
+  }
   lines.push(`${summary}。`);
   if (trigger.earlierRequeues.length > 0) {
-    lines.push(`更早的重新入队：${trigger.earlierRequeues
-      .map((earlier) => `${earlier.afterRunId}（${REWORK_FAILURE_CLASS_LABELS_ZH[earlier.failureClass]}）`).join('、')}。`);
+    lines.push(`${STR['brief.earlierRequeues.lead']}${trigger.earlierRequeues
+      .map((earlier) => `${earlier.afterRunId}（${REWORK_FAILURE_CLASS_LABELS_ZH[earlier.failureClass]}）`).join(STR['brief.list.separator'])}。`);
   }
   lines.push(continuityZh(brief.session));
 
-  section('上一次执行');
-  lines.push(`- 执行 ${previous.runRef.runId}（Session ${previous.sessionRef.sessionId}）${endingZh(brief)}。`);
+  section(STR['brief.section.previous']);
+  lines.push(`${STR['brief.previous.runLead']}${previous.runRef.runId}${STR['brief.previous.sessionOpen']}`
+    + `${previous.sessionRef.sessionId}）${endingZh(brief)}。`);
   if (brief.factsFrom.hops > 0) {
-    lines.push(`- 下面的执行事实来自更早的执行 ${brief.factsFrom.runRef.runId}（向前第 ${String(brief.factsFrom.hops)} 次`
-      + `${brief.factsFrom.truncated ? '，更早的执行未再查找' : ''}）。`);
+    lines.push(`${STR['brief.previous.factsFromLead']}${brief.factsFrom.runRef.runId}${STR['brief.previous.factsFromHopsOpen']}`
+      + `${String(brief.factsFrom.hops)}${STR['brief.previous.factsFromHopsSuffix']}`
+      + `${brief.factsFrom.truncated ? STR['brief.previous.factsFromTruncated'] : ''}）。`);
   }
   if (previous.interruption !== null) {
     const interruption = previous.interruption;
-    lines.push(`- 中断时${interruption.kind === 'paused' ? '处于暂停' : '正在执行'}，Kernel ${interruption.kernelPaused ? '已' : '未'}到达暂停点`
-      + `${interruption.pausedBy === null || interruption.pausedBy === 'none' ? '' : `，暂停请求者：${STOP_REQUESTER_ZH[interruption.pausedBy]}`}。`);
+    lines.push(`${STR['brief.interruption.lead']}`
+      + `${interruption.kind === 'paused' ? STR['brief.interruption.paused'] : STR['brief.interruption.executing']}`
+      + `${STR['brief.interruption.kernelPrefix']}`
+      + `${interruption.kernelPaused ? STR['brief.interruption.reached'] : STR['brief.interruption.notReached']}`
+      + `${STR['brief.interruption.pointReachedSuffix']}`
+      + `${interruption.pausedBy === null || interruption.pausedBy === 'none' ? '' : `${STR['brief.interruption.requesterPrefix']}${STOP_REQUESTER_ZH[interruption.pausedBy]}`}。`);
   }
-  if (previous.cancelledBy !== null) lines.push(`- 取消请求者：${STOP_REQUESTER_ZH[previous.cancelledBy]}。`);
-  if (previous.error !== null) lines.push(`- 错误：${t(previous.error)}`);
+  if (previous.cancelledBy !== null) {
+    lines.push(`${STR['brief.previous.cancelledByLead']}${STOP_REQUESTER_ZH[previous.cancelledBy]}。`);
+  }
+  if (previous.error !== null) lines.push(`${STR['brief.previous.errorLead']}${t(previous.error)}`);
   if (previous.limit !== null) {
-    lines.push(`- 超出限制 ${clip(previous.limit.kind, cap)}：实际 ${String(previous.limit.observed)}，上限 ${String(previous.limit.allowed)}。`);
+    lines.push(`${STR['brief.previous.limitLead']}${clip(previous.limit.kind, cap)}${STR['brief.previous.limitObserved']}`
+      + `${String(previous.limit.observed)}${STR['brief.previous.limitAllowed']}${String(previous.limit.allowed)}。`);
   }
   if (previous.budget !== null) {
-    lines.push(`- token 预算：上一次 ${String(previous.budget.previousTokenBudget)}，本次 ${String(previous.budget.currentTokenBudget)}。`);
+    lines.push(`${STR['brief.previous.budgetLead']}${String(previous.budget.previousTokenBudget)}`
+      + `${STR['brief.previous.budgetCurrent']}${String(previous.budget.currentTokenBudget)}。`);
   }
-  if (previous.wait !== null) lines.push(`- 等待的消息 ${previous.wait.messageRef.messageId}：${WAIT_STATUS_ZH[previous.wait.status]}。`);
-  for (const steer of previous.unacceptedSteers) lines.push(`- 没有被 Kernel 接受的引导 ${steer.intentRef.intentId}：${t(steer.text)}`);
-  if (previous.endedAt !== null) lines.push(`- 结束时间：${previous.endedAt}。`);
+  if (previous.wait !== null) {
+    lines.push(`${STR['brief.previous.waitLead']}${previous.wait.messageRef.messageId}：${WAIT_STATUS_ZH[previous.wait.status]}。`);
+  }
+  for (const steer of previous.unacceptedSteers) {
+    lines.push(`${STR['brief.previous.steerLead']}${steer.intentRef.intentId}：${t(steer.text)}`);
+  }
+  if (previous.endedAt !== null) lines.push(`${STR['brief.previous.endedAtLead']}${previous.endedAt}。`);
 
-  section('停在哪里');
+  section(STR['brief.section.stoppedAt']);
   if (stoppedAt.kernel === 'read') {
-    lines.push(`- 执行记录读到位置 ${stoppedAt.lastPosition === null ? '未知' : String(stoppedAt.lastPosition)}，`
-      + `Turn 状态：${stoppedAt.turnStatus ?? '未知'}。`);
+    lines.push(`${STR['brief.stoppedAt.positionLead']}`
+      + `${stoppedAt.lastPosition === null ? STR['brief.unknown'] : String(stoppedAt.lastPosition)}`
+      + `${STR['brief.stoppedAt.turnLead']}${stoppedAt.turnStatus ?? STR['brief.unknown']}。`);
   } else {
-    lines.push(stoppedAt.kernel === 'not_entered' ? '- 没有进入 Kernel，没有执行记录。' : '- 执行记录无法读取，停在哪里无法确定。');
+    lines.push(stoppedAt.kernel === 'not_entered' ? STR['brief.stoppedAt.notEntered'] : STR['brief.stoppedAt.unavailable']);
   }
-  if (stoppedAt.reason !== null) lines.push(`- 原因：${clip(stoppedAt.reason, cap)}`);
+  if (stoppedAt.reason !== null) lines.push(`${STR['brief.stoppedAt.reasonLead']}${clip(stoppedAt.reason, cap)}`);
   if (stoppedAt.lastToolGroup !== null) {
-    lines.push(`- 最后一组工具调用：消息 ${stoppedAt.lastToolGroup.sourceMessageId}，${String(stoppedAt.lastToolGroup.calls)} 个调用。`);
+    lines.push(`${STR['brief.stoppedAt.toolGroupLead']}${stoppedAt.lastToolGroup.sourceMessageId}，`
+      + `${String(stoppedAt.lastToolGroup.calls)}${STR['brief.stoppedAt.toolGroupCallsSuffix']}`);
   }
-  if (stoppedAt.lastAssistant !== null) lines.push(`- 最后的助手输出：${t(stoppedAt.lastAssistant)}`);
+  if (stoppedAt.lastAssistant !== null) lines.push(`${STR['brief.stoppedAt.lastAssistantLead']}${t(stoppedAt.lastAssistant)}`);
   if (stoppedAt.window !== null) {
-    lines.push(`- 读取的记录范围：位置 ${String(stoppedAt.window.fromPosition)}–${String(stoppedAt.window.throughPosition)}`
-      + `${stoppedAt.window.omittedRecords > 0 ? `，其中 ${String(stoppedAt.window.omittedRecords)} 条未读` : ''}。`);
+    lines.push(`${STR['brief.stoppedAt.windowLead']}${String(stoppedAt.window.fromPosition)}`
+      + `${STR['brief.stoppedAt.windowRange']}${String(stoppedAt.window.throughPosition)}`
+      + `${stoppedAt.window.omittedRecords > 0 ? `${STR['brief.stoppedAt.windowOmittedLead']}${String(stoppedAt.window.omittedRecords)}${STR['brief.stoppedAt.windowOmittedSuffix']}` : ''}。`);
   }
 
-  section('工具调用');
+  section(STR['brief.section.toolCalls']);
   const calls = brief.toolCalls;
   const groups: Array<[string, ContinuationToolCallV1[], number]> = [
-    ['已有确定结果', calls.confirmed, calls.confirmedOmitted],
-    ['没有执行（没有结果）', calls.notExecuted, calls.notExecutedOmitted],
-    ['结果未知（可能已产生副作用）', calls.unknown, calls.unknownOmitted],
+    [STR['brief.toolGroup.confirmed'], calls.confirmed, calls.confirmedOmitted],
+    [STR['brief.toolGroup.notExecuted'], calls.notExecuted, calls.notExecutedOmitted],
+    [STR['brief.toolGroup.unknown'], calls.unknown, calls.unknownOmitted],
   ];
   if (groups.every(([, listed, omitted]) => listed.length === 0 && omitted === 0)) {
-    lines.push(stoppedAt.kernel === 'unavailable' ? '- 执行记录无法读取，工具调用无法确定。' : '- 执行记录中没有工具调用。');
+    lines.push(stoppedAt.kernel === 'unavailable' ? STR['brief.toolCalls.noneUnavailable'] : STR['brief.toolCalls.none']);
   }
   for (const [label, listed, omitted] of groups) {
     if (listed.length === 0 && omitted === 0) continue;
-    lines.push(`- ${label}：${String(listed.length + omitted)} 个${moreZh(omitted)}`);
+    lines.push(`- ${label}：${String(listed.length + omitted)}${STR['brief.toolCalls.countSuffix']}${moreZh(omitted)}`);
     for (const call of listed) lines.push(`  - ${toolCallZh(call, cap)}`);
   }
 
   if (brief.checks !== null) {
     const checks = brief.checks;
-    section('检查');
-    lines.push(`- 轮次 ${checks.roundRef.roundId}（第 ${String(checks.roundOrdinal)} 轮）未通过的检查：${checks.failing.length === 0 ? '无' : ''}`);
+    section(STR['brief.section.checks']);
+    lines.push(`${STR['brief.checks.roundLead']}${checks.roundRef.roundId}${STR['brief.checks.ordinalOpen']}`
+      + `${String(checks.roundOrdinal)}${STR['brief.checks.failingMiddle']}`
+      + `${checks.failing.length === 0 ? STR['brief.list.none'] : ''}`);
     for (const failing of checks.failing) {
-      lines.push(`  - ${failing.checkId}：阶段 ${failing.phase}，结果 ${failing.outcome ?? '无'}`
-        + `${failing.cause === null ? '' : `，原因 ${failing.cause}`}`
-        + `${failing.reportRef === null ? '，没有报告' : `，报告 sha256:${failing.reportRef.digest}`}`);
+      lines.push(`  - ${failing.checkId}${STR['brief.checks.itemPhase']}${failing.phase}${STR['brief.checks.itemOutcome']}`
+        + `${failing.outcome ?? STR['brief.list.none']}`
+        + `${failing.cause === null ? '' : `${STR['brief.checks.causeLead']}${failing.cause}`}`
+        + `${failing.reportRef === null ? STR['brief.checks.noReport'] : `${STR['brief.checks.reportLead']}${failing.reportRef.digest}`}`);
     }
-    if (checks.gapCodes.length > 0) lines.push(`- 缺口：${listZh(checks.gapCodes, cap)}`);
+    if (checks.gapCodes.length > 0) lines.push(`${STR['brief.checks.gapsLead']}${listZh(checks.gapCodes, cap)}`);
   }
 
-  section('重新入队');
-  lines.push(`- 原因（${REWORK_ACTOR_CLASS_LABELS_ZH[brief.requeue.reasonAuthor]}）：${t(brief.requeue.reason)}`);
-  if (brief.requeue.newInputs.length === 0) lines.push('- 没有新输入。');
+  section(STR['brief.section.requeue']);
+  lines.push(`${STR['brief.requeue.reasonLead']}${REWORK_ACTOR_CLASS_LABELS_ZH[brief.requeue.reasonAuthor]}`
+    + `${STR['brief.requeue.reasonMiddle']}${t(brief.requeue.reason)}`);
+  if (brief.requeue.newInputs.length === 0) lines.push(STR['brief.requeue.none']);
   for (const input of brief.requeue.newInputs) {
     lines.push(input.kind === 'session_message'
-      ? `- 新输入：消息 ${input.ref.messageId}${input.replyBody === null ? '' : `，回复：${t(input.replyBody)}`}`
-      : `- 新输入：材料 ${input.ref.contentType} sha256:${input.ref.digest}${input.body === null ? '' : `：${t(input.body)}`}`);
+      ? `${STR['brief.requeue.messageLead']}${input.ref.messageId}${input.replyBody === null ? '' : `${STR['brief.requeue.replyLead']}${t(input.replyBody)}`}`
+      : `${STR['brief.requeue.materialLead']}${input.ref.contentType}${STR['brief.requeue.materialDigestLead']}`
+        + `${input.ref.digest}${input.body === null ? '' : `：${t(input.body)}`}`);
   }
 
-  section('工作区');
+  section(STR['brief.section.workspace']);
   const workspace = brief.workspace;
   const self = workspace.selfChanged;
-  if (self.status === 'unavailable') lines.push('- 上一次执行经工具改动的文件：无法确定。');
-  else if (self.status === 'not_entered') lines.push('- 上一次执行没有进入 Kernel，没有经工具改动文件。');
+  if (self.status === 'unavailable') lines.push(STR['brief.workspace.selfUnavailable']);
+  else if (self.status === 'not_entered') lines.push(STR['brief.workspace.selfNotEntered']);
   else {
-    lines.push(`- 上一次执行经工具改动的文件（${self.status === 'known' ? '完整' : '不完整'}）：${listZh(self.confirmed, cap)}`
-      + `${self.possible.length === 0 ? '' : `；可能改动：${listZh(self.possible, cap)}`}${moreZh(self.omitted)}`);
+    lines.push(`${STR['brief.workspace.selfLead']}`
+      + `${self.status === 'known' ? STR['brief.workspace.selfComplete'] : STR['brief.workspace.selfPartial']}`
+      + `${STR['brief.workspace.selfMiddle']}${listZh(self.confirmed, cap)}`
+      + `${self.possible.length === 0 ? '' : `${STR['brief.workspace.possibleLead']}${listZh(self.possible, cap)}`}${moreZh(self.omitted)}`);
   }
   const unobservedTo = workspace.unobserved.to === null ? null : workspace.checkpoints[workspace.unobserved.to];
-  lines.push(`- 上一次执行结束（${workspace.unobserved.previousEndedAt ?? '时间未知'}）到`
-    + `${unobservedTo === undefined || unobservedTo === null ? '本次执行开始' : `“${CHECKPOINT_ZH[unobservedTo.kind]}”`}之间：`
-    + '无法从持久记录确定是否有改动。');
+  lines.push(`${STR['brief.workspace.unobservedLead']}${workspace.unobserved.previousEndedAt ?? STR['brief.workspace.timeUnknown']}`
+    + `${STR['brief.workspace.unobservedMiddle']}`
+    + `${unobservedTo === undefined || unobservedTo === null ? STR['brief.workspace.thisStart'] : `“${CHECKPOINT_ZH[unobservedTo.kind]}”`}`
+    + `${STR['brief.workspace.unobservedAfter']}${STR['brief.workspace.unobservedTail']}`);
   for (const segment of workspace.segments) {
     const from = workspace.checkpoints[segment.from];
     const to = workspace.checkpoints[segment.to];
     if (from === undefined || to === undefined) continue;
-    const verdict = segment.verdict === 'changed' ? '有变化（具体文件无法从持久记录确定）'
-      : segment.verdict === 'unchanged' ? '源码摘要相同' : `无法确定（${clip(segment.reason, cap)}）`;
-    lines.push(`- ${CHECKPOINT_ZH[from.kind]} → ${CHECKPOINT_ZH[to.kind]}：${verdict}`);
+    const verdict = segment.verdict === 'changed' ? STR['brief.workspace.verdictChanged']
+      : segment.verdict === 'unchanged' ? STR['brief.workspace.verdictUnchanged']
+        : `${STR['brief.workspace.verdictUnknownOpen']}${clip(segment.reason, cap)}）`;
+    lines.push(`- ${CHECKPOINT_ZH[from.kind]}${STR['brief.workspace.segmentArrow']}${CHECKPOINT_ZH[to.kind]}：${verdict}`);
   }
   const uncommitted = workspace.uncommitted;
   if (uncommitted.status === 'git') {
-    lines.push(`- 未提交的改动（相对 ${uncommitted.baseCommit ?? '未知提交'}）：${listZh(uncommitted.paths, cap)}${moreZh(uncommitted.omitted)}`);
+    lines.push(`${STR['brief.workspace.uncommittedGitLead']}${uncommitted.baseCommit ?? STR['brief.workspace.unknownCommit']}`
+      + `${STR['brief.workspace.uncommittedGitMiddle']}${listZh(uncommitted.paths, cap)}${moreZh(uncommitted.omitted)}`);
   } else if (uncommitted.status === 'not_git') {
-    lines.push('- 工作区不是 git 仓库，未提交的改动无法列出。');
+    lines.push(STR['brief.workspace.notGit']);
   } else {
-    lines.push(`- 未提交的改动无法读取${uncommitted.reason === null ? '' : `：${clip(uncommitted.reason, cap)}`}。`);
+    lines.push(`${STR['brief.workspace.uncommittedUnknown']}${uncommitted.reason === null ? '' : `：${clip(uncommitted.reason, cap)}`}。`);
   }
 
   const accepted = brief.acceptedInputs;
   if (accepted.steers.length + accepted.steersOmitted + accepted.messages.length + accepted.messagesOmitted > 0) {
-    section('已接受的输入');
-    for (const steer of accepted.steers) lines.push(`- 引导 ${steer.intentRef.intentId}：${t(steer.text)}`);
-    if (accepted.steersOmitted > 0) lines.push(`- 另有 ${String(accepted.steersOmitted)} 条引导未列出。`);
-    for (const message of accepted.messages) {
-      lines.push(`- 消息 ${message.messageRef.messageId}（${message.part === 'message' ? '来信' : '回复'}）：${t(message.excerpt)}`);
+    section(STR['brief.section.acceptedInputs']);
+    for (const steer of accepted.steers) lines.push(`${STR['brief.accepted.steerLead']}${steer.intentRef.intentId}：${t(steer.text)}`);
+    if (accepted.steersOmitted > 0) {
+      lines.push(`${STR['brief.accepted.omittedLead']}${String(accepted.steersOmitted)}${STR['brief.accepted.steersOmittedSuffix']}`);
     }
-    if (accepted.messagesOmitted > 0) lines.push(`- 另有 ${String(accepted.messagesOmitted)} 条消息未列出。`);
+    for (const message of accepted.messages) {
+      lines.push(`${STR['brief.accepted.messageLead']}${message.messageRef.messageId}（`
+        + `${message.part === 'message' ? STR['brief.accepted.messageInbound'] : STR['brief.accepted.messageReply']}`
+        + `）：${t(message.excerpt)}`);
+    }
+    if (accepted.messagesOmitted > 0) {
+      lines.push(`${STR['brief.accepted.omittedLead']}${String(accepted.messagesOmitted)}${STR['brief.accepted.messagesOmittedSuffix']}`);
+    }
   }
   return lines;
 }
 
 const ANOMALY_CAUSE_ZH: Readonly<Record<SessionAnomalyAnchorV1['cause'], string>> = {
-  archive_interrupted: '归档中断了这次执行',
-  retired_archive: '退役后归档',
+  archive_interrupted: STR['brief.anomaly.cause.archive_interrupted'],
+  retired_archive: STR['brief.anomaly.cause.retired_archive'],
 };
 /** The fixed mixed-ownership warning for a worktree-sourced changed-file read (spec §2.6). */
-const ANOMALY_MIXED_OWNERSHIP_ZH =
-  '工作区里还没提交的改动，可能混有别的执行的改动，不一定是这次执行改的';
+const ANOMALY_MIXED_OWNERSHIP_ZH = STR['brief.anomaly.mixedOwnership'];
 /** The fixed closing sentence of the anomaly section (spec §2.7). */
-const ANOMALY_LAST_SENTENCE_ZH = '这些改动在工作区里，没撤销，也没核对；先看清它们再接着做。';
+const ANOMALY_LAST_SENTENCE_ZH = STR['brief.anomaly.lastSentence'];
 
 /**
  * Slice 1 §2.7: the `### 异常锚点` section. Empty without `anomalies`, so an
@@ -721,29 +826,36 @@ const ANOMALY_LAST_SENTENCE_ZH = '这些改动在工作区里，没撤销，也�
 function anomalyLinesZh(brief: ContinuationBriefV1, cap: number, pathLimit: number): string[] {
   const section = brief.anomalies;
   if (section === undefined) return [];
-  const lines: string[] = ['', '### 异常锚点'];
+  const lines: string[] = ['', STR['brief.anomaly.title']];
   let pathLines = 0;
   let droppedPaths = 0;
   for (const anchor of section.anchors) {
     const files = anchor.changedFiles;
-    lines.push(`- 锚点执行 ${anchor.runRef.runId}（Session ${anchor.sessionRef.sessionId}，任务 ${anchor.task.taskId}）：`
-      + `原因：${ANOMALY_CAUSE_ZH[anchor.cause]}，记录时间：${anchor.recordedAt}，结果没核对。`);
+    lines.push(`${STR['brief.anomaly.anchorLead']}${anchor.runRef.runId}${STR['brief.anomaly.sessionOpen']}`
+      + `${anchor.sessionRef.sessionId}${STR['brief.anomaly.taskMiddle']}${anchor.task.taskId}`
+      + `${STR['brief.anomaly.reasonMiddle']}${ANOMALY_CAUSE_ZH[anchor.cause]}`
+      + `${STR['brief.anomaly.recordedAtMiddle']}${anchor.recordedAt}${STR['brief.anomaly.anchorSuffix']}`);
     if (files.status === 'unavailable') {
-      lines.push(`  - 改动的文件无法确定${files.reason === null ? '' : `（${clip(files.reason, cap)}）`}。`);
+      lines.push(`${STR['brief.anomaly.filesUnavailableLead']}${files.reason === null ? '' : `（${clip(files.reason, cap)}）`}。`);
     } else if (files.status === 'not_entered') {
-      lines.push('  - 这次执行没有进入 Kernel，没有经工具改动文件。');
+      lines.push(STR['brief.anomaly.filesNotEntered']);
     } else if (pathLines < pathLimit) {
       pathLines += 1;
-      lines.push(`  - 已确认改动：${listZh(files.confirmed, cap)}`
-        + `${files.possible.length === 0 ? '' : `；可能改动：${listZh(files.possible, cap)}`}${moreZh(files.omitted)}。`);
+      lines.push(`${STR['brief.anomaly.confirmedFilesLead']}${listZh(files.confirmed, cap)}`
+        + `${files.possible.length === 0 ? '' : `${STR['brief.workspace.possibleLead']}${listZh(files.possible, cap)}`}`
+        + `${moreZh(files.omitted)}。`);
     } else {
       pathLines += 1;
       droppedPaths += 1;
     }
-    if (files.source === 'worktree') lines.push(`  - 注意：${ANOMALY_MIXED_OWNERSHIP_ZH}。`);
+    if (files.source === 'worktree') lines.push(`${STR['brief.anomaly.mixedLead']}${ANOMALY_MIXED_OWNERSHIP_ZH}。`);
   }
-  if (section.omitted > 0) lines.push(`- 另有 ${String(section.omitted)} 条异常锚点没有装入本说明。`);
-  if (droppedPaths > 0) lines.push(`- 另有 ${String(droppedPaths)} 条异常锚点的改动路径没有装入本说明。`);
+  if (section.omitted > 0) {
+    lines.push(`${STR['brief.anomaly.omittedAnchorsLead']}${String(section.omitted)}${STR['brief.anomaly.omittedAnchorsSuffix']}`);
+  }
+  if (droppedPaths > 0) {
+    lines.push(`${STR['brief.anomaly.omittedPathsLead']}${String(droppedPaths)}${STR['brief.anomaly.omittedPathsSuffix']}`);
+  }
   lines.push(ANOMALY_LAST_SENTENCE_ZH);
   return lines;
 }
@@ -762,68 +874,82 @@ function anomalyPathLineCount(section: ContinuationAnomalySectionV1): number {
 // K3 L20: unknown-call review section                                       //
 // ------------------------------------------------------------------------ //
 /** The fixed title of the review section (L20 "必需部分的写法"). */
-const UNKNOWN_CALL_REVIEW_TITLE_ZH = '### 结果未知的调用：核对和处置';
+const UNKNOWN_CALL_REVIEW_TITLE_ZH = STR['brief.review.title'];
 /** The fixed sentence of the review section (L5/L20). */
-const UNKNOWN_CALL_REVIEW_NOT_LISTED_ZH = '- 不在变动清单里，不证明没做。';
+const UNKNOWN_CALL_REVIEW_NOT_LISTED_ZH = STR['brief.review.notListed'];
 /** K3 B3 item 6: the required signal that the platform blocked the original commands (62 UTF-8 bytes). */
-const UNKNOWN_CALL_REVIEW_BLOCKED_ZH = '- 平台拦下原命令；要再跑先请求并得到允许。';
+const UNKNOWN_CALL_REVIEW_BLOCKED_ZH = STR['brief.review.blocked'];
 /** K3 B3 item 7: the optional section's heading. */
-const BLOCKED_COMMANDS_TITLE_ZH = '### 被拦的命令';
+const BLOCKED_COMMANDS_TITLE_ZH = STR['brief.blocked.title'];
 /** K3 B3 item 7: the request state of a blocked command; used/closed/absent render nothing. */
 const BLOCKED_COMMAND_STATE_ZH: Readonly<Record<'pending' | 'allowed' | 'denied' | 'denied_final', string>> = {
-  pending: '请求等答复',
-  allowed: '允许一次（未用）',
-  denied: '不允许',
-  denied_final: '不允许，也别再问',
+  pending: STR['brief.blocked.state.pending'],
+  allowed: STR['brief.blocked.state.allowed'],
+  denied: STR['brief.blocked.state.denied'],
+  denied_final: STR['brief.blocked.state.denied_final'],
 };
 /** L20: the option wording of the one-line disposition. */
 const UNKNOWN_CALL_REVIEW_DISPOSITION_ZH: Readonly<Record<
   NonNullable<ContinuationUnknownCallReviewV1['disposition']>['choice'], string>> = {
-  rerun_as_is: '照原样重跑',
-  skip_as_done: '跳过，当作已做：不要重跑这些命令',
-  handle_myself: '由人处理：操作者自己处理过这几条，先看当前状态',
+  rerun_as_is: STR['brief.review.disposition.rerun_as_is'],
+  skip_as_done: STR['brief.review.disposition.skip_as_done'],
+  handle_myself: STR['brief.review.disposition.handle_myself'],
   // B2 owns the approved-methods block; this is the L20 wording of the option.
-  safer_method: '换个稳妥的跑法：不要跑原命令，照下面的方案原样跑',
+  safer_method: STR['brief.review.disposition.safer_method'],
 };
 /** L20: no disposition means the review settled by itself. */
-const UNKNOWN_CALL_REVIEW_NO_DISPOSITION_ZH = '核对自动定下，不用决定';
+const UNKNOWN_CALL_REVIEW_NO_DISPOSITION_ZH = STR['brief.review.noDisposition'];
 /** L20: where the disposition came from. */
 const UNKNOWN_CALL_REVIEW_SOURCE_ZH: Readonly<Record<'card' | 'direct', string>> = {
-  card: '卡上选的', direct: '直接点的',
+  card: STR['brief.review.source.card'], direct: STR['brief.review.source.direct'],
 };
-const UNKNOWN_CALL_REVIEW_AUTO_SOURCE_ZH = '自动';
+const UNKNOWN_CALL_REVIEW_AUTO_SOURCE_ZH = STR['brief.review.autoSource'];
 const REVIEW_VERDICT_ZH: Readonly<Record<string, string>> = {
-  no_review_needed: '无需核对', done: '已做', not_done: '没做', compare_in_continuation: '看接续说明里的改动',
-  pending: '还没有结论', partial: '做了一部分', undetermined: '结果查不清',
+  no_review_needed: STR['brief.review.verdict.no_review_needed'], done: STR['brief.review.verdict.done'],
+  not_done: STR['brief.review.verdict.not_done'],
+  compare_in_continuation: STR['brief.review.verdict.compare_in_continuation'],
+  pending: STR['brief.review.verdict.pending'], partial: STR['brief.review.verdict.partial'],
+  undetermined: STR['brief.review.verdict.undetermined'],
 };
 const REVIEW_CHANGE_ZH: Readonly<Record<ContinuationUnknownCallReviewFileV1['change'], string>> = {
-  added: '新增', modified: '有改动', deleted: '已删除', mode_changed: '类型或模式变了', unchanged: '没变', not_visible: '看不见',
-  unknown: '不知道',
+  added: STR['brief.review.change.added'], modified: STR['brief.review.change.modified'],
+  deleted: STR['brief.review.change.deleted'], mode_changed: STR['brief.review.change.mode_changed'],
+  unchanged: STR['brief.review.change.unchanged'], not_visible: STR['brief.review.change.not_visible'],
+  unknown: STR['brief.review.change.unknown'],
 };
-const REVIEW_MODE_ZH: Readonly<Record<'replace' | 'create', string>> = { replace: '替换', create: '新建' };
+const REVIEW_MODE_ZH: Readonly<Record<'replace' | 'create', string>> = {
+  replace: STR['brief.review.mode.replace'], create: STR['brief.review.mode.create'],
+};
 const REVIEW_DIFF_REASON_ZH: Readonly<Record<ContinuationDiffOmittedReasonV1, string>> = {
-  baseline_dirty: '开始时这个路径不是干净的基准', binary: '二进制文件', too_large: '文件太大',
-  protected: '受保护路径', section_limit: '这一节的 diff 总量放不下', not_text: '不是文本文件',
+  baseline_dirty: STR['brief.review.diffReason.baseline_dirty'], binary: STR['brief.review.diffReason.binary'],
+  too_large: STR['brief.review.diffReason.too_large'], protected: STR['brief.review.diffReason.protected'],
+  section_limit: STR['brief.review.diffReason.section_limit'], not_text: STR['brief.review.diffReason.not_text'],
 };
 
 /** One non-required conclusion line per item (`#n = <callId>（<工具名>）：…`; D8: the callId appears only here). */
 function reviewItemConclusionZh(item: ContinuationUnknownCallReviewItemV1, cap: number): string {
   const parts = [REVIEW_VERDICT_ZH[item.verdict] ?? item.verdict];
-  if (item.evidence !== null) parts.push(`依据 ${boundedZh(item.evidence, cap)}`);
+  if (item.evidence !== null) parts.push(`${STR['brief.review.evidencePrefix']}${boundedZh(item.evidence, cap)}`);
   if (item.crashSuspicion !== null) {
-    const suspicion = item.crashSuspicion.verdict === 'unlikely' ? '不太可能'
-      : item.crashSuspicion.verdict === 'possible' ? '有可能' : '无法确定';
-    parts.push(`崩溃可疑：${suspicion}（${clip(item.crashSuspicion.evidence, cap)}）`);
+    const suspicion = item.crashSuspicion.verdict === 'unlikely' ? STR['brief.review.crash.unlikely']
+      : item.crashSuspicion.verdict === 'possible' ? STR['brief.review.crash.possible'] : STR['brief.review.crash.unknown'];
+    parts.push(`${STR['brief.review.crashPrefix']}${suspicion}（${clip(item.crashSuspicion.evidence, cap)}）`);
   }
-  if (item.reviewerConclusion !== null) parts.push(`改判前结论 ${boundedZh(item.reviewerConclusion, cap)}`);
-  return `- #${String(item.alias)} = ${clip(item.callId, cap)}（${clip(item.toolName, cap)}）：${parts.join('；')}`;
+  if (item.reviewerConclusion !== null) {
+    parts.push(`${STR['brief.review.reviewerPrefix']}${boundedZh(item.reviewerConclusion, cap)}`);
+  }
+  return `- #${String(item.alias)} = ${clip(item.callId, cap)}（${clip(item.toolName, cap)}）`
+    + `${STR['brief.review.conclusionMiddle']}${parts.join(STR['brief.separator.semicolon'])}`;
 }
 function reviewFileLinesZh(file: ContinuationUnknownCallReviewFileV1, cap: number): string[] {
-  const lines = [`  - 文件 ${clip(file.path, cap)}（${REVIEW_MODE_ZH[file.mode]}）：${REVIEW_CHANGE_ZH[file.change]}。`];
-  if (file.oldText !== null) lines.push(`    - 旧摘录：${boundedZh(file.oldText, cap)}`);
-  if (file.newText !== null) lines.push(`    - 新摘录：${boundedZh(file.newText, cap)}`);
-  if (file.diff !== null) lines.push(`    - diff：${boundedZh(file.diff, cap)}`);
-  else if (file.diffOmittedReason !== null) lines.push(`    - diff 未附：${REVIEW_DIFF_REASON_ZH[file.diffOmittedReason]}。`);
+  const lines = [`${STR['brief.review.fileLead']}${clip(file.path, cap)}（${REVIEW_MODE_ZH[file.mode]}`
+    + `${STR['brief.review.fileChangeMiddle']}${REVIEW_CHANGE_ZH[file.change]}。`];
+  if (file.oldText !== null) lines.push(`${STR['brief.review.oldText']}${boundedZh(file.oldText, cap)}`);
+  if (file.newText !== null) lines.push(`${STR['brief.review.newText']}${boundedZh(file.newText, cap)}`);
+  if (file.diff !== null) lines.push(`${STR['brief.review.diff']}${boundedZh(file.diff, cap)}`);
+  else if (file.diffOmittedReason !== null) {
+    lines.push(`${STR['brief.review.diffOmitted']}${REVIEW_DIFF_REASON_ZH[file.diffOmittedReason]}。`);
+  }
   return lines;
 }
 /** The non-required lines of the review section, in render order (never the fixed lines). */
@@ -836,8 +962,9 @@ function unknownCallReviewOptionalLinesZh(section: ContinuationUnknownCallReview
   // K3 L18: annotations are optional lines after the per-item conclusions. The
   // ② owner already turned the answer object into `null` (the record) or a path.
   for (const annotation of section.disposition?.annotations ?? []) {
-    lines.push(`- 批注（${annotation.path === null ? '这份核对记录' : clip(annotation.path, cap)}）`
-      + `：${clip(annotation.text, cap)}`);
+    lines.push(`${STR['brief.review.annotationLead']}`
+      + `${annotation.path === null ? STR['brief.review.annotationRecord'] : clip(annotation.path, cap)}`
+      + `${STR['brief.review.annotationMiddle']}${clip(annotation.text, cap)}`);
   }
   return lines;
 }
@@ -864,9 +991,11 @@ function unknownCallReviewOptionalLineCount(section: ContinuationUnknownCallRevi
 export function approvedMethodLinesZh(
   methods: ReadonlyArray<{ alias: number; command: string; cwd: string | null }>,
 ): string[] {
+  const indent = STR['brief.approved.newlineIndent'];
   return methods.map(method =>
-    `- 方案 #${method.alias}，目录 ${(method.cwd ?? '.').replace(/\r\n|\n/g, '\n  ')}：`
-    + `\n  ${method.command.replace(/\r\n|\n/g, '\n  ')}`);
+    `${STR['brief.approved.lead']}${String(method.alias)}${STR['brief.approved.cwdLead']}`
+    + `${(method.cwd ?? '.').replace(/\r\n|\n/g, indent)}${STR['brief.approved.afterCwd']}`
+    + `${indent}${method.command.replace(/\r\n|\n/g, indent)}`);
 }
 
 /**
@@ -885,8 +1014,9 @@ function unknownCallReviewLinesZh(brief: ContinuationBriefV1, cap: number, optio
   if (section === null) return [];
   const count = section.items.length;
   const lines: string[] = ['', UNKNOWN_CALL_REVIEW_TITLE_ZH,
-    `- 共 ${String(count)} 条（#1–#${String(count)}），另有 ${String(section.itemsOmitted)} 条没有列出；`
-    + '各条的结论和依据见上文“核对结论”，可能被略去。'];
+    `${STR['brief.review.countLead']}${String(count)}${STR['brief.review.countMiddle']}${String(count)}`
+    + `${STR['brief.review.countOmittedLead']}${String(section.itemsOmitted)}${STR['brief.review.countOmittedSuffix']}`
+    + STR['brief.review.countNote']];
   lines.push(...unknownCallReviewOptionalLinesZh(section, cap).slice(0, Math.max(0, optionalLimit)));
   const disposition = section.disposition;
   const option = disposition === null
@@ -897,15 +1027,15 @@ function unknownCallReviewLinesZh(brief: ContinuationBriefV1, cap: number, optio
     : UNKNOWN_CALL_REVIEW_SOURCE_ZH[disposition.source];
   // L20: ONE line; the 附言 is clipped to 60 UTF-16 units by `clip`, not RENDER_TEXT_CAPS.
   const note = disposition === null || disposition.text === null || disposition.text.text.length === 0
-    ? '' : `；附言：${clip(disposition.text.text, 60)}`;
-  lines.push(`- 处置：${option}（${source}）${note}。`);
+    ? '' : `${STR['brief.review.noteLead']}${clip(disposition.text.text, 60)}`;
+  lines.push(`${STR['brief.review.dispositionLead']}${option}（${source}）${note}。`);
   // Lead ruling 5: the targets line is ALWAYS present; with no targets (settled
   // by itself or an empty set) it reads exactly `无`. The platform line below
   // stays present only when it names any.
   const targets = disposition === null ? [] : disposition.targets;
   lines.push(targets.length === 0
-    ? '- 作用对象：无。'
-    : `- 作用对象：${targets.map(alias => `#${String(alias)}`).join('、')}。`);
+    ? STR['brief.review.targetsNone']
+    : `${STR['brief.review.targetsLead']}${targets.map(alias => `#${String(alias)}`).join(STR['brief.list.separator'])}。`);
   // L20: the approved methods are part of the mandatory block: every line is
   // written whole, between the targets line and the platform line. No approved
   // methods means no bytes change (an absent/empty array renders nothing).
@@ -913,8 +1043,9 @@ function unknownCallReviewLinesZh(brief: ContinuationBriefV1, cap: number, optio
     lines.push(...approvedMethodLinesZh(disposition.approvedMethods));
   }
   if (disposition !== null && disposition.platformTargets.length > 0) {
-    lines.push(`- 平台条目 ${disposition.platformTargets.map(alias => `#${String(alias)}`).join('、')}`
-      + '：结果查不清，重做前先核实。');
+    lines.push(`${STR['brief.review.platformLead']}`
+      + `${disposition.platformTargets.map(alias => `#${String(alias)}`).join(STR['brief.list.separator'])}`
+      + STR['brief.review.platformSuffix']);
   }
   lines.push(UNKNOWN_CALL_REVIEW_NOT_LISTED_ZH);
   // K3 B3 item 6: the required signal, present exactly when this record blocked
@@ -940,46 +1071,53 @@ export class ContinuationBriefCapacityError extends Error {
 
 function endingZh(brief: ContinuationBriefV1): string {  const previous = brief.previous;
   // `factsFrom.hops > 0` only when the previous Run itself never entered the Kernel.
-  if (brief.stoppedAt.kernel === 'not_entered' || brief.factsFrom.hops > 0) return `没有进入 Kernel 就结束（${previous.outcome}）`;
-  if (previous.outcome === 'cancelled' && brief.stoppedAt.reason === 'cancelled_at_reconcile') return '在 Host 重启核对时按你的取消结束';
-  if (previous.outcome === 'cancelled' && brief.stoppedAt.reason === 'cancelled_while_paused') return '暂停后按取消请求结束';
+  if (brief.stoppedAt.kernel === 'not_entered' || brief.factsFrom.hops > 0) {
+    return `${STR['brief.ending.notEnteredLead']}${previous.outcome}）`;
+  }
+  if (previous.outcome === 'cancelled' && brief.stoppedAt.reason === 'cancelled_at_reconcile') {
+    return STR['brief.ending.cancelledAtReconcile'];
+  }
+  if (previous.outcome === 'cancelled' && brief.stoppedAt.reason === 'cancelled_while_paused') {
+    return STR['brief.ending.cancelledWhilePaused'];
+  }
   switch (previous.origin) {
     case 'observed':
-      return `依据执行记录以 ${previous.outcome} 结束`;
+      return `${STR['brief.ending.observedLead']}${previous.outcome}${STR['brief.ending.observedSuffix']}`;
     case 'host_interrupted':
-      return `被 Host 重启中断，平台核对后记为 ${previous.outcome}`;
+      return `${STR['brief.ending.hostInterruptedLead']}${previous.outcome}`;
     case 'human_attested':
-      return `的结果无法从执行记录确定，由人工认定为 ${previous.outcome}`;
+      return `${STR['brief.ending.humanAttestedLead']}${previous.outcome}`;
   }
 }
 
 function continuityZh(session: ContinuationBriefV1['session']): string {
-  const here = `Session ${session.sessionRef.sessionId}`;
+  const here = `${STR['brief.continuity.sessionPrefix']}${session.sessionRef.sessionId}`;
   switch (session.continuity) {
     case 'same_session_history':
-      return `接续方式：在同一 ${here} 中继续，上一次的对话历史仍在。`;
+      return `${STR['brief.continuity.sameHistoryLead']}${here}${STR['brief.continuity.sameHistorySuffix']}`;
     case 'same_session_without_previous_turn':
-      return `接续方式：在同一 ${here} 中继续，但上一次执行的 Turn 不在模型历史中。`;
+      return `${STR['brief.continuity.sameHistoryLead']}${here}${STR['brief.continuity.sameWithoutTurnSuffix']}`;
     case 'other_session_seeded': {
       const seeded = session.seededFrom;
-      const from = seeded === null ? '之前' : `Session ${seeded.sessionRef.sessionId}`
-        + `${seeded.throughPosition === null ? '' : ` 到位置 ${String(seeded.throughPosition)}`}`;
-      return `接续方式：在新的 ${here} 中继续，带有 ${from} 的历史。`;
+      const from = seeded === null ? STR['brief.continuity.before'] : `${STR['brief.continuity.sessionPrefix']}${seeded.sessionRef.sessionId}`
+        + `${seeded.throughPosition === null ? '' : `${STR['brief.continuity.throughPosition']}${String(seeded.throughPosition)}`}`;
+      return `${STR['brief.continuity.otherLead']}${here}${STR['brief.continuity.seededMiddle']}${from}${STR['brief.continuity.seededSuffix']}`;
     }
     case 'other_session':
-      return `接续方式：在新的 ${here} 中继续，没有上一次的对话历史。`;
+      return `${STR['brief.continuity.otherLead']}${here}${STR['brief.continuity.otherSuffix']}`;
   }
 }
 
 function toolCallZh(call: ContinuationToolCallV1, cap: number): string {
-  const parts = [`${call.name}（${call.callId}）：${TOOL_RESULT_ZH[call.result]}`];
+  const parts = [`${call.name}${STR['brief.toolCall.openCallId']}${call.callId}${STR['brief.toolCall.beforeResult']}`
+    + `${TOOL_RESULT_ZH[call.result]}`];
   if (call.sideEffect !== null) parts.push(SIDE_EFFECT_ZH[call.sideEffect]);
-  if (call.target !== null) parts.push(`目标 ${boundedZh(call.target, cap)}`);
+  if (call.target !== null) parts.push(`${STR['brief.toolCall.targetLead']}${boundedZh(call.target, cap)}`);
   if (call.changedPaths.length > 0 || call.changedPathsOmitted > 0) {
-    parts.push(`改动 ${listZh(call.changedPaths, cap)}${moreZh(call.changedPathsOmitted)}`);
+    parts.push(`${STR['brief.toolCall.changedLead']}${listZh(call.changedPaths, cap)}${moreZh(call.changedPathsOmitted)}`);
   }
-  if (call.error !== null) parts.push(`错误 ${boundedZh(call.error, cap)}`);
-  return parts.join('；');
+  if (call.error !== null) parts.push(`${STR['brief.toolCall.errorLead']}${boundedZh(call.error, cap)}`);
+  return parts.join(STR['brief.separator.semicolon']);
 }
 
 // ------------------------------------------------------------------------ //

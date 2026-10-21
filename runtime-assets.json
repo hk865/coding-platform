@@ -52,6 +52,166 @@
     "sha256": "3c60ae2a1b09b0d7b1d034f5c40730b9762e0f53c5121266f620b3db37e1838c"
   },
   {
+    "path": "resources/prompts/platform/pack.json",
+    "sha256": "20f903996aeafa428884c6aab8f5fde49533cba6e6e8a93fd6c87684482647f4"
+  },
+  {
+    "path": "resources/prompts/platform/strings.json",
+    "sha256": "f504e0115f4c0a78d5a78c056c3372842257e4633cdd73e483424ede541edeb4"
+  },
+  {
+    "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
+    "sha256": "0ce75daec4258062d451703fb6efb22879a7e2e8359767a17d0f2666bfe8bd3d"
+  },
+  {
+    "path": "resources/prompts/platform/templates/consultation-received-input.txt",
+    "sha256": "f85a6dc6b19efe2a94bf4a00aef40d773c2639445ea6b5a4c3c55418a5881240"
+  },
+  {
+    "path": "resources/prompts/platform/templates/user-decision-response.txt",
+    "sha256": "71accd8d578f6ae8edbd766ad8b2453b15ef7870d2d126156ed6d742ead89edb"
+  },
+  {
+    "path": "resources/prompts/platform/templates/scribe-reminder.txt",
+    "sha256": "ff58b0ec39a30a454429e607faa4c871244d89a2821ca63badc724d6857505a0"
+  },
+  {
+    "path": "resources/prompts/platform/templates/continuation-brief.txt",
+    "sha256": "7078cba04345071fa640fac3838ece49972385844719db572a000f2135e6fd5a"
+  },
+  {
+    "path": "resources/prompts/platform/templates/unknown-call-review.txt",
+    "sha256": "20f737922abecfa171f46e4ea3a2cb1b615a2052c3a516081d1b54c8d6e2b3ad"
+  },
+  {
+    "path": "resources/prompts/platform/templates/unknown-call-proposal.txt",
+    "sha256": "25312493c04d0312852c64164e473c7a17fb467b5bbb1d86db68aba3916ea849"
+  },
+  {
+    "path": "resources/prompts/platform/tools/query_task_graph.json",
+    "sha256": "6f404bd3bfb264a53174b0a05c3fec58c05acd78166f76bed85c5df5dda7ceef"
+  },
+  {
+    "path": "resources/prompts/platform/tools/query_ready_tasks.json",
+    "sha256": "028ee928e59ac3b461e60e4e98d4a3eaf48aaa857b2162537871154ccf84365a"
+  },
+  {
+    "path": "resources/prompts/platform/tools/propose_future_plan.json",
+    "sha256": "7558605da4515a9cd4d2cad55efbf634ef8671eaa6def1a7643ddbf581670197"
+  },
+  {
+    "path": "resources/prompts/platform/tools/apply_future_plan.json",
+    "sha256": "89d4a7728988cc5b22e8acb3620a27117f3bfdb5c4830ecf14ebf935ee85660d"
+  },
+  {
+    "path": "resources/prompts/platform/tools/record_note.json",
+    "sha256": "543e52d8f2ba86228ab92b168404f82f39794e7caed176ef841e5c02b4266d88"
+  },
+  {
+    "path": "resources/prompts/platform/tools/project_source.json",
+    "sha256": "06168eb317332f3220a5e6bbaed8d8fe606c9f8ef2ee9f7f7166a490800fbd9d"
+  },
+  {
+    "path": "resources/prompts/platform/tools/read_source.json",
+    "sha256": "4cf417795a78585a948481387f1f27f7bce056d8f453bdf461b7e2fdfd0e121d"
+  },
+  {
+    "path": "resources/prompts/platform/tools/cpp_index.json",
+    "sha256": "b28680d1bc7145d5a7978cc6f9395079ecda83f13ee7015ff2d4bdaaacb3b88a"
+  },
+  {
+    "path": "resources/prompts/platform/tools/python_index.json",
+    "sha256": "680ffdd2b4ba62d7dad10767eef426a27c01e45ea65d3635ec771ba6d23252f1"
+  },
+  {
+    "path": "resources/prompts/platform/tools/code_index.json",
+    "sha256": "00c065c71df81aff4050a591cc46cebc14b47d5e058d76139babaa6ac785bd90"
+  },
+  {
+    "path": "resources/prompts/platform/tools/source_excerpt.json",
+    "sha256": "a70d476681ab583125e5660e659078a10134c3653e55580069eee1c265d6fb99"
+  },
+  {
+    "path": "resources/prompts/platform/tools/list_files.json",
+    "sha256": "074c3ddf505f2c406f0df1df34dbed5957851467836789363dec66e6f0022ada"
+  },
+  {
+    "path": "resources/prompts/platform/tools/search.json",
+    "sha256": "0aad4a54636306a77cda3c7b7f964908cc94171851bc5c324db4a5684eb581c6"
+  },
+  {
+    "path": "resources/prompts/platform/tools/symbols.json",
+    "sha256": "6f9632ec107c61a890df34c5931a4d515d4cd1c541b9b1c6fa0051a27fcb830b"
+  },
+  {
+    "path": "resources/prompts/platform/tools/run_readonly_command.json",
+    "sha256": "1a04260adf9cc805e8b21d6cefac2f20e9510a5ec39fa524ddc964560f48fc61"
+  },
+  {
+    "path": "resources/prompts/platform/tools/request_command_rerun.json",
+    "sha256": "1a92fa0ed1b95571c3dbb47c813282bc1cffb765eba72057a11314b32b57b22e"
+  },
+  {
+    "path": "resources/prompts/platform/tools/send_session_message.json",
+    "sha256": "07ca596e82a9656a7b5ecc8dd5e78911be43fa14e3c8dc33b15a8b7b30a2159a"
+  },
+  {
+    "path": "resources/prompts/platform/tools/read_session_inbox.json",
+    "sha256": "11de0f2fe3fdfbc03bf482de60ba828fde1f118bc76ecb59b53a04d277af7c64"
+  },
+  {
+    "path": "resources/prompts/platform/tools/read_session_message.json",
+    "sha256": "955f52f319ebba85ee92b91f35952daaecf1600bdee4e4658793b580e3427b7a"
+  },
+  {
+    "path": "resources/prompts/platform/tools/read_session_message_body.json",
+    "sha256": "3164ba05bb4d5e0010d8020381b1ad5df60062c9cd2e2fb3100501feb140a686"
+  },
+  {
+    "path": "resources/prompts/platform/tools/ack_session_message.json",
+    "sha256": "caaf5ce074af49b8749d83a4eecc2a600b5ae7e162a8c6eae5a086b5a17a54d1"
+  },
+  {
+    "path": "resources/prompts/platform/tools/respond_session_message.json",
+    "sha256": "f4ac0caea999407a409abd48d0a48465b2b2357ddbe4fc286abda8307a39c420"
+  },
+  {
+    "path": "resources/prompts/platform/tools/send_user_message.json",
+    "sha256": "6ee9091de037b68923bc2e8e1b46dc060b6722672f7df626d4fd198bc4c6e79c"
+  },
+  {
+    "path": "resources/prompts/platform/tools/read_user_decision.json",
+    "sha256": "2133ab2b10969a48f0596aca6c3dc03bbf3597803a5cf0f0cf44a904ef638dd9"
+  },
+  {
+    "path": "resources/prompts/platform/tools/record_decision_application.json",
+    "sha256": "4dfd5fefffd83482bcd75baa34433d4340012b189e7b0318244bc003955566d0"
+  },
+  {
+    "path": "resources/prompts/platform/tools/look_graph.json",
+    "sha256": "d7c9636d5e23cef970bbc6cec7741eb724f9a78b3276148f4977dc79dcb5a5ef"
+  },
+  {
+    "path": "resources/prompts/platform/tools/find_graph.json",
+    "sha256": "81a211f379e2cc25fa872a800b7712b8d980267a03e693f1f1a407b4d34806be"
+  },
+  {
+    "path": "resources/prompts/platform/tools/find_related_sessions.json",
+    "sha256": "dabd7f37eee3ace82eda3b550f1663a57ca1417c5225a67b1e06f8344ade848c"
+  },
+  {
+    "path": "resources/prompts/platform/tools/read_session_card.json",
+    "sha256": "a6620f60b59bb5fa79743e35802115e765e42694aebb99a44702834822737c38"
+  },
+  {
+    "path": "resources/prompts/platform/tools/record_unknown_call_review.json",
+    "sha256": "0bceb9563c1d42d8e6215b5e1db9262d163900144f0f9f5e2f8d4b7922780dcc"
+  },
+  {
+    "path": "resources/prompts/platform/tools/propose_safer_method.json",
+    "sha256": "e359d6f25b801eb5110b34306a61d441fca662da46fc4ccb12916cbeb6fdf32c"
+  },
+  {
     "path": "scripts/cpp-source-query.py",
     "sha256": "bd4b3a4ebd42a02381d737d9f981f421ab7a98dbb5bea4060fe2244b84736936"
   },

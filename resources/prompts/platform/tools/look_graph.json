@@ -1,0 +1,4 @@
+{
+  "description": "Read one graph node/path card or page (relation card/children/neighbours/executions/checks), the original execution history of one Run, or the exact declared task input body by page. Or read notes: `{ memory: { v: 1, op: lookup|neighbors|history|conflicts, ... } }`. The Goal, scope and identity are bound by the platform; do not send them.",
+  "parameters": {}
+}

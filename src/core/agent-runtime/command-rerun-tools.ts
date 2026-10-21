@@ -17,6 +17,7 @@ import type { TaskTriple } from '../../contracts/dispatch.js';
 import type {
   CommandRerunRequestPort, CommandRerunRequestReplyV1,
 } from '../work-graph/model/command-rerun-request-contracts.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import {
   toolSchema as z,
   type ToolCall,
@@ -36,12 +37,12 @@ export const REQUEST_COMMAND_RERUN_TOOL_NAMES = [REQUEST_COMMAND_RERUN_TOOL_NAME
  */
 const inputSchema = z
   .object({
-    command: z.string().describe('The exact command you want to run; 1-4000 UTF-8 bytes'),
-    reason: z.string().describe('Why a person should allow it; 1-2000 code points'),
+    command: z.string().describe(PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].parameters['command']),
+    reason: z.string().describe(PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].parameters['reason']),
     rewriteOf: z.object({
-      review: z.string().describe('The blocked command\'s UnknownCallReview runId (or its unique 8-character prefix)'),
-      alias: z.number().describe('The blocked command\'s alias #n'),
-    }).strict().optional().describe('Only for a rewrite the platform did not recognise'),
+      review: z.string().describe(PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].parameters['rewriteOf.review']),
+      alias: z.number().describe(PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].parameters['rewriteOf.alias']),
+    }).strict().optional().describe(PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].parameters['rewriteOf']),
   })
   .strict();
 type RequestCommandRerunArguments = z.infer<typeof inputSchema>;
@@ -203,10 +204,7 @@ export function createCommandRerunTools(config: CommandRerunToolsConfig): Comman
   function definition(): ToolDefinition {
     return {
       name: REQUEST_COMMAND_RERUN_TOOL_NAME,
-      description: 'Ask a person to allow one blocked command to run again. Give the exact command and a reason '
-        + 'they can read; the platform discovers the blocked alias. If the platform does not recognise your '
-        + 'rewrite of a blocked command, name its review run and alias with `rewriteOf`. The result says whether '
-        + 'the request is waiting, allowed for one use, refused, or not recognised; it is not the command running.',
+      description: PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].description,
       inputSchema,
       // A platform-state write: the Kernel permission policy and the Host
       // authorization list apply, but no workspace write or process capability

@@ -1,0 +1,6 @@
+{
+  "description": "Search literal text in workspace source without running shell commands. Returns matching lines with file content digests; bounded files/results and explicit skipped coverage. Use paths to narrow a query.",
+  "parameters": {
+    "prefix": "Workspace-relative directory to search recursively, not a file. Omit or use a single dot for the workspace root. Use paths for individual search files."
+  }
+}

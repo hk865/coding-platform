@@ -24,6 +24,7 @@ import type {
 import {
   recordNoteRequestOf, type RecordNoteArgs, type RecordNoteRequestV1,
 } from '../work-graph/model/note-contracts.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import {
   toolSchema as z,
   type ToolCall,
@@ -184,19 +185,7 @@ type WriteArgs = z.infer<typeof writeSchema>;
 type ReviewArgs = z.infer<typeof reviewSchema>;
 type WithdrawArgs = z.infer<typeof withdrawSchema>;
 
-const description = 'Record a note: `{ op: "write" | "review" | "withdraw", ... }`. '
-  + 'Write at task end, rework, plan adoption or archive (MVP B09). Before writing, look first: use the memory `lookup` '
-  + 'branch for the existing `topics` of the anchor and the `find` branch, and reuse an existing topic. Anchor so the note '
-  + 'still holds if this task is cancelled tomorrow (otherwise anchor on architecture). Pick one of the eight kinds: '
-  + '`convention`, `pitfall`, `tradeoff`, `open_question`, `preference`, `decision`, `understanding`, `repair`. Keep the '
-  + 'conclusion to one line; facts are pointers only, never copied text. Close an `open_question` with the `decision` that '
-  + 'points at it via `replaces`. '
-  + '`write` stores your draft (the platform resolves plan/catalog revisions, the stage anchor plan revision, '
-  + 'file symbol locators and basis-file digests from this execution; never send them) and returns `{ write, check }`; '
-  + 'read the `check` result and fix what it reports. '
-  + '`review` (the scribe) reviews/accepts/rejects, with an optional `resolution: "supersede" | "coexist"` when resolving '
-  + 'live contradictions; `withdraw` withdraws a note you may withdraw. '
-  + 'Only items with `currentEligible: true` are current conclusions. Authority is enforced by the note service.';
+const description = PLATFORM_PROMPT_PACK_V1.tools['record_note'].description;
 
 export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
   // Freeze the trusted scope/identity before returning the factory.

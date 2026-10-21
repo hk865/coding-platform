@@ -1,0 +1,9 @@
+{
+  "description": "Propose one safer replacement command for a proposalTargets (process) item, given by its alias #n. The command is run exactly as written, never the original; it is 1-4000 UTF-8 bytes, the optional cwd is at most 512 bytes and the rationale is 1-2000 characters. The reviewed record and this proposal round are bound by the platform; you cannot choose them. A later call for the same item replaces the earlier proposal until the round ends. If the result says capacity, shorten the command, the directory or the rationale.",
+  "parameters": {
+    "item": "The alias #n of a proposalTargets (process) item; never a Kernel callId",
+    "command": "The replacement command, run exactly as written; 1-4000 UTF-8 bytes",
+    "cwd": "Optional working directory, at most 512 UTF-8 bytes; absent renders as .",
+    "rationale": "Why this replacement is safer; 1-2000 characters"
+  }
+}

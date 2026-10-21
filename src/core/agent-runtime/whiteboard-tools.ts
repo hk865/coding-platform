@@ -39,6 +39,7 @@ import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../contracts/plan.js';
 import type { PlanChangeReason, PlanProposalRef, PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import { proposeFuturePlanRequest } from '../work-graph/model/tool-commit-arguments.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import {
   toolSchema as z,
   type ToolCall,
@@ -194,10 +195,12 @@ const goalPinRefSchema = z.object({
 }).strict();
 const versionPinSchema = z.object({
   ref: z.union([projectPinRefSchema, workspacePinRefSchema, goalPinRefSchema, planRevisionRefSchema, planProposalRefSchema])
-    .describe('One of the five W1 caller-visible refs: Project | Workspace | Goal | PlanRevision | PlanProposal.'),
+    .describe(PLATFORM_PROMPT_PACK_V1.strings['toolSchema.whiteboardPin.ref']),
   revision: z.number().int().min(0)
-    .describe('The exact version the caller saw for `ref`; the plan service rejects a mismatch with the current record.'),
+    .describe(PLATFORM_PROMPT_PACK_V1.strings['toolSchema.whiteboardPin.revision']),
 }).strict();
+
+const toolText = PLATFORM_PROMPT_PACK_V1.tools;
 
 const schemas: Record<WhiteboardToolName, z.ZodType> = {
   query_task_graph: z.object({
@@ -217,30 +220,26 @@ const schemas: Record<WhiteboardToolName, z.ZodType> = {
   // plan (`basedOn` is never null); the plan service re-checks that.
   propose_future_plan: z.object({
     basedOn: planRevisionRefSchema
-      .describe('The current accepted PlanRevisionRef this v2 future revision is based on; never null for an Agent proposal.'),
+      .describe(toolText['propose_future_plan'].parameters['basedOn']),
     draft: z.record(z.string(), z.unknown()).describe(
-      `PlanRevisionDraft (schemaVersion: 2); build it from the current Plan returned by query_task_graph and edit only what the revision needs.
-Top level: planId; planRevision; goalId (the bound Goal's goalId); stages: {stageId,title,description?}[]; tasks: RuntimeTask[]; assignments?: {taskId,role,instruction}[]; obligations: {obligationId,title,requirementLevel,taskIds,verificationRequirements:{requirementId,requirementLevel,kind,description}[]}[]; taskHierarchy: {parentOf:{parentTaskId,childTaskId}[]}; executionDag: {dependsOn:{taskId,dependsOnId,requires:{kind:'output-contract'|'artifact'|'decision'|'environment-revision'|'gate-result',label}}[]}; taskRelations?: {fromTaskId,toTaskId,kind:'coordination'|'expected_dependency',note}[].
-RuntimeTask: {taskId,stageId?,title,requirementLevel:'required'|'optional',taskKind:'work'|'gate',disposition:'active'|'deferred'|'cancelled'|'superseded',phase:'pending'|'ready'|'running'|'verifying'|'blocked'|'satisfied'|'failed',scope:{kind:'goal'}|{kind:'stage',stageId}|{kind:'module',stageId,moduleRef},executionIntent?:'plan_only'|'request_execution',replacedByTaskId?}. executionIntent is the adopted orchestration intent only: 'plan_only' records the intent now (assignment, obligations/acceptance, dependencies and exact inputs may all be omitted; the node is never claimable even after an assignment is later added); 'request_execution' asks this node to run and must already carry exactly one legal role/instruction assignment (acceptance may still be missing). It is not a Role grant, budget, ready signal, Run state or completion judgement. State the intent explicitly on every NEW work node; when editing an existing node that already carries executionIntent, preserve it or explicitly change 'plan_only' to 'request_execution' — omitting the field is invalid and cannot silently activate a node.
-A task that already has a Run, a lease or a satisfied reduction keeps its execution definition forever (title, phase, scope, executionIntent, assignment, inputs and the obligations whose taskIds list it): only its disposition and replacedByTaskId may change, and only once all its Runs ended and its lease is released; list every such task in reason.affectedTaskIds. To change its scope or obligation, set it 'superseded' (replacedByTaskId: the new task) and add a new task as another carrier of the same obligations, keeping the old task in their taskIds. Every required obligation keeps at least one active required carrier, so deferring or cancelling its only carrier needs a new carrier in the same revision. You cannot change your own running task, a task a person paused or cancelled, or add a carrier to an obligation whose active work a person stopped.
-Copy the current Plan's known fields, then drop accepted/compiler metadata that is not part of a draft: ref, revision, goalRef, acceptedAt, effectiveCompletionPolicy, effectiveArchitectureBaseline, taskStateBasis, dispositionRecord; omit origin/reviewAdmissionProtocol unless reproducing them is required. The plan service owns semantic validation (explicit-intent branches, assignment completeness, obligations, DAG/hierarchy legality, future-only rules); this adapter does not restate it.`,
+      toolText['propose_future_plan'].parameters['draft'],
     ),
     reason: z.record(z.string(), z.unknown())
-      .describe('PlanChangeReason: { text, sources, affectedTaskIds? }. affectedTaskIds: the taskIds this revision changes (at most 200, each a task of the draft); required for every task with execution history whose disposition changes.'),
+      .describe(toolText['propose_future_plan'].parameters['reason']),
     expected: z.array(versionPinSchema)
-      .describe('The exact W1 version pins the caller saw; omit a pin rather than guessing a fresh revision.'),
+      .describe(toolText['propose_future_plan'].parameters['expected']),
   }).strict(),
   // Agent `applyPlanChange` adopts only its own W2 candidate with
   // `decisionRefs=[]`; the adapter supplies that empty list, the model cannot.
   apply_future_plan: z.object({
     proposalRef: planProposalRefSchema
-      .describe('Your own candidate_v2 proposal ref; the plan service refuses another Run/author candidate.'),
+      .describe(toolText['apply_future_plan'].parameters['proposalRef']),
     expectedProposalRevision: z.number().int().min(1)
-      .describe('The exact revision of proposalRef, as read.'),
+      .describe(toolText['apply_future_plan'].parameters['expectedProposalRevision']),
     expected: z.array(versionPinSchema)
-      .describe('The exact W1 version pins the caller saw; omit a pin rather than guessing a fresh revision.'),
+      .describe(toolText['apply_future_plan'].parameters['expected']),
     acknowledgementRef: sessionMessageRefSchema.optional()
-      .describe('The user answer message this adoption is attributed to, when the user answered a card for this candidate. Attribution only; the plan owner re-reads the formal answer and derives the decision source itself. Omit it when the adoption is not attributed to a user answer.'),
+      .describe(toolText['apply_future_plan'].parameters['acknowledgementRef']),
   }).strict(),
 };
 
@@ -431,10 +430,10 @@ export function createWhiteboardTools(config: WhiteboardToolsConfig): Whiteboard
   }
 
   const descriptions: Record<WhiteboardToolName, string> = {
-    query_task_graph: 'Read the current Plan task graph for the bound Goal. Optional planRef selects a PlanRevision; optional atLeastCursor is a source cursor.',
-    query_ready_tasks: 'Read the ready candidate tasks for the bound Goal. includeBlocked selects blocked rows too; roleIds filters by Role; page paginates.',
-    propose_future_plan: 'Propose a v2 future Plan revision for the bound Goal. basedOn must be the current accepted PlanRevision; expected carries the exact W1 pins you saw. A task with execution history changes only its disposition (listed in reason.affectedTaskIds); to change its scope, supersede it and add a new carrier. The plan service owns all plan and future-only rules.',
-    apply_future_plan: 'Adopt your own W2 candidate proposal for the bound Goal. decisionRefs are supplied by the platform. Pass acknowledgementRef only when the user answered a card for this candidate; the plan owner re-reads that formal answer and derives the decision source itself. Only a real committed plan revision is reported as success.',
+    query_task_graph: toolText['query_task_graph'].description,
+    query_ready_tasks: toolText['query_ready_tasks'].description,
+    propose_future_plan: toolText['propose_future_plan'].description,
+    apply_future_plan: toolText['apply_future_plan'].description,
   };
 
   function definitionFor(name: WhiteboardToolName): ToolDefinition {

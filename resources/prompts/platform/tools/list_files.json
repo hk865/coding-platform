@@ -1,0 +1,6 @@
+{
+  "description": "List readable workspace file paths with bounded pagination. Includes installed/generated files; skips denied paths and symbolic links. No source execution.",
+  "parameters": {
+    "prefix": "Workspace-relative directory to enumerate recursively, not a file. Omit or use a single dot for the workspace root."
+  }
+}
