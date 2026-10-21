@@ -9,8 +9,7 @@ import { kernelRunLimits } from './run-limits.js';
 import { createExplorationTools, type ExplorationToolsHandle, type SourceToolOptions } from './exploration-tools.js';
 import { readSourceIdentity } from '../../core/workspace/source-identity.js';
 import type { RuntimeSourceCaptureAccess, RuntimeSourceCaptureFactory } from './source-tool-ports.js';
-import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
-import { kernelToolNameOf } from '../work-graph/state/unknown-call-kinds.js';
+import { assembleObservedExtensions, kernelEnabledToolNames } from './tool-group-assembly.js';
 
 /** The internal result of the ONE existing finally cleanup. It is a local
  * proof for the Trusted Host's live handle, never a public control ack. */
@@ -173,10 +172,7 @@ async function closeOwnedResources(groups: readonly ExplorationToolsHandle[], cl
  * conditional subsets below are picked from this list; exporting it lets the
  * K3 table check stay in sync with the real registration behavior.
  */
-export const EXPLORATION_TOOL_NAMES = [
-  'list_files', 'search', 'symbols', 'code_index', 'project_source',
-  'python_index', 'cpp_index', 'source_excerpt', 'read_source', 'read_material',
-] as const;
+export { EXPLORATION_TOOL_NAMES } from './tool-group-assembly.js';
 
 export async function runObservedModel(o: ObservedModelRunOptions) {
   // Capture the trusted Host configuration synchronously, before the first await, so later
@@ -277,30 +273,15 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
     // falls back to the legacy live index when the factory fails. `first_use` defers the open to
     // the first real project_source execution; `before_run` (the default) keeps the eager open.
     if (hasRead && frozenOpen && !lazyFrozen) source = await frozenOpen.call(frozen, o.signal);
-    // K3 L3: pick the conditional exploration subset from the exported list.
-    const sourceReadNames: readonly string[] = ['read_source', 'read_material'];
-    const readTools: string[] = hasRead
-      ? EXPLORATION_TOOL_NAMES.filter(name => !sourceReadNames.includes(name)
-        && (name !== 'project_source' || frozen))
-      : [];
-    // 协调工具只有在宿主**确实**注入了访问面时才装配；注入时它们和内置工具一样出现在
-    // 本次请求的工具清单里（模型只能看见被启用的工具名）。
-    const coordinationNames = [...(o.coordinationTools?.names ?? [])];
-    // The single read-only process tool, if this Run's Host grant selected it.
-    const readonlyCommandTool = o.readonlyCommandTool;
-    const readonlyCommandNames = readonlyCommandTool === undefined ? [] : [READONLY_COMMAND_TOOL_NAME];
-    // K3 L14: the review round's own tool, registered only when the driver built
-    // it for a review-purpose Run.
-    const unknownCallReviewTool = o.unknownCallReviewTool;
-    const unknownCallReviewNames = unknownCallReviewTool === undefined || o.unknownCallReviewToolName === undefined
-      ? [] : [o.unknownCallReviewToolName];
-    // L19a: the request tool has the same conditional registration shape.
-    const commandRerunTool = o.commandRerunTool;
-    const commandRerunNames = commandRerunTool === undefined || o.commandRerunToolName === undefined
-      ? [] : [o.commandRerunToolName];
-    const enabledNames = hasRead && reviewSource
-      ? ['read_source', ...(o.materialTools ? ['read_material'] : []), ...readTools, ...coordinationNames, ...readonlyCommandNames, ...unknownCallReviewNames, ...commandRerunNames]
-      : [...allowed.map(kernelToolNameOf), ...readTools, ...coordinationNames, ...readonlyCommandNames, ...unknownCallReviewNames, ...commandRerunNames];
+    const extensions = assembleObservedExtensions(o);
+    const enabledNames = kernelEnabledToolNames({
+      allowed,
+      hasRead,
+      reviewSource,
+      hasFrozenSource: frozen !== undefined,
+      hasMaterialTools: hasRead && reviewSource && !!o.materialTools,
+      extensionNames: extensions.names,
+    });
     const needsExploration = hasRead;
     let result!: Awaited<ReturnType<typeof o.kernel.runCodingAgent>>;
     try {
@@ -313,7 +294,7 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
         // 宿主对**非只读**扩展工具的显式授权：只有这里列出、且确实被 additionalTools 注册、
         // 且 effectClass 不是 read_only 的名字才会被内核的权限策略采纳（协议约束 2.3）。
         // 缺席时协调工具会被内核按"未授权的未知操作"拒绝——这是刻意的 fail-closed。
-        hostAuthorizedTools: [...coordinationNames, ...readonlyCommandNames, ...unknownCallReviewNames, ...commandRerunNames],
+        hostAuthorizedTools: [...extensions.names],
         additionalTools: workspace => {
           const tools: ToolDefinition[] = [];
           if (needsExploration) {
@@ -330,10 +311,7 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
             tools.push(...handle.tools);
           }
           tools.push(...(o.materialTools?.(workspace) ?? []));
-          tools.push(...(o.coordinationTools?.create(workspace) ?? []));
-          if (readonlyCommandTool !== undefined) tools.push(readonlyCommandTool(workspace));
-          if (unknownCallReviewTool !== undefined) tools.push(unknownCallReviewTool(workspace));
-          if (commandRerunTool !== undefined) tools.push(commandRerunTool(workspace));
+          tools.push(...extensions.create(workspace));
           return tools;
         },
         workspaceRoot: o.root, input: o.input, sessionId: o.sessionId, signal: o.signal,

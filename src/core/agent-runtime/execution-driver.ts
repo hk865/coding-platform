@@ -21,28 +21,25 @@ import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
 import type {
   HookPort, SqliteStores, ToolCall, ToolDefinition, ToolGroupBarrier, WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
-import { EXPLORATION_TOOL_NAMES, runObservedModel } from './observed-model-run.js';
+import { runObservedModel } from './observed-model-run.js';
 import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../../contracts/review-admission.js';
 import { createControlOnlyInputSupply, createMailboxInputSupply, type InputSupply } from './execution-inputs.js';
 import type { SourceToolOptions } from './exploration-tools.js';
 import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
-import { createSessionMailboxTools, SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from './communication-tools.js';
-import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
-import { createSessionDiscoveryTools, SESSION_DISCOVERY_TOOL_NAMES } from './session-discovery-tools.js';
 import { ModelBudget } from './model-budget.js';
 import { createRuntimeModelCallAccess, RuntimeModelCallRejected } from './model-call-access.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { loadPreparedManifest, snapshotRuntimeConfiguration } from './execution-preparation.js';
 import { createRuntimeSourceCaptureFactory } from './source-capture-access.js';
-import { createGraphTools, GRAPH_TOOL_NAMES } from './graph-tools.js';
-import { createNoteTools, NOTE_TOOL_NAMES } from './note-tool.js';
 import { registerReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import {
-  createUnknownCallReviewTools, PROPOSE_SAFER_METHOD_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
-} from './unknown-call-review-tools.js';
+  BUILTIN_TOOL_NAMES, createReviewToolGroup, createRerunToolGroup,
+  selectWorkToolGroup, type ToolGroup,
+} from './tool-group-assembly.js';
 import {
-  createCommandRerunTools, REQUEST_COMMAND_RERUN_TOOL_NAME,
-} from './command-rerun-tools.js';
+  PROPOSE_SAFER_METHOD_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
+} from './unknown-call-review-tools.js';
+import { REQUEST_COMMAND_RERUN_TOOL_NAME } from './command-rerun-tools.js';
 import { commandSha256 } from '../work-graph/state/command-normalization.js';
 import type {
   CommandRerunRequestPort, CommandRerunRequestReadPort,
@@ -51,14 +48,7 @@ import type {
   UnknownCallReviewReadPort,
 } from '../work-graph/model/unknown-call-review-contracts.js';
 import type { CommandRecognizer } from '../work-graph/model/command-recognition-contracts.js';
-import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
-import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
-import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
-import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
-import type {
-  ExecutionHistoryPage, GraphExecutionHistoryReadPort, TaskExecutionHistoryRequest,
-} from './execution-history-contracts.js';
-import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
+import type { SessionMessage } from '../work-graph/model/communication-contracts.js';
 import { toolCommitRequestId } from '../work-graph/model/tool-commit-arguments.js';
 import type { ExecutionObservationService } from './execution-observation.js';
 import type { RuntimeControlCoordinator, RuntimeControlHandle } from './execution-control.js';
@@ -95,18 +85,6 @@ export type ExecutionDriverService = {
 
 type KernelSessionReader = Pick<SqliteStores, 'get' | 'read'>;
 
-/** The frozen C1 + W2 platform coordination tool names. Declaring a name here
- * grants nothing: the real selection set is the manifest/Role/Host intersection
- * re-checked above. */
-const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
-  ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, ...SESSION_DISCOVERY_TOOL_NAMES,
-  ...GRAPH_TOOL_NAMES, ...NOTE_TOOL_NAMES,
-]);
-/** K3 group 3: the L13 exploration names a review-round manifest may select.
- * The set is deliberately NOT all of `RESERVED_TOOL_NAMES`: a mutation name
- * such as `edit` stays unknown and is refused `unsupported` (KB-09). */
-const EXPLORATION_TOOL_NAME_SET = new Set<string>(EXPLORATION_TOOL_NAMES);
-
 function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
 }
@@ -117,227 +95,9 @@ function nonEmpty(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-/** Builtin Kernel file/process tools. The platform coordination tools below are
- * extension tools and are never file/read/shell capabilities. */
-export const BUILTIN_TOOL_NAMES = new Set<string>(['read', 'write', 'shell']);
-/** Names the coordination factories must never collide with. Declaring a name
- * here still grants nothing; this is an assembly guard only. */
-export const RESERVED_TOOL_NAMES = new Set<string>([
-  ...BUILTIN_TOOL_NAMES, 'edit', 'check', 'list_files', 'search', 'symbols', 'code_index',
-  'project_source', 'python_index', 'cpp_index', 'source_excerpt', 'read_source', 'read_material',
-]);
+export { BUILTIN_TOOL_NAMES, RESERVED_TOOL_NAMES } from './tool-group-assembly.js';
+export { createGraphHistoryProxy } from './tool-group-assembly.js';
 
-type CoordinationTools = { names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] };
-
-/**
- * The narrow history proxy the graph tools receive as their `history`
- * dependency. It is NOT the Host-only RT8: every call first re-validates the
- * requested Run card through the ORIGINAL tool context (its own principal and
- * signal) against the tool config's trusted Goal, then delegates to RT8 with
- * the driver's own same-scope trusted Host context and THIS tool call's signal.
- * The Host context is never handed to the model, and RT8's own
- * `source_stale`/cursor rejections pass through unchanged.
- *
- * Work passes the original `startRun` Host context and the Work Run's canonical
- * Goal; Query passes the `queryExecution.readPreparationFacts` original
- * initiator for both `principal` and `materialReader` (the caller builds that
- * context) and the QueryJob's canonical Goal.
- */
-export function createGraphHistoryProxy(input: {
-  graph: GraphContextReadPort;
-  history: GraphExecutionHistoryReadPort;
-  goalRef: GoalRef;
-  hostContext: CoreCallContext;
-}): GraphExecutionHistoryReadPort {
-  return {
-    async readTaskExecutionHistory(toolCtx, request: TaskExecutionHistoryRequest): Promise<ReadResult<ExecutionHistoryPage>> {
-      // The Run card is validated under the ORIGINAL tool identity (its own
-      // principal and its own signal) against the tool config's trusted Goal:
-      // the tool can never widen its own scope to another Goal. The trusted Host
-      // context is used only for the RT8 read below.
-      let looked;
-      try {
-        looked = await input.graph.lookGraph(toolCtx, {
-          goalRef: input.goalRef,
-          target: { kind: 'node', node: { kind: 'run', ref: request.runRef } },
-          relation: 'card',
-          page: { afterCursor: null, limit: 1 },
-        });
-      } catch (error) {
-        return rejected('unavailable', `the Run card could not be read before the history read: ${messageOf(error)}`);
-      }
-      // A canonical scope/identity rejection from the card read (including a Run
-      // of another Goal) is returned as is; no history owner is reached.
-      if (looked.status !== 'ready') return looked;
-      const card = looked.value.items[0];
-      if (card === undefined) return rejected('not_found', 'the graph did not return the requested Run card');
-      if (request.runRef.projectId !== input.goalRef.projectId || request.runRef.goalId !== input.goalRef.goalId) {
-        return rejected('forbidden', 'the requested Run is not in the bound Goal');
-      }
-      const node = card.node;
-      if (node.kind !== 'run' || node.ref.projectId !== request.runRef.projectId
-        || node.ref.goalId !== request.runRef.goalId || node.ref.runId !== request.runRef.runId) {
-        return rejected('unavailable', 'the graph returned a different node than the requested Run');
-      }
-      if (card.run === null || card.run.ref.runId !== request.runRef.runId
-        || card.run.workspaceSnapshot.workspaceId !== input.hostContext.workspaceId) {
-        return rejected('forbidden', 'the Run belongs to another workspace');
-      }
-      const trusted: CoreCallContext = { ...input.hostContext, signal: toolCtx.signal };
-      const result = await input.history.readTaskExecutionHistory(trusted, request);
-      // Keep RT8's own code and result shape, but make the result name the Run it
-      // was reading: a history page or rejection is always locatable to one Run.
-      if (result.status === 'rejected') {
-        return { ...result, reason: `${result.reason} (Run ${request.runRef.runId})` };
-      }
-      return result;
-    },
-  };
-}
-
-/**
- * Filter the already-reviewed coordination factories down to the effective manifest
- * intersection. An unknown selected name or a selected platform tool whose
- * dependency is unbound fails closed here, before any provider, authorize/begin
- * write or new-entry Host call. The returned `names` and the actual definitions
- * are kept one-to-one; a factory product mismatch throws so the Kernel run
- * aborts before the first provider call.
- */
-function selectCoordinationTools(input: {
-  selected: readonly string[];
-  mailbox: SessionMailboxPort | undefined;
-  /** Slice 5 §4.6 user-decision owner; absent makes the three tools unregisterable. */
-  decisionMessages?: RuntimeExecutionDependencies['decisionMessages'];
-  /** Slice 5 §4.5/T-R2-1 plan-application receipt reader; absent keeps the old tool result shape. */
-  applicationReceipt?: RuntimeExecutionDependencies['applicationReceipt'];
-  sessions: SessionDirectoryPort;
-  plans: PlanTaskPort;
-  context: CoreCallContext;
-  sessionRef: SessionRef;
-  goalRef: GoalRef;
-  requestIdForCall: (call: Readonly<ToolCall>) => string;
-  /** Real registration seam for an explicit waitAfterSend; the Runtime owns the
-   * per-Run wait and the Kernel barrier commits the yielded terminal. */
-  onWaitRegistered?: (message: SessionMessage) => void;
-  /** Slice 3 read-only graph tools and the trusted Host context their narrow
-   * history proxy delegates with. Absent, a selection of look/find fails closed. */
-  graph?: {
-    graphContext: GraphContextReadPort;
-    taskInputs: TaskContextInputPort;
-    graphHistory: GraphExecutionHistoryReadPort;
-    hostContext: CoreCallContext;
-  };
-  /** Slice 4C L13/L14: `platform.notes`' reads, write and check ports. A
-   * selection of look/find memory or `record_note` without the needed port
-   * fails closed before the model. */
-  notes?: RuntimeExecutionDependencies['notes'];
-  /** Names this Runtime handles outside the coordination factories (the
-   * read-only process tool). They are recognized but never built here. */
-  extensionNames?: ReadonlySet<string>;
-}): { ok: true; value: CoordinationTools | null } | { ok: false; rejection: CoreRejection } {
-  const unknown = input.selected.filter(name => !BUILTIN_TOOL_NAMES.has(name)
-    && !EXPLORATION_TOOL_NAME_SET.has(name) && !PLATFORM_COORDINATION_TOOL_NAMES.has(name)
-    && !(input.extensionNames?.has(name) ?? false));
-  if (unknown.length > 0) {
-    return { ok: false, rejection: rejected('unsupported', `the Run selects tool names this Runtime does not know: ${[...new Set(unknown)].join(', ')}`) };
-  }
-  const wanted = new Set(input.selected);
-  const mailboxNames = SESSION_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name));
-  const decisionNames = USER_DECISION_TOOL_NAMES.filter(name => wanted.has(name));
-  const whiteboardNames = WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
-  const discoveryNames = SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
-  const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
-  const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name));
-  if (mailboxNames.length === 0 && decisionNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0
-    && graphNames.length === 0 && noteNames.length === 0) {
-    return { ok: true, value: null };
-  }
-  if ((mailboxNames.length > 0 || decisionNames.length > 0) && input.mailbox === undefined) {
-    return { ok: false, rejection: rejected('unsupported', `the Run selects communication tools but no SessionMailbox dependency is bound: ${[...mailboxNames, ...decisionNames].join(', ')}`) };
-  }
-  if (decisionNames.length > 0 && input.decisionMessages === undefined) {
-    return { ok: false, rejection: rejected('unsupported', `the Run selects user decision tools but no decisionMessages dependency is bound: ${decisionNames.join(', ')}`) };
-  }
-  if (graphNames.length > 0 && input.graph === undefined) {
-    return { ok: false, rejection: rejected('unsupported', `the Run selects graph read tools but no graph read dependency is bound: ${graphNames.join(', ')}`) };
-  }
-  if (noteNames.length > 0 && (input.notes?.write === undefined || input.notes.check === undefined)) {
-    return { ok: false, rejection: rejected('unsupported', `the Run selects note tools but no note write/check dependency is bound: ${noteNames.join(', ')}`) };
-  }
-  const handles: Array<{ names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] }> = [];
-  if (mailboxNames.length > 0 || decisionNames.length > 0) {
-    handles.push(createSessionMailboxTools({
-      mailbox: input.mailbox as SessionMailboxPort,
-      ...(input.decisionMessages === undefined ? {} : { decisionMessages: input.decisionMessages }),
-      context: input.context,
-      sessionRef: input.sessionRef,
-      requestIdForCall: input.requestIdForCall,
-      ...(input.onWaitRegistered === undefined ? {} : { onWaitRegistered: input.onWaitRegistered }),
-    }));
-  }
-  if (whiteboardNames.length > 0) {
-    handles.push(createWhiteboardTools({
-      plans: input.plans,
-      context: input.context,
-      goalRef: input.goalRef,
-      requestIdForCall: input.requestIdForCall,
-      ...(input.applicationReceipt === undefined ? {} : { applicationReceipt: input.applicationReceipt }),
-    }));
-  }
-  if (discoveryNames.length > 0) {
-    handles.push(createSessionDiscoveryTools({ sessions: input.sessions, context: input.context }));
-  }
-  if (graphNames.length > 0) {
-    const graphDeps = input.graph as NonNullable<typeof input.graph>;
-    handles.push(createGraphTools({
-      context: input.context,
-      goalRef: input.goalRef,
-      graph: graphDeps.graphContext,
-      inputs: graphDeps.taskInputs,
-      history: createGraphHistoryProxy({
-        graph: graphDeps.graphContext,
-        history: graphDeps.graphHistory,
-        goalRef: input.goalRef,
-        hostContext: graphDeps.hostContext,
-      }),
-      ...(input.notes?.memory === undefined ? {} : { notes: input.notes.memory }),
-    }));
-  }
-  if (noteNames.length > 0) {
-    const noteDeps = input.notes;
-    if (noteDeps?.write === undefined || noteDeps.check === undefined) {
-      return { ok: false, rejection: rejected('unsupported', `the Run selects note tools but no note write/check dependency is bound: ${noteNames.join(', ')}`) };
-    }
-    handles.push(createNoteTools({
-      context: input.context,
-      notes: noteDeps.write,
-      check: noteDeps.check,
-      requestIdForCall: input.requestIdForCall,
-    }));
-  }
-  const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames, ...noteNames];
-  if (new Set(names).size !== names.length) {
-    return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
-  }
-  if (names.some(name => RESERVED_TOOL_NAMES.has(name))) {
-    return { ok: false, rejection: rejected('unsupported', 'a coordination tool name collides with a builtin, exploration or material tool') };
-  }
-  return {
-    ok: true,
-    value: {
-      names,
-      create: (workspace: WorkspaceSandbox): ToolDefinition[] => {
-        const definitions = handles.flatMap(handle => handle.create(workspace)).filter(definition => wanted.has(definition.name));
-        const produced = definitions.map(definition => definition.name);
-        if (produced.length !== names.length || new Set(produced).size !== produced.length
-          || names.some(name => !produced.includes(name))) {
-          throw new Error('the coordination tool factory did not produce exactly the selected definitions');
-        }
-        return definitions;
-      },
-    },
-  };
-}
 function sameRef(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as never) === canonicalJson(right as never); } catch { return false; }
 }
@@ -684,7 +444,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         waitRegistered ??= { message };
         if (waitHandle !== null) waitHandle.waitMessage = structuredClone(message);
       };
-      const coordination = selectCoordinationTools({
+      const coordination = selectWorkToolGroup({
         selected: manifest.permissions.tools,
         mailbox: deps.messages,
         ...(deps.decisionMessages === undefined ? {} : { decisionMessages: deps.decisionMessages }),
@@ -711,7 +471,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           PROPOSE_SAFER_METHOD_TOOL_NAME, REQUEST_COMMAND_RERUN_TOOL_NAME]),
       });
       if (!coordination.ok) return coordination.rejection;
-      const coordinationTools = coordination.value;
+      const coordinationTools: ToolGroup | null = coordination.value;
 
       // K3 L14/L20: the one review-purpose write tool is registered on BOTH
       // phases — `record_unknown_call_review` for `review`,
@@ -726,21 +486,16 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         if (deps.unknownCallReviews === undefined) {
           return rejected('unsupported', 'the review Run requires the unknownCallReviews owner to register its review tool');
         }
-        const reviewTools = createUnknownCallReviewTools({
+        const reviewGroup = createReviewToolGroup({
           reviews: deps.unknownCallReviews,
           context: toolContext,
           reviewRef: reviewPurpose.reviewRef,
           requestIdForCall,
           phase: reviewPurpose.phase,
         });
-        const chosenName = reviewTools.names[0];
-        if (chosenName === undefined) return rejected('unsupported', 'the review tool factory produced no name');
-        unknownCallReviewToolName = chosenName;
-        unknownCallReviewTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => {
-          const definition = reviewTools.create(workspaceHandle)[0];
-          if (definition === undefined) throw new Error('the review tool factory produced no definition');
-          return definition;
-        };
+        if (!reviewGroup.ok) return reviewGroup.rejection;
+        unknownCallReviewToolName = reviewGroup.value.names[0]!;
+        unknownCallReviewTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => reviewGroup.value.create(workspaceHandle)[0]!;
       }
 
       // L19a: `request_command_rerun` is registered ONLY on a Work Run whose
@@ -757,20 +512,15 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         if (deps.unknownCallReviews === undefined) {
           return rejected('unsupported', 'the blocked Work Run requires the unknownCallReviews read port for its shell hook');
         }
-        const requestTools = createCommandRerunTools({
+        const rerunGroup = createRerunToolGroup({
           requests: deps.commandRerunRequests,
           context: toolContext,
           task: manifest.claim.task,
           requestIdForCall,
         });
-        const chosenName = requestTools.names[0];
-        if (chosenName === undefined) return rejected('unsupported', 'the rerun request tool factory produced no name');
-        commandRerunToolName = chosenName;
-        commandRerunTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => {
-          const definition = requestTools.create(workspaceHandle)[0];
-          if (definition === undefined) throw new Error('the rerun request tool factory produced no definition');
-          return definition;
-        };
+        if (!rerunGroup.ok) return rerunGroup.rejection;
+        commandRerunToolName = rerunGroup.value.names[0]!;
+        commandRerunTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => rerunGroup.value.create(workspaceHandle)[0]!;
       }
 
       // L19a "在哪拦": the `before_tool` shell gate for a Work Run with a

@@ -14,11 +14,10 @@ import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../cont
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { ModelCallAccess } from '../../contracts/dispatch.js';
 import type { QueryModelUsageV1, QueryRunRef } from '../../contracts/query-job.js';
-import type { HookPort, ToolDefinition, WorkspaceSandbox } from '../../../vendor/coding-agent/dist/public-api.js';
+import type { HookPort } from '../../../vendor/coding-agent/dist/public-api.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
-import { GRAPH_TOOL_NAMES, createGraphTools } from './graph-tools.js';
-import { createGraphHistoryProxy } from './execution-driver.js';
+import { GRAPH_TOOL_NAMES } from './graph-tools.js';
 import type { SourceToolOptions } from './exploration-tools.js';
 import { ModelBudget, type MeterEntry, type ModelTokenBudget } from './model-budget.js';
 import { RuntimeModelCallRejected } from './model-call-access.js';
@@ -29,6 +28,7 @@ import { projectQueryConfiguration } from './query-preparation.js';
 import { createQueryObservation } from './query-observation.js';
 import { createQuerySourceCaptureFactory } from './source-capture-access.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
+import { createQueryGraphToolGroup, type ToolGroup } from './tool-group-assembly.js';
 import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import type {
   ResolvedRuntimeConfiguration, RuntimeExecutionDependencies, StartQueryExecutionRequest,
@@ -211,7 +211,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // Host grant ∩ Role ceiling ∩ Query read ceiling already projected into
       // `manifest.permissions.tools` by `projectQueryConfiguration`.
       const grantedGraphNames = GRAPH_TOOL_NAMES.filter(name => manifest.permissions.tools.includes(name));
-      let coordinationTools: { names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] } | null = null;
+      let coordinationTools: ToolGroup | null = null;
       if (grantedGraphNames.length > 0) {
         if (deps.graphContext === undefined || deps.taskInputs === undefined) {
           return rejected('unsupported', `the Query grant selects graph read tools but no graph read dependency is bound: ${grantedGraphNames.join(', ')}`);
@@ -236,23 +236,15 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           materialReader: { kind: 'host', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, actor: structuredClone(initiator) },
           signal,
         };
-        const handle = createGraphTools({
+        coordinationTools = createQueryGraphToolGroup({
+          names: grantedGraphNames,
           context: toolContext,
           goalRef: facts.value.goal.ref,
           graph: deps.graphContext,
           inputs: deps.taskInputs,
-          history: createGraphHistoryProxy({
-            graph: deps.graphContext,
-            history: deps.graphHistory,
-            goalRef: facts.value.goal.ref,
-            hostContext: trustedHostContext,
-          }),
+          history: deps.graphHistory,
+          hostContext: trustedHostContext,
         });
-        coordinationTools = {
-          names: grantedGraphNames,
-          create: (workspace: WorkspaceSandbox): ToolDefinition[] =>
-            handle.create(workspace).filter(definition => grantedGraphNames.includes(definition.name as (typeof GRAPH_TOOL_NAMES)[number])),
-        };
       }
 
       const kernel: QueryEntryIdentity['kernel'] = {
