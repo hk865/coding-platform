@@ -28,7 +28,9 @@
  *
  * Only the PUBLIC record port is wrapped, for accounting: physical CRR pages
  * per index, CRR commits, `readMany` point-read keys, plus the hook's record /
- * closure / workspace reads. No record, page or event is hand-encoded.
+ * closure / workspace reads. Every lookup request is forwarded unchanged and
+ * its own limit recorded; the wrapper adds no page width of its own. No record,
+ * page or event is hand-encoded.
  */
 import type { HookPort, ToolCall } from '../../vendor/coding-agent/dist/public-api.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -62,6 +64,18 @@ import { PLAN_B2, T } from './S5-decision-fixture.js';
 
 /** R = 401 CRR rows on one alias of one Task: ceil(401 / 200) = 3 pages. */
 export const B401_R = 401;
+
+/**
+ * `runs` defaults to R = 401. This helper fills in no width: when the caller
+ * omits `taskRequestPageLimit`, seam D stays absent and the CRR service's own
+ * default (200) decides, so the scale world covers the production default.
+ *  - `taskRequestPageLimit` is seam D, passed to the CRR service (hook list and
+ *    the request tool's `readTaskRequests`, the latter through A).
+ */
+export type B401WorldOptions = {
+  runs?: number;
+  taskRequestPageLimit?: number;
+};
 const COMMAND = 'npm run db:migrate';
 const BLOCKED_CALL_ID = 'b2-401-call-1';
 /** `'completed'` is the natural final reply; `'crashed'` is the Runtime's own `run_crashed`. */
@@ -179,7 +193,7 @@ function committed(reply: CommandRerunRequestReplyV1): Extract<CommandRerunReque
   return reply;
 }
 
-export async function openB401World(options: { runs?: number } = {}): Promise<B401World> {
+export async function openB401World(options: B401WorldOptions = {}): Promise<B401World> {
   const total = options.runs ?? B401_R;
   const buildMs = Date.now();
   const blocked = await openK3BlockedCommandWorld('sqlite', {
@@ -216,6 +230,9 @@ export async function openB401World(options: { runs?: number } = {}): Promise<B4
         return committedNow;
       },
       async lookup(request: RecordLookupRequest) {
+        // Count only: the request reaches the store unchanged and the counter
+        // records the width the caller asked for (seam D's own limit), so a
+        // missed seam is visible instead of being capped here.
         const page = await base.lookup(request);
         const list = counters.pages.get(request.index) ?? [];
         list.push({ limit: request.limit, after: request.after,
@@ -262,6 +279,9 @@ export async function openB401World(options: { runs?: number } = {}): Promise<B4
     let eventSeq = 0;
     const requestService = createCommandRerunRequestService({
       records,
+      // R-SC-2: pass D only when the caller gave a width; absent stays absent
+      // so the service's own default (200) decides.
+      ...(options.taskRequestPageLimit === undefined ? {} : { taskRequestPageLimit: options.taskRequestPageLimit }),
       listTaskReviews: readTaskReviews,
       readTaskClosure: readClosure,
       recognize: recognizer,

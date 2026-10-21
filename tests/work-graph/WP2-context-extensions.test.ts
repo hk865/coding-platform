@@ -6,9 +6,12 @@
  *
  * The E2 acceptance evidence for F05-F08 lives in `tests/composition/WP2-wiring.test.ts`
  * (real platform). Here the provider is driven directly (entry E4): F05/F06
- * read the real Goal settings and the real S5 decision queue, and both F07
- * rows (the 100-per-page boundary and the 5,000-card capacity edge) use real
- * card histories read through the real queue. The remaining fault-injection
+ * read the real Goal settings and the real S5 decision queue, and the daily
+ * F07 cases use real card histories read through the real queue with the
+ * shrunken paging behaviour (page width 2, 4 candidates, 4/5 new requests).
+ * The original scale boundaries (the 100-per-page boundary and the
+ * 5,000/5,001-card capacity edge) stay in the sibling
+ * `WP2-context-extensions.scale.test.ts`. The remaining fault-injection
  * cases are named `SUP` supplements, not the row evidence.
  */
 import type { ActorRef, CommitCursor } from '../../src/contracts/command-event.js';
@@ -29,7 +32,6 @@ import type {
 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { ContextReadRequestV1 } from '../../src/core/work-graph/model/graph-context-contracts.js';
 import type { SessionPage } from '../../src/core/work-graph/model/session-contracts.js';
-import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
@@ -46,7 +48,7 @@ import { createDecisionReadModel, createGoalCauseCardSource } from '../../src/co
 import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice-display-token.js';
 import { createNoticePositionComparator } from '../../src/core/work-graph/views/notice-position.js';
-import { GOAL_A, GOAL_B, OPERATOR, PLAN_A1, PLAN_B1, PROJECT, WORKSPACE, WORKSPACE_SCOPE, openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
+import { GOAL_B, OPERATOR, PROJECT, WORKSPACE, WORKSPACE_SCOPE, openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
 import { committed, mailboxDependencies, materialsFor, pin, workContext } from '../helpers/S5-queue-support.js';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -194,13 +196,17 @@ function decisionCard(options: {
 // remain only for the narrowly named SUP fault-injection cases below. No row
 // evidence uses them.
 
+/** The decision read model's page widths; omitted values keep production's 200. */
+type DecisionReadWidths = { sourcePageLimit?: number; lookupPageLimit?: number };
+
 /**
  * F06/F07 entry E4 with REAL dependencies: the real S5 decision message owner
  * and the real `createDecisionReadModel` over the same records. No fabricated
  * card/page is used for these two rows.
  */
 function realDecisionQueue(f: S5DecisionFixture,
-  cardSources: readonly DecisionCardSourcePort[] = []): DecisionReadPort {
+  cardSources: readonly DecisionCardSourcePort[] = [],
+  widths: DecisionReadWidths = {}): DecisionReadPort {
   return createDecisionReadModel({
     records: f.records,
     cardSources: [...cardSources],
@@ -210,6 +216,8 @@ function realDecisionQueue(f: S5DecisionFixture,
       executedFiles: createGoalExecutedFilesReader({ records: f.records }) }),
     positions: createNoticePositionComparator(),
     displayTokens: createNoticeDisplayToken(new Uint8Array(32).fill(2)),
+    ...(widths.sourcePageLimit === undefined ? {} : { sourcePageLimit: widths.sourcePageLimit }),
+    ...(widths.lookupPageLimit === undefined ? {} : { lookupPageLimit: widths.lookupPageLimit }),
   });
 }
 
@@ -220,7 +228,7 @@ type DecisionHarness = {
   queue: DecisionReadPort;
 };
 
-async function openDecisionHarness(): Promise<DecisionHarness> {
+async function openDecisionHarness(widths: DecisionReadWidths = {}): Promise<DecisionHarness> {
   const f = await openS5DecisionFixture('memory');
   closers.push(() => f.close());
   const mailboxDeps = mailboxDependencies(f);
@@ -228,7 +236,7 @@ async function openDecisionHarness(): Promise<DecisionHarness> {
   const decisions = createDecisionMessageService({ records: f.records, now: f.now, newId: f.newId,
     operatorActor: OPERATOR, messages: mailbox, materials: mailboxDeps.materials,
     messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ records: f.records }) });
-  return { f, mailbox, decisions, queue: realDecisionQueue(f) };
+  return { f, mailbox, decisions, queue: realDecisionQueue(f, [], widths) };
 }
 
 /** A real decision_request user message through the original send owner. */
@@ -272,8 +280,16 @@ type DeferredDecisionHarness = {
  * production Session operation owner and its running Run RA is entered by the
  * shared real Runtime, so no Session, Kernel identity or entered fact is
  * handwritten under this row.
+ *
+ * The candidate count and the read widths are parameters so the daily small
+ * version can shrink the same world; both defaults keep today's production
+ * value (100 candidates, the decision read model's own 200-item windows).
  */
-async function openDeferredDecisionHarness(kind: 'memory' | 'sqlite'): Promise<DeferredDecisionHarness> {
+async function openDeferredDecisionHarness(
+  kind: 'memory' | 'sqlite',
+  candidateCount: number = F07_CANDIDATE_COUNT,
+  widths: DecisionReadWidths = {},
+): Promise<DeferredDecisionHarness> {
   const f = await openS5DecisionFixture(kind, { realRuntime: true });
   closers.push(() => f.close());
   const goalRef: GoalRef = { aggregateType: 'Goal', projectId: GOAL_B.projectId, goalId: F07_GOAL_ID };
@@ -323,7 +339,7 @@ async function openDeferredDecisionHarness(kind: 'memory' | 'sqlite'): Promise<D
   const goalRevision = current.value.goal.revision;
 
   const candidateProposalIds: string[] = [];
-  for (let index = 0; index < F07_CANDIDATE_COUNT; index += 1) {
+  for (let index = 0; index < candidateCount; index += 1) {
     const requestId = `f07-candidate-${String(index).padStart(3, '0')}`;
     const proposal = await plans.proposePlan(f.ctx, { input: { goalRef, basedOn: planRef, draft,
       reason: { text: `F07 filler ${String(index)}`, sources: [] } },
@@ -344,7 +360,7 @@ async function openDeferredDecisionHarness(kind: 'memory' | 'sqlite'): Promise<D
   const anomalies = createSessionAnomalyService({ records: f.records, lookups: f.records,
     sessionFacts: createSessionFactsService({ records: f.records }), now: f.now });
   return { f, goalRef, candidateProposalIds, anomalies,
-    queue: realDecisionQueue(f, [createGoalCauseCardSource(goalCauseReader)]) };
+    queue: realDecisionQueue(f, [createGoalCauseCardSource(goalCauseReader)], widths) };
 }
 
 describe('WP2 context extensions provider (module side; E2 evidence in WP2-wiring)', () => {
@@ -422,16 +438,52 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     expect(rows).not.toContain(rowKey);
   });
 
-  it.each(['memory', 'sqlite'] as const)('F07 %s follows the real page boundary and keeps the named tail Task card under focus', async kind => {
-    const h = await openDeferredDecisionHarness(kind);
-    const read = createContextExtensionsReader({ anomalies: h.anomalies, hostActor: HOST_ACTOR, decisions: h.queue });
+  // Daily small version of the moved 100-candidate scale row. The decision
+  // read model's source and lookup windows are 2 (the lookup window is the B′
+  // width both candidate enumerations use) and the context reader pages the
+  // queue at decisionPageLimit 2.
+  //
+  // B′ (PLAN_PROPOSAL_LOOKUP_INDEX for the deferred Goal) has no orderBy, so its
+  // records are in UTF-8 byte order of the canonical PlanProposalRef key, i.e.
+  // by proposalId. The index holds 5 records: the 4 live candidates plus the
+  // already-adopted initial proposal. A proposal id is
+  // 'plan-proposal-' + sha256(canonicalJson({projectId, workspaceId, goalId,
+  // requestId}))[:32]; the initial one hashes {schemaVersion:1,
+  // entry:'initial-plan-from-answer', ...} instead. Order and pages at width 2:
+  //   [f07-candidate-000 2ffd9c88c9ec25781692dd8102b308be,
+  //    f07-candidate-002 3299adb44ce2ece9515250663b0b497c]
+  //   [initial f07-deferred-propose 41992e3b8f2a989be37a79d7061a948d,
+  //    f07-candidate-003 675166877294110aaea0cdbacdd0cd3e]
+  //   [f07-candidate-001 91ac2ded8de1330b3a08c2e220c1c004]
+  // -> 2/2/1. The adopted proposal decodes to status accepted and is filtered
+  // out of the live cards; the last inner page holds the fourth live candidate,
+  // candidate-001 (91ac2ded...), whose card row the assertion lists.
+  //
+  // Outer queue (decisionPageLimit 2): the 4 candidate cards in proposalId order
+  // then the two real Goal-level goal_cause cards (change_pending, then
+  // required_task_deferred), 6 waiting cards in pages of 2:
+  //   [candidate-000, candidate-002] [candidate-003, candidate-001]
+  //   [change_pending, required_task_deferred (the named Task card)]
+  // so the named Task card is the sixth and last card.
+  const F07_SMALL_CANDIDATE_COUNT = 4;
+  it.each(['memory', 'sqlite'] as const)('F07 (small: 4 candidates, page 2) %s follows the real page boundary and keeps the named tail Task card under focus', async kind => {
+    const h = await openDeferredDecisionHarness(kind, F07_SMALL_CANDIDATE_COUNT,
+      { sourcePageLimit: 2, lookupPageLimit: 2 });
+    const read = createContextExtensionsReader({ anomalies: h.anomalies, hostActor: HOST_ACTOR,
+      decisions: h.queue, decisionPageLimit: 2 });
     const request = (focusTaskIds: string[]): ContextReadRequestV1 => ({ goalRef: h.goalRef, focusTaskIds });
 
-    // The literal expected row order. The real queue served two pages: the 100
-    // candidate cards, then the Task-linked goal_cause card (the named tail Task
-    // card). Every row key is written out from the spec format below; the only
-    // values taken from the platform are the proposal ids the real `proposePlan`
-    // returned, used as returned. Nothing is read back from the queue.
+    // The literal expected row order. B′ reads its 5 proposal records at width 2
+    // as 2/2/1 (records above); after the accepted initial proposal is filtered,
+    // the 4 live candidate cards are in candidateProposalIds order (proposalId
+    // 2ffd..., 3299..., 6751..., 91ac...). The real queue served three pages of
+    // 2: (candidate-000, candidate-002), (candidate-003, candidate-001), then the
+    // Goal-level change_pending goal_cause card and the Task-linked
+    // required_task_deferred goal_cause card (the named tail Task card), so the
+    // named Task card is the last waiting card. Every row key is written out from
+    // the spec format below; the only values taken from the platform are the
+    // proposal ids the real `proposePlan` returned, used as returned. Nothing
+    // is read back from the queue.
     //
     // Spec: a card row's key is 'decision:' + card.cardKey and the merged rows are
     // sorted by key in character-code order (wiring-2 §4.3 items 4 and 6, L5);
@@ -444,7 +496,7 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     //   candidate    {"goalRef":<GoalRef>,"kind":"candidate","proposalRef":<proposal>}
     //   a pin        {"ref":<ref>,"revision":<n>}
     // The deferred Task's pin is the L5 Task designation
-    // {aggregateType:'Task',projectId,goalId,taskId}@0. The 100 candidates also
+    // {aggregateType:'Task',projectId,goalId,taskId}@0. The live candidates also
     // make the smallest proposal id the Goal's pending proposal, so the real
     // display reader adds its Goal-level change_pending cause, pinned at that
     // proposal's first revision, 1.
@@ -482,16 +534,44 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
       .toEqual(goalLevelRowKeys);
   });
 
-  // Lead (2A §5.3, frozen): wiring 2's temporary 5,000-card bound is removed
-  // (2A §0.4); 5,001 real waiting cards are all read, nothing is refused.
-  it('F07 5,000 real waiting cards are all read and one more is read too (no capacity bound)', async () => {
-    const h = await openDecisionHarness();
-    const read = createContextExtensionsReader({ anomalies: anomalyDouble(), hostActor: HOST_ACTOR, decisions: h.queue });
+  // Daily small version of the moved 5,000/5,001-card scale row (2A §0.4: the
+  // wiring-2 temporary 5,000-card bound is removed; 2A §5.3 fixes the row).
+  // The real Goal B queue already serves 4 waiting cards; this adds 4 real
+  // decision requests (4 + 4 = 8 waiting cards) and then one overflow request
+  // (9 waiting cards). The queue is read at decisionPageLimit 2: 8 cards as
+  // pages of 2, 2, 2, 2, then 9 cards as pages of 2, 2, 2, 2, 1.
+  //
+  // A (the user-message index scan, S2A_USER_MESSAGES_LOOKUP) also crosses
+  // pages at lookupPageLimit 2. That index has no orderBy, so its records are in
+  // UTF-8 byte order of the canonical SessionMessageRef key, i.e. by messageId;
+  // a message id is sha256(canonicalJson({projectId, workspaceId, sender,
+  // requestId})) with the same sender (claim RA) for all of them. The fixture's
+  // two messages plus the four new requests are 6 records, pages of 2:
+  //   [Real decision 1 (s5-id-8) 233baeb9e8f9f278b21a1e508796df339574857e8fa767e744fa54ac3d68ba2d,
+  //    fixture answered (s5-answered-send) 364ef243161da4558b8ac36e0372e5dbe3f03b13e7552b071e2a990e76864bac]
+  //   [Real decision 0 (s5-id-7) 6341ee3b7c3dd7fdd3e7583339e5758bad72fab9ef077e13707f5663dfaf076c,
+  //    Real decision 2 (s5-id-9) 798d714887e4f9c219b6943885a7ff691473eadffe6d5cec91d4e205925856e7]
+  //   [fixture decision (s5-decision-send) 7f5447577dd8f08d240d817fae90c338f80b5ab3c7bec0ac68bbf03c1647d8af,
+  //    Real decision 3 (s5-id-10) cd8c37dd2ec25319c31494b720b0dd62b0be91690c0a22f796c99d763bc766e1]
+  // The last page holds Real decision 3, the last created card the membership
+  // assertion names (created.at(-1)). With the overflow request
+  // (s5-id-11, messageId 23f3467e82a370e22111a7ffed4f337315df0977f3ba53eb95da9de2bd0916a6)
+  // the 7 records are:
+  //   [Real decision 1 233baeb9..., overflow 23f3467e...]
+  //   [fixture answered 364ef243..., Real decision 0 6341ee3b...]
+  //   [Real decision 2 798d7148..., fixture decision 7f544757...]
+  //   [Real decision 3 cd8c37dd...]
+  // -> 2/2/2/1, still with Real decision 3 on the last page. The four card
+  // sources this harness does not wire still produce 4 literal not_available
+  // hint rows: 8 + 4 = 12 rows, then 9 + 4 = 13 rows.
+  it('F07 5,000 real waiting cards are all read and one more is read too (no capacity bound) (small: 4 requests, page 2)', async () => {
+    const h = await openDecisionHarness({ lookupPageLimit: 2 });
+    const read = createContextExtensionsReader({ anomalies: anomalyDouble(), hostActor: HOST_ACTOR,
+      decisions: h.queue, decisionPageLimit: 2 });
     const request: ContextReadRequestV1 = { goalRef: GOAL_B, focusTaskIds: [] };
-    // The real Goal B queue already serves 4 waiting cards; 4,996 new real
-    // decision requests bring the input window to exactly the L6 bound of 5,000.
+    // Four new real decision requests over the four pre-existing Goal B cards.
     const created: string[] = [];
-    for (let index = 0; index < 4_996; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       const sent = await sendDecisionRequest(h, `Real decision ${String(index)}`);
       const source = sent.decision?.source;
       if (source === undefined) throw new Error('the sent decision request carries no decision source');
@@ -505,14 +585,26 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     // The four pre-existing Goal B seed cards are present with independently
     // specified identities: the pending decision message, the two request
     // candidates and the A/B conflict, all named by the frozen fixture's literal
-    // values, never by a queue readback.
+    // values, never by a queue readback. Each key is the spec's canonical JSON
+    // (slice-5 §2; object keys in UTF-16 code-unit order). The message key is
+    // {"kind":"message","messageRef":{...}}; a candidate adds "goalRef" before
+    // "kind" before "requestRef"; the conflict pairs each Goal with its active
+    // Plan, A before B (the unordered pair sorts by the Goal key). Only the
+    // message and request ids are interpolated, from the fixture's public
+    // creation results.
     const seedKeys = [
-      `decision:${decisionSourceKey({ kind: 'message', messageRef: h.f.messages.decision.ref })}`,
-      `decision:${decisionSourceKey({ kind: 'candidate', goalRef: GOAL_B, requestRef: h.f.requests.Q1.ref })}`,
-      `decision:${decisionSourceKey({ kind: 'candidate', goalRef: GOAL_B, requestRef: h.f.requests.Q2.ref })}`,
-      `decision:${decisionSourceKey({ kind: 'goal_conflict', pair: [
-        { goalRef: GOAL_A, activePlanRef: PLAN_A1 }, { goalRef: GOAL_B, activePlanRef: PLAN_B1 },
-      ] })}`,
+      'decision:{"kind":"message","messageRef":{"aggregateType":"SessionMessage","messageId":"'
+        + h.f.messages.decision.ref.messageId + '","projectId":"P","workspaceId":"W"}}',
+      'decision:{"goalRef":{"aggregateType":"Goal","goalId":"B","projectId":"P"},"kind":"candidate",'
+        + '"requestRef":{"aggregateType":"QueryJob","projectId":"P","queryJobId":"'
+        + h.f.requests.Q1.ref.queryJobId + '","workspaceId":"W"}}',
+      'decision:{"goalRef":{"aggregateType":"Goal","goalId":"B","projectId":"P"},"kind":"candidate",'
+        + '"requestRef":{"aggregateType":"QueryJob","projectId":"P","queryJobId":"'
+        + h.f.requests.Q2.ref.queryJobId + '","workspaceId":"W"}}',
+      'decision:{"kind":"goal_conflict","pair":[{"activePlanRef":{"aggregateType":"PlanRevision",'
+        + '"planId":"PA1","projectId":"P"},"goalRef":{"aggregateType":"Goal","goalId":"A","projectId":"P"}},'
+        + '{"activePlanRef":{"aggregateType":"PlanRevision","planId":"PB1","projectId":"P"},'
+        + '"goalRef":{"aggregateType":"Goal","goalId":"B","projectId":"P"}}]}',
     ];
     for (const key of seedKeys) expect(keys.has(key)).toBe(true);
     // The four literal L5 not_available hint rows for the seven card sources.
@@ -523,12 +615,12 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
       'decision:not_available:message_release',
     ];
     for (const key of hintKeys) expect(keys.has(key)).toBe(true);
-    // 5,000 card rows plus the 4 literal not_available hint rows; nothing was
-    // truncated, skipped or fabricated.
-    expect(exact.decisions.rows).toHaveLength(5_004);
+    // 8 card rows (4 seed + 4 created) plus the 4 literal hint rows; nothing
+    // was truncated, skipped or fabricated.
+    expect(exact.decisions.rows).toHaveLength(12);
 
     // One more real waiting card: the read still succeeds and carries it, with
-    // every earlier row kept (5,001 card rows plus the 4 hint rows).
+    // every earlier row kept: 9 card rows plus the 4 hint rows.
     const overflow = await sendDecisionRequest(h, 'Real decision overflow');
     const overflowSource = overflow.decision?.source;
     if (overflowSource === undefined) throw new Error('the sent decision request carries no decision source');
@@ -536,8 +628,8 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     const overKeys = new Set(over.decisions.rows.map(row => row.key));
     expect(overKeys.has(`decision:${overflowSource.key}`)).toBe(true);
     for (const key of [...created, ...seedKeys, ...hintKeys]) expect(overKeys.has(key)).toBe(true);
-    expect(over.decisions.rows).toHaveLength(5_005);
-  }, 240_000);
+    expect(over.decisions.rows).toHaveLength(13);
+  });
 
   it('SUP (fault injection) an installed Goal-settings read failure fails the whole context read', async () => {
     const thrown = createContextExtensionsReader({

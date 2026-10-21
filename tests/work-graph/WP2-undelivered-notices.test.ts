@@ -26,6 +26,8 @@ type NoticeDeps = {
 };
 
 const factory: NoticeSourceFactory = (deps) => createUndeliveredReplyNoticeSource(deps);
+/** The daily M07 widths: both inner layers and the outer source page are 2. */
+const smallFactory: NoticeSourceFactory = (deps) => createUndeliveredReplyNoticeSource({ ...deps, readPageLimit: 2 });
 const opened: WP2NoticesFixture[] = [];
 afterEach(async () => { for (const f of opened.splice(0)) await f.close(); });
 
@@ -512,38 +514,64 @@ describe('WP2 undelivered-reply notices', () => {
   });
 
   // Lead (2A §5.3, frozen): wiring 2's temporary 50-page/5,000-item bound is
-  // removed (2A §0.4); 5,001 real replies are all paged, nothing is refused.
-  it('M07 5000 real undelivered replies are all read and 5001 are all read too (no capacity bound)', async () => {
-    // A real unavailable line with `count` saved replies: real messages, one
-    // wait yield, the real health commit, then one real response per message.
+  // removed (2A §0.4). The daily version keeps the exact-page and one-more
+  // behaviour with every inner and outer width cut to 2. The small world swaps
+  // the two roles so the decisive Session sits on the LAST directory page:
+  //   directory layer (readPageLimit 2): the fixture's 3 Sessions in ascending
+  //     Session aggregate-refKey order are page 1 [S (session-first),
+  //     idle (session-second)] and page 2 [D (b2-session-second)]. D, the last
+  //     page, sends and is retired; S replies.
+  //   reply layer (inner, readPageLimit 2): name the messages M0..Mn in send
+  //     order; the replies are committed in ascending SessionMessage refKey
+  //     (= ascending messageId, the only part of the key that differs) order,
+  //     so the inner read returns that same order. Hand-computed order:
+  //       4 replies: [M3, M2] / [M0, M1] (2 pages; decisive M1 on the last);
+  //       5 replies: [M3, M2] / [M4, M0] / [M1] (3 pages; decisive M1 last).
+  //   source layer (outer, limit 2): the same order and the same 2 and 3 pages
+  //     (the replies are all committed after the health commit R, so each
+  //     position is its reply commit P); the tail M1 is the last page's item.
+  it('M07 (small: 4 and 5 replies, page 2) 4 real undelivered replies are all read and 5 are all read too (no capacity bound)', async () => {
+    // A real unavailable line with `count` saved replies. D (the directory's
+    // last-page Session) sends and is retired through the real health owner;
+    // S replies. Real messages, one wait yield, the real health commit, then
+    // one real response per message in ascending message-key order.
     const replyLine = async (count: number) => {
-      const fixture = await open();
-      await fixture.f.enter();
+      const fixture = await open('memory', smallFactory);
+      await fixture.f.enter(fixture.f.b2.secondClaim); // enter D
       const messages: SessionMessage[] = [];
-      for (let index = 0; index < count; index += 1) messages.push(await fixture.send());
-      await fixture.f.yieldWait(messages[0]!);
-      await fixture.f.enter(fixture.f.b2.secondClaim);
-      await fixture.f.retire();
+      for (let index = 0; index < count; index += 1) messages.push(await fixture.send(fixture.f.b2.secondClaim, fixture.f.S));
+      await fixture.f.yieldWait(messages[0]!, fixture.f.b2.secondClaim);
+      await fixture.f.enter(); // enter S, the responder
+      const retired = await fixture.health('missing', fixture.f.D);
+      expect(retired).toMatchObject({ status: 'observed', session: { health: 'unavailable' } });
+      // Ascending full SessionMessage refKey = ascending messageId here (the
+      // project and workspace parts are identical for every message).
+      const ordered = [...messages].sort((left, right) => {
+        const a = left.ref.messageId;
+        const b = right.ref.messageId;
+        return a < b ? -1 : a > b ? 1 : 0;
+      });
       const replies = [];
-      for (const message of messages) replies.push(await fixture.f.respond(message));
-      return { fixture, messages, replies };
+      for (const message of ordered) replies.push(await fixture.f.respond(message, fixture.f.b2.claim));
+      return { fixture, messages: ordered, replies };
     };
 
-    // Exactly 5000 real replies on one real unavailable line: page the public
-    // source with its outer 200-item limit and verify every item and the named
-    // tail (the last created reply).
-    const exact = await replyLine(5_000);
+    // Exactly 4 real replies on one real unavailable line: page the public
+    // source with its outer 2-item limit and verify every item and the named
+    // tail (M1, the last committed reply in message-key order). 4 / 2 = 2 full
+    // pages.
+    const exact = await replyLine(4);
     const exactSource = exact.fixture.notices().source;
     const all: NoticeItemV1[] = [];
     let cursor: string | undefined;
     for (;;) {
       const page = ready(await exactSource.readPage(exact.fixture.ctx, { workspace: exact.fixture.scope,
-        page: cursor === undefined ? { limit: 200 } : { limit: 200, cursor } }));
+        page: cursor === undefined ? { limit: 2 } : { limit: 2, cursor } }));
       all.push(...page.items);
       if (page.nextCursor === null) break;
       cursor = page.nextCursor;
     }
-    expect(all).toHaveLength(5_000);
+    expect(all).toHaveLength(4);
     expect(all.map(item => item.objects[0])).toEqual(exact.messages.map((message, index) => ({
       kind: 'aggregate', pin: { ref: message.ref, revision: exact.replies[index]!.value.revision }, label: '原消息' })));
     expect(all.map(item => {
@@ -553,27 +581,28 @@ describe('WP2 undelivered-reply notices', () => {
     expect(all.at(-1)!.objects[0]).toEqual({ kind: 'aggregate',
       pin: { ref: exact.messages.at(-1)!.ref, revision: exact.replies.at(-1)!.value.revision }, label: '原消息' });
 
-    // One more real reply (5,001 on one line, past wiring 2's old bound): paging
-    // the public source still returns every item, in reply order, once each.
-    const over = await replyLine(5_001);
+    // One more real reply (5 on one line): 5 / 2 = 2 full pages and a third
+    // page with one item; paging the public source still returns every item,
+    // in reply order, once each.
+    const over = await replyLine(5);
     const overSource = over.fixture.notices().source;
     const overAll: NoticeItemV1[] = [];
     let overCursor: string | undefined;
     for (;;) {
       const page = ready(await overSource.readPage(over.fixture.ctx, { workspace: over.fixture.scope,
-        page: overCursor === undefined ? { limit: 200 } : { limit: 200, cursor: overCursor } }));
+        page: overCursor === undefined ? { limit: 2 } : { limit: 2, cursor: overCursor } }));
       overAll.push(...page.items);
       if (page.nextCursor === null) break;
       overCursor = page.nextCursor;
     }
-    expect(overAll).toHaveLength(5_001);
+    expect(overAll).toHaveLength(5);
     expect(overAll.map(item => item.objects[0])).toEqual(over.messages.map((message, index) => ({
       kind: 'aggregate', pin: { ref: message.ref, revision: over.replies[index]!.value.revision }, label: '原消息' })));
     expect(overAll.map(item => {
       if (item.position.kind !== 'commit') throw new Error('a commit position is required');
       return String(item.position.cursor);
     })).toEqual(over.replies.map(reply => String(reply.cursor)));
-  }, 300_000);
+  });
 
   it('M09 a changed window is retried as a whole and recovers; a stable mismatch fails', async () => {
     const f = await open();

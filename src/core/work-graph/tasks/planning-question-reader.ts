@@ -44,6 +44,8 @@ export type PlanningQuestionReaderRecords =
 export type PlanningQuestionReaderDependencies = {
   records: PlanningQuestionReaderRecords;
   plans: Pick<PlanTaskPort, 'readInitialPlanAnswerFacts'>;
+  /** The page width of one lookup batch; the default stays today's 200. */
+  lookupPageLimit?: number;
 };
 
 /** §4.2: one page of the saved planning questions, as decision cards, read-only. */
@@ -69,6 +71,7 @@ export function createPlanningQuestionReader(
   deps: PlanningQuestionReaderDependencies,
 ): PlanningQuestionReader {
   const { records, plans } = deps;
+  const lookupPageLimit = deps.lookupPageLimit ?? LOOKUP_PAGE_LIMIT;
 
   async function readGoal(goalRef: GoalRef): Promise<{ ok: true; goal: GoalSnapshot } | { ok: false; rejection: CoreRejection }> {
     const key = canonicalJson(goalRef as unknown as JsonValue);
@@ -109,8 +112,8 @@ export function createPlanningQuestionReader(
     let watermark: CommitCursor | null = null;
     for (;;) {
       const result = await records.lookup(after === undefined
-        ? { index, values, limit: LOOKUP_PAGE_LIMIT }
-        : { index, values, after, limit: LOOKUP_PAGE_LIMIT });
+        ? { index, values, limit: lookupPageLimit }
+        : { index, values, after, limit: lookupPageLimit });
       if (result.status !== 'ready') return null;
       for (const record of result.value.records) refKeys.push(record.refKey);
       watermark = result.value.readThrough ?? watermark;

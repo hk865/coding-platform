@@ -62,6 +62,8 @@ export type GoalConflictAssemblerDependencies = {
   records: DecisionReadRecordsPort;
   catalog: ArchitectureCatalogPort;
   executedFiles: GoalExecutedFilesPort;
+  /** The page width of the Goal-list lookup; absent keeps lookupAll's default 200. */
+  lookupPageLimit?: number;
 };
 
 /** The fixed §4.3 conflict options, in the frozen order wait/order/parallel. */
@@ -119,8 +121,11 @@ export async function readWatermark(
 export async function listWorkspaceGoals(
   records: DecisionReadRecordsPort,
   workspace: WorkspaceScope,
+  /** The page width of the Goal-list lookup; absent keeps lookupAll's default 200. */
+  lookupPageLimit?: number,
 ): Promise<{ goals: GoalSnapshot[]; watermark: CommitCursor | null; truncated: boolean }> {
-  const batch = await lookupAll(records, GOAL_BY_WORKSPACE_INDEX, [workspace.projectId, workspace.workspaceId]);
+  const batch = await lookupAll(records, GOAL_BY_WORKSPACE_INDEX, [workspace.projectId, workspace.workspaceId],
+    { ...(lookupPageLimit === undefined ? {} : { pageLimit: lookupPageLimit }) });
   const goals: GoalSnapshot[] = [];
   for (const record of batch.items) {
     const decoded = decodeGoalSnapshot(record);
@@ -225,7 +230,7 @@ async function assembleGoalConflicts(
   if (scopeProblem !== null) return scopeProblem;
   let listed: Awaited<ReturnType<typeof listWorkspaceGoals>>;
   try {
-    listed = await listWorkspaceGoals(deps.records, input.workspace);
+    listed = await listWorkspaceGoals(deps.records, input.workspace, deps.lookupPageLimit);
   } catch (error) {
     return storeFailureToRejection(error as { code: string; reason: string });
   }

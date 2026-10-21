@@ -80,6 +80,8 @@ export type CommandRerunRequestServiceDependencies = {
     Promise<ReadResult<{ closed: boolean; cause: 'satisfied' | 'cancelled' | 'superseded' | null }>>;
   /** The ONE recognizer (N's command-recognition.ts); absent -> requestRerun is unavailable. */
   recognize?: CommandRecognizer;
+  /** The page width of the task's request reads (hook list and request tool); default 200. */
+  taskRequestPageLimit?: number;
   now: () => string;
   eventId: () => string;
 };
@@ -177,6 +179,7 @@ export function createCommandRerunRequestService(
     ?? (typeof (store as Partial<RecordLookupPort>).lookup === 'function' ? store as RecordLookupPort : null);
   const now = deps.now;
   const newEventId = deps.eventId;
+  const taskRequestPageLimit = deps.taskRequestPageLimit ?? MAX_PAGE_LIMIT;
 
   // ---- reads --------------------------------------------------------------
 
@@ -461,7 +464,7 @@ export function createCommandRerunRequestService(
     let cursor: string | undefined;
     for (let page = 0; ; page += 1) {
       const read = await onePage(K3_CRR_BY_TASK_LOOKUP, [projectId, goalId, taskId],
-        MAX_PAGE_LIMIT, cursor, closure.closed);
+        taskRequestPageLimit, cursor, closure.closed);
       if (read.status !== 'ready') return read;
       items.push(...read.value.items);
       const next = read.value.nextCursor;
@@ -576,7 +579,7 @@ export function createCommandRerunRequestService(
     let batch;
     try {
       batch = await lookupAll<EncodedRecord>(lookups, K3_CRR_BY_TASK_LOOKUP,
-        [workspace.projectId, goalId, taskId]);
+        [workspace.projectId, goalId, taskId], { pageLimit: taskRequestPageLimit });
     } catch (error) {
       const failure = error as { status?: string; code?: string; reason?: string };
       if (failure !== null && typeof failure === 'object' && failure.code !== undefined) {

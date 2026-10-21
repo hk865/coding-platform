@@ -37,6 +37,9 @@ export type UndeliveredReplyNoticeSourceDependencies = {
   // the Session-by-workspace index through `records` and never reads it.
   sessions: Pick<SessionDirectoryPort, 'findSessions'>;
   messages: Pick<SessionMailboxPort, 'readUndeliveredReplies' | 'readMessage'>;
+  /** The page width of both inner reads: the Session directory and one line's replies
+   * (default PAGE_LIMIT = 100). */
+  readPageLimit?: number;
 };
 
 const PAGE_LIMIT = 100;
@@ -223,6 +226,7 @@ async function assembleAttempt(
   window: CommitCursor | null,
 ): Promise<{ status: 'value'; value: AssembledUndeliveredSource } | { status: 'window_changed' }
   | { status: 'result'; result: PageResult }> {
+  const readPageLimit = deps.readPageLimit ?? PAGE_LIMIT;
   // ---- directory: same-workspace unavailable lines, includeArchived -------
   // Slice 2A §0.4 row 5 / P3: list the workspace's Sessions through the
   // Session-by-workspace index in its key order and read only the Session
@@ -232,7 +236,7 @@ async function assembleAttempt(
   let directoryAfter: string | undefined;
   for (;;) {
     const read = await deps.records.lookup({ index: SESSION_BY_WORKSPACE_LOOKUP,
-      values: [input.workspace.projectId, input.workspace.workspaceId], limit: PAGE_LIMIT,
+      values: [input.workspace.projectId, input.workspace.workspaceId], limit: readPageLimit,
       ...(directoryAfter === undefined ? {} : { after: directoryAfter }) });
     if (read.status !== 'ready') return { status: 'result', result: storeFailureToRejection(read) };
     if (!sameWindow(window, read.value.readThrough)) return { status: 'window_changed' };
@@ -256,7 +260,7 @@ async function assembleAttempt(
     let replyCursor: string | undefined;
     while (true) {
       const read = await deps.messages.readUndeliveredReplies!(ctx, { sessionRef: source,
-        page: { limit: PAGE_LIMIT, ...(replyCursor === undefined ? {} : { cursor: replyCursor }),
+        page: { limit: readPageLimit, ...(replyCursor === undefined ? {} : { cursor: replyCursor }),
           ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }) } });
       if (read.status !== 'ready') {
         if (read.status === 'rejected' && read.code === 'source_stale') return { status: 'window_changed' };

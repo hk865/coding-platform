@@ -46,8 +46,6 @@ seams.shellSeam = shellSeam;
 
 const WORLDS: K3ReviewCardWorld[] = [];
 
-/** R-22: the one scale row's own timeout (the store-page test below); at most 600 s. */
-const T1_070_STORE_PAGE_TIMEOUT_MS = 600_000;
 afterEach(async () => {
   shellSeam.release();
   for (const world of WORLDS.splice(0)) await world.close();
@@ -319,32 +317,26 @@ describe('listReviews', () => {
       expect(rest.value.items).toEqual([later]);
     });
 
-  // Codex 8: bounded keyset pages, no total cap (L7 "没有总数上限"). More than
-  // one store page of records must still list with two clean pages.
-  //
-  // W2b-20 (c), R-22: this is a scale row. Each of its 205 records is its own
-  // real blocked Run with its own real Session (one shared Session is refused:
-  // `busy: the target Session health is unavailable`). Measured with
-  // `--maxWorkers=2` (R-22's runs and the W2b-20 run): 65-70 s on memory and
-  // 152-168 s on SQLite. Like the S2A scale tests (`S2A_SCALE_TIMEOUT_MS`),
-  // this ONE test carries its own timeout, at most 600 s (R-22); every other
-  // test here keeps the default.
+  // Codex 8: bounded keyset pages, no total cap (L7 "没有总数上限"). Small
+  // daily version of the moved 205-record scale row (R-22): 5 real records,
+  // page width 2 -> pages of 2, 2, 1; the third read ends the list, as the
+  // scale row ends it after its second page.
   it.each(['memory', 'sqlite'] as const)(
-    'listReviews %s: more than a store page of records lists without a cap', async kind => {
+    'listReviews %s: 5 records with page 2 list in pages 2, 2, 1 to the end', async kind => {
       const world = await openWorld(kind);
       const scope = world.fixture.base.scope;
-      // 205 real Tasks through public Plan adoption; each Task then gets one
+      // 5 real Tasks through public Plan adoption; each Task then gets one
       // real blocked Run, and the Run's own record is the listed row.
-      const taskIds = Array.from({ length: 205 },
-        (_unused, index) => `t1-070-many-${String(index).padStart(3, '0')}`);
+      const taskIds = Array.from({ length: 5 },
+        (_unused, index) => `t1-070-small-${String(index).padStart(3, '0')}`);
       const planRef = await adoptPlanTasks(world, taskIds);
-      // The 205 Runs go through ONE real-Run harness, so ONE platform Host
-      // recognizes them all (W2b-20 (c)); each record is still its own Run.
+      // The 5 Runs go through ONE real-Run harness, so ONE platform Host
+      // recognizes them all; each record is still its own Run.
       const harness = await openRealRunHarness(world, { newId: runIdGeneratorOf(world) });
       const created: UnknownCallReviewV1[] = [];
       try {
         for (const taskId of taskIds) {
-          created.push(await createPending(world, taskId, `k3-list-many-${taskId}`, { planRef, harness }));
+          created.push(await createPending(world, taskId, `k3-list-small-${taskId}`, { planRef, harness }));
         }
       } finally {
         await harness.closeUnion();
@@ -352,19 +344,28 @@ describe('listReviews', () => {
       const runIds = runIdOrder(created);
       const filter = { goalRef: GOAL_B, status: ['pending_review' as const] };
 
-      const first = await world.reviews.listReviews(world.fixture.ctx, { workspace: scope, filter, page: { limit: 200 } });
+      // Hand calculation: 5 records / page 2 = 2 + 2 + 1, and the third read
+      // has no cursor left.
+      const first = await world.reviews.listReviews(world.fixture.ctx, { workspace: scope, filter, page: { limit: 2 } });
       if (first.status !== 'ready') throw new Error(JSON.stringify(first));
-      expect(first.value.items).toHaveLength(200);
+      expect(first.value.items).toHaveLength(2);
       expect(first.value.nextCursor).not.toBeNull();
-      expect(first.value.items.map(record => record.ref.runId)).toEqual(runIds.slice(0, 200));
+      expect(first.value.items.map(record => record.ref.runId)).toEqual(runIds.slice(0, 2));
 
       const second = await world.reviews.listReviews(world.fixture.ctx, {
-        workspace: scope, filter, page: { limit: 200, cursor: first.value.nextCursor! } });
+        workspace: scope, filter, page: { limit: 2, cursor: first.value.nextCursor! } });
       if (second.status !== 'ready') throw new Error(JSON.stringify(second));
-      expect(second.value.items).toHaveLength(5);
-      expect(second.value.nextCursor).toBeNull();
-      expect(second.value.items.map(record => record.ref.runId)).toEqual(runIds.slice(200));
-    }, T1_070_STORE_PAGE_TIMEOUT_MS);
+      expect(second.value.items).toHaveLength(2);
+      expect(second.value.nextCursor).not.toBeNull();
+      expect(second.value.items.map(record => record.ref.runId)).toEqual(runIds.slice(2, 4));
+
+      const third = await world.reviews.listReviews(world.fixture.ctx, {
+        workspace: scope, filter, page: { limit: 2, cursor: second.value.nextCursor! } });
+      if (third.status !== 'ready') throw new Error(JSON.stringify(third));
+      expect(third.value.items).toHaveLength(1);
+      expect(third.value.nextCursor).toBeNull();
+      expect(third.value.items.map(record => record.ref.runId)).toEqual(runIds.slice(4));
+    });
 
   // Codex 8: every tuple's `readThrough` must be the same watermark; a mismatch
   // retries the page, and only a stable watermark is returned. The A3 gate holds

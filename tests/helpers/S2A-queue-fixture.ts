@@ -18,7 +18,7 @@ import type { DecisionCardV1, DecisionReadPort } from '../../src/core/work-graph
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { S5DecisionFixture } from './S5-decision-fixture.js';
 import { WORKSPACE_SCOPE } from './S5-decision-fixture.js';
-import { owners } from './S5-application-support.js';
+import { owners, type OwnerReadWidths } from './S5-application-support.js';
 import { realOwners } from './S5-user-message-support.js';
 
 export type QueueInput = Parameters<DecisionReadPort['queryDecisionQueue']>[1];
@@ -102,9 +102,9 @@ export async function answerUserDecision(
 /** The public queue read for one Goal. */
 export async function readGoalQueue(
   f: S5DecisionFixture, goalRef: GoalRef, page: QueueInput['page'] = { limit: 50 },
-  sections: QueueInput['sections'] = [...S2A_QUEUE_SECTIONS],
+  sections: QueueInput['sections'] = [...S2A_QUEUE_SECTIONS], widths?: OwnerReadWidths,
 ): Promise<DecisionCardQueue> {
-  return ready(await owners(f).reads.queryDecisionQueue(f.ctx, {
+  return ready(await owners(f, f.records, f.bodies, widths).reads.queryDecisionQueue(f.ctx, {
     workspace: WORKSPACE_SCOPE, goalRef, sections, page,
   }));
 }
@@ -112,9 +112,9 @@ export async function readGoalQueue(
 /** The public unfiltered queue read of the workspace. */
 export async function readWorkspaceQueue(
   f: S5DecisionFixture, page: QueueInput['page'] = { limit: 50 },
-  sections: QueueInput['sections'] = [...S2A_QUEUE_SECTIONS],
+  sections: QueueInput['sections'] = [...S2A_QUEUE_SECTIONS], widths?: OwnerReadWidths,
 ): Promise<DecisionCardQueue> {
-  return ready(await owners(f).reads.queryDecisionQueue(f.ctx, {
+  return ready(await owners(f, f.records, f.bodies, widths).reads.queryDecisionQueue(f.ctx, {
     workspace: WORKSPACE_SCOPE, sections, page,
   }));
 }

@@ -13,6 +13,6 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts", "vitest.scale.config.ts"],
   "exclude": ["dist", "node_modules"]
 }

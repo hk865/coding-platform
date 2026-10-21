@@ -59,7 +59,12 @@ import { readWatermark, storeFailureToRejection } from './goal-conflicts.js';
  */
 export type AutomaticReworkNoticeSourceDependencies = {
   records: Pick<S5RecordPort, 'readMany' | 'lookup'> & RecordOrderedLookupPort;
+  /** The page width of the ordered requeue/reverify reads (default 200). */
+  orderedPageLimit?: number;
 };
+
+/** §4.4: one ordered read page is at most 200 records (the default page width). */
+const ORDERED_PAGE_LIMIT = 200;
 
 /** Builds the `automatic_rework` notice source; the factory itself never throws. */
 export function createAutomaticReworkNoticeSource(
@@ -68,7 +73,8 @@ export function createAutomaticReworkNoticeSource(
   return {
     category: 'automatic_rework',
     async readPage(ctx, input): Promise<ReadResult<DecisionSourcePageV1<NoticeItemV1>>> {
-      return readAutomaticReworkPage(deps.records, ctx, input);
+      return readAutomaticReworkPage(deps.records, ctx, input,
+        deps.orderedPageLimit ?? ORDERED_PAGE_LIMIT);
     },
   };
 }
@@ -89,6 +95,8 @@ export async function readOrderedToEnd(
   index: string,
   values: readonly string[],
   bound: { value: OrderedLookupValue; inclusive: boolean } | null,
+  /** The page width of one ordered read; the default stays today's 200. */
+  limit: number = ORDERED_PAGE_LIMIT,
 ): Promise<EncodedRecord[]> {
   const all: EncodedRecord[] = [];
   const lookupOrdered = records.lookupOrdered;
@@ -100,7 +108,7 @@ export async function readOrderedToEnd(
       direction: 'asc',
       ...(bound === null ? {} : { bound }),
       ...(after === undefined ? {} : { after }),
-      limit: 200,
+      limit,
     });
     if (page.status !== 'ready') throw page;
     for (const record of page.value.records) all.push(record);
@@ -138,6 +146,7 @@ async function readAutomaticReworkPage(
   records: AutomaticReworkNoticeSourceDependencies['records'],
   _ctx: CoreCallContext,
   input: ReadPageInput,
+  orderedPageLimit: number = ORDERED_PAGE_LIMIT,
 ): Promise<ReadResult<DecisionSourcePageV1<NoticeItemV1>>> {
   // L11/P1: one assembly per window attempt. The read model passes one
   // `DecisionSourceAttempt` to every source and drops it with the attempt; the
@@ -161,7 +170,7 @@ async function readAutomaticReworkPage(
     // ---- requeues: the ordered window -------------------------------------
     const requeueRecords: { record: EncodedRecord; since: CommitCursor }[] = [];
     for (const record of await readOrderedToEnd(records, S2A_REQUEUE_BY_PROJECT_LOOKUP, [projectId],
-      seenCursor === null ? null : { value: seenCursor, inclusive: true })) {
+      seenCursor === null ? null : { value: seenCursor, inclusive: true }, orderedPageLimit)) {
       const since = orderedSince(record, seenCursor);
       if (!since.ok) return since.rejection;
       requeueRecords.push({ record, since: since.since });
@@ -210,7 +219,7 @@ async function readAutomaticReworkPage(
     const subjectCandidates = new Map<string, SubjectCandidate>();
     for (const actorClass of ['system', 'agent'] as const) {
       for (const record of await readOrderedToEnd(records, S2A_ROUND_REVERIFY_LOOKUP, [projectId, workspaceId, actorClass],
-        seenCursor === null ? null : { value: seenCursor, inclusive: true })) {
+        seenCursor === null ? null : { value: seenCursor, inclusive: true }, orderedPageLimit)) {
         const since = orderedSince(record, seenCursor);
         if (!since.ok) return since.rejection;
         const added = await addRoundCandidate(subjectCandidates, record, since.since, input, projectId, workspaceId);

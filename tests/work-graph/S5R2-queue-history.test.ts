@@ -124,19 +124,27 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
   });
 
   // Lead (2A §5.3, frozen): 201 Goals are no longer refused; the queue answers.
-  it('R2A07 / R2A08 - an unfiltered Workspace queue over 201 Goals is read, not refused', async () => {
+  // Small daily version: the base 3 Goals plus 2 (5 total), Goal-list lookup
+  // width 2 reads them in refKey byte order A, B, C, S5R2-capacity-000,
+  // S5R2-capacity-001 -> pages 2 + 2 + 1 = 3 pages, the last page holding
+  // S5R2-capacity-001; the conflict assembler's own Goal read crosses the same
+  // 3 pages. The decisive-item-last rule does not apply here (the row checks
+  // that the read is not refused and stays read-only).
+  it('R2A07 / R2A08 (small: 5 Goals, page 2) - an unfiltered Workspace queue over 5 Goals is read, not refused', async () => {
     const f = await open();
-    await populateGoals(f, 201);
+    await populateGoals(f, 5);
     expect(await modelRequestCounts(f)).toEqual({ workAttempts: 0, queryAdmissions: 0 });
     const before = await f.storeSnapshot();
     const allocations = { ...f.allocationCounts };
-    const result = await owners(f).reads.queryDecisionQueue(f.ctx, { workspace: WORKSPACE_SCOPE,
-      sections: ['waiting_answer', 'answered_pending_application', 'history', 'notices'], page: { limit: 50 } });
+    const result = await owners(f, f.records, f.bodies,
+      { decision: { sourcePageLimit: 2, lookupPageLimit: 2 } })
+      .reads.queryDecisionQueue(f.ctx, { workspace: WORKSPACE_SCOPE,
+        sections: ['waiting_answer', 'answered_pending_application', 'history', 'notices'], page: { limit: 50 } });
     expect(await f.storeSnapshot()).toEqual(before);
     expect(f.allocationCounts).toEqual(allocations);
     expect(await modelRequestCounts(f)).toEqual({ workAttempts: 0, queryAdmissions: 0 });
     expect(result).toMatchObject({ status: 'ready' });
-  }, 300_000);
+  });
 
   it('R2A10 - an ordinary Session message is not a direct decision card', async () => {
     const f = await open();
@@ -180,12 +188,21 @@ describe('S5R2 message capacity (memory only)', () => {
 
   // Lead (2A §5.3, frozen): 5001 pending requests are no longer refused; paging
   // with the same 50-card limit returns every one of them.
-  it('R2A09 - 5001 real pending user requests are all read by paging the queue', async () => {
+  // Small daily version: 5 new pending requests, public page.limit 2 and both
+  // internal widths 2. The full Goal-B waiting queue is 9 cards in card order:
+  // candidate Q1 (U1), candidate Q2 (U2), the B change_pending goal_cause, the
+  // A/B goal_conflict, then messages send-0, send-1, send-2, send-4, send-3 ->
+  // pages 2,2,2,2,1; the last page and decisive item is send-3. The
+  // user-message index holds 7 messages at width 2: send-0, fixture answered,
+  // send-1, send-2, fixture decision, send-4, send-3 -> pages 2,2,2,1, also
+  // ending with send-3. The queue loop below still reads every page to the end.
+  it('R2A09 (small: 5 cards, page 2) - 5 real pending user requests are all read by paging the queue', async () => {
     const f = await openS5DecisionFixture('memory', { duties: ['adviser'], operatorActor: { ...OPERATOR } });
     opened.push(f);
-    const services = owners(f);
+    const services = owners(f, f.records, f.bodies,
+      { decision: { sourcePageLimit: 2, lookupPageLimit: 2 } });
     // Close the fixture's pre-existing pending request by a real answer so
-    // exactly 5001 pending requests below come from sendUserMessage.
+    // exactly 5 pending requests below come from sendUserMessage.
     const metadata = f.messages.decision.decision;
     if (metadata === undefined) throw new Error('fixture decision request has no metadata');
     const seeded = ready(await services.reads.readDecisionCard(f.ctx, { source: metadata.source }));
@@ -199,14 +216,14 @@ describe('S5R2 message capacity (memory only)', () => {
     const sender = realOwners(f, ['adviser']);
     const sentKeys: string[] = [];
     const sentCardKeys: string[] = [];
-    for (let index = 0; index < 5001; index += 1) {
+    for (let index = 0; index < 5; index += 1) {
       const sent = await sendDecision(f, sender, `s5r2-a09-send-${index}`);
       sentKeys.push(keyOf(sent.message.ref));
       sentCardKeys.push(decisionSourceKey({ kind: 'message', messageRef: sent.message.ref }));
     }
     const stored = (await allIndexRecords(f, S5_MESSAGE_BY_WORKSPACE_STATUS, ['P', 'W', 'pending']))
       .map(record => decoded(decodeSessionMessageRecord(record)));
-    expect(stored).toHaveLength(5001);
+    expect(stored).toHaveLength(5);
     expect(stored.map(message => keyOf(message.ref)).sort()).toEqual(sentKeys.sort());
     for (const message of stored) {
       expect(message).toMatchObject({ goalRef: GOAL_B, revision: 1, status: 'pending', intent: 'decision_request',
@@ -220,8 +237,8 @@ describe('S5R2 message capacity (memory only)', () => {
     let cursor: string | undefined;
     for (;;) {
       const page = ready(await services.reads.queryDecisionQueue(f.ctx, { workspace: WORKSPACE_SCOPE, goalRef: GOAL_B,
-        sections: ['waiting_answer'], page: cursor === undefined ? { limit: 50 } : { limit: 50, cursor } }));
-      expect(page.waitingAnswer.length).toBeLessThanOrEqual(50);
+        sections: ['waiting_answer'], page: cursor === undefined ? { limit: 2 } : { limit: 2, cursor } }));
+      expect(page.waitingAnswer.length).toBeLessThanOrEqual(2);
       messageCards.push(...page.waitingAnswer.filter(card => card.source.kind === 'message').map(card => card.cardKey));
       if (page.nextCursor === null) break;
       expect(cursors.has(page.nextCursor)).toBe(false);
@@ -230,8 +247,8 @@ describe('S5R2 message capacity (memory only)', () => {
     }
     expect(await f.storeSnapshot()).toEqual(before);
     expect(f.allocationCounts).toEqual(allocations);
-    // Every one of the 5001 pending requests, once each.
-    expect(messageCards).toHaveLength(5001);
+    // Every one of the 5 pending requests, once each.
+    expect(messageCards).toHaveLength(5);
     expect([...messageCards].sort()).toEqual([...sentCardKeys].sort());
-  }, 300_000);
+  });
 });

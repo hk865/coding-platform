@@ -17,6 +17,7 @@
  */
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
+import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { sessionMessageRefKey } from '../../src/core/work-graph/sessions/message-record-codecs.js';
@@ -59,9 +60,32 @@ async function createNoticeSession(f: S5DecisionFixture, requestKey: string): Pr
   return { projectId: registered.value.ref.projectId, sessionId: registered.value.ref.sessionId };
 }
 
+export type OverboundNoticesOptions = {
+  sessions: number;
+  replies: number;
+  memberNotices: number;
+  /**
+   * The reply commit order. Absent (the default) keeps the `sc-base` order: each
+   * message is sent and immediately replied to, one pair at a time. `message-key`
+   * first collects every message and then replies in ascending SessionMessage
+   * refKey order — the order the undelivered-reply read layer returns them — so
+   * the reply read last is also the reply committed last (the tail).
+   */
+  replyOrder?: 'creation' | 'message-key';
+  /** The page width of the undelivered source's inner directory and reply reads
+   * (default 100, the production value). */
+  readPageLimit?: number;
+  /**
+   * The literal `meta.requestId`s of the member notifications, in creation
+   * order. Absent (the default) allocates `f.newId()` once per notice, the
+   * `sc-base` order; passing them consumes no `f.newId()` for this loop.
+   */
+  memberNoticeRequestIds?: readonly string[];
+};
+
 export async function buildOverboundNoticesWorld(
   f: S5DecisionFixture,
-  config: { sessions: number; replies: number; memberNotices: number },
+  config: OverboundNoticesOptions,
 ): Promise<OverboundNoticesWorld> {
   const created: SessionRef[] = [];
   for (let index = 0; index < config.sessions; index += 1) {
@@ -88,16 +112,43 @@ export async function buildOverboundNoticesWorld(
 
   const mailbox = createSessionMailbox(mailboxDependencies(f));
   let replyTailKey = '';
-  for (let index = 0; index < config.replies; index += 1) {
-    const sent = committed(await mailbox.sendMessage(workContext(f, sourceClaim), { input: {
-      recipient: responderSession, text: `Undelivered reply ${index}`, intent: 'inquiry', needsReply: true, waitAfterSend: false },
-      meta: { requestId: f.newId(), expected: [] } }));
-    const replied = committed(await mailbox.respondMessage(workContext(f, responderClaim), { input: {
-      messageRef: sent.ref, text: `Reply answer ${index}` },
-      meta: { requestId: f.newId(), expected: [await pin(f.records, sent.ref)] } }));
-    if (replied.response !== null) {
-      replyTailKey = `undelivered_reply:${canonicalJson({ messageRef: sent.ref,
-        responseRef: replied.response.bodyRef } as unknown as JsonValue)}`;
+  if (config.replyOrder === 'message-key') {
+    // The explicit message-key branch ONLY: collect every message, sort it by
+    // the order the reply read returns, then reply in that order. The default
+    // branch below keeps the `sc-base` one-send-one-reply sequence.
+    const sentMessages: SessionMessage[] = [];
+    for (let index = 0; index < config.replies; index += 1) {
+      sentMessages.push(committed(await mailbox.sendMessage(workContext(f, sourceClaim), { input: {
+        recipient: responderSession, text: `Undelivered reply ${index}`, intent: 'inquiry', needsReply: true, waitAfterSend: false },
+        meta: { requestId: f.newId(), expected: [] } })));
+    }
+    const replyOrder = [...sentMessages].sort((left, right) => {
+      const a = sessionMessageRefKey(left.ref);
+      const b = sessionMessageRefKey(right.ref);
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+    for (const sent of replyOrder) {
+      const replied = committed(await mailbox.respondMessage(workContext(f, responderClaim), { input: {
+        messageRef: sent.ref, text: `Reply answer ${sentMessages.indexOf(sent)}` },
+        meta: { requestId: f.newId(), expected: [await pin(f.records, sent.ref)] } }));
+      if (replied.response !== null) {
+        replyTailKey = `undelivered_reply:${canonicalJson({ messageRef: sent.ref,
+          responseRef: replied.response.bodyRef } as unknown as JsonValue)}`;
+      }
+    }
+  } else {
+    // Default (`sc-base`) path: send one message and reply to it immediately.
+    for (let index = 0; index < config.replies; index += 1) {
+      const sent = committed(await mailbox.sendMessage(workContext(f, sourceClaim), { input: {
+        recipient: responderSession, text: `Undelivered reply ${index}`, intent: 'inquiry', needsReply: true, waitAfterSend: false },
+        meta: { requestId: f.newId(), expected: [] } }));
+      const replied = committed(await mailbox.respondMessage(workContext(f, responderClaim), { input: {
+        messageRef: sent.ref, text: `Reply answer ${index}` },
+        meta: { requestId: f.newId(), expected: [await pin(f.records, sent.ref)] } }));
+      if (replied.response !== null) {
+        replyTailKey = `undelivered_reply:${canonicalJson({ messageRef: sent.ref,
+          responseRef: replied.response.bodyRef } as unknown as JsonValue)}`;
+      }
     }
   }
   // The source Run ends and the Session is retired through the real owners.
@@ -113,15 +164,17 @@ export async function buildOverboundNoticesWorld(
 
   let memberTailKey = '';
   for (let index = 0; index < config.memberNotices; index += 1) {
+    const requestId = config.memberNoticeRequestIds?.[index] ?? f.newId();
     const sent = committed(await mailbox.sendUserMessage(workContext(f, f.claimRA), { input: {
       goalRef: GOAL_B, intent: 'notify', text: `Member notification ${index}`,
       needsReply: false, waitAfterSend: false, options: [], objects: [] },
-      meta: { requestId: f.newId(), expected: [] } }));
+      meta: { requestId, expected: [] } }));
     memberTailKey = `member_notice:${sessionMessageRefKey(sent.ref)}`;
   }
 
   const undelivered = createUndeliveredReplyNoticeSource({ records: f.records,
-    sessions: createSessionDirectory({ records: f.records, lookups: f.records }), messages: mailbox });
+    sessions: createSessionDirectory({ records: f.records, lookups: f.records }), messages: mailbox,
+    ...(config.readPageLimit === undefined ? {} : { readPageLimit: config.readPageLimit }) });
   return { sourceSession, undelivered, expected: { sessions: created.length, memberNotices: config.memberNotices,
     undeliveredReplies: config.replies, memberTailKey, replyTailKey } };
 }

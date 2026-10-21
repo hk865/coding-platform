@@ -70,13 +70,21 @@ export const goalAt = async (records: S5Records, ref: GoalRef = GOAL_B) =>
 export const messageAt = async (records: S5Records, ref: SessionMessageRef) =>
   decoded(decodeSessionMessageRecord(await recordAt(records, ref)));
 
+/** Optional page widths threaded into the owner deps; omitted widths keep production defaults. */
+export type OwnerReadWidths = {
+  decision?: { sourcePageLimit?: number; lookupPageLimit?: number };
+  planningQuestion?: { lookupPageLimit?: number };
+  automaticRework?: { orderedPageLimit?: number };
+};
+
 /**
  * All services share the fixture's observed Store and allocation counters, also
  * after reopen. No Runtime/model port is installed: these owners and readers
  * have only persistence/material dependencies. Store snapshots also enumerate
  * any ModelRequest records, so read/rejection assertions cannot hide such writes.
  */
-export function owners(f: S5DecisionFixture, records: S5Records = f.records, bodies: RawArtifactStorePort = f.bodies) {
+export function owners(f: S5DecisionFixture, records: S5Records = f.records, bodies: RawArtifactStorePort = f.bodies,
+  widths: OwnerReadWidths = {}) {
   const roles = createRoleConfigurationService({ records, now: f.now, eventId: f.newId });
   const materials = createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now: f.now });
   const mailboxDeps: SessionMailboxDependencies = {
@@ -103,14 +111,31 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
   // (faults and counters still apply); the executed-files reader and the
   // automatic-rework source both read through it.
   const orderedRecords = asS5OrderedRecords(records);
+  // Conditional spreads keep `exactOptionalPropertyTypes` honest: an omitted
+  // width is absent from the deps object, so the production default applies.
+  const decisionWidths = {
+    ...(widths.decision?.sourcePageLimit === undefined ? {} : { sourcePageLimit: widths.decision.sourcePageLimit }),
+    ...(widths.decision?.lookupPageLimit === undefined ? {} : { lookupPageLimit: widths.decision.lookupPageLimit }),
+  };
+  const planningQuestionWidths = {
+    ...(widths.planningQuestion?.lookupPageLimit === undefined
+      ? {} : { lookupPageLimit: widths.planningQuestion.lookupPageLimit }),
+  };
+  const automaticReworkWidths = {
+    ...(widths.automaticRework?.orderedPageLimit === undefined
+      ? {} : { orderedPageLimit: widths.automaticRework.orderedPageLimit }),
+  };
   // The production composition's source wiring. Message/candidate projection must
   // be implemented by the production reader; this helper never manufactures cards.
-  const reads = createDecisionReadModel({ records,
-    cardSources: [createGoalCauseCardSource(causes), createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans }))],
-    noticeSources: [createAutomaticReworkNoticeSource({ records: orderedRecords })],
+  const reads = createDecisionReadModel({ records, ...decisionWidths,
+    cardSources: [createGoalCauseCardSource(causes),
+      createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans, ...planningQuestionWidths }))],
+    noticeSources: [createAutomaticReworkNoticeSource({ records: orderedRecords, ...automaticReworkWidths })],
     conflicts: createGoalConflictAssembler({ records: orderedRecords,
       catalog: createArchitectureCatalogService({ records: orderedRecords }),
-      executedFiles: createGoalExecutedFilesReader({ records: orderedRecords }) }),
+      executedFiles: createGoalExecutedFilesReader({ records: orderedRecords }),
+      ...(widths.decision?.lookupPageLimit === undefined
+        ? {} : { lookupPageLimit: widths.decision.lookupPageLimit }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
   });
   return { decisions, plans, causes, reads,

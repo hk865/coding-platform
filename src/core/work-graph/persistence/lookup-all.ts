@@ -33,14 +33,17 @@ export async function lookupAll<T = EncodedRecord>(
   records: Pick<RecordLookupPort, 'lookup'>,
   index: string,
   values: readonly (string | number | boolean | null)[],
+  /** The page width of one lookup batch; the defaults stay today's 200. */
+  options?: { pageLimit?: number },
 ): Promise<LookupBatch<T>> {
+  const pageLimit = options?.pageLimit ?? LOOKUP_PAGE_LIMIT;
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
     const items: T[] = [];
     let first: CommitCursor | null | undefined;
     let stable = true;
     let after: string | undefined;
     for (;;) {
-      const page = await records.lookup({ index, values, limit: LOOKUP_PAGE_LIMIT,
+      const page = await records.lookup({ index, values, limit: pageLimit,
         ...(after === undefined ? {} : { after }) });
       if (page.status !== 'ready') throw page;
       const pageWatermark = page.value.readThrough;

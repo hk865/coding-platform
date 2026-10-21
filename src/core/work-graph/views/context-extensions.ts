@@ -34,6 +34,8 @@ export type ContextExtensionsDependencies = {
   decisions?: Pick<DecisionReadPort, 'queryDecisionQueue'>;
   /** U8: the one memory-material read per assembly, when wired. */
   memoryMaterial?: NoteMemoryMaterialPort;
+  /** The page width of the decision-queue read (default DECISION_PAGE_LIMIT = 100). */
+  decisionPageLimit?: number;
 };
 
 /** The anchor owner's own scan budget (spec §4.2, L8): 100 per page, at most 25
@@ -190,6 +192,7 @@ function anchorRow(item: SessionAnomalyViewV1): ContextIndexRowV1 {
 export function createContextExtensionsReader(deps: ContextExtensionsDependencies):
   (ctx: CoreCallContext, request: ContextReadRequestV1) => Promise<ReadResult<ContextExtensionsV1>> {
   return async (ctx, request) => {
+    const decisionPageLimit = deps.decisionPageLimit ?? DECISION_PAGE_LIMIT;
     // Step 1: the provider needs a bound project/workspace context with a
     // signal, and the request must name this project. All of these refuse
     // before the owner is called.
@@ -325,8 +328,8 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
             goalRef: request.goalRef,
             sections: ['waiting_answer'],
             page: cursor === undefined
-              ? { limit: DECISION_PAGE_LIMIT }
-              : { limit: DECISION_PAGE_LIMIT, cursor },
+              ? { limit: decisionPageLimit }
+              : { limit: decisionPageLimit, cursor },
           });
           if (read.status === 'not_found') return { status: 'not_found' };
           if (read.status === 'not_ready') {

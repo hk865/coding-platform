@@ -108,6 +108,14 @@ export type WorkLineReaderDeps = {
    * false` (rule 5). The composition root injects the real read model.
    */
   decisions?: Pick<DecisionReadPort, 'queryDecisionQueue'>;
+  /**
+   * The page width of the read loops that page a 200-wide lookup to the end
+   * (default 200). Only the batch size changes; no total cap returns.
+   */
+  lookupPageLimit?: number;
+  /** The page width of the read loops that page a 100-wide list/lookup to the
+   * end (default 100). */
+  listPageLimit?: number;
 };
 
 // -------------------------------------------------------------------------- //
@@ -284,7 +292,7 @@ async function assembleLineRows(
   let copiesIndex: ActiveCopies;
   if (activeCopies !== undefined) copiesIndex = activeCopies;
   else {
-    const read = await readActiveCopies(deps.records, workspace);
+    const read = await readActiveCopies(deps.records, workspace, deps.lookupPageLimit ?? 200);
     if (read.status !== 'ready') return read;
     copiesIndex = read.value;
   }
@@ -343,7 +351,8 @@ async function assembleOneLine(
   const earlyProblem = lineState.problem ?? history.problem;
 
   const duty = await resolveDuty(deps.dutyFor, ctx, headRecord.role);
-  const openLinks = earlyProblem === null ? await readOpenResponsibleLinks(deps.records, workspace, chain, lineState) : emptyOpenLinks();
+  const openLinks = earlyProblem === null ? await readOpenResponsibleLinks(deps.records, workspace, chain, lineState,
+    deps.lookupPageLimit ?? 200) : emptyOpenLinks();
   const responsibleTriples = dedupeTasks(openLinks.taskLinks.map((entry) => entry.link.ref.target as { ref: TaskTriple }).map((target) => target.ref));
 
   const holder = earlyProblem === null ? await readHolder(deps.records, workspace, headRecord, lineState) : null;
@@ -423,7 +432,8 @@ async function assembleOneLine(
   let handoffFromLine: SessionRef | null = null;
   if (earliest !== undefined && earliest.provenance?.kind === 'handoff') {
     handoffFrom = earliest.provenance.from;
-    const fromLine = await findHeadOf(deps.records, workspace, earliest.provenance.from);
+    const fromLine = await findHeadOf(deps.records, workspace, earliest.provenance.from,
+      deps.lookupPageLimit ?? 200);
     if (fromLine.status !== 'ready') noteProblem(lineState, fromLine);
     handoffFromLine = fromLine.status === 'ready' ? (fromLine.value ?? earliest.provenance.from) : earliest.provenance.from;
   }
@@ -692,14 +702,15 @@ function emptyOpenLinks(): OpenLinks {
 }
 
 async function readOpenResponsibleLinks(records: WorkLineStore, workspace: WorkspaceScope,
-  chain: readonly LineChainEntryV1[], state: LineReadState): Promise<OpenLinks> {
+  chain: readonly LineChainEntryV1[], state: LineReadState,
+  lookupPageLimit: number = 200): Promise<OpenLinks> {
   const result = emptyOpenLinks();
   for (const entry of chain) {
     let after: string | undefined;
     for (;;) {
       const page = await records.lookup({ index: S2C_OPEN_LINKS_BY_SESSION_LOOKUP,
         values: [workspace.projectId, entry.session.sessionId, 'responsible', null],
-        ...(after === undefined ? {} : { after }), limit: 200 });
+        ...(after === undefined ? {} : { after }), limit: lookupPageLimit });
       if (page.status !== 'ready') { noteProblem(state, page); break; }
       for (const record of page.value.records) {
         const link = decodeLink(record);
@@ -1292,12 +1303,13 @@ function indexActiveCopies(sessions: readonly SessionRecord[]): ActiveCopies {
   return bySource;
 }
 
-async function readActiveCopies(records: WorkLineStore, workspace: WorkspaceScope): Promise<StoreRead<ActiveCopies>> {
+async function readActiveCopies(records: WorkLineStore, workspace: WorkspaceScope,
+  lookupPageLimit: number = 200): Promise<StoreRead<ActiveCopies>> {
   const sessions: SessionRecord[] = [];
   let after: string | undefined;
   for (;;) {
     const page = await records.lookup({ index: S2C_SESSION_BY_LIFECYCLE_KIND_LOOKUP,
-      values: [workspace.projectId, workspace.workspaceId, 'active', 'readonly_copy'], limit: 200,
+      values: [workspace.projectId, workspace.workspaceId, 'active', 'readonly_copy'], limit: lookupPageLimit,
       ...(after === undefined ? {} : { after }) });
     if (page.status !== 'ready') return rejectionOf(page);
     for (const record of page.value.records) {
@@ -1391,6 +1403,8 @@ export async function resolveContinuationLine(
   ref: SessionRef,
   /** L11 (review item 3a): receives each successor-resolution page's watermark. */
   cursorSink?: (cursor: CommitCursor | null) => void,
+  /** The page width of the successor lookup (default 200). */
+  lookupPageLimit: number = 200,
 ): Promise<StoreRead<ContinuationResolution>> {
   const seen = new Map<string, SessionRef>();
   const heads = new Map<string, SessionRef>();
@@ -1416,7 +1430,7 @@ export async function resolveContinuationLine(
     for (;;) {
       const page = await records.lookup({ index: S2C_SESSION_BY_KIND_FROM_LOOKUP,
         values: [workspace.projectId, workspace.workspaceId, 'continuation', current.session.sessionId],
-        ...(after === undefined ? {} : { after }), limit: 200 });
+        ...(after === undefined ? {} : { after }), limit: lookupPageLimit });
       if (page.status !== 'ready') return rejectionOf(page);
       cursorSink?.(page.value.readThrough);
       for (const record of page.value.records) {
@@ -1542,8 +1556,9 @@ async function cycleRepresentativesByWalk(
 }
 
 /** L2: walk `continuation` successors to the line head; null on a branch (N3) or a cycle (N9). */
-async function findHeadOf(records: WorkLineStore, workspace: WorkspaceScope, ref: SessionRef): Promise<StoreRead<SessionRef | null>> {
-  const resolved = await resolveContinuationLine(records, workspace, ref);
+async function findHeadOf(records: WorkLineStore, workspace: WorkspaceScope, ref: SessionRef,
+  lookupPageLimit: number = 200): Promise<StoreRead<SessionRef | null>> {
+  const resolved = await resolveContinuationLine(records, workspace, ref, undefined, lookupPageLimit);
   if (resolved.status !== 'ready') return resolved;
   return { status: 'ready', value: resolved.value.kind === 'head' ? resolved.value.head : null };
 }
@@ -1559,7 +1574,8 @@ type ActiveWindow = {
   withSuccessor: number;
 };
 
-async function readActiveSessions(records: WorkLineStore, workspace: WorkspaceScope): Promise<StoreRead<ActiveWindow>> {
+async function readActiveSessions(records: WorkLineStore, workspace: WorkspaceScope,
+  lookupPageLimit: number = 200): Promise<StoreRead<ActiveWindow>> {
   const active: SessionRecord[] = [];
   let first: CommitCursor | null = null;
   let last: CommitCursor | null = null;
@@ -1569,7 +1585,7 @@ async function readActiveSessions(records: WorkLineStore, workspace: WorkspaceSc
       index: SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
       values: [workspace.projectId, workspace.workspaceId, 'active'],
       ...(after === undefined ? {} : { after }),
-      limit: 200,
+      limit: lookupPageLimit,
     });
     if (page.status !== 'ready') return rejectionOf(page);
     if (first === null) first = page.value.readThrough;
@@ -1591,8 +1607,9 @@ async function readActiveSessions(records: WorkLineStore, workspace: WorkspaceSc
   return { status: 'ready', value: { sessions: active, from: first, to: last, withSuccessor } };
 }
 
-async function listActiveHeads(records: WorkLineStore, workspace: WorkspaceScope): Promise<StoreRead<ActiveWindow & { heads: SessionRecord[] }>> {
-  const windowResult = await readActiveSessions(records, workspace);
+async function listActiveHeads(records: WorkLineStore, workspace: WorkspaceScope,
+  lookupPageLimit: number = 200): Promise<StoreRead<ActiveWindow & { heads: SessionRecord[] }>> {
+  const windowResult = await readActiveSessions(records, workspace, lookupPageLimit);
   if (windowResult.status !== 'ready') return windowResult;
   const window = windowResult.value;
   const heads: SessionRecord[] = [];
@@ -1867,7 +1884,8 @@ async function readHistoryParts(
       return null;
     }
   };
-  const anchors = await readWrittenAnchors(state.records, workspace, chain, nextOf);
+  const anchors = await readWrittenAnchors(state.records, workspace, chain, nextOf,
+    deps.listPageLimit ?? 100);
   // L1b (review item 8): a budget stop records `history_budget`, the same token
   // the done-evidence part uses; other partials keep their prose reason.
   if (anchors.partial) partialParts.push({ part: 'written_anchors',
@@ -1903,6 +1921,8 @@ async function readWrittenAnchors(
   chain: readonly LineChainEntryV1[],
   /** §3.4 AT4 (L1b): the authoritative archive-state `next` of an outstanding anchor's task. */
   nextOf: (task: TaskTriple) => Promise<LineTaskArchiveNextV1 | null>,
+  /** The page width of the anchor lookup (default 100). */
+  listPageLimit: number = 100,
 ): Promise<PartRead> {
   const anchors: import('../../../contracts/session-anomaly.js').SessionAnomalyAnchorV1[] = [];
   let partial = false;
@@ -1912,7 +1932,7 @@ async function readWrittenAnchors(
     let after: string | undefined;
     for (;;) {
       const page = await records.lookup({ index: S2C_ANOMALY_BY_SESSION_LOOKUP,
-        values: [workspace.projectId, workspace.workspaceId, entry.session.sessionId], limit: 100,
+        values: [workspace.projectId, workspace.workspaceId, entry.session.sessionId], limit: listPageLimit,
         ...(after === undefined ? {} : { after }) });
       if (page.status !== 'ready') {
         if (isBudgetFailure(page)) { partial = true; stop = true; }
@@ -1950,7 +1970,7 @@ async function readWrittenAnchors(
   let unclaimed = 0;
   let outstandingTask: TaskTriple | null = null;
   for (const group of groups.values()) {
-    const entered = await readEnteredAnchors(records, group.task);
+    const entered = await readEnteredAnchors(records, group.task, listPageLimit);
     if (entered.hardFailure !== null) {
       return { count: { status: 'unavailable', reason: entered.hardFailure.reason }, partial: true, budget: false,
         reason: entered.hardFailure.reason, hardFailure: entered.hardFailure };
@@ -1974,12 +1994,14 @@ async function readWrittenAnchors(
 async function readEnteredAnchors(
   records: WorkLineStore,
   task: TaskTriple,
+  /** The page width of the Run-by-task lookup (default 100). */
+  listPageLimit: number = 100,
 ): Promise<{ pickers: Map<string, Set<string>>; exhausted: boolean; hardFailure: { code: string; reason: string } | null }> {
   const pickers = new Map<string, Set<string>>();
   let after: string | undefined;
   for (;;) {
     const page = await records.lookup({ index: RUN_BY_TASK_INDEX,
-      values: [task.projectId, task.goalId, task.taskId], limit: 100,
+      values: [task.projectId, task.goalId, task.taskId], limit: listPageLimit,
       ...(after === undefined ? {} : { after }) });
     if (page.status !== 'ready') {
       if (isBudgetFailure(page)) return { pickers, exhausted: true, hardFailure: null };
@@ -2038,6 +2060,7 @@ async function readUndelivered(
   state: { records: WorkLineStore; budget: Budget },
 ): Promise<PartRead> {
   const reader = deps.undeliveredRepliesFor(state.records);
+  const listPageLimit = deps.listPageLimit ?? 100;
   if (reader === undefined) {
     const reason = 'the undelivered-reply reader is not injected (L1b)';
     return { count: { status: 'unavailable', reason }, partial: true, budget: false, reason, hardFailure: null };
@@ -2046,7 +2069,7 @@ async function readUndelivered(
   let cursor: string | undefined;
   for (;;) {
     const read = await reader(ctx, { sessionRef: headRef,
-      page: cursor === undefined ? { limit: 100 } : { limit: 100, cursor } });
+      page: cursor === undefined ? { limit: listPageLimit } : { limit: listPageLimit, cursor } });
     if (read.status !== 'ready') {
       if (read.status === 'rejected' && !isBudgetFailure(read) && read.code !== 'incomplete') {
         return { count: { status: 'unavailable', reason: read.reason }, partial: true, budget: false, reason: read.reason,
@@ -2087,12 +2110,13 @@ const EXCLUDED_GOAL_CAUSES: ReadonlySet<string> = new Set([
 /** A present-but-failed queue read is a read-incomplete, never "no cards" (rule 5). */
 async function readDecisionQueue(deps: WorkLineReaderDeps, ctx: CoreCallContext, workspace: WorkspaceScope): Promise<QueueRead> {
   if (deps.decisions === undefined) return { cards: [], complete: true, problem: null };
+  const listPageLimit = deps.listPageLimit ?? 100;
   const cards: DecisionCardV1[] = [];
   try {
     let cursor: string | undefined;
     for (;;) {
       const read = await deps.decisions.queryDecisionQueue(ctx, { workspace, sections: ['waiting_answer'],
-        page: cursor === undefined ? { limit: 100 } : { limit: 100, cursor } });
+        page: cursor === undefined ? { limit: listPageLimit } : { limit: listPageLimit, cursor } });
       if (read.status !== 'ready') {
         return { cards: [], complete: false,
           problem: `decision_queue_read_failed: ${read.status === 'rejected' ? read.reason : read.status}` };
@@ -2330,7 +2354,8 @@ function cycleRepresentativeOf(members: readonly SessionRef[]): SessionRef {
   return members.reduce((left, right) => (left.sessionId <= right.sessionId ? left : right));
 }
 
-async function resolveLine(records: WorkLineStore, workspace: WorkspaceScope, key: SessionRef): Promise<StoreRead<ResolvedLine> | { status: 'not_found' }> {
+async function resolveLine(records: WorkLineStore, workspace: WorkspaceScope, key: SessionRef,
+  lookupPageLimit: number = 200): Promise<StoreRead<ResolvedLine> | { status: 'not_found' }> {
   // N9: a provenance cycle has no single head; its min-refKey representative
   // stands for the line so sections still resolve (the chain read reports the
   // `invalid` problem). Review item 1.
@@ -2338,7 +2363,7 @@ async function resolveLine(records: WorkLineStore, workspace: WorkspaceScope, ke
   // part of the same-instant consistency set, not only the predecessor watermarks.
   const resolutionCursors: (CommitCursor | null)[] = [];
   const resolution = await resolveContinuationLine(records, workspace, key,
-    (cursor) => { resolutionCursors.push(cursor); });
+    (cursor) => { resolutionCursors.push(cursor); }, lookupPageLimit);
   if (resolution.status !== 'ready') return resolution;
   const headRef = resolution.value.kind === 'head'
     ? resolution.value.head
@@ -2359,8 +2384,9 @@ async function readWorkLineConversationSource(
   records: WorkLineStore,
   workspace: WorkspaceScope,
   key: SessionRef,
+  lookupPageLimit: number = 200,
 ): Promise<ReadResult<LineConversationSourceV1>> {
-  const resolved = await resolveLine(records, workspace, key);
+  const resolved = await resolveLine(records, workspace, key, lookupPageLimit);
   if (resolved.status !== 'ready') return resolved;
   const oldestFirst = [...resolved.value.sessions].reverse();
   return {
@@ -2383,6 +2409,7 @@ async function readGateChecks(
   row: LineRowV1,
 ): Promise<LineGateCheckV1[]> {
   if (deps.plans === undefined) return [];
+  const listPageLimit = deps.listPageLimit ?? 100;
   const shared: SharedReads = { goals: new Map(), workspace: null };
   const result: LineGateCheckV1[] = [];
   const seenRounds = new Set<string>();
@@ -2399,7 +2426,7 @@ async function readGateChecks(
     let after: string | undefined;
     for (;;) {
       const page = await deps.records.lookup({ index: VERIFICATION_ROUND_BY_TASK_LOOKUP,
-        values: [workspace.projectId, workspace.workspaceId, task.goalId, task.taskId], limit: 100,
+        values: [workspace.projectId, workspace.workspaceId, task.goalId, task.taskId], limit: listPageLimit,
         ...(after === undefined ? {} : { after }) });
       if (page.status !== 'ready') break;
       for (const record of page.value.records) {
@@ -2550,8 +2577,9 @@ async function readExecutionsSection(
   key: SessionRef,
   limit: number,
   cursorRaw: string | undefined,
+  lookupPageLimit: number = 200,
 ): Promise<ReadResult<WorkLineSectionPageV1>> {
-  const resolved = await resolveLine(records, workspace, key);
+  const resolved = await resolveLine(records, workspace, key, lookupPageLimit);
   if (resolved.status !== 'ready') return resolved;
   const head = resolved.value.head;
   const sessionsOldest = [...resolved.value.sessions].reverse();
@@ -2593,7 +2621,7 @@ async function readExecutionsSection(
     // L11/L12 (review item 8): re-resolve the line from the caller's key on every
     // attempt. A retry that reused the original head would miss a head created
     // mid-page; the fresh head/chain reads enter the same-instant check too.
-    const lineNow = await resolveLine(records, workspace, key);
+    const lineNow = await resolveLine(records, workspace, key, lookupPageLimit);
     if (lineNow.status !== 'ready') return lineNow;
     const headNow = lineNow.value.head;
     const chainNow = [...lineNow.value.sessions].reverse();
@@ -2730,13 +2758,14 @@ async function readMessagesSection(
   limit: number,
   cursorRaw: string | undefined,
 ): Promise<ReadResult<WorkLineSectionPageV1>> {
-  const resolved = await resolveLine(deps.records, workspace, key);
+  const resolved = await resolveLine(deps.records, workspace, key, deps.lookupPageLimit ?? 200);
   if (resolved.status !== 'ready') return resolved;
   const sessionsOldest = [...resolved.value.sessions].reverse();
   const chainKeys = sessionsOldest.map((session) => plainSessionKey(sessionRefOf(session)));
   const keyStr = plainSessionKey({ projectId: key.projectId, sessionId: key.sessionId });
 
   const undelivered = new Set<string>();
+  const listPageLimit = deps.listPageLimit ?? 100;
   if (resolved.value.head.health === 'unavailable') {
     const reader = deps.undeliveredRepliesFor(deps.records);
     // Rule 3/§3.11: `undelivered` is only knowable when every page read; a
@@ -2748,7 +2777,7 @@ async function readMessagesSection(
     let cursor: string | undefined;
     for (;;) {
       const read = await reader(ctx, { sessionRef: sessionRefOf(resolved.value.head),
-        page: cursor === undefined ? { limit: 100 } : { limit: 100, cursor } });
+        page: cursor === undefined ? { limit: listPageLimit } : { limit: listPageLimit, cursor } });
       if (read.status !== 'ready') {
         return read.status === 'rejected'
           ? rejectionOf(read)
@@ -2837,8 +2866,9 @@ async function readParticipationSection(
   key: SessionRef,
   limit: number,
   cursorRaw: string | undefined,
+  lookupPageLimit: number = 200,
 ): Promise<ReadResult<WorkLineSectionPageV1>> {
-  const resolved = await resolveLine(records, workspace, key);
+  const resolved = await resolveLine(records, workspace, key, lookupPageLimit);
   if (resolved.status !== 'ready') return resolved;
   const sessionsOldest = [...resolved.value.sessions].reverse();
   const chainKeys = sessionsOldest.map((session) => plainSessionKey(sessionRefOf(session)));
@@ -2904,8 +2934,9 @@ async function readCopiesSection(
   key: SessionRef,
   limit: number,
   cursorRaw: string | undefined,
+  lookupPageLimit: number = 200,
 ): Promise<ReadResult<WorkLineSectionPageV1>> {
-  const resolved = await resolveLine(records, workspace, key);
+  const resolved = await resolveLine(records, workspace, key, lookupPageLimit);
   if (resolved.status !== 'ready') return resolved;
   const sessionsOldest = [...resolved.value.sessions].reverse();
   const chainKeys = sessionsOldest.map((session) => plainSessionKey(sessionRefOf(session)));
@@ -2969,9 +3000,10 @@ async function readCopiesSection(
 }
 
 export function createWorkLineReader(deps: WorkLineReaderDeps): WorkLineReadPort {
+  const lookupPageLimit = deps.lookupPageLimit ?? 200;
   return {
     async listWorkLines(ctx, input): Promise<ReadResult<WorkLineListV1>> {
-      const windowResult = await listActiveHeads(deps.records, input.workspace);
+      const windowResult = await listActiveHeads(deps.records, input.workspace, lookupPageLimit);
       if (windowResult.status !== 'ready') return windowResult;
       const window = windowResult.value;
       const assembled = await assembleLineRows(deps, ctx, input.workspace,
@@ -3024,7 +3056,8 @@ export function createWorkLineReader(deps: WorkLineReaderDeps): WorkLineReadPort
         sourceCursor: window.sourceCursor, withoutArchivedAt } };
     },
     async readWorkLine(_ctx, input): Promise<ReadResult<WorkLineDetailV1 | { kind: 'branched'; heads: SessionRef[] }>> {
-      const resolved = await resolveContinuationLine(deps.records, input.workspace, input.key);
+      const resolved = await resolveContinuationLine(deps.records, input.workspace, input.key,
+        undefined, lookupPageLimit);
       if (resolved.status !== 'ready') return resolved;
       // N3: a branch names the heads explicitly instead of collapsing to
       // not_found. N9: a provenance cycle is corrupt data; the min-refKey
@@ -3071,19 +3104,23 @@ export function createWorkLineReader(deps: WorkLineReaderDeps): WorkLineReadPort
       }
       switch (input.section) {
         case 'executions':
-          return readExecutionsSection(deps.records, input.workspace, input.key, limit, input.page.cursor);
+          return readExecutionsSection(deps.records, input.workspace, input.key, limit, input.page.cursor,
+            lookupPageLimit);
         case 'messages':
           return readMessagesSection(deps, ctx, input.workspace, input.key, limit, input.page.cursor);
         case 'participation':
-          return readParticipationSection(deps.records, input.workspace, input.key, limit, input.page.cursor);
+          return readParticipationSection(deps.records, input.workspace, input.key, limit, input.page.cursor,
+            lookupPageLimit);
         case 'copies':
-          return readCopiesSection(deps.records, input.workspace, input.key, limit, input.page.cursor);
+          return readCopiesSection(deps.records, input.workspace, input.key, limit, input.page.cursor,
+            lookupPageLimit);
         default:
           return { status: 'rejected', code: 'invalid', reason: `unknown line page section ${String(input.section)}` };
       }
     },
     async readWorkLineConversationSource(_ctx, input): Promise<ReadResult<LineConversationSourceV1>> {
-      return readWorkLineConversationSource(deps.records, input.workspace, input.key);
+      return readWorkLineConversationSource(deps.records, input.workspace, input.key,
+        lookupPageLimit);
     },
   };
 }

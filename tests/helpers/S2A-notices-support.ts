@@ -53,7 +53,8 @@ export async function openS2ANotices(kind: S5FixtureKind): Promise<{ f: S5Decisi
  * wraps (`f.b2.base.records`), exactly as P8 adapts a records double.
  */
 export function automaticRework(f: S5DecisionFixture,
-  countOrdered?: (index: string) => void): DecisionNoticeSourcePort {
+  countOrdered?: (index: string) => void,
+  orderedPageLimit?: number): DecisionNoticeSourcePort {
   const real = f.b2.base.records as unknown as RecordOrderedLookupPort;
   return createAutomaticReworkNoticeSource({ records: {
     readMany: (keys: readonly string[]) => f.records.readMany(keys),
@@ -62,7 +63,7 @@ export function automaticRework(f: S5DecisionFixture,
       countOrdered?.(request.index);
       return real.lookupOrdered(request);
     },
-  } });
+  }, ...(orderedPageLimit === undefined ? {} : { orderedPageLimit }) });
 }
 
 /**
@@ -70,7 +71,8 @@ export function automaticRework(f: S5DecisionFixture,
  * Only the injected notice sources differ; the merger, token and settings owner
  * are always the production implementations.
  */
-export function noticesHarness(f: S5DecisionFixture, sources: readonly DecisionNoticeSourcePort[]) {
+export function noticesHarness(f: S5DecisionFixture, sources: readonly DecisionNoticeSourcePort[],
+  widths: { sourcePageLimit?: number; lookupPageLimit?: number } = {}) {
   const displayTokens = createNoticeDisplayToken(new Uint8Array(32));
   const positions = createNoticePositionComparator();
   const settings = createDecisionSettingsService({ records: f.records, now: f.now, newId: f.newId,
@@ -78,7 +80,9 @@ export function noticesHarness(f: S5DecisionFixture, sources: readonly DecisionN
   const reads = createDecisionReadModel({ records: f.records, cardSources: [], noticeSources: sources,
     // Notice-only requests never call the unrelated conflict assembler.
     conflicts: { async queryGoalConflicts() { throw new Error('notice-only reads must not query conflicts'); } },
-    positions, displayTokens });
+    positions, displayTokens,
+    ...(widths.sourcePageLimit === undefined ? {} : { sourcePageLimit: widths.sourcePageLimit }),
+    ...(widths.lookupPageLimit === undefined ? {} : { lookupPageLimit: widths.lookupPageLimit }) });
   const page = async (options: { categories?: NoticeCategoryV1[]; limit?: number; cursor?: string } = {}) =>
     ready(await reads.queryDecisionQueue(f.ctx, { workspace: WORKSPACE_SCOPE, sections: ['notices'],
       ...(options.categories === undefined ? {} : { categories: options.categories }),

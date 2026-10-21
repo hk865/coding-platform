@@ -4,10 +4,15 @@
  * QA-14 drives the REAL `CORE_ROUTE_SPECS` `decisions/queue` route through
  * `parseCoreRouteRequest` + `dispatchCoreRoute` over the REAL
  * `createPlatformCoreRouteBindings`. The decision read model is the real
- * `createDecisionReadModel` the S5 fixture composes; the 5,001 waiting cards
- * are QA-05's dataset, built through the real public mailbox/decision services
- * on both backends. The only double is the QA-14 storage wrapper (L-fixtures
- * exception 2), which makes the real records port reject reads.
+ * `createDecisionReadModel` the S5 fixture composes.
+ *
+ * Small daily version of QA-14 (a): the 5 waiting cards are QA-05's dataset
+ * shape, built through the real public mailbox/decision services on both
+ * backends, with the route page limit and both internal widths set to 2. The
+ * 5,001-card scale run lives in `S2A-decision-routes.scale.test.ts`. QA-14 (b),
+ * the read-failure case, is not a scale case; its small world is built below.
+ * The only double is the QA-14 storage wrapper (L-fixtures exception 2), which
+ * makes the real records port reject reads.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
@@ -25,10 +30,12 @@ import { owners } from '../helpers/S5-application-support.js';
 import { sendUserDecision, startRun, S2A_SCALE_TIMEOUT_MS } from '../helpers/S2A-queue-fixture.js';
 import { failingReadRecords, S2A_ROUTE_READ_FAILURE_REASON } from '../helpers/S2A-route-storage-support.js';
 
-const QA14_CARDS = 5_001;
-const QA14_PAGE_LIMIT = 50;
-/** ceil(5001 / 50), hand-computed. */
-const QA14_PAGES = 101;
+const QA14_CARDS = 5;
+const QA14_PAGE_LIMIT = 2;
+/** ceil(5 / 2), hand-computed: route pages 2 + 2 + 1. */
+const QA14_PAGES = 3;
+/** Small daily widths: both internal read batches are 2 items. */
+const SMALL_WIDTHS = { decision: { sourcePageLimit: 2, lookupPageLimit: 2 } };
 
 /** A typed real platform supplies the shape; only the composed decision read is exercised. */
 const noWorkspace = {
@@ -45,7 +52,7 @@ describe.each(['memory', 'sqlite'] as const)('S2A decision queue route (QE4, %s)
   let composed: Awaited<ReturnType<typeof createTargetPlatform>>;
   let successBindings: ReturnType<typeof createPlatformCoreRouteBindings>;
   let failingBindings: ReturnType<typeof createPlatformCoreRouteBindings>;
-  /** The 5,001 sent requests' card keys, from the messages the fixture actually sent. */
+  /** The 5 sent requests' card keys, from the messages the fixture actually sent. */
   const sentKeys: string[] = [];
 
   beforeAll(async () => {
@@ -57,8 +64,12 @@ describe.each(['memory', 'sqlite'] as const)('S2A decision queue route (QE4, %s)
       sentKeys.push(decisionSourceKey({ kind: 'message', messageRef: sent.ref }));
     }
     composed = await createTargetPlatform({ storage: { kind: 'memory' }, workspace: noWorkspace });
-    successBindings = createPlatformCoreRouteBindings({ ...composed, decisions: owners(f).reads });
-    failingBindings = createPlatformCoreRouteBindings({ ...composed, decisions: owners(f, failingReadRecords(f.records)).reads });
+    // Seams A and B are injected through `owners`, with the SAME widths for the
+    // success and the read-failure binding.
+    successBindings = createPlatformCoreRouteBindings({ ...composed,
+      decisions: owners(f, f.records, f.bodies, SMALL_WIDTHS).reads });
+    failingBindings = createPlatformCoreRouteBindings({ ...composed,
+      decisions: owners(f, failingReadRecords(f.records), f.bodies, SMALL_WIDTHS).reads });
   }, S2A_SCALE_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -75,7 +86,7 @@ describe.each(['memory', 'sqlite'] as const)('S2A decision queue route (QE4, %s)
       },
     })) as Promise<ReadResult<DecisionQueueReadV1>>;
 
-  it('QA-14 (a) - the route returns the first page and a cursor, then pages to all 5,001 cards', async () => {
+  it('QA-14 (a) (small: 5 cards, page 2) - the route returns the first page and a cursor, then pages to all 5 cards', async () => {
     const first = await routePage(successBindings);
     expect(first.status).toBe('ready');
     if (first.status !== 'ready') throw new Error(`QA-14 first page was not ready: ${JSON.stringify(first)}`);
@@ -106,6 +117,12 @@ describe.each(['memory', 'sqlite'] as const)('S2A decision queue route (QE4, %s)
       }
       cursor = page.value.nextCursor;
     }
+    // Route pages: the 5 Goal-C cards in source-key byte order send-4, send-0,
+    // send-1, send-2, send-3 -> pages 2 + 2 + 1; the decisive fifth card
+    // send-3 is on the last page. The internal user-message scan is 7 items at
+    // width 2 (the fixture seeds 2 user messages beside these 5): send-4,
+    // fixture answered, send-0, send-1, send-2, fixture decision, send-3 ->
+    // pages 2,2,2,1, also ending with send-3.
     expect(pages).toBe(QA14_PAGES);
     expect(total).toBe(QA14_CARDS);
     expect([...seen].sort()).toEqual([...sentKeys].sort());

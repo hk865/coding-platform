@@ -106,6 +106,10 @@ export type DecisionReadModelDependencies = {
   conflicts: GoalConflictAssemblerPort;
   positions: NoticePositionComparatorPort;
   displayTokens: NoticeDisplayTokenPort;
+  /** The page width of one source read batch (default SOURCE_PAGE_LIMIT = 200). */
+  sourcePageLimit?: number;
+  /** The page width of one shared lookup batch and both candidate enumerations (default 200). */
+  lookupPageLimit?: number;
 };
 
 type CardAction = DecisionCardV1['actions'][number];
@@ -137,6 +141,7 @@ const WINDOW_MOVED: unique symbol = Symbol('decision-read-model.window-moved');
 const enumerateCandidates = enumerateGoalCandidates as unknown as (
   records: DecisionReadRecordsPort,
   goalRef: GoalRef,
+  options?: { lookupPageLimit?: number },
 ) => ReturnType<typeof enumerateGoalCandidates>;
 
 /**
@@ -147,6 +152,7 @@ const enumerateCandidates = enumerateGoalCandidates as unknown as (
 const enumerateClosedCandidates = enumerateClosedGoalCandidates as unknown as (
   records: DecisionReadRecordsPort,
   goalRef: GoalRef,
+  options?: { lookupPageLimit?: number },
 ) => ReturnType<typeof enumerateClosedGoalCandidates>;
 
 /** §4.1/§4.3: a card's stable page point, ordered exactly like the output list. */
@@ -828,7 +834,7 @@ async function readDecisionQueueWindow(
   let goals: GoalSnapshot[] = [];
   if (wantsGoals) {
     try {
-      const listed = await listWorkspaceGoals(deps.records, workspace);
+      const listed = await listWorkspaceGoals(deps.records, workspace, deps.lookupPageLimit);
       // 2A L3: the Goal listing is paged to the end; no Goal count and no
       // truncation can reject the whole queue any more.
       goals = listed.goals;
@@ -866,7 +872,8 @@ async function readDecisionQueueWindow(
   let messages: SessionMessage[] = [];
   if (wantsCards || wantsNotices) {
     try {
-      const loaded = await loadWorkspaceMessages(deps.records, workspace);
+      const loaded = await loadWorkspaceMessages(deps.records, workspace,
+        deps.lookupPageLimit);
       messages = loaded.messages;
       watermark = later(watermark, loaded.watermark);
     } catch (error) {
@@ -901,7 +908,8 @@ async function readDecisionQueueWindow(
       // (a discarded window/truncation is a real failure, never an empty page).
       let candidateRead: Awaited<ReturnType<typeof enumerateGoalCandidates>>;
       try {
-        candidateRead = await enumerateCandidates(deps.records, goal.ref);
+        candidateRead = await enumerateCandidates(deps.records, goal.ref,
+          deps.lookupPageLimit === undefined ? undefined : { lookupPageLimit: deps.lookupPageLimit });
       } catch (error) {
         return storeFailureToRejection(error as { code: string; reason: string });
       }
@@ -918,7 +926,8 @@ async function readDecisionQueueWindow(
     for (const goal of scopedGoals) {
       let closedRead: Awaited<ReturnType<typeof enumerateClosedGoalCandidates>>;
       try {
-        closedRead = await enumerateClosedCandidates(deps.records, goal.ref);
+        closedRead = await enumerateClosedCandidates(deps.records, goal.ref,
+          deps.lookupPageLimit === undefined ? undefined : { lookupPageLimit: deps.lookupPageLimit });
       } catch (error) {
         return storeFailureToRejection(error as { code: string; reason: string });
       }
@@ -946,7 +955,7 @@ async function readDecisionQueueWindow(
         for (;;) {
           const result = await source.readPage(ctx, { workspace,
             ...(goalRef === undefined ? {} : { goalRef }),
-            page: { limit: SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }),
+            page: { limit: deps.sourcePageLimit ?? SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }),
               ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }),
               attempt } });
           if (result.status !== 'ready') return result;
@@ -1015,7 +1024,7 @@ async function readDecisionQueueWindow(
           const result = await provider.readPage(ctx, { workspace,
             ...(input.goalRef === undefined ? {} : { goalRef: input.goalRef }),
             ...(savedSeen.value[category] === undefined ? {} : { after: savedSeen.value[category] }),
-            page: { limit: SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }),
+            page: { limit: deps.sourcePageLimit ?? SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }),
               ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }),
               attempt } });
           if (result.status !== 'ready') return result;
@@ -1328,7 +1337,8 @@ async function deriveOpenCard(
   if (source.kind === 'candidate') {
     const identity = parseIdentity(source.key);
     if (identity === null || identity.kind !== 'candidate' || goal === null) return null;
-    const proposal = await findCandidateProposal(deps.records, identity, goal);
+    const proposal = await findCandidateProposal(deps.records, identity, goal,
+      deps.lookupPageLimit);
     return proposal === null ? null : candidateCard(proposal, goal);
   }
   if (source.kind === 'goal_conflict') {
@@ -1366,7 +1376,7 @@ async function deriveOpenCard(
   let cursor: string | undefined;
   for (;;) {
     const result = await provider.readPage(ctx, { workspace, goalRef: goal.ref,
-      page: { limit: SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }), attempt } });
+      page: { limit: deps.sourcePageLimit ?? SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }), attempt } });
     if (result.status === 'not_found') return null;
     if (result.status !== 'ready') throw result;
     if (result.value.availability !== 'available') {
@@ -1594,13 +1604,16 @@ function builtInMemberNoticeSource(records: DecisionReadRecordsPort, messages: r
 async function loadWorkspaceMessages(
   records: DecisionReadRecordsPort,
   workspace: WorkspaceScope,
+  /** The page width of the shared lookup; absent keeps lookupAll's default 200. */
+  pageLimit?: number,
 ): Promise<{ messages: SessionMessage[]; watermark: CommitCursor | null }> {
   // 2A L2: read only the messages addressed to the user through the dedicated
   // index; member-to-member traffic is never read. The source is paged to the
   // end (L10), so its whole user-message set is available with no cap.
   const messages: SessionMessage[] = [];
   const batch = await lookupAll(records, S2A_USER_MESSAGES_LOOKUP,
-    [workspace.projectId, workspace.workspaceId, 'user']);
+    [workspace.projectId, workspace.workspaceId, 'user'],
+    { ...(pageLimit === undefined ? {} : { pageLimit }) });
   for (const record of batch.items) {
     const decoded = decodeSessionMessageRecord(record);
     if (decoded.status !== 'decoded') {
@@ -1619,6 +1632,8 @@ async function findCandidateProposal(
   records: DecisionReadRecordsPort,
   identity: Extract<DecisionSourceIdentityV1, { kind: 'candidate' }>,
   goal: GoalSnapshot,
+  /** The page width of the shared lookup; absent keeps lookupAll's default 200. */
+  pageLimit?: number,
 ): Promise<PlanProposal | null> {
   if ('proposalRef' in identity) {
     const record = await readOne(records, canonicalJson(identity.proposalRef as unknown as JsonValue));
@@ -1637,7 +1652,8 @@ async function findCandidateProposal(
     return decoded.value;
   }
   const batch = await lookupAll(records, S5_PLAN_PROPOSAL_BY_REQUEST,
-    [goal.ref.projectId, goal.workspaceRef.workspaceId, goal.ref.goalId, identity.requestRef.queryJobId]);
+    [goal.ref.projectId, goal.workspaceRef.workspaceId, goal.ref.goalId, identity.requestRef.queryJobId],
+    { ...(pageLimit === undefined ? {} : { pageLimit }) });
   const candidates: PlanProposal[] = [];
   // §2.5/T-R2-2: each chain's creation position is its first candidate's
   // wire-only `since`, read beside the public DTO.

@@ -46,8 +46,9 @@
  * scope/governance seed lives in the shared `createTaskClaimFixture`, not in
  * this file; see the group report.)
  */
+import { vi } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { SessionRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
+import type { ModuleRef, SessionRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { TaskClaim } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-execution.js';
@@ -73,12 +74,56 @@ import { sessionAnomalyRefKey } from '../../src/core/work-graph/tasks/session-an
 import {
   createWorkLineReader,
 } from '../../src/core/work-graph/views/work-line-reader.js';
+import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
+import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { completedEvent, crashedEvent, L_HOST } from './S2C-L-runs-support.js';
 import { decisionReadsOver, openLineFixture, type LineFixture } from './S2C-L-line-support.js';
 import { preparationHost, prepareTaskForReal, type ClaimFixtureKind } from './task-claim-fixture.js';
 
-/** P9: only the 2C-25 scale work uses this timeout. */
+/**
+ * P9: only the 2C-25 scale work uses this timeout. The daily small world uses
+ * the runner's own timeouts.
+ */
 export const S2C_SCALE_TIMEOUT_MS = 1_800_000;
+
+/** Fixture sizes. Every default is today's scale value; the daily file passes small ones. */
+export type ScaleFixtureOptions = {
+  /** Total active line heads. Default 1,100. */
+  activeHeads?: number;
+  /** Active heads that get a real `starting` Run. Default 100. */
+  startingHeads?: number;
+  /** Active continuation pairs (one predecessor + one successor head each). Default 50. */
+  activePairs?: number;
+  /** Active `readonly_copy` Sessions. Default 100. */
+  activeCopies?: number;
+  /** Archived line heads. Default 2,750. */
+  archivedHeads?: number;
+  /** Archived continuation pairs (only the successor is a head). Default 500. */
+  archivedPairs?: number;
+  /** Archived `readonly_copy` Sessions. Default 500. */
+  archivedCopies?: number;
+  /** X's distinct `participates` links. Default 2,099. */
+  xParticipates?: number;
+  /** Extra modules linked to X as open `responsible` targets. Default 0. */
+  xResponsibleModules?: number;
+  /** Tasks in the goal the starting heads claim. Default 100. */
+  workTasks?: number;
+  /** Messages R sends; the last two in refKey order are replied to. Default 2,500. */
+  rMessages?: number;
+  /** W's written anchors; all but the refKey-last are picked up. Default 30. */
+  wAnchors?: number;
+  /** Z's seeded historical Runs (plus the one real claim/fail). Default 2,999. */
+  zRuns?: number;
+  /** Seam I: width of the 200-wide read loops. Default 200. */
+  lookupPageLimit?: number;
+  /** Seam I: width of the 100-wide read loops. Default 100. */
+  listPageLimit?: number;
+  /**
+   * A controlled clock for the archive writes (one value per archived Session,
+   * in archive order). Absent keeps today's real clock.
+   */
+  archiveClock?: (index: number) => string;
+};
 
 /** The backend-independent shape of the workspace, exported for the test. */
 export type ScaleFixture = {
@@ -110,19 +155,15 @@ const KERNEL_STORE = { adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kerne
 const DEFAULT_ROLE = { kind: 'legacy_template' as const, templateId: 'builder', templateRevision: '1' };
 const MAIL_PERMISSIONS = { ...L_HOST.permissions, tools: [...SESSION_MAILBOX_TOOL_NAMES] };
 
-const scaleWorkTasks = Array.from({ length: 100 }, (_value, index) => ({
-  taskId: `work-${String(index).padStart(3, '0')}`, title: `Scale work ${String(index)}`,
-}));
-const wTasks = Array.from({ length: 30 }, (_value, index) => ({
-  taskId: `w-${String(index).padStart(2, '0')}`, title: `W anchor ${String(index)}`,
-}));
-/** X's goal: the responsible task plus the 2,099 distinct `participates` targets. */
-const xTasks = [
-  { taskId: 'x', title: 'X task' },
-  ...Array.from({ length: 2_099 }, (_value, index) => ({
-    taskId: `x-p-${String(index).padStart(4, '0')}`, title: `X participates ${String(index)}`,
-  })),
-];
+/** X's goal: the responsible task plus the distinct `participates` targets. */
+function xTaskSpecs(participates: number): { taskId: string; title: string }[] {
+  return [
+    { taskId: 'x', title: 'X task' },
+    ...Array.from({ length: participates }, (_value, index) => ({
+      taskId: `x-p-${String(index).padStart(4, '0')}`, title: `X participates ${String(index)}`,
+    })),
+  ];
+}
 
 function keyOf(ref: object): string {
   return canonicalJson(ref as unknown as JsonValue);
@@ -185,7 +226,8 @@ function mailboxOver(f: LineFixture, records: GoalRecordTransactionPort & Record
 }
 
 /** The reader dependencies the production composition builds (P12/L1b). */
-function realDeps(f: LineFixture, records: WorkLineStore, budget?: number): WorkLineReaderDeps {
+function realDeps(f: LineFixture, records: WorkLineStore, budget: number | undefined,
+  widths: { lookupPageLimit?: number | undefined; listPageLimit?: number | undefined }): WorkLineReaderDeps {
   const bodies = new RawArtifactBodyStore();
   const now = () => AT;
   const sessionFacts = createSessionFactsService({ records });
@@ -202,26 +244,106 @@ function realDeps(f: LineFixture, records: WorkLineStore, budget?: number): Work
     plans: f.base.plans,
     decisions: decisionReadsOver(f.base, records),
     ...(budget === undefined ? {} : { historyReadBudget: budget }),
+    ...(widths.lookupPageLimit === undefined ? {} : { lookupPageLimit: widths.lookupPageLimit }),
+    ...(widths.listPageLimit === undefined ? {} : { listPageLimit: widths.listPageLimit }),
   };
+}
+
+/**
+ * The small world links X to extra modules so its open `responsible` stream
+ * crosses a page at width 2 without adding a second responsible task. The
+ * modules are added through the public architecture-catalog revision entry.
+ */
+async function addResponsibleModules(f: LineFixture, count: number,
+  requestId: (name: string) => string): Promise<ModuleRef[]> {
+  const projectId = f.base.scope.projectId;
+  const refs: ModuleRef[] = Array.from({ length: count }, (_value, index) => ({
+    projectId, moduleId: `s2c-x-link-${String(index + 1)}`,
+  }));
+  if (count === 0) return refs;
+  const catalogService = createArchitectureCatalogService({ records: f.base.records });
+  // P1-05: the baseline pin and the current catalog are the platform's values,
+  // read through the public current-selection read (never the internal window).
+  const current = await catalogService.readArchitectureRevision(f.ctx, { selection: { kind: 'current' } });
+  if (current.status !== 'ready') throw new Error(`S2C-X catalog read failed: ${JSON.stringify(current)}`);
+  const catalog = current.value.catalog.catalog;
+  const existing = new Set(catalog.modules.map((module) => module.ref.moduleId));
+  const added = refs.filter((ref) => !existing.has(ref.moduleId)).map((ref) => ({
+    ref, name: `S2C-X link module ${ref.moduleId}`,
+    responsibility: 'S2C-X open responsible-link page width', paths: [`s2c-x/${ref.moduleId}`],
+    interfaces: [],
+  }));
+  if (added.length === 0) return refs;
+
+  // P1-05: the Project/Workspace revisions are the platform's values, read
+  // through the public registration read, not decoded from the Project record.
+  const registration = await createProjectBootstrapServices({ records: f.base.records,
+    now: () => AT, eventId: () => 's2c-x-registration-read' })
+    .projects.readWorkspaceRegistration(f.ctx, f.base.scope);
+  if (registration.status !== 'ready') throw new Error(`S2C-X registration read failed: ${JSON.stringify(registration)}`);
+  const revised = await catalogService.reviseArchitectureCatalog(f.ctx, {
+    input: {
+      basedOn: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest },
+      catalog: { ...catalog, modules: [...catalog.modules, ...added] },
+      reason: 'S2C-X small world: responsible link page width',
+    },
+    meta: { requestId: requestId('catalog'), expected: [
+      { ref: f.base.projectRef, revision: registration.value.project.revision },
+      { ref: f.base.workspaceRef, revision: registration.value.workspace.revision },
+    ] },
+  });
+  if (revised.status !== 'committed') throw new Error(`S2C-X catalog revision failed: ${JSON.stringify(revised)}`);
+  return refs;
 }
 
 // -------------------------------------------------------------------------- //
 // The builder                                                                //
 // -------------------------------------------------------------------------- //
 
-export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFixture> {
+export async function buildScaleFixture(kind: ClaimFixtureKind,
+  input: ScaleFixtureOptions = {}): Promise<ScaleFixture> {
+  const activeHeads = input.activeHeads ?? 1_100;
+  const startingHeadCount = input.startingHeads ?? 100;
+  const activePairCount = input.activePairs ?? 50;
+  const activeCopyCount = input.activeCopies ?? 100;
+  const archivedHeadCount = input.archivedHeads ?? 2_750;
+  const archivedPairCount = input.archivedPairs ?? 500;
+  const archivedCopyCount = input.archivedCopies ?? 500;
+  const xParticipates = input.xParticipates ?? 2_099;
+  const xResponsibleModules = input.xResponsibleModules ?? 0;
+  const workTaskCount = input.workTasks ?? 100;
+  const rMessageCount = input.rMessages ?? 2_500;
+  const wAnchorCount = input.wAnchors ?? 30;
+  const zRunCount = input.zRuns ?? 2_999;
+  const widths = { lookupPageLimit: input.lookupPageLimit, listPageLimit: input.listPageLimit };
+
+  // The six named active heads plus the two pre-created base Sessions are
+  // always present; the rest of `activeHeads` is filler.
+  const fillerCount = activeHeads - startingHeadCount - activePairCount - 6 - 2;
+  if (fillerCount < 0) throw new Error(`S2C-X activeHeads ${String(activeHeads)} is too small for its parts`);
+  if (startingHeadCount > workTaskCount) throw new Error('S2C-X startingHeads exceeds workTasks');
+  if (archivedHeadCount < archivedPairCount) throw new Error('S2C-X archivedHeads is smaller than archivedPairs');
+  const archivedPlainCount = archivedHeadCount - archivedPairCount;
+
   const f = await openLineFixture(kind);
   const { scope, ctx } = f.base;
   let seq = 0;
   const requestId = (name: string): string => `s2c-x-${name}-${++seq}`;
 
+  const workTaskSpecs = Array.from({ length: workTaskCount }, (_value, index) => ({
+    taskId: `work-${String(index).padStart(3, '0')}`, title: `Scale work ${String(index)}`,
+  }));
+  const wTaskSpecs = Array.from({ length: wAnchorCount }, (_value, index) => ({
+    taskId: `w-${String(index).padStart(2, '0')}`, title: `W anchor ${String(index)}`,
+  }));
+
   // --- goals and their one shared task triple for continuation provenance ---
-  const workGoal = await f.addGoal('x-scale-work', scaleWorkTasks);
+  const workGoal = await f.addGoal('x-scale-work', workTaskSpecs);
   const provGoal = await f.addGoal('x-scale-prov', [{ taskId: 'prov', title: 'Provenance task' }]);
   const provTask: TaskTriple = provGoal.tasks['prov']!;
-  const xGoal = await f.addGoal('x-scale-x', xTasks);
+  const xGoal = await f.addGoal('x-scale-x', xTaskSpecs(xParticipates));
   const rGoal = await f.addGoal('x-scale-r', [{ taskId: 'r', title: 'R task' }, { taskId: 'g', title: 'G task' }]);
-  const wGoal = await f.addGoal('x-scale-w', wTasks);
+  const wGoal = await f.addGoal('x-scale-w', wTaskSpecs);
   const zGoal = await f.addGoal('x-scale-z', [{ taskId: 'star', title: 'T star' }]);
 
   const continuation = (from: SessionRef): { schemaVersion: 1; kind: 'continuation'; from: SessionRef;
@@ -229,18 +351,18 @@ export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFi
     ({ schemaVersion: 1, kind: 'continuation', from, reason: 'interrupted', task: provTask });
 
   // --- active heads ----------------------------------------------------------
-  // 100 starting-Run lines: a real claim, no entry.
+  // Starting-Run lines: a real claim, no entry.
   const startingHeads: SessionRef[] = [];
-  for (let index = 0; index < 100; index += 1) {
+  for (let index = 0; index < startingHeadCount; index += 1) {
     const head = (await f.createSession(requestId(`start-${String(index)}`))).ref;
-    await f.claim(scaleWorkTasks[index]!.taskId, head, workGoal);
+    await f.claim(workTaskSpecs[index]!.taskId, head, workGoal);
     startingHeads.push(head);
   }
 
-  // 50 active continuation pairs (P is not a head; C is the head).
+  // Active continuation pairs (P is not a head; C is the head).
   const activeSuccessors: SessionRef[] = [];
   const activePredecessors: SessionRef[] = [];
-  for (let index = 0; index < 50; index += 1) {
+  for (let index = 0; index < activePairCount; index += 1) {
     const predecessor = (await f.createSession(requestId(`ap-${String(index)}`))).ref;
     const successor = (await f.createSession(requestId(`ac-${String(index)}`),
       { provenance: continuation(predecessor) })).ref;
@@ -248,7 +370,7 @@ export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFi
     activeSuccessors.push(successor);
   }
 
-  // 1,000 idle heads; the six named ones first.
+  // The idle heads; the six named ones first.
   const x = (await f.createSession(requestId('x'))).ref;
   const r = (await f.createSession(requestId('r'))).ref;
   const w = (await f.createSession(requestId('w'))).ref;
@@ -258,17 +380,20 @@ export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFi
   // The base fixture pre-creates two Sessions; they are two of the idle heads.
   const baseHeads = [f.base.sessions.first, f.base.sessions.second];
   const idleFillerHeads: SessionRef[] = [...baseHeads];
-  for (let index = 0; index < 942; index += 1) {
+  for (let index = 0; index < fillerCount; index += 1) {
     idleFillerHeads.push((await f.createSession(requestId(`idle-${String(index)}`))).ref);
   }
 
-  // --- X: 2,099 participates links + 1 responsible task link -----------------
-  for (let index = 0; index < 2_099; index += 1) {
+  // --- X: participates links + open responsible task and module links --------
+  for (let index = 0; index < xParticipates; index += 1) {
     await f.link(x, { kind: 'task', ref: xGoal.tasks[`x-p-${String(index).padStart(4, '0')}`]! }, 'participates', true);
   }
   await f.link(x, { kind: 'task', ref: xGoal.tasks['x']! }, 'responsible', true);
+  for (const moduleRef of await addResponsibleModules(f, xResponsibleModules, requestId)) {
+    await f.link(x, { kind: 'module', ref: moduleRef }, 'responsible', true);
+  }
 
-  // --- R: send 2,500 messages, the last two answered; then retire -------------
+  // --- R: send messages, the last two answered; then retire ------------------
   const rClaim = await f.claim('r', r, rGoal);
   await enterWithPermissions(f, rClaim.claim, MAIL_PERMISSIONS);
   const gClaim = await f.claim('g', replier, rGoal);
@@ -277,7 +402,7 @@ export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFi
   const gExec = await f.runs.readExecution(gClaim.claim);
   const mailbox = mailboxOver(f, f.base.records, f.runs.bodies, () => AT);
   const sent: { ref: SessionMessageRef; revision: number }[] = [];
-  for (let index = 0; index < 2_500; index += 1) {
+  for (let index = 0; index < rMessageCount; index += 1) {
     const message = await mailbox.sendMessage(workContext(f.ctx, rClaim.runRef, rExec.run.roleBinding), {
       input: { recipient: replier, text: `S2C-X scale message ${String(index)}`, intent: 'inquiry', needsReply: true },
       meta: { requestId: requestId(`send-${String(index)}`), expected: [] } });
@@ -295,9 +420,9 @@ export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFi
   await f.runs.retire(r, 'missing');
   await f.runs.recordResult(gClaim.claim, completedEvent(gClaim.claim, 's2c-x-g-end'));
 
-  // --- W: 30 anchors, one run per task; 29 picker Runs seeded -----------------
+  // --- W: anchors, one run per task; all but the last picked up --------------
   const wRunRefs: RunRef[] = [];
-  for (const task of wTasks) {
+  for (const task of wTaskSpecs) {
     const claim = await f.claim(task.taskId, w, wGoal);
     await f.runs.enter(claim.claim);
     await f.runs.recordResult(claim.claim, completedEvent(claim.claim, `s2c-x-w-${task.taskId}`));
@@ -310,9 +435,9 @@ export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFi
       goalId: runRef.goalId, runId: runRef.runId },
   }));
   anchors.sort((left, right) => (sessionAnomalyRefKey(left.anchorRef) < sessionAnomalyRefKey(right.anchorRef) ? -1 : 1));
-  for (const entry of anchors.slice(0, anchors.length - 1)) {
+  for (const entry of anchors.slice(0, Math.max(0, anchors.length - 1))) {
     // STORAGE-BOUNDARY EXCEPTION (lead ruling 2026-10-15, item 14; same
-    // reasoning as 2A exceptions 3-4): seeding the 29 picker Runs through the
+    // reasoning as 2A exceptions 3-4): seeding the picker Runs through the
     // public claim path is quadratic for the measurement, so the record is
     // written here in the shape today's RunSnapshot@1 codec decodes.
     const baseRead = await f.base.records.readMany([keyOf(entry.runRef)]);
@@ -331,7 +456,7 @@ export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFi
     if (committed.status !== 'committed') throw new Error(`S2C-X picker seed failed: ${JSON.stringify(committed)}`);
   }
 
-  // --- Z: one real claim/fail on T*, then 2,999 seeded Runs -------------------
+  // --- Z: one real claim/fail on T*, then the seeded Runs ---------------------
   await f.link(z, { kind: 'task', ref: zGoal.tasks['star']! }, 'responsible', true);
   let zIds = 0;
   const zClaim = await f.claimWith('star', z, { goal: zGoal, now: () => AT,
@@ -341,12 +466,12 @@ export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFi
   const zBaseRead = await f.base.records.readMany([keyOf(zClaim.runRef)]);
   if (zBaseRead.status !== 'ready' || zBaseRead.value.records[0] === undefined) throw new Error('S2C-X base Z run read');
   const zBase = JSON.parse(zBaseRead.value.records[0].json) as RunSnapshot;
-  for (let index = 0; index < 2_999; index += 1) {
+  for (let index = 0; index < zRunCount; index += 1) {
     // STORAGE-BOUNDARY EXCEPTION (lead ruling 2026-10-15, item 14; same
-    // reasoning as 2A exceptions 3-4): the 2,999 historical Runs of Z's task
-    // exist only to make queryTaskGraph's shared cost grow; driving them
-    // through real claim/fail/requeue cycles is quadratic, so they are written
-    // here in the shape today's RunSnapshot@1 codec decodes.
+    // reasoning as 2A exceptions 3-4): the historical Runs of Z's task exist
+    // only to make queryTaskGraph's shared cost grow; driving them through real
+    // claim/fail/requeue cycles is quadratic, so they are written here in the
+    // shape today's RunSnapshot@1 codec decodes.
     const run: RunSnapshot = { ...zBase, ref: { ...zBase.ref, runId: `a-${String(index).padStart(5, '0')}` } };
     const committed = await f.base.commitRaw([{ refKey: keyOf(run.ref), schemaId: 'RunSnapshot@1',
       revision: run.revision, json: JSON.stringify(run) }]);
@@ -354,11 +479,12 @@ export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFi
   }
 
   // --- active copies: a real consultation whose QueryRun is answered ----------
-  // Only link-free filler heads are asked: a Session with X's 2,100 links is
-  // refused by the link-budget guard the copy consultation reads.
-  const copySources = idleFillerHeads.slice(0, 100);
+  // Only link-free filler heads are asked: a Session with X's links is refused
+  // by the link-budget guard the copy consultation reads.
+  const copySources = idleFillerHeads.slice(0, activeCopyCount);
+  if (copySources.length < activeCopyCount) throw new Error('S2C-X activeCopies exceeds the link-free sources');
   const activeCopies: SessionRef[] = [];
-  for (let index = 0; index < 100; index += 1) {
+  for (let index = 0; index < activeCopyCount; index += 1) {
     const asked = copySources[index]!;
     const consultation = await f.runs.beginConsultationCopy(asked, requestId(`copy-${String(index)}`));
     await f.runs.completeConsultation(consultation.queryRunRef, consultation.copy, 'answered',
@@ -366,36 +492,48 @@ export async function buildScaleFixture(kind: ClaimFixtureKind): Promise<ScaleFi
     activeCopies.push(consultation.copy);
   }
 
-  // --- archived side: 2,250 plain heads + 500 pairs + 500 copies --------------
+  // --- archived side: pairs + plain heads + copies ---------------------------
   const archivedOrder: SessionRef[] = [];
   const archivedHeads: SessionRef[] = [];
-  for (let index = 0; index < 500; index += 1) {
+  for (let index = 0; index < archivedPairCount; index += 1) {
     const predecessor = (await f.createSession(requestId(`ahp-${String(index)}`))).ref;
     const successor = (await f.createSession(requestId(`ahc-${String(index)}`),
       { provenance: continuation(predecessor) })).ref;
     archivedOrder.push(predecessor, successor);
     archivedHeads.push(successor);
   }
-  for (let index = 0; index < 2_250; index += 1) {
+  for (let index = 0; index < archivedPlainCount; index += 1) {
     const head = (await f.createSession(requestId(`arch-${String(index)}`))).ref;
     archivedOrder.push(head);
     archivedHeads.push(head);
   }
-  for (let index = 0; index < 500; index += 1) {
-    const copy = await createArchivedCopy(f, requestId(`arch-copy-${String(index)}`), copySources[index % copySources.length]!);
+  for (let index = 0; index < archivedCopyCount; index += 1) {
+    if (copySources.length === 0) throw new Error('S2C-X archivedCopies needs a link-free source');
+    const copy = await createArchivedCopy(f, requestId(`arch-copy-${String(index)}`),
+      copySources[index % copySources.length]!);
     archivedOrder.push(copy);
   }
-  for (const session of archivedOrder) {
-    await f.archive(session, 'S2C-X scale archive');
+  const archiveClock = input.archiveClock;
+  if (archiveClock !== undefined) vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    let index = 0;
+    for (const session of archivedOrder) {
+      const at = archiveClock?.(index);
+      if (at !== undefined) vi.setSystemTime(new Date(at));
+      await f.archive(session, 'S2C-X scale archive');
+      index += 1;
+    }
+  } finally {
+    if (archiveClock !== undefined) vi.useRealTimers();
   }
 
   // --- shared reader wiring and the exported fixture --------------------------
-  const deps = realDeps(f, f.base.records as unknown as WorkLineStore);
+  const deps = realDeps(f, f.base.records as unknown as WorkLineStore, undefined, widths);
   const fixture: ScaleFixture = {
     kind, f, ctx, scope, x, r, w, z, archivedHeads, activeCopies, activeSuccessors, activePredecessors,
     activeHeads: [...startingHeads, ...activeSuccessors, x, r, w, z, replier, picker, ...idleFillerHeads],
     reader: createWorkLineReader(deps),
-    readerWith: (records, budget) => createWorkLineReader(realDeps(f, records, budget)),
+    readerWith: (records, budget) => createWorkLineReader(realDeps(f, records, budget, widths)),
     deps,
     close: async () => { await f.close(); },
   };

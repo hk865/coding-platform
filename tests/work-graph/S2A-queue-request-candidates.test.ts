@@ -2,16 +2,11 @@
  * Group Q (slice 2A) QA-09(二): one request with more candidates than the old
  * `findCandidateProposal` window still resolves through both public reads.
  *
- * DEVIATION from L-fixtures (UNSPECIFIED, proposed third exception; coordinator
- * ruled the seeded fixture acceptable only if the public path is infeasible
- * within P12's 600 s). The public path WAS tried: `proposePlan` with `requestRef`
- * (via `S5R2-a-support.propose`) once per candidate. It is O(n^2) because every
- * call runs `readRequestCandidateHead` -> `readLookupKeys(S5_PLAN_PROPOSAL_BY_REQUEST)`,
- * which 2A reads to the end. Measured: 1,549 ms for 200 candidates; the 5,001
- * run was killed after ~23 min without finishing on memory. The bulk rows are
- * therefore committed once at the fixture's storage boundary
- * (`seedCandidateProposal`), exactly like the QA-11 exception; every ASSERTION
- * still goes through `readDecisionCard` / `queryDecisionQueue`.
+ * Small daily version: 5 seeded candidates on request Q1, with the direct card
+ * read and the queue's candidate enumeration narrowed to 4-item lookup pages;
+ * the live (last) candidate `S2AQ09-4` is the fifth item, so it sits on the last
+ * page of both layers. The 5,001-candidate scale run (and its seeded-fixture
+ * deviation note) lives in `S2A-queue-request-candidates.scale.test.ts`.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
@@ -20,9 +15,10 @@ import { decodePlanRevisionSnapshot } from '../../src/core/work-graph/persistenc
 import { GOAL_B, OPERATOR, PLAN_B1, REQUEST_Q1, T, openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
 import { ready, owners, decoded, recordAt } from '../helpers/S5-application-support.js';
 import { proposalPins, readQueue, requestCards, requestKey } from '../helpers/S5R2-a-support.js';
-import { S2A_SCALE_TIMEOUT_MS } from '../helpers/S2A-queue-fixture.js';
 
-const CANDIDATES = 5_001;
+const CANDIDATES = 5;
+/** Small daily widths: the direct A lookup and the queue's B′ enumeration both read 4 per page. */
+const SMALL_WIDTHS = { decision: { lookupPageLimit: 4 } };
 
 describe.each(['memory', 'sqlite'] as const)('S2A request candidates (%s)', (kind) => {
   const opened: S5DecisionFixture[] = [];
@@ -33,7 +29,7 @@ describe.each(['memory', 'sqlite'] as const)('S2A request candidates (%s)', (kin
     return f;
   };
 
-  it('QA-09 (二) - 5001 candidates on one request resolve to the live head through card and queue', async () => {
+  it('QA-09 (二) (small: 5 candidates, page 4) - 5 candidates on one request resolve to the live head through card and queue', async () => {
     const f = await open();
     const active = decoded(decodePlanRevisionSnapshot(await recordAt(f.records, PLAN_B1)));
     const futureTask = 'pqa09-future';
@@ -73,15 +69,25 @@ describe.each(['memory', 'sqlite'] as const)('S2A request candidates (%s)', (kin
       if (receipt.status !== 'committed') throw new Error(`seed failed: ${JSON.stringify(receipt)}`);
     }
 
+    // Direct card read (seam A): the request lookup sees the fixture's U1 plus
+    // the 5 seeded candidates on Q1 = 6 items at width 4 -> pages 4 + 2. Byte
+    // order: S2AQ09-0, S2AQ09-1, S2AQ09-2, S2AQ09-3, S2AQ09-4, U1; the live
+    // S2AQ09-4 is the fifth item, on the last page.
     const key = requestKey();
-    const direct = ready(await owners(f).reads.readDecisionCard(f.ctx,
+    const direct = ready(await owners(f, f.records, f.bodies, SMALL_WIDTHS).reads.readDecisionCard(f.ctx,
       { source: { kind: 'candidate', key, goalRef: GOAL_B, pins: [] } }));
     expect(direct).toMatchObject({ cardKey: key, requestRef: REQUEST_Q1, state: 'waiting_answer',
       candidateStatus: 'candidate' });
     expect(proposalPins(direct)).toEqual([{ ref: liveRef, revision: 1 }]);
-    const queue = await readQueue(f, ['waiting_answer']);
+    // Queue enumeration (seam B′): the Goal-B proposal index sees the fixture's
+    // accepted PB1, its U1/U2, plus the 5 seeded = 8 items at width 4 -> pages
+    // 4 + 4. Byte order: S2AQ09-0, S2AQ09-1, S2AQ09-2, S2AQ09-3, S2AQ09-4, U1
+    // (plan-proposal-0798…), U2 (plan-proposal-a9aa…), PB1
+    // (plan-proposal-fd93…); the live S2AQ09-4 is the fifth item, on the last
+    // page.
+    const queue = await readQueue(f, ['waiting_answer'], SMALL_WIDTHS);
     const queued = requestCards(queue.waitingAnswer);
     expect(queued).toHaveLength(1);
     expect(queued[0]).toEqual(direct);
-  }, S2A_SCALE_TIMEOUT_MS);
+  });
 });

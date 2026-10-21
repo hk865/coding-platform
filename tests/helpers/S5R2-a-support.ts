@@ -14,7 +14,7 @@ import { createGoalService } from '../../src/core/work-graph/tasks/task-service.
 import {
   GOAL_B, PROJECT, REQUEST_Q1, T, WORKSPACE, WORKSPACE_SCOPE, type S5DecisionFixture,
 } from './S5-decision-fixture.js';
-import { committed, decoded, goalAt, keyOf, owners, pin, ready, recordAt } from './S5-application-support.js';
+import { committed, decoded, goalAt, keyOf, owners, pin, ready, recordAt, type OwnerReadWidths } from './S5-application-support.js';
 
 export type Candidate = Extract<PlanProposal, { kind: 'candidate_v2' }>;
 
@@ -109,8 +109,9 @@ export async function adopt(f: S5DecisionFixture, proposal: Candidate, requestId
 }
 
 export async function readQueue(f: S5DecisionFixture,
-  sections: Parameters<DecisionReadPort['queryDecisionQueue']>[1]['sections']) {
-  return ready(await owners(f).reads.queryDecisionQueue(f.ctx, {
+  sections: Parameters<DecisionReadPort['queryDecisionQueue']>[1]['sections'],
+  widths?: OwnerReadWidths) {
+  return ready(await owners(f, f.records, f.bodies, widths).reads.queryDecisionQueue(f.ctx, {
     workspace: WORKSPACE_SCOPE, goalRef: GOAL_B, sections, page: { limit: 100 },
   }));
 }
@@ -163,7 +164,7 @@ export async function allIndexRecords(f: S5DecisionFixture, index: string,
   return records;
 }
 
-export async function populateGoals(f: S5DecisionFixture, count: 200 | 201) {
+export async function populateGoals(f: S5DecisionFixture, count: number) {
   const goals = createGoalService({ records: f.records, now: f.now, eventId: f.newId }).tasks;
   const existing = await allIndexRecords(f, GOAL_BY_WORKSPACE_INDEX, ['P', 'W']);
   expect(existing.map(record => decoded(decodeGoalSnapshot(record)).ref.goalId).sort()).toEqual(['A', 'B', 'C']);

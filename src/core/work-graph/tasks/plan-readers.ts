@@ -484,6 +484,8 @@ async function readLookupKeys(
   records: RecordReadPort & RecordLookupPort,
   index: string,
   values: readonly (string | number | boolean | null)[],
+  /** The page width of one lookup batch; callers that must cross pages pass a small one. */
+  limit: number = LOOKUP_PAGE_LIMIT,
 ): Promise<{ status: 'ready'; refKeys: string[]; readThrough: CommitCursor | null; stable: boolean } | Rejected> {
   const refKeys: string[] = [];
   let after: string | undefined;
@@ -494,8 +496,8 @@ async function readLookupKeys(
   // 5,000-key window rejects a caller any more.
   for (;;) {
     const request: RecordLookupRequest = after === undefined
-      ? { index, values, limit: LOOKUP_PAGE_LIMIT }
-      : { index, values, after, limit: LOOKUP_PAGE_LIMIT };
+      ? { index, values, limit }
+      : { index, values, after, limit };
     const result = await records.lookup(request);
     if (result.status !== 'ready') {
       if (result.code === 'unsupported') return incomplete(`lookup index ${index} is not registered`);
@@ -617,10 +619,11 @@ export async function readRequestCandidateHead(
 export async function enumerateGoalCandidates(
   records: GoalRecordTransactionPort & RecordLookupPort,
   goalRef: GoalRef,
+  options?: { lookupPageLimit?: number },
 ): Promise<{ status: 'ready'; proposals: PlanProposal[]; readThrough: CommitCursor | null } | Rejected> {
   const values = [goalRef.projectId, goalRef.goalId];
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
-    const found = await readLookupKeys(records, PLAN_PROPOSAL_LOOKUP_INDEX, values);
+    const found = await readLookupKeys(records, PLAN_PROPOSAL_LOOKUP_INDEX, values, options?.lookupPageLimit);
     if (found.status !== 'ready') return found;
     const canonical = await readBatch(records, uniqueKeys(found.refKeys));
     if (canonical.status !== 'ready') return canonical;
@@ -664,10 +667,11 @@ export async function enumerateGoalCandidates(
 export async function enumerateClosedGoalCandidates(
   records: GoalRecordTransactionPort & RecordLookupPort,
   goalRef: GoalRef,
+  options?: { lookupPageLimit?: number },
 ): Promise<{ status: 'ready'; proposals: PlanProposal[]; readThrough: CommitCursor | null } | Rejected> {
   const values = [goalRef.projectId, goalRef.goalId];
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
-    const found = await readLookupKeys(records, PLAN_PROPOSAL_LOOKUP_INDEX, values);
+    const found = await readLookupKeys(records, PLAN_PROPOSAL_LOOKUP_INDEX, values, options?.lookupPageLimit);
     if (found.status !== 'ready') return found;
     const canonical = await readBatch(records, uniqueKeys(found.refKeys));
     if (canonical.status !== 'ready') return canonical;
