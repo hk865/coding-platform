@@ -1,5 +1,7 @@
 # 2A 片规格：决定队列只读相关的条目，不再拒绝，完整分页
 
+**后注（决定 86-6，lead 2026-10-21）：** QA-04、QA-05、QA-06（`tests/work-graph/S2A-queue-bounds`）、QA-07 和 QA-09（一）（`S2A-queue-derived-cards`）、QA-09（二）（`S2A-queue-request-candidates`）、QA-10（二）（`S2A-notices-overbound`）、QA-14（一）（`tests/app/S2A-decision-routes`）和 L11 的 201 次自动返工（`S2A-notices-attempt`）在规模批里核：原规模的用例原样挪进同名的 `.scale.test.ts`（两种后端、原数量、原断言、原超时，不注入页宽，所以也核了生产的默认页宽），`npm run test:scale` 每片合入前和全量一起跑；日常套件（`npm test`，CI 也只跑它）的同名文件里是同一组断言的小版本：测试经 owner 的依赖传入小页宽，每层读取至少跨两页，决定那一条在最后一页，每层的顺序和分页手算写在注释里。正文原样保留，只加此注。拆分经过见 [证据](../../../reviews/evidence/scale-split-sc-2026-10-21/README.md)。QA-14（二）是读失败，不需要规模，只在日常文件里；QA-17 没拆（不做接缝 H）。
+
 **后注（决定 60、62）：** 后来的决定改写了本规格的这几处：
 - L6（约 140 行）、L8（约 148 行）：决定 60-8/62-2 的项目级卡源（上限 `role_capacity`、角色线变动 `role_line_change`、结构修订提议）和决定 62 的规则记录，要沿本规格已接管的单卡/队列完整读取（分页、计数、历史、水位）接入，不另起一套读取；由第 7 片 7D 改。
 - 正文原样保留，只加此注。

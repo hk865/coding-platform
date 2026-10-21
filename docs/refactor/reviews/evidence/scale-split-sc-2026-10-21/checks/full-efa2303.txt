@@ -1,0 +1,19 @@
+full suite sc: copy /home/han001/dsh-work/slices/s9sc at efa2303 SC2 scale tests split; bubblewrap, 8 workers, scope 11G; started 18:59 available 14220 MB
+build 0
+typecheck 0
+check:architecture 0
+vitest exit 1 wall 967 s
+ Test Files  1 failed | 754 passed (755)
+      Tests  1 failed | 9667 passed | 3 skipped (9671)
+   Duration  920.18s (transform 33.70s, setup 0ms, import 512.07s, tests 6765.74s, environment 64ms)
+failing files:
+ FAIL  tests/architecture/production-reach.test.ts > production reach of src/ > reaches every declaration from a production entry point, or allowlists it with its reason
+ ❯ tests/architecture/production-reach.test.ts (4 tests | 1 failed)
+ ❯ tests/architecture/production-reach.test.ts:103:90
+ended 19:16
+scale batch exit 0 wall 3194 s
+ Test Files  12 passed (12)
+      Tests  38 passed (38)
+   Duration  3044.24s (transform 3.01s, setup 0ms, import 10.07s, tests 3033.23s, environment 1ms)
+scale failing files:
+scale ended 20:09
