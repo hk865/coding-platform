@@ -41,7 +41,7 @@ import {
   type NoteUserReasonTargetV1,
 } from '../state/note-machine.js';
 import { S4_NOTE_BY_REVIEW_STATUS_LOOKUP } from '../persistence/note-record-codecs.js';
-import { readAllHeads } from './note-read-model.js';
+import { readAllHeads } from './note-base-reader.js';
 import { readHeadBatch, readPointerAndHeadBatch } from './note-batch-reader.js';
 import { readGoalPlanWindow } from '../tasks/plan-readers.js';
 import type { NotePlanWindowFactsV1 } from './note-service.js';

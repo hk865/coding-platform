@@ -34,10 +34,8 @@ import {
   goalSnapshotValueProblem,
   workspaceSnapshotValueProblem,
 } from './record-codecs.js';
-import { encodeEventEnvelope } from './event-envelope.js';
-import {
-  eventBodyEnvelopeProblem, eventBodyProblem, eventEnvelopeProblem,
-} from './event-validation.js';
+import { createEventCodec, type EventFormat } from './event-codec-factory.js';
+import { eventBodyProblem } from './event-validation.js';
 import { noticeOriginFieldsProblem, type NoticeOriginWireV1 } from './rework-codecs.js';
 export type { NoticeOriginWireV1 } from './rework-codecs.js';
 
@@ -53,42 +51,50 @@ export const DECISION_EVENT_SCHEMA_VERSION = 1 as const;
 // Encoders / decoders
 // --------------------------------------------------------------------------
 
+const goalSettingsChangedFormat: EventFormat = {
+  eventType: GOAL_SETTINGS_CHANGED_EVENT,
+  schemaVersion: DECISION_EVENT_SCHEMA_VERSION,
+  jsonLabel: 'GoalSettingsChanged event',
+  bodyProblem: goalSettingsChangedEventProblem,
+};
+
+const workspaceNoticeSeenChangedFormat: EventFormat = {
+  eventType: WORKSPACE_NOTICE_SEEN_CHANGED_EVENT,
+  schemaVersion: DECISION_EVENT_SCHEMA_VERSION,
+  jsonLabel: 'WorkspaceNoticeSeenChanged event',
+  bodyProblem: workspaceNoticeSeenChangedEventProblem,
+};
+
+const goalSettingsChangedCodec = createEventCodec<GoalSettingsChangedEventV1>(goalSettingsChangedFormat);
+const workspaceNoticeSeenChangedCodec =
+  createEventCodec<WorkspaceNoticeSeenChangedEventV1>(workspaceNoticeSeenChangedFormat);
+
 export function encodeGoalSettingsChangedEvent(event: GoalSettingsChangedEventV1): EncodedDomainEvent {
-  return encodeEventEnvelope(event);
+  return goalSettingsChangedCodec.encode(event);
 }
 
 export function decodeGoalSettingsChangedEvent(
   event: EncodedDomainEvent,
 ): DecodeResult<GoalSettingsChangedEventV1> {
-  const problem = eventEnvelopeProblem(event, GOAL_SETTINGS_CHANGED_EVENT, DECISION_EVENT_SCHEMA_VERSION);
-  if (problem !== null) return invalid(problem);
-  const parsed = parseTaggedObject(event.json, 'GoalSettingsChanged event');
-  if (typeof parsed === 'string') return invalid(parsed);
-  const bindingProblem = eventBodyEnvelopeProblem(parsed, event, GOAL_SETTINGS_CHANGED_EVENT);
-  if (bindingProblem !== null) return invalid(bindingProblem);
-  const bodyProblem = goalSettingsChangedEventProblem(parsed);
-  if (bodyProblem !== null) return invalid(bodyProblem);
-  return { status: 'decoded', value: parsed as unknown as GoalSettingsChangedEventV1 };
+  const decoded = goalSettingsChangedCodec.decodeBody(event);
+  return decoded.status === 'decoded'
+    ? { status: 'decoded', value: decoded.value as unknown as GoalSettingsChangedEventV1 }
+    : decoded;
 }
 
 export function encodeWorkspaceNoticeSeenChangedEvent(
   event: WorkspaceNoticeSeenChangedEventV1,
 ): EncodedDomainEvent {
-  return encodeEventEnvelope(event);
+  return workspaceNoticeSeenChangedCodec.encode(event);
 }
 
 export function decodeWorkspaceNoticeSeenChangedEvent(
   event: EncodedDomainEvent,
 ): DecodeResult<WorkspaceNoticeSeenChangedEventV1> {
-  const problem = eventEnvelopeProblem(event, WORKSPACE_NOTICE_SEEN_CHANGED_EVENT, DECISION_EVENT_SCHEMA_VERSION);
-  if (problem !== null) return invalid(problem);
-  const parsed = parseTaggedObject(event.json, 'WorkspaceNoticeSeenChanged event');
-  if (typeof parsed === 'string') return invalid(parsed);
-  const bindingProblem = eventBodyEnvelopeProblem(parsed, event, WORKSPACE_NOTICE_SEEN_CHANGED_EVENT);
-  if (bindingProblem !== null) return invalid(bindingProblem);
-  const bodyProblem = workspaceNoticeSeenChangedEventProblem(parsed);
-  if (bodyProblem !== null) return invalid(bodyProblem);
-  return { status: 'decoded', value: parsed as unknown as WorkspaceNoticeSeenChangedEventV1 };
+  const decoded = workspaceNoticeSeenChangedCodec.decodeBody(event);
+  return decoded.status === 'decoded'
+    ? { status: 'decoded', value: decoded.value as unknown as WorkspaceNoticeSeenChangedEventV1 }
+    : decoded;
 }
 
 // --------------------------------------------------------------------------
@@ -408,34 +414,17 @@ export function decodeNoticeOrigin(record: EncodedRecord): DecodeResult<NoticeOr
 // The one registration
 // --------------------------------------------------------------------------
 
-function validateGoalSettingsChangedEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
-  const decoded = decodeGoalSettingsChangedEvent(event);
-  return decoded.status === 'decoded' ? { status: 'decoded', value: event } : decoded;
-}
-
-function validateWorkspaceNoticeSeenChangedEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
-  const decoded = decodeWorkspaceNoticeSeenChangedEvent(event);
-  return decoded.status === 'decoded' ? { status: 'decoded', value: event } : decoded;
-}
-
 /**
  * The decision write-event registration. It declares no record schema and no
  * lookup: both new events are new EVENT types on existing aggregates, and the
  * §2.5 lookup indexes live with the aggregate codec that already owns them.
+ * The entries are in the Goal → notice order.
  */
 export const DECISION_RECORD_SCHEMAS: RecordBackendSchemas = {
   records: [],
   events: [
-    {
-      eventType: GOAL_SETTINGS_CHANGED_EVENT,
-      schemaVersion: DECISION_EVENT_SCHEMA_VERSION,
-      validate: validateGoalSettingsChangedEvent,
-    },
-    {
-      eventType: WORKSPACE_NOTICE_SEEN_CHANGED_EVENT,
-      schemaVersion: DECISION_EVENT_SCHEMA_VERSION,
-      validate: validateWorkspaceNoticeSeenChangedEvent,
-    },
+    goalSettingsChangedCodec.registration,
+    workspaceNoticeSeenChangedCodec.registration,
   ],
   lookups: [],
 };

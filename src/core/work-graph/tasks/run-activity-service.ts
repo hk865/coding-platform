@@ -33,6 +33,7 @@ import { dispatchOutboxRefKey, decodeDispatchOutboxEntry } from './claim-record-
 import type { EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GraphWrite } from '../model/task-contracts.js';
+import { decideActivityOutcome, type ActivityWriteOutcome } from '../state/activity-replacement.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP } from './plan-readers.js';
 import {
@@ -73,7 +74,7 @@ export type RunActivityServiceDependencies = {
   batchRuns?: number;
 };
 
-export type RunActivityWriteOutcome = 'created' | 'replaced' | 'unchanged';
+export type RunActivityWriteOutcome = ActivityWriteOutcome;
 
 // --------------------------------------------------------------------------
 // Small pure helpers (shared shape with the other WorkGraph services)
@@ -132,38 +133,22 @@ function fingerprintOf(value: unknown): string {
 }
 
 // --------------------------------------------------------------------------
-// L4: the ONE decision table, shared by the backfill write and the end commit
+// L4: RunActivitySnapshot adapter over the shared replacement rule
 // --------------------------------------------------------------------------
 
 /**
- * L4, applied top-down. `endCommit` is true only for the RUN-21 path inside a
- * Run-ending commit; the backfill never replaces a current-rule `counted`
- * record (row 4). Rows:
- * 1. absent → created;
- * 2. the old rule version is older → replaced;
- * 3. old `counted`, this is the RUN-21 end, the new window is a terminal
- *    extension of an unfinished old one → replaced;
- * 4. old `counted`, anything else → unchanged;
- * 5. old `unknown`, new `counted` → replaced;
- * 6. old `unknown`, new `unknown` with a different reason → replaced;
- * 7. old `unknown`, new `unknown` with the same reason → unchanged.
+ * The rule itself lives in `state/activity-replacement.ts` and takes the two
+ * facts values. This wrapper is the only adaptation: `existing === null ?
+ * null : existing.facts` keeps "no record" distinct from a present record
+ * (whose `facts` the type always has); `existing?.facts ?? null` would widen
+ * "no record" to "no facts".
  */
 export function decideRunActivityOutcome(
   existing: RunActivitySnapshot | null,
   incoming: RunActivityFactsV1,
   endCommit: boolean,
 ): RunActivityWriteOutcome {
-  if (existing === null) return 'created';
-  const old = existing.facts;
-  if (old.ruleVersion < incoming.ruleVersion) return 'replaced';
-  if (old.status === 'counted') {
-    if (!endCommit || incoming.status !== 'counted') return 'unchanged';
-    const unfinished = !old.window.turnTerminal || old.window.unresolvedCalls > 0;
-    return incoming.window.turnTerminal && incoming.window.throughPosition > old.window.throughPosition && unfinished
-      ? 'replaced' : 'unchanged';
-  }
-  if (incoming.status === 'counted') return 'replaced';
-  return old.reason === incoming.reason ? 'unchanged' : 'replaced';
+  return decideActivityOutcome(existing === null ? null : existing.facts, incoming, endCommit);
 }
 
 /**

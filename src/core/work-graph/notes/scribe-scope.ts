@@ -34,7 +34,8 @@ import {
   S4_NOTE_BY_REVIEW_STATUS_LOOKUP, decodeNoteHeadSnapshot, noteHeadRefKey,
 } from '../persistence/note-record-codecs.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
-import { readAllHeads, readAllRecords, mapStoreFailure, type ReadFailureCode } from './note-read-model.js';
+import { readAllHeads, readAllRecords, type ReadFailureCode } from './note-base-reader.js';
+import { mapStoreFailure } from './store-failures.js';
 import { pathOwnershipOf } from './note-path-ownership.js';
 import { GOAL_BY_WORKSPACE_INDEX } from '../tasks/plan-readers.js';
 

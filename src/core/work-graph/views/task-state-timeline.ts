@@ -41,8 +41,11 @@ import { SESSION_ANOMALY_BY_TASK_LOOKUP } from '../model/session-facts-contracts
 import { isPausedInterrupted } from '../state/run-machine.js';
 import { storeFailureToRejection } from './goal-conflicts.js';
 import {
-  Budget, CapacityError, readEqualityAll, readOneKeyed, readOrderedAll, readWatermark,
+  Budget, CapacityError, readEqualityAll, readOneKeyed, readOrderedAll,
 } from './activity-read-helpers.js';
+import {
+  ACTIVITY_WINDOW_MAX_ATTEMPTS, readStableActivityWindow,
+} from './activity-stable-window.js';
 
 // --------------------------------------------------------------------------
 // Public view types (spec §2 "WorkGraph views")
@@ -85,7 +88,6 @@ export type TaskTimelineDependencies = {
 // Page limits and canonical keys
 // --------------------------------------------------------------------------
 
-const WINDOW_MAX_ATTEMPTS = 4;
 const PAGE_LIMIT = 200;
 
 function canonicalKey(value: unknown): string {
@@ -540,25 +542,19 @@ export function createTaskStateTimeline(deps: TaskTimelineDependencies): TaskTim
       const problem = validateInput(ctx, input);
       if (problem !== null) return problem;
       const window = `goal ${input.goalRef.projectId}/${input.goalRef.goalId} cursor ${input.cursor ?? 'start'} limit ${String(input.limit)}`;
-      for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
-        const budget = new Budget(cap);
-        try {
-          const before = await readWatermark(deps.records);
-          if (before.status !== 'ready') return before;
-          const result = await readTimelineWindow(deps, ctx, input, budget);
-          if (result.status !== 'ready') return result;
-          const after = await readWatermark(deps.records);
-          if (after.status !== 'ready') return after;
-          if (before.value === after.value) return result;
-        } catch (error) {
+      return readStableActivityWindow({
+        records: deps.records,
+        cap,
+        read: (budget) => readTimelineWindow(deps, ctx, input, budget),
+        mapError: (error) => {
           if (error instanceof CapacityError) {
             return { status: 'rejected', code: 'capacity',
               reason: `the task timeline read for ${window} exceeds the storage-read cap of ${String(cap)}` };
           }
           return storeFailureToRejection(error as { code: string; reason: string });
-        }
-      }
-      return rejected('unavailable', `the task timeline read for ${window} did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts`);
+        },
+        exhausted: () => rejected('unavailable', `the task timeline read for ${window} did not yield one stable read window within ${String(ACTIVITY_WINDOW_MAX_ATTEMPTS)} attempts`),
+      });
     },
   };
 }

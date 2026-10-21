@@ -44,7 +44,7 @@ import { S4_NOTE_BY_REVIEW_STATUS_LOOKUP } from '../persistence/note-record-code
 import { foldInputOf, readGoalUnderstandingAnchors,
   type GoalUnderstandingAnchorsReadV1 } from './note-update-due.js';
 import { readHeadBatch } from './note-batch-reader.js';
-import { readAllHeads } from './note-read-model.js';
+import { readAllHeads } from './note-base-reader.js';
 
 export type NoteScribeTodosDeps = {
   records: GoalRecordTransactionPort & RecordLookupPort;

@@ -55,12 +55,14 @@ import {
 import { GOAL_BY_WORKSPACE_INDEX, readGoalPlanWindow } from '../tasks/plan-readers.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { anchorKeyOf, resolveNoteAnchors, topicKeyOf, type NoteAnchorFactsDeps } from './note-anchors.js';
-import { renderUnderstandingBody } from './note-service.js';
+import { readAllHeads, readAllRecords, type ReadFailureCode, type ReadOutcome } from './note-base-reader.js';
+import { renderUnderstandingBody } from './note-rendering.js';
 import { anchorSlots, headsOnKeyPrefix, isRelatedHead, matchesPathPrefix, resolveRelatedScope, resolveTaskScopeWithPlan,
   stageIdOf, type RelatedScope, type RelatedScopeDeps } from './note-related-scope.js';
 import { readPointerAndHeadBatch } from './note-batch-reader.js';
 import { asOutcome, mapStoreFailure } from './store-failures.js';
 
+export { readAllHeads, readAllRecords, type ReadFailureCode } from './note-base-reader.js';
 export { mapStoreFailure, type MappedStoreFailure } from './store-failures.js';
 
 export type NoteReadDependencies = {
@@ -95,11 +97,6 @@ export type NoteListReadPort = {
   listNotes(ctx: CoreCallContext, request: NoteListRequestV1): Promise<NoteMemoryReadResult<NoteListResultV1>>;
 };
 
-/** The note-port failure codes a store/record read can produce (all in NoteErrorCode). */
-export type ReadFailureCode = 'invalid' | 'not_found' | 'revision_conflict' | 'unavailable';
-
-type ReadOutcome<T> = { ok: true; value: T } | { ok: false; code: ReadFailureCode; reason: string };
-
 /** R9: the not-found answer the three anchor-scoped reads share, with candidates. */
 export function anchorNotFound(candidates?: NoteAnchorCandidateV1[], unavailable?: boolean): NoteAnchorNotFoundV1 {
   return { status: 'rejected', code: 'not_found', reason: 'anchor_not_found',
@@ -117,38 +114,6 @@ function isGeneral(kind: string): boolean { return (NOTE_GENERAL_KINDS as readon
 function hasOnlyKeys(value: object, allowed: readonly string[]): boolean {
   const keys = Object.keys(value);
   return keys.length === allowed.length && keys.every(key => allowed.includes(key));
-}
-
-/**
- * Page one lookup index to completion (`next` to the end). Any page that is not
- * `ready` is returned as the mapped store failure; a partial set is never handed
- * back.
- */
-export async function readAllRecords(records: RecordLookupPort, index: string,
-  values: readonly (string | null)[]): Promise<ReadOutcome<EncodedRecord[]>> {
-  const found: EncodedRecord[] = [];
-  let after: string | undefined;
-  for (;;) {
-    const page = await records.lookup({ index, values, ...(after === undefined ? {} : { after }), limit: 200 });
-    if (page.status !== 'ready') return asOutcome(page);
-    found.push(...page.value.records);
-    if (page.value.next === null) return { ok: true, value: found };
-    after = page.value.next;
-  }
-}
-
-/** Every note head on one index, or the failure; an undecodable head is `unavailable`. */
-export async function readAllHeads(records: RecordLookupPort, index: string,
-  values: readonly (string | null)[]): Promise<{ ok: true; heads: NoteHeadSnapshot[] } | { ok: false; code: ReadFailureCode; reason: string }> {
-  const page = await readAllRecords(records, index, values);
-  if (!page.ok) return page;
-  const heads: NoteHeadSnapshot[] = [];
-  for (const record of page.value) {
-    const decoded = decodeNoteHeadSnapshot(record);
-    if (decoded.status !== 'decoded') return { ok: false, code: 'unavailable', reason: 'damaged note head' };
-    heads.push(decoded.value);
-  }
-  return { ok: true, heads };
 }
 
 async function readRecord(records: GoalRecordTransactionPort, refKey: string): Promise<ReadOutcome<EncodedRecord | null>> {

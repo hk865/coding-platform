@@ -33,7 +33,9 @@ import { stageContinuityOf } from './note-continuity.js';
 import { anchorSlots } from './note-related-scope.js';
 import { readGoalPlanWindow, type GoalPlanWindow } from '../tasks/plan-readers.js';
 import { S2B_PLAN_REVISION_BY_GOAL_LOOKUP, decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
-import { mapStoreFailure, readAllHeads, type ReadFailureCode } from './note-read-model.js';
+import { readAllHeads, type ReadFailureCode } from './note-base-reader.js';
+import { renderUnderstandingBody } from './note-rendering.js';
+import { mapStoreFailure } from './store-failures.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { CurrentCatalogWindow } from '../architecture/catalog-service.js';
 import { catalogModuleFactsOf, readCurrentCatalogWindow } from '../architecture/catalog-service.js';
@@ -349,9 +351,7 @@ function supersessionTargetsOf(subject: { noteId: string; kind: NoteHeadSnapshot
 }
 
 /** The stored body of an understanding is the rendered five sections (L4.1). */
-export function renderUnderstandingBody(sections: { status: string; decided: string; open: string; next: string; risks: string }): string {
-  return `现状\n${sections.status}\n\n已定\n${sections.decided}\n\n未决\n${sections.open}\n\n下一步\n${sections.next}\n\n风险\n${sections.risks}`;
-}
+export { renderUnderstandingBody } from './note-rendering.js';
 
 /**
  * L4.1/L2a class 1: the complete shape gate over the WHOLE `WriteNoteInput`.

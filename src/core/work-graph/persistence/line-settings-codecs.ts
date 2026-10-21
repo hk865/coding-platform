@@ -16,10 +16,10 @@
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { WorkspaceSnapshot } from '../../../contracts/ledger.js';
-import { invalid, parseTaggedObject, type UnknownRecord } from '../../../contracts/validation/common.js';
+import type { UnknownRecord } from '../../../contracts/validation/common.js';
 import type { DecodeResult, EncodedDomainEvent, RecordBackendSchemas } from '../../record-store/ports.js';
-import { encodeEventEnvelope } from './event-envelope.js';
-import { eventBodyEnvelopeProblem, eventBodyProblem, eventEnvelopeProblem } from './event-validation.js';
+import { createEventCodec, type EventFormat } from './event-codec-factory.js';
+import { eventBodyProblem } from './event-validation.js';
 import { workspaceSnapshotValueProblem } from './record-codecs.js';
 
 // --------------------------------------------------------------------------
@@ -49,24 +49,27 @@ export type WorkspaceLinePinsChangedEventV1 = {
 // Encoder / decoder
 // --------------------------------------------------------------------------
 
+const workspaceLinePinsChangedFormat: EventFormat = {
+  eventType: WORKSPACE_LINE_PINS_CHANGED_EVENT,
+  schemaVersion: LINE_SETTINGS_EVENT_SCHEMA_VERSION,
+  jsonLabel: 'WorkspaceLinePinsChanged event',
+  bodyProblem: workspaceLinePinsChangedEventProblem,
+};
+
+const workspaceLinePinsChangedCodec =
+  createEventCodec<WorkspaceLinePinsChangedEventV1>(workspaceLinePinsChangedFormat);
+
 export function encodeWorkspaceLinePinsChangedEvent(event: WorkspaceLinePinsChangedEventV1): EncodedDomainEvent {
-  return encodeEventEnvelope(event);
+  return workspaceLinePinsChangedCodec.encode(event);
 }
 
 export function decodeWorkspaceLinePinsChangedEvent(
   event: EncodedDomainEvent,
 ): DecodeResult<WorkspaceLinePinsChangedEventV1> {
-  const problem = eventEnvelopeProblem(
-    event, WORKSPACE_LINE_PINS_CHANGED_EVENT, LINE_SETTINGS_EVENT_SCHEMA_VERSION,
-  );
-  if (problem !== null) return invalid(problem);
-  const parsed = parseTaggedObject(event.json, 'WorkspaceLinePinsChanged event');
-  if (typeof parsed === 'string') return invalid(parsed);
-  const bindingProblem = eventBodyEnvelopeProblem(parsed, event, WORKSPACE_LINE_PINS_CHANGED_EVENT);
-  if (bindingProblem !== null) return invalid(bindingProblem);
-  const bodyProblem = workspaceLinePinsChangedEventProblem(parsed);
-  if (bodyProblem !== null) return invalid(bodyProblem);
-  return { status: 'decoded', value: parsed as unknown as WorkspaceLinePinsChangedEventV1 };
+  const decoded = workspaceLinePinsChangedCodec.decodeBody(event);
+  return decoded.status === 'decoded'
+    ? { status: 'decoded', value: decoded.value as unknown as WorkspaceLinePinsChangedEventV1 }
+    : decoded;
 }
 
 // --------------------------------------------------------------------------
@@ -91,11 +94,6 @@ function workspaceLinePinsChangedEventProblem(value: unknown): string | null {
 // The one registration
 // --------------------------------------------------------------------------
 
-function validateWorkspaceLinePinsChangedEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
-  const decoded = decodeWorkspaceLinePinsChangedEvent(event);
-  return decoded.status === 'decoded' ? { status: 'decoded', value: event } : decoded;
-}
-
 /**
  * The line-settings write-event registration. It declares no record schema and no
  * lookup: the pin change is a new EVENT type on the existing Workspace aggregate.
@@ -103,11 +101,7 @@ function validateWorkspaceLinePinsChangedEvent(event: EncodedDomainEvent): Decod
 export const LINE_SETTINGS_RECORD_SCHEMAS: RecordBackendSchemas = {
   records: [],
   events: [
-    {
-      eventType: WORKSPACE_LINE_PINS_CHANGED_EVENT,
-      schemaVersion: LINE_SETTINGS_EVENT_SCHEMA_VERSION,
-      validate: validateWorkspaceLinePinsChangedEvent,
-    },
+    workspaceLinePinsChangedCodec.registration,
   ],
   lookups: [],
 };

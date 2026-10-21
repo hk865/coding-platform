@@ -52,8 +52,11 @@ import {
 import { storeFailureToRejection } from './goal-conflicts.js';
 import {
   activityViewOf, Budget, CapacityError, claimingSessionOf, emptyView, gateInfoOf,
-  isQuarterInstant, readEqualityAll, readOneKeyed, readOrderedAll, readWatermark, scanOrdered,
+  isQuarterInstant, readEqualityAll, readOneKeyed, readOrderedAll, scanOrdered,
 } from './activity-read-helpers.js';
+import {
+  ACTIVITY_WINDOW_MAX_ATTEMPTS, readStableActivityWindow,
+} from './activity-stable-window.js';
 
 // --------------------------------------------------------------------------
 // Public view types (spec §2 "WorkGraph views")
@@ -119,7 +122,6 @@ export type ActivityReadModelDependencies = {
   now: () => string;
 };
 
-const WINDOW_MAX_ATTEMPTS = 4;
 const HOUR_MS = 60 * 60 * 1000;
 const QUARTER_MS = 15 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -765,50 +767,41 @@ export function createActivityReadModel(
       const problem = validateCalendarInput(ctx, input);
       if (problem !== null) return problem;
       const window = `${input.from}..${input.to} (${input.granularity})`;
-      for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
-        const budget = new Budget(cap);
-        try {
-          const before = await readWatermark(deps.records);
-          if (before.status !== 'ready') return before;
-          const result = await readCalendarWindow(deps, ctx, input, now(), budget);
-          if (result.status !== 'ready') return result;
-          const after = await readWatermark(deps.records);
-          if (after.status !== 'ready') return after;
-          if (before.value === after.value) return result;
-        } catch (error) {
+      return readStableActivityWindow({
+        records: deps.records,
+        cap,
+        // Deferred on purpose: the executor evaluates this only after a
+        // successful "before" watermark, so each retry reads the clock when its
+        // own window starts.
+        read: (budget) => readCalendarWindow(deps, ctx, input, now(), budget),
+        mapError: (error) => {
           if (error instanceof CapacityError) {
             return { status: 'rejected', code: 'capacity',
               reason: `the activity read for window ${window} exceeds the storage-read cap of ${String(cap)}` };
           }
           return storeFailureToRejection(error as { code: string; reason: string });
-        }
-      }
-      return rejected('unavailable', `the activity read for window ${window} did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts`);
+        },
+        exhausted: () => rejected('unavailable', `the activity read for window ${window} did not yield one stable read window within ${String(ACTIVITY_WINDOW_MAX_ATTEMPTS)} attempts`),
+      });
     },
 
     async readRunActivities(ctx, input): Promise<ReadResult<RunActivityViewV1[]>> {
       if (!Array.isArray(input.runRefs) || input.runRefs.length < 1 || input.runRefs.length > RUN_REF_LIMIT) {
         return rejected('invalid', `runRefs must carry between 1 and ${String(RUN_REF_LIMIT)} references`);
       }
-      for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
-        const budget = new Budget(cap);
-        try {
-          const before = await readWatermark(deps.records);
-          if (before.status !== 'ready') return before;
-          const result = await readRunActivitiesWindow(deps, ctx, input, budget);
-          if (result.status !== 'ready') return result;
-          const after = await readWatermark(deps.records);
-          if (after.status !== 'ready') return after;
-          if (before.value === after.value) return result;
-        } catch (error) {
+      return readStableActivityWindow({
+        records: deps.records,
+        cap,
+        read: (budget) => readRunActivitiesWindow(deps, ctx, input, budget),
+        mapError: (error) => {
           if (error instanceof CapacityError) {
             return { status: 'rejected', code: 'capacity',
               reason: `the Run activity read exceeds the storage-read cap of ${String(cap)}` };
           }
           return storeFailureToRejection(error as { code: string; reason: string });
-        }
-      }
-      return rejected('unavailable', `the Run activity read did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts`);
+        },
+        exhausted: () => rejected('unavailable', `the Run activity read did not yield one stable read window within ${String(ACTIVITY_WINDOW_MAX_ATTEMPTS)} attempts`),
+      });
     },
   };
 }

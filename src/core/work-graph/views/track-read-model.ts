@@ -68,8 +68,11 @@ import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
 import { storeFailureToRejection } from './goal-conflicts.js';
 import {
   activityViewOf, Budget, CapacityError, claimingSessionOf, emptyView, gateInfoOf,
-  isQuarterInstant, readEqualityAll, readOneKeyed, readWatermark,
+  isQuarterInstant, readEqualityAll, readOneKeyed,
 } from './activity-read-helpers.js';
+import {
+  ACTIVITY_WINDOW_MAX_ATTEMPTS, readStableActivityWindow,
+} from './activity-stable-window.js';
 import type { ActivityUncountedReason, RunActivityViewV1 } from './activity-read-model.js';
 
 // --------------------------------------------------------------------------
@@ -128,7 +131,6 @@ export type TrackReadModelDependencies = {
   now?: () => string;
 };
 
-const WINDOW_MAX_ATTEMPTS = 4;
 const PAGE_LIMIT = 200;
 /**
  * The readonly-copy provenance lookup is paged too, so a `limit: 2` page
@@ -1166,26 +1168,22 @@ export function createTrackReadModel(deps: TrackReadModelDependencies): Pick<Tra
       const problem = validateTrackInput(ctx, input);
       if (problem !== null) return problem;
       const window = `${input.from}..${input.to}`;
-      for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
-        const budget = new Budget(cap);
-        try {
-          const before = await readWatermark(deps.records);
-          if (before.status !== 'ready') return before;
-          const result = await readTrackBarsWindow(deps, ctx, input, budget);
-          if (result.status !== 'ready') return result;
-          const after = await readWatermark(deps.records);
-          if (after.status !== 'ready') return after;
-          if (before.value === after.value) return result;
-        } catch (error) {
+      return readStableActivityWindow({
+        records: deps.records,
+        cap,
+        read: (budget) => readTrackBarsWindow(deps, ctx, input, budget),
+        mapError: (error) => {
           if (error instanceof CapacityError) {
             return { status: 'rejected', code: 'capacity',
               reason: `the track read for window ${window} exceeds the storage-read cap of ${String(cap)}` };
           }
+          // Only the track maps its own workspace-scope exception; the shared
+          // executor stays unaware of it.
           if (error instanceof ForbiddenError) return rejected('forbidden', error.reason);
           return storeFailureToRejection(error as { code: string; reason: string });
-        }
-      }
-      return rejected('unavailable', `the track read for window ${window} did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts`);
+        },
+        exhausted: () => rejected('unavailable', `the track read for window ${window} did not yield one stable read window within ${String(ACTIVITY_WINDOW_MAX_ATTEMPTS)} attempts`),
+      });
     },
   };
 }
