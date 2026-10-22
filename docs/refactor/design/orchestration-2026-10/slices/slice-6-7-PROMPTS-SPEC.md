@@ -4,6 +4,12 @@
 
 **后注（决定 85-1，lead 2026-10-22）：** D3 已在 6A 之前的结构一轮里做完（`55541fee`、`eee7503f`），发出的字节不变。PC-1、PC-2 在这个结构上写：包的格式、槽位表和渲染器在 `src/contracts/prompts/`（`prompt-pack.ts`、`slot-tables.ts`、`render-template.ts`），平台包第 1 版在 `resources/prompts/platform/`（`pack.json`、`strings.json`、`templates/`、`tools/`），由 `scripts/build-platform-prompts.mjs` 生成静态模块 `src/contracts/prompts/platform-pack.generated.ts`（构建前核对，运行时不读盘）；上下文装配拆在 `src/core/agent-runtime/context-*`（`context-work-recipe.ts`、`context-query-recipe.ts`、`context-continuation-recipe.ts`、`context-review-recipe.ts`、`context-rendering.ts`、`context-fact-text.ts` 等），`context-assembler.ts` 只留出口和工厂。正文原样保留，只加此注。经过见 [证据](../../../reviews/evidence/structure-round-2026-10-21/README.md)。
 
+**后注（决定 83-5，用户 2026-10-22 定）：** 你的包也能改平台工具的说明（`tools/<工具名>.json`），由 PC-2 做；正文原样保留，以下几处按这条读：
+- §2 `PromptSetV1` 加 `tools: { name: string; packId: string; digest: string; ref: ArtifactRef }[]`：这次执行最终交给 Kernel 的工具里有包文字的那些。开始和恢复时工具从这里取文字。
+- 按整个工具从最近的包取；参数说明的键必须和平台那份完全一样，只能改文字。
+- 编辑路由加 `settings/prompts/tools/read` 和 `settings/prompts/tools/save { packId, toolName, expectedDigest, entry: { description, parameters } }`：digest 对不上回 `revision_conflict`，校验不过回 `invalid`，在平台包上存回 `forbidden`。
+- Kernel 自带工具（如 read、shell）的说明这一轮不能改。它们由每次请求的 `toolSpecsRef` 记下，不搬进包。§0.4 那句“归 PC”按此读。
+
 第 6、7 片已冻结（决定 64），这一节是冻结后的补充，不改它们已定的行为。它定这几件事：
 - 提示词放在哪、谁能改、按什么选；
 - 超长时怎么删；
