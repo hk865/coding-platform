@@ -15,8 +15,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  CONTINUATION_BRIEF_LIMITS, CONTINUATION_STANDING_INSTRUCTIONS_ZH_V1, REWORK_ACTOR_CLASS_LABELS_ZH,
-  REWORK_FAILURE_CLASS_LABELS_ZH, compareSourceCheckpoints, continuationBriefDigest, continuationBriefMarker,
+  CONTINUATION_BRIEF_LIMITS, compareSourceCheckpoints, continuationBriefDigest, continuationBriefMarker,
   continuationBriefShapeProblem, renderContinuationBriefZh, type BoundedTextV1, type ContinuationBriefV1,
   type ContinuationToolCallV1,
 } from '../../src/contracts/continuation-brief.js';
@@ -385,7 +384,10 @@ describe('compareSourceCheckpoints (C3)', () => {
 
 describe('renderContinuationBriefZh (C3, §6.1 (e))', () => {
   const bytes = (text: string): number => new TextEncoder().encode(text).length;
-  const fixedBlock = CONTINUATION_STANDING_INSTRUCTIONS_ZH_V1.join('\n');
+  const fixedBlock = ['### 继续之前', '- 文件可能已经变化，编辑前先重新读取。',
+    '- “结果未知”的工具调用可能已经产生副作用，重做之前先核实当前状态。',
+    '- “没有执行”的工具调用没有产生结果，需要时重新发起。',
+    '- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。'].join('\n');
   const render = (value: ContinuationBriefV1): string => renderContinuationBriefZh(value, continuationBriefDigest(value));
 
   it('puts the marker on line 2 and always ends with the fixed instruction block', () => {
@@ -488,8 +490,18 @@ describe('renderContinuationBriefZh (C3, §6.1 (e))', () => {
   });
 
   it('keeps the §2 labels of the failure and actor classes', () => {
-    expect(REWORK_FAILURE_CLASS_LABELS_ZH).toEqual({ interrupted: '平台中断', cancelled: '已取消', check_failed: '检查未通过',
-      run_failed: '执行失败', check_incomplete: '检查不完整' });
-    expect(REWORK_ACTOR_CLASS_LABELS_ZH).toEqual({ human: '人工', system: '系统自动', agent: 'Agent' });
+    const failureClass = { interrupted: '平台中断', cancelled: '已取消', check_failed: '检查未通过',
+      run_failed: '执行失败', check_incomplete: '检查不完整' };
+    const actorClass = { human: '人工', system: '系统自动', agent: 'Agent' };
+    for (const [key, label] of Object.entries(failureClass)) {
+      const value = brief();
+      value.failureClass = key as ContinuationBriefV1['failureClass'];
+      expect(render(value)).toContain(`失败类别：${label}`);
+    }
+    for (const [key, label] of Object.entries(actorClass)) {
+      const value = brief();
+      value.trigger.actorClass = key as ContinuationBriefV1['trigger']['actorClass'];
+      expect(render(value)).toContain(`发起方：${label}`);
+    }
   });
 });

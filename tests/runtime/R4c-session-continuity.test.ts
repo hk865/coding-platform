@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import { ModelBudget, DEFAULT_RUNTIME_BUDGET } from '../../src/core/agent-runtime/model-budget.js';
 import { runObservedModel, type ObservedModelRunOptions } from '../../src/core/agent-runtime/observed-model-run.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import { frozenPromptInputs } from './PC-frozen-prompt.js';
 
 const SESSION_ID = 'r4c-continuous-session';
 
@@ -25,6 +27,9 @@ async function fixture() {
     },
   };
   const budget = { ...DEFAULT_RUNTIME_BUDGET, perResponseTokens: 128 };
+  const prompt = await frozenPromptInputs();
+  const bodies = new RawArtifactBodyStore();
+  const promptFacts = new Map();
   const options = (input: string): ObservedModelRunOptions => ({
     kernel, bound: { configuration: { revision: 'local-r4c', provider: 'deepseek',
       model: 'local-continuity-fixture', baseUrl: 'http://127.0.0.1' }, client },
@@ -35,6 +40,9 @@ async function fixture() {
     }),
     readOnly: true, allowedTools: [], signal: new AbortController().signal,
     deniedPrefixes: [], processSandboxOptions: {}, publish: async () => {},
+    prompt, bodies, promptFacts,
+    origin: { kind: 'run', owner: { aggregateType: 'Run', projectId: 'r4c-continuity-project',
+      goalId: 'r4c-continuity-goal', runId: 'r4c-continuity-run' } },
   });
   const records = async () => {
     const store = await kernel.SqliteStores.open(databasePath);

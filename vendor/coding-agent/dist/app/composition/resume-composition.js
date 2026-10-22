@@ -200,18 +200,33 @@ export async function resumeCodingAgentInternal(input, target) {
         // 继续执行：核对已在 recover 内、任何对账写入之前完成；这里取同一结果作为实际约束，
         // 已用计数与旧 deadline 由 RunState/limits 继续生效，不清零。
         const effectiveConstraints = verifyConstraints();
-        const skillProvider = await (await FileSkillLoader.create(path.resolve(input.config.skills.resourceRoot))).load(signal);
-        const skills = await skillProvider.select({ schemaVersion: 1, requestedIds: input.config.skills.enabledIds }, { signal });
+        // Host-provided context wins over the configured sources; absence keeps the
+        // fixed base text and the Skill files (ruling 2's only compatibility promise).
+        const baseSystemPrompt = input.baseSystemPrompt?.text ?? CODING_AGENT_SYSTEM_PROMPT;
+        const systemPromptVersion = input.baseSystemPrompt
+            ? `${input.baseSystemPrompt.templateId}@${input.baseSystemPrompt.version}`
+            : CODING_AGENT_SYSTEM_PROMPT_VERSION;
+        let skills;
+        let skillResourceRoot;
+        if (input.skills !== undefined) {
+            skills = input.skills;
+            skillResourceRoot = "provided-by-host";
+        }
+        else {
+            const skillProvider = await (await FileSkillLoader.create(path.resolve(input.config.skills.resourceRoot))).load(signal);
+            skills = await skillProvider.select({ schemaVersion: 1, requestedIds: input.config.skills.enabledIds }, { signal });
+            skillResourceRoot = input.config.skills.resourceRoot;
+        }
         input.onConfiguration?.({
-            systemPromptVersion: CODING_AGENT_SYSTEM_PROMPT_VERSION,
-            systemPrompt: CODING_AGENT_SYSTEM_PROMPT,
+            systemPromptVersion,
+            systemPrompt: baseSystemPrompt,
             provider: provider.id,
             model: input.config.model.model,
             thinking: input.config.model.options["thinking"] ?? "provider_default",
             reasoningEffort: input.config.model.options["reasoningEffort"] ?? "provider_default",
             tools: tools.modelToolSpecs(),
             skills,
-            skillResourceRoot: input.config.skills.resourceRoot,
+            skillResourceRoot,
             contextWindowTokens: input.config.runtime.tokenBudget,
             maxOutputTokens: input.config.model.maxOutputTokens,
             maxModelRequests: input.config.runtime.maxModelRequests,
@@ -277,13 +292,16 @@ export async function resumeCodingAgentInternal(input, target) {
             run: turnRecord.payload.run,
             sessionId: input.sessionId,
             ...(input.inputSupply === undefined ? {} : { inputSupply: input.inputSupply }),
-            baseSystemPrompt: CODING_AGENT_SYSTEM_PROMPT,
+            baseSystemPrompt,
             tools: tools.modelToolSpecs(),
             skills,
             memories,
             tokenBudget: input.config.runtime.tokenBudget,
             maxOutputTokens: input.config.model.maxOutputTokens,
             ...(historyTranscript.length > 0 ? { historyTranscript } : {}),
+            ...(input.reasoningReplay === undefined ? {} : { reasoningReplay: input.reasoningReplay }),
+            ...(input.previewRequest === undefined ? {} : { previewRequest: input.previewRequest }),
+            ...(input.onContextSelected === undefined ? {} : { onContextSelected: input.onContextSelected }),
         };
         const state = recovery.action === "paused"
             ? await runner.resume(recovery.state, context, { signal })

@@ -1272,6 +1272,66 @@
       "name": "CommandsStopResponse",
       "reason": "wire-format",
       "note": "the commands/stop route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the E3 workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/contracts/prompts/prompt-set.ts",
+      "name": "PromptRecordRequestV1",
+      "reason": "wire-format",
+      "note": "the element type of PromptRecordReadResultV1.requests, returned by RuntimeExecutionPort.readPromptRecord"
+    },
+    {
+      "file": "src/contracts/prompts/prompt-set.ts",
+      "name": "PromptRecordReadResultV1",
+      "reason": "wire-format",
+      "note": "the complete read result that RuntimeExecutionPort.readPromptRecord returns; the reader is that published port."
+    },
+    {
+      "file": "src/contracts/prompts/prompt-set.ts",
+      "name": "PromptRecordReadV1",
+      "reason": "wire-format",
+      "note": "the wrapper of the complete result that RuntimeExecutionPort.readPromptRecord returns; the reader is that published port."
+    },
+    {
+      "file": "src/core/agent-runtime/ports.ts",
+      "name": "RuntimeExecutionPort.readPromptRecord",
+      "reason": "kept-for",
+      "note": "slice 6 of the orchestration design (decision 83, prompts and context): the prompt-record read port the Runtime publishes; E3 adds the HTTP route."
+    },
+    {
+      "file": "src/core/agent-runtime/runtime.ts",
+      "name": "messageOf",
+      "reason": "kept-for",
+      "note": "slice 6 of the orchestration design (decision 83, prompts and context): turns a caught value into the message of the readPromptRecord rejection; E3 adds the route."
+    },
+    {
+      "file": "src/core/agent-runtime/runtime.ts",
+      "name": "rejected",
+      "reason": "kept-for",
+      "note": "slice 6 of the orchestration design (decision 83, prompts and context): builds the rejection of RuntimeExecutionPort.readPromptRecord; E3 adds the route."
+    },
+    {
+      "file": "src/core/agent-runtime/runtime.ts",
+      "name": "sameQueryRunRef",
+      "reason": "kept-for",
+      "note": "slice 6 of the orchestration design (decision 83, prompts and context): checks the Query Run identity in RuntimeExecutionPort.readPromptRecord; E3 adds the route."
+    },
+    {
+      "file": "src/core/agent-runtime/runtime.ts",
+      "name": "readQueryPromptSet",
+      "reason": "kept-for",
+      "note": "slice 6 of the orchestration design (decision 83, prompts and context): reads the Query prompt set that RuntimeExecutionPort.readPromptRecord returns; E3 adds the route."
+    },
+    {
+      "file": "src/core/work-graph/tasks/model-call-contracts.ts",
+      "name": "ModelRequestReadPort.listRunModelRequests",
+      "reason": "kept-for",
+      "note": "slice 6 of the orchestration design (decision 83, prompts and context): the model-request read port that runtime.readPromptRecord calls; E3 adds the route."
+    },
+    {
+      "file": "src/core/work-graph/tasks/model-call-service.ts",
+      "name": "completeRunRef",
+      "reason": "kept-for",
+      "note": "slice 6 of the orchestration design (decision 83, prompts and context): the RunRef guard of ModelRequestReadPort.listRunModelRequests, reached through readPromptRecord; E3 adds the route."
     }
   ]
 }

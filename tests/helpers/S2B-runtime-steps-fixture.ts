@@ -399,7 +399,10 @@ export async function createS2BRuntimeSteps(options: S2BRuntimeStepsOptions): Pr
       // the default keeps the reviewed Runtime Host binding as before.
       host: options.host === undefined ? host : preparationHost({
         configurationRevision: hostGrant.configurationRevision,
-        permissions: hostGrant.permissions, hostTemplate: hostGrant.hostTemplate }), now,
+        permissions: hostGrant.permissions, hostTemplate: hostGrant.hostTemplate,
+        // L-04: preparation and start must use ONE model binding; the previous
+        // default prepared as test/test while start used this configuration.
+        model: { configuration: { ...configuration.model.configuration } } }), now,
       directory, scope, requestId: `s2b-runtime-steps-prepare-${claim.runRef.runId}`,
     })).prepared;
     const started = runtime.port.startRun(ctx, { prepared, consumerId: options.consumerId,

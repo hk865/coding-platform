@@ -27,15 +27,24 @@ import type { RuntimeBudget } from '../runtime-budget.js';
 import type { TaskClaim } from './task-claim.js';
 import type { ContinuationBriefV1 } from '../continuation-brief.js';
 import type { ContextAssemblyBindingV1 } from '../graph-context.js';
+import type { PromptSetV1 } from '../prompts/prompt-set.js';
 import type {
   CapturedPathV1, UnknownCallObservationV1, UnknownCallReviewRef, WorkspaceCaptureV1,
 } from '../unknown-call-review.js';
 import type { BoundedTextV1 } from '../continuation-brief.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../prompts/platform-pack.generated.js';
+import type { PromptTextsV1 } from '../prompts/prompt-set.js';
 import { renderTemplate } from '../prompts/render-template.js';
 
-/** The fixed v1 platform texts; every key is literal so a missing one is a type error. */
-const STR = PLATFORM_PROMPT_PACK_V1.strings;
+/** A direct call keeps the generated platform pack (ruling 14). */
+const DEFAULT_TEXTS: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1;
+
+/** One fixed string of the resolved pack; a missing key is a pack bug. */
+function packString(texts: PromptTextsV1, key: string): string {
+  const value = texts.strings[key];
+  if (value === undefined) throw new Error(`the resolved prompt pack has no string "${key}"`);
+  return value;
+}
 
 /**
  * K3: the review-round input handed to the Kernel (spec §2). Only the review /
@@ -99,39 +108,43 @@ export type UnknownCallReviewInputV1 = {
  * structured copy when it validates the section interval and digests. Pure:
  * it reads only the input and returns one string.
  */
-export function renderUnknownCallReviewZh(input: UnknownCallReviewInputV1): string {
+export function renderUnknownCallReviewZh(
+  input: UnknownCallReviewInputV1,
+  texts: PromptTextsV1 = DEFAULT_TEXTS,
+): string {
+  const S = (key: string): string => packString(texts, key);
   const workspace = input.workspace;
   const omitted = (count: number): string => count > 0
-    ? `${STR['k3.workspace.omittedLead']}${String(count)}${STR['k3.workspace.omittedSuffix']}` : '';
+    ? `${S('k3.workspace.omittedLead')}${String(count)}${S('k3.workspace.omittedSuffix')}` : '';
   const workspaceLines: string[] = [];
-  workspaceLines.push(`${STR['k3.workspace.statusLead']}${workspace.status}${STR['k3.workspace.baselineMiddle']}`
-    + `${workspace.runBaselineKnown ? STR['k3.workspace.yes'] : STR['k3.workspace.no']}`);
-  workspaceLines.push(`${STR['k3.workspace.notVisibleLead']}`
-    + `${workspace.notVisible.length === 0 ? STR['k3.none']
-      : workspace.notVisible.join(STR['k3.list.separator']) + omitted(workspace.notVisibleOmitted)}`);
-  workspaceLines.push(`${STR['k3.workspace.changedLead']}`
-    + `${workspace.changedSample.length === 0 ? STR['k3.none']
-      : workspace.changedSample.map(path => `${path.path}（${path.change}）`).join(STR['k3.list.separator'])
+  workspaceLines.push(`${S('k3.workspace.statusLead')}${workspace.status}${S('k3.workspace.baselineMiddle')}`
+    + `${workspace.runBaselineKnown ? S('k3.workspace.yes') : S('k3.workspace.no')}`);
+  workspaceLines.push(`${S('k3.workspace.notVisibleLead')}`
+    + `${workspace.notVisible.length === 0 ? S('k3.none')
+      : workspace.notVisible.join(S('k3.list.separator')) + omitted(workspace.notVisibleOmitted)}`);
+  workspaceLines.push(`${S('k3.workspace.changedLead')}`
+    + `${workspace.changedSample.length === 0 ? S('k3.none')
+      : workspace.changedSample.map(path => `${path.path}（${path.change}）`).join(S('k3.list.separator'))
         + omitted(workspace.changedOmitted)}`);
-  workspaceLines.push(STR['k3.workspace.disclaimer']);
+  workspaceLines.push(S('k3.workspace.disclaimer'));
   const writtenLines: string[] = [];
   const written = input.items.filter(item => item.current !== null
     && (item.current.by === 'review_round' || item.current.by === 'settlement'));
   if (written.length === 0) {
-    writtenLines.push(STR['k3.none']);
+    writtenLines.push(S('k3.none'));
   } else {
     for (const item of written) {
       const current = item.current;
       if (current === null || (current.by !== 'review_round' && current.by !== 'settlement')) continue;
-      writtenLines.push(`${STR['k3.written.lineLead']}${String(item.alias)}${STR['k3.written.verdictLead']}`
-        + `${current.verdict}${STR['k3.written.evidenceLead']}${current.evidence}`);
+      writtenLines.push(`${S('k3.written.lineLead')}${String(item.alias)}${S('k3.written.verdictLead')}`
+        + `${current.verdict}${S('k3.written.evidenceLead')}${current.evidence}`);
     }
   }
   // L20: the proposal phase lists the proposal targets and the person's note and
   // annotations. The review-only item list and its two questions would ask the
   // model to review instead of propose, so they are not rendered here.
   if (input.phase === 'proposal') {
-    const indent = (text: string): string => text.replace(/\r\n|\n/g, STR['k3.proposal.newlineIndent']);
+    const indent = (text: string): string => text.replace(/\r\n|\n/g, S('k3.proposal.newlineIndent'));
     const targetLines: string[] = [];
     const targets = [...(input.targets ?? [])].sort((left, right) => left - right);
     for (const alias of targets) {
@@ -141,24 +154,24 @@ export function renderUnknownCallReviewZh(input: UnknownCallReviewInputV1): stri
       // prepared manifest. The proposal must still show the record's own cut,
       // marked as a cut, never "（无）". Truncated items keep their 4 KiB cut.
       const original = item.display === 'unexpanded'
-        ? indent(item.summaryCommand ?? '') + STR['k3.proposal.summarySuffix']
-        : indent(item.command?.text ?? STR['k3.none']);
-      targetLines.push(`${STR['k3.proposal.targetLead']}${String(alias)}（${item.toolName}）`
-        + `${STR['k3.proposal.commandLead']}${original}`);
+        ? indent(item.summaryCommand ?? '') + S('k3.proposal.summarySuffix')
+        : indent(item.command?.text ?? S('k3.none'));
+      targetLines.push(`${S('k3.proposal.targetLead')}${String(alias)}（${item.toolName}）`
+        + `${S('k3.proposal.commandLead')}${original}`);
     }
     const personNote = input.personText !== null && input.personText !== ''
-      ? `\n${STR['k3.proposal.personLead']}${input.personText}` : '';
+      ? `\n${S('k3.proposal.personLead')}${input.personText}` : '';
     const annotationLines = input.annotations.map(annotation =>
-      `${STR['k3.proposal.annotationLead']}${annotation.path ?? STR['k3.proposal.annotationRecord']}`
-      + `${STR['k3.proposal.annotationMiddle']}${annotation.text}`);
+      `${S('k3.proposal.annotationLead')}${annotation.path ?? S('k3.proposal.annotationRecord')}`
+      + `${S('k3.proposal.annotationMiddle')}${annotation.text}`);
     const platformLines: string[] = [];
     if (input.platformTargets.length !== 0) {
       const aliases = [...input.platformTargets].sort((left, right) => left - right)
-        .map(alias => `#${String(alias)}`).join(STR['k3.list.separator']);
-      platformLines.push(`${STR['k3.proposal.platformLead']}${aliases}${STR['k3.proposal.platformSuffix']}`);
+        .map(alias => `#${String(alias)}`).join(S('k3.list.separator'));
+      platformLines.push(`${S('k3.proposal.platformLead')}${aliases}${S('k3.proposal.platformSuffix')}`);
     }
     const slotLines = (lines: readonly string[]): string => (lines.length === 0 ? '' : `\n${lines.join('\n')}`);
-    return renderTemplate(PLATFORM_PROMPT_PACK_V1, 'unknown-call-proposal', {
+    return renderTemplate(texts, 'unknown-call-proposal', {
       workspaceLines: workspaceLines.join('\n'),
       writtenLines: writtenLines.join('\n'),
       targets: slotLines(targetLines),
@@ -170,22 +183,22 @@ export function renderUnknownCallReviewZh(input: UnknownCallReviewInputV1): stri
   const itemLines: string[] = [];
   for (const item of input.items) {
     if (item.display === 'unexpanded') {
-      itemLines.push(`${STR['k3.review.itemLead']}${String(item.alias)} ${item.toolName}`
-        + `${STR['k3.review.unexpandedSuffix']}`);
+      itemLines.push(`${S('k3.review.itemLead')}${String(item.alias)} ${item.toolName}`
+        + `${S('k3.review.unexpandedSuffix')}`);
     } else {
-      const batch = item.sameBatch.length === 0 ? STR['k3.none']
-        : `#${item.sameBatch.join(STR['k3.review.batchSeparator'])}`;
-      itemLines.push(`${STR['k3.review.itemLead']}${String(item.alias)} ${item.toolName}`
-        + `${STR['k3.review.commandLead']}${item.command?.text ?? STR['k3.none']}`
-        + `${STR['k3.review.cwdLead']}${item.cwd ?? STR['k3.none']}`
-        + `${STR['k3.review.startedLead']}${item.startedAt ?? STR['k3.unknown']}`
-        + `${STR['k3.review.batchLead']}${batch}`);
+      const batch = item.sameBatch.length === 0 ? S('k3.none')
+        : `#${item.sameBatch.join(S('k3.review.batchSeparator'))}`;
+      itemLines.push(`${S('k3.review.itemLead')}${String(item.alias)} ${item.toolName}`
+        + `${S('k3.review.commandLead')}${item.command?.text ?? S('k3.none')}`
+        + `${S('k3.review.cwdLead')}${item.cwd ?? S('k3.none')}`
+        + `${S('k3.review.startedLead')}${item.startedAt ?? S('k3.unknown')}`
+        + `${S('k3.review.batchLead')}${batch}`);
     }
     if (item.display === 'truncated' || item.display === 'unexpanded') {
-      itemLines.push(STR['k3.review.noFullText']);
+      itemLines.push(S('k3.review.noFullText'));
     }
   }
-  return renderTemplate(PLATFORM_PROMPT_PACK_V1, 'unknown-call-review', {
+  return renderTemplate(texts, 'unknown-call-review', {
     workspaceLines: workspaceLines.join('\n'),
     writtenLines: writtenLines.join('\n'),
     items: itemLines.length === 0 ? '' : '\n' + itemLines.join('\n'),
@@ -220,6 +233,8 @@ export type PreparedTaskManifestV1 = {
   continuationBrief?: ContinuationBriefV1;
   /** Slice 3: the assembled context binding fixed at prepare (required). */
   contextAssembly: ContextAssemblyBindingV1;
+  /** Ruling 14: the frozen prompt set (required) inside the manifest digest. */
+  promptSet: PromptSetV1;
   /**
    * LA-1: model history seed filled by AgentRuntime `prepare` (never Workflow)
    * from `TaskRequeue.historySource` when the claim Session is a fresh Session
@@ -286,6 +301,8 @@ export type PreparedQueryManifestV1 = {
   sessionBasis?: { sourceKernelSessionId: string; throughPosition: number | null };
   /** Slice 3: the assembled Query context binding fixed at prepare (required). */
   contextAssembly: ContextAssemblyBindingV1;
+  /** Ruling 14: the frozen prompt set (required) inside the manifest digest. */
+  promptSet: PromptSetV1;
   input: string;
   inputDigest: string;
 };

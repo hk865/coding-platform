@@ -25,6 +25,7 @@ import { RuntimeRunner, type ToolGroupBarrier } from "../../core/runtime/loop/ru
 import { CheckpointingEventSink } from "../../core/runtime/checkpointing/checkpointing-event-sink.js";
 import { createInitialRunState } from "../../core/runtime/state/run-state.js";
 import type { RunState, TranscriptEntry } from "../../core/runtime/state/run-state.js";
+import type { SkillContext } from "../../core/context/types/context-types.js";
 import type { ProviderRegistry } from "../../model/providers/registry/provider-registry.js";
 import { EmptyMemoryProvider } from "../../memory/providers/empty/empty-memory-provider.js";
 import { MAX_MEMORY_QUERY_BYTES } from "../../core/ports/memory_provider/memory-provider-port.js";
@@ -46,6 +47,7 @@ import {
   kernelSessionApiVersion,
   type AppRuntimeConfiguration,
   type ExecutionIdentity,
+  type HostContextInputs,
   type SecretSource,
   type SessionContextMode,
 } from "./composition-contracts.js";
@@ -68,7 +70,7 @@ export type { AppRuntimeConfiguration, SecretSource } from "./composition-contra
 export { kernelSessionApiVersion };
 export type { ExecutionIdentity, SessionContextMode };
 
-export interface RunAppInput {
+export interface RunAppInput extends HostContextInputs {
   /** Host-provided tools still use registry validation, permissions and output limits. */
   readonly additionalTools?: (
     workspace: WorkspaceSandbox,
@@ -345,6 +347,11 @@ export async function runCodingAgent(input: Readonly<RunAppInput>): Promise<RunA
             ...(input.controlHooks ? { controlHooks: input.controlHooks } : {}),
             ...(input.toolGroupBarrier ? { toolGroupBarrier: input.toolGroupBarrier } : {}),
             ...(input.inputSupply ? { inputSupply: input.inputSupply } : {}),
+            ...(input.baseSystemPrompt ? { baseSystemPrompt: input.baseSystemPrompt } : {}),
+            ...(input.skills ? { skills: input.skills } : {}),
+            ...(input.reasoningReplay ? { reasoningReplay: input.reasoningReplay } : {}),
+            ...(input.previewRequest ? { previewRequest: input.previewRequest } : {}),
+            ...(input.onContextSelected ? { onContextSelected: input.onContextSelected } : {}),
             config: input.config,
             workspaceRoot: input.workspaceRoot,
             sessionId,
@@ -412,24 +419,38 @@ export async function runCodingAgent(input: Readonly<RunAppInput>): Promise<RunA
       recoveryConstraints,
     );
 
-    const skillLoader = await FileSkillLoader.create(
-      path.resolve(input.config.skills.resourceRoot),
-    );
-    const skillProvider = await skillLoader.load(signal);
-    const skills = await skillProvider.select(
-      { schemaVersion: 1, requestedIds: input.config.skills.enabledIds },
-      { signal },
-    );
+    // Host-provided context wins over the configured sources; absence keeps the
+    // fixed base text and the Skill files (ruling 2's only compatibility promise).
+    const baseSystemPrompt = input.baseSystemPrompt?.text ?? CODING_AGENT_SYSTEM_PROMPT;
+    const systemPromptVersion = input.baseSystemPrompt
+      ? `${input.baseSystemPrompt.templateId}@${input.baseSystemPrompt.version}`
+      : CODING_AGENT_SYSTEM_PROMPT_VERSION;
+    let skills: readonly SkillContext[];
+    let skillResourceRoot: string;
+    if (input.skills !== undefined) {
+      skills = input.skills;
+      skillResourceRoot = "provided-by-host";
+    } else {
+      const skillLoader = await FileSkillLoader.create(
+        path.resolve(input.config.skills.resourceRoot),
+      );
+      const skillProvider = await skillLoader.load(signal);
+      skills = await skillProvider.select(
+        { schemaVersion: 1, requestedIds: input.config.skills.enabledIds },
+        { signal },
+      );
+      skillResourceRoot = input.config.skills.resourceRoot;
+    }
     input.onConfiguration?.({
-      systemPromptVersion: CODING_AGENT_SYSTEM_PROMPT_VERSION,
-      systemPrompt: CODING_AGENT_SYSTEM_PROMPT,
+      systemPromptVersion,
+      systemPrompt: baseSystemPrompt,
       provider: provider.id,
       model: input.config.model.model,
       thinking: input.config.model.options["thinking"] ?? "provider_default",
       reasoningEffort: input.config.model.options["reasoningEffort"] ?? "provider_default",
       tools: tools.modelToolSpecs(),
       skills,
-      skillResourceRoot: input.config.skills.resourceRoot,
+      skillResourceRoot,
       contextWindowTokens: input.config.runtime.tokenBudget,
       maxOutputTokens: input.config.model.maxOutputTokens,
       maxModelRequests: input.config.runtime.maxModelRequests,
@@ -490,13 +511,16 @@ export async function runCodingAgent(input: Readonly<RunAppInput>): Promise<RunA
         run,
         ...(sessionId === undefined ? {} : { sessionId }),
         ...(input.inputSupply === undefined ? {} : { inputSupply: input.inputSupply }),
-        baseSystemPrompt: CODING_AGENT_SYSTEM_PROMPT,
+        baseSystemPrompt,
         tools: tools.modelToolSpecs(),
         skills,
         memories,
         tokenBudget: input.config.runtime.tokenBudget,
         maxOutputTokens: input.config.model.maxOutputTokens,
         ...(historyTranscript.length > 0 ? { historyTranscript } : {}),
+        ...(input.reasoningReplay === undefined ? {} : { reasoningReplay: input.reasoningReplay }),
+        ...(input.previewRequest === undefined ? {} : { previewRequest: input.previewRequest }),
+        ...(input.onContextSelected === undefined ? {} : { onContextSelected: input.onContextSelected }),
       },
       { signal },
     );

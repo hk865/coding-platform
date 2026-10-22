@@ -75,4 +75,11 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         updateDueCount: { required: true },
         anchors: { required: false },
     },
+    // Ruling 11: `base` and the five platform Skills are fixed text with no slots.
+    'base': {},
+    'skill-platform-work': {},
+    'skill-platform-secretary': {},
+    'skill-platform-adviser': {},
+    'skill-platform-scribe': {},
+    'skill-platform-reviewer': {},
 };

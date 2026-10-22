@@ -29,10 +29,8 @@ import {
 } from './task-requeue.js';
 import { ROUND_CHECK_INCOMPLETE_CAUSES, type VerificationRoundRef } from './verification.js';
 import { PLATFORM_PROMPT_PACK_V1 } from './prompts/platform-pack.generated.js';
+import type { PromptTextsV1 } from './prompts/prompt-set.js';
 import { renderTemplate } from './prompts/render-template.js';
-
-/** The fixed v1 platform texts; every key is literal so a missing one is a type error. */
-const STR = PLATFORM_PROMPT_PACK_V1.strings;
 
 // ------------------------------------------------------------------------ //
 // Shapes                                                                    //
@@ -334,55 +332,135 @@ function because(stamp: SourceCheckpointStampV1): string {
 // Chinese renderer                                                          //
 // ------------------------------------------------------------------------ //
 /**
- * Labels of the failure and actor classes (spec §2, "失败类别与操作者类别的标签").
- * The UI keeps its own copy (it cannot import contract values); a test asserts
- * that the copies agree.
+ * Every fixed text and label the renderer needs, read from one pack (ruling
+ * 14). A preparation passes the resolved pack; a direct call keeps the
+ * generated platform pack, so existing renderer tests are unchanged.
  */
-export const REWORK_FAILURE_CLASS_LABELS_ZH: Readonly<Record<ReworkFailureClass, string>> = Object.freeze({
-  interrupted: STR['brief.failureClass.interrupted'],
-  cancelled: STR['brief.failureClass.cancelled'],
-  check_failed: STR['brief.failureClass.check_failed'],
-  run_failed: STR['brief.failureClass.run_failed'],
-  check_incomplete: STR['brief.failureClass.check_incomplete'],
-});
-export const REWORK_ACTOR_CLASS_LABELS_ZH: Readonly<Record<ReworkActorClass, string>> = Object.freeze({
-  human: STR['brief.actorClass.human'],
-  system: STR['brief.actorClass.system'],
-  agent: STR['brief.actorClass.agent'],
-});
-/**
- * The fixed block of `standingInstructionVersion: 1`, always kept; changing its
- * text is a new version. The `continuation-brief` template is the ONE source:
- * everything after its last blank line is this always-kept closing block, so
- * the template and this array cannot drift apart. The tag above the block is
- * the template's first line; the marker is passed as a slot.
- */
-const CONTINUATION_BRIEF_TEMPLATE_TEXT = PLATFORM_PROMPT_PACK_V1.templates['continuation-brief'];
-const CONTINUATION_BRIEF_HEADING_ZH = CONTINUATION_BRIEF_TEMPLATE_TEXT.slice(
-  0, CONTINUATION_BRIEF_TEMPLATE_TEXT.indexOf('\n'));
-export const CONTINUATION_STANDING_INSTRUCTIONS_ZH_V1: readonly string[] = Object.freeze(
-  CONTINUATION_BRIEF_TEMPLATE_TEXT.slice(CONTINUATION_BRIEF_TEMPLATE_TEXT.lastIndexOf('\n\n') + 2).split('\n'),
-);
+type BriefTexts = {
+  pack: PromptTextsV1;
+  S: (key: string) => string;
+  template: string;
+  heading: string;
+  standing: readonly string[];
+  failureClass: Readonly<Record<ReworkFailureClass, string>>;
+  actorClass: Readonly<Record<ReworkActorClass, string>>;
+  stopRequester: Readonly<Record<StopRequester, string>>;
+  toolResult: Readonly<Record<ContinuationToolCallV1['result'], string>>;
+  sideEffect: Readonly<Record<NonNullable<ContinuationToolCallV1['sideEffect']>, string>>;
+  waitStatus: Readonly<Record<'pending' | 'read' | 'responded', string>>;
+  checkpoint: Readonly<Record<ContinuationSourceCheckpointV1['kind'], string>>;
+  anomalyCause: Readonly<Record<SessionAnomalyAnchorV1['cause'], string>>;
+  anomalyMixedOwnership: string;
+  anomalyLastSentence: string;
+  reviewTitle: string;
+  reviewNotListed: string;
+  reviewBlocked: string;
+  blockedTitle: string;
+  blockedState: Readonly<Record<'pending' | 'allowed' | 'denied' | 'denied_final', string>>;
+  disposition: Readonly<Record<NonNullable<ContinuationUnknownCallReviewV1['disposition']>['choice'], string>>;
+  noDisposition: string;
+  reviewSource: Readonly<Record<'card' | 'direct', string>>;
+  autoSource: string;
+  reviewVerdict: Readonly<Record<string, string>>;
+  reviewChange: Readonly<Record<ContinuationUnknownCallReviewFileV1['change'], string>>;
+  reviewMode: Readonly<Record<'replace' | 'create', string>>;
+  reviewDiffReason: Readonly<Record<ContinuationDiffOmittedReasonV1, string>>;
+};
 
-const STOP_REQUESTER_ZH: Readonly<Record<StopRequester, string>> = {
-  human: STR['brief.stopRequester.human'], goal_fan_out: STR['brief.stopRequester.goal_fan_out'],
-  system: STR['brief.stopRequester.system'], none: STR['brief.stopRequester.none'],
-};
-const TOOL_RESULT_ZH: Readonly<Record<ContinuationToolCallV1['result'], string>> = {
-  success: STR['brief.toolResult.success'], error: STR['brief.toolResult.error'],
-  cancelled: STR['brief.toolResult.cancelled'], not_started: STR['brief.toolResult.not_started'],
-  outcome_unknown: STR['brief.toolResult.outcome_unknown'],
-};
-const SIDE_EFFECT_ZH: Readonly<Record<NonNullable<ContinuationToolCallV1['sideEffect']>, string>> = {
-  none: STR['brief.sideEffect.none'], possible: STR['brief.sideEffect.possible'], confirmed: STR['brief.sideEffect.confirmed'],
-};
-const WAIT_STATUS_ZH: Readonly<Record<'pending' | 'read' | 'responded', string>> = {
-  pending: STR['brief.waitStatus.pending'], read: STR['brief.waitStatus.read'], responded: STR['brief.waitStatus.responded'],
-};
-const CHECKPOINT_ZH: Readonly<Record<ContinuationSourceCheckpointV1['kind'], string>> = {
-  round_open: STR['brief.checkpoint.round_open'], requeue: STR['brief.checkpoint.requeue'],
-  brief: STR['brief.checkpoint.brief'],
-};
+/** One fixed string of the resolved pack; a missing key is a pack bug. */
+function packString(texts: PromptTextsV1, key: string): string {
+  const value = texts.strings[key];
+  if (value === undefined) throw new Error(`the resolved prompt pack has no string "${key}"`);
+  return value;
+}
+
+/** Builds the whole fixed-text table from one pack; nothing falls back per key. */
+function briefTexts(texts: PromptTextsV1): BriefTexts {
+  const S = (key: string): string => packString(texts, key);
+  const template = texts.templates['continuation-brief'] ?? '';
+  return {
+    pack: texts,
+    S,
+    template,
+    heading: template.slice(0, template.indexOf('\n')),
+    standing: Object.freeze(template.slice(template.lastIndexOf('\n\n') + 2).split('\n')),
+    failureClass: Object.freeze({
+      interrupted: S('brief.failureClass.interrupted') ?? '', cancelled: S('brief.failureClass.cancelled') ?? '',
+      check_failed: S('brief.failureClass.check_failed') ?? '', run_failed: S('brief.failureClass.run_failed') ?? '',
+      check_incomplete: S('brief.failureClass.check_incomplete') ?? '',
+    }),
+    actorClass: Object.freeze({
+      human: S('brief.actorClass.human') ?? '', system: S('brief.actorClass.system') ?? '',
+      agent: S('brief.actorClass.agent') ?? '',
+    }),
+    stopRequester: {
+      human: S('brief.stopRequester.human') ?? '', goal_fan_out: S('brief.stopRequester.goal_fan_out') ?? '',
+      system: S('brief.stopRequester.system') ?? '', none: S('brief.stopRequester.none') ?? '',
+    },
+    toolResult: {
+      success: S('brief.toolResult.success') ?? '', error: S('brief.toolResult.error') ?? '',
+      cancelled: S('brief.toolResult.cancelled') ?? '', not_started: S('brief.toolResult.not_started') ?? '',
+      outcome_unknown: S('brief.toolResult.outcome_unknown') ?? '',
+    },
+    sideEffect: {
+      none: S('brief.sideEffect.none') ?? '', possible: S('brief.sideEffect.possible') ?? '',
+      confirmed: S('brief.sideEffect.confirmed') ?? '',
+    },
+    waitStatus: {
+      pending: S('brief.waitStatus.pending') ?? '', read: S('brief.waitStatus.read') ?? '',
+      responded: S('brief.waitStatus.responded') ?? '',
+    },
+    checkpoint: {
+      round_open: S('brief.checkpoint.round_open') ?? '', requeue: S('brief.checkpoint.requeue') ?? '',
+      brief: S('brief.checkpoint.brief') ?? '',
+    },
+    anomalyCause: {
+      archive_interrupted: S('brief.anomaly.cause.archive_interrupted') ?? '',
+      retired_archive: S('brief.anomaly.cause.retired_archive') ?? '',
+    },
+    anomalyMixedOwnership: S('brief.anomaly.mixedOwnership') ?? '',
+    anomalyLastSentence: S('brief.anomaly.lastSentence') ?? '',
+    reviewTitle: S('brief.review.title') ?? '',
+    reviewNotListed: S('brief.review.notListed') ?? '',
+    reviewBlocked: S('brief.review.blocked') ?? '',
+    blockedTitle: S('brief.blocked.title') ?? '',
+    blockedState: {
+      pending: S('brief.blocked.state.pending') ?? '', allowed: S('brief.blocked.state.allowed') ?? '',
+      denied: S('brief.blocked.state.denied') ?? '', denied_final: S('brief.blocked.state.denied_final') ?? '',
+    },
+    disposition: {
+      rerun_as_is: S('brief.review.disposition.rerun_as_is') ?? '',
+      skip_as_done: S('brief.review.disposition.skip_as_done') ?? '',
+      handle_myself: S('brief.review.disposition.handle_myself') ?? '',
+      safer_method: S('brief.review.disposition.safer_method') ?? '',
+    },
+    noDisposition: S('brief.review.noDisposition') ?? '',
+    reviewSource: { card: S('brief.review.source.card') ?? '', direct: S('brief.review.source.direct') ?? '' },
+    autoSource: S('brief.review.autoSource') ?? '',
+    reviewVerdict: {
+      no_review_needed: S('brief.review.verdict.no_review_needed') ?? '', done: S('brief.review.verdict.done') ?? '',
+      not_done: S('brief.review.verdict.not_done') ?? '',
+      compare_in_continuation: S('brief.review.verdict.compare_in_continuation') ?? '',
+      pending: S('brief.review.verdict.pending') ?? '', partial: S('brief.review.verdict.partial') ?? '',
+      undetermined: S('brief.review.verdict.undetermined') ?? '',
+    },
+    reviewChange: {
+      added: S('brief.review.change.added') ?? '', modified: S('brief.review.change.modified') ?? '',
+      deleted: S('brief.review.change.deleted') ?? '', mode_changed: S('brief.review.change.mode_changed') ?? '',
+      unchanged: S('brief.review.change.unchanged') ?? '', not_visible: S('brief.review.change.not_visible') ?? '',
+      unknown: S('brief.review.change.unknown') ?? '',
+    },
+    reviewMode: { replace: S('brief.review.mode.replace') ?? '', create: S('brief.review.mode.create') ?? '' },
+    reviewDiffReason: {
+      baseline_dirty: S('brief.review.diffReason.baseline_dirty') ?? '', binary: S('brief.review.diffReason.binary') ?? '',
+      too_large: S('brief.review.diffReason.too_large') ?? '', protected: S('brief.review.diffReason.protected') ?? '',
+      section_limit: S('brief.review.diffReason.section_limit') ?? '', not_text: S('brief.review.diffReason.not_text') ?? '',
+    },
+  };
+}
+
+const DEFAULT_TEXTS: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1;
+
 /** Successively shorter caps (UTF-16 code units) tried on every text before body items are left out. */
 const RENDER_TEXT_CAPS: readonly number[] = [CONTINUATION_BRIEF_LIMITS.textChars, 1000, 250, 60];
 const UTF8 = new TextEncoder();
@@ -402,9 +480,9 @@ type ContinuationBriefTemplateParts = {
  * prefixed with the single LF the old array join supplied, so an empty part
  * renders no bytes at all. `sectionRanges` is not part of the brief output.
  */
-function renderBriefTemplateZh(marker: string, parts: ContinuationBriefTemplateParts): string {
+function renderBriefTemplateZh(B: BriefTexts, marker: string, parts: ContinuationBriefTemplateParts): string {
   const slot = (lines: readonly string[]): string => (lines.length === 0 ? '' : `\n${lines.join('\n')}`);
-  return renderTemplate(PLATFORM_PROMPT_PACK_V1, 'continuation-brief', {
+  return renderTemplate(B.pack, 'continuation-brief', {
     marker,
     body: slot(parts.body),
     blockedOmission: slot(parts.blockedOmission),
@@ -431,10 +509,11 @@ function renderBriefTemplateZh(marker: string, parts: ContinuationBriefTemplateP
  * (`cancelled_at_reconcile`: Host-restart wording; `cancelled_while_paused`:
  * the in-process wording).
  */
-export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: string): string {
+export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: string, texts: PromptTextsV1 = DEFAULT_TEXTS): string {
+  const B = briefTexts(texts);
   const marker = continuationBriefMarker(digest);
-  const head = [CONTINUATION_BRIEF_HEADING_ZH, marker];
-  const tail = ['', ...CONTINUATION_STANDING_INSTRUCTIONS_ZH_V1];
+  const head = [B.heading, marker];
+  const tail = ['', ...B.standing];
   const limit = CONTINUATION_BRIEF_LIMITS.renderedBytes;
   const anomalies = brief.anomalies;
   const review = brief.unknownCallReview ?? null;
@@ -453,9 +532,9 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
   // shorten or the other optional lines are omitted.
   if (blockedAll.length > 0) {
     const firstCap = RENDER_TEXT_CAPS[0]!;
-    const fullBody = briefBodyZh(brief, firstCap);
-    const fullAnomaly = anomalyLinesZh(brief, firstCap, allPaths);
-    const fullReview = unknownCallReviewLinesZh(brief, firstCap, allReviewLines);
+    const fullBody = briefBodyZh(B, brief, firstCap);
+    const fullAnomaly = anomalyLinesZh(B, brief, firstCap, allPaths);
+    const fullReview = unknownCallReviewLinesZh(B, brief, firstCap, allReviewLines);
     // K3 B3 item 9: the count line is its own last entry (present only while all
     // 16 lines are shown and the Task has more), and every candidate is measured
     // WITH the note for the command lines it just removed — the count line itself
@@ -466,10 +545,10 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
     // `blockedOmission` slot is the position used once the section is gone.
     const candidate = (keep: number, withCountLine: boolean): string => {
       const removed = blockedKeepMax - keep;
-      const note = removed > 0 ? [omittedNoteZh(removed)] : [];
-      return renderBriefTemplateZh(marker, {
+      const note = removed > 0 ? [omittedNoteZh(B, removed)] : [];
+      return renderBriefTemplateZh(B, marker, {
         body: fullBody, blockedOmission: [], bodyOmission: [], anomalies: fullAnomaly, review: fullReview,
-        blocked: [...blockedCommandsLinesZh(blockedAll, keep, withCountLine), ...note],
+        blocked: [...blockedCommandsLinesZh(B, blockedAll, keep, withCountLine), ...note],
       });
     };
     if (blockedAll.length > blockedKeepMax) {
@@ -485,13 +564,13 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
     blockedOmitted = blockedKeepMax;
   }
   for (const cap of RENDER_TEXT_CAPS) {
-    body = briefBodyZh(brief, cap);
-    anomaly = anomalyLinesZh(brief, cap, allPaths);
-    reviewLines = unknownCallReviewLinesZh(brief, cap, allReviewLines);
+    body = briefBodyZh(B, brief, cap);
+    anomaly = anomalyLinesZh(B, brief, cap, allPaths);
+    reviewLines = unknownCallReviewLinesZh(B, brief, cap, allReviewLines);
     // The removed blocked command lines are already owed a note; measure every
     // cap candidate WITH it and return that measured text (never a shorter one).
-    const note = blockedOmitted > 0 ? [omittedNoteZh(blockedOmitted)] : [];
-    const text = renderBriefTemplateZh(marker, {
+    const note = blockedOmitted > 0 ? [omittedNoteZh(B, blockedOmitted)] : [];
+    const text = renderBriefTemplateZh(B, marker, {
       body, blockedOmission: note, bodyOmission: [], anomalies: anomaly, review: reviewLines, blocked: [],
     });
     if (utf8Length(text) <= limit) return text;
@@ -504,12 +583,12 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
     let kept = 0;
     for (const line of body) {
       const next = used + 1 + utf8Length(line);
-      if (next + 1 + utf8Length(omittedNoteZh(body.length - kept - 1)) > limit) break;
+      if (next + 1 + utf8Length(omittedNoteZh(B, body.length - kept - 1)) > limit) break;
       used = next;
       kept += 1;
     }
-    return renderBriefTemplateZh(marker, {
-      body: body.slice(0, kept), blockedOmission: [], bodyOmission: [omittedNoteZh(body.length - kept)],
+    return renderBriefTemplateZh(B, marker, {
+      body: body.slice(0, kept), blockedOmission: [], bodyOmission: [omittedNoteZh(B, body.length - kept)],
       anomalies: [], review: [], blocked: [],
     });
   }
@@ -522,7 +601,7 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
   if (review === null) {
     let budgeted: string[] | null = null;
     for (let allowed = allPaths; allowed >= 0; allowed -= 1) {
-      const candidate = anomalyLinesZh(brief, cap, allowed);
+      const candidate = anomalyLinesZh(B, brief, cap, allowed);
       if (utf8Length([...head, ...candidate, ...tail].join('\n')) <= limit) { budgeted = candidate; break; }
     }
     if (budgeted === null) {
@@ -538,7 +617,7 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
     let chosen: string[] | null = null;
     for (let allowedAnomaly = allPaths; allowedAnomaly >= 0 && chosen === null; allowedAnomaly -= 1) {
       for (let allowedReview = allReviewLines; allowedReview >= 0; allowedReview -= 1) {
-        const candidate = [...anomalyLinesZh(brief, cap, allowedAnomaly), ...unknownCallReviewLinesZh(brief, cap, allowedReview)];
+        const candidate = [...anomalyLinesZh(B, brief, cap, allowedAnomaly), ...unknownCallReviewLinesZh(B, brief, cap, allowedReview)];
         if (utf8Length([...head, ...candidate, ...tail].join('\n')) <= limit) { chosen = candidate; break; }
       }
     }
@@ -554,20 +633,20 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
   let kept = 0;
   for (const line of body) {
     const next = used + 1 + utf8Length(line);
-    if (next + 1 + utf8Length(omittedNoteZh(body.length - kept - 1 + blockedOmitted)) > limit) break;
+    if (next + 1 + utf8Length(omittedNoteZh(B, body.length - kept - 1 + blockedOmitted)) > limit) break;
     used = next;
     kept += 1;
   }
-  const withNote = renderBriefTemplateZh(marker, {
-    body: body.slice(0, kept), blockedOmission: [], bodyOmission: [omittedNoteZh(body.length - kept + blockedOmitted)],
+  const withNote = renderBriefTemplateZh(B, marker, {
+    body: body.slice(0, kept), blockedOmission: [], bodyOmission: [omittedNoteZh(B, body.length - kept + blockedOmitted)],
     anomalies: suffixMandatory, review: [], blocked: [],
   });
   return kept === 0 && utf8Length(withNote) > limit ? [...head, ...suffix].join('\n') : withNote;
 }
 
-function omittedNoteZh(lines: number): string {
-  return `${STR['brief.omitted.prefix']}${String(CONTINUATION_BRIEF_LIMITS.renderedBytes)}`
-    + `${STR['brief.omitted.between']}${String(lines)}${STR['brief.omitted.suffix']}`;
+function omittedNoteZh(B: BriefTexts, lines: number): string {
+  return `${B.S('brief.omitted.prefix')}${String(CONTINUATION_BRIEF_LIMITS.renderedBytes)}`
+    + `${B.S('brief.omitted.between')}${String(lines)}${B.S('brief.omitted.suffix')}`;
 }
 function utf8Length(text: string): number {
   return UTF8.encode(text).length;
@@ -581,14 +660,14 @@ function utf8Length(text: string): number {
  * never counted, and the empty line plus heading disappear with the last line.
  */
 function blockedCommandsLinesZh(
-  entries: NonNullable<ContinuationBriefV1['blockedCommands']>, keep: number, withCountLine: boolean,
+  B: BriefTexts, entries: NonNullable<ContinuationBriefV1['blockedCommands']>, keep: number, withCountLine: boolean,
 ): string[] {
   if (entries.length === 0 || keep <= 0) return [];
-  const lines: string[] = ['', BLOCKED_COMMANDS_TITLE_ZH];
+  const lines: string[] = ['', B.blockedTitle];
   for (const entry of entries.slice(0, Math.min(16, keep))) {
-    let line = `${STR['brief.blocked.lineLead']}${String(entry.alias)}${STR['brief.blocked.lineMiddle']}`
-      + `${entry.reviewRunId.slice(0, 8)}${STR['brief.blocked.lineSuffix']}`;
-    if (entry.requestState !== null) line += `${STR['brief.blocked.stateLead']}${BLOCKED_COMMAND_STATE_ZH[entry.requestState]}`;
+    let line = `${B.S('brief.blocked.lineLead')}${String(entry.alias)}${B.S('brief.blocked.lineMiddle')}`
+      + `${entry.reviewRunId.slice(0, 8)}${B.S('brief.blocked.lineSuffix')}`;
+    if (entry.requestState !== null) line += `${B.S('brief.blocked.stateLead')}${B.blockedState[entry.requestState]}`;
     const forms: string[] = [];
     const seen = new Set<string>();
     for (const raw of entry.declaredForms) {
@@ -597,223 +676,214 @@ function blockedCommandsLinesZh(
       forms.push(truncateUtf8(raw, 160));
     }
     if (forms.length > 0) {
-      line += `${STR['brief.blocked.formsLead']}${forms.slice(0, 3).join(STR['brief.list.separator'])}`;
-      if (forms.length > 3) line += `${STR['brief.blocked.formsMoreLead']}${String(forms.length)}${STR['brief.blocked.formsMoreSuffix']}`;
+      line += `${B.S('brief.blocked.formsLead')}${forms.slice(0, 3).join(B.S('brief.list.separator'))}`;
+      if (forms.length > 3) line += `${B.S('brief.blocked.formsMoreLead')}${String(forms.length)}${B.S('brief.blocked.formsMoreSuffix')}`;
     }
     lines.push(line);
   }
   if (withCountLine && entries.length > 16) {
-    lines.push(`${STR['brief.blocked.omittedLead']}${String(entries.length - 16)}${STR['brief.blocked.omittedSuffix']}`);
+    lines.push(`${B.S('brief.blocked.omittedLead')}${String(entries.length - 16)}${B.S('brief.blocked.omittedSuffix')}`);
   }
   return lines;
 }
 /** `text` cut to `cap` UTF-16 code units without splitting a surrogate pair; continuation lines are indented. */
-function clip(text: string, cap: number): string {
+function clip(B: BriefTexts, text: string, cap: number): string {
   let cut = text;
   if (text.length > cap) {
     const end = cap > 0 && /[\uD800-\uDBFF]/.test(text.charAt(cap - 1)) ? cap - 1 : cap;
-    cut = `${text.slice(0, end)}${STR['brief.clip.truncatedSuffix']}`;
+    cut = `${text.slice(0, end)}${B.S('brief.clip.truncatedSuffix')}`;
   }
-  return cut.replace(/\r?\n/g, STR['brief.clip.newlineIndent']);
+  return cut.replace(/\r?\n/g, B.S('brief.clip.newlineIndent'));
 }
-function boundedZh(value: BoundedTextV1, cap: number): string {
-  const text = clip(value.text, cap);
-  const truncated = STR['brief.clip.truncatedSuffix'];
+function boundedZh(B: BriefTexts, value: BoundedTextV1, cap: number): string {
+  const text = clip(B, value.text, cap);
+  const truncated = B.S('brief.clip.truncatedSuffix');
   return value.truncated && !text.endsWith(truncated) ? `${text}${truncated}` : text;
 }
-function listZh(items: readonly string[], cap: number): string {
+function listZh(B: BriefTexts, items: readonly string[], cap: number): string {
   return items.length === 0
-    ? STR['brief.list.none'] : items.map((item) => clip(item, cap)).join(STR['brief.list.separator']);
+    ? B.S('brief.list.none') : items.map((item) => clip(B, item, cap)).join(B.S('brief.list.separator'));
 }
-function moreZh(omitted: number): string {
-  return omitted > 0 ? `${STR['brief.list.morePrefix']}${String(omitted)}${STR['brief.list.moreSuffix']}` : '';
+function moreZh(B: BriefTexts, omitted: number): string {
+  return omitted > 0 ? `${B.S('brief.list.morePrefix')}${String(omitted)}${B.S('brief.list.moreSuffix')}` : '';
 }
 
-function briefBodyZh(brief: ContinuationBriefV1, cap: number): string[] {
-  const t = (value: BoundedTextV1): string => boundedZh(value, cap);
+function briefBodyZh(B: BriefTexts, brief: ContinuationBriefV1, cap: number): string[] {
+  const t = (value: BoundedTextV1): string => boundedZh(B, value, cap);
   const lines: string[] = [];
   const section = (title: string): void => { lines.push('', `### ${title}`); };
   const trigger = brief.trigger;
   const previous = brief.previous;
   const stoppedAt = brief.stoppedAt;
 
-  let summary = `${STR['brief.summary.lead']}${brief.task.taskId}${STR['brief.summary.afterTask']}`
-    + `${brief.mode === 'rework' ? STR['brief.mode.rework'] : STR['brief.mode.resumeAfterInterruption']}${STR['brief.summary.afterMode']}`
-    + `${STR['brief.summary.requeueLead']}${String(trigger.requeueNumber)}${STR['brief.summary.beforeFailureClass']}`
-    + `${REWORK_FAILURE_CLASS_LABELS_ZH[brief.failureClass]}${STR['brief.summary.beforeActor']}`
-    + `${REWORK_ACTOR_CLASS_LABELS_ZH[trigger.actorClass]}`;
-  if (trigger.goalResume) summary += STR['brief.summary.goalResume'];
+  let summary = `${B.S('brief.summary.lead')}${brief.task.taskId}${B.S('brief.summary.afterTask')}`
+    + `${brief.mode === 'rework' ? B.S('brief.mode.rework') : B.S('brief.mode.resumeAfterInterruption')}${B.S('brief.summary.afterMode')}`
+    + `${B.S('brief.summary.requeueLead')}${String(trigger.requeueNumber)}${B.S('brief.summary.beforeFailureClass')}`
+    + `${B.failureClass[brief.failureClass]}${B.S('brief.summary.beforeActor')}`
+    + `${B.actorClass[trigger.actorClass]}`;
+  if (trigger.goalResume) summary += B.S('brief.summary.goalResume');
   if (trigger.autoRework !== null) {
-    summary += `${STR['brief.summary.autoRework']}${String(trigger.autoRework.count)}/${String(trigger.autoRework.cap)}`;
+    summary += `${B.S('brief.summary.autoRework')}${String(trigger.autoRework.count)}/${String(trigger.autoRework.cap)}`;
   }
   lines.push(`${summary}。`);
   if (trigger.earlierRequeues.length > 0) {
-    lines.push(`${STR['brief.earlierRequeues.lead']}${trigger.earlierRequeues
-      .map((earlier) => `${earlier.afterRunId}（${REWORK_FAILURE_CLASS_LABELS_ZH[earlier.failureClass]}）`).join(STR['brief.list.separator'])}。`);
+    lines.push(`${B.S('brief.earlierRequeues.lead')}${trigger.earlierRequeues
+      .map((earlier) => `${earlier.afterRunId}（${B.failureClass[earlier.failureClass]}）`).join(B.S('brief.list.separator'))}。`);
   }
-  lines.push(continuityZh(brief.session));
+  lines.push(continuityZh(B, brief.session));
 
-  section(STR['brief.section.previous']);
-  lines.push(`${STR['brief.previous.runLead']}${previous.runRef.runId}${STR['brief.previous.sessionOpen']}`
-    + `${previous.sessionRef.sessionId}）${endingZh(brief)}。`);
+  section(B.S('brief.section.previous'));
+  lines.push(`${B.S('brief.previous.runLead')}${previous.runRef.runId}${B.S('brief.previous.sessionOpen')}`
+    + `${previous.sessionRef.sessionId}）${endingZh(B, brief)}。`);
   if (brief.factsFrom.hops > 0) {
-    lines.push(`${STR['brief.previous.factsFromLead']}${brief.factsFrom.runRef.runId}${STR['brief.previous.factsFromHopsOpen']}`
-      + `${String(brief.factsFrom.hops)}${STR['brief.previous.factsFromHopsSuffix']}`
-      + `${brief.factsFrom.truncated ? STR['brief.previous.factsFromTruncated'] : ''}）。`);
+    lines.push(`${B.S('brief.previous.factsFromLead')}${brief.factsFrom.runRef.runId}${B.S('brief.previous.factsFromHopsOpen')}`
+      + `${String(brief.factsFrom.hops)}${B.S('brief.previous.factsFromHopsSuffix')}`
+      + `${brief.factsFrom.truncated ? B.S('brief.previous.factsFromTruncated') : ''}）。`);
   }
   if (previous.interruption !== null) {
     const interruption = previous.interruption;
-    lines.push(`${STR['brief.interruption.lead']}`
-      + `${interruption.kind === 'paused' ? STR['brief.interruption.paused'] : STR['brief.interruption.executing']}`
-      + `${STR['brief.interruption.kernelPrefix']}`
-      + `${interruption.kernelPaused ? STR['brief.interruption.reached'] : STR['brief.interruption.notReached']}`
-      + `${STR['brief.interruption.pointReachedSuffix']}`
-      + `${interruption.pausedBy === null || interruption.pausedBy === 'none' ? '' : `${STR['brief.interruption.requesterPrefix']}${STOP_REQUESTER_ZH[interruption.pausedBy]}`}。`);
+    lines.push(`${B.S('brief.interruption.lead')}`
+      + `${interruption.kind === 'paused' ? B.S('brief.interruption.paused') : B.S('brief.interruption.executing')}`
+      + `${B.S('brief.interruption.kernelPrefix')}`
+      + `${interruption.kernelPaused ? B.S('brief.interruption.reached') : B.S('brief.interruption.notReached')}`
+      + `${B.S('brief.interruption.pointReachedSuffix')}`
+      + `${interruption.pausedBy === null || interruption.pausedBy === 'none' ? '' : `${B.S('brief.interruption.requesterPrefix')}${B.stopRequester[interruption.pausedBy]}`}。`);
   }
   if (previous.cancelledBy !== null) {
-    lines.push(`${STR['brief.previous.cancelledByLead']}${STOP_REQUESTER_ZH[previous.cancelledBy]}。`);
+    lines.push(`${B.S('brief.previous.cancelledByLead')}${B.stopRequester[previous.cancelledBy]}。`);
   }
-  if (previous.error !== null) lines.push(`${STR['brief.previous.errorLead']}${t(previous.error)}`);
+  if (previous.error !== null) lines.push(`${B.S('brief.previous.errorLead')}${t(previous.error)}`);
   if (previous.limit !== null) {
-    lines.push(`${STR['brief.previous.limitLead']}${clip(previous.limit.kind, cap)}${STR['brief.previous.limitObserved']}`
-      + `${String(previous.limit.observed)}${STR['brief.previous.limitAllowed']}${String(previous.limit.allowed)}。`);
+    lines.push(`${B.S('brief.previous.limitLead')}${clip(B, previous.limit.kind, cap)}${B.S('brief.previous.limitObserved')}`
+      + `${String(previous.limit.observed)}${B.S('brief.previous.limitAllowed')}${String(previous.limit.allowed)}。`);
   }
   if (previous.budget !== null) {
-    lines.push(`${STR['brief.previous.budgetLead']}${String(previous.budget.previousTokenBudget)}`
-      + `${STR['brief.previous.budgetCurrent']}${String(previous.budget.currentTokenBudget)}。`);
+    lines.push(`${B.S('brief.previous.budgetLead')}${String(previous.budget.previousTokenBudget)}`
+      + `${B.S('brief.previous.budgetCurrent')}${String(previous.budget.currentTokenBudget)}。`);
   }
   if (previous.wait !== null) {
-    lines.push(`${STR['brief.previous.waitLead']}${previous.wait.messageRef.messageId}：${WAIT_STATUS_ZH[previous.wait.status]}。`);
+    lines.push(`${B.S('brief.previous.waitLead')}${previous.wait.messageRef.messageId}：${B.waitStatus[previous.wait.status]}。`);
   }
   for (const steer of previous.unacceptedSteers) {
-    lines.push(`${STR['brief.previous.steerLead']}${steer.intentRef.intentId}：${t(steer.text)}`);
+    lines.push(`${B.S('brief.previous.steerLead')}${steer.intentRef.intentId}：${t(steer.text)}`);
   }
-  if (previous.endedAt !== null) lines.push(`${STR['brief.previous.endedAtLead']}${previous.endedAt}。`);
+  if (previous.endedAt !== null) lines.push(`${B.S('brief.previous.endedAtLead')}${previous.endedAt}。`);
 
-  section(STR['brief.section.stoppedAt']);
+  section(B.S('brief.section.stoppedAt'));
   if (stoppedAt.kernel === 'read') {
-    lines.push(`${STR['brief.stoppedAt.positionLead']}`
-      + `${stoppedAt.lastPosition === null ? STR['brief.unknown'] : String(stoppedAt.lastPosition)}`
-      + `${STR['brief.stoppedAt.turnLead']}${stoppedAt.turnStatus ?? STR['brief.unknown']}。`);
+    lines.push(`${B.S('brief.stoppedAt.positionLead')}`
+      + `${stoppedAt.lastPosition === null ? B.S('brief.unknown') : String(stoppedAt.lastPosition)}`
+      + `${B.S('brief.stoppedAt.turnLead')}${stoppedAt.turnStatus ?? B.S('brief.unknown')}。`);
   } else {
-    lines.push(stoppedAt.kernel === 'not_entered' ? STR['brief.stoppedAt.notEntered'] : STR['brief.stoppedAt.unavailable']);
+    lines.push(stoppedAt.kernel === 'not_entered' ? B.S('brief.stoppedAt.notEntered') : B.S('brief.stoppedAt.unavailable'));
   }
-  if (stoppedAt.reason !== null) lines.push(`${STR['brief.stoppedAt.reasonLead']}${clip(stoppedAt.reason, cap)}`);
+  if (stoppedAt.reason !== null) lines.push(`${B.S('brief.stoppedAt.reasonLead')}${clip(B, stoppedAt.reason, cap)}`);
   if (stoppedAt.lastToolGroup !== null) {
-    lines.push(`${STR['brief.stoppedAt.toolGroupLead']}${stoppedAt.lastToolGroup.sourceMessageId}，`
-      + `${String(stoppedAt.lastToolGroup.calls)}${STR['brief.stoppedAt.toolGroupCallsSuffix']}`);
+    lines.push(`${B.S('brief.stoppedAt.toolGroupLead')}${stoppedAt.lastToolGroup.sourceMessageId}，`
+      + `${String(stoppedAt.lastToolGroup.calls)}${B.S('brief.stoppedAt.toolGroupCallsSuffix')}`);
   }
-  if (stoppedAt.lastAssistant !== null) lines.push(`${STR['brief.stoppedAt.lastAssistantLead']}${t(stoppedAt.lastAssistant)}`);
+  if (stoppedAt.lastAssistant !== null) lines.push(`${B.S('brief.stoppedAt.lastAssistantLead')}${t(stoppedAt.lastAssistant)}`);
   if (stoppedAt.window !== null) {
-    lines.push(`${STR['brief.stoppedAt.windowLead']}${String(stoppedAt.window.fromPosition)}`
-      + `${STR['brief.stoppedAt.windowRange']}${String(stoppedAt.window.throughPosition)}`
-      + `${stoppedAt.window.omittedRecords > 0 ? `${STR['brief.stoppedAt.windowOmittedLead']}${String(stoppedAt.window.omittedRecords)}${STR['brief.stoppedAt.windowOmittedSuffix']}` : ''}。`);
+    lines.push(`${B.S('brief.stoppedAt.windowLead')}${String(stoppedAt.window.fromPosition)}`
+      + `${B.S('brief.stoppedAt.windowRange')}${String(stoppedAt.window.throughPosition)}`
+      + `${stoppedAt.window.omittedRecords > 0 ? `${B.S('brief.stoppedAt.windowOmittedLead')}${String(stoppedAt.window.omittedRecords)}${B.S('brief.stoppedAt.windowOmittedSuffix')}` : ''}。`);
   }
 
-  section(STR['brief.section.toolCalls']);
+  section(B.S('brief.section.toolCalls'));
   const calls = brief.toolCalls;
   const groups: Array<[string, ContinuationToolCallV1[], number]> = [
-    [STR['brief.toolGroup.confirmed'], calls.confirmed, calls.confirmedOmitted],
-    [STR['brief.toolGroup.notExecuted'], calls.notExecuted, calls.notExecutedOmitted],
-    [STR['brief.toolGroup.unknown'], calls.unknown, calls.unknownOmitted],
+    [B.S('brief.toolGroup.confirmed'), calls.confirmed, calls.confirmedOmitted],
+    [B.S('brief.toolGroup.notExecuted'), calls.notExecuted, calls.notExecutedOmitted],
+    [B.S('brief.toolGroup.unknown'), calls.unknown, calls.unknownOmitted],
   ];
   if (groups.every(([, listed, omitted]) => listed.length === 0 && omitted === 0)) {
-    lines.push(stoppedAt.kernel === 'unavailable' ? STR['brief.toolCalls.noneUnavailable'] : STR['brief.toolCalls.none']);
+    lines.push(stoppedAt.kernel === 'unavailable' ? B.S('brief.toolCalls.noneUnavailable') : B.S('brief.toolCalls.none'));
   }
   for (const [label, listed, omitted] of groups) {
     if (listed.length === 0 && omitted === 0) continue;
-    lines.push(`- ${label}：${String(listed.length + omitted)}${STR['brief.toolCalls.countSuffix']}${moreZh(omitted)}`);
-    for (const call of listed) lines.push(`  - ${toolCallZh(call, cap)}`);
+    lines.push(`- ${label}：${String(listed.length + omitted)}${B.S('brief.toolCalls.countSuffix')}${moreZh(B, omitted)}`);
+    for (const call of listed) lines.push(`  - ${toolCallZh(B, call, cap)}`);
   }
 
   if (brief.checks !== null) {
     const checks = brief.checks;
-    section(STR['brief.section.checks']);
-    lines.push(`${STR['brief.checks.roundLead']}${checks.roundRef.roundId}${STR['brief.checks.ordinalOpen']}`
-      + `${String(checks.roundOrdinal)}${STR['brief.checks.failingMiddle']}`
-      + `${checks.failing.length === 0 ? STR['brief.list.none'] : ''}`);
+    section(B.S('brief.section.checks'));
+    lines.push(`${B.S('brief.checks.roundLead')}${checks.roundRef.roundId}${B.S('brief.checks.ordinalOpen')}`
+      + `${String(checks.roundOrdinal)}${B.S('brief.checks.failingMiddle')}`
+      + `${checks.failing.length === 0 ? B.S('brief.list.none') : ''}`);
     for (const failing of checks.failing) {
-      lines.push(`  - ${failing.checkId}${STR['brief.checks.itemPhase']}${failing.phase}${STR['brief.checks.itemOutcome']}`
-        + `${failing.outcome ?? STR['brief.list.none']}`
-        + `${failing.cause === null ? '' : `${STR['brief.checks.causeLead']}${failing.cause}`}`
-        + `${failing.reportRef === null ? STR['brief.checks.noReport'] : `${STR['brief.checks.reportLead']}${failing.reportRef.digest}`}`);
+      lines.push(`  - ${failing.checkId}${B.S('brief.checks.itemPhase')}${failing.phase}${B.S('brief.checks.itemOutcome')}`
+        + `${failing.outcome ?? B.S('brief.list.none')}`
+        + `${failing.cause === null ? '' : `${B.S('brief.checks.causeLead')}${failing.cause}`}`
+        + `${failing.reportRef === null ? B.S('brief.checks.noReport') : `${B.S('brief.checks.reportLead')}${failing.reportRef.digest}`}`);
     }
-    if (checks.gapCodes.length > 0) lines.push(`${STR['brief.checks.gapsLead']}${listZh(checks.gapCodes, cap)}`);
+    if (checks.gapCodes.length > 0) lines.push(`${B.S('brief.checks.gapsLead')}${listZh(B, checks.gapCodes, cap)}`);
   }
 
-  section(STR['brief.section.requeue']);
-  lines.push(`${STR['brief.requeue.reasonLead']}${REWORK_ACTOR_CLASS_LABELS_ZH[brief.requeue.reasonAuthor]}`
-    + `${STR['brief.requeue.reasonMiddle']}${t(brief.requeue.reason)}`);
-  if (brief.requeue.newInputs.length === 0) lines.push(STR['brief.requeue.none']);
+  section(B.S('brief.section.requeue'));
+  lines.push(`${B.S('brief.requeue.reasonLead')}${B.actorClass[brief.requeue.reasonAuthor]}`
+    + `${B.S('brief.requeue.reasonMiddle')}${t(brief.requeue.reason)}`);
+  if (brief.requeue.newInputs.length === 0) lines.push(B.S('brief.requeue.none'));
   for (const input of brief.requeue.newInputs) {
     lines.push(input.kind === 'session_message'
-      ? `${STR['brief.requeue.messageLead']}${input.ref.messageId}${input.replyBody === null ? '' : `${STR['brief.requeue.replyLead']}${t(input.replyBody)}`}`
-      : `${STR['brief.requeue.materialLead']}${input.ref.contentType}${STR['brief.requeue.materialDigestLead']}`
+      ? `${B.S('brief.requeue.messageLead')}${input.ref.messageId}${input.replyBody === null ? '' : `${B.S('brief.requeue.replyLead')}${t(input.replyBody)}`}`
+      : `${B.S('brief.requeue.materialLead')}${input.ref.contentType}${B.S('brief.requeue.materialDigestLead')}`
         + `${input.ref.digest}${input.body === null ? '' : `：${t(input.body)}`}`);
   }
 
-  section(STR['brief.section.workspace']);
+  section(B.S('brief.section.workspace'));
   const workspace = brief.workspace;
   const self = workspace.selfChanged;
-  if (self.status === 'unavailable') lines.push(STR['brief.workspace.selfUnavailable']);
-  else if (self.status === 'not_entered') lines.push(STR['brief.workspace.selfNotEntered']);
+  if (self.status === 'unavailable') lines.push(B.S('brief.workspace.selfUnavailable'));
+  else if (self.status === 'not_entered') lines.push(B.S('brief.workspace.selfNotEntered'));
   else {
-    lines.push(`${STR['brief.workspace.selfLead']}`
-      + `${self.status === 'known' ? STR['brief.workspace.selfComplete'] : STR['brief.workspace.selfPartial']}`
-      + `${STR['brief.workspace.selfMiddle']}${listZh(self.confirmed, cap)}`
-      + `${self.possible.length === 0 ? '' : `${STR['brief.workspace.possibleLead']}${listZh(self.possible, cap)}`}${moreZh(self.omitted)}`);
+    lines.push(`${B.S('brief.workspace.selfLead')}`
+      + `${self.status === 'known' ? B.S('brief.workspace.selfComplete') : B.S('brief.workspace.selfPartial')}`
+      + `${B.S('brief.workspace.selfMiddle')}${listZh(B, self.confirmed, cap)}`
+      + `${self.possible.length === 0 ? '' : `${B.S('brief.workspace.possibleLead')}${listZh(B, self.possible, cap)}`}${moreZh(B, self.omitted)}`);
   }
   const unobservedTo = workspace.unobserved.to === null ? null : workspace.checkpoints[workspace.unobserved.to];
-  lines.push(`${STR['brief.workspace.unobservedLead']}${workspace.unobserved.previousEndedAt ?? STR['brief.workspace.timeUnknown']}`
-    + `${STR['brief.workspace.unobservedMiddle']}`
-    + `${unobservedTo === undefined || unobservedTo === null ? STR['brief.workspace.thisStart'] : `“${CHECKPOINT_ZH[unobservedTo.kind]}”`}`
-    + `${STR['brief.workspace.unobservedAfter']}${STR['brief.workspace.unobservedTail']}`);
+  lines.push(`${B.S('brief.workspace.unobservedLead')}${workspace.unobserved.previousEndedAt ?? B.S('brief.workspace.timeUnknown')}`
+    + `${B.S('brief.workspace.unobservedMiddle')}`
+    + `${unobservedTo === undefined || unobservedTo === null ? B.S('brief.workspace.thisStart') : `“${B.checkpoint[unobservedTo.kind]}”`}`
+    + `${B.S('brief.workspace.unobservedAfter')}${B.S('brief.workspace.unobservedTail')}`);
   for (const segment of workspace.segments) {
     const from = workspace.checkpoints[segment.from];
     const to = workspace.checkpoints[segment.to];
     if (from === undefined || to === undefined) continue;
-    const verdict = segment.verdict === 'changed' ? STR['brief.workspace.verdictChanged']
-      : segment.verdict === 'unchanged' ? STR['brief.workspace.verdictUnchanged']
-        : `${STR['brief.workspace.verdictUnknownOpen']}${clip(segment.reason, cap)}）`;
-    lines.push(`- ${CHECKPOINT_ZH[from.kind]}${STR['brief.workspace.segmentArrow']}${CHECKPOINT_ZH[to.kind]}：${verdict}`);
+    const verdict = segment.verdict === 'changed' ? B.S('brief.workspace.verdictChanged')
+      : segment.verdict === 'unchanged' ? B.S('brief.workspace.verdictUnchanged')
+        : `${B.S('brief.workspace.verdictUnknownOpen')}${clip(B, segment.reason, cap)}）`;
+    lines.push(`- ${B.checkpoint[from.kind]}${B.S('brief.workspace.segmentArrow')}${B.checkpoint[to.kind]}：${verdict}`);
   }
   const uncommitted = workspace.uncommitted;
   if (uncommitted.status === 'git') {
-    lines.push(`${STR['brief.workspace.uncommittedGitLead']}${uncommitted.baseCommit ?? STR['brief.workspace.unknownCommit']}`
-      + `${STR['brief.workspace.uncommittedGitMiddle']}${listZh(uncommitted.paths, cap)}${moreZh(uncommitted.omitted)}`);
+    lines.push(`${B.S('brief.workspace.uncommittedGitLead')}${uncommitted.baseCommit ?? B.S('brief.workspace.unknownCommit')}`
+      + `${B.S('brief.workspace.uncommittedGitMiddle')}${listZh(B, uncommitted.paths, cap)}${moreZh(B, uncommitted.omitted)}`);
   } else if (uncommitted.status === 'not_git') {
-    lines.push(STR['brief.workspace.notGit']);
+    lines.push(B.S('brief.workspace.notGit'));
   } else {
-    lines.push(`${STR['brief.workspace.uncommittedUnknown']}${uncommitted.reason === null ? '' : `：${clip(uncommitted.reason, cap)}`}。`);
+    lines.push(`${B.S('brief.workspace.uncommittedUnknown')}${uncommitted.reason === null ? '' : `：${clip(B, uncommitted.reason, cap)}`}。`);
   }
 
   const accepted = brief.acceptedInputs;
   if (accepted.steers.length + accepted.steersOmitted + accepted.messages.length + accepted.messagesOmitted > 0) {
-    section(STR['brief.section.acceptedInputs']);
-    for (const steer of accepted.steers) lines.push(`${STR['brief.accepted.steerLead']}${steer.intentRef.intentId}：${t(steer.text)}`);
+    section(B.S('brief.section.acceptedInputs'));
+    for (const steer of accepted.steers) lines.push(`${B.S('brief.accepted.steerLead')}${steer.intentRef.intentId}：${t(steer.text)}`);
     if (accepted.steersOmitted > 0) {
-      lines.push(`${STR['brief.accepted.omittedLead']}${String(accepted.steersOmitted)}${STR['brief.accepted.steersOmittedSuffix']}`);
+      lines.push(`${B.S('brief.accepted.omittedLead')}${String(accepted.steersOmitted)}${B.S('brief.accepted.steersOmittedSuffix')}`);
     }
     for (const message of accepted.messages) {
-      lines.push(`${STR['brief.accepted.messageLead']}${message.messageRef.messageId}（`
-        + `${message.part === 'message' ? STR['brief.accepted.messageInbound'] : STR['brief.accepted.messageReply']}`
+      lines.push(`${B.S('brief.accepted.messageLead')}${message.messageRef.messageId}（`
+        + `${message.part === 'message' ? B.S('brief.accepted.messageInbound') : B.S('brief.accepted.messageReply')}`
         + `）：${t(message.excerpt)}`);
     }
     if (accepted.messagesOmitted > 0) {
-      lines.push(`${STR['brief.accepted.omittedLead']}${String(accepted.messagesOmitted)}${STR['brief.accepted.messagesOmittedSuffix']}`);
+      lines.push(`${B.S('brief.accepted.omittedLead')}${String(accepted.messagesOmitted)}${B.S('brief.accepted.messagesOmittedSuffix')}`);
     }
   }
   return lines;
 }
-
-const ANOMALY_CAUSE_ZH: Readonly<Record<SessionAnomalyAnchorV1['cause'], string>> = {
-  archive_interrupted: STR['brief.anomaly.cause.archive_interrupted'],
-  retired_archive: STR['brief.anomaly.cause.retired_archive'],
-};
-/** The fixed mixed-ownership warning for a worktree-sourced changed-file read (spec §2.6). */
-const ANOMALY_MIXED_OWNERSHIP_ZH = STR['brief.anomaly.mixedOwnership'];
-/** The fixed closing sentence of the anomaly section (spec §2.7). */
-const ANOMALY_LAST_SENTENCE_ZH = STR['brief.anomaly.lastSentence'];
 
 /**
  * Slice 1 §2.7: the `### 异常锚点` section. Empty without `anomalies`, so an
@@ -823,40 +893,40 @@ const ANOMALY_LAST_SENTENCE_ZH = STR['brief.anomaly.lastSentence'];
  * of path lines that may still be written (spec §2.7 budgets them first under
  * the `renderedBytes` bound); every path line left out is counted once.
  */
-function anomalyLinesZh(brief: ContinuationBriefV1, cap: number, pathLimit: number): string[] {
+function anomalyLinesZh(B: BriefTexts, brief: ContinuationBriefV1, cap: number, pathLimit: number): string[] {
   const section = brief.anomalies;
   if (section === undefined) return [];
-  const lines: string[] = ['', STR['brief.anomaly.title']];
+  const lines: string[] = ['', B.S('brief.anomaly.title')];
   let pathLines = 0;
   let droppedPaths = 0;
   for (const anchor of section.anchors) {
     const files = anchor.changedFiles;
-    lines.push(`${STR['brief.anomaly.anchorLead']}${anchor.runRef.runId}${STR['brief.anomaly.sessionOpen']}`
-      + `${anchor.sessionRef.sessionId}${STR['brief.anomaly.taskMiddle']}${anchor.task.taskId}`
-      + `${STR['brief.anomaly.reasonMiddle']}${ANOMALY_CAUSE_ZH[anchor.cause]}`
-      + `${STR['brief.anomaly.recordedAtMiddle']}${anchor.recordedAt}${STR['brief.anomaly.anchorSuffix']}`);
+    lines.push(`${B.S('brief.anomaly.anchorLead')}${anchor.runRef.runId}${B.S('brief.anomaly.sessionOpen')}`
+      + `${anchor.sessionRef.sessionId}${B.S('brief.anomaly.taskMiddle')}${anchor.task.taskId}`
+      + `${B.S('brief.anomaly.reasonMiddle')}${B.anomalyCause[anchor.cause]}`
+      + `${B.S('brief.anomaly.recordedAtMiddle')}${anchor.recordedAt}${B.S('brief.anomaly.anchorSuffix')}`);
     if (files.status === 'unavailable') {
-      lines.push(`${STR['brief.anomaly.filesUnavailableLead']}${files.reason === null ? '' : `（${clip(files.reason, cap)}）`}。`);
+      lines.push(`${B.S('brief.anomaly.filesUnavailableLead')}${files.reason === null ? '' : `（${clip(B, files.reason, cap)}）`}。`);
     } else if (files.status === 'not_entered') {
-      lines.push(STR['brief.anomaly.filesNotEntered']);
+      lines.push(B.S('brief.anomaly.filesNotEntered'));
     } else if (pathLines < pathLimit) {
       pathLines += 1;
-      lines.push(`${STR['brief.anomaly.confirmedFilesLead']}${listZh(files.confirmed, cap)}`
-        + `${files.possible.length === 0 ? '' : `${STR['brief.workspace.possibleLead']}${listZh(files.possible, cap)}`}`
-        + `${moreZh(files.omitted)}。`);
+      lines.push(`${B.S('brief.anomaly.confirmedFilesLead')}${listZh(B, files.confirmed, cap)}`
+        + `${files.possible.length === 0 ? '' : `${B.S('brief.workspace.possibleLead')}${listZh(B, files.possible, cap)}`}`
+        + `${moreZh(B, files.omitted)}。`);
     } else {
       pathLines += 1;
       droppedPaths += 1;
     }
-    if (files.source === 'worktree') lines.push(`${STR['brief.anomaly.mixedLead']}${ANOMALY_MIXED_OWNERSHIP_ZH}。`);
+    if (files.source === 'worktree') lines.push(`${B.S('brief.anomaly.mixedLead')}${B.anomalyMixedOwnership}。`);
   }
   if (section.omitted > 0) {
-    lines.push(`${STR['brief.anomaly.omittedAnchorsLead']}${String(section.omitted)}${STR['brief.anomaly.omittedAnchorsSuffix']}`);
+    lines.push(`${B.S('brief.anomaly.omittedAnchorsLead')}${String(section.omitted)}${B.S('brief.anomaly.omittedAnchorsSuffix')}`);
   }
   if (droppedPaths > 0) {
-    lines.push(`${STR['brief.anomaly.omittedPathsLead']}${String(droppedPaths)}${STR['brief.anomaly.omittedPathsSuffix']}`);
+    lines.push(`${B.S('brief.anomaly.omittedPathsLead')}${String(droppedPaths)}${B.S('brief.anomaly.omittedPathsSuffix')}`);
   }
-  lines.push(ANOMALY_LAST_SENTENCE_ZH);
+  lines.push(B.anomalyLastSentence);
   return lines;
 }
 
@@ -873,98 +943,45 @@ function anomalyPathLineCount(section: ContinuationAnomalySectionV1): number {
 // ------------------------------------------------------------------------ //
 // K3 L20: unknown-call review section                                       //
 // ------------------------------------------------------------------------ //
-/** The fixed title of the review section (L20 "必需部分的写法"). */
-const UNKNOWN_CALL_REVIEW_TITLE_ZH = STR['brief.review.title'];
-/** The fixed sentence of the review section (L5/L20). */
-const UNKNOWN_CALL_REVIEW_NOT_LISTED_ZH = STR['brief.review.notListed'];
-/** K3 B3 item 6: the required signal that the platform blocked the original commands (62 UTF-8 bytes). */
-const UNKNOWN_CALL_REVIEW_BLOCKED_ZH = STR['brief.review.blocked'];
-/** K3 B3 item 7: the optional section's heading. */
-const BLOCKED_COMMANDS_TITLE_ZH = STR['brief.blocked.title'];
-/** K3 B3 item 7: the request state of a blocked command; used/closed/absent render nothing. */
-const BLOCKED_COMMAND_STATE_ZH: Readonly<Record<'pending' | 'allowed' | 'denied' | 'denied_final', string>> = {
-  pending: STR['brief.blocked.state.pending'],
-  allowed: STR['brief.blocked.state.allowed'],
-  denied: STR['brief.blocked.state.denied'],
-  denied_final: STR['brief.blocked.state.denied_final'],
-};
-/** L20: the option wording of the one-line disposition. */
-const UNKNOWN_CALL_REVIEW_DISPOSITION_ZH: Readonly<Record<
-  NonNullable<ContinuationUnknownCallReviewV1['disposition']>['choice'], string>> = {
-  rerun_as_is: STR['brief.review.disposition.rerun_as_is'],
-  skip_as_done: STR['brief.review.disposition.skip_as_done'],
-  handle_myself: STR['brief.review.disposition.handle_myself'],
-  // B2 owns the approved-methods block; this is the L20 wording of the option.
-  safer_method: STR['brief.review.disposition.safer_method'],
-};
-/** L20: no disposition means the review settled by itself. */
-const UNKNOWN_CALL_REVIEW_NO_DISPOSITION_ZH = STR['brief.review.noDisposition'];
-/** L20: where the disposition came from. */
-const UNKNOWN_CALL_REVIEW_SOURCE_ZH: Readonly<Record<'card' | 'direct', string>> = {
-  card: STR['brief.review.source.card'], direct: STR['brief.review.source.direct'],
-};
-const UNKNOWN_CALL_REVIEW_AUTO_SOURCE_ZH = STR['brief.review.autoSource'];
-const REVIEW_VERDICT_ZH: Readonly<Record<string, string>> = {
-  no_review_needed: STR['brief.review.verdict.no_review_needed'], done: STR['brief.review.verdict.done'],
-  not_done: STR['brief.review.verdict.not_done'],
-  compare_in_continuation: STR['brief.review.verdict.compare_in_continuation'],
-  pending: STR['brief.review.verdict.pending'], partial: STR['brief.review.verdict.partial'],
-  undetermined: STR['brief.review.verdict.undetermined'],
-};
-const REVIEW_CHANGE_ZH: Readonly<Record<ContinuationUnknownCallReviewFileV1['change'], string>> = {
-  added: STR['brief.review.change.added'], modified: STR['brief.review.change.modified'],
-  deleted: STR['brief.review.change.deleted'], mode_changed: STR['brief.review.change.mode_changed'],
-  unchanged: STR['brief.review.change.unchanged'], not_visible: STR['brief.review.change.not_visible'],
-  unknown: STR['brief.review.change.unknown'],
-};
-const REVIEW_MODE_ZH: Readonly<Record<'replace' | 'create', string>> = {
-  replace: STR['brief.review.mode.replace'], create: STR['brief.review.mode.create'],
-};
-const REVIEW_DIFF_REASON_ZH: Readonly<Record<ContinuationDiffOmittedReasonV1, string>> = {
-  baseline_dirty: STR['brief.review.diffReason.baseline_dirty'], binary: STR['brief.review.diffReason.binary'],
-  too_large: STR['brief.review.diffReason.too_large'], protected: STR['brief.review.diffReason.protected'],
-  section_limit: STR['brief.review.diffReason.section_limit'], not_text: STR['brief.review.diffReason.not_text'],
-};
-
 /** One non-required conclusion line per item (`#n = <callId>（<工具名>）：…`; D8: the callId appears only here). */
-function reviewItemConclusionZh(item: ContinuationUnknownCallReviewItemV1, cap: number): string {
-  const parts = [REVIEW_VERDICT_ZH[item.verdict] ?? item.verdict];
-  if (item.evidence !== null) parts.push(`${STR['brief.review.evidencePrefix']}${boundedZh(item.evidence, cap)}`);
+function reviewItemConclusionZh(B: BriefTexts, item: ContinuationUnknownCallReviewItemV1, cap: number): string {
+  const parts = [B.reviewVerdict[item.verdict] ?? item.verdict];
+  if (item.evidence !== null) parts.push(`${B.S('brief.review.evidencePrefix')}${boundedZh(B, item.evidence, cap)}`);
   if (item.crashSuspicion !== null) {
-    const suspicion = item.crashSuspicion.verdict === 'unlikely' ? STR['brief.review.crash.unlikely']
-      : item.crashSuspicion.verdict === 'possible' ? STR['brief.review.crash.possible'] : STR['brief.review.crash.unknown'];
-    parts.push(`${STR['brief.review.crashPrefix']}${suspicion}（${clip(item.crashSuspicion.evidence, cap)}）`);
+    const suspicion = item.crashSuspicion.verdict === 'unlikely' ? B.S('brief.review.crash.unlikely')
+      : item.crashSuspicion.verdict === 'possible' ? B.S('brief.review.crash.possible') : B.S('brief.review.crash.unknown');
+    parts.push(`${B.S('brief.review.crashPrefix')}${suspicion}（${clip(B, item.crashSuspicion.evidence, cap)}）`);
   }
   if (item.reviewerConclusion !== null) {
-    parts.push(`${STR['brief.review.reviewerPrefix']}${boundedZh(item.reviewerConclusion, cap)}`);
+    parts.push(`${B.S('brief.review.reviewerPrefix')}${boundedZh(B, item.reviewerConclusion, cap)}`);
   }
-  return `- #${String(item.alias)} = ${clip(item.callId, cap)}（${clip(item.toolName, cap)}）`
-    + `${STR['brief.review.conclusionMiddle']}${parts.join(STR['brief.separator.semicolon'])}`;
+  return `- #${String(item.alias)} = ${clip(B, item.callId, cap)}（${clip(B, item.toolName, cap)}）`
+    + `${B.S('brief.review.conclusionMiddle')}${parts.join(B.S('brief.separator.semicolon'))}`;
 }
-function reviewFileLinesZh(file: ContinuationUnknownCallReviewFileV1, cap: number): string[] {
-  const lines = [`${STR['brief.review.fileLead']}${clip(file.path, cap)}（${REVIEW_MODE_ZH[file.mode]}`
-    + `${STR['brief.review.fileChangeMiddle']}${REVIEW_CHANGE_ZH[file.change]}。`];
-  if (file.oldText !== null) lines.push(`${STR['brief.review.oldText']}${boundedZh(file.oldText, cap)}`);
-  if (file.newText !== null) lines.push(`${STR['brief.review.newText']}${boundedZh(file.newText, cap)}`);
-  if (file.diff !== null) lines.push(`${STR['brief.review.diff']}${boundedZh(file.diff, cap)}`);
+function reviewFileLinesZh(B: BriefTexts, file: ContinuationUnknownCallReviewFileV1, cap: number): string[] {
+  const lines = [`${B.S('brief.review.fileLead')}${clip(B, file.path, cap)}（${B.reviewMode[file.mode]}`
+    + `${B.S('brief.review.fileChangeMiddle')}${B.reviewChange[file.change]}。`];
+  if (file.oldText !== null) lines.push(`${B.S('brief.review.oldText')}${boundedZh(B, file.oldText, cap)}`);
+  if (file.newText !== null) lines.push(`${B.S('brief.review.newText')}${boundedZh(B, file.newText, cap)}`);
+  if (file.diff !== null) lines.push(`${B.S('brief.review.diff')}${boundedZh(B, file.diff, cap)}`);
   else if (file.diffOmittedReason !== null) {
-    lines.push(`${STR['brief.review.diffOmitted']}${REVIEW_DIFF_REASON_ZH[file.diffOmittedReason]}。`);
+    lines.push(`${B.S('brief.review.diffOmitted')}${B.reviewDiffReason[file.diffOmittedReason]}。`);
   }
   return lines;
 }
 /** The non-required lines of the review section, in render order (never the fixed lines). */
-function unknownCallReviewOptionalLinesZh(section: ContinuationUnknownCallReviewV1, cap: number): string[] {
+function unknownCallReviewOptionalLinesZh(B: BriefTexts, section: ContinuationUnknownCallReviewV1, cap: number): string[] {
   const lines: string[] = [];
   for (const item of section.items) {
-    lines.push(reviewItemConclusionZh(item, cap));
-    for (const file of item.files) lines.push(...reviewFileLinesZh(file, cap));
+    lines.push(reviewItemConclusionZh(B, item, cap));
+    for (const file of item.files) lines.push(...reviewFileLinesZh(B, file, cap));
   }
   // K3 L18: annotations are optional lines after the per-item conclusions. The
   // ② owner already turned the answer object into `null` (the record) or a path.
   for (const annotation of section.disposition?.annotations ?? []) {
-    lines.push(`${STR['brief.review.annotationLead']}`
-      + `${annotation.path === null ? STR['brief.review.annotationRecord'] : clip(annotation.path, cap)}`
-      + `${STR['brief.review.annotationMiddle']}${clip(annotation.text, cap)}`);
+    lines.push(`${B.S('brief.review.annotationLead')}`
+      + `${annotation.path === null ? B.S('brief.review.annotationRecord') : clip(B, annotation.path, cap)}`
+      + `${B.S('brief.review.annotationMiddle')}${clip(B, annotation.text, cap)}`);
   }
   return lines;
 }
@@ -990,11 +1007,18 @@ function unknownCallReviewOptionalLineCount(section: ContinuationUnknownCallRevi
  */
 export function approvedMethodLinesZh(
   methods: ReadonlyArray<{ alias: number; command: string; cwd: string | null }>,
+  texts: PromptTextsV1 = DEFAULT_TEXTS,
 ): string[] {
-  const indent = STR['brief.approved.newlineIndent'];
+  return approvedMethodLinesWith(briefTexts(texts), methods);
+}
+function approvedMethodLinesWith(
+  B: BriefTexts,
+  methods: ReadonlyArray<{ alias: number; command: string; cwd: string | null }>,
+): string[] {
+  const indent = B.S('brief.approved.newlineIndent') ?? '';
   return methods.map(method =>
-    `${STR['brief.approved.lead']}${String(method.alias)}${STR['brief.approved.cwdLead']}`
-    + `${(method.cwd ?? '.').replace(/\r\n|\n/g, indent)}${STR['brief.approved.afterCwd']}`
+    `${B.S('brief.approved.lead')}${String(method.alias)}${B.S('brief.approved.cwdLead')}`
+    + `${(method.cwd ?? '.').replace(/\r\n|\n/g, indent)}${B.S('brief.approved.afterCwd')}`
     + `${indent}${method.command.replace(/\r\n|\n/g, indent)}`);
 }
 
@@ -1009,49 +1033,49 @@ export function approvedMethodLinesZh(
  * shortened or omitted); B3 adds the blocked-command sentence after the fixed
  * sentence, which is not built here.
  */
-function unknownCallReviewLinesZh(brief: ContinuationBriefV1, cap: number, optionalLimit: number): string[] {
+function unknownCallReviewLinesZh(B: BriefTexts, brief: ContinuationBriefV1, cap: number, optionalLimit: number): string[] {
   const section = brief.unknownCallReview ?? null;
   if (section === null) return [];
   const count = section.items.length;
-  const lines: string[] = ['', UNKNOWN_CALL_REVIEW_TITLE_ZH,
-    `${STR['brief.review.countLead']}${String(count)}${STR['brief.review.countMiddle']}${String(count)}`
-    + `${STR['brief.review.countOmittedLead']}${String(section.itemsOmitted)}${STR['brief.review.countOmittedSuffix']}`
-    + STR['brief.review.countNote']];
-  lines.push(...unknownCallReviewOptionalLinesZh(section, cap).slice(0, Math.max(0, optionalLimit)));
+  const lines: string[] = ['', B.reviewTitle,
+    `${B.S('brief.review.countLead')}${String(count)}${B.S('brief.review.countMiddle')}${String(count)}`
+    + `${B.S('brief.review.countOmittedLead')}${String(section.itemsOmitted)}${B.S('brief.review.countOmittedSuffix')}`
+    + B.S('brief.review.countNote')];
+  lines.push(...unknownCallReviewOptionalLinesZh(B, section, cap).slice(0, Math.max(0, optionalLimit)));
   const disposition = section.disposition;
   const option = disposition === null
-    ? UNKNOWN_CALL_REVIEW_NO_DISPOSITION_ZH
-    : UNKNOWN_CALL_REVIEW_DISPOSITION_ZH[disposition.choice];
+    ? B.noDisposition
+    : B.disposition[disposition.choice];
   const source = disposition === null
-    ? UNKNOWN_CALL_REVIEW_AUTO_SOURCE_ZH
-    : UNKNOWN_CALL_REVIEW_SOURCE_ZH[disposition.source];
+    ? B.autoSource
+    : B.reviewSource[disposition.source];
   // L20: ONE line; the 附言 is clipped to 60 UTF-16 units by `clip`, not RENDER_TEXT_CAPS.
   const note = disposition === null || disposition.text === null || disposition.text.text.length === 0
-    ? '' : `${STR['brief.review.noteLead']}${clip(disposition.text.text, 60)}`;
-  lines.push(`${STR['brief.review.dispositionLead']}${option}（${source}）${note}。`);
+    ? '' : `${B.S('brief.review.noteLead')}${clip(B, disposition.text.text, 60)}`;
+  lines.push(`${B.S('brief.review.dispositionLead')}${option}（${source}）${note}。`);
   // Lead ruling 5: the targets line is ALWAYS present; with no targets (settled
   // by itself or an empty set) it reads exactly `无`. The platform line below
   // stays present only when it names any.
   const targets = disposition === null ? [] : disposition.targets;
   lines.push(targets.length === 0
-    ? STR['brief.review.targetsNone']
-    : `${STR['brief.review.targetsLead']}${targets.map(alias => `#${String(alias)}`).join(STR['brief.list.separator'])}。`);
+    ? B.S('brief.review.targetsNone')
+    : `${B.S('brief.review.targetsLead')}${targets.map(alias => `#${String(alias)}`).join(B.S('brief.list.separator'))}。`);
   // L20: the approved methods are part of the mandatory block: every line is
   // written whole, between the targets line and the platform line. No approved
   // methods means no bytes change (an absent/empty array renders nothing).
   if (disposition !== null && disposition.approvedMethods.length > 0) {
-    lines.push(...approvedMethodLinesZh(disposition.approvedMethods));
+    lines.push(...approvedMethodLinesWith(B, disposition.approvedMethods));
   }
   if (disposition !== null && disposition.platformTargets.length > 0) {
-    lines.push(`${STR['brief.review.platformLead']}`
-      + `${disposition.platformTargets.map(alias => `#${String(alias)}`).join(STR['brief.list.separator'])}`
-      + STR['brief.review.platformSuffix']);
+    lines.push(`${B.S('brief.review.platformLead')}`
+      + `${disposition.platformTargets.map(alias => `#${String(alias)}`).join(B.S('brief.list.separator'))}`
+      + B.S('brief.review.platformSuffix'));
   }
-  lines.push(UNKNOWN_CALL_REVIEW_NOT_LISTED_ZH);
+  lines.push(B.reviewNotListed);
   // K3 B3 item 6: the required signal, present exactly when this record blocked
   // at least one original command. No blocked commands renders no new bytes.
   if (section.blockedCommands !== undefined && section.blockedCommands.length > 0) {
-    lines.push(UNKNOWN_CALL_REVIEW_BLOCKED_ZH);
+    lines.push(B.reviewBlocked);
   }
   return lines;
 }
@@ -1069,55 +1093,55 @@ export class ContinuationBriefCapacityError extends Error {
   }
 }
 
-function endingZh(brief: ContinuationBriefV1): string {  const previous = brief.previous;
+function endingZh(B: BriefTexts, brief: ContinuationBriefV1): string {  const previous = brief.previous;
   // `factsFrom.hops > 0` only when the previous Run itself never entered the Kernel.
   if (brief.stoppedAt.kernel === 'not_entered' || brief.factsFrom.hops > 0) {
-    return `${STR['brief.ending.notEnteredLead']}${previous.outcome}）`;
+    return `${B.S('brief.ending.notEnteredLead')}${previous.outcome}）`;
   }
   if (previous.outcome === 'cancelled' && brief.stoppedAt.reason === 'cancelled_at_reconcile') {
-    return STR['brief.ending.cancelledAtReconcile'];
+    return B.S('brief.ending.cancelledAtReconcile');
   }
   if (previous.outcome === 'cancelled' && brief.stoppedAt.reason === 'cancelled_while_paused') {
-    return STR['brief.ending.cancelledWhilePaused'];
+    return B.S('brief.ending.cancelledWhilePaused');
   }
   switch (previous.origin) {
     case 'observed':
-      return `${STR['brief.ending.observedLead']}${previous.outcome}${STR['brief.ending.observedSuffix']}`;
+      return `${B.S('brief.ending.observedLead')}${previous.outcome}${B.S('brief.ending.observedSuffix')}`;
     case 'host_interrupted':
-      return `${STR['brief.ending.hostInterruptedLead']}${previous.outcome}`;
+      return `${B.S('brief.ending.hostInterruptedLead')}${previous.outcome}`;
     case 'human_attested':
-      return `${STR['brief.ending.humanAttestedLead']}${previous.outcome}`;
+      return `${B.S('brief.ending.humanAttestedLead')}${previous.outcome}`;
   }
 }
 
-function continuityZh(session: ContinuationBriefV1['session']): string {
-  const here = `${STR['brief.continuity.sessionPrefix']}${session.sessionRef.sessionId}`;
+function continuityZh(B: BriefTexts, session: ContinuationBriefV1['session']): string {
+  const here = `${B.S('brief.continuity.sessionPrefix')}${session.sessionRef.sessionId}`;
   switch (session.continuity) {
     case 'same_session_history':
-      return `${STR['brief.continuity.sameHistoryLead']}${here}${STR['brief.continuity.sameHistorySuffix']}`;
+      return `${B.S('brief.continuity.sameHistoryLead')}${here}${B.S('brief.continuity.sameHistorySuffix')}`;
     case 'same_session_without_previous_turn':
-      return `${STR['brief.continuity.sameHistoryLead']}${here}${STR['brief.continuity.sameWithoutTurnSuffix']}`;
+      return `${B.S('brief.continuity.sameHistoryLead')}${here}${B.S('brief.continuity.sameWithoutTurnSuffix')}`;
     case 'other_session_seeded': {
       const seeded = session.seededFrom;
-      const from = seeded === null ? STR['brief.continuity.before'] : `${STR['brief.continuity.sessionPrefix']}${seeded.sessionRef.sessionId}`
-        + `${seeded.throughPosition === null ? '' : `${STR['brief.continuity.throughPosition']}${String(seeded.throughPosition)}`}`;
-      return `${STR['brief.continuity.otherLead']}${here}${STR['brief.continuity.seededMiddle']}${from}${STR['brief.continuity.seededSuffix']}`;
+      const from = seeded === null ? B.S('brief.continuity.before') : `${B.S('brief.continuity.sessionPrefix')}${seeded.sessionRef.sessionId}`
+        + `${seeded.throughPosition === null ? '' : `${B.S('brief.continuity.throughPosition')}${String(seeded.throughPosition)}`}`;
+      return `${B.S('brief.continuity.otherLead')}${here}${B.S('brief.continuity.seededMiddle')}${from}${B.S('brief.continuity.seededSuffix')}`;
     }
     case 'other_session':
-      return `${STR['brief.continuity.otherLead']}${here}${STR['brief.continuity.otherSuffix']}`;
+      return `${B.S('brief.continuity.otherLead')}${here}${B.S('brief.continuity.otherSuffix')}`;
   }
 }
 
-function toolCallZh(call: ContinuationToolCallV1, cap: number): string {
-  const parts = [`${call.name}${STR['brief.toolCall.openCallId']}${call.callId}${STR['brief.toolCall.beforeResult']}`
-    + `${TOOL_RESULT_ZH[call.result]}`];
-  if (call.sideEffect !== null) parts.push(SIDE_EFFECT_ZH[call.sideEffect]);
-  if (call.target !== null) parts.push(`${STR['brief.toolCall.targetLead']}${boundedZh(call.target, cap)}`);
+function toolCallZh(B: BriefTexts, call: ContinuationToolCallV1, cap: number): string {
+  const parts = [`${call.name}${B.S('brief.toolCall.openCallId')}${call.callId}${B.S('brief.toolCall.beforeResult')}`
+    + `${B.toolResult[call.result]}`];
+  if (call.sideEffect !== null) parts.push(B.sideEffect[call.sideEffect]);
+  if (call.target !== null) parts.push(`${B.S('brief.toolCall.targetLead')}${boundedZh(B, call.target, cap)}`);
   if (call.changedPaths.length > 0 || call.changedPathsOmitted > 0) {
-    parts.push(`${STR['brief.toolCall.changedLead']}${listZh(call.changedPaths, cap)}${moreZh(call.changedPathsOmitted)}`);
+    parts.push(`${B.S('brief.toolCall.changedLead')}${listZh(B, call.changedPaths, cap)}${moreZh(B, call.changedPathsOmitted)}`);
   }
-  if (call.error !== null) parts.push(`${STR['brief.toolCall.errorLead']}${boundedZh(call.error, cap)}`);
-  return parts.join(STR['brief.separator.semicolon']);
+  if (call.error !== null) parts.push(`${B.S('brief.toolCall.errorLead')}${boundedZh(B, call.error, cap)}`);
+  return parts.join(B.S('brief.separator.semicolon'));
 }
 
 // ------------------------------------------------------------------------ //

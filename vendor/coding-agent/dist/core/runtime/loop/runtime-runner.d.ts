@@ -1,5 +1,5 @@
 import type { ContextBuilderPort } from "../../context/builder/context-builder.js";
-import type { TokenEstimator } from "../../context/selection_policy/context-selection-policy.js";
+import type { ContextPreview, ContextSelectionReport, ReasoningReplay, TokenEstimator } from "../../context/selection_policy/context-selection-policy.js";
 import type { ContextFragment, MemoryItem, SkillContext } from "../../context/types/context-types.js";
 import { HookExecutor } from "../../hooks/executor/hook-executor.js";
 import type { ModelClientPort, ModelToolSpec } from "../../ports/model_client/model-client-port.js";
@@ -49,6 +49,12 @@ export interface RunnerContextInput {
      * 缺省为空数组，旧 CLI 的 `current_turn` 语义不变。
      */
     readonly historyTranscript?: readonly TranscriptEntry[];
+    /** 最终请求的输入/输出预留测量；缺席时用配置的估算器对 window 做默认测量。 */
+    readonly previewRequest?: ContextPreview;
+    /** 每个真正发出的模型请求一次，在 hook 复核之后、provider 之前。 */
+    readonly onContextSelected?: (report: ContextSelectionReport) => void;
+    /** 出站思考过滤；缺席时不过滤（P4）。 */
+    readonly reasoningReplay?: ReasoningReplay;
 }
 export interface RunnerCallOptions {
     readonly signal?: AbortSignal;

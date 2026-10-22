@@ -1,4 +1,5 @@
 import type { PlanRevisionRef } from "./plan.js";
+import type { ModelRequestPromptFactsV1 } from "./prompts/prompt-set.js";
 import type { TaskEnvelopeV1 } from "./task-envelope.js";
 // ------------------------------------------------------------------------ //
 // Aggregate refs                                                             //
@@ -346,7 +347,8 @@ export type ModelRequestPermitRef = {
 /** Existing model-call admission protocol; implementation remains the caller's responsibility. */
 export interface ModelCallAccess {
   bind(input: { inputDigest: string; manifestDigest: string; materialAccessRefs?: import('./material-access.js').MaterialAccessGrantRef[]; additionalMaterialRefs?: import('./artifact.js').ArtifactRef[] }): Promise<void>;
-  beforeCall(input: { requestId: string; requestDigest: string; contextInputDigest: string; manifestDigest: string }): Promise<void>;
+  beforeCall(input: { requestId: string; requestDigest: string; contextInputDigest: string; manifestDigest: string;
+    prompt: ModelRequestPromptFactsV1 & { maxOutputTokens: number } }): Promise<void>;
 }
 
 // Completed-capability migration: selected original declarations, no legacy service port.

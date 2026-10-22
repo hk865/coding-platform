@@ -26,7 +26,7 @@ import type {
 } from '../../src/contracts/graph-context.js';
 import type { WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { NoteDraftV1, NoteSectionsV1 } from '../../src/contracts/note.js';
-import { CONTEXT_SECTION_HEADERS, createContextAssembler } from '../../src/core/agent-runtime/context-assembler.js';
+import { createContextAssembler } from '../../src/core/agent-runtime/context-assembler.js';
 import type { ExecutionPreparationDependencies } from '../../src/core/agent-runtime/execution-preparation.js';
 import { createExecutionPreparation } from '../../src/core/agent-runtime/execution-preparation.js';
 import type { ResolvedRuntimeConfiguration } from '../../src/core/agent-runtime/execution-contracts.js';
@@ -355,7 +355,7 @@ describe('S4C2 real-chain assembly', () => {
       for (let index = 1; index <= 2; index += 1) expect(input).not.toContain(`NORM-${String(index)}`);
       expect(input).toContain('另有 2 条，用‘看’读项目');
 
-      const notes = sectionText(input, CONTEXT_SECTION_HEADERS.notes, CONTEXT_SECTION_HEADERS.reminders);
+      const notes = sectionText(input, '## Note index', '## Reminders');
       expect(notes).toContain(`坑(任务 ${TASK})：BUDGET-ONLY-LINE（${generalNote} v1）`);
       for (let index = 3; index <= 7; index += 1) {
         expect(notes).not.toContain(`NORM-${String(index)}`);

@@ -36,7 +36,7 @@ import {
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { platformRoleProfile, type PlatformRoleProfileV1 } from '../../src/core/agent-runtime/role-profiles.js';
-import { CONTEXT_SECTION_HEADERS, createContextAssembler } from '../../src/core/agent-runtime/context-assembler.js';
+import { createContextAssembler } from '../../src/core/agent-runtime/context-assembler.js';
 import { effectivePlatformDuty } from '../../src/core/work-graph/state/context-input.js';
 import { validateRoleSpecContent } from '../../src/contracts/validation/role.js';
 import type { ValidationIssue } from '../../src/contracts/validation/common.js';
@@ -203,7 +203,7 @@ describe.each(['memory', 'sqlite'] as const)('%s: S3 role profiles', kind => {
       expect(assembled).toMatchObject({ status: 'ready' });
       if (assembled.status !== 'ready') throw new Error(`RP01 assembler role section was not ready: ${assembled.status}`);
       const roleSection = assembled.value.input;
-      expect(roleSection).toContain(CONTEXT_SECTION_HEADERS.role);
+      expect(roleSection).toContain('## Runtime context');
       expect(roleSection).toContain(`duty: ${duty}`);
       expect(roleSection).toContain(`label: ${EXPECTED[duty].label}`);
       expect(roleSection).toContain(`purpose: ${EXPECTED[duty].purpose}`);

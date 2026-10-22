@@ -28,6 +28,7 @@ import type { QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../src/contr
 import type { RoleBindingRefV1 } from '../../src/contracts/dispatch.js';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import { artifactBodyDigest } from '../../src/contracts/artifact.js';
+import type { PromptSetV1 } from '../../src/contracts/prompts/prompt-set.js';
 import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type {
@@ -76,6 +77,22 @@ import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-r
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 
 const AT = '2026-09-24T00:00:00.000Z';
+/** PC-1b: a minimal valid frozen set for the hand-built manifest of AD06. */
+const PROMPT_TEXT_CONTENT_TYPE = 'application/vnd.coding-platform.prompt-text;version=1';
+const promptTextRef = (body: string): ArtifactRef => ({
+  kind: 'artifact', contentType: PROMPT_TEXT_CONTENT_TYPE,
+  digest: sha256Hex(body), sizeBytes: Buffer.byteLength(body, 'utf8'),
+  source: { kind: 'workspace', refId: 'w', revision: '1' },
+});
+const PROMPT_SET: PromptSetV1 = {
+  schemaVersion: 1, modelId: 'ad-model', provider: 'deepseek', model: 'ad-scripted', packId: 'platform',
+  reasoningReplay: 'current_run',
+  sectionOrder: { work: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'unknown_call_review'] },
+  templates: [],
+  strings: { digest: sha256Hex('{}'), ref: promptTextRef('{}') },
+  base: { templateId: 'base', version: 1, digest: sha256Hex(''), ref: promptTextRef('') },
+  skills: [],
+};
 const H = (value: string): string => sha256Hex(value);
 const B = (value: string): number => Buffer.byteLength(value, 'utf8');
 
@@ -527,7 +544,7 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
       sessionRole: roleRef, workspaceSnapshot, permissions: HOST_PERMISSIONS, budget: base.budget,
       selectedTaskInputs, materialBasis: null, materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [],
       sourceRefs: [{ kind: 'workspace', refId: WORKSPACE_ID, revision: String(workspaceRevision) }],
-      contextAssembly: binding, input, inputDigest,
+      contextAssembly: binding, promptSet: PROMPT_SET, input, inputDigest,
     };
     const stored = await bodies.put({ body: JSON.stringify(manifest),
       contentType: 'application/vnd.coding-platform.task-execution-manifest+json;version=1',

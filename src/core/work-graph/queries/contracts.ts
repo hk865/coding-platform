@@ -35,6 +35,7 @@ import type {
   QueryRunSnapshot,
 } from '../../../contracts/query-job.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
+import type { QueryRequestPromptFactsV1 } from '../../../contracts/prompts/prompt-set.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
@@ -161,6 +162,7 @@ export interface QueryExecutionPort {
     requestDigest: string;
     contextInputDigest: string;
     manifestDigest: string;
+    prompt: QueryRequestPromptFactsV1;
   }>): Promise<WriteResult<QueryRunSnapshot>>;
   recordQueryObservation(ctx: CoreCallContext, request: GraphWrite<QueryHistoryObservation>): Promise<WriteResult<QueryExecutionRecord>>;
   readQueryAnswer(ctx: CoreCallContext, ref: QueryJobAnswerRef): Promise<ReadResult<QueryJobAnswerSnapshot>>;

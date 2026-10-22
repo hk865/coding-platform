@@ -82,6 +82,7 @@ import {
   LOCAL_WORKBENCH_ROLE_BINDING,
   narrowResolvedReadonlyCommands,
   PLATFORM_SKILL_RESOURCE_ROOT,
+  runtimeModelId,
   settingsModelSecretVariable,
   type WorkbenchModelConfiguration,
   type WorkbenchQueryProfile,
@@ -390,7 +391,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // is selected.
   const baseProvider: WorkbenchRuntimeProviderDependencies = options.runtimeProvider ?? {};
   const providerRegistry = baseProvider.registry ?? createBuiltinProviderRegistry();
-  const startupCatalogOptions = new Map<string, { provider: string; options: Record<string, JsonValue> }>();
+  const startupCatalogOptions = new Map<string, {
+    provider: string;
+    options: Record<string, JsonValue>;
+    promptPack?: string;
+    reasoningReplay?: 'current_run' | 'none';
+  }>();
   const providerSecretName = (model: WorkbenchModelConfiguration): string =>
     model.secretEnvironmentVariable ?? providerRegistry.get(model.provider).secretEnvironmentVariable;
   const baseSecretSource = baseProvider.secretSource ?? { get: (name: string) => process.env[name] };
@@ -669,16 +675,19 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ? settingsModelSecretVariable(model.id)
       : (model.secretEnvironmentVariable ?? settingsModelSecretVariable(model.id));
     const original = startupCatalogOptions.get(model.id);
-    const options: Record<string, JsonValue> = original?.provider === model.provider
-      ? structuredClone(original.options) : {};
+    const restored = original !== undefined && original.provider === model.provider ? original : undefined;
+    const options: Record<string, JsonValue> = restored === undefined ? {} : structuredClone(restored.options);
     if (model.thinking !== undefined) options['thinking'] = model.thinking;
     if (model.reasoningEffort !== undefined) options['reasoningEffort'] = model.reasoningEffort;
     return {
       revision: `host-settings:${model.id}`,
+      modelId: model.id,
       provider: model.provider,
       model: model.model,
       ...(model.baseUrl === undefined || model.baseUrl.length === 0 ? {} : { baseUrl: model.baseUrl }),
       ...(Object.keys(options).length === 0 ? {} : { options }),
+      ...(restored === undefined || restored.promptPack === undefined ? {} : { promptPack: restored.promptPack }),
+      ...(restored === undefined || restored.reasoningReplay === undefined ? {} : { reasoningReplay: restored.reasoningReplay }),
       secretEnvironmentVariable: variable,
     };
   }
@@ -803,12 +812,21 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const baseUrl = binding.model.baseUrl !== undefined && validateSettingsBaseUrl(binding.model.baseUrl) === null
         ? binding.model.baseUrl : undefined;
       const secretEnvironmentVariable = providerSecretName(binding.model);
-      const identity = canonicalJson({
-        provider, model: binding.model.model, baseUrl: baseUrl ?? null,
-        secretEnvironmentVariable, options: binding.model.options ?? null,
-      } as never);
-      const id = `runtime-${sha256Hex(identity).slice(0, 16)}`;
-      startupCatalogOptions.set(id, { provider, options: structuredClone(binding.model.options ?? {}) });
+      const id = runtimeModelId({
+        provider,
+        model: binding.model.model,
+        ...(baseUrl === undefined ? {} : { baseUrl }),
+        secretEnvironmentVariable,
+        ...(binding.model.options === undefined ? {} : { options: binding.model.options }),
+        ...(binding.model.promptPack === undefined ? {} : { promptPack: binding.model.promptPack }),
+        ...(binding.model.reasoningReplay === undefined ? {} : { reasoningReplay: binding.model.reasoningReplay }),
+      });
+      startupCatalogOptions.set(id, {
+        provider,
+        options: structuredClone(binding.model.options ?? {}),
+        ...(binding.model.promptPack === undefined ? {} : { promptPack: binding.model.promptPack }),
+        ...(binding.model.reasoningReplay === undefined ? {} : { reasoningReplay: binding.model.reasoningReplay }),
+      });
       if (!modelsById.has(id)) {
         modelsById.set(id, {
           id, label: `${provider} ${binding.model.model}`, provider, model: binding.model.model,

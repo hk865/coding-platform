@@ -7,6 +7,7 @@ import type { RoleConfigurationRef } from '../../contracts/core/identity.js';
 import type { PlatformDutyV1 } from '../../contracts/graph-context.js';
 import type { RoleResponsibilityV1 } from '../../contracts/role-spec.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 
 export type PlatformRoleProfileV1 = {
   duty: PlatformDutyV1;
@@ -20,53 +21,61 @@ export type PlatformRoleProfileV1 = {
 const PLATFORM_ROLE_PROFILES: Readonly<Record<PlatformDutyV1, PlatformRoleProfileV1>> = {
   executor: {
     duty: 'executor',
-    label: PLATFORM_PROMPT_PACK_V1.strings['role.executor.label'],
-    purpose: PLATFORM_PROMPT_PACK_V1.strings['role.executor.purpose'],
+    label: (PLATFORM_PROMPT_PACK_V1.strings['role.executor.label'] ?? ''),
+    purpose: (PLATFORM_PROMPT_PACK_V1.strings['role.executor.purpose'] ?? ''),
     responsibility: ['execution'],
     behaviorSkillId: 'platform-work',
     template: { kind: 'legacy_template', templateId: 'platform-executor', templateRevision: 's3.1' },
   },
   secretary: {
     duty: 'secretary',
-    label: PLATFORM_PROMPT_PACK_V1.strings['role.secretary.label'],
-    purpose: PLATFORM_PROMPT_PACK_V1.strings['role.secretary.purpose'],
+    label: (PLATFORM_PROMPT_PACK_V1.strings['role.secretary.label'] ?? ''),
+    purpose: (PLATFORM_PROMPT_PACK_V1.strings['role.secretary.purpose'] ?? ''),
     responsibility: ['human_decision_support', 'planning'],
     behaviorSkillId: 'platform-secretary',
     template: { kind: 'legacy_template', templateId: 'platform-secretary', templateRevision: 's3.1' },
   },
   adviser: {
     duty: 'adviser',
-    label: PLATFORM_PROMPT_PACK_V1.strings['role.adviser.label'],
-    purpose: PLATFORM_PROMPT_PACK_V1.strings['role.adviser.purpose'],
+    label: (PLATFORM_PROMPT_PACK_V1.strings['role.adviser.label'] ?? ''),
+    purpose: (PLATFORM_PROMPT_PACK_V1.strings['role.adviser.purpose'] ?? ''),
     responsibility: ['investigation', 'integration'],
     behaviorSkillId: 'platform-adviser',
     template: { kind: 'legacy_template', templateId: 'platform-adviser', templateRevision: 's3.1' },
   },
   scribe: {
     duty: 'scribe',
-    label: PLATFORM_PROMPT_PACK_V1.strings['role.scribe.label'],
-    purpose: PLATFORM_PROMPT_PACK_V1.strings['role.scribe.purpose'],
+    label: (PLATFORM_PROMPT_PACK_V1.strings['role.scribe.label'] ?? ''),
+    purpose: (PLATFORM_PROMPT_PACK_V1.strings['role.scribe.purpose'] ?? ''),
     responsibility: ['fact_consolidation'],
     behaviorSkillId: 'platform-scribe',
     template: { kind: 'legacy_template', templateId: 'platform-scribe', templateRevision: 's3.1' },
   },
   reviewer: {
     duty: 'reviewer',
-    label: PLATFORM_PROMPT_PACK_V1.strings['role.reviewer.label'],
-    purpose: PLATFORM_PROMPT_PACK_V1.strings['role.reviewer.purpose'],
+    label: (PLATFORM_PROMPT_PACK_V1.strings['role.reviewer.label'] ?? ''),
+    purpose: (PLATFORM_PROMPT_PACK_V1.strings['role.reviewer.purpose'] ?? ''),
     responsibility: ['verification'],
     behaviorSkillId: 'platform-reviewer',
     template: { kind: 'legacy_template', templateId: 'platform-reviewer', templateRevision: 's3.1' },
   },
 };
 
-/** Returns a fresh clone so no caller can mutate the shared table. */
-export function platformRoleProfile(duty: PlatformDutyV1): PlatformRoleProfileV1 {
+/**
+ * Returns a fresh clone so no caller can mutate the shared table. Ruling 14: a
+ * preparation passes the resolved pack; a direct call keeps the generated pack.
+ * The duty, responsibility and legacy template are code metadata and never vary
+ * with the pack.
+ */
+export function platformRoleProfile(
+  duty: PlatformDutyV1,
+  texts: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1,
+): PlatformRoleProfileV1 {
   const profile = PLATFORM_ROLE_PROFILES[duty];
   return {
     duty: profile.duty,
-    label: profile.label,
-    purpose: profile.purpose,
+    label: texts.strings[`role.${duty}.label`] ?? '',
+    purpose: texts.strings[`role.${duty}.purpose`] ?? '',
     responsibility: [...profile.responsibility],
     behaviorSkillId: profile.behaviorSkillId,
     template: { ...profile.template },

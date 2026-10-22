@@ -38,9 +38,11 @@ import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../src/contra
 import type { SessionHealthConclusion, SessionRecord } from '../../src/contracts/core/session.js';
 import type { DelegatedWriteProvenanceV1 } from '../../src/contracts/delegated-write.js';
 import {
-  TERMINAL_PAYLOAD_TEXT_MAX_CHARS, TERMINAL_PAYLOAD_TRUNCATION_SUFFIX, type RunRef, type RunSnapshot, type RuntimeEventV1,
+  TERMINAL_PAYLOAD_TEXT_MAX_CHARS, TERMINAL_PAYLOAD_TRUNCATION_SUFFIX, type ModelRequestPermitRef,
+  type RunRef, type RunSnapshot, type RuntimeEventV1,
   type RuntimeInputBindingV1, type TaskAttemptRef, type TaskAttemptSnapshot, type TaskTriple,
 } from '../../src/contracts/dispatch.js';
+import { PROMPT_TOOL_SPECS_CONTENT_TYPE, type ModelRequestPromptFactsV1 } from '../../src/contracts/prompts/prompt-set.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { NoProgressKeyV1 } from '../../src/contracts/no-progress.js';
@@ -92,6 +94,12 @@ import {
   taskReworkRefusedEventFromEvent,
 } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
+import {
+  MODEL_REQUEST_AUTHORIZED_EVENT_TYPE, MODEL_REQUEST_RECORD_SCHEMAS, decodeModelRequestPermitSnapshot,
+  encodeModelRequestPermitSnapshot, encodeModelRequestRecordedEvent, modelRequestRecordedEventFromEvent,
+  type ModelRequestRecordedEvent,
+} from '../../src/core/work-graph/tasks/model-request-codecs.js';
+import type { ModelRequestPermitV1 } from '../../src/core/work-graph/tasks/model-call-contracts.js';
 import { decodeRun } from '../../src/core/work-graph/materials/run-snapshot-decoder.js';
 import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
@@ -842,5 +850,112 @@ describe('other step-1 decoders', () => {
     expect(status(proposal)).toBe('decoded');
     expect(status({ ...proposal, draft: { ...draft, dispositionRecord: { schemaVersion: 1, entries: [] } } })).toBe('invalid');
     expect(status({ ...proposal, reason: { text: 'split the module', sources: [], affectedTaskIds: ['not-a-draft-task'] } })).toBe('invalid');
+  });
+});
+
+// ------------------------------------------------------------------------ //
+// ModelRequest permit prompt facts and sequence (PC-1b, ruling 26)          //
+// ------------------------------------------------------------------------ //
+const modelPermitRef: ModelRequestPermitRef = { aggregateType: 'ModelRequestPermit', projectId: P, workspaceId: W, permitId: 'permit-1' };
+function modelPrompt(): ModelRequestPromptFactsV1 & { maxOutputTokens: number } {
+  return {
+    systemDigest: sha('1'), toolsDigest: sha('2'),
+    toolSpecsRef: artifact(sha('3'), PROMPT_TOOL_SPECS_CONTENT_TYPE),
+    maxOutputTokens: 512,
+    selection: { inputTokens: 128, budget: 128000,
+      removed: { memory: 1, skillReference: 2, additionalInstruction: 3, toolResultBody: 4,
+        historyExchange: 5, historyConclusion: 6, currentExchange: 7 } },
+  };
+}
+function modelPermit(overrides: Partial<ModelRequestPermitV1> = {}): ModelRequestPermitV1 {
+  return {
+    schemaVersion: 1, permitId: modelPermitRef.permitId, runRef: runRef('run-1'), requestId: 'model-request-1',
+    requestDigest: sha('4'), contextInputDigest: sha('5'), manifestDigest: sha('6'), deliveryRefs: [],
+    permissions: { policyRevision: 'policy-1', tools: ['read'], writeScope: [] },
+    prompt: modelPrompt(), sequence: 1, consumedByAttemptId: null, issuedAt: at, consumedAt: null,
+    ...overrides,
+  };
+}
+function modelPermitEvent(permit = modelPermit()): ModelRequestRecordedEvent {
+  return { eventId: 'ev-model-1', eventType: MODEL_REQUEST_AUTHORIZED_EVENT_TYPE, schemaVersion: 1, occurredAt: at,
+    identityKey: 'model-identity-1', actor: human, fingerprint: 'fp:model-1', permitRef: modelPermitRef,
+    permit, runRevision: 4 };
+}
+
+describe('ModelRequest permit prompt facts and sequence (PC-1b, ruling 26)', () => {
+  it('round-trips the prompt facts and sequence through the permit snapshot and the authorized event', () => {
+    const snapshot = { ref: modelPermitRef, revision: 1 as const, schemaVersion: 1 as const, permit: modelPermit(), recordedAt: at };
+    const encoded = encodeModelRequestPermitSnapshot(snapshot);
+    expect(decodeModelRequestPermitSnapshot(encoded)).toEqual({ status: 'decoded', value: snapshot });
+    expect(MODEL_REQUEST_RECORD_SCHEMAS.records[0]?.validate(encoded).status).toBe('decoded');
+    // The Runtime may freeze a zero cap when the cumulative output is spent; the
+    // codec accepts the number and the meter, not this codec, refuses the call.
+    const zeroCap = { ...snapshot, permit: { ...snapshot.permit, prompt: { ...modelPrompt(), maxOutputTokens: 0 } } };
+    expect(decodeModelRequestPermitSnapshot(encodeModelRequestPermitSnapshot(zeroCap))).toEqual({ status: 'decoded', value: zeroCap });
+    // Consumption changes only the two consumption fields; the facts and sequence stay.
+    const consumed = { ...snapshot, revision: 2 as const,
+      permit: { ...snapshot.permit, consumedByAttemptId: 'attempt-1', consumedAt: at } };
+    expect(decodeModelRequestPermitSnapshot(encodeModelRequestPermitSnapshot(consumed))).toEqual({ status: 'decoded', value: consumed });
+    const event = modelPermitEvent();
+    expect(modelRequestRecordedEventFromEvent(encodeModelRequestRecordedEvent(event))).toEqual({ status: 'decoded', value: event });
+    expect(MODEL_REQUEST_RECORD_SCHEMAS.events[0]?.validate(encodeModelRequestRecordedEvent(event)).status).toBe('decoded');
+  });
+
+  it('rejects a missing, unknown or ill-typed prompt fact, sequence or selection field', () => {
+    const snapshotOf = (permit: ModelRequestPermitV1) =>
+      ({ ref: modelPermitRef, revision: 1 as const, schemaVersion: 1 as const, permit, recordedAt: at });
+    const status = (permit: ModelRequestPermitV1) =>
+      decodeModelRequestPermitSnapshot(encodeModelRequestPermitSnapshot(snapshotOf(permit))).status;
+    const withPrompt = (patch: Record<string, unknown>) => modelPermit({ prompt: { ...modelPrompt(), ...patch } as ModelRequestPermitV1['prompt'] });
+    const prompt = modelPrompt();
+    expect(status(withPrompt({ extra: true }))).toBe('invalid');
+    expect(status(withPrompt({ prompt: 1 }))).toBe('invalid');
+    const { maxOutputTokens: _maxOutputTokens, ...withoutMax } = prompt;
+    expect(status(modelPermit({ prompt: withoutMax as ModelRequestPermitV1['prompt'] }))).toBe('invalid');
+    for (const maxOutputTokens of [-1, 1.5, '512', null]) {
+      expect(status(withPrompt({ maxOutputTokens }))).toBe('invalid');
+    }
+    expect(status(withPrompt({ systemDigest: 'not-a-digest' }))).toBe('invalid');
+    expect(status(withPrompt({ toolsDigest: sha('A') }))).toBe('invalid');
+    expect(status(withPrompt({ toolSpecsRef: { ...prompt.toolSpecsRef, kind: 'other' } }))).toBe('invalid');
+    expect(status(withPrompt({ selection: { ...prompt.selection, extra: true } }))).toBe('invalid');
+    expect(status(withPrompt({ selection: { ...prompt.selection, removed: { ...prompt.selection.removed, extra: 1 } } }))).toBe('invalid');
+    for (const key of Object.keys(prompt.selection.removed) as (keyof typeof prompt.selection.removed)[]) {
+      expect(status(withPrompt({ selection: { ...prompt.selection,
+        removed: { ...prompt.selection.removed, [key]: -1 } } })), key).toBe('invalid');
+      expect(status(withPrompt({ selection: { ...prompt.selection,
+        removed: { ...prompt.selection.removed, [key]: '1' } } })), key).toBe('invalid');
+    }
+    for (const inputTokens of [-1, 1.5, '128']) {
+      expect(status(withPrompt({ selection: { ...prompt.selection, inputTokens } }))).toBe('invalid');
+    }
+    const { budget: _budget, ...withoutBudget } = prompt.selection;
+    expect(status(withPrompt({ selection: withoutBudget }))).toBe('invalid');
+    for (const budget of [-1, 1.5, '2000', null]) {
+      expect(status(withPrompt({ selection: { ...prompt.selection, budget } }))).toBe('invalid');
+    }
+    // Nested unknown keys: the tool-spec ref and its source accept exactly
+    // their own fields in the snapshot, the event and the authorization input.
+    const refExtra = { ...prompt, toolSpecsRef: { ...prompt.toolSpecsRef, extra: true } };
+    const sourceExtra = { ...prompt,
+      toolSpecsRef: { ...prompt.toolSpecsRef, source: { ...prompt.toolSpecsRef.source, extra: true } } };
+    expect(status(modelPermit({ prompt: refExtra }))).toBe('invalid');
+    expect(status(modelPermit({ prompt: sourceExtra }))).toBe('invalid');
+    for (const sequence of [0, -1, 1.5, null]) {
+      expect(status(modelPermit({ sequence: sequence as number }))).toBe('invalid');
+    }
+    expect(status(modelPermit({ extra: true } as unknown as Partial<ModelRequestPermitV1>))).toBe('invalid');
+    const eventStatus = (permit: ModelRequestPermitV1) =>
+      modelRequestRecordedEventFromEvent(encodeModelRequestRecordedEvent(modelPermitEvent(permit))).status;
+    expect(eventStatus(modelPermit({ prompt: undefined } as unknown as ModelRequestPermitV1))).toBe('invalid');
+    expect(eventStatus(modelPermit({ sequence: 0 }))).toBe('invalid');
+    expect(eventStatus(modelPermit({ prompt: { ...prompt, selection: withoutBudget } as ModelRequestPermitV1['prompt'] })))
+      .toBe('invalid');
+    for (const budget of [-1, '2000']) {
+      expect(eventStatus(modelPermit({ prompt: { ...prompt,
+        selection: { ...prompt.selection, budget } } as ModelRequestPermitV1['prompt'] }))).toBe('invalid');
+    }
+    expect(eventStatus(modelPermit({ prompt: refExtra as ModelRequestPermitV1['prompt'] }))).toBe('invalid');
+    expect(eventStatus(modelPermit({ prompt: sourceExtra as ModelRequestPermitV1['prompt'] }))).toBe('invalid');
   });
 });

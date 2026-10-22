@@ -1,4 +1,4 @@
-import type { ResolvedPromptPackV1 } from './prompt-pack.js';
+import type { PromptTextsV1 } from './prompt-set.js';
 import { TEMPLATE_SLOTS } from './slot-tables.js';
 
 /** A rendered slot's UTF-8 byte span in `text`; `endByte` is exclusive. */
@@ -181,16 +181,17 @@ function renderNodes(
  * Renders one platform template. Only the three P1 constructs are honoured;
  * slot values are inserted verbatim. All failures below are code bugs that the
  * fixed pack cannot produce, so they throw a plain Error instead of returning a
- * result union.
+ * result union. `texts` is the narrow surface (ruling 14): a resolved pack
+ * satisfies it structurally.
  */
 export function renderTemplate(
-    resolved: ResolvedPromptPackV1,
+    texts: PromptTextsV1,
     templateId: string,
     slots: Readonly<Record<string, string | undefined>>,
     finalToolNames: readonly string[],
 ): { text: string; sectionRanges: Readonly<Record<string, SlotRangeV1>> } {
     const table = Object.hasOwn(TEMPLATE_SLOTS, templateId) ? TEMPLATE_SLOTS[templateId] : undefined;
-    const source = Object.hasOwn(resolved.templates, templateId) ? resolved.templates[templateId] : undefined;
+    const source = Object.hasOwn(texts.templates, templateId) ? texts.templates[templateId] : undefined;
     if (table === undefined || source === undefined) throw new Error(`unknown prompt template "${templateId}"`);
     // A caller may not smuggle in a slot the template's table does not declare.
     for (const name of Object.keys(slots))

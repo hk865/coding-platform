@@ -14,6 +14,8 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import { DEFAULT_RUNTIME_BUDGET, ModelBudget } from '../../src/core/agent-runtime/model-budget.js';
 import { runObservedModel, type ObservedModelRunOptions } from '../../src/core/agent-runtime/observed-model-run.js';
 import { createExecutionHistoryReader } from '../../src/core/agent-runtime/observation-recovery.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import { frozenPromptInputs } from './PC-frozen-prompt.js';
 import type { ExecutionHistoryPort, KernelExecutionIdentity } from '../../src/core/agent-runtime/execution-history-contracts.js';
 import type {
   SessionHistoryEntry, SessionHistoryRequest, SessionOperationsPort,
@@ -49,6 +51,9 @@ type TurnInput = {
   publish?: ObservedModelRunOptions['publish']; signal?: AbortSignal;
 };
 
+let promptInputs: Promise<ObservedModelRunOptions['prompt']> | undefined;
+const promptOnce = () => (promptInputs ??= frozenPromptInputs());
+
 async function runTurn(turn: TurnInput) {
   const budget = { ...DEFAULT_RUNTIME_BUDGET, perResponseTokens: 128 };
   return runObservedModel({
@@ -63,6 +68,11 @@ async function runTurn(turn: TurnInput) {
     }),
     readOnly: true, allowedTools: [], deniedPrefixes: [], processSandboxOptions: {},
     publish: turn.publish ?? (async () => {}),
+    prompt: await promptOnce(),
+    bodies: new RawArtifactBodyStore(),
+    origin: { kind: 'run', owner: { aggregateType: 'Run', projectId: 'r4c-history-project',
+      goalId: 'r4c-history-goal', runId: 'r4c-history-run' } },
+    promptFacts: new Map(),
   });
 }
 

@@ -20,6 +20,9 @@ const relativeSources = ['storage/adapters/sqlite/sqlite-stores.ts', 'public-api
   // session-store-port inlines the AgentEvent union into its emitted declarations; it
   // must be regenerated with the same event set or its ZodObject snapshot goes stale.
   'core/ports/session_store/session-store-port.ts',
+  // The context selection policy is restored from the frozen map so its dist is
+  // only produced by this script.
+  'core/context/selection_policy/context-selection-policy.ts',
   // The Host workbench tool adapter needs the minimal legal empty-file replace;
   // the restored source is managed here so dist is only produced by this script.
   'sandbox/workspace/workspace-sandbox.ts', 'sandbox/process/process-sandbox.ts',

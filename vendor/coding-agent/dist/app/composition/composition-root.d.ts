@@ -6,7 +6,7 @@ import type { RunState } from "../../core/runtime/state/run-state.js";
 import type { ProviderRegistry } from "../../model/providers/registry/provider-registry.js";
 import { WorkspaceSandbox } from "../../sandbox/workspace/workspace-sandbox.js";
 import type { AppConfig } from "./app-config.js";
-import { kernelSessionApiVersion, type AppRuntimeConfiguration, type ExecutionIdentity, type SecretSource, type SessionContextMode } from "./composition-contracts.js";
+import { kernelSessionApiVersion, type AppRuntimeConfiguration, type ExecutionIdentity, type HostContextInputs, type SecretSource, type SessionContextMode } from "./composition-contracts.js";
 /**
  * 共享类型继续从本文件可达，`m5-public-api` 的既有导出路径不变。
  * 定义在 composition-contracts.ts，避免与 resume-composition 形成循环导入。
@@ -14,7 +14,7 @@ import { kernelSessionApiVersion, type AppRuntimeConfiguration, type ExecutionId
 export type { AppRuntimeConfiguration, SecretSource } from "./composition-contracts.js";
 export { kernelSessionApiVersion };
 export type { ExecutionIdentity, SessionContextMode };
-export interface RunAppInput {
+export interface RunAppInput extends HostContextInputs {
     /** Host-provided tools still use registry validation, permissions and output limits. */
     readonly additionalTools?: (workspace: WorkspaceSandbox) => readonly import("../../tools/schemas/tool-schemas.js").ToolDefinition[];
     /**

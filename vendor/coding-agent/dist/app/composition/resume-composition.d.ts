@@ -10,9 +10,9 @@ import type { ProcessSandboxOptions } from "../../sandbox/process/process-sandbo
 import { WorkspaceSandbox } from "../../sandbox/workspace/workspace-sandbox.js";
 import type { WorkspaceSandboxOptions } from "../../sandbox/workspace/workspace-sandbox.js";
 import type { AppConfig } from "./app-config.js";
-import type { AppRuntimeConfiguration, SecretSource } from "./composition-contracts.js";
+import type { AppRuntimeConfiguration, HostContextInputs, SecretSource } from "./composition-contracts.js";
 import { type RecoveryTarget } from "./recovery-contract.js";
-export interface ResumeAppInput {
+export interface ResumeAppInput extends HostContextInputs {
     /** Host-provided tools still use registry validation, permissions and output limits. */
     readonly additionalTools?: (workspace: WorkspaceSandbox) => readonly import("../../tools/schemas/tool-schemas.js").ToolDefinition[];
     /** 宿主对**非只读**扩展能力的显式授权（工具名）；语义与 `RunAppInput.hostAuthorizedTools` 相同。 */

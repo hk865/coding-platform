@@ -6,6 +6,7 @@
  * （architecture check 会把类型导入也算作一条边）。
  */
 import type { SkillContext } from "../../core/context/types/context-types.js";
+import type { BaseSystemPromptInput, ContextPreview, ContextSelectionReport, ReasoningReplay } from "../../core/context/selection_policy/context-selection-policy.js";
 import type { ModelToolSpec } from "../../core/ports/model_client/model-client-port.js";
 export interface SecretSource {
     get(name: string): string | undefined;
@@ -73,4 +74,22 @@ export type ExecutionIdentity = {
     runId: string;
     turnId: string;
 };
+/**
+ * Host-supplied run inputs shared by the new run and the same-identity resume.
+ *
+ * Every field is optional. Absent fields keep the Kernel's configured sources:
+ * without `baseSystemPrompt` and `skills` the fixed base text and the Skill
+ * files are used, without `reasoningReplay` no thinking is filtered, and
+ * without `previewRequest` the runner's configured estimator measures the
+ * request. `skills` and `baseSystemPrompt` are independent; when `skills` is
+ * given, `skillResourceRoot` reports `provided-by-host` and no Skill file is
+ * read.
+ */
+export interface HostContextInputs {
+    readonly baseSystemPrompt?: BaseSystemPromptInput;
+    readonly skills?: readonly SkillContext[];
+    readonly reasoningReplay?: ReasoningReplay;
+    readonly previewRequest?: ContextPreview;
+    readonly onContextSelected?: (report: ContextSelectionReport) => void;
+}
 //# sourceMappingURL=composition-contracts.d.ts.map

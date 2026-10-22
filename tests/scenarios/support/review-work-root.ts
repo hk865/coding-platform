@@ -28,7 +28,7 @@ import { createTargetPlatform } from '../../../src/composition/create-platform.j
 import type { ReadonlyCommandAccessInput } from '../../../src/core/agent-runtime/execution-contracts.js';
 import type { WorkflowAdvanceInput, WorkflowStepReceipt } from '../../../src/business/workflow/contracts.js';
 import {
-  AG2B_AT, AG2B_CONSUMER_ID, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING,
+  AG2B_AT, AG2B_CONSUMER_ID, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_SECRET_VAR, AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING,
   AG2B_WORK_TASK_ID, permissionRevision, plain,
 } from '../../helpers/AG2b-collaboration-fixture.js';
 import type { ScriptedModel } from '../../helpers/B2-runtime-fixture.js';
@@ -36,7 +36,7 @@ import {
   AG2B_WORK_TOOLS, ag2bWorkRuntime, ag2bWorkspaceBindings, hostCtx, performs, type HostScenario, type Platform,
 } from '../harness.js';
 import {
-  createWorkbenchRuntimeHostBindings, type WorkbenchRuntimeConfiguration,
+  createWorkbenchRuntimeHostBindings, runtimeModelId, type WorkbenchRuntimeConfiguration,
 } from '../../../src/app/runtime-configuration.js';
 import { sha256Hex } from '../../../src/contracts/fingerprint.js';
 import type { ReadResult } from '../../../src/contracts/core/results.js';
@@ -47,7 +47,10 @@ import { crashOneCommand } from './review-card-round.js';
 /** `openWorkRoot` (./common.ts) with the read-only command grant a review round needs. */
 export async function openReviewWorkRoot(h: HostScenario, model: ScriptedModel,
   observer?: RecordCommitObserver): Promise<Platform> {
-  const base = ag2bWorkRuntime(() => model, { tools: [...AG2B_WORK_TOOLS, 'run_readonly_command'] });
+  const base = ag2bWorkRuntime(() => model, { tools: [...AG2B_WORK_TOOLS, 'run_readonly_command'],
+    workModelId: runtimeModelId({ provider: 'deepseek', model: 'ag2b-scripted-work',
+      secretEnvironmentVariable: AG2B_SECRET_VAR }),
+  });
   const facts = { access: 'all_except_denied' as const, processSandboxOptions: {} };
   const runtime = {
     ...base,

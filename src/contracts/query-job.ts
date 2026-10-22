@@ -114,6 +114,7 @@ import type { RoleConfigurationRef, SessionRef } from './core/identity.js';
 import type { SessionMessageRef } from './core/session-message.js';
 import type { RoleSpecResolutionV1 } from './role-spec-materials.js';
 import type { RunExecutionHistoryV1 } from './core/execution-history.js';
+import type { QueryRequestPromptFactsV1 } from './prompts/prompt-set.js';
 import { validMaterialSourcePin } from './material-access.js';
 export type QueryTaskRef = {
     aggregateType: "Task";
@@ -362,6 +363,8 @@ export type QueryModelUsageV1 = {
     outputTokens: number | null;
     cachedInputTokens: number | null;
     usageStatus: 'reserved' | 'reported' | 'unknown';
+    /** The send layer's facts, written once by the reservation; never redefined by a usage write. */
+    prompt: QueryRequestPromptFactsV1;
 };
 export type QueryModelRequestV1 = QueryModelUsageV1 & { admitted: boolean };
 /**

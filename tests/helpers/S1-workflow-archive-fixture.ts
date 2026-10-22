@@ -595,6 +595,13 @@ export async function workflowForFixture(b2: B2ExecutionFixture, options: {
   const sessionOperations = createSessionOperations({ sessions: base.sessionsPort, kernelStores });
   const activity = createExecutionHistoryReader({ history: sessionOperations });
   const scripted = createScriptedModel([{ kind: 'text', text: 'FX3 must stop before start' }]);
+  { // The Host double below selects b2-trusted-skill from <dir>/skills; write it as B2-runtime-fixture does.
+    const fs = await import('node:fs/promises');
+    const skillDir = join(base.directory, 'skills', 'b2-trusted-skill');
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(join(skillDir, 'skill.json'), JSON.stringify({ schemaVersion: 1, id: 'b2-trusted-skill', title: 'B2 trusted skill', kind: 'instruction', priority: 10, contentFile: 'content.md' }));
+    await fs.writeFile(join(skillDir, 'content.md'), 'B2_SKILL_FROM_REAL_FILE');
+  }
   const runtime = createAgentRuntime({ claims, executions: reads, entry: b2.entry, modelRequests: b2.model,
     roles, plans: base.plans, messages, sessions: base.sessionsPort, materials, bodies: b2.bodies,
     // Rework 10 package R: the REQUIRED Task-review reader is the real owner over

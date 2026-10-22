@@ -14,6 +14,7 @@ import type {
 } from '../../contracts/graph-context.js';
 import { goalContextDigestV1 } from '../../contracts/graph-context.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { SessionAnomalyAnchorRef } from '../../contracts/session-anomaly.js';
@@ -29,14 +30,19 @@ import {
   notImplementedExtensions, optionalRowsFromExtensions, rolePayload, taskPayload,
 } from './context-fact-text.js';
 import {
-  CONTEXT_FORMAT_VERSION, renderContext, WORK_CONTEXT_PRELUDE,
+  CONTEXT_FORMAT_VERSION, renderContext, workContextPrelude,
 } from './context-rendering.js';
 import { assembleReviewForContext } from './context-review-recipe.js';
 import { canonical, messageOf, rejected, requirementIdOf, sortedSources } from './context-support.js';
 import type { AssembledContextV1, ContextAssemblerDependencies, OptionalRow } from './context-types.js';
 import type { ResolvedRuntimeConfiguration } from './execution-contracts.js';
 
-const S = PLATFORM_PROMPT_PACK_V1.strings;
+/** One fixed string of the resolved pack; a missing key is a pack bug. */
+function packString(texts: PromptTextsV1, key: string): string {
+  const value = texts.strings[key];
+  if (value === undefined) throw new Error(`the resolved prompt pack has no string "${key}"`);
+  return value;
+}
 
 export async function assembleWorkContext(
   deps: ContextAssemblerDependencies, clock: (() => string) | undefined, ctx: CoreCallContext,
@@ -46,8 +52,12 @@ export async function assembleWorkContext(
     permissions: TaskEnvelopeV1['permissions'];
     /** Rework 1 item 1: the ONE Task review-record read `prepare` made. */
     taskReviews?: readonly UnknownCallReviewV1[];
+    /** The resolved pack (ruling 14); absent keeps the generated pack. */
+    texts?: PromptTextsV1;
   },
 ): Promise<ReadResult<AssembledContextV1>> {
+  const texts = input.texts ?? PLATFORM_PROMPT_PACK_V1;
+  const S = (key: string): string => packString(texts, key);
   const execution = input.execution;
   const run = execution?.run;
   const claim = execution?.outbox?.claim;
@@ -56,7 +66,7 @@ export async function assembleWorkContext(
   const residentBudgetBytes = typeof input.configuration?.contextResidentBytes === 'number'
     && Number.isSafeInteger(input.configuration.contextResidentBytes) && input.configuration.contextResidentBytes >= 0
     ? input.configuration.contextResidentBytes : 4096;
-  const dutyResult = effectiveDuty(input.role, input.configuration, session?.role);
+  const dutyResult = effectiveDuty(input.role, input.configuration, session?.role, texts);
   if ('rejection' in dutyResult) return dutyResult.rejection;
   const duty = dutyResult.duty;
   const cancelled = (reason: string): CoreRejection => rejected('cancelled', reason);
@@ -81,21 +91,21 @@ export async function assembleWorkContext(
   const extensions = facts?.extensions ?? notImplementedExtensions();
   const workspaceRevision = run?.workspaceSnapshot?.revision ?? 0;
 
-  const roleSection = rolePayload(input.role, input.permissions, duty, residentBudgetBytes);
+  const roleSection = rolePayload(input.role, input.permissions, duty, residentBudgetBytes, texts);
   const goalSection = graphContextMissing || facts === null
-    ? S['context.work.goalNotLoaded']
-    : goalPayload(facts.goal, workspaceRevision, extensions);
-  const taskSection = plan === undefined || claim === undefined ? null : taskPayload(plan, execution, facts?.graph ?? null);
+    ? S('context.work.goalNotLoaded')
+    : goalPayload(facts.goal, workspaceRevision, extensions, texts);
+  const taskSection = plan === undefined || claim === undefined ? null : taskPayload(plan, execution, facts?.graph ?? null, texts);
 
-  const extensionRows = optionalRowsFromExtensions(extensions);
+  const extensionRows = optionalRowsFromExtensions(extensions, texts);
   const reminders: OptionalRow[] = [];
   // §4.3/G5.3: an unassembled extension is reported as not connected whenever
   // the projection says `not_implemented`, with or without the graph port.
   if (extensions.notes.availability === 'not_implemented') {
-    reminders.push({ key: 'note:not_implemented', text: S['context.work.notesNotConnected'] });
+    reminders.push({ key: 'note:not_implemented', text: S('context.work.notesNotConnected') });
   }
   if (extensions.anomalies.availability === 'not_implemented') {
-    reminders.push({ key: 'anomaly:not_implemented', text: S['context.work.anomaliesNotConnected'] });
+    reminders.push({ key: 'anomaly:not_implemented', text: S('context.work.anomaliesNotConnected') });
   }
   reminders.push(...extensionRows.reminders);
 
@@ -116,7 +126,7 @@ export async function assembleWorkContext(
       ? { projectId: plan?.ref.projectId ?? claim.task.projectId, moduleId: task.scope.moduleRef }
       : null;
     const unavailable = (): void => {
-      reminders.push({ key: ARCHITECTURE_REMINDER_UNAVAILABLE_KEY, text: S['context.work.remindersUnavailable'] });
+      reminders.push({ key: ARCHITECTURE_REMINDER_UNAVAILABLE_KEY, text: S('context.work.remindersUnavailable') });
     };
     const cancelledReminder = (): CoreRejection =>
       cancelled('the architecture reminder read was cancelled');
@@ -139,7 +149,7 @@ export async function assembleWorkContext(
       if (reminderRead.status === 'ready') {
         const now = clock();
         for (const row of architectureReminderRowEntries({
-          facts: reminderRead.value, taskModuleRef, now,
+          facts: reminderRead.value, taskModuleRef, now, texts,
         })) {
           reminders.push({ key: row.key, text: row.text });
         }
@@ -182,7 +192,7 @@ export async function assembleWorkContext(
     if (enriched.status === 'ready') upstreamExecutions = enriched.value.executions;
   }
   for (const selection of missingSelections) {
-    reminders.push(missingInputReminder(selection, upstreamExecutions));
+    reminders.push(missingInputReminder(selection, upstreamExecutions, texts));
   }
 
   const inputRows: OptionalRow[] = [];
@@ -206,7 +216,7 @@ export async function assembleWorkContext(
       if (pageSelection.state !== 'selected' || pageSelection.source === null) {
         // The owner returned an item-level missing/unavailable state as ready:
         // render that state and never a fake selected row.
-        reminders.push(missingInputReminder(pageSelection, upstreamExecutions));
+        reminders.push(missingInputReminder(pageSelection, upstreamExecutions, texts));
         continue;
       }
       if (sha256Hex(canonicalJson(pageSelection.source as unknown as JsonValue)) !== candidateKey) {
@@ -241,7 +251,7 @@ export async function assembleWorkContext(
     // Slice 1 N7 (§2.7): the anomaly section is budgeted; when even the mandatory content cannot fit the
     // 16 KiB brief the preparation is refused `capacity`, never rendered truncated or thrown out of the port.
     try {
-      continuationSuffix = renderContinuationBriefZh(continuationBrief, continuationBriefDigest(continuationBrief));
+      continuationSuffix = renderContinuationBriefZh(continuationBrief, continuationBriefDigest(continuationBrief), texts);
     } catch (error) {
       if (error instanceof ContinuationBriefCapacityError) return rejected('capacity', error.message);
       throw error;
@@ -253,7 +263,7 @@ export async function assembleWorkContext(
   // original Run (L12), never a TaskRequeue.
   const reviewPurpose = run?.purpose?.kind === 'unknown_call_review' ? run.purpose : undefined;
   if (reviewPurpose !== undefined) {
-    const assembledReview = await assembleReviewForContext(deps, ctx, execution, reviewPurpose);
+    const assembledReview = await assembleReviewForContext(deps, ctx, execution, reviewPurpose, texts);
     if (!assembledReview.ok) return assembledReview.rejection;
     // R1: the review text is its OWN trailing section, never the continuation
     // section; review and continuation are mutually exclusive.
@@ -263,7 +273,7 @@ export async function assembleWorkContext(
   }
 
   const rendered = renderContext({
-    prelude: WORK_CONTEXT_PRELUDE,
+    prelude: workContextPrelude(texts),
     required: { role: roleSection, goal: goalSection, task: taskSection },
     optional: {
       footprint: extensionRows.footprint, notes: extensionRows.notes, reminders, inputs: inputRows,
@@ -271,6 +281,7 @@ export async function assembleWorkContext(
     continuationSuffix,
     reviewSuffix,
     residentBudgetBytes,
+    texts,
   });
 
   const selectedTaskInputs = inputSelections
@@ -295,7 +306,7 @@ export async function assembleWorkContext(
   const generalOmitted = rendered.sections.find((section) => section.name === 'notes')?.omitted ?? 0;
   const keptGeneral = extensions.notes.general
     .slice(0, Math.max(0, extensions.notes.general.length - generalOmitted));
-  const noteSources = noteSourcesOf(extensions.notes, keptGeneral);
+  const noteSources = noteSourcesOf(extensions.notes, keptGeneral, texts);
 
   const binding: ContextAssemblyBindingV1 = {
     schemaVersion: 1,

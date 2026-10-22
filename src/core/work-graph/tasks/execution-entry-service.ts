@@ -45,6 +45,9 @@ import {
   continuationBriefDigest, continuationBriefShapeProblem, renderContinuationBriefZh,
 } from '../../../contracts/continuation-brief.js';
 import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import {
+  PROMPT_TEXT_CONTENT_TYPE, checkPromptBody, decodePromptSetV1, type PromptTextsV1,
+} from '../../../contracts/prompts/prompt-set.js';
 import { edgeDeclarationId, legacyDeclarationId } from '../../../contracts/input-declaration-id.js';
 import {
   isNonNeg as isSafeInteger, isPos as isPositiveSafeInteger, isRecord, isSha256Hex, nonEmpty,
@@ -486,6 +489,9 @@ function manifestProblem(value: unknown): string | null {
   }
   if (typeof value['input'] !== 'string') return 'manifest input must be a string';
   if (!isSha256Hex(value['inputDigest'])) return 'manifest inputDigest must be a sha256 hex';
+  // Ruling 13/17: every manifest loader decodes the frozen prompt set; the entry
+  // reads its text bodies when it re-renders a section.
+  if (decodePromptSetV1(value['promptSet']) === null) return 'manifest promptSet must be a PromptSetV1';
   return null;
 }
 
@@ -966,13 +972,81 @@ function legacyTemplateDutyOf(role: RoleConfigurationRef): PlatformDutyV1 | unde
   return duties.find(duty => role.templateId === `platform-${duty}`);
 }
 
+/** The template ids an entry check re-renders from the saved manifest's frozen set. */
+function frozenRenderTemplateIds(manifest: PreparedTaskManifestV1): string[] {
+  const ids: string[] = [];
+  if (manifest.continuationBrief !== undefined) ids.push('continuation-brief');
+  if (manifest.unknownCallReview !== undefined) {
+    ids.push(manifest.unknownCallReview.phase === 'proposal' ? 'unknown-call-proposal' : 'unknown-call-review');
+  }
+  return ids;
+}
+
+/**
+ * Ruling 17: the frozen template text and string table a saved manifest's
+ * `promptSet` names, read back through the entry's own `deps.bodies`.
+ *
+ * WorkGraph may not import the Runtime, so this uses only the pure contract
+ * helpers: `decodePromptSetV1` and `checkPromptBody` verify the content type,
+ * digest and size of every body. Only the templates the caller is about to
+ * re-render are read, plus the merged strings body. A missing set or template,
+ * an unreadable body, a body that disagrees with its ref or an unreadable
+ * string table is `unavailable`; it never falls back to the current pack.
+ */
+async function readFrozenPromptTexts(
+  deps: Pick<ExecutionEntryDependencies, 'bodies'>,
+  manifest: PreparedTaskManifestV1,
+  templateIds: readonly string[],
+): Promise<{ ok: true; value: PromptTextsV1 } | Rejected> {
+  if (templateIds.length === 0) return { ok: true, value: { templates: {}, strings: {} } };
+  const set = decodePromptSetV1(manifest.promptSet);
+  if (set === null) return { ok: false, rejection: unavailable('the saved prepared manifest has no valid prompt set') };
+  const templates: Record<string, string> = {};
+  for (const templateId of templateIds) {
+    const entry = set.templates.find(template => template.id === templateId);
+    if (entry === undefined) {
+      return { ok: false, rejection: unavailable(`the saved prompt set does not freeze the ${templateId} template`) };
+    }
+    const read = await deps.bodies.read(entry.ref);
+    if (read.status !== 'ready') {
+      return { ok: false, rejection: unavailable(`the frozen ${templateId} template could not be read: ${read.reason}`) };
+    }
+    const text = checkPromptBody(entry.ref, read.value, PROMPT_TEXT_CONTENT_TYPE);
+    if (text === null) {
+      return { ok: false, rejection: unavailable(`the frozen ${templateId} template disagrees with its reference`) };
+    }
+    templates[templateId] = text;
+  }
+  const stringsRead = await deps.bodies.read(set.strings.ref);
+  if (stringsRead.status !== 'ready') {
+    return { ok: false, rejection: unavailable(`the frozen prompt string table could not be read: ${stringsRead.reason}`) };
+  }
+  const stringsText = checkPromptBody(set.strings.ref, stringsRead.value, PROMPT_TEXT_CONTENT_TYPE);
+  if (stringsText === null) {
+    return { ok: false, rejection: unavailable('the frozen prompt string table disagrees with its reference') };
+  }
+  const parsed = parseJsonObject(stringsText);
+  if (parsed === null) return { ok: false, rejection: unavailable('the frozen prompt string table is not readable JSON') };
+  const strings: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value !== 'string') {
+      return { ok: false, rejection: unavailable('the frozen prompt string table is not a flat string map') };
+    }
+    strings[key] = value;
+  }
+  return { ok: true, value: { templates, strings } };
+}
+
 /**
  * The rendered continuation brief of a saved manifest, or null when the manifest
  * carries none. Only a continuation/handoff binding names a continuation section.
+ * The frozen texts of the manifest's `promptSet` are the ONLY source (ruling 17):
+ * the caller reads them first and never re-renders from the current pack.
  */
-function continuationSuffixOf(manifest: PreparedTaskManifestV1): string | null {
+function continuationSuffixOf(manifest: PreparedTaskManifestV1, frozenTexts: PromptTextsV1): string | null {
   if (manifest.continuationBrief === undefined) return null;
-  return renderContinuationBriefZh(manifest.continuationBrief, continuationBriefDigest(manifest.continuationBrief));
+  return renderContinuationBriefZh(manifest.continuationBrief,
+    continuationBriefDigest(manifest.continuationBrief), frozenTexts);
 }
 
 /**
@@ -1033,6 +1107,8 @@ function contextConsumptionProblem(input: {
   rebinding: boolean;
   /** R1/R2: the trusted Run purpose decides whether the manifest must carry the review instruction. */
   run: RunSnapshot;
+  /** Ruling 17: the frozen template texts the saved manifest's `promptSet` names. */
+  promptTexts: PromptTextsV1;
 }): CoreRejection | null {
   const binding = input.manifest.contextAssembly;
   const roleDuty = roleDutyOf(input.manifest.role);
@@ -1050,12 +1126,13 @@ function contextConsumptionProblem(input: {
   if ((manifestReview !== undefined) !== isReviewRoundPurpose(input.run.purpose)) {
     return forbidden('the prepared review instruction disagrees with the Run purpose');
   }
-  const reviewSuffix = manifestReview === undefined ? null : renderUnknownCallReviewZh(manifestReview);
+  const reviewSuffix = manifestReview === undefined ? null
+    : renderUnknownCallReviewZh(manifestReview, input.promptTexts);
   const assemblyProblem = contextAssemblyProblem({
     binding,
     text: input.manifest.input,
     selectedTaskInputs: input.manifest.selectedTaskInputs,
-    continuationSuffix: continuationSuffixOf(input.manifest),
+    continuationSuffix: continuationSuffixOf(input.manifest, input.promptTexts),
     reviewSuffix,
   });
   if (assemblyProblem !== null) return assemblyProblem;
@@ -1167,11 +1244,17 @@ async function authorizeAdmission(
   // added inside the same fresh admission and only decides when it passed.
   const admitted = await admitManifest(deps, ctx, facts, manifest);
   if (!admitted.ok) return admitted;
+  // Ruling 17: the brief and review re-renders read the frozen template texts and
+  // string table back from the saved manifest's `promptSet`, after this loader
+  // authorized the manifest. An unreadable text is the entry's `unavailable`.
+  const frozenTexts = await readFrozenPromptTexts(deps, manifest, frozenRenderTemplateIds(manifest));
+  if (!frozenTexts.ok) return frozenTexts;
   // CTX-01 pins the sources the binding consumed; CTX-02 (an already bound manifest whose
   // authorization was revoked) only validates it and never refuses for sources that moved on.
   const rebinding = facts.run.executionAuthorization?.phase === 'revoked';
   const consumption = contextConsumptionProblem({
     manifest, plan: facts.plan, claim, scope, workspaceRevision, goal, rebinding, run: facts.run,
+    promptTexts: frozenTexts.value,
   });
   if (consumption !== null) return { ok: false, rejection: consumption };
   return { ok: true, value: { ...admitted.value,
@@ -1189,6 +1272,7 @@ async function authorizeAdmission(
  */
 function continuationBriefVerdict(
   run: RunSnapshot, claim: TaskClaim, binding: RuntimeInputBindingV1, manifest: PreparedTaskManifestV1 | null,
+  frozenTexts: PromptTextsV1,
 ): RunGuardContext['continuationBrief'] {
   const digest = binding.continuationBriefDigest;
   const brief = manifest === null ? undefined : manifest.continuationBrief;
@@ -1198,7 +1282,7 @@ function continuationBriefVerdict(
   if (manifest === null || brief === undefined) return 'bound';
   if (!sameRef(brief.runRef, claim.runRef) || !sameRef(brief.requeueRef, requeueRef)
     || continuationBriefDigest(brief) !== digest
-    || !manifest.input.endsWith(`\n\n${renderContinuationBriefZh(brief, digest)}`)) {
+    || !manifest.input.endsWith(`\n\n${renderContinuationBriefZh(brief, digest, frozenTexts)}`)) {
     return 'mismatch';
   }
   return 'bound';
@@ -1474,9 +1558,15 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
       // silent hold (the review instruction can no longer be checked).
       if (reviewFacts !== null && !briefManifest.ok) return briefManifest.rejection;
       const manifestBrief = briefManifest.ok ? briefManifest.value.manifest.continuationBrief : undefined;
+      // Ruling 17: a brief present here is re-rendered from the frozen
+      // continuation-brief template and string table, never from the current pack.
+      const briefTexts = briefManifest.ok && manifestBrief !== undefined
+        ? await readFrozenPromptTexts(deps, briefManifest.value.manifest, ['continuation-brief'])
+        : { ok: true as const, value: { templates: {}, strings: {} } };
+      if (!briefTexts.ok) return briefTexts.rejection;
       runCtx = { ...runCtx,
         continuationBrief: continuationBriefVerdict(facts.run, claim, prepared.inputBinding,
-          briefManifest.ok ? briefManifest.value.manifest : null),
+          briefManifest.ok ? briefManifest.value.manifest : null, briefTexts.value),
         // Slice 1 §3.5/F84: the actually installed anchor refs must equal the
         // binding's canonical refs; an old brief without the section holds.
         anomalyRefsMatch: anomalyAnchorRefsMatch(manifestBrief, prepared.inputBinding) };

@@ -74,7 +74,7 @@ export function createRuntimeModelCallAccess(deps: RuntimeModelCallAccessDepende
       let issued;
       try {
         issued = await deps.modelRequests.authorizeModelRequest(context, {
-          input: { permit, requestId: input.requestId, requestDigest: input.requestDigest, contextInputDigest: input.contextInputDigest, manifestDigest: input.manifestDigest },
+          input: { permit, requestId: input.requestId, requestDigest: input.requestDigest, contextInputDigest: input.contextInputDigest, manifestDigest: input.manifestDigest, prompt: input.prompt },
           meta: { requestId: `b2-model-authorize:${input.requestId}`, expected: [{ ref: runRef, revision: run.revision }] },
         });
       } catch (error) {
@@ -85,7 +85,7 @@ export function createRuntimeModelCallAccess(deps: RuntimeModelCallAccessDepende
       let consumed;
       try {
         consumed = await deps.modelRequests.recordModelRequestAttempt(context, {
-          input: { request: { permit, requestId: input.requestId, requestDigest: input.requestDigest, contextInputDigest: input.contextInputDigest, manifestDigest: input.manifestDigest }, permitRef: issued.value.permitRef, attemptId, observedAt: deps.now() },
+          input: { request: { permit, requestId: input.requestId, requestDigest: input.requestDigest, contextInputDigest: input.contextInputDigest, manifestDigest: input.manifestDigest, prompt: input.prompt }, permitRef: issued.value.permitRef, attemptId, observedAt: deps.now() },
           meta: { requestId: `b2-model-consume:${input.requestId}`, expected: [{ ref: runRef, revision: run.revision }, { ref: issued.value.permitRef, revision: 1 }] },
         });
       } catch (error) {

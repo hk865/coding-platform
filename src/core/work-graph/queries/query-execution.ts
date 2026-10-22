@@ -32,6 +32,7 @@ import type { GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
+import { decodePromptSetV1, type QueryRequestPromptFactsV1 } from '../../../contracts/prompts/prompt-set.js';
 import type {
   QueryExecutionStateV1, QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef,
   QueryJobSnapshot, QueryModelRequestV1, QueryModelUsageV1, QueryRunRef, QueryRunSnapshot,
@@ -59,7 +60,7 @@ import {
   decodeQueryExecutionRecordedEvent, decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot,
   decodeQueryJobSubmittedEvent, decodeQueryRunSnapshotRecord, encodeQueryExecutionRecordedEvent,
   encodeQueryJobAnsweredEvent, encodeQueryJobAnswerSnapshot, encodeQueryJobSnapshot,
-  encodeQueryRunSnapshotRecord, type QueryExecutionOperation, type QueryExecutionRecordedEventV1,
+  encodeQueryRunSnapshotRecord, queryPromptFactsIssues, type QueryExecutionOperation, type QueryExecutionRecordedEventV1,
 } from './query-record-codecs.js';
 import type {
   QueryEntryIdentity, QueryEntryTicket, QueryExecutionDependencies, QueryExecutionPort,
@@ -462,6 +463,11 @@ function loadQueryManifest(
     }
     const manifest = parsed as unknown as PreparedQueryManifestV1;
     if (!sameRef(manifest.queryRunRef, prepared.queryRunRef)) return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest disagrees with the requested QueryRun');
+    // Ruling 13/27: every manifest loader decodes the frozen set; a missing or
+    // broken `promptSet` is `invalid` before the bind can commit.
+    if (decodePromptSetV1(manifest.promptSet) === null) {
+      return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest has no valid prompt set');
+    }
     if (sha256Hex(manifest.input) !== manifest.inputDigest) return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest input digest is not the digest of its input');
     if (manifest.inputDigest !== prepared.inputDigest) return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest digest disagrees with the Prepared value');
     return { status: 'ready', value: { manifest, bundleRef } };
@@ -1306,8 +1312,33 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         || !['reserved', 'reported', 'unknown'].includes(incoming['usageStatus'] as string)) {
         return rejectedWithNonEmptyCurrent('invalid', 'a usage entry is not a complete reserved/reported/unknown record');
       }
-      const existing = byId.get(incoming['requestId'] as string);
-      byId.set(incoming['requestId'] as string, { ...structuredClone(incoming as unknown as QueryModelUsageV1), admitted: existing?.admitted ?? false });
+      const promptProblems = queryPromptFactsIssues(incoming['prompt'], 'usage entry prompt');
+      if (promptProblems.length > 0) {
+        return rejectedWithNonEmptyCurrent('invalid', `a usage entry's prompt facts are invalid: ${promptProblems.join('; ')}`);
+      }
+      const modelRequestId = incoming['requestId'] as string;
+      const next = structuredClone(incoming) as unknown as QueryModelUsageV1;
+      const existing = byId.get(modelRequestId);
+      if (existing !== undefined) {
+        // Only the mutable usage projection may move after the reservation. The
+        // prompt facts and both reservations are part of the request's identity.
+        if (existing.requestDigest !== next.requestDigest
+          || existing.reservedInput !== next.reservedInput
+          || existing.reservedOutput !== next.reservedOutput
+          || !sameRef(existing.prompt, next.prompt)) {
+          return rejectedWithNonEmptyCurrent('idempotency_conflict',
+            `the usage write for model request ${modelRequestId} changes an immutable fact of its reservation`);
+        }
+        byId.set(modelRequestId, {
+          ...existing,
+          inputTokens: next.inputTokens,
+          outputTokens: next.outputTokens,
+          cachedInputTokens: next.cachedInputTokens,
+          usageStatus: next.usageStatus,
+        });
+      } else {
+        byId.set(modelRequestId, { ...next, admitted: false });
+      }
     }
     const requests = [...byId.values()];
     const executionState: QueryExecutionStateV1 = { ...structuredClone(state), requests };
@@ -1327,13 +1358,13 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
 
   async function admitRequest(
     ctx: CoreCallContext,
-    request: GraphWrite<{ entry: QueryEntryIdentity; requestId: string; requestDigest: string; contextInputDigest: string; manifestDigest: string }>,
+    request: GraphWrite<{ entry: QueryEntryIdentity; requestId: string; requestDigest: string; contextInputDigest: string; manifestDigest: string; prompt: QueryRequestPromptFactsV1 }>,
   ): Promise<WriteResult<QueryRunSnapshot>> {
     const owned = ownContext(ctx);
     if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
     const actor = hostActor(owned);
     if (actor === null) return rejectedWithNonEmptyCurrent('forbidden', 'admitQueryModelRequest requires a trusted Host call context');
-    let ownedRequest: GraphWrite<{ entry: QueryEntryIdentity; requestId: string; requestDigest: string; contextInputDigest: string; manifestDigest: string }>;
+    let ownedRequest: GraphWrite<{ entry: QueryEntryIdentity; requestId: string; requestDigest: string; contextInputDigest: string; manifestDigest: string; prompt: QueryRequestPromptFactsV1 }>;
     try { ownedRequest = structuredClone(request); } catch { return rejectedWithNonEmptyCurrent('invalid', 'the admit request cannot be isolated from the caller'); }
     const input = ownedRequest?.input;
     const meta = ownedRequest?.meta;
@@ -1341,6 +1372,10 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       || !nonEmpty(input.requestDigest) || !nonEmpty(input.contextInputDigest) || !nonEmpty(input.manifestDigest)
       || !isRecord(meta) || !nonEmpty(meta.requestId)) {
       return rejectedWithNonEmptyCurrent('invalid', 'admitQueryModelRequest requires a complete entry and request identity');
+    }
+    const promptProblems = queryPromptFactsIssues(input.prompt, 'prompt');
+    if (promptProblems.length > 0) {
+      return rejectedWithNonEmptyCurrent('invalid', `admitQueryModelRequest requires complete prompt facts: ${promptProblems.join('; ')}`);
     }
     const entry = input.entry as unknown as QueryEntryIdentity;
     const modelRequestId = input.requestId;
@@ -1381,6 +1416,9 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const reserved = state.requests.find(candidate => candidate.requestId === modelRequestId);
     if (reserved === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the model request was not reserved before admission');
     if (reserved.requestDigest !== input.requestDigest) return rejectedWithNonEmptyCurrent('invalid', 'the model request digest disagrees with the reservation');
+    if (!sameRef(reserved.prompt, input.prompt)) {
+      return rejectedWithNonEmptyCurrent('idempotency_conflict', 'the prompt facts disagree with the model request reservation');
+    }
     if (state.prepared === null || input.manifestDigest !== state.prepared.bundleRef.digest
       || input.contextInputDigest !== state.prepared.inputDigest) {
       return rejectedWithNonEmptyCurrent('invalid', 'the model request binding disagrees with the persisted preparation');

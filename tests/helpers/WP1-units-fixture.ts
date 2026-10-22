@@ -23,6 +23,8 @@ import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../src
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { SessionRecord } from '../../src/contracts/core/session.js';
 import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
+import type { ArtifactRef } from '../../src/contracts/artifact.js';
+import type { PromptSetV1 } from '../../src/contracts/prompts/prompt-set.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { GoalRef, GoalSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
@@ -499,6 +501,23 @@ type StartRefusalFixture = {
   calls: { ctx: CoreCallContext; request: Parameters<WorkflowDependencies['runtime']['startRun']>[1] }[];
 };
 
+/** PC-1b: a minimal valid frozen set; this Runtime double never stores or reads its bodies. */
+const PROMPT_TEXT_CONTENT_TYPE = 'application/vnd.coding-platform.prompt-text;version=1';
+const promptTextRef = (body: string): ArtifactRef => ({
+  kind: 'artifact', contentType: PROMPT_TEXT_CONTENT_TYPE,
+  digest: sha256Hex(body), sizeBytes: Buffer.byteLength(body, 'utf8'),
+  source: { kind: 'workspace', refId: 'p', revision: '1' },
+});
+const PROMPT_SET: PromptSetV1 = {
+  schemaVersion: 1, modelId: 'cu-model', provider: 'deepseek', model: 'cu-scripted', packId: 'platform',
+  reasoningReplay: 'current_run',
+  sectionOrder: { work: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'unknown_call_review'] },
+  templates: [],
+  strings: { digest: sha256Hex('{}'), ref: promptTextRef('{}') },
+  base: { templateId: 'base', version: 1, digest: sha256Hex(''), ref: promptTextRef('') },
+  skills: [],
+};
+
 /** WF01/WF02. workflow.ts:425-507 validates ctx/base but reads no owner before
  * performStep(start):1353. No optional maintenance ports are installed (1464).
  */
@@ -522,7 +541,7 @@ export async function startRefusalWorkflow(
     permissions: f.taskInput.permissions, budget: f.taskInput.execution.run.budget,
     selectedTaskInputs: assembled.value.selectedTaskInputs,
     materialBasis: null, materialAccessRefs: [], additionalMaterialRefs: [],
-    deliveryRefs: [], sourceRefs: [], contextAssembly: assembled.value.binding,
+    deliveryRefs: [], sourceRefs: [], contextAssembly: assembled.value.binding, promptSet: PROMPT_SET,
     ...(assembled.value.sessionBasis === undefined ? {} : { sessionBasis: assembled.value.sessionBasis }),
     input: inputText, inputDigest: sha256Hex(inputText),
   };

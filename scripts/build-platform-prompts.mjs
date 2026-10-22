@@ -120,6 +120,21 @@ function emitTools(tools, level) {
     return lines.join('\n');
 }
 
+/** Each template's origin (ruling 11): the pack it came from and its version. */
+function emitOrigins(manifest, level) {
+    const entries = Object.entries(manifest.templates);
+    if (entries.length === 0) return '{}';
+    const lines = ['{'];
+    for (const [id, entry] of entries) {
+        lines.push(`${pad(level + 1)}${quote(id)}: {`);
+        lines.push(`${pad(level + 2)}"packId": ${quote(manifest.packId)},`);
+        lines.push(`${pad(level + 2)}"version": ${JSON.stringify(entry.version)},`);
+        lines.push(`${pad(level + 1)}},`);
+    }
+    lines.push(`${pad(level)}}`);
+    return lines.join('\n');
+}
+
 /**
  * Renders the committed module from already-read pack data. Pure: the CLI and
  * the boundaries check both use it, and neither may regenerate by guessing.
@@ -142,6 +157,7 @@ export function renderPlatformPackModule(pack) {
         `  templates: ${emitStringMap(templates, 1)},`,
         `  strings: ${emitStringMap(strings, 1)},`,
         `  tools: ${emitTools(tools, 1)},`,
+        `  origins: ${emitOrigins(manifest, 1)},`,
         '} as const satisfies ResolvedPromptPackV1;',
     ];
     return `${lines.join('\n')}\n`;

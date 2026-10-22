@@ -40,6 +40,7 @@ import { renderUnknownCallReviewZh } from '../../src/contracts/core/prepared-exe
 import type { RunRef, TaskAttemptRef, TaskBudgetV1, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
+import type { PromptSetV1 } from '../../src/contracts/prompts/prompt-set.js';
 import type { PlanRevisionRef } from '../../src/contracts/plan.js';
 import type {
   CapturedPathV1, UnknownCallReviewItemV1, UnknownCallReviewV1,
@@ -240,6 +241,28 @@ const CONTEXT_ASSEMBLY: ContextAssemblyBindingV1 = {
     goalSettings: 'not_implemented', decisions: 'available' },
 };
 
+/**
+ * PC-1b (ruling 14): the preparation now freezes a prompt set inside the
+ * manifest, so the measured bytes include it. These literals add it; the
+ * manifest-size boundary stays the same, so only the number of item trims can
+ * move (the assertions check the order and that the last boundary is over).
+ */
+const PROMPT_TEXT_CONTENT_TYPE = 'application/vnd.coding-platform.prompt-text;version=1';
+const promptTextRef = (body: string): ArtifactRef => ({
+  kind: 'artifact', contentType: PROMPT_TEXT_CONTENT_TYPE,
+  digest: sha256Hex(body), sizeBytes: Buffer.byteLength(body, 'utf8'),
+  source: { kind: 'workspace', refId: WORKSPACE, revision: '1' },
+});
+const PROMPT_SET: PromptSetV1 = {
+  schemaVersion: 1, modelId: 'k335-pure-model', provider: 'deepseek', model: 'k335-pure-scripted',
+  packId: 'platform', reasoningReplay: 'current_run',
+  sectionOrder: { work: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'unknown_call_review'] },
+  templates: [],
+  strings: { digest: sha256Hex('{}'), ref: promptTextRef('{}') },
+  base: { templateId: 'base', version: 1, digest: sha256Hex(''), ref: promptTextRef('') },
+  skills: [],
+};
+
 /** The production manifest build (`execution-preparation.ts` ~505-548). */
 function manifestFor(review: UnknownCallReviewInputV1, inputText: string): PreparedTaskManifestV1 {
   const total = Buffer.byteLength(inputText, 'utf8');
@@ -257,7 +280,7 @@ function manifestFor(review: UnknownCallReviewInputV1, inputText: string): Prepa
     selectedTaskInputs: [{ requirementId: 'k335-pure-requirement', ref: CAPTURE_REF }],
     materialBasis: { planRef: PLAN_REF, workspaceRevision: 3, sourceDigest: sha256Hex('k335-pure-source') },
     materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [], sourceRefs: SOURCE_REFS,
-    contextAssembly: assembly, continuationBrief: CONTINUATION_BRIEF,
+    contextAssembly: assembly, promptSet: PROMPT_SET, continuationBrief: CONTINUATION_BRIEF,
     sessionBasis: { sourceKernelSessionId: 'k335-pure-source-kernel', throughPosition: 4 },
     workspaceBaseline: { status: 'captured', ref: BASELINE_REF, digest: BASELINE_REF.digest },
     unknownCallReview: review,
@@ -386,7 +409,7 @@ describe('K3-35 (一) pure 32-item renderer/codec extreme', () => {
     expect(Object.keys(measured).sort()).toEqual([
       'additionalMaterialRefs', 'blockedCommands', 'budget', 'claim', 'contextAssembly',
       'continuationBrief', 'deliveryRefs', 'hostConfigurationRevision', 'hostTemplate', 'input',
-      'inputDigest', 'kind', 'materialAccessRefs', 'materialBasis', 'permissions', 'role',
+      'inputDigest', 'kind', 'materialAccessRefs', 'materialBasis', 'permissions', 'promptSet', 'role',
       'roleBinding', 'schemaVersion', 'selectedTaskInputs', 'sessionBasis', 'sessionRole',
       'sourceRefs', 'unknownCallReview', 'workspaceBaseline', 'workspaceSnapshot',
     ].sort());

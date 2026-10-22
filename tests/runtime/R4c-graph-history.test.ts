@@ -55,6 +55,7 @@ import type {
 } from '../../src/core/agent-runtime/execution-history-contracts.js';
 import { DEFAULT_RUNTIME_BUDGET, ModelBudget } from '../../src/core/agent-runtime/model-budget.js';
 import { runObservedModel, type ObservedModelRunOptions } from '../../src/core/agent-runtime/observed-model-run.js';
+import { frozenPromptInputs } from './PC-frozen-prompt.js';
 import {
   CLAIM_FIXTURE_AT,
   createTaskClaimFixture,
@@ -229,6 +230,9 @@ type TurnInput = {
   publish?: ObservedModelRunOptions['publish']; signal?: AbortSignal;
 };
 
+let promptInputs: Promise<ObservedModelRunOptions['prompt']> | undefined;
+const promptOnce = () => (promptInputs ??= frozenPromptInputs());
+
 async function runTurn(turn: TurnInput) {
   const budget = { ...DEFAULT_RUNTIME_BUDGET, perResponseTokens: 128 };
   return runObservedModel({
@@ -244,6 +248,11 @@ async function runTurn(turn: TurnInput) {
     }),
     readOnly: true, allowedTools: [], deniedPrefixes: [], processSandboxOptions: {},
     publish: turn.publish ?? (async () => {}),
+    prompt: await promptOnce(),
+    bodies: new RawArtifactBodyStore(),
+    origin: { kind: 'run', owner: { aggregateType: 'Run', projectId: 'r4c-graph-project',
+      goalId: 'r4c-graph-goal', runId: 'r4c-graph-run' } },
+    promptFacts: new Map(),
   });
 }
 

@@ -32,6 +32,7 @@ import type { PreparedQueryExecution, PreparedTaskExecution, PreparedTaskManifes
 import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { MaterialBasisV1 } from '../../contracts/material-access.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
+import type { PromptPackSourcePort } from '../../contracts/prompts/prompt-pack.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { PlatformDutyV1 } from '../../contracts/graph-context.js';
 import type { RunRef } from '../../contracts/dispatch.js';
@@ -55,7 +56,7 @@ import type { ExecutionReadPort, TaskExecutionRecord } from '../work-graph/model
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
 import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
 import type { NoteCheckPort, NoteMemoryReadPort, NoteWritePort } from '../work-graph/model/note-contracts.js';
-import type { ModelRequestPort } from '../work-graph/tasks/model-call-contracts.js';
+import type { ModelRequestPort, ModelRequestReadPort } from '../work-graph/tasks/model-call-contracts.js';
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
 import type { SessionMailboxPort } from '../work-graph/model/communication-contracts.js';
@@ -211,6 +212,12 @@ export type RuntimeExecutionDependencies = {
   /** Existing WG12 writer for live nonterminal observed ranges. */
   historyWriter: ExecutionHistoryWritePort;
   modelRequests: ModelRequestPort;
+  /** Ruling 28/29: the Work model-request read the prompt record reads. Absent
+   * answers `unavailable` on a Work ref; it is never an empty permit list. */
+  modelRequestReads?: ModelRequestReadPort;
+  /** Ruling 30: the ONE prompt-pack source every preparation resolves through.
+   * `createAgentRuntime` installs the generated platform source when absent. */
+  promptPacks?: PromptPackSourcePort;
   roles: RoleBindingFactsPort;
   /** The SAME full Plan service the Host reads/writes through (W2 delegated writes). */
   plans: PlanTaskPort;

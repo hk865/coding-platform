@@ -19,6 +19,8 @@ import type {
   StartTaskExecutionRequest, TaskExecutionRecord,
 } from './execution-contracts.js';
 import type { QueryExecutionRecord } from '../work-graph/queries/contracts.js';
+import type { QueryRunRef } from '../../contracts/query-job.js';
+import type { PromptRecordReadV1 } from '../../contracts/prompts/prompt-set.js';
 import type { CreateSessionRequest, SessionHistoryEntry, SessionHistoryRequest } from './session-operations.js';
 import type { RunActivityRead } from './run-activity-reader.js';
 
@@ -77,6 +79,14 @@ export interface RuntimeExecutionPort {
    * Optional like the members above; `createAgentRuntime` publishes it.
    */
   readContinuationBrief?(ctx: CoreCallContext, request: { runRef: RunRef }): Promise<ReadResult<{ brief: ContinuationBriefV1; digest: string } | null>>;
+  /**
+   * Ruling 29: the frozen prompt record of one Work Run or QueryRun — the
+   * manifest's set, its request rows in order and every text body the set and
+   * the requests refer to, keyed by digest. Read fresh, verified against each
+   * ref; no HTTP route (E3 adds one). Optional only so existing port literals
+   * stay type-compatible; `createAgentRuntime` always publishes it.
+   */
+  readPromptRecord?(ctx: CoreCallContext, ref: RunRef | QueryRunRef): Promise<PromptRecordReadV1>;
   /**
    * Slice 1 §3.3: the exact changed-file snapshot recorded beside an archive
    * anomaly anchor (Kernel window → current worktree → unknown; §2.6 last

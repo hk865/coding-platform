@@ -16,12 +16,17 @@ import type { ModelCallAccess } from '../../contracts/dispatch.js';
 import type { QueryModelUsageV1, QueryRunRef } from '../../contracts/query-job.js';
 import type { HookPort } from '../../../vendor/coding-agent/dist/public-api.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import {
+  decodePromptSetV1, promptSelectionOf, type ModelRequestPromptFactsV1, type PromptSetV1,
+  type QueryRequestPromptFactsV1,
+} from '../../contracts/prompts/prompt-set.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import { GRAPH_TOOL_NAMES } from './graph-tools.js';
 import type { SourceToolOptions } from './exploration-tools.js';
 import { ModelBudget, type MeterEntry, type ModelTokenBudget } from './model-budget.js';
 import { RuntimeModelCallRejected } from './model-call-access.js';
 import { runObservedModel } from './observed-model-run.js';
+import { readPromptTexts } from './prompt-set-texts.js';
 import { registerReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import { createMailboxInputSupply } from './execution-inputs.js';
 import { projectQueryConfiguration } from './query-preparation.js';
@@ -78,6 +83,23 @@ function mapRead(result: ReadResult<unknown>): CoreRejection {
   return { status: 'rejected', code: result.code, reason: result.reason, ...(result.current === undefined ? {} : { current: result.current }) };
 }
 
+/**
+ * Ruling 16: the Host binding still names the prepared prompt selection and the
+ * provider/model the set was frozen with. `promptSelectionOf` is the only reader
+ * of `selection`; a BoundModel without one takes its documented fallback
+ * (revision / `platform` / `current_run`) and is compared exactly like any other.
+ */
+function samePromptBinding(
+  model: { configuration: { revision: string; provider: string; model: string };
+    selection?: { modelId: string; promptPack: string; reasoningReplay: 'current_run' | 'none' } },
+  set: PromptSetV1,
+): boolean {
+  const selection = promptSelectionOf(model);
+  return selection.modelId === set.modelId && selection.promptPack === set.packId
+    && selection.reasoningReplay === set.reasoningReplay
+    && model.configuration.provider === set.provider && model.configuration.model === set.model;
+}
+
 async function loadManifest(
   bodies: RuntimeExecutionDependencies['bodies'],
   prepared: PreparedQueryExecution,
@@ -113,11 +135,38 @@ async function loadManifest(
   const manifest = parsed as unknown as PreparedQueryManifestV1;
   if (sha256Hex(manifest.input) !== manifest.inputDigest) return rejected('invalid', 'the Query manifest input digest is not the digest of its input');
   if (manifest.inputDigest !== prepared.inputDigest) return rejected('invalid', 'the Query manifest input digest disagrees with the Prepared value');
+  // Ruling 16/22: the frozen prompt set is required and strictly decoded; an
+  // absent or malformed one is `invalid`, never a silently empty set.
+  if (decodePromptSetV1(parsed['promptSet']) === null) {
+    return rejected('invalid', 'the Query manifest has no valid prompt set');
+  }
   return { status: 'ready', value: { manifest, bundleRef } };
 }
 
-function projectMeterEntry(entry: MeterEntry): QueryModelUsageV1 {
+/** The exact shape the send wrapper writes into the shared map (ruling 24). */
+type PromptFacts = ModelRequestPromptFactsV1 & { maxOutputTokens: number };
+
+/** Ruling 27: the Query request record stores the send facts WITHOUT the output cap
+ * (its existing `reservedOutput` is the cap). One projection serves the meter row
+ * and the admission input. */
+function queryRequestFacts(facts: PromptFacts): QueryRequestPromptFactsV1 {
+  return {
+    systemDigest: facts.systemDigest,
+    toolsDigest: facts.toolsDigest,
+    toolSpecsRef: { ...facts.toolSpecsRef },
+    selection: { ...facts.selection, removed: { ...facts.selection.removed } },
+  };
+}
+
+function projectMeterEntry(entry: MeterEntry, promptFacts: Map<string, PromptFacts>): QueryModelUsageV1 {
   if (!nonEmpty(entry.inputDigest)) throw new Error('the Query model request has no real input digest');
+  // Ruling 27: no silent default. The facts are written by the send layer under
+  // this exact requestId before the meter reserves, so a missing entry is a
+  // wiring failure and throws before the usage write.
+  const facts = promptFacts.get(entry.requestId);
+  if (facts === undefined) {
+    throw new Error(`the Query request prompt facts are missing for request ${entry.requestId}`);
+  }
   return {
     requestId: entry.requestId,
     requestDigest: entry.inputDigest,
@@ -127,6 +176,7 @@ function projectMeterEntry(entry: MeterEntry): QueryModelUsageV1 {
     outputTokens: entry.outputTokens,
     cachedInputTokens: entry.cachedInputTokens,
     usageStatus: entry.status,
+    prompt: queryRequestFacts(facts),
   };
 }
 
@@ -179,6 +229,17 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         return observation.observe(owned, { queryRunRef });
       }
       if (state.phase !== 'prepared') return rejected('incomplete', 'the QueryRun has not been prepared');
+      // Ruling 22: the frozen prompt inputs are the ONLY base and Skills this
+      // QueryRun sends; an unreadable text is this driver's `unavailable`.
+      const promptTexts = await readPromptTexts(deps.bodies, manifest.promptSet);
+      if (promptTexts.status !== 'ready') {
+        return rejected('unavailable', `reading the prepared prompt texts failed: ${promptTexts.reason}`);
+      }
+      const frozenPrompt = {
+        base: promptTexts.value.base,
+        skills: promptTexts.value.skills,
+        reasoningReplay: manifest.promptSet.reasoningReplay,
+      };
       const execution = record.job.job.intent.execution;
       if (signal.aborted) return rejected('cancelled', 'the Query start was cancelled before the Host configuration read');
 
@@ -198,7 +259,10 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       if (projected.configurationRevision !== manifest.hostConfigurationRevision
         || !sameRef(projected.permissions, manifest.permissions)
         || !sameRef(projected.budget, manifest.runtimeBudget)
-        || !sameRef({ template: projected.hostTemplate }, { template: manifest.hostTemplate })) {
+        || !sameRef({ template: projected.hostTemplate }, { template: manifest.hostTemplate })
+        // Ruling 16: the pre-entry comparison also sees the Host's prompt
+        // selection and bound provider/model. After entry only observation runs.
+        || !samePromptBinding(configured.value.model, manifest.promptSet)) {
         return rejected('forbidden', 'the prepared Query permissions no longer fit the current Host and Role ceilings');
       }
       const hostConfig: ResolvedRuntimeConfiguration = configured.value;
@@ -360,8 +424,11 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       });
 
       const taskBudget: ModelTokenBudget = { tokenBudget: record.job.job.intent.budget.maxTokens, deadline: record.job.job.intent.budget.deadline };
+      // Ruling 24/27: the send layer fills this map by requestId before the meter
+      // reserves; the usage projection below reads the same entry.
+      const promptFacts = new Map<string, PromptFacts>();
       const meter = new ModelBudget(manifest.runtimeBudget, async (entries) => {
-        const projectedEntries = entries.map(projectMeterEntry);
+        const projectedEntries = entries.map(entry => projectMeterEntry(entry, promptFacts));
         const usageRequestId = `r5b-query-usage:${queryRunRef.runId}:${sha256Hex(canonicalJson(projectedEntries as unknown as JsonValue))}`;
         let lastReason = 'unknown';
         for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -395,6 +462,9 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
               input: {
                 entry, requestId: input.requestId, requestDigest: input.requestDigest,
                 contextInputDigest: input.contextInputDigest, manifestDigest: input.manifestDigest,
+                // Ruling 27: the send facts (without the output cap) ride the
+                // admission; the existing reservation carries the cap.
+                prompt: queryRequestFacts(input.prompt),
               },
               meta: { requestId: `r5b-query-admit:${input.requestId}`, expected: [{ ref: queryRunRef, revision: current.value.run.revision }] },
             });
@@ -522,8 +592,12 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           ...(coordinationTools === null ? {} : { coordinationTools }),
           ...(readonlyCommandTool === undefined ? {} : { readonlyCommandTool }),
           controlHooks: hasFileRead ? [enteredHook, toolPathHook] : [enteredHook],
-          skills: hostConfig.skills,
-          ...(hostConfig.systemInstruction === null ? {} : { systemInstruction: hostConfig.systemInstruction }),
+          // Ruling 22: the frozen base (Host instruction merged), frozen Skills
+          // and frozen replay; the Host options no longer exist here.
+          prompt: frozenPrompt,
+          bodies: deps.bodies,
+          origin: { kind: 'run', owner: queryRunRef },
+          promptFacts,
           processSandboxOptions: hostConfig.processSandboxOptions,
           ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
           ...(sourceTools === undefined ? {} : { sourceTools }),

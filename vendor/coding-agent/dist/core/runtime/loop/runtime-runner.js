@@ -406,8 +406,27 @@ export class RuntimeRunner {
                     tokenBudget: context.input.tokenBudget,
                     maxOutputTokens: context.input.maxOutputTokens ?? null,
                 };
-                const selected = selectContext(builderInput, this.#tokenEstimator);
-                let request = this.#contextBuilder.build(selected.input);
+                const previewRequest = context.input.previewRequest ??
+                    (async (candidate) => {
+                        const inputTokens = estimateTokens(candidate, this.#tokenEstimator);
+                        return {
+                            outgoing: candidate,
+                            inputTokens,
+                            outputReserve: 0,
+                            fits: inputTokens <= context.input.tokenBudget,
+                        };
+                    });
+                const selection = await selectContext(builderInput, {
+                    historyEntryCount: history.length,
+                    taskInputMessageId: state.turn.userMessage.messageId,
+                    build: (candidate) => this.#contextBuilder.build(candidate),
+                    previewRequest,
+                    ...(context.input.reasoningReplay === undefined
+                        ? {}
+                        : { reasoningReplay: context.input.reasoningReplay }),
+                });
+                let request = selection.request;
+                let selectionReport = selection.report;
                 const beforeModel = await this.#hooks.beforeModel(state, request, context.cancellation.signal);
                 if (beforeModel.kind === "block") {
                     return this.#commit(state, context, "run.failed", {
@@ -428,12 +447,18 @@ export class RuntimeRunner {
                     return this.#commit(state, context, "run.failed", { failure: beforeModel.failure });
                 }
                 if (beforeModel.kind === "modify") {
-                    request = beforeModel.value;
-                    // Hook 可以调整提示词，但不能借此绕过调用方给定的模型上下文窗口。
-                    const modifiedEstimate = estimateTokens(request, this.#tokenEstimator);
-                    if (modifiedEstimate > context.input.tokenBudget) {
-                        throw new ContextSelectionError("required_content_over_budget", `Hook 修改后的请求需要 ${modifiedEstimate} tokens，预算为 ${context.input.tokenBudget}`);
+                    // Hook 可以调整提示词，但不能借此绕过调用方给定的模型上下文窗口；
+                    // 复核与选择使用同一个最终请求预览，报告带走复核后的计数。
+                    const rechecked = await previewRequest(beforeModel.value);
+                    if (!rechecked.fits) {
+                        throw new ContextSelectionError("required_content_over_budget", `Hook 修改后的请求需要 ${rechecked.inputTokens} tokens，输入预算为 ${context.input.tokenBudget - rechecked.outputReserve}`);
                     }
+                    request = rechecked.outgoing;
+                    selectionReport = {
+                        ...selection.report,
+                        inputTokens: rechecked.inputTokens,
+                        budget: context.input.tokenBudget - rechecked.outputReserve,
+                    };
                 }
                 state = await this.#commit(state, context, "model.request_started", {
                     requestId,
@@ -441,6 +466,7 @@ export class RuntimeRunner {
                 });
                 if (isTerminalRunStatus(state.status))
                     return state;
+                context.input.onContextSelected?.(selectionReport);
                 const stream = await consumeModelStream(this.#modelClient, request, {
                     signal: context.cancellation.signal,
                     ...(this.#onTextDelta

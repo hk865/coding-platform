@@ -19,4 +19,8 @@ export type BoundModel = {
   configuration: { revision: string; provider: string; model: string; baseUrl: string };
   client: ModelClientPort;
   inputCounter?: ModelInputCounter;
+  /** The trusted prompt selection the Host resolved for this binding. The Host
+   * always fills it; a model a test builds directly may omit it and then keeps
+   * the revision, `platform` pack and `current_run` replay. */
+  selection?: { modelId: string; promptPack: string; reasoningReplay: 'current_run' | 'none' };
 };

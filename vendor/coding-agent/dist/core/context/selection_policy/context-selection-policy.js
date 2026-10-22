@@ -24,135 +24,307 @@ export function estimateTokens(input, estimator) {
         throw new ContextSelectionError("token_estimation_failed", error instanceof Error ? error.message : "token estimator 失败");
     }
 }
-/**
- * assistant 与其完整 ToolResult 必须作为一个整体淘汰；当前用户消息和未闭合调用永不移除。
- */
-function removableTranscriptGroups(transcript) {
-    const groups = [];
-    const latestUserIndex = transcript.findLastIndex((entry) => entry.kind === "user_message");
-    for (let index = 0; index < transcript.length; index += 1) {
-        const entry = transcript[index];
-        if (entry.kind === "user_message") {
-            if (index !== latestUserIndex) {
-                groups.push({
-                    kind: "user_message",
-                    id: entry.message.messageId,
-                    messageId: entry.message.messageId,
-                });
-            }
-            continue;
-        }
-        if (entry.kind !== "assistant_message")
-            continue;
-        const expected = new Set(entry.toolCalls.map((call) => call.callId));
-        let cursor = index + 1;
-        while (cursor < transcript.length && transcript[cursor]?.kind === "tool_result") {
-            const result = transcript[cursor];
-            if (!expected.has(result.callId))
-                break;
-            expected.delete(result.callId);
-            cursor += 1;
-        }
-        if (expected.size === 0 && entry.toolCalls.length > 0) {
-            groups.push({
-                kind: "assistant_tool_exchange",
-                id: entry.message.messageId,
-                messageId: entry.message.messageId,
-                callIds: entry.toolCalls.map((call) => call.callId),
-            });
-        }
-        index = cursor - 1;
-    }
-    return groups;
+const TOOL_RESULT_PLACEHOLDER = (toolName, callId) => `内容因长度省略（工具 ${toolName}，调用 ${callId}），需要时重新读`;
+function emptyRemoved() {
+    return {
+        memory: 0,
+        skillReference: 0,
+        additionalInstruction: 0,
+        toolResultBody: 0,
+        historyExchange: 0,
+        historyConclusion: 0,
+        currentExchange: 0,
+    };
 }
 /**
- * 通过稳定业务标识删除完整交换，而不是复用会随前一次删除漂移的数组下标。
- * assistant messageId 与它声明的 callId 集合共同定义一个原子裁剪单位。
+ * 历史/当前标记只在过滤前计算一次；过滤只复制被改动的 entry 和 message，
+ * 不在原对象上 delete。思考过滤后既无正文、又无思考、也无调用的 assistant 才从出站副本移除。
  */
-function withoutTranscriptGroup(transcript, group) {
-    if (group.kind === "user_message") {
-        return transcript.filter((entry) => entry.kind !== "user_message" || entry.message.messageId !== group.messageId);
-    }
-    const callIds = new Set(group.callIds);
-    return transcript.filter((entry) => {
-        if (entry.kind === "assistant_message") {
-            return entry.message.messageId !== group.messageId;
+function outgoingEntries(transcript, historyEntryCount, replay) {
+    const result = [];
+    transcript.forEach((entry, index) => {
+        const history = index < historyEntryCount;
+        if (replay === undefined) {
+            result.push({ entry, history });
+            return;
         }
-        if (entry.kind === "tool_result")
-            return !callIds.has(entry.callId);
-        return true;
+        let outgoing = entry;
+        if (entry.kind === "assistant_message" &&
+            entry.message.reasoningContent !== undefined &&
+            (replay === "none" || history)) {
+            const { reasoningContent: _removed, ...message } = entry.message;
+            outgoing = { ...entry, message };
+        }
+        if (outgoing.kind === "assistant_message") {
+            const hasContent = outgoing.message.content.length > 0;
+            const hasReasoning = (outgoing.message.reasoningContent?.length ?? 0) > 0;
+            const hasCalls = outgoing.toolCalls.length > 0;
+            if (!hasContent && !hasReasoning && !hasCalls)
+                return;
+        }
+        result.push({ entry: outgoing, history });
     });
+    return result;
+}
+/**
+ * 完整交换 = assistant 声明的全部 callId 紧接着都有一条自己的结果。
+ * 只按真实相邻位置收结果；缺失结果的组保持未闭合，整组受保护。
+ */
+function scanExchanges(entries) {
+    const scans = [];
+    for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index].entry;
+        if (entry.kind !== "assistant_message" || entry.toolCalls.length === 0)
+            continue;
+        const expected = new Set(entry.toolCalls.map((call) => call.callId));
+        const resultIndexes = [];
+        let cursor = index + 1;
+        while (cursor < entries.length) {
+            const candidate = entries[cursor].entry;
+            if (candidate.kind !== "tool_result" || !expected.has(candidate.callId))
+                break;
+            expected.delete(candidate.callId);
+            resultIndexes.push(cursor);
+            cursor += 1;
+        }
+        scans.push({
+            assistantIndex: index,
+            callIds: entry.toolCalls.map((call) => call.callId),
+            resultIndexes,
+            closed: expected.size === 0,
+        });
+    }
+    return scans;
 }
 function removalOrder(left, right) {
     return left.priority - right.priority || right.id.localeCompare(left.id, "en");
 }
-function withoutId(values, id) {
-    return values.filter((value) => value.id !== id);
-}
-export function selectContext(input, estimator) {
-    let additionalInstructions = [...input.additionalInstructions];
-    let skills = [...input.skills];
-    let memories = [...input.memories];
-    let transcript = [...input.transcript];
-    const removed = [];
-    const buildInput = () => ({
-        ...input,
-        additionalInstructions,
-        skills,
-        memories,
-        transcript,
-    });
-    const estimate = () => estimateTokens(buildInput(), estimator);
-    let estimatedTokens = estimate();
-    if (estimatedTokens <= input.tokenBudget) {
-        return { input: buildInput(), estimatedTokens, removed };
+function buildRemovalUnits(input, entries, taskInputMessageId) {
+    const units = [];
+    for (const memory of [...input.memories].sort(removalOrder)) {
+        units.push({ kind: "memory", id: memory.id });
     }
-    const remove = (kind, item) => {
-        if (kind === "memory")
-            memories = withoutId(memories, item.id);
-        else if (kind === "additional_instruction") {
-            additionalInstructions = withoutId(additionalInstructions, item.id);
+    for (const skill of input.skills
+        .filter((value) => value.kind === "reference")
+        .sort(removalOrder)) {
+        units.push({ kind: "skillReference", id: skill.id });
+    }
+    for (const instruction of [...input.additionalInstructions].sort(removalOrder)) {
+        units.push({ kind: "additionalInstruction", id: instruction.id });
+    }
+    const callNames = new Map();
+    for (const value of entries) {
+        if (value.entry.kind !== "assistant_message")
+            continue;
+        for (const call of value.entry.toolCalls)
+            callNames.set(call.callId, call.name);
+    }
+    const scans = scanExchanges(entries);
+    const partlyClosedResults = new Set();
+    for (const scan of scans) {
+        if (scan.closed)
+            continue;
+        for (const resultIndex of scan.resultIndexes)
+            partlyClosedResults.add(resultIndex);
+    }
+    // 第 4 步：只缩历史成功结果正文；新 output 的 UTF-8 JSON 必须严格更短。
+    for (let index = 0; index < entries.length; index += 1) {
+        const { entry, history } = entries[index];
+        if (!history || entry.kind !== "tool_result")
+            continue;
+        if (entry.result.status !== "success" || partlyClosedResults.has(index))
+            continue;
+        const toolName = callNames.get(entry.callId);
+        if (toolName === undefined)
+            continue;
+        const output = [
+            { kind: "text", text: TOOL_RESULT_PLACEHOLDER(toolName, entry.callId) },
+        ];
+        if (Buffer.byteLength(JSON.stringify(output), "utf8") <
+            Buffer.byteLength(JSON.stringify(entry.result.output), "utf8")) {
+            units.push({ kind: "toolResultBody", callId: entry.callId, output });
         }
-        else
-            skills = withoutId(skills, item.id);
-        removed.push({ kind, id: item.id, source: item.source, reason: "budget" });
-        estimatedTokens = estimate();
-    };
-    for (const item of [...memories].sort(removalOrder)) {
-        if (estimatedTokens <= input.tokenBudget)
-            break;
-        remove("memory", item);
     }
-    for (const item of skills.filter((value) => value.kind === "reference").sort(removalOrder)) {
-        if (estimatedTokens <= input.tokenBudget)
-            break;
-        remove("skill_reference", item);
+    const latestUserIndex = entries.findLastIndex((value) => value.entry.kind === "user_message");
+    const protectedIds = new Set();
+    if (latestUserIndex >= 0) {
+        const latest = entries[latestUserIndex].entry;
+        if (latest.kind === "user_message")
+            protectedIds.add(latest.message.messageId);
     }
-    for (const item of [...additionalInstructions].sort(removalOrder)) {
-        if (estimatedTokens <= input.tokenBudget)
-            break;
-        remove("additional_instruction", item);
+    if (taskInputMessageId !== null)
+        protectedIds.add(taskInputMessageId);
+    const scanByAssistant = new Map();
+    for (const scan of scans)
+        scanByAssistant.set(scan.assistantIndex, scan);
+    // 第 5 步：历史消息按位置，完整交换与 user 消息各算一个单位。
+    for (let index = 0; index < entries.length; index += 1) {
+        const { entry, history } = entries[index];
+        if (!history)
+            continue;
+        if (entry.kind === "user_message") {
+            if (protectedIds.has(entry.message.messageId))
+                continue;
+            units.push({ kind: "historyExchange", id: entry.message.messageId });
+            continue;
+        }
+        const scan = scanByAssistant.get(index);
+        if (scan !== undefined && scan.closed) {
+            if (entry.kind !== "assistant_message")
+                continue;
+            units.push({
+                kind: "historyExchange",
+                id: entry.message.messageId,
+                callIds: scan.callIds,
+            });
+        }
     }
-    for (const item of skills.filter((value) => value.kind === "instruction").sort(removalOrder)) {
-        if (estimatedTokens <= input.tokenBudget)
-            break;
-        remove("skill_instruction", item);
+    // 第 6 步：历史中无工具调用的 assistant 结论。
+    for (const { entry, history } of entries) {
+        if (!history || entry.kind !== "assistant_message" || entry.toolCalls.length > 0)
+            continue;
+        units.push({ kind: "historyConclusion", id: entry.message.messageId });
     }
-    for (const group of removableTranscriptGroups(transcript)) {
-        if (estimatedTokens <= input.tokenBudget)
-            break;
-        transcript = withoutTranscriptGroup(transcript, group);
-        removed.push({
-            kind: "transcript_group",
-            id: group.id,
-            source: "transcript",
-            reason: "budget",
+    // 第 7 步：当前执行的完整工具交换；当前 user 与无调用 assistant 不在此列。
+    for (const scan of scans) {
+        if (entries[scan.assistantIndex].history || !scan.closed)
+            continue;
+        const assistant = entries[scan.assistantIndex].entry;
+        if (assistant.kind !== "assistant_message")
+            continue;
+        units.push({
+            kind: "currentExchange",
+            id: assistant.message.messageId,
+            callIds: scan.callIds,
         });
-        estimatedTokens = estimate();
     }
-    if (estimatedTokens > input.tokenBudget) {
-        throw new ContextSelectionError("required_content_over_budget", `不可裁剪 Context 需要 ${estimatedTokens} tokens，预算为 ${input.tokenBudget}`);
+    return units;
+}
+function applyPrefix(input, entries, units, count) {
+    let memories = [...input.memories];
+    let skills = [...input.skills];
+    let additionalInstructions = [...input.additionalInstructions];
+    let transcript = [...entries];
+    const removed = emptyRemoved();
+    for (let index = 0; index < count; index += 1) {
+        const unit = units[index];
+        removed[unit.kind] += 1;
+        switch (unit.kind) {
+            case "memory":
+                memories = memories.filter((value) => value.id !== unit.id);
+                break;
+            case "skillReference":
+                skills = skills.filter((value) => value.id !== unit.id);
+                break;
+            case "additionalInstruction":
+                additionalInstructions = additionalInstructions.filter((value) => value.id !== unit.id);
+                break;
+            case "toolResultBody": {
+                const output = unit.output;
+                if (output === undefined)
+                    throw new Error("toolResultBody 单位缺少替换正文");
+                transcript = transcript.map((value) => value.entry.kind === "tool_result" && value.entry.callId === unit.callId
+                    ? {
+                        ...value,
+                        entry: {
+                            ...value.entry,
+                            result: { ...value.entry.result, output },
+                        },
+                    }
+                    : value);
+                break;
+            }
+            case "historyConclusion":
+                transcript = transcript.filter((value) => value.entry.kind !== "assistant_message" ||
+                    value.entry.message.messageId !== unit.id);
+                break;
+            case "historyExchange":
+            case "currentExchange": {
+                if (unit.callIds === undefined) {
+                    transcript = transcript.filter((value) => value.entry.kind !== "user_message" ||
+                        value.entry.message.messageId !== unit.id);
+                    break;
+                }
+                const callIds = new Set(unit.callIds);
+                transcript = transcript.filter((value) => {
+                    if (value.entry.kind === "assistant_message") {
+                        return value.entry.message.messageId !== unit.id;
+                    }
+                    if (value.entry.kind === "tool_result")
+                        return !callIds.has(value.entry.callId);
+                    return true;
+                });
+                break;
+            }
+        }
     }
-    return { input: buildInput(), estimatedTokens, removed };
+    return {
+        selected: {
+            ...input,
+            memories,
+            skills,
+            additionalInstructions,
+            transcript: transcript.map((value) => value.entry),
+        },
+        removed,
+    };
+}
+/**
+ * 先 k=0；再 k=N；否则在 (0, N] 二分最小的可行前缀。
+ * 只使用自身预览返回 fits 的前缀；返回的是该次预览的 outgoing 请求。
+ */
+export async function selectContext(input, options) {
+    const entries = outgoingEntries(input.transcript, options.historyEntryCount, options.reasoningReplay);
+    const units = buildRemovalUnits(input, entries, options.taskInputMessageId);
+    const preview = async (count) => {
+        const prefix = applyPrefix(input, entries, units, count);
+        const request = options.build(prefix.selected);
+        const result = await options.previewRequest(request);
+        return { prefix, preview: result };
+    };
+    const report = (outcome) => ({
+        requestId: input.requestId,
+        inputTokens: outcome.preview.inputTokens,
+        budget: input.tokenBudget - outcome.preview.outputReserve,
+        removed: outcome.prefix.removed,
+    });
+    const finish = (outcome) => ({
+        selected: outcome.prefix.selected,
+        request: outcome.preview.outgoing,
+        report: report(outcome),
+    });
+    const zero = await preview(0);
+    if (zero.preview.fits)
+        return finish(zero);
+    if (units.length === 0) {
+        throw new ContextSelectionError("required_content_over_budget", `不可裁剪 Context 需要 ${zero.preview.inputTokens} tokens，输入预算为 ${input.tokenBudget - zero.preview.outputReserve}`);
+    }
+    const all = await preview(units.length);
+    const cache = new Map([
+        [0, zero],
+        [units.length, all],
+    ]);
+    if (!all.preview.fits) {
+        throw new ContextSelectionError("required_content_over_budget", `不可裁剪 Context 需要 ${all.preview.inputTokens} tokens，输入预算为 ${input.tokenBudget - all.preview.outputReserve}`);
+    }
+    let low = 1;
+    let high = units.length;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        let candidate = cache.get(middle);
+        if (candidate === undefined) {
+            candidate = await preview(middle);
+            cache.set(middle, candidate);
+        }
+        if (candidate.preview.fits)
+            high = middle;
+        else
+            low = middle + 1;
+    }
+    const chosen = cache.get(high);
+    if (!chosen.preview.fits) {
+        throw new ContextSelectionError("required_content_over_budget", `不可裁剪 Context 需要 ${chosen.preview.inputTokens} tokens，输入预算为 ${input.tokenBudget - chosen.preview.outputReserve}`);
+    }
+    return finish(chosen);
 }
 //# sourceMappingURL=context-selection-policy.js.map

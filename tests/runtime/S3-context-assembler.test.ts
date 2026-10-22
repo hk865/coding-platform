@@ -42,7 +42,6 @@ import type { RoleSpecContentV1, RoleSpecRevisionRef } from '../../src/contracts
 import type { RoleSpecResolutionV1 } from '../../src/contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import type { ContextAssemblerDependencies } from '../../src/core/agent-runtime/context-assembler.js';
-import { INITIAL_COORDINATION_RESPONSE_GUIDE } from '../../src/core/agent-runtime/query-preparation.js';
 import type { ResolvedRuntimeConfiguration } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { RawArtifactPut, RawArtifactRecord } from '../../src/core/record-store/body-ports.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
@@ -55,11 +54,16 @@ import type { MaterialPort } from '../../src/core/work-graph/model/material-cont
 import type { QueryPreparationFacts } from '../../src/core/work-graph/queries/contracts.js';
 import { createWP2Platform, preparedBundle, type WP2PlatformFixture } from '../helpers/WP2-platform-support.js';
 import {
-  CONTEXT_FORMAT_VERSION, CONTEXT_SECTION_HEADERS, CONTEXT_SECTION_ORDER, QUERY_CONTEXT_PRELUDE,
-  WORK_CONTEXT_PRELUDE, createContextAssembler, renderAttentionChanges, renderContext,
+  CONTEXT_FORMAT_VERSION, CONTEXT_SECTION_ORDER,
+  createContextAssembler, renderAttentionChanges, renderContext,
 } from '../../src/core/agent-runtime/context-assembler.js';
 
 void renderAttentionChanges;
+
+// Literal values of the platform pack that the production constants no longer
+// publish (J-07): the Work and Query context preludes.
+const WORK_CONTEXT_PRELUDE = '# Verified runtime task input\n\nThis is the current task context assembled from formal platform facts; it is not a transcript.';
+const QUERY_CONTEXT_PRELUDE = '# Verified read-only Query input\n\nThis is the current bounded Query context assembled from formal platform facts; it is not a transcript.';
 
 const H = (s: string): string => sha256Hex(s);
 const B = (s: string): number => Buffer.byteLength(s, 'utf8');
@@ -758,10 +762,10 @@ describe('S3 context assembler CA01-CA15', () => {
       expect(section?.startByte).toBeNull();
       expect(section?.endByte).toBeNull();
     }
-    expect(result.input).not.toContain(CONTEXT_SECTION_HEADERS.footprint);
-    expect(result.input).not.toContain(CONTEXT_SECTION_HEADERS.notes);
-    expect(result.input).not.toContain(CONTEXT_SECTION_HEADERS.reminders);
-    expect(result.input).not.toContain(CONTEXT_SECTION_HEADERS.inputs);
+    expect(result.input).not.toContain('## Footprint');
+    expect(result.input).not.toContain('## Note index');
+    expect(result.input).not.toContain('## Reminders');
+    expect(result.input).not.toContain('## Selected inputs');
     expect(result.input).toContain('## Runtime context\nR');
     expect(result.input).toContain('## Goal\nG');
     expect(result.input).toContain('## Accepted task\nT');
@@ -802,7 +806,7 @@ describe('S3 context assembler CA01-CA15', () => {
     expect(result.status).toBe('ready');
     const input = ready(result).value.input;
     // The missing declaration and tA's current facts are reminders, not a silent empty section.
-    const reminders = sectionText(input, CONTEXT_SECTION_HEADERS.reminders, CONTEXT_SECTION_HEADERS.inputs);
+    const reminders = sectionText(input, '## Reminders', '## Selected inputs');
     expect(reminders).toContain('d1');
     expect(reminders).toContain('tA');
     // Lead fix after the freeze: the fixture's extensions are not_implemented, so spec §4.3
@@ -828,7 +832,7 @@ describe('S3 context assembler CA01-CA15', () => {
       optional: { reminders: reminderRows }, continuationSuffix: suffix, residentBudgetBytes: 4096,
     });
     expect(result.input.endsWith(`\n\n${suffix}`)).toBe(true);
-    expect(sectionText(result.input, CONTEXT_SECTION_HEADERS.reminders, CONTEXT_SECTION_HEADERS.inputs)).toContain(anchorKey);
+    expect(sectionText(result.input, '## Reminders', '## Selected inputs')).toContain(anchorKey);
     expect(result.sections.at(-1)?.name).toBe('continuation');
     // Nothing follows the rendered brief.
     expect(result.input.slice(result.input.indexOf(suffix) + suffix.length)).toBe('');
@@ -861,7 +865,7 @@ describe('S3 context assembler CA01-CA15', () => {
       goalSettings: 'not_implemented', decisions: 'not_implemented',
     });
     // The specific not-connected wording of §4.3, never an empty-but-available section.
-    const reminders = sectionText(result.input, CONTEXT_SECTION_HEADERS.reminders, CONTEXT_SECTION_HEADERS.inputs);
+    const reminders = sectionText(result.input, '## Reminders', '## Selected inputs');
     expect(reminders).toContain('注记索引尚未接入');
     expect(reminders).toContain('异常锚点投影尚未接入');
   });
@@ -881,3 +885,90 @@ describe('S3 context assembler CA01-CA15', () => {
     }
   });
 });
+
+// The frozen literal of the platform pack's `initial-planning-answer` guide
+// (today's value; its production export was removed by J-07).
+const INITIAL_COORDINATION_RESPONSE_GUIDE = `Return exactly one JSON object as your entire final answer, with schemaVersion 2 and kind "plan" or "needs_decision": no preface, no trailing note, no commentary and no markdown or code fences. The platform parses that one object strictly and never extracts or repairs JSON out of surrounding text.
+For needs_decision, provide summary and questions (a non-empty array of strings); ask only the real product or authorization decisions the request leaves open. Do not invent authorization.
+For plan, provide summary and plan with schemaVersion 2 and the following fields:
+- stages: array of {stageId, title, description?}. A task references a stage only through its own stageId.
+- tasks: array of {taskId, stageId?, title, requirementLevel, taskKind, disposition, phase, scope, executionIntent?}. requirementLevel is "required" or "optional". taskKind is "work" or "gate". disposition is "active", "deferred", "cancelled" or "superseded". phase is "pending", "ready", "running", "verifying", "blocked", "satisfied" or "failed"; every task of a NEW plan starts "pending". scope is {kind:"goal"}, {kind:"stage",stageId} or {kind:"module",stageId,moduleRef}. Task scope.moduleRef is a non-empty STRING containing the moduleId, NOT the {projectId,moduleId} object used in the architecture catalog. executionIntent is "plan_only" or "request_execution" and may appear on a work task only.
+- assignments: array of {taskId, role, instruction}. A work task with executionIntent "request_execution" needs exactly one assignment whose role is one of the AVAILABLE roles/templateId shown in this context; a work task with executionIntent "plan_only" may omit it; a gate task must never carry an assignment or an executionIntent, because a gate conclusion comes from the formal evidence reduction, not from an execution run. A future work task with executionIntent "plan_only" may omit assignment, obligations/acceptance and dependencies; its incompleteness alone is not a reason to return needs_decision.
+- obligations: array of {obligationId, title, requirementLevel, taskIds, verificationRequirements}. taskIds lists only work/gate tasks of this same plan. Every verificationRequirements entry is {requirementId, requirementLevel, kind, description}; requirementLevel is "required" or "optional" and kind must be one of the requirementKinds of the effective CompletionPolicy shown in this context. A required obligation needs at least the policy's minimum number of required verification requirements.
+- taskHierarchy: {parentOf:[{parentTaskId, childTaskId}]}. It only expresses display grouping.
+- executionDag: {dependsOn:[{taskId, dependsOnId, requires:{kind, label}}]}. requires.kind is "output-contract", "artifact", "decision", "environment-revision" or "gate-result"; use a real versioned input/output dependency, keep the DAG acyclic and never make a task depend on itself.
+- taskRelations (optional): array of {fromTaskId, toTaskId, kind, note}; kind is "coordination" or "expected_dependency". It is advisory only and never a dispatch prerequisite.
+You MAY also add an OPTIONAL top-level "setup" sibling of "plan"; it is a SUGGESTION only and grants no Host/tool permission. It has exactly these three fields:
+- architecture: {baselineId, description, constraints:[{name, scope}], catalog:{requireDag:true, dependencies:[{from:{projectId, moduleId}, to:{projectId, moduleId}, reason}], modules:[{ref:{projectId, moduleId}, name, responsibility, paths, interfaces:[{id, description, paths}]}]}}. Every module ref MUST use the REAL projectId of this request; never guess a project/workspace id.
+- completionPolicy: {schemaVersion:1, requirementKinds:[...], minimumRequiredRequirementsPerObligation:N}. Copy the requirementKinds of the effective CompletionPolicy shown in this context. When no policy is shown, propose the smallest REAL policy this request needs; never emit an empty policy whose vacuously satisfied obligations would auto-PASS.
+- checks: array of {checkId, kind, command, cwd, timeoutMs, taskIds}. "kind" is exactly a policy requirement kind ("static" or "dynamic") and maps directly to the requirement.kind it satisfies; there is NO coverage field and never add one. taskIds is "all" or the real task ids. Use only a command that must really run for this request: never assume a test file exists, never copy an unrelated command, and never invent an empty check list to force a PASS.
+Omit "setup" entirely when you have no real architecture/policy/check to propose.
+Do not include planId, planRevision, goalId or origin: the platform derives identity from the saved Job project/goal/intentId and provenance from the real Goal/Workspace revisions and the actual answer digest.
+Choose every stage, task, scope, role, instruction, obligation, verification requirement and dependency from the actual request and the real sources. Never invent a gate, dependency, assignment, acceptance, verification requirement or role binding the request did not ask for, and never fill a genuinely missing decision with a default; ask that decision through needs_decision instead.
+The JSON example below is a SHAPE SAMPLE only: it shows the exact field names and legal enum values. It is NOT authorization for any task, role, acceptance, dependency, architecture, policy or check of this request. Do not copy its ids, projectId, role, tasks, obligations or dependencies; replace every value with the real one from this request.
+BEGIN_INITIAL_PLAN_EXAMPLE
+{
+  "schemaVersion": 2,
+  "kind": "plan",
+  "summary": "Shape sample only: replace every value with the real work of this request.",
+  "plan": {
+    "schemaVersion": 2,
+    "stages": [
+      { "stageId": "sample-stage", "title": "Shape sample stage" }
+    ],
+    "tasks": [
+      { "taskId": "sample-work", "stageId": "sample-stage", "title": "Shape sample executable work",
+        "requirementLevel": "required", "taskKind": "work", "disposition": "active", "phase": "pending",
+        "scope": { "kind": "stage", "stageId": "sample-stage" }, "executionIntent": "request_execution" },
+      { "taskId": "sample-gate", "title": "Shape sample goal gate",
+        "requirementLevel": "required", "taskKind": "gate", "disposition": "active", "phase": "pending",
+        "scope": { "kind": "goal" } },
+      { "taskId": "sample-future", "title": "Shape sample optional future intent",
+        "requirementLevel": "optional", "taskKind": "work", "disposition": "active", "phase": "pending",
+        "scope": { "kind": "goal" }, "executionIntent": "plan_only" }
+    ],
+    "assignments": [
+      { "taskId": "sample-work", "role": "<role-from-available-configuration>",
+        "instruction": "Shape sample instruction: replace with the real requested work" }
+    ],
+    "obligations": [
+      { "obligationId": "sample-obligation", "title": "Shape sample acceptance obligation",
+        "requirementLevel": "required", "taskIds": ["sample-work", "sample-gate"],
+        "verificationRequirements": [
+          { "requirementId": "sample-requirement", "requirementLevel": "required", "kind": "static",
+            "description": "Shape sample verification: replace with the real check from this request" }
+        ] }
+    ],
+    "taskHierarchy": { "parentOf": [] },
+    "executionDag": { "dependsOn": [
+      { "taskId": "sample-gate", "dependsOnId": "sample-work",
+        "requires": { "kind": "artifact", "label": "Shape sample required input for the gate" } }
+    ] }
+  },
+  "setup": {
+    "architecture": {
+      "baselineId": "sample-baseline",
+      "description": "Shape sample: replace with the real initial boundary of this project",
+      "constraints": [],
+      "catalog": {
+        "requireDag": true,
+        "dependencies": [],
+        "modules": [
+          { "ref": { "projectId": "<real-project-id-from-this-request>", "moduleId": "sample-module" },
+            "name": "Shape sample module", "responsibility": "Replace with the real responsibility",
+            "paths": ["src"], "interfaces": [] }
+        ]
+      }
+    },
+    "completionPolicy": {
+      "schemaVersion": 1,
+      "requirementKinds": ["static"],
+      "minimumRequiredRequirementsPerObligation": 1
+    },
+    "checks": [
+      { "checkId": "sample-check", "kind": "static", "command": "<real-command-that-must-run>",
+        "cwd": ".", "timeoutMs": 60000, "taskIds": "all" }
+    ]
+  }
+}
+END_INITIAL_PLAN_EXAMPLE`;

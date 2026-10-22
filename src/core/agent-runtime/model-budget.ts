@@ -1,4 +1,4 @@
-import type { ModelClientPort, ModelRequest, ModelEvent } from '../../../vendor/coding-agent/dist/public-api.js';
+import type { ContextPreviewResult, ModelClientPort, ModelRequest, ModelEvent } from '../../../vendor/coding-agent/dist/public-api.js';
 import { createHash } from 'node:crypto';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 export { DEFAULT_RUNTIME_BUDGET, validateRuntimeBudget, type RuntimeBudget } from '../../contracts/runtime-budget.js';
@@ -6,6 +6,11 @@ export type InputTokenMeasurement = { tokens: number; method: 'model_tokenizer' 
 export type ModelInputCounter = { count(request: ModelRequest): InputTokenMeasurement | Promise<InputTokenMeasurement> };
 export type MeterEntry = { requestId: string; reservedInput: number; reservedOutput: number; inputTokens: number | null; outputTokens: number | null; cachedInputTokens: number | null; status: 'reserved' | 'reported' | 'unknown';
   inputMeasurement?: InputTokenMeasurement; inputBytes?: number; inputDigest?: string; contextWindowTokens?: number };
+export type MeasuredModelRequest = {
+  outgoing: ModelRequest; output: number; inputBytes: number;
+  measurement: InputTokenMeasurement; fits: boolean;
+};
+
 export class BudgetExceeded extends Error {}
 export class ContextCapacityExceeded extends Error {
   constructor(readonly detail: { input: InputTokenMeasurement; outputReserve: number; contextWindow: number; inputBytes: number; inputDigest: string }) {
@@ -75,24 +80,53 @@ export class ModelBudget {
       throw new BudgetExceeded('持久任务累计 Token 预算不足，未发送下一次请求');
     }
   }
-  wrap(client: ModelClientPort): ModelClientPort {
+  /**
+   * The one side-effect-free measurement shared by `preview`, `wrap` and the
+   * request facts: the output cap, the complete final request (with that cap),
+   * its input count and whether the pair fits the context window. It pushes no
+   * entry, persists nothing and does not mark the meter exhausted. `totals` is
+   * captured by the caller when the measurement must share one account snapshot
+   * (the real reservation does).
+   */
+  private async measure(request: Readonly<ModelRequest>, totals = this.totals()): Promise<MeasuredModelRequest> {
+    const output = Math.min(request.maxOutputTokens ?? this.limits.perResponseTokens, this.limits.perResponseTokens, this.limits.outputTokens === null ? Infinity : this.limits.outputTokens - totals.output);
+    const outgoing = { ...request, maxOutputTokens: output };
+    // Count the complete final request, including system/tool schemas and
+    // tool history. Estimates and provider-reported usage remain separate.
+    const inputBytes = Buffer.byteLength(JSON.stringify(outgoing), 'utf8');
+    const measurement = this.counter ? await this.counter.count(outgoing) : { tokens: inputBytes + 4096, method: 'conservative_utf8_estimate' as const, tokenizer: 'unavailable; UTF-8 reservation only' };
+    if (!Number.isSafeInteger(measurement.tokens) || measurement.tokens < 0 || !['model_tokenizer', 'conservative_utf8_estimate'].includes(measurement.method)) throw Error('输入 Token 计量无效；模型尚未调用');
+    return { outgoing, output, inputBytes, measurement,
+      fits: measurement.tokens + output <= this.limits.contextWindowTokens };
+  }
+  /**
+   * Ruling 21: the Kernel's context selection measures through this method.
+   * The next preview reads the same account's `totals()`, so the reserve follows
+   * cumulative output (PC-15). The real reservation stays in `wrap`.
+   */
+  async preview(request: ModelRequest): Promise<ContextPreviewResult> {
+    const { outgoing, output, measurement, fits } = await this.measure(request);
+    return { outgoing, inputTokens: measurement.tokens, outputReserve: output, fits };
+  }
+  /**
+   * `beforeReserve` receives the exact measurement this call reserves from, just
+   * before the entry is pushed, so the request facts take the same cap and count
+   * and no outer copy of the formula exists.
+   */
+  wrap(client: ModelClientPort, beforeReserve?: (measured: MeasuredModelRequest) => void): ModelClientPort {
     const self = this;
     return { async *stream(request, options) {
       const totals = self.totals();
-      const output = Math.min(request.maxOutputTokens ?? self.limits.perResponseTokens, self.limits.perResponseTokens, self.limits.outputTokens === null ? Infinity : self.limits.outputTokens - totals.output);
-      const outgoing = { ...request, maxOutputTokens: output };
-      // Count the complete final request, including system/tool schemas and
-      // tool history. Estimates and provider-reported usage remain separate.
-      const inputBytes = Buffer.byteLength(JSON.stringify(outgoing), 'utf8');
-      const measurement = self.counter ? await self.counter.count(outgoing) : { tokens: inputBytes + 4096, method: 'conservative_utf8_estimate' as const, tokenizer: 'unavailable; UTF-8 reservation only' };
-      if (!Number.isSafeInteger(measurement.tokens) || measurement.tokens < 0 || !['model_tokenizer', 'conservative_utf8_estimate'].includes(measurement.method)) throw Error('输入 Token 计量无效；模型尚未调用');
+      const measured = await self.measure(request, totals);
+      const { outgoing, output, inputBytes, measurement, fits } = measured;
       const input = measurement.tokens;
       if ((self.limits.maxRequests !== null && self.entries.length >= self.limits.maxRequests) || (self.limits.inputTokens !== null && totals.input + input > self.limits.inputTokens) || output <= 0) { self.exhausted = true; throw new BudgetExceeded('累计调用预算不足，未发送下一次请求'); }
       // The persistent Run budget is a stronger cumulative guard than the
       // Kernel's post-usage maxTotalTokens: refuse the reservation first.
       self.assertTaskBudgetAdmissible(input, output);
       const inputDigest = createHash('sha256').update(JSON.stringify(outgoing)).digest('hex');
-      if (input + output > self.limits.contextWindowTokens) throw new ContextCapacityExceeded({ input: measurement, outputReserve: output, contextWindow: self.limits.contextWindowTokens, inputBytes, inputDigest });
+      if (!fits) throw new ContextCapacityExceeded({ input: measurement, outputReserve: output, contextWindow: self.limits.contextWindowTokens, inputBytes, inputDigest });
+      beforeReserve?.(measured);
       const entry: MeterEntry = { requestId: request.requestId, reservedInput: input, reservedOutput: output, inputTokens: null, outputTokens: null, cachedInputTokens: null, status: 'reserved', inputMeasurement: measurement, inputBytes, inputDigest, contextWindowTokens: self.limits.contextWindowTokens };
       self.entries.push(entry); await self.persist(self.entries);
       let usage: Extract<ModelEvent, { type: 'usage_snapshot' }>['usage'] | undefined;

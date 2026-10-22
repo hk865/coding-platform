@@ -776,7 +776,8 @@ export const AG2B_WORK_TOOLS: readonly string[] = ['read', 'write', 'find_relate
  * binding as the Host builds it (the advisor template, read-only tools).
  */
 export function ag2bWorkRuntime(model: () => ScriptedModel,
-  options: { tools?: readonly string[]; queryModel?: ScriptedModel } = {}): RuntimeHostBindings {
+  // The Host's computed id: the double carries it so a run the Host prepared starts on it.
+  options: { tools?: readonly string[]; queryModel?: ScriptedModel; workModelId?: string } = {}): RuntimeHostBindings {
   const queryModel = options.queryModel;
   return {
     async resolveConfiguration(context, request) {
@@ -790,6 +791,10 @@ export function ag2bWorkRuntime(model: () => ScriptedModel,
         configurationRevision: 'ag2b-work-host@1',
         model: { configuration: { revision: 'ag2b-work-model@1', provider: 'deepseek', model: 'ag2b-scripted-work',
           baseUrl: 'http://127.0.0.1' }, client: model().client,
+          ...(options.workModelId === undefined ? {} : {
+            selection: { modelId: options.workModelId, promptPack: 'platform',
+              reasoningReplay: 'current_run' as const },
+          }),
         inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'scenario-counter' }) } },
         budget: AG2B_RUNTIME_BUDGET,
         hostTemplate: request.role.kind === 'legacy_template'

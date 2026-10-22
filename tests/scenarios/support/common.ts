@@ -55,9 +55,10 @@ import type { GoalDisplayV1 } from '../../../src/core/work-graph/state/goal-mach
 import type { HostInstanceFacts } from '../../../src/core/work-graph/model/execution-entry-contracts.js';
 import type { TaskRow } from '../../../src/core/work-graph/model/plan-contracts.js';
 import type { ModelRequest } from '../../../vendor/coding-agent/dist/public-api.js';
+import { runtimeModelId } from '../../../src/app/runtime-configuration.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../../helpers/B2-runtime-fixture.js';
 import {
-  AG2B_AT, AG2B_CHECK_COMMAND, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_RESULT_FILE, AG2B_RESULT_TEXT, AG2B_SCOPE, AG2B_WORK_ROLE,
+  AG2B_AT, AG2B_CHECK_COMMAND, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_RESULT_FILE, AG2B_RESULT_TEXT, AG2B_SCOPE, AG2B_SECRET_VAR, AG2B_WORK_ROLE,
   AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, ag2bChecksConfiguration, corePost, graphWrite, permissionRevision, plain,
   seedAG2bWorkGraph, startAG2bHost, writeAG2bWorkspace, type AG2bHost,
 } from '../../helpers/AG2b-collaboration-fixture.js';
@@ -738,6 +739,8 @@ export async function openWorkRoot(h: HostScenario, model: ScriptedModel = creat
     kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
       databasePath: join(h.database, 'kernel.sqlite') }] },
     runtime: ag2bWorkRuntime(() => model, { ...(queryModel === undefined ? {} : { queryModel }),
+      workModelId: runtimeModelId({ provider: 'deepseek', model: 'ag2b-scripted-work',
+        secretEnvironmentVariable: AG2B_SECRET_VAR }),
       ...(tools === undefined ? {} : { tools }) }),
     ...(observer === undefined ? {} : { commitObserver: observer }),
     ...(hostInstance === undefined ? {} : { hostInstance }),

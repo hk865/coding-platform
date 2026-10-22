@@ -13,13 +13,15 @@
  * Runtime consumer separately proves the real external call.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { ModelRequestPermitRef } from '../../../contracts/dispatch.js';
-import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { PreparedCommit, RecordGuard } from '../../record-store/ports.js';
+import type { ModelRequestPermitRef, RunRef } from '../../../contracts/dispatch.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { PreparedCommit, RecordGuard, StoreFailure, StoreResult, UniqueClaimChange } from '../../record-store/ports.js';
+import type { RecordLookupPage } from '../../record-store/lookup-ports.js';
 import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import { dispatchOutboxRefKey, taskAttemptRefKey } from './claim-record-codecs.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
+import { ownerReadStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import {
   admitEnteredRun, bindTrustedContext, checkRunAndPermitPins, checkRunPin, isRecord, isSha256Hex,
@@ -28,17 +30,20 @@ import {
 import type { EnteredAdmission } from './execution-entry-service.js';
 import type {
   ActualModelRequest, IssuedModelRequest, ModelCallServiceDependencies, ModelRequestPort,
+  ModelRequestReadPort, ModelRequestPermitV1,
 } from './model-call-contracts.js';
 import { modelRequestPermitIdFor } from './model-call-contracts.js';
-import type { ModelRequestPermitSnapshot, ModelRequestPermitV1 } from './model-call-contracts.js';
+import type { ModelRequestPermitSnapshot } from './model-call-contracts.js';
 import {
-  MODEL_REQUEST_AUTHORIZED_EVENT_TYPE, MODEL_REQUEST_EVENT_SCHEMA_VERSION, MODEL_REQUEST_EVIDENCE_EVENT_TYPE,
+  MODEL_REQUEST_AUTHORIZED_EVENT_TYPE, MODEL_REQUEST_BY_RUN_LOOKUP, MODEL_REQUEST_EVENT_SCHEMA_VERSION,
+  MODEL_REQUEST_EVIDENCE_EVENT_TYPE,
   decodeModelRequestPermitSnapshot, encodeModelRequestPermitSnapshot, encodeModelRequestRecordedEvent,
-  modelRequestRecordedEventFromEvent, type ModelRequestRecordedEvent,
+  modelRequestPromptProblem, modelRequestRecordedEventFromEvent, type ModelRequestRecordedEvent,
 } from './model-request-codecs.js';
 
 const MODEL_AUTHORIZE_PREFIX = 'b2-model-authorize:';
 const MODEL_CONSUME_PREFIX = 'b2-model-consume:';
+const MODEL_REQUEST_LOOKUP_PAGE = 200;
 
 type HostActor = { kind: 'human' | 'system'; id: string };
 
@@ -66,7 +71,72 @@ function actualModelRequestProblem(value: unknown): CoreRejection | null {
   if (!isSha256Hex(value['requestDigest'])) return { status: 'rejected', code: 'invalid', reason: 'the actual model request requestDigest must be a sha256 hex' };
   if (!isSha256Hex(value['contextInputDigest'])) return { status: 'rejected', code: 'invalid', reason: 'the actual model request contextInputDigest must be a sha256 hex' };
   if (!isSha256Hex(value['manifestDigest'])) return { status: 'rejected', code: 'invalid', reason: 'the actual model request manifestDigest must be a sha256 hex' };
+  const promptProblem = modelRequestPromptProblem(value['prompt']);
+  if (promptProblem !== null) return { status: 'rejected', code: 'invalid', reason: `the actual model request ${promptProblem}` };
   return null;
+}
+/** One Run+sequence slot: a lost claim means a broken caller, never a retry. */
+function modelRequestSequenceClaimKey(runRef: RunRef, sequence: number): string {
+  return `model-request-sequence:${canonicalJson(runRef as unknown as JsonValue)}:${String(sequence)}`;
+}
+/**
+ * The authorization's own failure map: its only unique claim is the sequence
+ * slot, so a lost claim is `busy` with this lane's text (never the shared
+ * Kernel identity-slot text).
+ */
+function authorizationStoreFailure(failure: StoreFailure): CoreRejection {
+  if (failure.code === 'unique_conflict') {
+    return { status: 'rejected', code: 'busy', reason: 'the model request sequence slot is already taken' };
+  }
+  return mapStoreFailure(failure);
+}
+function completeRunRef(value: unknown): value is RunRef {
+  return isRecord(value) && value['aggregateType'] === 'Run'
+    && nonEmpty(value['projectId']) && nonEmpty(value['goalId']) && nonEmpty(value['runId']);
+}
+/**
+ * The one permit read (ruling 28): the registered Run lookup, paged, decoded,
+ * then ordered by `sequence`. It never scans records and never reads Kernel
+ * history.
+ */
+async function listRunPermits(
+  records: ModelCallServiceDependencies['records'],
+  runRef: RunRef,
+): Promise<ReadResult<ModelRequestPermitV1[]>> {
+  const permits: ModelRequestPermitV1[] = [];
+  const seen = new Set<string>();
+  let after: string | undefined;
+  for (;;) {
+    let page: StoreResult<RecordLookupPage>;
+    try {
+      page = await records.lookup({ index: MODEL_REQUEST_BY_RUN_LOOKUP,
+        values: [runRef.projectId, runRef.goalId, runRef.runId], limit: MODEL_REQUEST_LOOKUP_PAGE,
+        ...(after === undefined ? {} : { after }) });
+    } catch (error) {
+      return { status: 'rejected', code: 'unavailable',
+        reason: `the model request permits could not be read: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    if (page.status !== 'ready') return ownerReadStoreFailureToRejection(page);
+    for (const record of page.value.records) {
+      const decoded = decodeModelRequestPermitSnapshot(record);
+      if (decoded.status !== 'decoded') {
+        return { status: 'rejected', code: 'unavailable', reason: `a stored model request permit is damaged: ${decoded.reason}` };
+      }
+      if (!sameRef(decoded.value.permit.runRef, runRef)) {
+        return { status: 'rejected', code: 'unavailable', reason: 'a stored model request permit names another Run' };
+      }
+      permits.push(decoded.value.permit);
+    }
+    const next = page.value.next;
+    if (next === null) break;
+    if (seen.has(next)) {
+      return { status: 'rejected', code: 'unavailable', reason: 'the model request permit pages did not advance' };
+    }
+    seen.add(next);
+    after = next;
+  }
+  permits.sort((left, right) => left.sequence - right.sequence);
+  return { status: 'ready', value: permits };
 }
 function claimChainGuards(admission: EnteredAdmission, runPinRevision: number): RecordGuard[] {
   const { run, attempt, outbox, plan, session, lease } = admission.facts;
@@ -136,15 +206,24 @@ export function createModelCallService(deps: ModelCallServiceDependencies): Mode
       if (existing.value.records.length > 0) {
         return { status: 'rejected', code: 'revision_conflict', reason: 'a model request permit already exists for this request' };
       }
+      // Ruling 26: the next slot is read from the Run's permits; the unique
+      // claim below, not the Run revision, makes it atomic.
+      const listed = await listRunPermits(records, claim.runRef);
+      if (listed.status !== 'ready') {
+        return listed.status === 'rejected' ? listed
+          : { status: 'rejected', code: 'unavailable', reason: 'the model request permits are not readable' };
+      }
+      const sequence = listed.value.length + 1;
       const nowIso = deps.now();
       const eventId = deps.eventId();
       if (!nonEmpty(nowIso) || !nonEmpty(eventId)) {
         return { status: 'rejected', code: 'unsupported', reason: 'the injected id/clock source produced an empty value' };
       }
       const permit: ModelRequestPermitV1 = {
-        schemaVersion: 1, permitId: permitRef.permitId, runRef: claim.runRef,
+        schemaVersion: 1, permitId: permitRef.permitId, sequence, runRef: claim.runRef,
         requestId: actual.requestId, requestDigest: actual.requestDigest,
         contextInputDigest: actual.contextInputDigest, manifestDigest: actual.manifestDigest,
+        prompt: actual.prompt,
         deliveryRefs: inputBinding.deliveryRefs, permissions: manifest.permissions,
         consumedByAttemptId: null, issuedAt: nowIso, consumedAt: null,
       };
@@ -155,16 +234,18 @@ export function createModelCallService(deps: ModelCallServiceDependencies): Mode
         schemaVersion: MODEL_REQUEST_EVENT_SCHEMA_VERSION, occurredAt: nowIso,
         identityKey: identity, actor, fingerprint, permitRef, permit, runRevision: facts.run.revision,
       };
+      const claims: UniqueClaimChange[] = [{ claimKey: modelRequestSequenceClaimKey(claim.runRef, sequence),
+        expectedOwner: null, nextOwner: permitRef.permitId }];
       const merged = mergeGuards([
         ...claimChainGuards(admitted.value, runPin.revision),
         { refKey: permitKey, expectedRevision: null },
       ]);
       if (!merged.ok) return merged.rejection;
       const prepared: PreparedCommit = { identityKey: identity, fingerprint, guards: merged.guards, records: [record],
-        claims: [], indexGuards: [], indexChanges: [], events: [encodeModelRequestRecordedEvent(event)] };
+        claims, indexGuards: [], indexChanges: [], events: [encodeModelRequestRecordedEvent(event)] };
       if (signal.aborted) return { status: 'rejected', code: 'cancelled', reason: 'the model authorization was cancelled before commit' };
       const receipt = await records.commit(prepared);
-      if (receipt.status !== 'committed') return mapStoreFailure(receipt);
+      if (receipt.status !== 'committed') return authorizationStoreFailure(receipt);
       if (receipt.replayed) return await replayModel(records, receipt, identity, fingerprint, actor, permitRef);
       return { status: 'committed', value: { permitRef, permit, runRevision: facts.run.revision }, replayed: false, cursor: receipt.cursor };
     } catch (error) {
@@ -245,7 +326,8 @@ export function createModelCallService(deps: ModelCallServiceDependencies): Mode
       if (!sameRef(stored.permit.runRef, claim.runRef) || stored.permit.permitId !== permitRef.permitId
         || stored.permit.requestId !== actual.requestId || stored.permit.requestDigest !== actual.requestDigest
         || stored.permit.contextInputDigest !== actual.contextInputDigest
-        || stored.permit.manifestDigest !== actual.manifestDigest) {
+        || stored.permit.manifestDigest !== actual.manifestDigest
+        || !sameJson(stored.permit.prompt, actual.prompt)) {
         return { status: 'rejected', code: 'forbidden', reason: 'the stored permit does not match the actual request' };
       }
       const consumed: ModelRequestPermitV1 = { ...stored.permit, consumedByAttemptId: attemptId, consumedAt: observedAt };
@@ -275,6 +357,37 @@ export function createModelCallService(deps: ModelCallServiceDependencies): Mode
   }
 
   return { authorizeModelRequest, recordModelRequestAttempt };
+}
+
+/**
+ * The separate Work read port (ruling 28). One Run's permits by `sequence`
+ * through the registered lookup; no record scan and no Kernel history.
+ */
+export function createModelRequestReadPort(
+  deps: Pick<ModelCallServiceDependencies, 'records'>,
+): ModelRequestReadPort {
+  return {
+    async listRunModelRequests(ctx: CoreCallContext, runRef: RunRef): Promise<ReadResult<ModelRequestPermitV1[]>> {
+      const owned = bindTrustedContext(ctx);
+      if (!owned.ok) return owned.rejection;
+      let isolated: RunRef;
+      try {
+        isolated = structuredClone(runRef);
+      } catch {
+        return { status: 'rejected', code: 'invalid', reason: 'the Run ref cannot be isolated from the caller' };
+      }
+      if (!completeRunRef(isolated)) {
+        return { status: 'rejected', code: 'invalid', reason: 'listRunModelRequests requires a complete RunRef' };
+      }
+      if (isolated.projectId !== owned.scope.projectId) {
+        return { status: 'rejected', code: 'forbidden', reason: 'the Run belongs to another project' };
+      }
+      if (owned.signal.aborted) {
+        return { status: 'rejected', code: 'cancelled', reason: 'the model request read was cancelled before lookup' };
+      }
+      return await listRunPermits(deps.records, isolated);
+    },
+  };
 }
 
 async function replayModel(

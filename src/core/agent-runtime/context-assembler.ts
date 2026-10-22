@@ -13,8 +13,8 @@ export type {
   ArchitectureReminderReadPort, AssembledContextV1, ContextAssembler, ContextAssemblerDependencies,
 } from './context-types.js';
 export {
-  ATTENTION_HEADER, ATTENTION_MAX_BYTES, CONTEXT_FORMAT_VERSION, CONTEXT_SECTION_HEADERS,
-  CONTEXT_SECTION_ORDER, QUERY_CONTEXT_PRELUDE, WORK_CONTEXT_PRELUDE, renderAttentionChanges, renderContext,
+  ATTENTION_HEADER, ATTENTION_MAX_BYTES, CONTEXT_FORMAT_VERSION,
+  CONTEXT_SECTION_ORDER, renderAttentionChanges, renderContext,
 } from './context-rendering.js';
 export {
   REVIEW_COMMAND_MAX_BYTES, buildUnknownCallReviewInputV1, trimUnknownCallReviewInput,

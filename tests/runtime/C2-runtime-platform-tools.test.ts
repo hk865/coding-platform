@@ -13,13 +13,14 @@
  * for exactly that reason and are frozen for the implementation phase.
  */
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../src/contracts/prompts/platform-pack.generated.js';
+import { PLATFORM_SKILLS } from '../../src/contracts/prompts/platform-skills.js';
 import { createSessionMailboxTools, SESSION_MAILBOX_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { WHITEBOARD_TOOL_NAMES } from '../../src/core/agent-runtime/whiteboard-tools.js';
 import type { ModelRequest, ToolCall, ToolResult, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
@@ -60,10 +61,14 @@ function toolJson(request: ModelRequest | undefined, callId: string): unknown {
 function callArgs(reply: ScriptedReply | undefined): Record<string, unknown> | undefined {
   return reply !== undefined && reply.kind === 'calls' ? reply.calls[0]?.args : undefined;
 }
-async function skillBodies(): Promise<Record<string, string>> {
-  const entries = await Promise.all(C2_SKILL_IDS.map(async id =>
-    [id, await readFile(join(new URL('../../resources/skills', import.meta.url).pathname, id, 'content.md'), 'utf8')] as const));
-  return Object.fromEntries(entries);
+/** Ruling 15: the platform Skill bodies are the pack templates, not the old directory. */
+function skillBodies(): Record<string, string> {
+  const templates = PLATFORM_PROMPT_PACK_V1.templates as Readonly<Record<string, string>>;
+  return Object.fromEntries(C2_SKILL_IDS.map(id => {
+    const entry = PLATFORM_SKILLS.find(skill => skill.id === id);
+    if (entry === undefined) throw new Error(`no platform Skill ${id}`);
+    return [id, templates[entry.templateId] ?? ''] as const;
+  }));
 }
 
 describe('C2 platform tool adapters', () => {
@@ -124,7 +129,7 @@ describe('C2 platform tool adapters', () => {
 
 describe('C2 real Runtime consumer over the production composition (phase-2 target)', () => {
   it('runs a real inbox -> body -> respond round through the model with the three deployed skills (RED)', async () => {
-    const bodies = await skillBodies();
+    const bodies = skillBodies();
     const safety = await readFile(C2_SAFETY_PATH, 'utf8');
     expect(safety.trim().length).toBeGreaterThan(0);
     let messageRef: SessionMessageRef | undefined;
@@ -204,7 +209,7 @@ describe('C2 real Runtime consumer over the production composition (phase-2 targ
       expect(names).not.toContain(forbidden);
     }
     // An explicit empty Skill set must not fall back to any deployed skill.
-    const bodies = await skillBodies();
+    const bodies = skillBodies();
     for (const id of C2_SKILL_IDS) expect(fx.scripted.requests[0]?.systemPrompt ?? '').not.toContain(bodies[id]);
   });
 

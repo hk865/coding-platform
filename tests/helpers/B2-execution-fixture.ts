@@ -38,6 +38,7 @@ import { createExecutionEntryService } from '../../src/core/work-graph/tasks/exe
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
+import { PROMPT_TOOL_SPECS_CONTENT_TYPE, type ModelRequestPromptFactsV1 } from '../../src/contracts/prompts/prompt-set.js';
 import type { ModelRequestPort, ActualModelRequest } from '../../src/core/work-graph/tasks/model-call-contracts.js';
 import { createModelCallService } from '../../src/core/work-graph/tasks/model-call-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
@@ -48,6 +49,18 @@ export const B2_HOST = {
   configurationRevision: 'b2-host-config-1',
   permissions: { policyRevision: 'legacy-template', tools: ['read'], writeScope: [] as string[] },
   hostTemplate: { templateId: 'builder', revision: '1', digest: artifactBodyDigest('trusted builder template revision 1') },
+};
+/** The frozen prompt facts a real Runtime sends with one model request (ruling 26). */
+export const B2_PROMPT_FACTS: ModelRequestPromptFactsV1 & { maxOutputTokens: number } = {
+  systemDigest: artifactBodyDigest('b2 system prompt'),
+  toolsDigest: artifactBodyDigest('b2 tool specs'),
+  toolSpecsRef: { kind: 'artifact', contentType: PROMPT_TOOL_SPECS_CONTENT_TYPE,
+    digest: artifactBodyDigest('b2 tool specs'), sizeBytes: Buffer.byteLength('b2 tool specs'),
+    source: { kind: 'workspace', refId: 'b2-workspace', revision: '1' } },
+  maxOutputTokens: 512,
+  selection: { inputTokens: 128, budget: 128000,
+    removed: { memory: 1, skillReference: 2, additionalInstruction: 3, toolResultBody: 4,
+      historyExchange: 5, historyConclusion: 6, currentExchange: 7 } },
 };
 export type B2Records = TaskClaimFixture['records'];
 type B2Ports = { entry: ExecutionEntryPort; model: ModelRequestPort };
@@ -315,7 +328,8 @@ export async function createB2ExecutionFixture<Base extends TaskClaimFixture = T
   function actualRequest(admitted: B2Admitted, requestId = 'b2-actual-request'): ActualModelRequest {
     return { permit: admitted.permit, requestId, requestDigest: artifactBodyDigest(JSON.stringify({ requestId, input: B2_INPUT })),
       contextInputDigest: admitted.prepared.inputBinding.inputDigest,
-      manifestDigest: admitted.prepared.inputBinding.manifestDigest };
+      manifestDigest: admitted.prepared.inputBinding.manifestDigest,
+      prompt: structuredClone(B2_PROMPT_FACTS) };
   }
   function terminalObservation(admitted: B2Admitted) {
     return { claim: admitted.prepared.claim,

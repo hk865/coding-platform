@@ -18,12 +18,18 @@ import type { SourceRefV1 } from '../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
-import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { PromptPackSourcePort, ResolvedPromptPackV1 } from '../../contracts/prompts/prompt-pack.js';
+import { promptSelectionOf } from '../../contracts/prompts/prompt-set.js';
+import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { plainSessionRefToAggregate } from '../work-graph/sessions/session-record-codecs.js';
 import { SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
 import { WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
 import type { ContextAssembler } from './context-assembler.js';
 import { createContextAssembler } from './context-assembler.js';
+import { queryPreparedSectionOrder } from './context-rendering.js';
+import {
+  resolvePromptPack, selectPromptSkills, storePromptTexts, trackPromptTexts, type PromptPartsV1,
+} from './prompt-set-texts.js';
 import type {
   PrepareQueryExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies,
 } from './execution-contracts.js';
@@ -35,20 +41,6 @@ export type QueryPreparationPort = {
 /** Exact manifest content type (declared once in contracts, ND-9); the Query writer re-reads the body and requires this. */
 export { QUERY_MANIFEST_CONTENT_TYPE };
 export const MAX_QUERY_MANIFEST_BYTES = ARTIFACT_MAX_SIZE_BYTES;
-
-/**
- * R5b.4 §11.3 initial_coordination response guide seam.
- *
- * The ONE response contract for a verified `initial_coordination` Query. It
- * upgrades the legacy reply to the v2 protocol: plan identity is derived by the
- * platform, a `plan_only` task may omit assignment/acceptance, and the model
- * never invents a gate, dependency, assignment or Role binding. Stage one
- * declares the seam only; ordinary Query preparation is unchanged and does not
- * inject it. Stage two appends it to the bounded Query input for exactly the
- * verified `initial_coordination` request, using the same trusted Role/Skill/
- * Host configuration, and adds no write-tool grant.
- */
-export const INITIAL_COORDINATION_RESPONSE_GUIDE = PLATFORM_PROMPT_PACK_V1.templates['initial-planning-answer'];
 
 /**
  * The read-only Query ceiling: no file mutation, no shell and no platform
@@ -137,7 +129,27 @@ export function projectQueryConfiguration(input: {
   };
 }
 
-export function createQueryPreparation(deps: RuntimeExecutionDependencies, contextAssembler?: ContextAssembler): QueryPreparationPort {
+/** One used template's pack identity and exact text (ruling 14 item 6). */
+function promptTemplatePart(pack: ResolvedPromptPackV1, id: string) {
+  const text = pack.templates[id];
+  if (text === undefined) throw new Error(`the resolved prompt pack has no template ${id}`);
+  return { id, version: promptTemplateVersion(pack, id), packId: pack.origins[id]?.packId ?? pack.manifest.packId, text };
+}
+
+function promptTemplateVersion(pack: ResolvedPromptPackV1, id: string): number {
+  return pack.origins[id]?.version ?? pack.manifest.templates[id]?.version ?? 1;
+}
+
+export type QueryPreparationDependencies = RuntimeExecutionDependencies & {
+  /**
+   * Ruling 14: the ONE prompt-pack source of this preparation. Absent installs
+   * the ruling-30 platform default (the generated pack), never `unavailable`;
+   * production always wires the source.
+   */
+  promptPacks?: PromptPackSourcePort;
+};
+
+export function createQueryPreparation(deps: QueryPreparationDependencies, contextAssembler?: ContextAssembler): QueryPreparationPort {
   // §4.2/G5.7: a missing second argument constructs the same one assembler once.
   const assembler = contextAssembler ?? createContextAssembler(deps);
   return {
@@ -200,7 +212,18 @@ export function createQueryPreparation(deps: RuntimeExecutionDependencies, conte
         return rejected('unavailable', `Host Query configuration resolution failed: ${messageOf(error)}`);
       }
       if (configured.status !== 'ready') return mapRead(configured);
+      // Ruling 14 item 1: Query has no snapshot, so take the selection and the
+      // bound provider/model at once, before the pack await.
+      const selection = promptSelectionOf(configured.value.model);
+      const boundProvider = configured.value.model.configuration.provider;
+      const boundModel = configured.value.model.configuration.model;
       if (signal.aborted) return rejected('cancelled', 'the Query preparation was cancelled after the Host configuration read');
+      // Ruling 14 item 2: resolve the pack ONCE; a rejection names the pack.
+      const resolved = await resolvePromptPack(deps.promptPacks, selection.promptPack, signal);
+      if (resolved.status !== 'ready') return resolved;
+      if (signal.aborted) return rejected('cancelled', 'the Query preparation was cancelled while the prompt pack was resolved');
+      const pack = resolved.value;
+      const tracked = trackPromptTexts(pack);
       const projected = projectQueryConfiguration({
         host: configured.value,
         requested: execution.runtimeBudget,
@@ -224,8 +247,12 @@ export function createQueryPreparation(deps: RuntimeExecutionDependencies, conte
       if (focusPlan !== null) {
         sourceRefs.push({ kind: 'plan-revision', refId: focusPlan.ref.planId, revision: String(focusPlan.planRevision) });
       }
+      const planningGuide = tracked.texts.templates['initial-planning-answer'];
+      if (execution.kind === 'initial_coordination' && planningGuide === undefined) {
+        return rejected('invalid', 'the resolved prompt pack has no initial-planning-answer template');
+      }
       const question = execution.kind === 'initial_coordination'
-        ? `${record.job.job.intent.question}\n\n${INITIAL_COORDINATION_RESPONSE_GUIDE}`
+        ? `${record.job.job.intent.question}\n\n${planningGuide ?? ''}`
         : record.job.job.intent.question;
       // Slice 3 C7 (§4.2/§4.3): the ONE assembler owns the Query text and its
       // binding. A non-ready assembler result is propagated unchanged; its
@@ -238,6 +265,7 @@ export function createQueryPreparation(deps: RuntimeExecutionDependencies, conte
           configuration: configured.value,
           permissions: projected.permissions,
           question,
+          texts: tracked.texts,
         });
       } catch (error) {
         return rejected('unavailable', `the Query context assembly failed: ${messageOf(error)}`);
@@ -252,6 +280,28 @@ export function createQueryPreparation(deps: RuntimeExecutionDependencies, conte
         sourceKernelSessionId: consultationDerivation.sourceKernel.kernelSessionId,
         throughPosition: consultationDerivation.throughPosition,
       };
+      // Ruling 14 items 4-6: base + Host instruction, Skills from the same pack,
+      // then the frozen texts and the set.
+      const baseText = renderTemplate(tracked.texts, 'base', {}, []).text;
+      const mergedBase = baseText + (configured.value.systemInstruction ? '\n\n' + configured.value.systemInstruction : '');
+      const selectedSkills = await selectPromptSkills(configured.value.skills, tracked.texts, {
+        signal, ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }),
+      });
+      if (selectedSkills.status !== 'ready') return selectedSkills;
+      if (signal.aborted) return rejected('cancelled', 'the Query preparation was cancelled while the Skills were selected');
+      const promptParts: PromptPartsV1 = {
+        selection: { modelId: selection.modelId, provider: boundProvider, model: boundModel,
+          packId: pack.manifest.packId, reasoningReplay: selection.reasoningReplay },
+        sectionOrder: queryPreparedSectionOrder(),
+        templates: tracked.usedTemplates().map(id => promptTemplatePart(pack, id)),
+        strings: pack.strings,
+        base: { templateId: 'base', version: promptTemplateVersion(pack, 'base'), text: mergedBase },
+        skills: selectedSkills.value,
+      };
+      const storedPrompts = await storePromptTexts(deps.bodies, { kind: 'run', owner: queryRunRef }, promptParts, deps.now());
+      if (storedPrompts.status !== 'ready') {
+        return rejected('unavailable', `storing the Query prompt texts failed: ${storedPrompts.reason}`);
+      }
       const manifest: PreparedQueryManifestV1 = {
         schemaVersion: 1,
         kind: 'query_execution',
@@ -272,6 +322,7 @@ export function createQueryPreparation(deps: RuntimeExecutionDependencies, conte
         sourceRefs,
         ...(sessionBasis === undefined ? {} : { sessionBasis }),
         contextAssembly,
+        promptSet: storedPrompts.value,
         input,
         inputDigest,
       };

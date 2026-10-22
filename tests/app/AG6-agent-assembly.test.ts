@@ -12,7 +12,7 @@
  * tools reach one real request. They do not score the model and do not claim the
  * placeholder `platform-work`/`platform-reviewer` content is finished.
  */
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -32,6 +32,10 @@ import type {
 import { DEFAULT_RUNTIME_BUDGET, ModelBudget } from '../../src/core/agent-runtime/model-budget.js';
 import { runObservedModel, type ObservedModelRunOptions } from '../../src/core/agent-runtime/observed-model-run.js';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../src/contracts/prompts/platform-pack.generated.js';
+import { sha256Hex } from '../../src/contracts/fingerprint.js';
+import { PLATFORM_SKILLS } from '../../src/contracts/prompts/platform-skills.js';
+import { openPCWorkFixture } from '../helpers/PC-platform-fixture.js';
 
 const PROJECT_ID = 'ag6-project';
 const REPO_SKILLS = resolve(import.meta.dirname, '../../resources/skills');
@@ -49,7 +53,13 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
-const contentOf = (id: string) => readFile(join(REPO_SKILLS, id, 'content.md'), 'utf8');
+/** Ruling 15: the platform Skill body is the resolved pack's template, not the old directory. */
+const contentOf = (id: string): string => {
+  const entry = PLATFORM_SKILLS.find(skill => skill.id === id);
+  if (entry === undefined) throw new Error(`no platform Skill ${id}`);
+  const templates = PLATFORM_PROMPT_PACK_V1.templates as Readonly<Record<string, string>>;
+  return templates[entry.templateId] ?? '';
+};
 
 // --------------------------------------------------------------------------
 // JSON-level configuration builder: the shorthand never appears in a TS literal.
@@ -139,7 +149,7 @@ async function tempWorkspace(name: string) {
   return { directory, root, databasePath: join(directory, 'kernel.sqlite'), sessionId: `ag6-${name}` };
 }
 
-function baseOptions(root: string, databasePath: string, sessionId: string, bound: ObservedModelRunOptions['bound']): ObservedModelRunOptions {
+function baseOptions(root: string, databasePath: string, sessionId: string, bound: ObservedModelRunOptions['bound']): Omit<ObservedModelRunOptions, 'prompt'> {
   const budget = { ...DEFAULT_RUNTIME_BUDGET, contextWindowTokens: 200_000, perResponseTokens: 512, maxRequests: 4, maxToolCalls: 4, timeoutMs: 30_000 };
   return {
     kernel, bound,
@@ -150,6 +160,12 @@ function baseOptions(root: string, databasePath: string, sessionId: string, boun
     taskBudget: { tokenBudget: null, deadline: null },
     readOnly: true, signal: new AbortController().signal,
     deniedPrefixes: [], processSandboxOptions: {}, publish: async () => {},
+    // PC-1b ruling 25: the direct caller supplies the tool-spec body store.
+    bodies: { async put(input) { return { status: 'ready' as const, value: { replayed: false, ref: {
+      kind: 'artifact' as const, contentType: input.contentType, digest: sha256Hex(input.body),
+      sizeBytes: Buffer.byteLength(input.body, 'utf8'), source: input.sourceRefs[0]! } } }; } },
+    origin: { kind: 'run', owner: { aggregateType: 'Run', projectId: 'ag6-project', goalId: 'ag6-goal', runId: 'ag6-run' } },
+    promptFacts: new Map(),
   };
 }
 
@@ -190,15 +206,24 @@ describe('AG6 trusted preset assembly', () => {
     expect(secretReads).toEqual(['AG6_FAKE_SECRET']);
 
     const w = await tempWorkspace('preset');
-    const result = await runObservedModel({ ...baseOptions(w.root, w.databasePath, w.sessionId, work.model), input: 'AG6 preset turn', skills: work.skills });
+    // The preset's own resolved selection is frozen through preparation.
+    const fixture = await openPCWorkFixture({ skills: work.skills, tools: ['read'] });
+    let frozenPrompt;
+    try {
+      await fixture.work.prepare();
+      frozenPrompt = (await fixture.work.preparedTexts()).prompt;
+    } finally {
+      await fixture.close();
+    }
+    const result = await runObservedModel({ ...baseOptions(w.root, w.databasePath, w.sessionId, work.model), input: 'AG6 preset turn', prompt: frozenPrompt });
     expect(result.state.status).toBe('completed');
     expect(requests).toHaveLength(1);
     const prompt = requests[0]!.systemPrompt;
-    expect(prompt).toContain(await contentOf('platform-work'));
-    expect(prompt).toContain(await contentOf('platform-secretary'));
-    expect(prompt).toContain(await contentOf('platform-scribe'));
-    expect(prompt).not.toContain(await contentOf('platform-adviser'));
-    expect(prompt).not.toContain(await contentOf('platform-reviewer'));
+    expect(prompt).toContain(contentOf('platform-work'));
+    expect(prompt).toContain(contentOf('platform-secretary'));
+    expect(prompt).toContain(contentOf('platform-scribe'));
+    expect(prompt).not.toContain(contentOf('platform-adviser'));
+    expect(prompt).not.toContain(contentOf('platform-reviewer'));
     const toolNames = requests[0]!.tools.map(tool => tool.name);
     for (const forbidden of ['query_ready_tasks', 'send_session_message', 'find_related_sessions', 'read_session_card']) {
       expect(toolNames, `${forbidden} must not be granted by a Skill`).not.toContain(forbidden);

@@ -7,6 +7,8 @@ import { WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
 import { createExplorationTools } from '../../src/core/agent-runtime/exploration-tools.js';
 import { runObservedModel } from '../../src/core/agent-runtime/observed-model-run.js';
 import { DEFAULT_RUNTIME_BUDGET, ModelBudget } from '../../src/core/agent-runtime/model-budget.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import { frozenPromptInputs } from '../runtime/PC-frozen-prompt.js';
 import type { ModelClientPort, ModelEvent, ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 const roots: string[] = [];
 const groups: ReturnType<typeof createExplorationTools>[] = [];
@@ -145,9 +147,13 @@ it('delivers real C++ semantic tool output into the next model request through t
   } };
   const kernel = await import('../../vendor/coding-agent/dist/public-api.js');
   const meter = new ModelBudget(DEFAULT_RUNTIME_BUDGET, async () => {});
+  const prompt = await frozenPromptInputs();
   const result = await runObservedModel({ kernel, bound: { configuration: { revision: 'cpp-test', provider: 'deepseek', model: 'labelled-cpp-model-stub', baseUrl: 'http://127.0.0.1' }, client }, meter,
     root, databasePath: join(storage, 'kernel.sqlite'), sessionId: 'cpp-source-real-kernel', input: 'Inspect the configured C++ pick definition without modifying source.', budget: DEFAULT_RUNTIME_BUDGET, readOnly: true,
     taskBudget: { tokenBudget: null, deadline: null },
+    prompt, bodies: new RawArtifactBodyStore(),
+    origin: { kind: 'run', owner: { aggregateType: 'Run', projectId: 'cpp-project', goalId: 'cpp-goal', runId: 'cpp-run' } },
+    promptFacts: new Map(),
     signal: new AbortController().signal, deniedPrefixes: ['private'], processSandboxOptions: {}, publish: async () => {} });
   expect(result.enabledTools).toContain('cpp_index');
   expect(requests).toHaveLength(2);

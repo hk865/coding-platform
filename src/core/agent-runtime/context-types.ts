@@ -5,6 +5,7 @@ import type {
   PreparedQueryManifestV1, PreparedTaskManifestV1, UnknownCallReviewInputV1,
 } from '../../contracts/core/prepared-execution.js';
 import type { ReadResult } from '../../contracts/core/results.js';
+import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import type { ContinuationBriefV1 } from '../../contracts/continuation-brief.js';
 import type {
   AttentionGraphReadRequestV1, ContextAssemblyBindingV1, GraphAttentionFactsV1,
@@ -61,6 +62,7 @@ export interface ContextAssembler {
     execution: TaskExecutionRecord; role: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>;
     configuration: ResolvedRuntimeConfiguration;
     permissions: TaskEnvelopeV1['permissions'];
+    texts?: PromptTextsV1;
   }): Promise<ReadResult<AssembledContextV1>>;
   assembleQuery(ctx: CoreCallContext, input: {
     facts: QueryPreparationFacts;
@@ -68,6 +70,7 @@ export interface ContextAssembler {
     configuration: ResolvedRuntimeConfiguration;
     permissions: PreparedQueryManifestV1['permissions'];
     question: string;
+    texts?: PromptTextsV1;
   }): Promise<ReadResult<AssembledContextV1>>;
   readAttentionGraph(ctx: CoreCallContext, request: AttentionGraphReadRequestV1): Promise<ReadResult<GraphAttentionFactsV1>>;
 }

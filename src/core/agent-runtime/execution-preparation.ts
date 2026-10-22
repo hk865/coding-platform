@@ -21,6 +21,9 @@ import type { SourceRefV1, RuntimeInputBindingV1 } from '../../contracts/dispatc
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { SessionAnomalyAnchorRef } from '../../contracts/session-anomaly.js';
 import { revisionAssignments } from '../../contracts/plan.js';
+import type { PromptPackSourcePort, ResolvedPromptPackV1 } from '../../contracts/prompts/prompt-pack.js';
+import { decodePromptSetV1, promptSelectionOf, type PromptSetV1 } from '../../contracts/prompts/prompt-set.js';
+import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
 import { MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import { continuationBriefDigest, type ContinuationBriefV1 } from '../../contracts/continuation-brief.js';
@@ -34,6 +37,11 @@ import {
   briefWorkspaceFactsFor, createContextAssembler, trimUnknownCallReviewInput,
   type BriefWorkspaceFactsOutcome, type ContextAssembler, type ContextAssemblerDependencies,
 } from './context-assembler.js';
+import { workPreparedSectionOrder } from './context-rendering.js';
+import {
+  resolvePromptPack, selectPromptSkills, storePromptTexts, trackPromptTexts,
+  type PromptPartsV1,
+} from './prompt-set-texts.js';
 import { readTaskReviews } from '../work-graph/tasks/task-review-reader.js';
 import { orderBlockedCommands } from '../work-graph/tasks/blocked-command-order.js';
 import { unknownCallReviewRefKey } from '../work-graph/tasks/unknown-call-review-codecs.js';
@@ -51,6 +59,12 @@ export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies
     'materials' | 'plans' | 'sessions' | 'kernelStores' | 'workspaceHost' | 'workspaceSource'
     | 'kernel' | 'graphContext' | 'taskInputs' | 'architectureReminders' | 'unknownCallReviews'>>
   & {
+    /**
+     * Ruling 14: the ONE prompt-pack source of this preparation. Absent installs
+     * the ruling-30 platform default (the generated pack), never `unavailable`;
+     * production always wires the source.
+     */
+    promptPacks?: PromptPackSourcePort;
     /**
      * Rework 1 item 4 / rework 2 item 2: the ONE canonical Task-closure read
      * (`readTaskClosure`). REQUIRED: `createAgentRuntime` passes the trusted
@@ -374,6 +388,11 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         return rejected('unavailable', `Host configuration resolution failed: ${messageOf(error)}`);
       }
       if (configured.status !== 'ready') return mapRead(configured);
+      // Ruling 14 item 1: the selection and the bound provider/model are read
+      // BEFORE the first await that follows the configuration read.
+      const selection = promptSelectionOf(configured.value.model);
+      const boundProvider = configured.value.model.configuration.provider;
+      const boundModel = configured.value.model.configuration.model;
       const hostConfig = snapshotRuntimeConfiguration(configured.value);
       if (roleResolution.status === 'absent') {
         if (hostConfig.hostTemplate === null) {
@@ -402,6 +421,15 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         return rejected('unsupported', 'shell requires Host shellWorkspaceAccess=all_except_denied, a shell grant and an explicit whole-workspace write scope');
       }
       if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled after the Host configuration read');
+
+      // Ruling 14 item 2: resolve the pack ONCE, before anything renders. A
+      // rejection names the pack and its reason; it never falls back to
+      // `platform`.
+      const resolved = await resolvePromptPack(deps.promptPacks, selection.promptPack, signal);
+      if (resolved.status !== 'ready') return resolved;
+      if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled while the prompt pack was resolved');
+      const pack = resolved.value;
+      const tracked = trackPromptTexts(pack);
 
       // 3. Exact Plan/Task contract: the assignment instruction is the formal
       //    task input; a required material kind this batch cannot source is a
@@ -480,6 +508,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       try {
         assembled = await assembler.assembleTask(owned, {
           execution: record.value, role: roleResolution, configuration: hostConfig, permissions,
+          texts: tracked.texts,
           ...(taskReviews === undefined ? {} : { taskReviews }),
         });
       } catch (error) {
@@ -495,6 +524,29 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       sessionBasis = assembled.value.sessionBasis;
       selectedTaskInputs = assembled.value.selectedTaskInputs;
       contextAssembly = assembled.value.binding;
+      // Ruling 14 items 4-6: render the base, merge the Host instruction, select
+      // the Skills through the same resolved pack, and store the frozen texts.
+      const baseText = renderTemplate(tracked.texts, 'base', {}, []).text;
+      const mergedBase = baseText + (hostConfig.systemInstruction ? '\n\n' + hostConfig.systemInstruction : '');
+      const selectedSkills = await selectPromptSkills(hostConfig.skills, tracked.texts, {
+        signal, ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }),
+      });
+      if (selectedSkills.status !== 'ready') return selectedSkills;
+      if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled while the Skills were selected');
+      const promptParts: PromptPartsV1 = {
+        selection: { modelId: selection.modelId, provider: boundProvider, model: boundModel,
+          packId: pack.manifest.packId, reasoningReplay: selection.reasoningReplay },
+        sectionOrder: workPreparedSectionOrder(),
+        templates: tracked.usedTemplates().map(id => promptTemplatePart(pack, id)),
+        strings: pack.strings,
+        base: { templateId: 'base', version: promptTemplateVersion(pack, 'base'), text: mergedBase },
+        skills: selectedSkills.value,
+      };
+      const storedPrompts = await storePromptTexts(deps.bodies, { kind: 'run', owner: runRef }, promptParts, deps.now());
+      if (storedPrompts.status !== 'ready') {
+        return rejected('unavailable', `storing the prepared prompt texts failed: ${storedPrompts.reason}`);
+      }
+      const promptSet: PromptSetV1 = storedPrompts.value;
       const reviewInput = assembled.value.unknownCallReview;
       const reviewSectionStart = assembled.value.reviewSectionStart ?? null;
       // Slice 1 §2.7: the anchors the brief's anomaly section names are bound with the input.
@@ -530,6 +582,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
           permissions, budget: run.budget, selectedTaskInputs, materialBasis: hostConfig.materialBasis,
           materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs,
           contextAssembly: assembly,
+          promptSet,
           ...(brief === null ? {} : { continuationBrief: brief }),
           ...(sessionBasis === undefined ? {} : { sessionBasis }),
           ...(workspaceBaseline === undefined ? {} : { workspaceBaseline }),
@@ -548,7 +601,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         const baseInput = Buffer.from(input, 'utf8').subarray(0, reviewSectionStart).toString('utf8');
         const fit = fitUnknownCallReviewForManifest({
           review: reviewInput,
-          render: review => renderUnknownCallReviewZh(review),
+          render: review => renderUnknownCallReviewZh(review, tracked.texts),
           measure: (review, rendered) => Buffer.byteLength(JSON.stringify(buildManifest(review, baseInput + rendered)), 'utf8'),
         });
         if (!fit.ok) {
@@ -600,6 +653,17 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
   };
 }
 
+/** One used template's pack identity and exact text (ruling 14 item 6). */
+function promptTemplatePart(pack: ResolvedPromptPackV1, id: string) {
+  const text = pack.templates[id];
+  if (text === undefined) throw new Error(`the resolved prompt pack has no template ${id}`);
+  return { id, version: promptTemplateVersion(pack, id), packId: pack.origins[id]?.packId ?? pack.manifest.packId, text };
+}
+
+function promptTemplateVersion(pack: ResolvedPromptPackV1, id: string): number {
+  return pack.origins[id]?.version ?? pack.manifest.templates[id]?.version ?? 1;
+}
+
 /** Freeze the mutable data fields of a trusted Host configuration into a
  * per-call snapshot. Capability fields (model client, input counter) stay by
  * reference: they are handles, not data a later caller mutation can retarget,
@@ -612,6 +676,8 @@ export function snapshotRuntimeConfiguration(config: ResolvedRuntimeConfiguratio
     configuration: { ...config.model.configuration },
     client: config.model.client,
     ...(config.model.inputCounter === undefined ? {} : { inputCounter: config.model.inputCounter }),
+    // Ruling 14 item 1: a field-by-field rebuild must not drop the selection.
+    ...(config.model.selection === undefined ? {} : { selection: { ...config.model.selection } }),
   };
   return {
     configurationRevision: config.configurationRevision,
@@ -670,6 +736,9 @@ export async function loadPreparedManifest(
   if (!isRecord(parsed) || parsed['schemaVersion'] !== 1 || parsed['kind'] !== 'task_execution'
     || typeof parsed['input'] !== 'string' || !nonEmpty(parsed['inputDigest'])) {
     return rejected('invalid', 'the prepared manifest is not a complete task-execution manifest');
+  }
+  if (decodePromptSetV1(parsed['promptSet']) === null) {
+    return rejected('invalid', 'the prepared manifest has no valid prompt set');
   }
   const manifest = parsed as unknown as PreparedTaskManifestV1;
   if (!sameRef(manifest.claim, prepared.claim)) return rejected('invalid', 'the prepared manifest claim disagrees with the returned claim');

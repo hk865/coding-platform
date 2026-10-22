@@ -1,10 +1,17 @@
 import { createHash } from 'node:crypto';
 import type { ModelCallAccess } from '../../contracts/dispatch.js';
 import { resolve } from 'node:path';
-import type { AgentEvent, ExecutionIdentity, HookPort, ModelClientPort, SessionContextMode, ToolDefinition, ToolGroupBarrier, WorkspaceSandbox } from '../../../vendor/coding-agent/dist/public-api.js';
+import type { AgentEvent, ContextSelectionReport, ExecutionIdentity, HookPort, ModelClientPort, ModelRequest, SessionContextMode, ToolDefinition, ToolGroupBarrier, WorkspaceSandbox } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { BoundModel } from './source-tool-ports.js';
 import type { ModelBudget, RuntimeBudget } from './model-budget.js';
 import type { ModelTokenBudget } from './model-budget.js';
+import type { ModelRequestPromptFactsV1 } from '../../contracts/prompts/prompt-set.js';
+import { PROMPT_TOOL_SPECS_CONTENT_TYPE } from '../../contracts/prompts/prompt-set.js';
+import type { PromptSkillV1 } from './prompt-set-texts.js';
+import type { ArtifactRef } from '../../contracts/artifact.js';
+import type { MaterialOrigin, RawArtifactStorePort } from '../record-store/body-ports.js';
+import { sha256Hex } from '../../contracts/fingerprint.js';
+import { RuntimeModelCallRejected } from './model-call-access.js';
 import { kernelRunLimits } from './run-limits.js';
 import { createExplorationTools, type ExplorationToolsHandle, type SourceToolOptions } from './exploration-tools.js';
 import { readSourceIdentity } from '../../core/workspace/source-identity.js';
@@ -22,7 +29,7 @@ export type ObservedModelRunOptions = {
   root: string; databasePath: string; sessionId: string; input: string; budget: RuntimeBudget; readOnly: boolean;
   /** Persistent Run cumulative constraint; the formal driver always supplies it. */
   taskBudget: ModelTokenBudget;
-  /** Trusted clock used to evaluate the persistent absolute task deadline. */
+  /** Trusted clock: the persistent task deadline and the tool-specs body's `requestedAt`. */
   now?: () => string;
   /** Frozen public Kernel inputs; the caller supplies a real completed history boundary. */
   sessionContext?: SessionContextMode;
@@ -64,16 +71,32 @@ export type ObservedModelRunOptions = {
    */
   onKernelExited?: () => void;
   /**
-   * Trusted Host Skill resource configuration for this model loop. When present it is the only
-   * source of skills, including an explicit empty `enabledIds`; when absent the existing
-   * coding-safety behavior is preserved. Mutable fields are snapshotted before the first await.
-   * This is an internal Host seam, not a place for caller-supplied model JSON.
+   * PC-1b ruling 22: the frozen prompt inputs prepared for this Run. `base` is
+   * the merged base text, `skills` the selected Skill contexts and
+   * `reasoningReplay` the frozen thinking policy. Mutable fields are snapshotted
+   * before the first await. The base and the Skills are both required, so this
+   * call never silently falls back to the Kernel's fixed text or Skill files.
    */
-  skills?: { resourceRoot: string; enabledIds: string[] };
+  prompt: {
+    base: { templateId: string; version: number; text: string };
+    skills: PromptSkillV1[];
+    reasoningReplay: 'current_run' | 'none';
+  };
   /** 显式结构化报告请求；必须在容量计量和模型调用授权前进入真实请求。 */
   responseFormat?: { type: 'json_object' };
-  /** Static host-owned role guidance only; never interpolate source or memory content. */
-  systemInstruction?: string;
+  /**
+   * PC-1b ruling 25: store and check the exact model tool specs this Run sends.
+   * `origin` is the real Run/QueryRun owner and the trusted `now` supplies the
+   * put's `requestedAt`.
+   */
+  bodies: Pick<RawArtifactStorePort, 'put'>;
+  origin: MaterialOrigin;
+  /**
+   * PC-1b ruling 24: the request prompt facts joined by `requestId`. This run
+   * writes them before the meter reserves; a Query meter-persist closure reads
+   * the same map to build its reservation rows. Work passes an empty map.
+   */
+  promptFacts: Map<string, ModelRequestPromptFactsV1 & { maxOutputTokens: number }>;
   sourceTools?: SourceToolOptions;
   /**
    * 本次模型循环的源码捕获模式。显式 `frozen` 必须提供可信工厂，**不会**回落成任何实时索引。
@@ -177,8 +200,7 @@ export { EXPLORATION_TOOL_NAMES } from './tool-group-assembly.js';
 export async function runObservedModel(o: ObservedModelRunOptions) {
   // Capture the trusted Host configuration synchronously, before the first await, so later
   // mutation of the caller's array/object cannot change this run. Hook functions are forwarded
-  // with their original receiver instead of being JSON-cloned; an explicit empty `enabledIds`
-  // stays empty and never secretly falls back to coding-safety.
+  // with their original receiver instead of being JSON-cloned.
   const controlHooks = o.controlHooks === undefined ? undefined : snapshotControlHooks(o.controlHooks);
   // R4.3a: capture the optional tool-group barrier and the internal cleanup
   // notification before the first await, so a caller mutating the options object
@@ -186,7 +208,46 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
   const toolGroupBarrier = o.toolGroupBarrier;
   const onResourcesClosed = o.onResourcesClosed;
   const onKernelExited = o.onKernelExited;
-  const skills = o.skills === undefined ? undefined : { resourceRoot: o.skills.resourceRoot, enabledIds: [...o.skills.enabledIds] };
+  // Ruling 22: own the frozen prompt inputs and the final-request transform
+  // before the first await, so later mutation cannot change what this run sends.
+  const prompt = {
+    base: { ...o.prompt.base },
+    skills: o.prompt.skills.map((skill): PromptSkillV1 => ({ ...skill })),
+    reasoningReplay: o.prompt.reasoningReplay,
+  };
+  // Ruling 20: the ONE outgoing transform (responseFormat only; the Host
+  // instruction is already inside the frozen base). Both the preview and the
+  // real client wrapper use it.
+  const responseFormat = o.responseFormat === undefined ? undefined : { ...o.responseFormat };
+  const finalRequest = (request: Readonly<ModelRequest>): ModelRequest =>
+    responseFormat === undefined ? { ...request } : { ...request, responseFormat: { ...responseFormat } };
+  // Ruling 24: reports and facts are joined by `requestId`, never "the last
+  // report". Ruling 25 owns the one tool-specs put promise for this Run.
+  const selections = new Map<string, ContextSelectionReport>();
+  const requestFacts = new Map<string, ModelRequestPromptFactsV1 & { maxOutputTokens: number }>();
+  let toolSpecsPromise: Promise<ArtifactRef> | undefined;
+  let toolSpecsRejection: string | undefined;
+  // The trusted clock is captured before the first await; it is the put's
+  // `requestedAt`. The formal drivers always pass it; a direct caller that does
+  // not gets a real timestamp for this provenance field only.
+  const now = o.now;
+  const requestedAt = (): string => (now === undefined ? new Date().toISOString() : now());
+  // Ruling 25: the first request, and every later request of this Run, measure
+  // against the stored body's digest. A failure records the rejection; after the
+  // Kernel returns (`unavailable`) it is raised as the driver-visible rejection.
+  const storedToolSpecs = async (): Promise<ArtifactRef> => {
+    if (toolSpecsRejection !== undefined) throw new RuntimeModelCallRejected('unavailable', toolSpecsRejection);
+    if (toolSpecsPromise === undefined) {
+      toolSpecsRejection = 'the Kernel reported no model tool specs before the first request';
+      throw new RuntimeModelCallRejected('unavailable', toolSpecsRejection);
+    }
+    try {
+      return await toolSpecsPromise;
+    } catch (error) {
+      toolSpecsRejection ??= 'the request tool specs body could not be stored: ' + exactMessage(error);
+      throw new RuntimeModelCallRejected('unavailable', toolSpecsRejection);
+    }
+  };
   // Own the optional object fields before the first await and forward these
   // snapshots to Kernel; never assemble a platform transcript here.
   const sessionContext = o.sessionContext === undefined ? undefined : { ...o.sessionContext };
@@ -242,22 +303,51 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
         if (o.signal.aborted) throw Error('Run cancelled before model call');
         if (!o.manifestDigest) throw Error('Actual Context manifest is not bound');
         await o.assertMaterialsCurrent?.();
+        // Ruling 24: the shared beforeCall carries the facts computed for this
+        // exact requestId; the meter's reservation is already accounted for.
+        const facts = requestFacts.get(request.requestId);
+        if (facts === undefined) throw new RuntimeModelCallRejected('unavailable', 'the request prompt facts were not computed');
         await o.modelCalls!.beforeCall({ requestId: request.requestId,
           requestDigest: createHash('sha256').update(JSON.stringify(request)).digest('hex'),
-          contextInputDigest: createHash('sha256').update(o.input).digest('hex'), manifestDigest: o.manifestDigest });
+          contextInputDigest: createHash('sha256').update(o.input).digest('hex'), manifestDigest: o.manifestDigest,
+          prompt: facts });
         if (o.signal.aborted) throw Error('Run cancelled before provider boundary');
         yield* o.bound.client.stream(request, options);
       },
     } : o.bound.client;
     // The meter applies the final output limit before authorization hashes the request.
-    const metered = o.meter.wrap(provider);
+    // Ruling 24: the facts are built from the SAME measurement the meter reserves
+    // from (ruling 21's one measuring result), before the entry is pushed and
+    // before the provider sees the request; Query's persist closure reads the
+    // same map entry while it writes the reservation.
+    let pendingToolSpecsRef: ArtifactRef | undefined;
+    const metered = o.meter.wrap(provider, measured => {
+      const request = measured.outgoing;
+      const selection = selections.get(request.requestId);
+      if (selection === undefined) throw new RuntimeModelCallRejected('unavailable', `the context selection report for request ${request.requestId} is missing`);
+      if (pendingToolSpecsRef === undefined) throw new RuntimeModelCallRejected('unavailable', 'the request tool specs body is not available');
+      const facts: ModelRequestPromptFactsV1 & { maxOutputTokens: number } = {
+        systemDigest: sha256Hex(request.systemPrompt),
+        toolsDigest: sha256Hex(JSON.stringify(request.tools)),
+        toolSpecsRef: pendingToolSpecsRef,
+        maxOutputTokens: measured.output,
+        selection: { inputTokens: selection.inputTokens, budget: selection.budget, removed: { ...selection.removed } },
+      };
+      requestFacts.set(request.requestId, facts);
+      o.promptFacts.set(request.requestId, facts);
+    });
     const client: ModelClientPort = {
       async *stream(request, options) {
         await o.sourceTools?.assertCurrent?.();
-        const outgoing = { ...request,
-          ...(o.responseFormat ? { responseFormat: { ...o.responseFormat } } : {}),
-          ...(o.systemInstruction ? { systemPrompt: request.systemPrompt + '\n\n' + o.systemInstruction } : {}) };
-        yield* metered.stream(outgoing, options);
+        // Ruling 25: await the one tool-specs put before the meter reserves and
+        // refuse a request whose tools are not byte-equal to the stored body.
+        const toolSpecsRef = await storedToolSpecs();
+        if (sha256Hex(JSON.stringify(request.tools)) !== toolSpecsRef.digest) {
+          toolSpecsRejection = 'the Kernel-reported tool specs do not equal the request tools';
+          throw new RuntimeModelCallRejected('unavailable', toolSpecsRejection);
+        }
+        pendingToolSpecsRef = toolSpecsRef;
+        yield* metered.stream(finalRequest(request), options);
         await o.sourceTools?.assertCurrent?.();
       },
     };
@@ -290,7 +380,38 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
           runtime: { tokenBudget: o.budget.contextWindowTokens, maxModelRequests: o.budget.maxRequests ?? base.runtime.maxModelRequests, maxToolCalls: o.budget.maxToolCalls ?? base.runtime.maxToolCalls },
           tools: { enabledNames },
           storage: { databasePath: o.databasePath },
-          skills: skills ?? { resourceRoot: resolve(import.meta.dirname, '../../../vendor/coding-agent/resources/skills'), enabledIds: ['coding-safety'] } },
+          // The Host always provides both the base and the Skills, so the
+          // Kernel's fixed text and Skill-file fallback are never read.
+          skills: { resourceRoot: resolve(import.meta.dirname, '../../../vendor/coding-agent/resources/skills'), enabledIds: ['coding-safety'] } },
+        // 裁定 22：冻结的提示词输入是本 Run 唯一的 base 与 Skills 来源。
+        baseSystemPrompt: prompt.base,
+        skills: prompt.skills,
+        reasoningReplay: prompt.reasoningReplay,
+        previewRequest: request => o.meter.preview(finalRequest(request)),
+        onContextSelected: report => {
+          selections.set(report.requestId, report);
+        },
+        // 裁定 25：同步回报时立刻复制、排序并开始写工具说明正文；拒绝处理器
+        // 同时挂上，首个请求进入 meter 之前会 await 这个 Promise。
+        onConfiguration: configuration => {
+          const specs = [...configuration.tools].sort((left, right) => left.name.localeCompare(right.name, 'en'));
+          const body = JSON.stringify(specs);
+          let pending: Promise<ArtifactRef>;
+          try {
+            pending = o.bodies.put({
+              body, contentType: PROMPT_TOOL_SPECS_CONTENT_TYPE,
+              sourceRefs: [{ kind: 'governance', refId: 'runtime-model-configuration', revision: o.bound.configuration.revision }],
+              origin: o.origin, requestedAt: requestedAt(),
+            }).then(stored => {
+              if (stored.status !== 'ready') throw new Error(stored.reason);
+              return stored.value.ref;
+            });
+          } catch (error) {
+            pending = Promise.reject(error);
+          }
+          pending.catch(error => { toolSpecsRejection ??= 'the request tool specs body could not be stored: ' + exactMessage(error); });
+          toolSpecsPromise = pending;
+        },
         // 宿主对**非只读**扩展工具的显式授权：只有这里列出、且确实被 additionalTools 注册、
         // 且 effectClass 不是 read_only 的名字才会被内核的权限策略采纳（协议约束 2.3）。
         // 缺席时协调工具会被内核按"未授权的未知操作"拒绝——这是刻意的 fail-closed。
@@ -348,6 +469,9 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
     }
     completed = result.state.status === 'completed';
     stopped = result.state.status === 'paused' || result.state.status === 'cancelled';
+    // Ruling 25: the Kernel turns the thrown stream error into a failed run and
+    // returns; only here can the driver keep the `unavailable` rejection code.
+    if (toolSpecsRejection !== undefined) throw new RuntimeModelCallRejected('unavailable', toolSpecsRejection);
     return result;
   } catch (error) {
     failed = true;

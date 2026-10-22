@@ -18,9 +18,10 @@ import type { MaterialPort } from '../core/work-graph/model/material-contracts.j
 import { createWorkspaceAccessFactory, type WorkspaceHostBindings } from '../core/workspace/access.js';
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../core/workspace/workspace-tools.js';
 import { createAgentRuntime } from '../core/agent-runtime/runtime.js';
+import { createPlatformPromptPackSource } from '../contracts/prompts/prompt-pack.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import { createExecutionEntryService, readManifestFromEnvelope } from '../core/work-graph/tasks/execution-entry-service.js';
-import { createModelCallService } from '../core/work-graph/tasks/model-call-service.js';
+import { createModelCallService, createModelRequestReadPort } from '../core/work-graph/tasks/model-call-service.js';
 import { createSessionMailbox, createMessageWriteOwner } from '../core/work-graph/communication/mailbox-service.js';
 import { createDecisionMessageService } from '../core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../core/work-graph/communication/decision-source-facts.js';
@@ -1181,6 +1182,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         readTaskClosure: (ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) => Promise<import('../contracts/core/results.js').ReadResult<TaskClosureV1>>;
       } = {
         claims: claimService, executions: executionReader, entry, historyWriter, modelRequests,
+        // Ruling 30: the Work permit read over the SAME record backend; PC-2
+        // swaps the pack source for the disk one.
+        modelRequestReads: createModelRequestReadPort(entryDependencies),
+        promptPacks: createPlatformPromptPackSource(),
         roles: roleService, plans: planService, messages: mailbox, sessions: sessionDirectory,
         // Slice 5 §4.6: the SAME user-decision owner the platform publishes, so
         // the three user tools call the real owners and never fail closed.

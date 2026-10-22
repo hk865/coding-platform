@@ -16,9 +16,10 @@ import type { ActorRef } from '../../../contracts/command-event.js';
 import type { ModelRequestPermitRef } from '../../../contracts/dispatch.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
 import {
-  hasOnlyKeys, invalid, isPos, isSha256Hex, nonEmpty, parseObject,
+  hasOnlyKeys, invalid, isNonNeg, isPos, isSha256Hex, nonEmpty, parseObject,
 } from '../../../contracts/validation/common.js';
 import type { ModelRequestPermitV1, ModelRequestPermitSnapshot } from './model-call-contracts.js';
+import { isArtifactRef } from '../../record-store/body-codec.js';
 import type {
   DecodeResult,
   EncodedDomainEvent,
@@ -31,6 +32,8 @@ export const MODEL_REQUEST_PERMIT_SCHEMA_ID = 'ModelRequestPermitSnapshot@1';
 export const MODEL_REQUEST_AUTHORIZED_EVENT_TYPE = 'ModelRequestAuthorized';
 export const MODEL_REQUEST_EVIDENCE_EVENT_TYPE = 'ModelRequestEvidenceRecorded';
 export const MODEL_REQUEST_EVENT_SCHEMA_VERSION = 1 as const;
+/** The Run's permit bucket; the read port sorts the records by `sequence`. */
+export const MODEL_REQUEST_BY_RUN_LOOKUP = 'model-request-by-run';
 
 type EventActor = Extract<ActorRef, { kind: 'human' | 'system' }>;
 
@@ -77,22 +80,65 @@ function deliveryPinProblem(value: unknown): string | null {
   }
   return null;
 }
+const REMOVED_COUNT_KEYS = ['memory', 'skillReference', 'additionalInstruction', 'toolResultBody',
+  'historyExchange', 'historyConclusion', 'currentExchange'] as const;
+/** The frozen Work facts accept exactly this ref and source shape (ruling 26). */
+const TOOL_SPECS_REF_KEYS = ['kind', 'contentType', 'digest', 'sizeBytes', 'source'] as const;
+const TOOL_SPECS_SOURCE_KEYS = ['kind', 'refId', 'revision', 'digest'] as const;
+
+/**
+ * The one strict rule for the frozen request facts (ruling 26). A Work permit
+ * requires the output cap; every count is a non-negative safe integer.
+ */
+export function modelRequestPromptProblem(value: unknown): string | null {
+  if (!isJsonObject(value)) return 'prompt must be an object';
+  if (!hasOnlyKeys(value, ['systemDigest', 'toolsDigest', 'toolSpecsRef', 'maxOutputTokens', 'selection'])) {
+    return 'prompt carries unknown fields';
+  }
+  if (!isSha256Hex(value['systemDigest'])) return 'prompt systemDigest must be a sha256 hex';
+  if (!isSha256Hex(value['toolsDigest'])) return 'prompt toolsDigest must be a sha256 hex';
+  const toolSpecsRef = value['toolSpecsRef'];
+  if (!isJsonObject(toolSpecsRef) || !hasOnlyKeys(toolSpecsRef, TOOL_SPECS_REF_KEYS)
+    || !isArtifactRef(toolSpecsRef)) {
+    return 'prompt toolSpecsRef must be a complete ArtifactRef';
+  }
+  const toolSpecsSource = toolSpecsRef['source'];
+  if (!isJsonObject(toolSpecsSource) || !hasOnlyKeys(toolSpecsSource, TOOL_SPECS_SOURCE_KEYS)) {
+    return 'prompt toolSpecsRef source must be a complete SourceRef';
+  }
+  if (!isNonNeg(value['maxOutputTokens'])) return 'prompt maxOutputTokens must be a non-negative safe integer';
+  const selection = value['selection'];
+  if (!isJsonObject(selection)) return 'prompt selection must be an object';
+  if (!hasOnlyKeys(selection, ['inputTokens', 'budget', 'removed'])) return 'prompt selection carries unknown fields';
+  if (!isNonNeg(selection['inputTokens'])) return 'prompt selection inputTokens must be a non-negative safe integer';
+  if (!isNonNeg(selection['budget'])) return 'prompt selection budget must be a non-negative safe integer';
+  const removed = selection['removed'];
+  if (!isJsonObject(removed)) return 'prompt selection removed must be an object';
+  if (!hasOnlyKeys(removed, REMOVED_COUNT_KEYS)) return 'prompt selection removed carries unknown fields';
+  for (const key of REMOVED_COUNT_KEYS) {
+    if (!isNonNeg(removed[key])) return `prompt selection removed ${key} must be a non-negative safe integer`;
+  }
+  return null;
+}
 
 export function modelRequestPermitProblem(value: unknown): string | null {
   if (!isJsonObject(value)) return 'ModelRequestPermit must be an object';
-  if (!hasOnlyKeys(value, ['schemaVersion', 'permitId', 'runRef', 'requestId', 'requestDigest',
-    'contextInputDigest', 'manifestDigest', 'deliveryRefs', 'permissions', 'consumedByAttemptId',
+  if (!hasOnlyKeys(value, ['schemaVersion', 'permitId', 'sequence', 'runRef', 'requestId', 'requestDigest',
+    'contextInputDigest', 'manifestDigest', 'prompt', 'deliveryRefs', 'permissions', 'consumedByAttemptId',
     'issuedAt', 'consumedAt'])) {
     return 'ModelRequestPermit carries unknown fields';
   }
   if (value['schemaVersion'] !== 1) return 'ModelRequestPermit schemaVersion must be 1';
   if (!nonEmpty(value['permitId'])) return 'ModelRequestPermit permitId is required';
+  if (!isPos(value['sequence'])) return 'ModelRequestPermit sequence must be a positive safe integer';
   const runProblem = runRefProblem(value['runRef']);
   if (runProblem !== null) return runProblem;
   if (!nonEmpty(value['requestId'])) return 'ModelRequestPermit requestId must be a non-empty string';
   if (!isSha256Hex(value['requestDigest'])) return 'ModelRequestPermit requestDigest must be a sha256 hex';
   if (!isSha256Hex(value['contextInputDigest'])) return 'ModelRequestPermit contextInputDigest must be a sha256 hex';
   if (!isSha256Hex(value['manifestDigest'])) return 'ModelRequestPermit manifestDigest must be a sha256 hex';
+  const promptProblem = modelRequestPromptProblem(value['prompt']);
+  if (promptProblem !== null) return promptProblem;
   if (!Array.isArray(value['deliveryRefs'])) return 'ModelRequestPermit deliveryRefs must be an array';
   for (const pin of value['deliveryRefs']) {
     const problem = deliveryPinProblem(pin);
@@ -219,5 +265,8 @@ export const MODEL_REQUEST_RECORD_SCHEMAS: RecordBackendSchemas = {
     { eventType: MODEL_REQUEST_AUTHORIZED_EVENT_TYPE, schemaVersion: MODEL_REQUEST_EVENT_SCHEMA_VERSION, validate: validateModelRequestEvent },
     { eventType: MODEL_REQUEST_EVIDENCE_EVENT_TYPE, schemaVersion: MODEL_REQUEST_EVENT_SCHEMA_VERSION, validate: validateModelRequestEvent },
   ],
-  lookups: [],
+  lookups: [
+    { name: MODEL_REQUEST_BY_RUN_LOOKUP, aggregateType: 'ModelRequestPermit',
+      paths: ['permit.runRef.projectId', 'permit.runRef.goalId', 'permit.runRef.runId'] },
+  ],
 };

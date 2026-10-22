@@ -11,6 +11,7 @@ import type { GoalSnapshot } from '../../contracts/ledger.js';
 import type { PlanRevisionSnapshot, RuntimeTask } from '../../contracts/plan.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
@@ -21,15 +22,23 @@ import { canonical, emptyNotes, indexRowText, rejected } from './context-support
 import type { OptionalRow } from './context-types.js';
 import type { ResolvedRuntimeConfiguration } from './execution-contracts.js';
 
-const S = PLATFORM_PROMPT_PACK_V1.strings;
+/** A direct call keeps the generated platform pack (ruling 14). */
+const DEFAULT_TEXTS: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1;
+
+/** One fixed string of the resolved pack; a missing key is a pack bug. */
+function packString(texts: PromptTextsV1, key: string): string {
+  const value = texts.strings[key];
+  if (value === undefined) throw new Error(`the resolved prompt pack has no string "${key}"`);
+  return value;
+}
 
 const PLATFORM_DUTIES: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
 
 /** §2.4 item 3 / §2.5: the duty a versioned legacy template Session role ref fixes, or none. */
-function templateDutyOf(sessionRole: RoleConfigurationRef | undefined): PlatformDutyV1 | undefined {
+function templateDutyOf(sessionRole: RoleConfigurationRef | undefined, texts: PromptTextsV1): PlatformDutyV1 | undefined {
   if (sessionRole === undefined || sessionRole.kind !== 'legacy_template') return undefined;
   return PLATFORM_DUTIES.find((duty) => {
-    const template = platformRoleProfile(duty).template;
+    const template = platformRoleProfile(duty, texts).template;
     return template.templateId === sessionRole.templateId && template.templateRevision === sessionRole.templateRevision;
   });
 }
@@ -37,10 +46,11 @@ function templateDutyOf(sessionRole: RoleConfigurationRef | undefined): Platform
 /** The Role's explicit duty, else the Host's, else the duty the Session's versioned legacy template fixes, else executor. */
 export function effectiveDuty(
   role: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>, configuration: ResolvedRuntimeConfiguration, sessionRole: RoleConfigurationRef | undefined,
+  texts: PromptTextsV1 = DEFAULT_TEXTS,
 ): { duty: PlatformDutyV1 } | { rejection: CoreRejection } {
   const roleDuty = role.status === 'resolved' ? role.spec.platformDuty : undefined;
   const hostDuty = configuration?.platformDuty;
-  const templateDuty = templateDutyOf(sessionRole);
+  const templateDuty = templateDutyOf(sessionRole, texts);
   if (roleDuty !== undefined && hostDuty !== undefined && roleDuty !== hostDuty) {
     return { rejection: rejected('forbidden', 'the explicit Host duty disagrees with the resolved Role duty') };
   }
@@ -55,39 +65,41 @@ export function rolePayload(
   permissions: TaskEnvelopeV1['permissions'],
   duty: PlatformDutyV1,
   residentBudgetBytes: number,
+  texts: PromptTextsV1 = DEFAULT_TEXTS,
 ): string {
+  const S = (key: string): string => packString(texts, key);
   const binding = [
-    S['context.role.bindingHeading'],
-    `${S['context.role.binding']}${JSON.stringify(permissions)}`,
-    `${S['context.role.tools']}${permissions.tools.join(', ') || S['context.none']}`,
-    `${S['context.role.writeScope']}${permissions.writeScope.join(', ') || S['context.none']}`,
+    S('context.role.bindingHeading'),
+    `${S('context.role.binding')}${JSON.stringify(permissions)}`,
+    `${S('context.role.tools')}${permissions.tools.join(', ') || S('context.none')}`,
+    `${S('context.role.writeScope')}${permissions.writeScope.join(', ') || S('context.none')}`,
   ].join('\n');
   let specification: string;
   if (role.status === 'resolved') {
     specification = [
-      S['context.role.specificationHeading'],
-      `${S['context.role.role']}${role.roleId}@${String(role.revision.revision)}`,
-      `${S['context.role.label']}${role.spec.label}`,
-      `${S['context.role.purpose']}${role.spec.purpose}`,
-      `${S['context.role.responsibility']}${role.spec.responsibility.join(', ')}`,
-      `${S['context.role.materials']}${role.spec.requiredMaterials.map((material) => `${material.kind} (${material.reason})`).join('; ')}`,
-      `${S['context.role.outputs']}${role.spec.requiredOutputs.map((output) => `${output.kind} (${output.reason})`).join('; ')}`,
-      `${S['context.role.exitSuccess']}${role.spec.exit.success}`,
-      `${S['context.role.exitStop']}${role.spec.exit.stop}`,
-      `${S['context.role.exitHandoff']}${role.spec.exit.handoff}`,
+      S('context.role.specificationHeading'),
+      `${S('context.role.role')}${role.roleId}@${String(role.revision.revision)}`,
+      `${S('context.role.label')}${role.spec.label}`,
+      `${S('context.role.purpose')}${role.spec.purpose}`,
+      `${S('context.role.responsibility')}${role.spec.responsibility.join(', ')}`,
+      `${S('context.role.materials')}${role.spec.requiredMaterials.map((material) => `${material.kind} (${material.reason})`).join('; ')}`,
+      `${S('context.role.outputs')}${role.spec.requiredOutputs.map((output) => `${output.kind} (${output.reason})`).join('; ')}`,
+      `${S('context.role.exitSuccess')}${role.spec.exit.success}`,
+      `${S('context.role.exitStop')}${role.spec.exit.stop}`,
+      `${S('context.role.exitHandoff')}${role.spec.exit.handoff}`,
     ].join('\n');
   } else {
     // §2.5: the configuration table supplies the label/purpose/responsibility of
     // a legacy explicit-duty Role; it never overrides an installed RoleSpec body.
-    const profile = platformRoleProfile(duty);
+    const profile = platformRoleProfile(duty, texts);
     const detail = [
-      `${S['context.role.label']}${profile.label}`,
-      `${S['context.role.purpose']}${profile.purpose}`,
-      `${S['context.role.responsibility']}${profile.responsibility.join(', ')}`,
+      `${S('context.role.label')}${profile.label}`,
+      `${S('context.role.purpose')}${profile.purpose}`,
+      `${S('context.role.responsibility')}${profile.responsibility.join(', ')}`,
     ];
-    specification = [S['context.role.specificationHeading'], `${S['context.role.role']}${role.roleId} (${role.status})`, role.reason, ...detail].join('\n');
+    specification = [S('context.role.specificationHeading'), `${S('context.role.role')}${role.roleId} (${role.status})`, role.reason, ...detail].join('\n');
   }
-  return [binding, specification, `${S['context.role.duty']}${duty}`, `${S['context.role.residentBytes']}${String(residentBudgetBytes)}`].join('\n\n');
+  return [binding, specification, `${S('context.role.duty')}${duty}`, `${S('context.role.residentBytes')}${String(residentBudgetBytes)}`].join('\n\n');
 }
 
 /** The bare goal id of a `goal:<goalId>` anchor key (never the pointer revision). */
@@ -103,8 +115,9 @@ function stageIdOfAnchor(anchorKey: string): string {
 }
 
 /** Ruling 3: every rendered note line carries `（<noteId> v<version>）`. */
-function withNoteVersion(label: string, noteId: string, version: number): string {
-  return label + S['context.understanding.versionOpen'] + noteId + S['context.understanding.versionSeparator'] + String(version) + S['context.understanding.versionClose'];
+function withNoteVersion(label: string, noteId: string, version: number, texts: PromptTextsV1): string {
+  const S = (key: string): string => packString(texts, key);
+  return label + S('context.understanding.versionOpen') + noteId + S('context.understanding.versionSeparator') + String(version) + S('context.understanding.versionClose');
 }
 
 /**
@@ -112,11 +125,12 @@ function withNoteVersion(label: string, noteId: string, version: number): string
  * line and (unchanged) as the digest label of its note source. A row that
  * cannot be the current conclusion is one warning line.
  */
-function understandingSourceLabel(row: NotesUnderstandingRowV1): string {
-  if (!row.currentEligible) return S['context.understanding.reread'];
-  if (row.scope === 'project') return S['context.understanding.projectLabel'];
-  if (row.scope === 'goal') return `${S['context.understanding.goalLabelPrefix']}${goalIdOfAnchor(row.status.anchorKey)}${S['context.understanding.labelSuffix']}`;
-  return `${S['context.understanding.stageLabelPrefix']}${stageIdOfAnchor(row.status.anchorKey)}${S['context.understanding.labelSuffix']}`;
+function understandingSourceLabel(row: NotesUnderstandingRowV1, texts: PromptTextsV1): string {
+  const S = (key: string): string => packString(texts, key);
+  if (!row.currentEligible) return S('context.understanding.reread');
+  if (row.scope === 'project') return S('context.understanding.projectLabel');
+  if (row.scope === 'goal') return `${S('context.understanding.goalLabelPrefix')}${goalIdOfAnchor(row.status.anchorKey)}${S('context.understanding.labelSuffix')}`;
+  return `${S('context.understanding.stageLabelPrefix')}${stageIdOfAnchor(row.status.anchorKey)}${S('context.understanding.labelSuffix')}`;
 }
 
 /**
@@ -126,50 +140,53 @@ function understandingSourceLabel(row: NotesUnderstandingRowV1): string {
  * exactly ONE warning line with the existing general warning wording and no
  * body. Every rendered note line carries the note id and version.
  */
-function understandingLine(row: NotesUnderstandingRowV1): string {
+function understandingLine(row: NotesUnderstandingRowV1, texts: PromptTextsV1): string {
+  const S = (key: string): string => packString(texts, key);
   const noteId = row.status.pointer.noteId;
   const version = row.version;
   if (!row.currentEligible) {
     if (noteId !== null && version !== null) {
-      return withNoteVersion(S['context.understanding.warningPrefix'] + noteId + ' ' + (row.conclusion ?? '') + S['context.understanding.notCurrent'], noteId, version);
+      return withNoteVersion(S('context.understanding.warningPrefix') + noteId + ' ' + (row.conclusion ?? '') + S('context.understanding.notCurrent'), noteId, version, texts);
     }
-    if (row.scope === 'goal') return S['context.understanding.noCurrentGoalPrefix'] + goalIdOfAnchor(row.status.anchorKey) + S['context.understanding.noCurrentSuffix'];
-    if (row.scope === 'stage') return S['context.understanding.noCurrentStagePrefix'] + stageIdOfAnchor(row.status.anchorKey) + S['context.understanding.noCurrentSuffix'];
-    return S['context.understanding.noCurrentProject'];
+    if (row.scope === 'goal') return S('context.understanding.noCurrentGoalPrefix') + goalIdOfAnchor(row.status.anchorKey) + S('context.understanding.noCurrentSuffix');
+    if (row.scope === 'stage') return S('context.understanding.noCurrentStagePrefix') + stageIdOfAnchor(row.status.anchorKey) + S('context.understanding.noCurrentSuffix');
+    return S('context.understanding.noCurrentProject');
   }
   if (noteId === null || version === null) {
-    if (row.scope === 'goal') return S['context.understanding.noCurrentGoalPrefix'] + goalIdOfAnchor(row.status.anchorKey) + S['context.understanding.noCurrentSuffix'];
-    if (row.scope === 'stage') return S['context.understanding.noCurrentStagePrefix'] + stageIdOfAnchor(row.status.anchorKey) + S['context.understanding.noCurrentSuffix'];
-    return S['context.understanding.noCurrentProject'];
+    if (row.scope === 'goal') return S('context.understanding.noCurrentGoalPrefix') + goalIdOfAnchor(row.status.anchorKey) + S('context.understanding.noCurrentSuffix');
+    if (row.scope === 'stage') return S('context.understanding.noCurrentStagePrefix') + stageIdOfAnchor(row.status.anchorKey) + S('context.understanding.noCurrentSuffix');
+    return S('context.understanding.noCurrentProject');
   }
-  const label = understandingSourceLabel(row);
+  const label = understandingSourceLabel(row, texts);
   const content = row.scope === 'project' ? (row.body ?? row.conclusion ?? '') : (row.conclusion ?? '');
-  return `${withNoteVersion(label, noteId, version)}${S['context.understanding.labelSeparator']}${content}`;
+  return `${withNoteVersion(label, noteId, version, texts)}${S('context.understanding.labelSeparator')}${content}`;
 }
 
 /** §11.4: the Goal card's `current understanding` block (rows then project norms). */
-function notesGoalText(notes: ContextExtensionsV1['notes']): string {
-  if (notes.availability === 'not_implemented') return S['context.notImplemented'];
+function notesGoalText(notes: ContextExtensionsV1['notes'], texts: PromptTextsV1): string {
+  const S = (key: string): string => packString(texts, key);
+  if (notes.availability === 'not_implemented') return S('context.notImplemented');
   const lines: string[] = [];
-  for (const row of notes.understanding.rows.slice(0, 3)) lines.push(understandingLine(row));
+  for (const row of notes.understanding.rows.slice(0, 3)) lines.push(understandingLine(row, texts));
   for (const norm of notes.understanding.norms) {
-    lines.push(withNoteVersion(norm.label, norm.noteId, norm.version));
+    lines.push(withNoteVersion(norm.label, norm.noteId, norm.version, texts));
   }
   if (notes.understanding.normsOmitted > 0) {
-    lines.push(S['context.understanding.normsOmittedPrefix'] + String(notes.understanding.normsOmitted) + S['context.understanding.normsOmittedSuffix']);
+    lines.push(S('context.understanding.normsOmittedPrefix') + String(notes.understanding.normsOmitted) + S('context.understanding.normsOmittedSuffix'));
   }
-  return lines.length === 0 ? S['context.none'] : lines.join('\n');
+  return lines.length === 0 ? S('context.none') : lines.join('\n');
 }
 
-export function goalPayload(goal: GoalSnapshot, workspaceRevision: number, extensions: ContextExtensionsV1): string {
+export function goalPayload(goal: GoalSnapshot, workspaceRevision: number, extensions: ContextExtensionsV1, texts: PromptTextsV1 = DEFAULT_TEXTS): string {
+  const S = (key: string): string => packString(texts, key);
   const autonomy = extensions.goalSettings.availability === 'available' && extensions.goalSettings.autonomy !== null
-    ? extensions.goalSettings.autonomy : S['context.notImplemented'];
+    ? extensions.goalSettings.autonomy : S('context.notImplemented');
   return [
-    `${S['context.goal.goal']}${goal.ref.goalId}`,
-    `${S['context.goal.objective']}${goal.objective}`,
-    `${S['context.goal.workspace']}${goal.workspaceRef.workspaceId}@${String(workspaceRevision)}`,
-    `${S['context.goal.autonomy']}${autonomy}`,
-    `${S['context.goal.understanding']}${notesGoalText(extensions.notes)}`,
+    `${S('context.goal.goal')}${goal.ref.goalId}`,
+    `${S('context.goal.objective')}${goal.objective}`,
+    `${S('context.goal.workspace')}${goal.workspaceRef.workspaceId}@${String(workspaceRevision)}`,
+    `${S('context.goal.autonomy')}${autonomy}`,
+    `${S('context.goal.understanding')}${notesGoalText(extensions.notes, texts)}`,
   ].join('\n');
 }
 
@@ -214,7 +231,8 @@ export function declarationsForTask(plan: PlanRevisionSnapshot, taskId: string):
   return out;
 }
 
-export function taskPayload(plan: PlanRevisionSnapshot, record: TaskExecutionRecord, graph: GraphContextFactsV1['graph']): string | null {
+export function taskPayload(plan: PlanRevisionSnapshot, record: TaskExecutionRecord, graph: GraphContextFactsV1['graph'], texts: PromptTextsV1 = DEFAULT_TEXTS): string | null {
+  const S = (key: string): string => packString(texts, key);
   const claim = record?.outbox?.claim;
   if (claim === undefined) return null;
   const taskId = claim.task.taskId;
@@ -239,26 +257,27 @@ export function taskPayload(plan: PlanRevisionSnapshot, record: TaskExecutionRec
   const currentTask = graph?.tasks.find((row) => row.ref.taskId === taskId && row.ref.goalId === plan.goalRef.goalId);
   const phase = currentTask?.effectivePhase ?? task?.phase ?? 'pending';
   const lines = [
-    `${S['context.task.task']}${task?.title ?? taskId} (${taskId})`,
-    `${S['context.task.instruction']}${assignment?.instruction ?? ''}`,
-    `${S['context.task.plan']}${plan.ref.planId}`,
-    `${S['context.task.workspace']}${workspaceId}@${String(workspaceRevision)}`,
-    `${S['context.task.definitionPlan']}${plan.ref.planId}@${String(plan.planRevision)}`,
-    `${S['context.task.stage']}${stage === undefined ? S['context.task.undeclared'] : `${stage.title} (${stage.stageId})`}`,
-    `${S['context.task.module']}${task?.scope.kind === 'module' ? task.scope.moduleRef : S['context.task.undeclared']}`,
-    `${S['context.task.requirementLevel']}${task?.requirementLevel ?? 'required'}`,
-    `${S['context.task.disposition']}${task?.disposition ?? 'active'}`,
-    `${S['context.task.phase']}${phase}`,
-    `${S['context.task.obligations']}${obligations.length === 0 ? S['context.task.undefined'] : canonical(obligations, S['context.task.undefined'])}`,
-    `${S['context.task.acceptance']}${requirements.length === 0 ? S['context.task.undefined'] : canonical(requirements, S['context.task.undefined'])}`,
-    `${S['context.task.upstream']}${upstream.length === 0 ? S['context.task.null'] : canonical(upstream, S['context.task.null'])}`,
-    `${S['context.task.downstream']}${downstream.length === 0 ? S['context.task.null'] : canonical(downstream, S['context.task.null'])}`,
-    S['context.task.failure'],
+    `${S('context.task.task')}${task?.title ?? taskId} (${taskId})`,
+    `${S('context.task.instruction')}${assignment?.instruction ?? ''}`,
+    `${S('context.task.plan')}${plan.ref.planId}`,
+    `${S('context.task.workspace')}${workspaceId}@${String(workspaceRevision)}`,
+    `${S('context.task.definitionPlan')}${plan.ref.planId}@${String(plan.planRevision)}`,
+    `${S('context.task.stage')}${stage === undefined ? S('context.task.undeclared') : `${stage.title} (${stage.stageId})`}`,
+    `${S('context.task.module')}${task?.scope.kind === 'module' ? task.scope.moduleRef : S('context.task.undeclared')}`,
+    `${S('context.task.requirementLevel')}${task?.requirementLevel ?? 'required'}`,
+    `${S('context.task.disposition')}${task?.disposition ?? 'active'}`,
+    `${S('context.task.phase')}${phase}`,
+    `${S('context.task.obligations')}${obligations.length === 0 ? S('context.task.undefined') : canonical(obligations, S('context.task.undefined'))}`,
+    `${S('context.task.acceptance')}${requirements.length === 0 ? S('context.task.undefined') : canonical(requirements, S('context.task.undefined'))}`,
+    `${S('context.task.upstream')}${upstream.length === 0 ? S('context.task.null') : canonical(upstream, S('context.task.null'))}`,
+    `${S('context.task.downstream')}${downstream.length === 0 ? S('context.task.null') : canonical(downstream, S('context.task.null'))}`,
+    S('context.task.failure'),
   ];
   return lines.join('\n');
 }
 
-export function missingInputReminder(selection: InputSelectionV1, executions: readonly TaskExecutionRecord[]): OptionalRow {
+export function missingInputReminder(selection: InputSelectionV1, executions: readonly TaskExecutionRecord[], texts: PromptTextsV1 = DEFAULT_TEXTS): OptionalRow {
+  const S = (key: string): string => packString(texts, key);
   const declaration = selection.declaration;
   const upstream = declaration.upstream;
   const execution = upstream === null ? undefined : executions.find((candidate) =>
@@ -266,13 +285,13 @@ export function missingInputReminder(selection: InputSelectionV1, executions: re
     && candidate.run?.task?.goalId === upstream.goalId
     && candidate.run?.task?.taskId === upstream.taskId);
   const facts = execution === undefined
-    ? S['context.missingInput.noRecord']
-    : S['context.missingInput.runPrefix'] + execution.run.ref.runId + ' ' + execution.run.status
-      + (execution.run.outcome === null ? '' : S['context.missingInput.outcomeOpen'] + execution.run.outcome + S['context.missingInput.outcomeClose']);
+    ? S('context.missingInput.noRecord')
+    : S('context.missingInput.runPrefix') + execution.run.ref.runId + ' ' + execution.run.status
+      + (execution.run.outcome === null ? '' : S('context.missingInput.outcomeOpen') + execution.run.outcome + S('context.missingInput.outcomeClose'));
   const reason = selection.reason === null ? selection.state : selection.reason;
   return {
     key: `input:${declaration.declarationId}`,
-    text: S['context.missingInput.prefix'] + declaration.declarationId + S['context.missingInput.reasonSeparator'] + reason + S['context.missingInput.upstreamSeparator'] + (upstream?.taskId ?? S['context.missingInput.noUpstream']) + S['context.missingInput.factsSeparator'] + facts,
+    text: S('context.missingInput.prefix') + declaration.declarationId + S('context.missingInput.reasonSeparator') + reason + S('context.missingInput.upstreamSeparator') + (upstream?.taskId ?? S('context.missingInput.noUpstream')) + S('context.missingInput.factsSeparator') + facts,
   };
 }
 
@@ -280,15 +299,16 @@ function noteRowKey(row: NoteIndexRowV1): string {
   return `note:${row.anchorKey}\u0000${row.noteId}@${String(row.version)}`;
 }
 
-export function optionalRowsFromExtensions(extensions: ContextExtensionsV1): {
+export function optionalRowsFromExtensions(extensions: ContextExtensionsV1, texts: PromptTextsV1 = DEFAULT_TEXTS): {
   footprint: OptionalRow[]; notes: OptionalRow[];
   reminders: OptionalRow[];
 } {
   // Ruling 3: every rendered note line carries the note id and version. The
   // row key keeps its own identity so the budget dedup/sort is unchanged.
+  const S = (key: string): string => packString(texts, key);
   const notes = extensions.notes.general.map((row) => ({
     key: noteRowKey(row),
-    text: withNoteVersion(row.label, row.noteId, row.version),
+    text: withNoteVersion(row.label, row.noteId, row.version, texts),
   }));
   return {
     // The footprint section is a declared future section; its producer only ever
@@ -312,7 +332,7 @@ export function optionalRowsFromExtensions(extensions: ContextExtensionsV1): {
         .filter((row) => row.status.updateDue === true)
         .map((row, index) => ({
           key: `understanding:${String(index)}:${row.status.anchorKey}`,
-          text: `${S['context.work.understandingUpdateDue']}${row.status.anchorKey}`,
+          text: `${S('context.work.understandingUpdateDue')}${row.status.anchorKey}`,
         })),
     ],
   };
@@ -332,20 +352,22 @@ export function annotations(extensions: ContextExtensionsV1): ContextAssemblyBin
  * §4.3/G5.1: the copy-mode Query task section is the focus line(s) named by the
  * QueryJob's `focusTaskRefs`; it is omitted when there is none.
  */
-export function queryFocusLines(facts: QueryPreparationFacts, graph: GraphContextFactsV1['graph']): string | null {
+export function queryFocusLines(facts: QueryPreparationFacts, graph: GraphContextFactsV1['graph'], texts: PromptTextsV1 = DEFAULT_TEXTS): string | null {
+  const S = (key: string): string => packString(texts, key);
   const focus = facts.record?.job?.job?.intent?.focusTaskRefs ?? [];
   const lines = focus.map((ref) => {
     const row = graph?.tasks.find((candidate) => candidate.ref.taskId === ref.taskId && candidate.ref.goalId === ref.goalId);
-    return `${S['context.task.task']}${row?.definition.title ?? ref.taskId} (${ref.taskId})`;
+    return `${S('context.task.task')}${row?.definition.title ?? ref.taskId} (${ref.taskId})`;
   });
   return lines.length === 0 ? null : lines.join('\n');
 }
 
 /** §4.3/G5.1: the planning task section is the current Plan summary. */
-export function queryPlanSummary(plan: PlanRevisionSnapshot): string {
-  const stages = plan.stages.map((stage) => `${stage.title} (${stage.stageId})`).join(', ') || S['context.query.none'];
-  const tasks = plan.tasks.map((task) => `${task.title} (${task.taskId})`).join(', ') || S['context.query.none'];
-  return [`${S['context.query.plan']}${plan.ref.planId}@${String(plan.planRevision)}`, `${S['context.query.stages']}${stages}`, `${S['context.query.tasks']}${tasks}`].join('\n');
+export function queryPlanSummary(plan: PlanRevisionSnapshot, texts: PromptTextsV1 = DEFAULT_TEXTS): string {
+  const S = (key: string): string => packString(texts, key);
+  const stages = plan.stages.map((stage) => `${stage.title} (${stage.stageId})`).join(', ') || S('context.query.none');
+  const tasks = plan.tasks.map((task) => `${task.title} (${task.taskId})`).join(', ') || S('context.query.none');
+  return [`${S('context.query.plan')}${plan.ref.planId}@${String(plan.planRevision)}`, `${S('context.query.stages')}${stages}`, `${S('context.query.tasks')}${tasks}`].join('\n');
 }
 
 /** §4.3/G5.1: the planning footprint rows are the top-level module cards. */
@@ -382,6 +404,7 @@ export function notImplementedExtensions(): ContextExtensionsV1 {
 export function noteSourcesOf(
   notes: ContextExtensionsV1['notes'],
   keptGeneral: readonly NoteIndexRowV1[],
+  texts: PromptTextsV1 = DEFAULT_TEXTS,
 ): ContextSourceV1[] {
   const sources: ContextSourceV1[] = [];
   const seen = new Set<string>();
@@ -397,7 +420,7 @@ export function noteSourcesOf(
   for (const row of notes.understanding.rows.slice(0, 3)) {
     const noteId = row.status.pointer.noteId;
     if (noteId === null || row.version === null) continue;
-    add(row.status.anchorKey, noteId, row.version, understandingSourceLabel(row));
+    add(row.status.anchorKey, noteId, row.version, understandingSourceLabel(row, texts));
   }
   for (const norm of notes.understanding.norms) {
     add(norm.anchorKey, norm.noteId, norm.version, norm.label);

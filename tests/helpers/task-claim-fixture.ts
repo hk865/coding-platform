@@ -509,6 +509,8 @@ export type PreparationHostConfiguration = {
   hostTemplate: { templateId: string; revision: string; digest: string } | null;
   budget?: RuntimeBudget;
   client?: ModelClientPort;
+  /** Optional preparation model binding; default is the fixture's test/test one. */
+  model?: { configuration: { revision: string; provider: string; model: string; baseUrl: string }; client?: ModelClientPort };
 };
 
 /** A trusted Host binding for the REAL preparation path, over public configuration only. */
@@ -516,8 +518,10 @@ export function preparationHost(config: PreparationHostConfiguration): RuntimeHo
   const resolved = (): ResolvedRuntimeConfiguration => ({
     configurationRevision: config.configurationRevision,
     model: {
-      configuration: { revision: config.configurationRevision, provider: 'test', model: 'test', baseUrl: 'http://127.0.0.1' },
-      client: config.client ?? preparationOnlyModel,
+      configuration: config.model === undefined
+        ? { revision: config.configurationRevision, provider: 'test', model: 'test', baseUrl: 'http://127.0.0.1' }
+        : { ...config.model.configuration },
+      client: config.client ?? config.model?.client ?? preparationOnlyModel,
     },
     budget: config.budget ?? { contextWindowTokens: 128000, inputTokens: null, outputTokens: null,
       maxRequests: 4, maxToolCalls: 8, timeoutMs: null, perResponseTokens: 512 },

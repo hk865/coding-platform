@@ -55,6 +55,16 @@ export type {
   ContextBuilderInput,
   ContextBuilderPort,
 } from "./core/context/builder/context-builder.js";
+/** Host-provided context inputs and the selection report; runtime exports unchanged. */
+export type {
+  BaseSystemPromptInput,
+  ContextPreview,
+  ContextPreviewResult,
+  ContextSelectionOptions,
+  ContextSelectionRemoved,
+  ContextSelectionReport,
+  ReasoningReplay,
+} from "./core/context/selection_policy/context-selection-policy.js";
 export type { AgentEvent, EventMeta } from "./core/runtime/events/agent-events.js";
 export type { Run, RunState, Turn } from "./core/runtime/state/run-state.js";
 export type {

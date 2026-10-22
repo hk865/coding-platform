@@ -22,6 +22,8 @@ import type {
   HookPort, SqliteStores, ToolCall, ToolDefinition, ToolGroupBarrier, WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import { runObservedModel } from './observed-model-run.js';
+import { readPromptTexts } from './prompt-set-texts.js';
+import { promptSelectionOf, type PromptSetV1 } from '../../contracts/prompts/prompt-set.js';
 import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../../contracts/review-admission.js';
 import { createControlOnlyInputSupply, createMailboxInputSupply, type InputSupply } from './execution-inputs.js';
 import type { SourceToolOptions } from './exploration-tools.js';
@@ -100,6 +102,23 @@ export { createGraphHistoryProxy } from './tool-group-assembly.js';
 
 function sameRef(left: unknown, right: unknown): boolean {
   try { return canonicalJson(left as never) === canonicalJson(right as never); } catch { return false; }
+}
+
+/**
+ * Ruling 16: the Host binding still names the prepared prompt selection and the
+ * provider/model the set was frozen with. `promptSelectionOf` is the only reader
+ * of `selection`; a BoundModel without one takes its documented fallback
+ * (revision / `platform` / `current_run`) and is compared exactly like any other.
+ */
+function samePromptBinding(
+  model: { configuration: { revision: string; provider: string; model: string };
+    selection?: { modelId: string; promptPack: string; reasoningReplay: 'current_run' | 'none' } },
+  set: PromptSetV1,
+): boolean {
+  const selection = promptSelectionOf(model);
+  return selection.modelId === set.modelId && selection.promptPack === set.packId
+    && selection.reasoningReplay === set.reasoningReplay
+    && model.configuration.provider === set.provider && model.configuration.model === set.model;
 }
 /**
  * §6.3 driver check 1 (C3): a Run with a fixed `inputBinding` accepts only a
@@ -573,6 +592,13 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         || !sameRef(hostConfig.hostTemplate, manifest.hostTemplate)) {
         return rejected('forbidden', 'the Host configuration revision or template changed since preparation');
       }
+      // Ruling 16: a start, and a resume with a same-process proof, also compares
+      // the Host's prompt selection and bound provider/model with the frozen set.
+      // A resume WITHOUT a live handle already answered `busy` above, before this
+      // check ever runs.
+      if (!samePromptBinding(hostConfig.model, manifest.promptSet)) {
+        return rejected('forbidden', 'the Host model or prompt selection changed since preparation');
+      }
       const policyRevisionMatches = manifest.permissions.policyRevision === record.run.roleBinding.policyRevision;
       if (isReviewRoundPurpose(record.run.purpose)) {
         // R4/L13: the review round's fixed tool set and empty write scope, with
@@ -617,6 +643,21 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       const location = deps.kernelStores.byAdapterId(record.session.kernel.adapterId);
       if (!location) return rejected('unsupported', 'the prepared Session is not mapped to a current Kernel store');
       if (!nonEmpty(location.databasePath)) return rejected('unsupported', 'the mapped Kernel store has no database path');
+
+      // Ruling 22: the frozen prompt inputs are the ONLY base and Skills this Run
+      // sends. A text that cannot be read back is this driver's `unavailable`,
+      // decided before the entry authorization and begin writes. It comes after
+      // the `busy`/observe answers above, so a resume without a live handle still
+      // answers `busy` first (ruling 16 keeps that order).
+      const promptTexts = await readPromptTexts(deps.bodies, manifest.promptSet);
+      if (promptTexts.status !== 'ready') {
+        return rejected('unavailable', `reading the prepared prompt texts failed: ${promptTexts.reason}`);
+      }
+      const frozenPrompt = {
+        base: promptTexts.value.base,
+        skills: promptTexts.value.skills,
+        reasoningReplay: manifest.promptSet.reasoningReplay,
+      };
 
       // 6. Obtain the entry permit: reuse the persisted V2 permit when the Run
       //    is already authorized, otherwise read the current revision and
@@ -979,8 +1020,13 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
               ...(hasFileRead ? [toolPathHook] : []),
               ...(shellBlockedHook === undefined ? [] : [shellBlockedHook]),
             ],
-            skills: hostConfig.skills,
-            ...(hostConfig.systemInstruction === null ? {} : { systemInstruction: hostConfig.systemInstruction }),
+            // Ruling 22: the frozen base (with the Host instruction already
+            // merged), the frozen Skills and the frozen thinking policy. The
+            // Host's `skills`/`systemInstruction` options no longer exist here.
+            prompt: frozenPrompt,
+            bodies: deps.bodies,
+            origin: { kind: 'run', owner: runRef },
+            promptFacts: new Map(),
             processSandboxOptions: hostConfig.processSandboxOptions,
             ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
             ...(sourceTools === undefined ? {} : { sourceTools }),

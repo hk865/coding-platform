@@ -17,7 +17,12 @@ import {
   estimateTokens,
   selectContext,
 } from "../../context/selection_policy/context-selection-policy.js";
-import type { TokenEstimator } from "../../context/selection_policy/context-selection-policy.js";
+import type {
+  ContextPreview,
+  ContextSelectionReport,
+  ReasoningReplay,
+  TokenEstimator,
+} from "../../context/selection_policy/context-selection-policy.js";
 import type {
   ContextFragment,
   MemoryItem,
@@ -109,6 +114,12 @@ export interface RunnerContextInput {
    * 缺省为空数组，旧 CLI 的 `current_turn` 语义不变。
    */
   readonly historyTranscript?: readonly TranscriptEntry[];
+  /** 最终请求的输入/输出预留测量；缺席时用配置的估算器对 window 做默认测量。 */
+  readonly previewRequest?: ContextPreview;
+  /** 每个真正发出的模型请求一次，在 hook 复核之后、provider 之前。 */
+  readonly onContextSelected?: (report: ContextSelectionReport) => void;
+  /** 出站思考过滤；缺席时不过滤（P4）。 */
+  readonly reasoningReplay?: ReasoningReplay;
 }
 
 export interface RunnerCallOptions {
@@ -683,8 +694,28 @@ export class RuntimeRunner {
           tokenBudget: context.input.tokenBudget,
           maxOutputTokens: context.input.maxOutputTokens ?? null,
         };
-        const selected = selectContext(builderInput, this.#tokenEstimator);
-        let request: ModelRequest = this.#contextBuilder.build(selected.input);
+        const previewRequest: ContextPreview =
+          context.input.previewRequest ??
+          (async (candidate: ModelRequest) => {
+            const inputTokens = estimateTokens(candidate, this.#tokenEstimator);
+            return {
+              outgoing: candidate,
+              inputTokens,
+              outputReserve: 0,
+              fits: inputTokens <= context.input.tokenBudget,
+            };
+          });
+        const selection = await selectContext(builderInput, {
+          historyEntryCount: history.length,
+          taskInputMessageId: state.turn.userMessage.messageId,
+          build: (candidate) => this.#contextBuilder.build(candidate),
+          previewRequest,
+          ...(context.input.reasoningReplay === undefined
+            ? {}
+            : { reasoningReplay: context.input.reasoningReplay }),
+        });
+        let request: ModelRequest = selection.request;
+        let selectionReport: ContextSelectionReport = selection.report;
         const beforeModel = await this.#hooks.beforeModel(
           state,
           request,
@@ -709,15 +740,21 @@ export class RuntimeRunner {
           return this.#commit(state, context, "run.failed", { failure: beforeModel.failure });
         }
         if (beforeModel.kind === "modify") {
-          request = beforeModel.value;
-          // Hook 可以调整提示词，但不能借此绕过调用方给定的模型上下文窗口。
-          const modifiedEstimate = estimateTokens(request, this.#tokenEstimator);
-          if (modifiedEstimate > context.input.tokenBudget) {
+          // Hook 可以调整提示词，但不能借此绕过调用方给定的模型上下文窗口；
+          // 复核与选择使用同一个最终请求预览，报告带走复核后的计数。
+          const rechecked = await previewRequest(beforeModel.value);
+          if (!rechecked.fits) {
             throw new ContextSelectionError(
               "required_content_over_budget",
-              `Hook 修改后的请求需要 ${modifiedEstimate} tokens，预算为 ${context.input.tokenBudget}`,
+              `Hook 修改后的请求需要 ${rechecked.inputTokens} tokens，输入预算为 ${context.input.tokenBudget - rechecked.outputReserve}`,
             );
           }
+          request = rechecked.outgoing;
+          selectionReport = {
+            ...selection.report,
+            inputTokens: rechecked.inputTokens,
+            budget: context.input.tokenBudget - rechecked.outputReserve,
+          };
         }
 
         state = await this.#commit(state, context, "model.request_started", {
@@ -725,6 +762,7 @@ export class RuntimeRunner {
           retryOfRequestId,
         });
         if (isTerminalRunStatus(state.status)) return state;
+        context.input.onContextSelected?.(selectionReport);
         const stream = await consumeModelStream(this.#modelClient, request, {
           signal: context.cancellation.signal,
           ...(this.#onTextDelta

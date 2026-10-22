@@ -15,8 +15,7 @@
  * Role/Grant admission. A Host without a runtime configuration keeps every
  * other page working.
  */
-import { resolve } from 'node:path';
-import { sha256Hex } from '../contracts/fingerprint.js';
+import { canonicalJson, sha256Hex } from '../contracts/fingerprint.js';
 import {
   createBuiltinProviderRegistry,
   type ProviderId,
@@ -39,7 +38,9 @@ import type {
   RuntimeHostBindings,
 } from '../core/agent-runtime/execution-contracts.js';
 import { READONLY_COMMAND_TOOL_NAME } from '../core/agent-runtime/readonly-command-tool.js';
+import { PLATFORM_SKILL_RESOURCE_ROOT } from '../core/agent-runtime/platform-skill-root.js';
 import { reviewHostLayerOneAccess } from '../contracts/review-admission.js';
+import { validateSettingsBaseUrl } from './host-settings.js';
 
 /** One trusted model description. It carries the environment-variable NAME
  * only; the secret value never enters this value, a digest, a log or a body. */
@@ -50,6 +51,14 @@ export type WorkbenchModelConfiguration = {
   baseUrl?: string;
   options?: Readonly<Record<string, JsonValue>>;
   secretEnvironmentVariable?: string;
+  /** The displayed/catalogued model id. A settings selection sets the settings
+   * item id here; a direct Host configuration leaves it absent and the Host
+   * derives the same `runtime-<sha16>` id the settings catalog projects. */
+  modelId?: string;
+  /** The explicit prompt pack; absent defaults to `platform` at resolution. */
+  promptPack?: string;
+  /** The explicit replay policy; absent defaults to `current_run` at resolution. */
+  reasoningReplay?: 'current_run' | 'none';
 };
 
 /** The original explicit trusted Skill selection: a repository resource root
@@ -75,11 +84,10 @@ const PLATFORM_BEHAVIORS: readonly PlatformBehavior[] = ['secretary', 'adviser',
 /** The closed platform-duty enum, validated only when an explicit grant names it. */
 const PLATFORM_DUTIES = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'] as const;
 
-/** The repository `resources/skills` root derived from this module's own location
- * (`src/app` in source, `dist/app` after the build). Both point two levels up at
- * the repository root, so the path never depends on the process cwd and never
- * looks at a parent checkout. */
-export const PLATFORM_SKILL_RESOURCE_ROOT = resolve(import.meta.dirname, '../../resources/skills');
+/** The repository `resources/skills` root. The Runtime owns the binding (core
+ * may not import `src/app`); this re-export keeps the Host-facing name and the
+ * exact same absolute value. */
+export { PLATFORM_SKILL_RESOURCE_ROOT };
 
 /**
  * The builtin identity for a directory opened through Host settings. It is a
@@ -207,6 +215,32 @@ const nonEmpty = (value: unknown): value is string => typeof value === 'string' 
 
 const scopeKey = (scope: WorkspaceScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
 
+/** The identity a settings catalog projects for a direct Host model, and the
+ * id the same direct model resolves with. One function serves both so a later
+ * settings selection finds exactly the catalogued entry. `promptPack` and
+ * `reasoningReplay` join the identity only when the direct configuration
+ * carries them, so a model without them keeps today's id byte for byte. */
+export function runtimeModelId(identity: {
+  provider: string;
+  model: string;
+  baseUrl?: string;
+  secretEnvironmentVariable: string;
+  options?: Readonly<Record<string, JsonValue>>;
+  promptPack?: string;
+  reasoningReplay?: 'current_run' | 'none';
+}): string {
+  const material = canonicalJson({
+    provider: identity.provider,
+    model: identity.model,
+    baseUrl: identity.baseUrl ?? null,
+    secretEnvironmentVariable: identity.secretEnvironmentVariable,
+    options: identity.options ?? null,
+    ...(identity.promptPack === undefined ? {} : { promptPack: identity.promptPack }),
+    ...(identity.reasoningReplay === undefined ? {} : { reasoningReplay: identity.reasoningReplay }),
+  } as never);
+  return `runtime-${sha256Hex(material).slice(0, 16)}`;
+}
+
 /** Structural equality of one complete `RoleConfigurationRef`: never a prefix
  * match, never a first-match guess. */
 export function sameRoleConfiguration(left: RoleConfigurationRef, right: RoleConfigurationRef): boolean {
@@ -265,6 +299,13 @@ export function validateWorkbenchRuntimeConfiguration(
     if (!validRole(binding.role)) return { code: 'invalid', reason: `bindings[${index}] requires a complete RoleConfigurationRef` };
     if (!nonEmpty(binding.configurationRevision)) return { code: 'invalid', reason: `bindings[${index}] requires a configurationRevision` };
     if (!isPlainObject(binding.model) || !nonEmpty(binding.model.model)) return { code: 'invalid', reason: `bindings[${index}] requires a model description` };
+    if (binding.model.modelId !== undefined && !nonEmpty(binding.model.modelId))
+      return { code: 'invalid', reason: `bindings[${index}].model.modelId must be a non-empty string when present` };
+    if (binding.model.promptPack !== undefined && !nonEmpty(binding.model.promptPack))
+      return { code: 'invalid', reason: `bindings[${index}].model.promptPack must be a non-empty string when present` };
+    if (binding.model.reasoningReplay !== undefined
+      && binding.model.reasoningReplay !== 'current_run' && binding.model.reasoningReplay !== 'none')
+      return { code: 'invalid', reason: `bindings[${index}].model.reasoningReplay must be current_run or none when present` };
     if (!isPlainObject(binding.grant)) return { code: 'invalid', reason: `bindings[${index}] requires a trusted grant` };
     // Slice 3 §2.4 item 3 / §2.5: the optional resident budget and duty are
     // validated here; an explicit legacy duty must name exactly the versioned
@@ -403,6 +444,19 @@ export function createWorkbenchRuntimeHostBindings(
       return { status: 'rejected', code: 'unsupported', reason: `trusted runtime binding ${binding.id} has no configured secret for its selected provider` };
     }
     const baseUrl = binding.model.baseUrl ?? definition.defaultBaseUrl;
+    // The settings catalog drops an invalid explicit baseUrl, so the direct
+    // model's id must be computed over the same accepted value.
+    const cataloguedBaseUrl = binding.model.baseUrl !== undefined
+      && validateSettingsBaseUrl(binding.model.baseUrl) === null ? binding.model.baseUrl : undefined;
+    const modelId = binding.model.modelId ?? runtimeModelId({
+      provider: binding.model.provider,
+      model: binding.model.model,
+      ...(cataloguedBaseUrl === undefined ? {} : { baseUrl: cataloguedBaseUrl }),
+      secretEnvironmentVariable: variable,
+      ...(binding.model.options === undefined ? {} : { options: binding.model.options }),
+      ...(binding.model.promptPack === undefined ? {} : { promptPack: binding.model.promptPack }),
+      ...(binding.model.reasoningReplay === undefined ? {} : { reasoningReplay: binding.model.reasoningReplay }),
+    });
     let client;
     try {
       client = registry.create(binding.model.provider, {
@@ -417,6 +471,11 @@ export function createWorkbenchRuntimeHostBindings(
     const model: ResolvedRuntimeConfiguration['model'] = {
       configuration: { revision: binding.model.revision, provider: binding.model.provider, model: binding.model.model, baseUrl },
       client,
+      selection: {
+        modelId,
+        promptPack: binding.model.promptPack ?? 'platform',
+        reasoningReplay: binding.model.reasoningReplay ?? 'current_run',
+      },
     };
     models.set(binding.id, model);
     return { status: 'ready', value: model };

@@ -9,6 +9,8 @@ import { runObservedModel, type ObservedModelRunOptions } from '../../src/core/a
 import { createExplorationTools } from '../../src/core/agent-runtime/exploration-tools.js';
 import { ModelBudget, DEFAULT_RUNTIME_BUDGET } from '../../src/core/agent-runtime/model-budget.js';
 import { PythonSourceIndex } from '../../src/core/workspace/python-source-index.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import { frozenPromptInputs } from './PC-frozen-prompt.js';
 
 const resources = vi.hoisted(() => ({
   groups: [] as Array<{
@@ -110,6 +112,11 @@ async function fixture(client: kernel.ModelClientPort = finalClient()) {
     taskBudget: { tokenBudget: null, deadline: null },
     signal: new AbortController().signal, deniedPrefixes: [], processSandboxOptions: {}, publish: async () => {},
     projectSource: { mode: 'frozen', open: source.open },
+    prompt: await frozenPromptInputs(),
+    bodies: new RawArtifactBodyStore(),
+    origin: { kind: 'run', owner: { aggregateType: 'Run', projectId: 'lifecycle-project',
+      goalId: 'lifecycle-goal', runId: 'lifecycle-run' } },
+    promptFacts: new Map(),
   };
   return { root, source, options };
 }

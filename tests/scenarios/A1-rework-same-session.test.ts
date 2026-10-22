@@ -34,7 +34,7 @@
  */
 import { afterEach, expect, it } from 'vitest';
 import {
-  CONTINUATION_STANDING_INSTRUCTIONS_ZH_V1, continuationBriefDigest, continuationBriefMarker, renderContinuationBriefZh,
+  continuationBriefDigest, continuationBriefMarker, renderContinuationBriefZh,
 } from '../../src/contracts/continuation-brief.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
@@ -205,7 +205,10 @@ it('A1 (C8, §15.2 5.8, AV-12, W-21, L-3, C3): a FAILed round is requeued automa
     to: checkpoints.indexOf('requeue'), verdict: 'unchanged' }));
   expect(newInput.content).toContain('检查轮次开始 → 重新入队：源码摘要相同');
   // The fixed block, and the same-Session continuity.
-  expect(newInput.content).toContain(CONTINUATION_STANDING_INSTRUCTIONS_ZH_V1.join('\n'));
+  expect(newInput.content).toContain(['### 继续之前', '- 文件可能已经变化，编辑前先重新读取。',
+    '- “结果未知”的工具调用可能已经产生副作用，重做之前先核实当前状态。',
+    '- “没有执行”的工具调用没有产生结果，需要时重新发起。',
+    '- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。'].join('\n'));
   expect(brief.session).toMatchObject({ continuity: 'same_session_history', sessionRef: run1.outbox.claim.sessionRef });
   // The Kernel `turn.started` of Run 2 carries the marker line; Run 1's does not.
   const turns = turnStarts(h.database);

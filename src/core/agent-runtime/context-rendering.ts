@@ -9,43 +9,96 @@
  * derived from the template's slot ranges.
  */
 import type {
-  AttentionChangesV1, ContextAssemblyBindingV1, ContextSectionNameV1,
+  AttentionChangesV1, ContextAssemblyBindingV1, ContextCallKindV1, ContextSectionNameV1,
 } from '../../contracts/graph-context.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { PromptSetV1, PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { byKey, utf8Bytes } from './context-support.js';
 import type { OptionalRow, OptionalSectionName } from './context-types.js';
 
-const S = PLATFORM_PROMPT_PACK_V1.strings;
+/** A direct call without a resolved pack keeps the generated platform pack (ruling 14). */
+const DEFAULT_TEXTS: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1;
+
+/** One fixed string of the resolved pack; a missing key is a pack bug. */
+function packString(texts: PromptTextsV1, key: string): string {
+  const value = texts.strings[key];
+  if (value === undefined) throw new Error(`the resolved prompt pack has no string "${key}"`);
+  return value;
+}
+
+/** The section headers of one resolved pack, in render order. */
+export function contextSectionHeaders(texts: PromptTextsV1): Readonly<Record<ContextSectionNameV1, string>> {
+  return {
+    role: packString(texts, 'context.section.role'),
+    goal: packString(texts, 'context.section.goal'),
+    task: packString(texts, 'context.section.task'),
+    footprint: packString(texts, 'context.section.footprint'),
+    notes: packString(texts, 'context.section.notes'),
+    reminders: packString(texts, 'context.section.reminders'),
+    inputs: packString(texts, 'context.section.inputs'),
+    continuation: '',
+    unknown_call_review: '',
+  };
+}
+
+export function workContextPrelude(texts: PromptTextsV1): string { return packString(texts, 'context.prelude.work'); }
+export function queryContextPrelude(texts: PromptTextsV1): string { return packString(texts, 'context.prelude.query'); }
 
 /** The frozen format version of an assembled context binding (§4.3). */
 export const CONTEXT_FORMAT_VERSION = 's3-context-v1' as const;
-
-/** The frozen section headers, in render order (§4.3). */
-export const CONTEXT_SECTION_HEADERS: Readonly<Record<ContextSectionNameV1, string>> = {
-  role: S['context.section.role'],
-  goal: S['context.section.goal'],
-  task: S['context.section.task'],
-  footprint: S['context.section.footprint'],
-  notes: S['context.section.notes'],
-  reminders: S['context.section.reminders'],
-  inputs: S['context.section.inputs'],
-  continuation: '',
-  unknown_call_review: '',
-};
 
 export const CONTEXT_SECTION_ORDER: readonly ContextSectionNameV1[] = [
   'role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation',
 ];
 
+/** R1: the review instruction is the last section, legal only for the `work` call kind. */
+const SECTION_ORDER_WITH_REVIEW: readonly ContextSectionNameV1[] = [...CONTEXT_SECTION_ORDER, 'unknown_call_review'];
+
+/** The sections each template declares a slot for (the template half of ruling 18). */
+const TEMPLATE_SECTIONS: Readonly<Record<ContextTemplateId, readonly ContextSectionNameV1[]>> = {
+  'work-input': SECTION_ORDER_WITH_REVIEW,
+  'query-planning-input': ['role', 'goal', 'task', 'footprint'],
+  'query-copy-input': ['role', 'goal', 'task'],
+};
+
+/** The call-kind half of ruling 18 (the table of state/context-input.ts ~65-73, for the kinds a preparation produces). */
+const CALL_KIND_SECTIONS: Readonly<Partial<Record<ContextCallKindV1, readonly ContextSectionNameV1[]>>> = {
+  work: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'unknown_call_review'],
+  continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation'],
+  planning: ['role', 'goal', 'task', 'footprint'],
+  copy: ['role', 'goal', 'task'],
+};
+
+/**
+ * Ruling 18: today's fixed section order projected onto what a template and a
+ * call kind allow. PC-1 records it; nothing reads it yet.
+ */
+export function sectionOrderFor(
+  callKind: 'work' | 'continuation' | 'planning' | 'copy',
+  templateId: ContextTemplateId,
+): ContextSectionNameV1[] {
+  const callKindAllowed = new Set(CALL_KIND_SECTIONS[callKind] ?? []);
+  const templateAllowed = new Set(TEMPLATE_SECTIONS[templateId]);
+  return SECTION_ORDER_WITH_REVIEW.filter(name => callKindAllowed.has(name) && templateAllowed.has(name));
+}
+
+/** Every call kind a Work preparation can produce (`work` also covers a review-purpose Run). */
+export function workPreparedSectionOrder(): PromptSetV1['sectionOrder'] {
+  return { work: sectionOrderFor('work', 'work-input'),
+    continuation: sectionOrderFor('continuation', 'work-input') };
+}
+
+/** Every call kind a Query preparation can produce. */
+export function queryPreparedSectionOrder(): PromptSetV1['sectionOrder'] {
+  return { planning: sectionOrderFor('planning', 'query-planning-input'),
+    copy: sectionOrderFor('copy', 'query-copy-input') };
+}
+
 const OPTIONAL_SECTIONS: readonly OptionalSectionName[] = CONTEXT_SECTION_ORDER.filter(
   (name): name is OptionalSectionName =>
     name === 'footprint' || name === 'notes' || name === 'reminders' || name === 'inputs',
 );
-
-export const WORK_CONTEXT_PRELUDE = S['context.prelude.work'];
-/** §4.3: the Query prelude keeps the original header AND its bounded-Query line. */
-export const QUERY_CONTEXT_PRELUDE = S['context.prelude.query'];
 
 export const ATTENTION_HEADER = '[attention s3-v1]';
 export const ATTENTION_MAX_BYTES = 16_384;
@@ -64,8 +117,8 @@ const TEMPLATE_OPTIONAL_SECTIONS: Readonly<Record<ContextTemplateId, readonly Op
 };
 
 /** A pack slot that is empty renders nothing, so the `\n\n` must be inside the value. */
-const omissionLine = (count: number): string =>
-  S['context.omissions.prefix'] + String(count) + S['context.omissions.suffix'];
+const omissionLine = (texts: PromptTextsV1, count: number): string =>
+  packString(texts, 'context.omissions.prefix') + String(count) + packString(texts, 'context.omissions.suffix');
 
 type RenderInput = {
   templateId: ContextTemplateId;
@@ -75,9 +128,12 @@ type RenderInput = {
   continuationSuffix: string | null;
   reviewSuffix: string | null;
   residentBudgetBytes: number;
+  texts: PromptTextsV1;
 };
 
 function renderWithTemplate(input: RenderInput): RenderResult {
+  const texts = input.texts;
+  const headers = contextSectionHeaders(texts);
   const allowed = TEMPLATE_OPTIONAL_SECTIONS[input.templateId];
   const present = allowed
     // §11.4/L20: the `notes` rows already arrive in the memory material's source
@@ -100,9 +156,9 @@ function renderWithTemplate(input: RenderInput): RenderResult {
       remaining -= kept;
       const missing = section.rows.length - kept;
       omitted.set(section.name, missing);
-      let text = CONTEXT_SECTION_HEADERS[section.name];
+      let text = headers[section.name];
       if (kept > 0) text += '\n' + section.rows.slice(0, kept).map((row) => row.text).join('\n');
-      if (missing > 0) text += '\n' + omissionLine(missing);
+      if (missing > 0) text += '\n' + omissionLine(texts, missing);
       parts.push(text);
     }
     return { text: parts.length === 0 ? '' : '\n\n' + parts.join('\n\n'), omitted };
@@ -121,9 +177,9 @@ function renderWithTemplate(input: RenderInput): RenderResult {
   const task = input.required.task;
   const slots: Record<string, string | undefined> = {
     prelude: input.prelude,
-    role: CONTEXT_SECTION_HEADERS.role + '\n' + input.required.role,
-    goal: goal === null ? undefined : '\n\n' + CONTEXT_SECTION_HEADERS.goal + '\n' + goal,
-    task: task === null ? undefined : '\n\n' + CONTEXT_SECTION_HEADERS.task + '\n' + task,
+    role: headers.role + '\n' + input.required.role,
+    goal: goal === null ? undefined : '\n\n' + headers.goal + '\n' + goal,
+    task: task === null ? undefined : '\n\n' + headers.task + '\n' + task,
   };
   // Pass exactly the slots each frozen template's table declares; an absent
   // section is an undefined value, not a missing key.
@@ -148,9 +204,9 @@ function renderWithTemplate(input: RenderInput): RenderResult {
       const kept = Math.min(remaining, section.rows.length);
       remaining -= kept;
       const missing = section.rows.length - kept;
-      let text = CONTEXT_SECTION_HEADERS[section.name];
+      let text = headers[section.name];
       if (kept > 0) text += '\n' + section.rows.slice(0, kept).map((row) => row.text).join('\n');
-      if (missing > 0) text += '\n' + omissionLine(missing);
+      if (missing > 0) text += '\n' + omissionLine(texts, missing);
       slots[section.name] = '\n\n' + text;
       optionalSections.push({ name: section.name, omitted: missing });
     }
@@ -163,11 +219,11 @@ function renderWithTemplate(input: RenderInput): RenderResult {
     for (const name of allowed) {
       const count = (input.optional[name] ?? []).length;
       if (count === 0) continue;
-      lines.push(`${name}${S['context.omissions.nameSeparator']}${omissionLine(count)}`);
+      lines.push(`${name}${packString(texts, 'context.omissions.nameSeparator')}${omissionLine(texts, count)}`);
       omittedSections.push({ name, count });
     }
     if (lines.length > 0) {
-      const block = '\n\n' + S['context.omissions.heading'] + '\n' + lines.join('\n');
+      const block = '\n\n' + packString(texts, 'context.omissions.heading') + '\n' + lines.join('\n');
       // §4.3/G5.5: the mandatory omission metadata is appended at the end of the
       // required task section (or the goal section when no task exists, or the role
       // section when neither exists). The block is part of that slot's value, so the
@@ -179,7 +235,7 @@ function renderWithTemplate(input: RenderInput): RenderResult {
     }
   }
 
-  const rendered = renderTemplate(PLATFORM_PROMPT_PACK_V1, input.templateId, slots, []);
+  const rendered = renderTemplate(texts, input.templateId, slots, []);
   const rangeOf = (name: string) => {
     const range = rendered.sectionRanges[name];
     // Every slot below has a non-empty value, so a missing range is a code bug.
@@ -242,6 +298,8 @@ export function renderContext(input: {
   /** R1: the rendered `unknown_call_review` section of a review-purpose Work Run. */
   reviewSuffix?: string | null;
   residentBudgetBytes: number;
+  /** The resolved pack; absent keeps the generated pack for a direct call. */
+  texts?: PromptTextsV1;
 }): RenderResult {
   return renderWithTemplate({
     templateId: 'work-input',
@@ -251,6 +309,7 @@ export function renderContext(input: {
     continuationSuffix: input.continuationSuffix,
     reviewSuffix: input.reviewSuffix ?? null,
     residentBudgetBytes: input.residentBudgetBytes,
+    texts: input.texts ?? DEFAULT_TEXTS,
   });
 }
 
@@ -260,6 +319,8 @@ export function renderQueryContext(input: {
   required: { role: string; goal: string | null; task: string | null };
   optional: Partial<Record<'footprint', OptionalRow[]>>;
   residentBudgetBytes: number;
+  /** The resolved pack; absent keeps the generated pack for a direct call. */
+  texts?: PromptTextsV1;
 }): RenderResult {
   return renderWithTemplate({
     templateId: input.templateId,
@@ -269,6 +330,7 @@ export function renderQueryContext(input: {
     continuationSuffix: null,
     reviewSuffix: null,
     residentBudgetBytes: input.residentBudgetBytes,
+    texts: input.texts ?? DEFAULT_TEXTS,
   });
 }
 
@@ -308,7 +370,7 @@ export function renderAttentionChanges(input: AttentionChangesV1): string {
   }
 
   const omittedLine = (count: number): string => JSON.stringify({
-    kind: 'omitted', count, hint: omissionLine(count),
+    kind: 'omitted', count, hint: omissionLine(DEFAULT_TEXTS, count),
   });
   // §4.5/G5.6: keep the longest prefix whose ACTUAL final text fits. The last
   // kept row needs no omission line (count 0), so reserving one always would

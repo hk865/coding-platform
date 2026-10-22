@@ -19,6 +19,8 @@ import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../../src/core/w
 import type { RuntimeSourceCaptureAccess } from '../../src/core/agent-runtime/source-tool-ports.js';
 import { runObservedModel, type ObservedModelRunOptions } from '../../src/core/agent-runtime/observed-model-run.js';
 import { ModelBudget, DEFAULT_RUNTIME_BUDGET } from '../../src/core/agent-runtime/model-budget.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import { frozenPromptInputs } from './PC-frozen-prompt.js';
 
 const directories: string[] = [];
 const openAccesses: RuntimeSourceCaptureAccess[] = [];
@@ -165,6 +167,7 @@ async function fixture(name: string, respond: ModelRound, assertMaterialsCurrent
     count: () => ({ tokens: 100, method: 'model_tokenizer', tokenizer: 'labelled-local-test-counter' }),
   });
   const permits: string[] = [];
+  const prompt = await frozenPromptInputs();
   const options: ObservedModelRunOptions = {
     kernel, bound: { configuration: { revision: 'local-text-loop', provider: 'deepseek',
       model: 'labelled-local-text-client', baseUrl: 'http://127.0.0.1' }, client },
@@ -179,6 +182,11 @@ async function fixture(name: string, respond: ModelRound, assertMaterialsCurrent
     modelCalls: { bind: async () => {}, beforeCall: async ({ requestId }) => { permits.push(requestId); } },
     manifestDigest: digest('trusted-test-context'),
     ...(assertMaterialsCurrent ? { assertMaterialsCurrent } : {}),
+    prompt,
+    bodies: new RawArtifactBodyStore(),
+    origin: { kind: 'run', owner: { aggregateType: 'Run', projectId: 'source-text-project',
+      goalId: 'source-text-goal', runId: 'source-text-run' } },
+    promptFacts: new Map(),
   };
   return {
     root, requests, permits,

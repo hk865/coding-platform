@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import { modelRequestPermitIdFor } from '../../src/core/work-graph/tasks/model-call-contracts.js';
-import { B2_AT, b2Key, createB2ExecutionFixture, synchronizeB2Commits, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
+import { B2_AT, B2_PROMPT_FACTS, b2Key, createB2ExecutionFixture, synchronizeB2Commits, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
 
 const fixtures: B2ExecutionFixture[] = [];
 async function open(kind: 'memory' | 'sqlite' = 'memory') { const f = await createB2ExecutionFixture(kind); fixtures.push(f); return f; }
@@ -17,7 +17,7 @@ describe('B2 model request', () => {
     expect(issued.value.permitRef.permitId).toBe(modelRequestPermitIdFor(f.claim.runRef, request.requestId));
     expect(issued.value.permit).toMatchObject({ runRef: f.claim.runRef, requestId: request.requestId,
       requestDigest: request.requestDigest, contextInputDigest: request.contextInputDigest, manifestDigest: request.manifestDigest,
-      consumedByAttemptId: null, consumedAt: null });
+      prompt: B2_PROMPT_FACTS, sequence: 1, consumedByAttemptId: null, consumedAt: null });
     const before = await f.read();
     for (const [field, value] of Object.entries({ requestDigest: artifactBodyDigest('other request'),
       contextInputDigest: artifactBodyDigest('other context'), manifestDigest: artifactBodyDigest('other manifest') })) {
@@ -25,6 +25,44 @@ describe('B2 model request', () => {
         meta: { requestId: `changed-${field}`, expected: [await f.pin()] } })).toMatchObject({ status: 'rejected' });
       expect(await f.read()).toEqual(before);
     }
+  });
+
+  it('rejects unknown keys nested in the tool-spec ref and its source before writing a permit', async () => {
+    const f = await open(); const admitted = await f.enter(); const request = f.actualRequest(admitted, 'nested-unknown');
+    const before = await f.read();
+    const refExtra = { ...request, prompt: { ...request.prompt,
+      toolSpecsRef: { ...request.prompt.toolSpecsRef, extra: true } } };
+    expect(await f.model.authorizeModelRequest(f.ctx, { input: refExtra,
+      meta: { requestId: 'nested-ref-extra', expected: [await f.pin()] } }))
+      .toMatchObject({ status: 'rejected', code: 'invalid' });
+    const sourceExtra = { ...request, prompt: { ...request.prompt,
+      toolSpecsRef: { ...request.prompt.toolSpecsRef,
+        source: { ...request.prompt.toolSpecsRef.source, extra: true } } } };
+    expect(await f.model.authorizeModelRequest(f.ctx, { input: sourceExtra,
+      meta: { requestId: 'nested-source-extra', expected: [await f.pin()] } }))
+      .toMatchObject({ status: 'rejected', code: 'invalid' });
+    expect(await f.read()).toEqual(before);
+  });
+
+  it('stores the prompt facts with the permit and compares them again at consumption (ruling 26)', async () => {
+    const f = await open(); const admitted = await f.enter();
+    const request = f.actualRequest(admitted, 'prompt-facts-request');
+    expect(request.prompt).toEqual(B2_PROMPT_FACTS);
+    const issued = await f.model.authorizeModelRequest(f.ctx, { input: request,
+      meta: { requestId: 'issue-prompt-facts', expected: [await f.pin()] } });
+    expect(issued).toMatchObject({ status: 'committed' });
+    if (issued.status !== 'committed') throw Error('real permit issuance required');
+    expect(issued.value.permit).toMatchObject({ prompt: B2_PROMPT_FACTS, sequence: 1 });
+    const expected = [await f.pin(), { ref: issued.value.permitRef, revision: 1 }];
+    const changed = { ...request, prompt: { ...request.prompt, systemDigest: artifactBodyDigest('another system') } };
+    expect(await f.model.recordModelRequestAttempt(f.ctx, { input: { request: changed, permitRef: issued.value.permitRef,
+      attemptId: 'prompt-mismatch', observedAt: B2_AT }, meta: { requestId: 'consume-prompt-mismatch', expected } }))
+      .toMatchObject({ status: 'rejected', code: 'forbidden',
+        reason: expect.stringMatching(/the stored permit does not match the actual request/) });
+    const consumed = await f.model.recordModelRequestAttempt(f.ctx, { input: { request, permitRef: issued.value.permitRef,
+      attemptId: 'prompt-exact', observedAt: B2_AT }, meta: { requestId: 'consume-prompt-exact', expected } });
+    expect(consumed).toMatchObject({ status: 'committed', value: { permit: { prompt: B2_PROMPT_FACTS, sequence: 1,
+      consumedByAttemptId: 'prompt-exact' } } });
   });
 
   it('SQLite concurrent consumption has one fresh winner; restart replay never changes the consumed permit', async () => {

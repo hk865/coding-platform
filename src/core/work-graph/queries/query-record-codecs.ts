@@ -29,8 +29,9 @@ import type { ActorRef } from '../../../contracts/command-event.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { validQueryExecution } from '../../../contracts/query-job.js';
 import {
-  invalid, isPos, isRecord, isSha256Hex, nonEmpty, parseTaggedObject, type UnknownRecord,
+  invalid, isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty, parseTaggedObject, type UnknownRecord,
 } from '../../../contracts/validation/common.js';
+import { isArtifactRef } from '../../record-store/body-codec.js';
 import type {
   QueryExecutionStateV1,
   QueryJobAnswerRef,
@@ -339,6 +340,91 @@ function answerIssues(value: unknown, expectedRef: QueryJobAnswerRef | null): st
   return issues;
 }
 
+// --------------------------------------------------------------------------
+// Query request prompt facts (PC-1b ruling 27)
+// --------------------------------------------------------------------------
+
+const QUERY_PROMPT_FACT_KEYS = ['systemDigest', 'toolsDigest', 'toolSpecsRef', 'selection'] as const;
+const QUERY_SELECTION_KEYS = ['inputTokens', 'budget', 'removed'] as const;
+const QUERY_SELECTION_REMOVED_KEYS = ['memory', 'skillReference', 'additionalInstruction', 'toolResultBody',
+  'historyExchange', 'historyConclusion', 'currentExchange'] as const;
+const ARTIFACT_REF_KEYS = ['kind', 'contentType', 'digest', 'sizeBytes', 'source'] as const;
+const ARTIFACT_SOURCE_KEYS = ['kind', 'refId', 'revision', 'digest'] as const;
+const QUERY_REQUEST_KEYS = ['requestId', 'requestDigest', 'reservedInput', 'reservedOutput', 'inputTokens',
+  'outputTokens', 'cachedInputTokens', 'usageStatus', 'admitted', 'prompt'] as const;
+const QUERY_USAGE_STATUSES = ['reserved', 'reported', 'unknown'] as const;
+
+/** Exact key set: an unknown or a missing field is both a rejection. */
+function hasExactKeys(value: UnknownRecord, keys: readonly string[]): boolean {
+  const actual = Object.keys(value);
+  return actual.length === keys.length && keys.every(key => Object.hasOwn(value, key));
+}
+
+/** The prompt facts' ArtifactRef: the store validator plus an exact source shape. */
+function isExactArtifactRef(value: unknown): boolean {
+  if (!isRecord(value) || !hasExactKeys(value, ARTIFACT_REF_KEYS) || !isArtifactRef(value)) return false;
+  const source = value['source'];
+  if (!isRecord(source)) return false;
+  const sourceKeys = Object.keys(source);
+  if (sourceKeys.length !== 3 && sourceKeys.length !== 4) return false;
+  if (!sourceKeys.every(key => (ARTIFACT_SOURCE_KEYS as readonly string[]).includes(key))) return false;
+  return sourceKeys.length === 3 || typeof source['digest'] === 'string';
+}
+
+/**
+ * Strict persistent shape of one Query request's prompt facts. Query drops the
+ * output cap: the row's existing `reservedOutput` carries it. Every level is
+ * exact, so a historical row is never silently widened by an unknown field.
+ */
+export function queryPromptFactsIssues(value: unknown, path: string): string[] {
+  if (!isRecord(value)) return [`${path} must be an object`];
+  const issues: string[] = [];
+  if (!hasExactKeys(value, QUERY_PROMPT_FACT_KEYS)) {
+    issues.push(`${path} must carry exactly ${QUERY_PROMPT_FACT_KEYS.join(', ')}`);
+  }
+  if (!isSha256Hex(value['systemDigest'])) issues.push(`${path}.systemDigest must be a lowercase sha256 hex`);
+  if (!isSha256Hex(value['toolsDigest'])) issues.push(`${path}.toolsDigest must be a lowercase sha256 hex`);
+  if (!isExactArtifactRef(value['toolSpecsRef'])) issues.push(`${path}.toolSpecsRef must be a complete ArtifactRef`);
+  const selection = value['selection'];
+  if (!isRecord(selection) || !hasExactKeys(selection, QUERY_SELECTION_KEYS)) {
+    issues.push(`${path}.selection must carry exactly ${QUERY_SELECTION_KEYS.join(', ')}`);
+  } else {
+    if (!isNonNeg(selection['inputTokens'])) issues.push(`${path}.selection.inputTokens must be a non-negative integer`);
+    if (!isNonNeg(selection['budget'])) issues.push(`${path}.selection.budget must be a non-negative integer`);
+    const removed = selection['removed'];
+    if (!isRecord(removed) || !hasExactKeys(removed, QUERY_SELECTION_REMOVED_KEYS)) {
+      issues.push(`${path}.selection.removed must carry exactly ${QUERY_SELECTION_REMOVED_KEYS.join(', ')}`);
+    } else {
+      for (const key of QUERY_SELECTION_REMOVED_KEYS) {
+        if (!isNonNeg(removed[key])) issues.push(`${path}.selection.removed.${key} must be a non-negative integer`);
+      }
+    }
+  }
+  return issues;
+}
+
+/** Strict shape of one persisted Query model request row, prompt facts included. */
+function queryModelRequestIssues(value: unknown, path: string): string[] {
+  if (!isRecord(value)) return [`${path} must be an object`];
+  const issues: string[] = [];
+  if (!hasExactKeys(value, QUERY_REQUEST_KEYS)) {
+    issues.push(`${path} must carry exactly ${QUERY_REQUEST_KEYS.join(', ')}`);
+  }
+  if (!nonEmpty(value['requestId'])) issues.push(`${path}.requestId must be a non-empty string`);
+  if (!nonEmpty(value['requestDigest'])) issues.push(`${path}.requestDigest must be a non-empty string`);
+  if (!isNonNeg(value['reservedInput'])) issues.push(`${path}.reservedInput must be a non-negative integer`);
+  if (!isNonNeg(value['reservedOutput'])) issues.push(`${path}.reservedOutput must be a non-negative integer`);
+  for (const key of ['inputTokens', 'outputTokens', 'cachedInputTokens'] as const) {
+    if (!(value[key] === null || isNonNeg(value[key]))) issues.push(`${path}.${key} must be null or a non-negative integer`);
+  }
+  if (!(QUERY_USAGE_STATUSES as readonly unknown[]).includes(value['usageStatus'])) {
+    issues.push(`${path}.usageStatus must be reserved, reported or unknown`);
+  }
+  if (typeof value['admitted'] !== 'boolean') issues.push(`${path}.admitted must be a boolean`);
+  issues.push(...queryPromptFactsIssues(value['prompt'], `${path}.prompt`));
+  return issues;
+}
+
 /** Versioned execution-state projection shape; used by the operation event. */
 function executionStateIssues(value: unknown): string[] {
   if (value === null) return [];
@@ -353,6 +439,9 @@ function executionStateIssues(value: unknown): string[] {
     issues.push('executionState.sessionGeneration must be a positive integer');
   }
   if (!Array.isArray(value['requests'])) issues.push('executionState.requests must be an array');
+  else value['requests'].forEach((request, index) => {
+    issues.push(...queryModelRequestIssues(request, `executionState.requests[${index}]`));
+  });
   // QRR-05 (A.2 step 5.6): the optional cause of phase `unknown`.
   const unknown = value['unknown'];
   if (unknown !== undefined) {

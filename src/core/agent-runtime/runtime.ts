@@ -4,8 +4,10 @@
  * With the trusted dependency bundle the factory wires the real bounded
  * preparation, fresh execution driver, incremental observation services and the
  * ONE internal control coordinator. A no-argument call keeps the previous N0
- * behavior and returns an explicit `unsupported` for every member: the factory
- * never fabricates a capability and never starts a Kernel/provider call.
+ * behavior and answers `unsupported` for every member except `readPromptRecord`:
+ * that member validates the ref and answers a complete Work ref `unavailable`,
+ * while every other member stays `unsupported`. The factory never fabricates a
+ * capability and never starts a Kernel/provider call.
  *
  * The Session creation/original-history members are still declared only so the
  * composition root can override them with the accepted RT1/RT7/RT8
@@ -14,6 +16,7 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
 import type { RunRef } from '../../contracts/dispatch.js';
+import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
 import type { TaskRow } from '../work-graph/model/plan-contracts.js';
 import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
@@ -25,6 +28,17 @@ import { createRuntimeControlCoordinator } from './execution-control.js';
 import { createExecutionPreparation, loadPreparedManifest, rehydratePreparedExecution } from './execution-preparation.js';
 import { createContextAssembler } from './context-assembler.js';
 import { continuationBriefDigest } from '../../contracts/continuation-brief.js';
+import { createPlatformPromptPackSource } from '../../contracts/prompts/prompt-pack.js';
+import {
+  checkPromptBody, decodePromptSetV1, PROMPT_TEXT_CONTENT_TYPE, PROMPT_TOOL_SPECS_CONTENT_TYPE,
+  type PromptRecordRequestV1, type PromptSetV1,
+} from '../../contracts/prompts/prompt-set.js';
+import { sha256Hex } from '../../contracts/fingerprint.js';
+import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
+import type { ArtifactRef } from '../../contracts/artifact.js';
+import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
+import type { PreparedQueryExecution } from '../../contracts/core/prepared-execution.js';
+import type { RawArtifactStorePort } from '../record-store/body-ports.js';
 import { createSessionHistoryCursorOwner, kernelDatabaseState, type SessionHistoryCursorOwner } from './session-operations.js';
 import { createArchiveChangedFilesReader } from './session-anomaly-facts.js';
 import { bookLateEvidenceInProcess, stopPausedRunInProcess } from './run-reconcile.js';
@@ -44,6 +58,65 @@ import { isRunExecutionHistoryV1 } from '../work-graph/persistence/execution-his
 const unsupported = (reason: string) => ({
   status: 'rejected' as const, code: 'unsupported' as const, reason,
 });
+
+const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error);
+const rejected = (code: CoreRejection['code'], reason: string): CoreRejection =>
+  ({ status: 'rejected', code, reason });
+
+/** Ruling 29: the Query manifest is re-read through these exact identity fields. */
+function sameQueryRunRef(value: unknown, ref: QueryRunRef): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate['aggregateType'] === 'QueryRun'
+    && ['projectId', 'workspaceId', 'queryJobId', 'runId']
+      .every(field => candidate[field] === (ref as unknown as Record<string, unknown>)[field]);
+}
+
+/**
+ * Ruling 29: re-read the Query manifest named by `record.run.prepared.bundleRef`.
+ * The two Query manifest loaders are private, so this is the minimal equal read:
+ * content type, stored ref, body digest/size and the body's owner must all
+ * agree. A store failure is `unavailable`; a ref/content disagreement `invalid`.
+ */
+async function readQueryPromptSet(
+  bodies: Pick<RawArtifactStorePort, 'read'>,
+  prepared: PreparedQueryExecution,
+): Promise<ReadResult<PromptSetV1>> {
+  const bundleRef: ArtifactRef | undefined = prepared.bundleRef;
+  if (bundleRef === undefined || bundleRef.contentType !== QUERY_MANIFEST_CONTENT_TYPE
+    || bundleRef.digest.length === 0 || !Number.isSafeInteger(bundleRef.sizeBytes) || bundleRef.sizeBytes < 0) {
+    return rejected('invalid', 'the QueryRun has no prepared manifest reference');
+  }
+  let stored;
+  try { stored = await bodies.read(bundleRef); }
+  catch (error) { return rejected('unavailable', `reading the Query manifest failed: ${messageOf(error)}`); }
+  if (stored.status !== 'ready') return rejected('unavailable', 'the Query manifest body is not readable');
+  const record = stored.value;
+  if (record.ref.contentType !== bundleRef.contentType || record.ref.digest !== bundleRef.digest
+    || record.ref.sizeBytes !== bundleRef.sizeBytes) {
+    return rejected('invalid', 'the stored Query manifest reference disagrees with the Prepared envelope');
+  }
+  if (sha256Hex(record.body) !== bundleRef.digest
+    || Buffer.byteLength(record.body, 'utf8') !== bundleRef.sizeBytes) {
+    return rejected('invalid', 'the stored Query manifest bytes do not match their content digest');
+  }
+  if (record.origin.kind !== 'run' || !sameQueryRunRef(record.origin.owner, prepared.queryRunRef)) {
+    return rejected('forbidden', 'the stored Query manifest is not owned by this QueryRun');
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(record.body); } catch { return rejected('invalid', 'the Query manifest is not valid JSON'); }
+  if (typeof parsed !== 'object' || parsed === null) {
+    return rejected('invalid', 'the Query manifest is not valid JSON');
+  }
+  const manifest = parsed as Record<string, unknown>;
+  if (manifest['schemaVersion'] !== 1 || manifest['kind'] !== 'query_execution'
+    || !sameQueryRunRef(manifest['queryRunRef'], prepared.queryRunRef)) {
+    return rejected('invalid', "the Query manifest is not this QueryRun's execution manifest");
+  }
+  const set = decodePromptSetV1(manifest['promptSet']);
+  if (set === null) return rejected('invalid', 'the Query manifest has no valid prompt set');
+  return { status: 'ready', value: set };
+}
 
 function basePort(): AgentRuntimePort {
   return {
@@ -70,6 +143,27 @@ function basePort(): AgentRuntimePort {
     },
     async readAttentionGraph() {
       return unsupported('B2 skeleton: readAttentionGraph is not implemented');
+    },
+    async readPromptRecord(_ctx, ref) {
+      // Ruling 29/30: no dependencies means no model-request read; a complete
+      // Work ref is explicitly unavailable, never an empty list. The ref is
+      // validated here exactly as the wired factory does.
+      const raw = (typeof ref === 'object' && ref !== null ? ref : null) as Record<string, unknown> | null;
+      const complete = (fields: readonly string[]): boolean =>
+        raw !== null && fields.every(field => typeof raw[field] === 'string' && (raw[field] as string).length > 0);
+      if (raw?.['aggregateType'] === 'Run') {
+        if (!complete(['projectId', 'goalId', 'runId'])) {
+          return rejected('invalid', 'readPromptRecord requires a complete RunRef');
+        }
+        return rejected('unavailable', 'model request reads are not wired');
+      }
+      if (raw?.['aggregateType'] === 'QueryRun') {
+        if (!complete(['projectId', 'workspaceId', 'queryJobId', 'runId'])) {
+          return rejected('invalid', 'readPromptRecord requires a complete QueryRunRef');
+        }
+        return unsupported('B2 skeleton: readPromptRecord is not implemented');
+      }
+      return rejected('invalid', 'readPromptRecord requires a complete RunRef or QueryRunRef');
     },
   };
 }
@@ -460,8 +554,14 @@ function createReviewCapability(
   };
 }
 
-export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRuntimeService {
-  if (deps === undefined) return { port: basePort() };
+export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies): AgentRuntimeService {
+  if (requestedDeps === undefined) return { port: basePort() };
+  // Ruling 30: one resolved bundle for the whole factory; the caller's object is
+  // never mutated and every consumer below sees the same pack source.
+  const deps: RuntimeExecutionDependencies = {
+    ...requestedDeps,
+    promptPacks: requestedDeps.promptPacks ?? createPlatformPromptPackSource(),
+  };
 
   const contextAssembler = createContextAssembler(deps);
   const preparation = createExecutionPreparation(deps, contextAssembler);
@@ -534,6 +634,120 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
       return { status: 'rejected', code: 'unavailable', reason: 'the saved manifest brief disagrees with the Run binding' };
     }
     return { status: 'ready', value: { brief, digest } };
+  };
+  /**
+   * Ruling 29: one Work Run's or QueryRun's frozen prompt record, read afresh.
+   * The ref is validated, the read is authorized through the same execution
+   * owner the driver uses, the manifest is re-read and its `promptSet` decoded,
+   * then the requests are listed and every body they and the set refer to is
+   * verified against its ref. A missing store body is `unavailable`; a
+   * ref/content disagreement is `invalid`.
+   */
+  const readPromptRecord: NonNullable<RuntimeExecutionPort['readPromptRecord']> = async (ctx, ref) => {
+    const raw = (typeof ref === 'object' && ref !== null ? ref : null) as Record<string, unknown> | null;
+    const complete = (fields: readonly string[]): boolean =>
+      raw !== null && fields.every(field => typeof raw[field] === 'string' && (raw[field] as string).length > 0);
+
+    const readTexts = async (set: PromptSetV1, requests: PromptRecordRequestV1[]):
+      Promise<{ status: 'ready'; value: Record<string, string> } | CoreRejection> => {
+      const texts: Record<string, string> = {};
+      const seen = new Set<string>();
+      const read = async (target: ArtifactRef, contentType: string, what: string): Promise<CoreRejection | null> => {
+        // Ruling 17/29: verify the ref's own type before the cache can collapse
+        // two refs that share a digest and size but name another type.
+        if (target.contentType !== contentType) {
+          return rejected('invalid', `${what} does not match its reference`);
+        }
+        const key = `${contentType}|${target.digest}|${String(target.sizeBytes)}`;
+        if (seen.has(key)) return null;
+        seen.add(key);
+        let stored;
+        try { stored = await deps.bodies.read(target); }
+        catch (error) { return rejected('unavailable', `reading ${what} failed: ${messageOf(error)}`); }
+        if (stored.status !== 'ready') return rejected('unavailable', `${what} is not readable`);
+        const body = checkPromptBody(target, stored.value, contentType);
+        if (body === null) return rejected('invalid', `${what} does not match its reference`);
+        texts[target.digest] = body;
+        return null;
+      };
+      for (const template of set.templates) {
+        const problem = await read(template.ref, PROMPT_TEXT_CONTENT_TYPE, `the frozen template ${template.id}`);
+        if (problem !== null) return problem;
+      }
+      const strings = await read(set.strings.ref, PROMPT_TEXT_CONTENT_TYPE, 'the frozen string table');
+      if (strings !== null) return strings;
+      const base = await read(set.base.ref, PROMPT_TEXT_CONTENT_TYPE, 'the frozen base prompt');
+      if (base !== null) return base;
+      for (const skill of set.skills) {
+        const problem = await read(skill.ref, PROMPT_TEXT_CONTENT_TYPE, `the frozen Skill ${skill.id}`);
+        if (problem !== null) return problem;
+      }
+      for (const request of requests) {
+        const problem = await read(request.toolSpecsRef, PROMPT_TOOL_SPECS_CONTENT_TYPE,
+          `the tool specs of request ${request.requestId}`);
+        if (problem !== null) return problem;
+      }
+      return { status: 'ready', value: texts };
+    };
+
+    if (raw?.['aggregateType'] === 'Run') {
+      if (!complete(['projectId', 'goalId', 'runId'])) {
+        return rejected('invalid', 'readPromptRecord requires a complete RunRef');
+      }
+      const runRef: RunRef = { aggregateType: 'Run', projectId: raw['projectId'] as string,
+        goalId: raw['goalId'] as string, runId: raw['runId'] as string };
+      const reads = deps.modelRequestReads;
+      if (reads === undefined) return rejected('unavailable', 'model request reads are not wired');
+      const read = await deps.executions.readExecution(ctx, runRef);
+      if (read.status !== 'ready') return read;
+      const prepared = rehydratePreparedExecution(read.value);
+      if (prepared === null) return rejected('incomplete', 'the Run has no saved prepared manifest');
+      const loaded = await loadPreparedManifest(deps.bodies, prepared);
+      if (loaded.status !== 'ready') return loaded;
+      const set = decodePromptSetV1(loaded.value.manifest.promptSet);
+      if (set === null) return rejected('invalid', 'the saved manifest has no valid prompt set');
+      const listed = await reads.listRunModelRequests(ctx, runRef);
+      if (listed.status !== 'ready') return listed;
+      const requests: PromptRecordRequestV1[] = [...listed.value]
+        .sort((left, right) => left.sequence - right.sequence)
+        .map(permit => ({ requestId: permit.requestId, systemDigest: permit.prompt.systemDigest,
+          toolsDigest: permit.prompt.toolsDigest, toolSpecsRef: permit.prompt.toolSpecsRef,
+          selection: permit.prompt.selection, kind: 'work' as const, maxOutputTokens: permit.prompt.maxOutputTokens }));
+      const texts = await readTexts(set, requests);
+      if (texts.status !== 'ready') return texts;
+      return { status: 'ready', value: { set, requests, texts: texts.value } };
+    }
+
+    if (raw?.['aggregateType'] === 'QueryRun') {
+      if (!complete(['projectId', 'workspaceId', 'queryJobId', 'runId'])) {
+        return rejected('invalid', 'readPromptRecord requires a complete QueryRunRef');
+      }
+      const queryRunRef: QueryRunRef = { aggregateType: 'QueryRun', projectId: raw['projectId'] as string,
+        workspaceId: raw['workspaceId'] as string, queryJobId: raw['queryJobId'] as string,
+        runId: raw['runId'] as string };
+      const queryExecution = deps.queryExecution;
+      if (queryExecution === undefined) {
+        return rejected('unsupported', 'readPromptRecord requires the trusted QueryExecutionPort');
+      }
+      const read = await queryExecution.readQueryExecution(ctx, queryRunRef);
+      if (read.status !== 'ready') return read;
+      const state = read.value.run.run.executionState;
+      if (state === undefined) return rejected('incomplete', 'the QueryRun has no execution state');
+      const prepared = state.prepared;
+      if (prepared === null) return rejected('incomplete', 'the QueryRun has not been prepared yet');
+      const loaded = await readQueryPromptSet(deps.bodies,
+        { queryRunRef, bundleRef: prepared.bundleRef, inputDigest: prepared.inputDigest });
+      if (loaded.status !== 'ready') return loaded;
+      const requests: PromptRecordRequestV1[] = state.requests.map(request => ({
+        requestId: request.requestId, systemDigest: request.prompt.systemDigest,
+        toolsDigest: request.prompt.toolsDigest, toolSpecsRef: request.prompt.toolSpecsRef,
+        selection: request.prompt.selection, kind: 'query' as const, reservedOutput: request.reservedOutput }));
+      const texts = await readTexts(loaded.value, requests);
+      if (texts.status !== 'ready') return texts;
+      return { status: 'ready', value: { set: loaded.value, requests, texts: texts.value } };
+    }
+
+    return rejected('invalid', 'readPromptRecord requires a complete RunRef or QueryRunRef');
   };
   /**
    * R4.3a delivery, plus RUN-23 in process (A.2 step 5.6, RD-7): a cancel the live handle can no
@@ -693,6 +907,7 @@ export function createAgentRuntime(deps?: RuntimeExecutionDependencies): AgentRu
     ...base,
     readCompletedBoundary,
     readContinuationBrief,
+    readPromptRecord,
     readArchiveChangedFiles: (ctx, request) => archiveChangedFiles.readArchiveChangedFiles(ctx, request),
     prepareExecution: (ctx, request) => preparation.prepare(ctx, request),
     startRun: (ctx, request) => driver.start(ctx, request),

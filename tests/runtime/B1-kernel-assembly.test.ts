@@ -16,7 +16,10 @@ import { DEFAULT_RUNTIME_BUDGET, ModelBudget } from '../../src/core/agent-runtim
 import { runObservedModel, type ObservedModelRunOptions } from '../../src/core/agent-runtime/observed-model-run.js';
 import { createProjectSourceTool } from '../../src/core/agent-runtime/project-source-tool.js';
 import type { RuntimeSourceCaptureAccess } from '../../src/core/agent-runtime/source-tool-ports.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import type { CaptureSummary, WorkspaceResult, WorkspaceToolsPort } from '../../src/core/workspace/ports.js';
+import { customSkillDirectory, openPCWorkFixture, scriptedModel } from '../helpers/PC-platform-fixture.js';
+import { frozenPromptInputs } from './PC-frozen-prompt.js';
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -39,15 +42,6 @@ async function tempWorkspace(name: string) {
   await mkdir(root, { recursive: true });
   await writeFile(join(root, 'a.ts'), 'export const a = 1;\n');
   return { directory, root, databasePath: join(directory, 'kernel.sqlite'), sessionId: `b1-${name}` };
-}
-
-/** Write one skill in the exact FileSkillLoader manifest/content format the Kernel loads. */
-async function writeTrustedSkill(resourceRoot: string, id: string, content: string): Promise<void> {
-  await mkdir(join(resourceRoot, id), { recursive: true });
-  await writeFile(join(resourceRoot, id, 'skill.json'), JSON.stringify({
-    schemaVersion: 1, id, title: id, kind: 'instruction', priority: 10, contentFile: 'content.md',
-  }));
-  await writeFile(join(resourceRoot, id, 'content.md'), `${content}\n`);
 }
 
 type ScriptReply =
@@ -86,7 +80,14 @@ function scriptedClient(
   return { client, requests };
 }
 
-function baseOptions(root: string, databasePath: string, sessionId: string, client: kernel.ModelClientPort): ObservedModelRunOptions {
+/** Ruling 22: one frozen prompt for every direct call in this file. */
+let promptInputs: Promise<ObservedModelRunOptions['prompt']> | undefined;
+const promptOnce = () => (promptInputs ??= frozenPromptInputs());
+
+function baseOptions(
+  root: string, databasePath: string, sessionId: string, client: kernel.ModelClientPort,
+  prompt: ObservedModelRunOptions['prompt'],
+): ObservedModelRunOptions {
   const budget = { ...DEFAULT_RUNTIME_BUDGET, contextWindowTokens: 200_000, perResponseTokens: 512, maxRequests: 12, maxToolCalls: 16, timeoutMs: 30_000 };
   return {
     kernel,
@@ -98,6 +99,12 @@ function baseOptions(root: string, databasePath: string, sessionId: string, clie
     taskBudget: { tokenBudget: null, deadline: null },
     readOnly: true, signal: new AbortController().signal,
     deniedPrefixes: [], processSandboxOptions: {}, publish: async () => {},
+    // PC-1b ruling 22: the frozen prompt inputs, the tool-spec body store and
+    // the per-request facts map are required options now.
+    prompt,
+    bodies: new RawArtifactBodyStore(),
+    origin: { kind: 'run', owner: { aggregateType: 'Run', projectId: 'b1-project', goalId: 'b1-goal', runId: 'b1-run' } },
+    promptFacts: new Map(),
   };
 }
 
@@ -173,35 +180,42 @@ function jsonOutput(result: kernel.ToolResult): unknown {
 }
 
 describe('B1 Kernel assembly seam', () => {
-  it('uses the trusted skill resource config verbatim, including an explicit empty list, and snapshots it before awaits', async () => {
-    const w = await tempWorkspace('skills');
-    const skillRoot = join(w.directory, 'skills');
-    await writeTrustedSkill(skillRoot, 'b1-fixture', SKILL_MARKER);
+  it('freezes the trusted Skill selection at preparation, including an explicit empty list, and ignores a later change', async () => {
+    const skill = await customSkillDirectory(SKILL_MARKER);
+    try {
+      // 1. The trusted custom Skill reaches the real model system prompt through preparation.
+      const custom = await openPCWorkFixture({ skills: skill.selection, model: scriptedModel([{ text: 'custom skill answer' }]) });
+      try {
+        await custom.work.prepare();
+        await custom.work.start();
+        expect(custom.model.requests[0]!.systemPrompt).toContain(SKILL_MARKER);
+        expect(custom.model.requests[0]!.systemPrompt).not.toContain(CODING_SAFETY_ID);
+      } finally { await custom.close(); }
 
-    const { client, requests } = scriptedClient([
-      { kind: 'text', text: 'custom skill answer' },
-      { kind: 'text', text: 'explicit empty skills answer' },
-      { kind: 'text', text: 'snapshot answer' },
-    ]);
-    const base = baseOptions(w.root, w.databasePath, w.sessionId, client);
+      // 2. An explicit empty enabledIds stays empty; it never falls back to coding-safety.
+      const empty = await openPCWorkFixture({
+        skills: { resourceRoot: skill.selection.resourceRoot, enabledIds: [] },
+        model: scriptedModel([{ text: 'explicit empty skills answer' }]),
+      });
+      try {
+        await empty.work.prepare();
+        await empty.work.start();
+        expect(empty.model.requests[0]!.systemPrompt).not.toContain(SKILL_MARKER);
+        expect(empty.model.requests[0]!.systemPrompt).not.toContain(CODING_SAFETY_ID);
+      } finally { await empty.close(); }
 
-    // 1. The trusted custom skill resource reaches the real model system prompt.
-    await runObservedModel({ ...base, input: 'custom skill turn', skills: { resourceRoot: skillRoot, enabledIds: ['b1-fixture'] } });
-    expect(requests[0]!.systemPrompt).toContain(SKILL_MARKER);
-    expect(requests[0]!.systemPrompt).not.toContain(CODING_SAFETY_ID);
-
-    // 2. An explicit empty enabledIds must select nothing; it must not secretly fall back to coding-safety.
-    await runObservedModel({ ...base, input: 'explicit empty skills turn', skills: { resourceRoot: skillRoot, enabledIds: [] } });
-    expect(requests[1]!.systemPrompt).not.toContain(SKILL_MARKER);
-    expect(requests[1]!.systemPrompt).not.toContain(CODING_SAFETY_ID);
-
-    // 3. The mutable trusted fields are snapshotted before the first await; later mutation is ignored.
-    const mutableSkills = { resourceRoot: skillRoot, enabledIds: ['b1-fixture'] };
-    const pending = runObservedModel({ ...base, input: 'snapshot skills turn', skills: mutableSkills });
-    mutableSkills.enabledIds.length = 0;
-    mutableSkills.resourceRoot = join(w.directory, 'missing-after-mutation');
-    await pending;
-    expect(requests[2]!.systemPrompt).toContain(SKILL_MARKER);
+      // 3. A change after preparation is ignored: the frozen set still reaches the model.
+      const frozen = await openPCWorkFixture({ skills: skill.selection, model: scriptedModel([{ text: 'snapshot skills answer' }]) });
+      try {
+        await frozen.work.prepare();
+        await skill.rewrite('B1_MUTATED_AFTER_PREPARATION');
+        await frozen.work.start();
+        expect(frozen.model.requests[0]!.systemPrompt).toContain(SKILL_MARKER);
+        expect(frozen.model.requests[0]!.systemPrompt).not.toContain('B1_MUTATED_AFTER_PREPARATION');
+      } finally { await frozen.close(); }
+    } finally {
+      await skill.close();
+    }
   }, 60_000);
 
   it('awaits before_model, snapshots the hook list/metadata/execute before the first await, and sees run.started/turn.started', async () => {
@@ -236,10 +250,11 @@ describe('B1 Kernel assembly seam', () => {
       async execute() { throw new Error('replacement hook must not run'); },
     };
 
+    const prompt = await promptOnce();
     let pending: Promise<Awaited<ReturnType<typeof runObservedModel>>> | undefined;
     try {
       pending = runObservedModel({
-        ...baseOptions(w.root, w.databasePath, w.sessionId, client),
+        ...baseOptions(w.root, w.databasePath, w.sessionId, client, prompt),
         input: 'barrier turn',
         controlHooks: hooks,
         projectSource: { mode: 'frozen', open, openOn: 'first_use' },
@@ -283,7 +298,7 @@ describe('B1 Kernel assembly seam', () => {
     };
 
     const result = await runObservedModel({
-      ...baseOptions(w.root, w.databasePath, w.sessionId, client),
+      ...baseOptions(w.root, w.databasePath, w.sessionId, client, await promptOnce()),
       input: 'pause turn',
       controlHooks: [hook],
       projectSource: { mode: 'frozen', open, openOn: 'first_use' },
@@ -312,7 +327,7 @@ describe('B1 Kernel assembly seam', () => {
     let pending: Promise<Awaited<ReturnType<typeof runObservedModel>>> | undefined;
     try {
       pending = runObservedModel({
-        ...baseOptions(w.root, w.databasePath, w.sessionId, client),
+        ...baseOptions(w.root, w.databasePath, w.sessionId, client, await promptOnce()),
         input: 'first use turn',
         projectSource,
       });
@@ -382,7 +397,7 @@ describe('B1 Kernel assembly seam', () => {
     let pending: Promise<Awaited<ReturnType<typeof runObservedModel>>> | undefined;
     try {
       pending = runObservedModel({
-        ...baseOptions(w.root, w.databasePath, w.sessionId, client),
+        ...baseOptions(w.root, w.databasePath, w.sessionId, client, await promptOnce()),
         input: 'drain turn', signal: controller.signal,
         projectSource: { mode: 'frozen', open, openOn: 'first_use' },
       });
@@ -423,7 +438,7 @@ describe('B1 Kernel assembly seam', () => {
 
     // Kernel may surface a tool failure as an error result and continue; the Run must not be required to throw.
     const result = await runObservedModel({
-      ...baseOptions(w.root, w.databasePath, w.sessionId, client),
+      ...baseOptions(w.root, w.databasePath, w.sessionId, client, await promptOnce()),
       input: 'lazy failure turn',
       projectSource: { mode: 'frozen', open, openOn: 'first_use' },
     });

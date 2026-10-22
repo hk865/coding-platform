@@ -6,21 +6,24 @@
  * execution truth table. A permit is one-shot: @1 issued -> @2 consumed.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { WriteResult } from '../../../contracts/core/results.js';
+import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type {
   ModelRequestMaterialPinV1, ModelRequestPermitRef, RunRef,
 } from '../../../contracts/dispatch.js';
+import type { ModelRequestPromptFactsV1 } from '../../../contracts/prompts/prompt-set.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type { ExecutionEntryDependencies, TaskEntryPermit } from '../model/execution-entry-contracts.js';
 
+/** One model request's frozen prompt facts; a Work permit always stores the cap. */
 export type ActualModelRequest = {
   permit: TaskEntryPermit;
   requestId: string;
   requestDigest: string;
   contextInputDigest: string;
   manifestDigest: string;
+  prompt: ModelRequestPromptFactsV1 & { maxOutputTokens: number };
 };
 
 export type IssuedModelRequest = {
@@ -40,14 +43,22 @@ export interface ModelRequestPort {
   }>): Promise<WriteResult<IssuedModelRequest>>;
 }
 
+/** The separate Work read side: one Run's model-request permits by `sequence`. */
+export interface ModelRequestReadPort {
+  listRunModelRequests(ctx: CoreCallContext, runRef: RunRef): Promise<ReadResult<ModelRequestPermitV1[]>>;
+}
+
 export type ModelRequestPermitV1 = {
   schemaVersion: 1;
   permitId: string;
+  /** 1 + the number of this Run's permits authorized before it. */
+  sequence: number;
   runRef: RunRef;
   requestId: string;
   requestDigest: string;
   contextInputDigest: string;
   manifestDigest: string;
+  prompt: ModelRequestPromptFactsV1 & { maxOutputTokens: number };
   deliveryRefs: ModelRequestMaterialPinV1[];
   /** Exact authorization copied from the Run envelope at issuance time. */
   permissions: TaskEnvelopeV1['permissions'];
