@@ -14,6 +14,7 @@ import { sha256Hex } from '../../contracts/fingerprint.js';
 import { RuntimeModelCallRejected } from './model-call-access.js';
 import { kernelRunLimits } from './run-limits.js';
 import { createExplorationTools, type ExplorationToolsHandle, type SourceToolOptions } from './exploration-tools.js';
+import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import { readSourceIdentity } from '../../core/workspace/source-identity.js';
 import type { RuntimeSourceCaptureAccess, RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import { assembleObservedExtensions, kernelEnabledToolNames } from './tool-group-assembly.js';
@@ -98,6 +99,12 @@ export type ObservedModelRunOptions = {
    */
   promptFacts: Map<string, ModelRequestPromptFactsV1 & { maxOutputTokens: number }>;
   sourceTools?: SourceToolOptions;
+  /**
+   * The frozen tool texts read from the manifest's set. Every
+   * factory that builds a tool for this call must receive it; the per-tool
+   * fallback to the generated pack stays inside the factory.
+   */
+  texts?: Readonly<Record<string, ToolTextV1>>;
   /**
    * 本次模型循环的源码捕获模式。显式 `frozen` 必须提供可信工厂，**不会**回落成任何实时索引。
    * 工厂返回的访问能力由本函数独占并在 finally 关闭；工具组不能关闭它。
@@ -208,6 +215,9 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
   const toolGroupBarrier = o.toolGroupBarrier;
   const onResourcesClosed = o.onResourcesClosed;
   const onKernelExited = o.onKernelExited;
+  // The frozen tool texts are snapshotted before the first
+  // await so a later caller mutation cannot retarget what the factories send.
+  const toolTexts = o.texts === undefined ? undefined : { ...o.texts };
   // Ruling 22: own the frozen prompt inputs and the final-request transform
   // before the first await, so later mutation cannot change what this run sends.
   const prompt = {
@@ -424,6 +434,7 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
             // authoritative; a caller-supplied access in `sourceTools` cannot be used unowned here.
             const explorationOptions: SourceToolOptions = {
               sourceIdentity: () => readSourceIdentity(o.root, workspace.identity), ...o.sourceTools,
+              ...(toolTexts === undefined ? {} : { texts: toolTexts }),
               ...(frozen === undefined ? {} : { projectSource: lazyFrozen ? { mode: 'frozen' as const, access: openSharedSource } : { mode: 'frozen' as const, access: source! } }),
             };
             if (frozen === undefined) delete explorationOptions.projectSource;

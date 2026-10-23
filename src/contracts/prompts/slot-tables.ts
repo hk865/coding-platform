@@ -9,9 +9,9 @@ import type { TemplateSlotTableV1 } from './prompt-pack.js';
  * formatting supplies a heading or separator.
  *
  * The three main input templates (`work-input`, `query-planning-input`,
- * `query-copy-input`) are rendered by the context assembler later; their
- * tables are frozen here so the pack format and the renderer do not change
- * when those templates arrive.
+ * `query-copy-input`) are rendered by the context assembler; their own slot
+ * order is the section order, so their tables are frozen here with the format
+ * and renderer.
  */
 export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
     'work-input': {
@@ -75,6 +75,8 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         updateDueCount: { required: true },
         anchors: { required: false },
     },
+    // The stale-files reminder is fixed text with no slots.
+    'stale-files-reminder': {},
     // Ruling 11: `base` and the five platform Skills are fixed text with no slots.
     'base': {},
     'skill-platform-work': {},

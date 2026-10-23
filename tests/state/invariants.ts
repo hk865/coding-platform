@@ -26,8 +26,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ActorRef } from '../../src/contracts/command-event.js';
 import {
-  continuationBriefDigest, continuationBriefMarker, renderContinuationBriefZh, type ContinuationBriefV1,
+  continuationBriefDigest, renderContinuationBriefZh, type ContinuationBriefV1,
 } from '../../src/contracts/continuation-brief.js';
+import {
+  PROMPT_TEXT_CONTENT_TYPE, checkPromptBody, decodePromptSetV1, type PromptTextsV1,
+} from '../../src/contracts/prompts/prompt-set.js';
+import type { PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { ControlIntentKindV1, ControlIntentRef, ControlIntentSnapshotV1 } from '../../src/contracts/control-intent.js';
 import type { ExecutionRef } from '../../src/contracts/core/identity.js';
 import type { SessionRecord } from '../../src/contracts/core/session.js';
@@ -223,6 +227,12 @@ export type InvariantManifest = {
   runRef: RunRef;
   continuationBrief: ContinuationBriefV1 | null;
   input: string;
+  /** PC-2 ruling 12: the binding's `continuation` interval; null when it carries none. */
+  continuationRange: { startByte: number; endByte: number } | null;
+  /** Ruling 17: the frozen template text and string table the manifest's prompt set names. */
+  promptTexts: PromptTextsV1 | null;
+  /** Ruling 10: the manifest's frozen tool list, for re-rendering the brief. */
+  toolNames: readonly string[];
   /** Why the manifest could not be loaded; null when it was. */
   problem: string | null;
 };
@@ -522,6 +532,41 @@ async function readTaskStates(
   return states;
 }
 
+/**
+ * Ruling 17/G-05: the frozen template text and string table a saved manifest's
+ * `promptSet` names, read from the same artifact store, plus its frozen tool
+ * list. I-19 must re-render the brief from THIS material, never from the
+ * current default platform pack.
+ */
+async function readFrozenContinuationTexts(
+  bodies: ReturnType<typeof createSqliteRawArtifactStore>,
+  manifest: PreparedTaskManifestV1,
+): Promise<{ ok: true; texts: PromptTextsV1; toolNames: readonly string[] } | { ok: false; problem: string }> {
+  const set = decodePromptSetV1(manifest.promptSet);
+  if (set === null) return { ok: false, problem: 'the saved prompt set is not decodable' };
+  const template = set.templates.find(entry => entry.id === 'continuation-brief');
+  if (template === undefined) return { ok: false, problem: 'the saved prompt set freezes no continuation-brief template' };
+  const read = await bodies.read(template.ref);
+  if (read.status !== 'ready') return { ok: false, problem: `the frozen continuation-brief template could not be read: ${read.reason}` };
+  const text = checkPromptBody(template.ref, read.value, PROMPT_TEXT_CONTENT_TYPE);
+  if (text === null) return { ok: false, problem: 'the frozen continuation-brief template disagrees with its reference' };
+  const stringsRead = await bodies.read(set.strings.ref);
+  if (stringsRead.status !== 'ready') return { ok: false, problem: `the frozen prompt string table could not be read: ${stringsRead.reason}` };
+  const stringsText = checkPromptBody(set.strings.ref, stringsRead.value, PROMPT_TEXT_CONTENT_TYPE);
+  if (stringsText === null) return { ok: false, problem: 'the frozen prompt string table disagrees with its reference' };
+  let parsed: unknown;
+  try { parsed = JSON.parse(stringsText); } catch { return { ok: false, problem: 'the frozen prompt string table is not readable JSON' }; }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, problem: 'the frozen prompt string table is not a flat string map' };
+  }
+  const strings: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value !== 'string') return { ok: false, problem: 'the frozen prompt string table is not a flat string map' };
+    strings[key] = value;
+  }
+  return { ok: true, texts: { templates: { 'continuation-brief': text }, strings }, toolNames: [...set.toolNames] };
+}
+
 /** I-19's manifest clause: the saved manifest of each authorized requeue Run (`rehydratePreparedExecution`, `loadPreparedManifest`). */
 async function readManifests(artifactsPath: string, scratch: string, world: InvariantWorld): Promise<InvariantManifest[]> {
   const copy = join(scratch, 'artifacts.sqlite');
@@ -535,14 +580,34 @@ async function readManifests(artifactsPath: string, scratch: string, world: Inva
       const outbox = index.outboxOf(run);
       const prepared = outbox === undefined ? null : rehydratePreparedExecution({ run, outbox });
       if (prepared === null) {
-        manifests.push({ runRef: run.ref, continuationBrief: null, input: '', problem: 'the Run or its Outbox cannot be rehydrated' });
+        manifests.push({ runRef: run.ref, continuationBrief: null, input: '', continuationRange: null,
+          promptTexts: null, toolNames: [], problem: 'the Run or its Outbox cannot be rehydrated' });
         continue;
       }
       const loaded = await loadPreparedManifest(bodies, prepared);
-      manifests.push(loaded.status === 'ready'
-        ? { runRef: run.ref, continuationBrief: loaded.value.manifest.continuationBrief ?? null, input: loaded.value.manifest.input,
-          problem: null }
-        : { runRef: run.ref, continuationBrief: null, input: '', problem: JSON.stringify(loaded) });
+      if (loaded.status !== 'ready') {
+        manifests.push({ runRef: run.ref, continuationBrief: null, input: '', continuationRange: null,
+          promptTexts: null, toolNames: [], problem: JSON.stringify(loaded) });
+        continue;
+      }
+      const frozen = await readFrozenContinuationTexts(bodies, loaded.value.manifest);
+      if (!frozen.ok) {
+        manifests.push({ runRef: run.ref, continuationBrief: null, input: '', continuationRange: null,
+          promptTexts: null, toolNames: [], problem: frozen.problem });
+        continue;
+      }
+      const section = loaded.value.manifest.contextAssembly.sections
+        .find(candidate => candidate.name === 'continuation');
+      manifests.push({
+        runRef: run.ref,
+        continuationBrief: loaded.value.manifest.continuationBrief ?? null,
+        input: loaded.value.manifest.input,
+        continuationRange: section?.startByte == null || section.endByte == null
+          ? null : { startByte: section.startByte, endByte: section.endByte },
+        promptTexts: frozen.texts,
+        toolNames: frozen.toolNames,
+        problem: null,
+      });
     }
   } finally {
     await bodies.close();
@@ -1860,9 +1925,32 @@ export function checkI19ContinuationBriefBinding(world: InvariantWorld, prev?: I
     if (!sameRef(brief.runRef, index.claimOf(run)?.runRef) || !sameRef(brief.requeueRef, run.requeueRef)) {
       out.push(finding('I-19', run.ref, `the brief of Run ${id} names another Run or requeue`));
     }
-    const rendered = `\n\n${renderContinuationBriefZh(brief, digest)}`;
-    if (!manifest.input.endsWith(rendered) || rendered.split('\n')[3] !== continuationBriefMarker(digest)) {
-      out.push(finding('I-19', run.ref, `the manifest input of Run ${id} does not end with the rendered brief and its marker`));
+    // PC-2 ruling 12/17: by the binding's own range, never "the brief is last"
+    // or a fixed marker line, and re-rendered from the manifest's frozen
+    // template, string table and tool list, never the current platform pack.
+    const rendered = manifest.promptTexts === null ? null
+      : renderContinuationBriefZh(brief, digest, manifest.promptTexts, manifest.toolNames);
+    const range = manifest.continuationRange;
+    if (rendered === null) {
+      out.push(finding('I-19', run.ref, `the manifest of Run ${id} has no readable frozen prompt texts`));
+    } else if (range === null) {
+      out.push(finding('I-19', run.ref, `the manifest of Run ${id} has no continuation section`));
+    } else {
+      const inputBytes = Buffer.from(manifest.input, 'utf8');
+      const { startByte, endByte } = range;
+      // G-06: a range outside the input is a violation, never clamped by
+      // `subarray` into a shorter slice that happens to match.
+      if (!Number.isSafeInteger(startByte) || !Number.isSafeInteger(endByte)
+        || startByte < 0 || startByte > endByte || endByte > inputBytes.length) {
+        out.push(finding('I-19', run.ref, `the manifest continuation range of Run ${id} is outside the input`));
+      } else if (!inputBytes.subarray(startByte, endByte).equals(Buffer.from(rendered, 'utf8'))) {
+        out.push(finding('I-19', run.ref, `the manifest continuation range of Run ${id} is not the rendered brief`));
+      } else {
+        const first = manifest.input.indexOf(rendered);
+        if (first !== manifest.input.lastIndexOf(rendered)) {
+          out.push(finding('I-19', run.ref, `the rendered brief of Run ${id} does not occur exactly once`));
+        }
+      }
     }
   }
   if (prev !== undefined) {

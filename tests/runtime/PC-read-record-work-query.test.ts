@@ -22,7 +22,8 @@ const PER_RESPONSE = 321;
  */
 function expectExactTexts(
   set: { templates: { ref: { digest: string } }[]; strings: { ref: { digest: string } };
-    base: { ref: { digest: string } }; skills: { ref: { digest: string } }[] },
+    base: { ref: { digest: string } }; skills: { ref: { digest: string } }[];
+    tools: { ref: { digest: string } }[] },
   requests: { toolSpecsRef: { digest: string } }[],
   texts: Record<string, string>,
 ): void {
@@ -31,6 +32,7 @@ function expectExactTexts(
   referred.add(set.strings.ref.digest);
   referred.add(set.base.ref.digest);
   for (const skill of set.skills) referred.add(skill.ref.digest);
+  for (const tool of set.tools) referred.add(tool.ref.digest);
   for (const request of requests) referred.add(request.toolSpecsRef.digest);
   expect(Object.keys(texts).sort()).toEqual([...referred].sort());
   for (const [digest, text] of Object.entries(texts)) expect(sha(text), `text keyed ${digest}`).toBe(digest);

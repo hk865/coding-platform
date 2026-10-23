@@ -201,16 +201,17 @@ describe('K3 L13 review-purpose prepare', () => {
       expect(manifest.input).toContain('## Unknown-call review');
       expect(manifest.input).toContain('做没做完：已做 / 没做 / 做了一半 / 判断不了，附依据');
       expect(manifest.inputDigest).toBe(prepared.inputBinding.inputDigest);
-      // R1/D1: the review instruction is its own LAST section; the call stays work.
+      // R1/D1: the review instruction is its own section; PC-2 ruling 9 puts
+      // the reminders section last, so the review is no longer the tail. The
+      // call stays work and the frozen tool list renders the review text.
       const sections = manifest.contextAssembly!.sections;
       expect(manifest.contextAssembly!.callKind).toBe('work');
-      const last = sections[sections.length - 1]!;
-      expect(last.name).toBe('unknown_call_review');
-      const suffix = renderUnknownCallReviewZh(manifest.unknownCallReview!);
-      const totalBytes = Buffer.byteLength(manifest.input, 'utf8');
-      expect(last.endByte).toBe(totalBytes);
-      expect(last.startByte).toBe(totalBytes - Buffer.byteLength(suffix, 'utf8'));
-      expect(manifest.input.endsWith(`\n\n${suffix}`)).toBe(true);
+      expect(sections[sections.length - 1]!.name).toBe('reminders');
+      const review = sections.find(section => section.name === 'unknown_call_review')!;
+      const suffix = renderUnknownCallReviewZh(manifest.unknownCallReview!, undefined,
+        manifest.promptSet.toolNames);
+      const bytes = Buffer.from(manifest.input, 'utf8');
+      expect(bytes.subarray(review.startByte!, review.endByte!).toString('utf8')).toBe(suffix);
     } finally {
       await world.close();
     }

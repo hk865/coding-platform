@@ -324,7 +324,9 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
    * body. The transport keeps the same token/same-origin boundary as the core
    * routes and never lets a settings request reach a domain owner directly: an
    * absent port is an explicit `unsupported` gap and a port failure is a bounded
-   * `unavailable` response.
+   * `unavailable` response. A body that cannot be parsed is `invalid`; on the
+   * prompt-pack routes it also carries the `problems` contract they use for a
+   * broken body.
    */
   async function handleSettings(suffix: string, request: IncomingMessage, response: ServerResponse): Promise<boolean> {
     if (!isSettingsRoute(suffix)) return false;
@@ -336,7 +338,15 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
     try { raw = await readJsonBody(request, maxBodyBytes); }
     catch (error) {
       if (error instanceof BodyTooLargeError) sendJson(response, 413, { status: 'rejected', code: 'capacity', reason: error.message });
-      else sendJson(response, 400, { status: 'rejected', code: 'invalid', reason: error instanceof Error ? error.message : 'invalid request body' });
+      else {
+        const reason = error instanceof Error ? error.message : 'invalid request body';
+        if (suffix.startsWith('prompts/')) {
+          sendJson(response, 400, { status: 'rejected', code: 'invalid', reason,
+            problems: [{ packId: '', templateId: null, reason }] });
+        } else {
+          sendJson(response, 400, { status: 'rejected', code: 'invalid', reason });
+        }
+      }
       return true;
     }
     if (controller.signal.aborted) { sendJson(response, 408, { status: 'rejected', code: 'cancelled', reason: 'the client cancelled the request' }); return true; }

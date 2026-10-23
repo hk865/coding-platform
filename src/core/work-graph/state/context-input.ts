@@ -7,8 +7,9 @@
  * four budget sections, `totalBytes` = UTF-8 byte length, the required sections of
  * the call kind present, each budget section's `omitted` count consistent with its
  * omission marker (`另有 n 条，用‘看’读`), sorted/deduplicated sources, the
- * continuation section last and exactly the rendered brief, and the legacy
- * `selectedTaskInputs` projection equal to the binding's Artifact selections.
+ * continuation/review section exactly the re-rendered text at the binding's byte
+ * range and nowhere else, and the legacy `selectedTaskInputs` projection equal to
+ * the binding's Artifact selections.
  *
  * `declaredInputProblem` is the pure G-INPUT check of one declaration's
  * selection: the declaration belongs to the claim's Plan, the state shape holds
@@ -39,12 +40,6 @@ const CALL_KINDS: readonly ContextCallKindV1[] = [
 
 const DUTIES: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
 
-/** The fixed rendering order of §4.3; every call kind is a subsequence. R1: the
- * review instruction is the last section and is legal only for `work`. */
-const SECTION_ORDER: readonly ContextSectionNameV1[] = [
-  'role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation', 'unknown_call_review',
-];
-
 /** The four budgeted optional sections that may be omitted as a whole (§4.3 T2). */
 const BUDGET_SECTIONS: ReadonlySet<ContextSectionNameV1> = new Set(['footprint', 'notes', 'reminders', 'inputs']);
 
@@ -70,7 +65,7 @@ const CALL_KIND_SECTIONS: Readonly<Record<ContextCallKindV1, ReadonlySet<Context
   secretary: new Set(['role', 'goal', 'task', 'notes', 'reminders']),
   copy: new Set(['role', 'goal', 'task']),
   planning: new Set(['role', 'goal', 'task', 'footprint']),
-  attention: new Set(SECTION_ORDER.filter((name) => name !== 'unknown_call_review')),
+  attention: new Set(['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation']),
 };
 
 function invalid(reason: string): CoreRejection {
@@ -84,6 +79,34 @@ function forbidden(reason: string): CoreRejection {
 /** The UTF-8 bytes of a half-open section interval, decoded back as text. */
 function utf8Slice(text: string, startByte: number, endByte: number): string {
   return Buffer.from(text, 'utf8').subarray(startByte, endByte).toString('utf8');
+}
+
+/**
+ * Ruling 11: the binding's `sectionOrder` is the frozen `PromptSetV1`'s order
+ * for its call kind, element for element. A frozen set that names no order for
+ * that call kind rejects: the entry may not fall back to the binding's own
+ * order.
+ */
+export function frozenSectionOrderProblem(input: {
+  binding: ContextAssemblyBindingV1;
+  expectedSectionOrder: readonly ContextSectionNameV1[] | undefined;
+}): CoreRejection | null {
+  const { binding, expectedSectionOrder } = input;
+  if (!isRecord(binding) || !Array.isArray(binding.sectionOrder)) {
+    return invalid('the context assembly sectionOrder must be an array');
+  }
+  if (expectedSectionOrder === undefined) {
+    return invalid(`the frozen prompt set has no section order for callKind ${String(binding.callKind)}`);
+  }
+  if (expectedSectionOrder.length !== binding.sectionOrder.length) {
+    return invalid('the context assembly sectionOrder disagrees with the frozen prompt set');
+  }
+  for (let index = 0; index < binding.sectionOrder.length; index += 1) {
+    if (binding.sectionOrder[index] !== expectedSectionOrder[index]) {
+      return invalid('the context assembly sectionOrder disagrees with the frozen prompt set');
+    }
+  }
+  return null;
 }
 
 function lastLineOf(text: string): string {
@@ -170,40 +193,73 @@ function requirementIdOf(declarationId: string): string {
 }
 
 /**
- * D1/R1: the one trailing-section check shared by the continuation brief and the
- * review instruction. `suffix` is the rendered text (null when the section must
- * be absent); when it is present the section must be the last one and its byte
- * interval exactly the rendered suffix.
+ * The minimal binding/`sections` structure the entry's continuation-brief
+ * verdict reads before the full guard runs. A missing or non-object binding, or
+ * a non-array `sections`, is `invalid`, never the `unavailable` an exception in
+ * that earlier path would become.
  */
-function trailingSectionProblem(input: {
+export function contextAssemblyStructureProblem(binding: unknown): CoreRejection | null {
+  if (!isRecord(binding)) return invalid('the context assembly binding is not an object');
+  if (!Array.isArray(binding.sections)) return invalid('the context assembly sections must be an array');
+  for (const section of binding.sections) {
+    if (!isRecord(section)) return invalid('a context section entry is not an object');
+  }
+  return null;
+}
+
+/**
+ * Ruling 12: the ONE range-and-unique check of a re-rendered section, shared by
+ * the guard and the entry's continuation-brief verdict. The section's interval,
+ * sliced out of the input by UTF-8 byte offsets, must equal `rendered`, and the
+ * rendered text must occur exactly once in the input. The section need not be
+ * last: the binding's `sectionOrder` decides where it sits.
+ */
+export function renderedSectionProblem(input: {
   text: string;
   sections: ContextAssemblyBindingV1['sections'];
-  index: number;
   name: ContextSectionNameV1;
-  /** The rendered text; null means the section carries no text. */
-  suffix: string | null;
+  /** The re-rendered text of the section. */
+  rendered: string;
   /** Human noun of the rendered text, e.g. `continuation brief`. */
   noun: string;
-  /** True when the section itself is required even without its rendered text. */
-  required: boolean;
 }): CoreRejection | null {
-  const { text, sections, index, name, suffix } = input;
-  if (suffix === null) {
-    if (index !== -1) return invalid(`a ${name} section requires the rendered ${input.noun}`);
-    if (input.required) return invalid(`a ${name} section is required by this call kind`);
-    return null;
+  const { text, sections, name, rendered, noun } = input;
+  // The verdict runs before the full guard, so the structure it reads
+  // must be checked here first. A null (or otherwise non-object) entry is
+  // `invalid`, never the `unavailable` an exception would become.
+  if (!Array.isArray(sections)) return invalid('the context assembly sections must be an array');
+  for (const section of sections) {
+    if (!isRecord(section)) return invalid('a context section entry is not an object');
   }
+  const index = sections.findIndex((section) => section.name === name);
   if (index === -1) return invalid(`a ${name} section is required`);
-  if (index !== sections.length - 1) return invalid(`the ${name} section must be the last section`);
   const section = sections[index]!;
   if (section.startByte === null || section.endByte === null) {
     return invalid(`the ${name} section cannot be omitted`);
   }
-  if (section.endByte !== utf8Bytes(text)) return invalid(`no text may follow the ${input.noun}`);
-  if (section.startByte !== utf8Bytes(text) - utf8Bytes(suffix)) {
-    return invalid(`the ${name} section interval must be exactly the rendered ${input.noun}`);
+  const bytes = Buffer.from(text, 'utf8');
+  const startByte = section.startByte;
+  const endByte = section.endByte;
+  // A malformed interval (a non-integer, a negative start, a reversed or
+  // out-of-bounds end) is `invalid` before any slice clamps it.
+  if (!isNonNeg(startByte) || !isNonNeg(endByte) || endByte < startByte || endByte > bytes.length) {
+    return invalid(`the ${name} section interval is outside the input`);
   }
-  if (!text.endsWith(`\n\n${suffix}`)) return invalid(`the input does not end with the ${input.noun}`);
+  // A non-tail section still starts after a blank line: the two bytes
+  // immediately before the bound range are LF LF. The section need not end the
+  // input, but it is never glued straight onto the previous section.
+  if (startByte < 2 || bytes[startByte - 2] !== 0x0a || bytes[startByte - 1] !== 0x0a) {
+    return invalid(`the ${name} section must be preceded by a blank line`);
+  }
+  // Raw UTF-8 byte equality, never a lossy decode that turns an
+  // incomplete sequence into U+FFFD and so accepts the wrong byte range.
+  if (!bytes.subarray(startByte, endByte).equals(Buffer.from(rendered, 'utf8'))) {
+    return invalid(`the ${name} section interval must equal the rendered ${noun}`);
+  }
+  const first = text.indexOf(rendered);
+  if (first === -1 || first !== text.lastIndexOf(rendered)) {
+    return invalid(`the rendered ${noun} must occur exactly once in the input`);
+  }
   return null;
 }
 
@@ -237,25 +293,35 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
   if (!Array.isArray(binding.inputSelections)) return invalid('the context assembly inputSelections must be an array');
 
   const allowed = CALL_KIND_SECTIONS[binding.callKind];
+  // Ruling 9/12: the binding's own `sectionOrder` is the truth. It starts with
+  // `role`, names each legal section at most once, and keeps the goal/task
+  // sections the call kind requires. There is no global fixed order any more.
+  if (!Array.isArray(binding.sectionOrder)) return invalid('the context assembly sectionOrder must be an array');
+  if (binding.sectionOrder[0] !== 'role') return invalid('the context assembly sectionOrder must start with the role section');
+  const orderPositions = new Map<ContextSectionNameV1, number>();
+  for (const name of binding.sectionOrder) {
+    if (!allowed.has(name)) return invalid(`section ${String(name)} is not legal for callKind ${binding.callKind}`);
+    if (orderPositions.has(name)) return invalid(`section ${name} appears twice in sectionOrder`);
+    orderPositions.set(name, orderPositions.size);
+  }
+  if (REQUIRES_GOAL_AND_TASK.has(binding.callKind)) {
+    if (!orderPositions.has('goal')) return invalid(`a ${binding.callKind} call requires a goal section in sectionOrder`);
+    if (!orderPositions.has('task')) return invalid(`a ${binding.callKind} call requires a task section in sectionOrder`);
+  }
+
   const seen = new Set<ContextSectionNameV1>();
   const budgetSections: BudgetSection[] = [];
   let previousOrder = -1;
   let previousEnd: number | null = null;
-  let continuationIndex = -1;
-  let reviewIndex = -1;
-  for (let index = 0; index < binding.sections.length; index += 1) {
-    const section = binding.sections[index]!;
+  for (const section of binding.sections) {
     if (!isRecord(section)) return invalid('a context section entry is not an object');
     const name = section.name as ContextSectionNameV1;
-    if (!SECTION_ORDER.includes(name)) return invalid('a context section name is not recognized');
-    if (!allowed.has(name)) return invalid(`section ${name} is not legal for callKind ${binding.callKind}`);
+    const order = orderPositions.get(name);
+    if (order === undefined) return invalid(`section ${String(name)} is not in the binding's sectionOrder`);
     if (seen.has(name)) return invalid(`section ${name} appears twice`);
     seen.add(name);
-    const order = SECTION_ORDER.indexOf(name);
-    if (order <= previousOrder) return invalid('context sections are not in the fixed order');
+    if (order <= previousOrder) return invalid('context sections are not in the sectionOrder');
     previousOrder = order;
-    if (name === 'continuation') continuationIndex = index;
-    if (name === 'unknown_call_review') reviewIndex = index;
     if (!isNonNeg(section.omitted)) return invalid('a section omitted count must be a non-negative safe integer');
     const startByte = section.startByte;
     const endByte = section.endByte;
@@ -291,10 +357,13 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
     if (problem !== null) return problem;
   }
 
+  // Ruling 12: the continuation brief is present exactly on the two call kinds
+  // that carry it, at its binding range and nowhere else. It need not be last.
   if (binding.callKind === 'continuation' || binding.callKind === 'handoff') {
-    const continuationProblem = trailingSectionProblem({
-      text, sections: binding.sections, index: continuationIndex,
-      name: 'continuation', suffix: continuationSuffix, noun: 'continuation brief', required: true,
+    if (continuationSuffix === null) return invalid('a continuation section is required by this call kind');
+    const continuationProblem = renderedSectionProblem({
+      text, sections: binding.sections, name: 'continuation',
+      rendered: continuationSuffix, noun: 'continuation brief',
     });
     if (continuationProblem !== null) return continuationProblem;
   } else {
@@ -302,15 +371,21 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
     if (continuationSuffix !== null) return invalid('a continuation brief was supplied without a continuation section');
   }
 
-  // R1: the review instruction is a Work-only last section, present exactly when
-  // the caller supplies its rendered text. `continuation` and `handoff` never
-  // carry it (the call-kind table already refuses the name there).
+  // R1: the review instruction is a Work section, present exactly when the
+  // caller supplies its rendered text. `continuation` and `handoff` never carry
+  // it (the call-kind table already refuses the name there). It need not be last.
   if (binding.callKind === 'work') {
-    const reviewProblem = trailingSectionProblem({
-      text, sections: binding.sections, index: reviewIndex,
-      name: 'unknown_call_review', suffix: reviewSuffix, noun: 'review instruction', required: false,
-    });
-    if (reviewProblem !== null) return reviewProblem;
+    if (reviewSuffix === null) {
+      if (seen.has('unknown_call_review')) {
+        return invalid('an unknown_call_review section requires the rendered review instruction');
+      }
+    } else {
+      const reviewProblem = renderedSectionProblem({
+        text, sections: binding.sections, name: 'unknown_call_review',
+        rendered: reviewSuffix, noun: 'review instruction',
+      });
+      if (reviewProblem !== null) return reviewProblem;
+    }
   } else if (reviewSuffix !== null) {
     return invalid('a review section is legal only for a work call');
   }

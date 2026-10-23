@@ -40,6 +40,7 @@ import type { PlanRevisionDraft, PlanRevisionRef } from '../../contracts/plan.js
 import type { PlanChangeReason, PlanProposalRef, PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import { proposeFuturePlanRequest } from '../work-graph/model/tool-commit-arguments.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import {
   toolSchema as z,
   type ToolCall,
@@ -47,6 +48,9 @@ import {
   type ToolResult,
   type WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
+
+/** Typed view: the generated pack's literal `tools` object has no string index signature. */
+const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMPT_PACK_V1.tools;
 
 /**
  * Fixed production tool names. The Host authorization list (B2 envelope/Host
@@ -81,6 +85,8 @@ export type WhiteboardToolsConfig = {
    * caller passed an `acknowledgementRef`.
    */
   applicationReceipt?: (ctx: CoreCallContext, cursor: CommitCursor) => Promise<DecisionApplicationReceiptV1 | null>;
+  /** The platform tools' model-facing texts; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
 };
 
 export type WhiteboardToolsHandle = {
@@ -193,16 +199,18 @@ const workspacePinRefSchema = z.object({
 const goalPinRefSchema = z.object({
   aggregateType: z.literal('Goal'), projectId: z.string().min(1), goalId: z.string().min(1),
 }).strict();
-const versionPinSchema = z.object({
-  ref: z.union([projectPinRefSchema, workspacePinRefSchema, goalPinRefSchema, planRevisionRefSchema, planProposalRefSchema])
-    .describe(PLATFORM_PROMPT_PACK_V1.strings['toolSchema.whiteboardPin.ref']),
-  revision: z.number().int().min(0)
-    .describe(PLATFORM_PROMPT_PACK_V1.strings['toolSchema.whiteboardPin.revision']),
-}).strict();
+function versionPinSchema(refText: string, revisionText: string) {
+  return z.object({
+    ref: z.union([projectPinRefSchema, workspacePinRefSchema, goalPinRefSchema, planRevisionRefSchema, planProposalRefSchema])
+      .describe(refText),
+    revision: z.number().int().min(0).describe(revisionText),
+  }).strict();
+}
 
-const toolText = PLATFORM_PROMPT_PACK_V1.tools;
-
-const schemas: Record<WhiteboardToolName, z.ZodType> = {
+function buildSchemas(textOf: (name: WhiteboardToolName) => ToolTextV1): Record<WhiteboardToolName, z.ZodType> {
+  const propose = textOf('propose_future_plan');
+  const apply = textOf('apply_future_plan');
+  return {
   query_task_graph: z.object({
     planRef: planRevisionRefSchema.optional(),
     atLeastCursor: z.string().min(1).optional(),
@@ -220,28 +228,29 @@ const schemas: Record<WhiteboardToolName, z.ZodType> = {
   // plan (`basedOn` is never null); the plan service re-checks that.
   propose_future_plan: z.object({
     basedOn: planRevisionRefSchema
-      .describe(toolText['propose_future_plan'].parameters['basedOn']),
+      .describe(propose.parameters['basedOn']!),
     draft: z.record(z.string(), z.unknown()).describe(
-      toolText['propose_future_plan'].parameters['draft'],
+      propose.parameters['draft']!,
     ),
     reason: z.record(z.string(), z.unknown())
-      .describe(toolText['propose_future_plan'].parameters['reason']),
-    expected: z.array(versionPinSchema)
-      .describe(toolText['propose_future_plan'].parameters['expected']),
+      .describe(propose.parameters['reason']!),
+    expected: z.array(versionPinSchema(propose.parameters['expected[].ref']!, propose.parameters['expected[].revision']!))
+      .describe(propose.parameters['expected']!),
   }).strict(),
   // Agent `applyPlanChange` adopts only its own W2 candidate with
   // `decisionRefs=[]`; the adapter supplies that empty list, the model cannot.
   apply_future_plan: z.object({
     proposalRef: planProposalRefSchema
-      .describe(toolText['apply_future_plan'].parameters['proposalRef']),
+      .describe(apply.parameters['proposalRef']!),
     expectedProposalRevision: z.number().int().min(1)
-      .describe(toolText['apply_future_plan'].parameters['expectedProposalRevision']),
-    expected: z.array(versionPinSchema)
-      .describe(toolText['apply_future_plan'].parameters['expected']),
+      .describe(apply.parameters['expectedProposalRevision']!),
+    expected: z.array(versionPinSchema(apply.parameters['expected[].ref']!, apply.parameters['expected[].revision']!))
+      .describe(apply.parameters['expected']!),
     acknowledgementRef: sessionMessageRefSchema.optional()
-      .describe(toolText['apply_future_plan'].parameters['acknowledgementRef']),
+      .describe(apply.parameters['acknowledgementRef']!),
   }).strict(),
-};
+  };
+}
 
 // --------------------------------------------------------------------------
 // The factory
@@ -352,6 +361,9 @@ async function dispatch(prepared: PreparedWhiteboardCall): Promise<ToolResult> {
 }
 
 export function createWhiteboardTools(config: WhiteboardToolsConfig): WhiteboardToolsHandle {
+  const textOf = (name: WhiteboardToolName): ToolTextV1 =>
+    config.texts?.[name] ?? PLATFORM_TOOL_TEXTS[name]!;
+  const schemas = buildSchemas(textOf);
   // Freeze the trusted scope before returning the factory. The model-facing
   // schemas have no Goal field, so a caller can never rebind it, and a later
   // mutation of the caller's config object must not change this handler's
@@ -430,10 +442,10 @@ export function createWhiteboardTools(config: WhiteboardToolsConfig): Whiteboard
   }
 
   const descriptions: Record<WhiteboardToolName, string> = {
-    query_task_graph: toolText['query_task_graph'].description,
-    query_ready_tasks: toolText['query_ready_tasks'].description,
-    propose_future_plan: toolText['propose_future_plan'].description,
-    apply_future_plan: toolText['apply_future_plan'].description,
+    query_task_graph: textOf('query_task_graph').description,
+    query_ready_tasks: textOf('query_ready_tasks').description,
+    propose_future_plan: textOf('propose_future_plan').description,
+    apply_future_plan: textOf('apply_future_plan').description,
   };
 
   function definitionFor(name: WhiteboardToolName): ToolDefinition {

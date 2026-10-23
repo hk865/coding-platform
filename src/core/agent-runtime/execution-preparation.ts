@@ -37,10 +37,13 @@ import {
   briefWorkspaceFactsFor, createContextAssembler, trimUnknownCallReviewInput,
   type BriefWorkspaceFactsOutcome, type ContextAssembler, type ContextAssemblerDependencies,
 } from './context-assembler.js';
-import { workPreparedSectionOrder } from './context-rendering.js';
+import { rerenderContextV1, workPreparedSectionOrder } from './context-rendering.js';
+import { finalToolNamesOf, RUNTIME_TOOL_NAMES } from './tool-group-assembly.js';
+import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
+import type { ContextWorkHistoryInputV1 } from './context-types.js';
 import {
-  resolvePromptPack, selectPromptSkills, storePromptTexts, trackPromptTexts,
-  type PromptPartsV1,
+  promptDeclarationProblem, promptRenderProblem, resolvePromptPack, selectPromptSkills,
+  storePromptTexts, trackPromptTexts, type PromptPartsV1,
 } from './prompt-set-texts.js';
 import { readTaskReviews } from '../work-graph/tasks/task-review-reader.js';
 import { orderBlockedCommands } from '../work-graph/tasks/blocked-command-order.js';
@@ -494,6 +497,60 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
           }
         }
       }
+      // The final tool list is computed ONCE here, after the
+      // permissions, frozen-source and material facts are fixed, and frozen as
+      // `PromptSetV1.toolNames`. The read-only command gate is the one fact that
+      // needs the Host workspace authorization; a failure leaves the tool out
+      // and the start decides its own unavailable/forbidden answer.
+      const readOnly = writeScopeResult.writeScope.length === 0;
+      const readonlyRequested = readOnly && permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
+      // The production Runtime always wires the workspace host; a direct
+      // preparation without one cannot read the read policy, so it freezes the
+      // capability and the start (which requires the host) re-checks the gate.
+      let readonlyAllowsWholeWorkspace = deps.workspaceHost === undefined;
+      if (readonlyRequested && deps.workspaceHost !== undefined) {
+        try {
+          const authorized = await deps.workspaceHost.authorize(owned, {
+            aggregateType: 'Workspace', projectId: claim.task.projectId, workspaceId: session.workspaceId,
+          });
+          readonlyAllowsWholeWorkspace = authorized.status === 'ready' && authorized.value.allowsRead('.');
+        } catch { readonlyAllowsWholeWorkspace = false; }
+      }
+      const finalNames = finalToolNamesOf({
+        callKind: 'work',
+        // Preparation freezes only the names this Runtime knows; an unknown
+        // selected name (a rework tool with no registration here) is left to
+        // the start, where the real selection and owners are still checked.
+        selected: permissions.tools.filter(name => RUNTIME_TOOL_NAMES.has(name)),
+        readOnly,
+        reviewPhase: reviewPurpose?.phase ?? null,
+        hasBlockedCommands: (blockedBinding ?? []).length > 0,
+        reviewSource: false,
+        frozenSource: permissions.tools.includes('read'),
+        materialTools: false,
+        // Preparation freezes the CAPABILITY set: the actual owner wiring is
+        // re-checked by the same function at start (ruling 16's comparison), so
+        // a missing owner there is still `unsupported`. This call site does not
+        // hold the Runtime's owner bindings.
+        owners: {
+          mailbox: true, decisionMessages: true, applicationReceipt: true,
+          sessions: true, plans: true, graph: true, notes: true,
+          unknownCallReviews: true, commandRerunRequests: true,
+        },
+        readonlyCommand: {
+          requested: readonlyRequested,
+          access: hostConfig.readonlyCommandAccess,
+          allowsReadWholeWorkspace: readonlyAllowsWholeWorkspace,
+        },
+      });
+      if (!finalNames.ok) return finalNames.rejection;
+      const toolNames = finalNames.value;
+      // Preparation reads no Kernel history. The Session record
+      // already says whether it holds a completed cursor; the recipe only needs
+      // that presence, never the cursor's position.
+      const history: ContextWorkHistoryInputV1 = {
+        callKind: 'work', hasCompletedCursor: session.historyCursor !== null,
+      };
       // Slice 3 (§4.2/§4.3, C7): the ONE context assembler owns the eight
       // sections and the byte budget. Its rejection (in particular a failing
       // `graphContext` read) is propagated unchanged; the manifest is built from
@@ -508,11 +565,13 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       try {
         assembled = await assembler.assembleTask(owned, {
           execution: record.value, role: roleResolution, configuration: hostConfig, permissions,
-          texts: tracked.texts,
+          texts: tracked.texts, toolNames, history,
           ...(taskReviews === undefined ? {} : { taskReviews }),
         });
       } catch (error) {
         if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled while the context was assembled');
+        const renderProblem = promptRenderProblem(error, pack.manifest.packId);
+        if (renderProblem !== null) return renderProblem;
         return rejected('unavailable', `the context assembly failed: ${messageOf(error)}`);
       }
       // Cancellation wins over both a ready and a rejected assembly result.
@@ -526,21 +585,43 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       contextAssembly = assembled.value.binding;
       // Ruling 14 items 4-6: render the base, merge the Host instruction, select
       // the Skills through the same resolved pack, and store the frozen texts.
-      const baseText = renderTemplate(tracked.texts, 'base', {}, []).text;
+      let baseText: string;
+      try {
+        baseText = renderTemplate(tracked.texts, 'base', {}, toolNames).text;
+      } catch (error) {
+        const renderProblem = promptRenderProblem(error, pack.manifest.packId);
+        if (renderProblem !== null) return renderProblem;
+        throw error;
+      }
       const mergedBase = baseText + (hostConfig.systemInstruction ? '\n\n' + hostConfig.systemInstruction : '');
       const selectedSkills = await selectPromptSkills(hostConfig.skills, tracked.texts, {
-        signal, ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }),
+        signal, ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }), toolNames,
       });
       if (selectedSkills.status !== 'ready') return selectedSkills;
       if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled while the Skills were selected');
+      // Every used template's declarations must fit the frozen list.
+      const usedTemplates = tracked.usedTemplates();
+      const declarationProblem = promptDeclarationProblem(pack, usedTemplates, toolNames);
+      if (declarationProblem !== null) return declarationProblem;
+      // The tool entries the resolved pack supplies for the
+      // frozen names only; the raw entries are stored by `storePromptTexts`.
+      const toolParts = toolNames.flatMap((name) => {
+        const entry = pack.tools[name];
+        if (entry === undefined) return [];
+        const packId = pack.toolOrigins[name];
+        if (packId === undefined) throw new Error(`the resolved prompt pack has no origin for tool ${name}`);
+        return [{ name, packId, entry }];
+      });
       const promptParts: PromptPartsV1 = {
         selection: { modelId: selection.modelId, provider: boundProvider, model: boundModel,
           packId: pack.manifest.packId, reasoningReplay: selection.reasoningReplay },
-        sectionOrder: workPreparedSectionOrder(),
-        templates: tracked.usedTemplates().map(id => promptTemplatePart(pack, id)),
+        sectionOrder: workPreparedSectionOrder(tracked.texts),
+        templates: usedTemplates.map(id => promptTemplatePart(pack, id)),
         strings: pack.strings,
         base: { templateId: 'base', version: promptTemplateVersion(pack, 'base'), text: mergedBase },
         skills: selectedSkills.value,
+        toolNames: [...toolNames],
+        tools: toolParts,
       };
       const storedPrompts = await storePromptTexts(deps.bodies, { kind: 'run', owner: runRef }, promptParts, deps.now());
       if (storedPrompts.status !== 'ready') {
@@ -548,7 +629,9 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       }
       const promptSet: PromptSetV1 = storedPrompts.value;
       const reviewInput = assembled.value.unknownCallReview;
-      const reviewSectionStart = assembled.value.reviewSectionStart ?? null;
+      // The frozen value comes from the assembly's decision,
+      // never recomputed here.
+      const takesSessionHistory = assembled.value.takesSessionHistory;
       // Slice 1 §2.7: the anchors the brief's anomaly section names are bound with the input.
       const anomalyAnchorRefs: SessionAnomalyAnchorRef[] | null = assembled.value.anomalyAnchorRefs ?? null;
       const briefDigest = brief === null ? null : continuationBriefDigest(brief);
@@ -566,14 +649,17 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // K3 D8: the review instruction is carried twice in the manifest (the
       // structured field and the rendered `input`), so the whole manifest is
       // measured and the instruction trimmed from the back while over budget.
-      const buildManifest = (review: UnknownCallReviewInputV1 | undefined, inputText: string): PreparedTaskManifestV1 => {
-        const total = Buffer.byteLength(inputText, 'utf8');
-        const trimsReviewSuffix = review !== undefined && reviewSectionStart !== null;
-        const assembly = trimsReviewSuffix
-          ? { ...contextAssembly, totalBytes: total,
-              sections: contextAssembly.sections.map(section => section.name === 'unknown_call_review'
-                && section.startByte === reviewSectionStart ? { ...section, endByte: total } : section) }
-          : contextAssembly;
+      const buildManifest = (
+        review: UnknownCallReviewInputV1 | undefined,
+        inputText: string,
+        rerendered?: ReturnType<typeof rerenderContextV1>,
+      ): PreparedTaskManifestV1 => {
+        // Ruling 13: the shrink replaces the input, every range and the manifest
+        // measure from the re-render; omission metadata and the billed
+        // `residentBytes` stay the material's.
+        const assembly = rerendered === undefined
+          ? contextAssembly
+          : { ...contextAssembly, totalBytes: rerendered.totalBytes, sections: rerendered.sections };
         return {
           schemaVersion: 1, kind: 'task_execution', claim, role: roleResolution,
           hostTemplate: roleResolution.status === 'resolved' ? null : hostConfig.hostTemplate,
@@ -582,6 +668,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
           permissions, budget: run.budget, selectedTaskInputs, materialBasis: hostConfig.materialBasis,
           materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs,
           contextAssembly: assembly,
+          takesSessionHistory,
           promptSet,
           ...(brief === null ? {} : { continuationBrief: brief }),
           ...(sessionBasis === undefined ? {} : { sessionBasis }),
@@ -592,24 +679,33 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         };
       };
       let manifest: PreparedTaskManifestV1;
-      if (reviewInput === undefined || reviewSectionStart === null) {
+      if (reviewInput === undefined) {
         manifest = buildManifest(undefined, input);
       } else {
-        // D4/F: `reviewSectionStart` is a UTF-8 BYTE offset, so the prefix must
-        // be cut by bytes, never as a JS string index (the base text often holds
-        // Chinese role/goal/task content).
-        const baseInput = Buffer.from(input, 'utf8').subarray(0, reviewSectionStart).toString('utf8');
-        const fit = fitUnknownCallReviewForManifest({
-          review: reviewInput,
-          render: review => renderUnknownCallReviewZh(review, tracked.texts),
-          measure: (review, rendered) => Buffer.byteLength(JSON.stringify(buildManifest(review, baseInput + rendered)), 'utf8'),
-        });
-        if (!fit.ok) {
-          return rejected('capacity', `the bounded prepared manifest exceeds ${String(MAX_PREPARED_MANIFEST_BYTES)} bytes`);
+        // Ruling 13: each candidate re-renders the whole input from the frozen
+        // material with only the review slot replaced; no prefix cut remains.
+        const material = assembled.value.renderMaterial;
+        try {
+          const fit = fitUnknownCallReviewForManifest({
+            review: reviewInput,
+            render: review => renderUnknownCallReviewZh(review, tracked.texts, toolNames),
+            measure: (review, rendered) => {
+              const candidate = rerenderContextV1(material, rendered);
+              return Buffer.byteLength(JSON.stringify(buildManifest(review, candidate.input, candidate)), 'utf8');
+            },
+          });
+          if (!fit.ok) {
+            return rejected('capacity', `the bounded prepared manifest exceeds ${String(MAX_PREPARED_MANIFEST_BYTES)} bytes`);
+          }
+          const rerendered = rerenderContextV1(material, fit.rendered);
+          input = rerendered.input;
+          inputDigest = sha256Hex(input);
+          manifest = buildManifest(fit.review, input, rerendered);
+        } catch (error) {
+          const renderProblem = promptRenderProblem(error, pack.manifest.packId);
+          if (renderProblem !== null) return renderProblem;
+          throw error;
         }
-        input = baseInput + fit.rendered;
-        inputDigest = sha256Hex(input);
-        manifest = buildManifest(fit.review, input);
       }
       const manifestJson = JSON.stringify(manifest);
       if (Buffer.byteLength(manifestJson, 'utf8') > MAX_PREPARED_MANIFEST_BYTES) {

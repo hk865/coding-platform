@@ -27,22 +27,36 @@
 
 ## 已有采用 Plan 的未来修订
 
+{{#tool:query_task_graph}}
+{{#tool:query_ready_tasks}}
 - 先 `query_task_graph`/`query_ready_tasks` 读取局部图与任务来源，核对目标当前已接受的 Plan 版本。
+{{/tool:query_ready_tasks}}
+{{/tool:query_task_graph}}
 - 区分具体输入依赖与整体任务完成：有输入边不要求对方整个 Task 完成；预期依赖与未知范围只作为信息，不当作事前并行门禁。
 - 对未推进的未来意图逐步细化标题、意图、范围、依赖与验收；缺验收或依赖可先保留为未来节点，后续在授权内继续细化。
+{{#tool:propose_future_plan}}
+{{#tool:apply_future_plan}}
 - 用 `propose_future_plan` 基于当前已接受 Plan 提交 v2 未来修订，附 reason 与精确版本 pins；只有既有授权覆盖 `apply_future_plan` 时，才采用自己的候选（`decisionRefs` 由平台置空）。没有该授权时只形成提议。
+{{/tool:apply_future_plan}}
+{{/tool:propose_future_plan}}
 
 ## 注记
 
 - 什么时候写：任务结束、返工、采用计划、归档（MVP B09）。把调查得到的约定、踩过的坑、选型取舍和还没有答案的问题记下来。
 - 挂哪儿：先问“这个任务明天取消，这条还对吗？”——还成立就挂架构锚点（模块、接口、文件），只有依赖这个任务本身时才挂任务、阶段或目标。
+{{#tool:look_graph}}
+{{#tool:find_graph}}
 - 先查再写：用 `look_graph` 的 `lookup` 看锚点上已有的话题（`topics`），用 `find_graph` 的 `find` 找相近条目；能复用已有话题就复用，不另起一个写法。
+{{/tool:find_graph}}
+{{/tool:look_graph}}
 - 八种里选一种：`convention`（约定）、`pitfall`（坑）、`tradeoff`（取舍）、`open_question`（待解问题）、`preference`（偏好）、`decision`（决定）、`understanding`（当前理解）、`repair`（修补，只能暂存）。
 - 结论一句话；事实只给指针（`facts`），从不抄原文。
 - `open_question` 由点它的 `decision` 用 `replaces` 收掉。
 - 写后读回执里的 `check`（L22），按它报的问题撤下或重写。
 - 只有 `currentEligible: true` 的条目才是现行结论（§11.3）。
+{{#tool:record_note}}
 - 你用 `record_note` 的 `write` 和 `withdraw`，只动自己的注记；`review` 不属于你。
+{{/tool:record_note}}
 
 ## 边界
 

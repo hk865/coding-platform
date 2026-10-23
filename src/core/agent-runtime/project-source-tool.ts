@@ -3,9 +3,13 @@ import type { SourceCaptureRef } from '../../contracts/core/source.js';
 import type { JsonValue } from '../../contracts/fingerprint.js';
 import type { RuntimeSourceCaptureAccess } from './source-tool-ports.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import type {
   CaptureSummary, GitWorkspaceVersion, SourceCoverage, SourcePage, SourceQuery, WorkingTreeWorkspaceVersion, WorkspaceComparison, WorkspaceFile, WorkspaceResult,
 } from '../../core/workspace/ports.js';
+
+/** Typed view: the generated pack's literal `tools` object has no string index signature. */
+const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMPT_PACK_V1.tools;
 
 /**
  * The `project_source` model wire. It is a thin adapter over the trusted WorkspaceToolsPort:
@@ -152,6 +156,8 @@ export type ProjectSourceToolOptions = {
   /** The existing exploration/Reviewer path policy; no second permission cache is built here. */
   requireVisible: (path: string) => void;
   assertCurrent?: () => Promise<void>;
+  /** The platform tools' model-facing texts; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
 };
 
 const NONE = { sideEffect: 'none' as const, changedPaths: [], workspaceRevision: null, artifactRefs: [] };
@@ -233,9 +239,10 @@ export function createProjectSourceTool(options: ProjectSourceToolOptions): Tool
   // never falls back to the live `project_index`. The resolver stays owned by the run loop; this
   // tool never opens or closes the capability and never owns its lifetime.
   const accessOption = options.access;
+  const text = options.texts?.['project_source'] ?? PLATFORM_TOOL_TEXTS['project_source']!;
   return {
     name: 'project_source',
-    description: PLATFORM_PROMPT_PACK_V1.tools['project_source'].description,
+    description: text.description,
     inputSchema: projectSourceInputSchema,
     effectClass: 'read_only',
     requiredCapabilities: ['workspace_read'],

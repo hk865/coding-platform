@@ -120,15 +120,17 @@ function emitTools(tools, level) {
     return lines.join('\n');
 }
 
-/** Each template's origin (ruling 11): the pack it came from and its version. */
+/** Each template's origin (rulings 4, 11): the pack it came from, its version and its tool declarations. */
 function emitOrigins(manifest, level) {
     const entries = Object.entries(manifest.templates);
     if (entries.length === 0) return '{}';
     const lines = ['{'];
     for (const [id, entry] of entries) {
         lines.push(`${pad(level + 1)}${quote(id)}: {`);
+        const names = entry.mentionsTools.map(quote).join(', ');
         lines.push(`${pad(level + 2)}"packId": ${quote(manifest.packId)},`);
         lines.push(`${pad(level + 2)}"version": ${JSON.stringify(entry.version)},`);
+        lines.push(`${pad(level + 2)}"mentionsTools": [${names}],`);
         lines.push(`${pad(level + 1)}},`);
     }
     lines.push(`${pad(level)}}`);
@@ -158,6 +160,7 @@ export function renderPlatformPackModule(pack) {
         `  strings: ${emitStringMap(strings, 1)},`,
         `  tools: ${emitTools(tools, 1)},`,
         `  origins: ${emitOrigins(manifest, 1)},`,
+        `  toolOrigins: ${emitStringMap(Object.fromEntries(Object.keys(manifest.tools).map(name => [name, manifest.packId])), 1)},`,
         '} as const satisfies ResolvedPromptPackV1;',
     ];
     return `${lines.join('\n')}\n`;

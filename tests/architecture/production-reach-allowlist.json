@@ -1277,19 +1277,19 @@
       "file": "src/contracts/prompts/prompt-set.ts",
       "name": "PromptRecordRequestV1",
       "reason": "wire-format",
-      "note": "the element type of PromptRecordReadResultV1.requests, returned by RuntimeExecutionPort.readPromptRecord"
+      "note": "the element/result shape RuntimeExecutionPort.readPromptRecord returns; the port is published now and E3 adds its HTTP route, which is the later production reader"
     },
     {
       "file": "src/contracts/prompts/prompt-set.ts",
       "name": "PromptRecordReadResultV1",
       "reason": "wire-format",
-      "note": "the complete read result that RuntimeExecutionPort.readPromptRecord returns; the reader is that published port."
+      "note": "the element/result shape RuntimeExecutionPort.readPromptRecord returns; the port is published now and E3 adds its HTTP route, which is the later production reader"
     },
     {
       "file": "src/contracts/prompts/prompt-set.ts",
       "name": "PromptRecordReadV1",
       "reason": "wire-format",
-      "note": "the wrapper of the complete result that RuntimeExecutionPort.readPromptRecord returns; the reader is that published port."
+      "note": "the element/result shape RuntimeExecutionPort.readPromptRecord returns; the port is published now and E3 adds its HTTP route, which is the later production reader"
     },
     {
       "file": "src/core/agent-runtime/ports.ts",

@@ -54,6 +54,7 @@ function goalRecord(digest: string | null, goalId = GOAL, revision = 1): Context
 function bindingWith(sources: ContextSourceV1[]): ContextAssemblyBindingV1 {
   return {
     schemaVersion: 1, formatVersion: 's3-context-v1', callKind: 'work', duty: 'executor',
+    sectionOrder: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs'],
     residentBudgetBytes: 4096, residentBytes: 0, totalBytes: 0,
     sections: [], sources, inputSelections: [],
     extensions: { notes: 'not_implemented', anomalies: 'not_implemented', footprint: 'not_implemented',

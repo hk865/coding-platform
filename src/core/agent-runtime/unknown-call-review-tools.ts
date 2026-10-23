@@ -19,6 +19,7 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import type {
   UnknownCallReviewPort, UnknownCallReviewReadPort,
 } from '../work-graph/model/unknown-call-review-contracts.js';
@@ -30,6 +31,9 @@ import {
   type ToolResult,
   type WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
+
+/** Typed view: the generated pack's literal `tools` object has no string index signature. */
+const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMPT_PACK_V1.tools;
 
 export const RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME = 'record_unknown_call_review';
 /** L20/section 2: the proposal round's one write tool, registered in place of the review tool. */
@@ -46,36 +50,35 @@ export const UNKNOWN_CALL_REVIEW_CRASH_EVIDENCE_MAX_CHARS = 1000;
 /** L20/lead answer 7: the rationale is 1..2,000 UTF-16 code units. */
 export const UNKNOWN_CALL_PROPOSAL_RATIONALE_MAX_CHARS = 2000;
 
-const inputSchema = z
-  .object({
-    item: z.number().int().min(1).max(UNKNOWN_CALL_REVIEW_MAX_ITEMS)
-      .describe(PLATFORM_PROMPT_PACK_V1.tools.record_unknown_call_review.parameters.item),
-    verdict: z.enum(['done', 'not_done', 'partial', 'undetermined'])
-      .describe(PLATFORM_PROMPT_PACK_V1.tools.record_unknown_call_review.parameters.verdict),
-    evidence: z.string().min(1).max(UNKNOWN_CALL_REVIEW_EVIDENCE_MAX_CHARS)
-      .describe(PLATFORM_PROMPT_PACK_V1.tools.record_unknown_call_review.parameters.evidence),
-    crashSuspicion: z.object({
-      verdict: z.enum(['unlikely', 'possible', 'undetermined']),
-      evidence: z.string().min(1).max(UNKNOWN_CALL_REVIEW_CRASH_EVIDENCE_MAX_CHARS),
-    }).strict().describe(PLATFORM_PROMPT_PACK_V1.tools.record_unknown_call_review.parameters.crashSuspicion),
-  })
-  .strict();
-type RecordUnknownCallReviewArguments = z.infer<typeof inputSchema>;
+function buildInputSchema(text: ToolTextV1) {
+  const parameters = text.parameters;
+  return z
+    .object({
+      item: z.number().int().min(1).max(UNKNOWN_CALL_REVIEW_MAX_ITEMS).describe(parameters['item']!),
+      verdict: z.enum(['done', 'not_done', 'partial', 'undetermined']).describe(parameters['verdict']!),
+      evidence: z.string().min(1).max(UNKNOWN_CALL_REVIEW_EVIDENCE_MAX_CHARS).describe(parameters['evidence']!),
+      crashSuspicion: z.object({
+        verdict: z.enum(['unlikely', 'possible', 'undetermined']),
+        evidence: z.string().min(1).max(UNKNOWN_CALL_REVIEW_CRASH_EVIDENCE_MAX_CHARS),
+      }).strict().describe(parameters['crashSuspicion']!),
+    })
+    .strict();
+}
+type RecordUnknownCallReviewArguments = z.infer<ReturnType<typeof buildInputSchema>>;
 
 /** L20/section 2 `propose_safer_method`: the model supplies only the replacement command and why. */
-const proposalInputSchema = z
-  .object({
-    item: z.number().int().min(1).max(UNKNOWN_CALL_REVIEW_MAX_ITEMS)
-      .describe(PLATFORM_PROMPT_PACK_V1.tools.propose_safer_method.parameters.item),
-    command: z.string().min(1)
-      .describe(PLATFORM_PROMPT_PACK_V1.tools.propose_safer_method.parameters.command),
-    cwd: z.string().optional()
-      .describe(PLATFORM_PROMPT_PACK_V1.tools.propose_safer_method.parameters.cwd),
-    rationale: z.string().min(1).max(UNKNOWN_CALL_PROPOSAL_RATIONALE_MAX_CHARS)
-      .describe(PLATFORM_PROMPT_PACK_V1.tools.propose_safer_method.parameters.rationale),
-  })
-  .strict();
-type ProposeSaferMethodArguments = z.infer<typeof proposalInputSchema>;
+function buildProposalInputSchema(text: ToolTextV1) {
+  const parameters = text.parameters;
+  return z
+    .object({
+      item: z.number().int().min(1).max(UNKNOWN_CALL_REVIEW_MAX_ITEMS).describe(parameters['item']!),
+      command: z.string().min(1).describe(parameters['command']!),
+      cwd: z.string().optional().describe(parameters['cwd']!),
+      rationale: z.string().min(1).max(UNKNOWN_CALL_PROPOSAL_RATIONALE_MAX_CHARS).describe(parameters['rationale']!),
+    })
+    .strict();
+}
+type ProposeSaferMethodArguments = z.infer<ReturnType<typeof buildProposalInputSchema>>;
 
 export type UnknownCallReviewToolsConfig = {
   /** The SAME owner the routes publish; the adapter adds no review rules. */
@@ -88,6 +91,8 @@ export type UnknownCallReviewToolsConfig = {
   requestIdForCall: (call: Readonly<ToolCall>) => string;
   /** Which round this factory registers: the review tool (default) or the proposal tool. */
   phase?: 'review' | 'proposal';
+  /** The platform tools' model-facing texts; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
 };
 
 export type UnknownCallReviewToolsHandle = {
@@ -126,6 +131,10 @@ function localFailure(callId: string, code: 'invalid_arguments' | 'execution_fai
 }
 
 export function createUnknownCallReviewTools(config: UnknownCallReviewToolsConfig): UnknownCallReviewToolsHandle {
+  const textOf = (name: string): ToolTextV1 =>
+    config.texts?.[name] ?? PLATFORM_TOOL_TEXTS[name]!;
+  const inputSchema = buildInputSchema(textOf('record_unknown_call_review'));
+  const proposalInputSchema = buildProposalInputSchema(textOf('propose_safer_method'));
   // Freeze the trusted identity before returning the factory: the model cannot
   // rebind the record, the principal or the request identity.
   const fixedReviewRef: UnknownCallReviewRef = {
@@ -210,7 +219,7 @@ export function createUnknownCallReviewTools(config: UnknownCallReviewToolsConfi
   function reviewDefinition(): ToolDefinition {
     return {
       name: RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
-      description: PLATFORM_PROMPT_PACK_V1.tools.record_unknown_call_review.description,
+      description: textOf('record_unknown_call_review').description,
       inputSchema,
       // A platform-state write: the Kernel permission policy and the Host
       // authorization list apply, but no workspace write or process capability
@@ -292,7 +301,7 @@ export function createUnknownCallReviewTools(config: UnknownCallReviewToolsConfi
   function proposalDefinition(): ToolDefinition {
     return {
       name: PROPOSE_SAFER_METHOD_TOOL_NAME,
-      description: PLATFORM_PROMPT_PACK_V1.tools.propose_safer_method.description,
+      description: textOf('propose_safer_method').description,
       inputSchema: proposalInputSchema,
       effectClass: 'workspace_write',
       requiredCapabilities: [],

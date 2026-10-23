@@ -32,8 +32,8 @@ const WORK_INSTRUCTION = 'PC_WORK_HOST_INSTRUCTION';
 const QUERY_INSTRUCTION = 'PC_QUERY_HOST_INSTRUCTION';
 
 const WORK_ORDER = {
-  work: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'unknown_call_review'],
-  continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation'],
+  work: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'unknown_call_review', 'reminders'],
+  continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
 };
 const QUERY_ORDER = {
   planning: ['role', 'goal', 'task', 'footprint'],
@@ -138,7 +138,7 @@ describe('ruling 14: a Work preparation freezes before the pack await (and rulin
       });
       expect(gate.calls()).toBe(1);
       expect(prepared.set.base.digest).toBe(sha(`${BASE_A}\n\n${WORK_INSTRUCTION}`));
-      expect(prepared.texts.base).toEqual({ templateId: 'base', version: 1, text: `${BASE_A}\n\n${WORK_INSTRUCTION}` });
+      expect(prepared.texts.base).toEqual({ templateId: 'base', version: 2, text: `${BASE_A}\n\n${WORK_INSTRUCTION}` });
       expect(prepared.texts.strings['context.prelude.work']).toBe('PC_WORK_PRELUDE_A');
       expect(prepared.input.startsWith('PC_WORK_PRELUDE_A')).toBe(true);
       expect(prepared.input).toContain('PC_ROLE_HEADER_A');

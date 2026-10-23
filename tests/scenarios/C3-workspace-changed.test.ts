@@ -73,15 +73,15 @@ it('C3 (GAP-49): the source is D1 at the requeue and D2 at the prepare; the brie
   // The file Run 1 changed through its tools (the only per-file fact the records hold).
   expect(brief.workspace.selfChanged).toEqual({ status: 'known', confirmed: [NOTES_FILE], possible: [], omitted: 0 });
 
-  // The rendered brief, as the last section of Run 2's input in its Kernel Turn and its first model request.
+  // The rendered brief in Run 2's input; PC-2 puts the reminders section after it.
   const rendered = renderContinuationBriefZh(brief, digest);
   const run2 = await execution(h, run2Ref);
   const turn = turnStarts(h.database).find(candidate => candidate.runId === run2.run.executionHistory?.kernel.runId);
   if (turn === undefined) throw new Error('Run 2 must have started a Kernel Turn');
-  expect(turn.content.endsWith(`\n\n${rendered}`)).toBe(true);
+  expect(turn.content).toContain(`\n\n${rendered}`);
   const firstRequest = h.modelRequests()[2]?.messages.at(-1);
   if (firstRequest?.role !== 'user') throw new Error('Run 2\'s first model request must end with its input');
-  expect(firstRequest.content.endsWith(`\n\n${rendered}`)).toBe(true);
+  expect(firstRequest.content).toContain(`\n\n${rendered}`);
   const lines = rendered.split('\n');
   expect(lines).toContain('- 重新入队 → 本次执行开始前：有变化（具体文件无法从持久记录确定）');
   expect(lines).toContain(`- 未提交的改动（相对 ${baseCommit}）：${NOTES_FILE}、${OPERATOR_FILE}`);

@@ -1,7 +1,7 @@
 /**
- * PC-1b P — ruling 18: the recorded section order is today's fixed order
- * projected onto the sections the template and the call kind allow. Nothing
- * reads it in PC-1.
+ * PC-1b P — ruling 18: the recorded section order is the prompt template's slot
+ * order projected onto the sections the call kind allows. PC-2 ruling 9 moved
+ * the platform `work-input` order (inputs before continuation, reminders last).
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -9,11 +9,12 @@ import {
 } from '../../src/core/agent-runtime/context-rendering.js';
 
 describe('ruling 18: the projected section order', () => {
-  it('keeps today\'s eight-section order for the two Work call kinds', () => {
-    expect(CONTEXT_SECTION_ORDER).toEqual(['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation']);
+  it('keeps the platform v2 order for the two Work call kinds', () => {
+    expect(CONTEXT_SECTION_ORDER).toEqual(
+      ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'unknown_call_review', 'reminders']);
     expect(workPreparedSectionOrder()).toEqual({
-      work: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'unknown_call_review'],
-      continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation'],
+      work: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'unknown_call_review', 'reminders'],
+      continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
     });
   });
 

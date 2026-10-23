@@ -25,7 +25,7 @@ import type { GoalSnapshot, WorkspaceSnapshot } from '../ledger.js';
 import type { PlanRevisionSnapshot } from '../plan.js';
 import type { RuntimeBudget } from '../runtime-budget.js';
 import type { TaskClaim } from './task-claim.js';
-import type { ContinuationBriefV1 } from '../continuation-brief.js';
+import { templateToolNames, type ContinuationBriefV1 } from '../continuation-brief.js';
 import type { ContextAssemblyBindingV1 } from '../graph-context.js';
 import type { PromptSetV1 } from '../prompts/prompt-set.js';
 import type {
@@ -100,8 +100,9 @@ export type UnknownCallReviewInputV1 = {
 };
 
 /**
- * K3 L13/R1: render the structured review instruction as the trailing
- * `unknown_call_review` section of a review-purpose Work Run's input.
+ * K3 L13/R1: render the structured review instruction as the `unknown_call_review`
+ * section (an independent interval in the frozen order) of a review-purpose Work
+ * Run's input.
  *
  * It lives beside `UnknownCallReviewInputV1` (as `renderContinuationBriefZh`
  * sits beside the continuation brief) so WorkGraph can re-render the stored
@@ -111,6 +112,9 @@ export type UnknownCallReviewInputV1 = {
 export function renderUnknownCallReviewZh(
   input: UnknownCallReviewInputV1,
   texts: PromptTextsV1 = DEFAULT_TEXTS,
+  /** Ruling 10: the frozen tool list; absent renders every tool block the template names. */
+  toolNames: readonly string[] = templateToolNames(texts,
+    input.phase === 'proposal' ? 'unknown-call-proposal' : 'unknown-call-review'),
 ): string {
   const S = (key: string): string => packString(texts, key);
   const workspace = input.workspace;
@@ -178,7 +182,7 @@ export function renderUnknownCallReviewZh(
       personNote,
       annotations: slotLines(annotationLines),
       platformTargets: slotLines(platformLines),
-    }, []).text;
+    }, toolNames).text;
   }
   const itemLines: string[] = [];
   for (const item of input.items) {
@@ -202,7 +206,7 @@ export function renderUnknownCallReviewZh(
     workspaceLines: workspaceLines.join('\n'),
     writtenLines: writtenLines.join('\n'),
     items: itemLines.length === 0 ? '' : '\n' + itemLines.join('\n'),
-  }, []).text;
+  }, toolNames).text;
 }
 
 export type PreparedTaskManifestV1 = {
@@ -228,11 +232,14 @@ export type PreparedTaskManifestV1 = {
   sourceRefs: SourceRefV1[];
   /**
    * C3: present exactly on a Run claimed with a `requeueRef`; pinned by
-   * `inputBinding.continuationBriefDigest`, rendered as the last section of `input`.
+   * `inputBinding.continuationBriefDigest`, rendered into the `continuation`
+   * section (an independent interval in the frozen order) of `input`.
    */
   continuationBrief?: ContinuationBriefV1;
   /** Slice 3: the assembled context binding fixed at prepare (required). */
   contextAssembly: ContextAssemblyBindingV1;
+  /** The assembly's history decision, inside the manifest digest. */
+  takesSessionHistory: boolean;
   /** Ruling 14: the frozen prompt set (required) inside the manifest digest. */
   promptSet: PromptSetV1;
   /**
@@ -301,6 +308,8 @@ export type PreparedQueryManifestV1 = {
   sessionBasis?: { sourceKernelSessionId: string; throughPosition: number | null };
   /** Slice 3: the assembled Query context binding fixed at prepare (required). */
   contextAssembly: ContextAssemblyBindingV1;
+  /** The assembly's history decision, inside the manifest digest. */
+  takesSessionHistory: boolean;
   /** Ruling 14: the frozen prompt set (required) inside the manifest digest. */
   promptSet: PromptSetV1;
   input: string;

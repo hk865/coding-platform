@@ -13,9 +13,12 @@ import type {
 } from '../../contracts/graph-context.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { PromptSetV1, PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
-import { renderTemplate } from '../../contracts/prompts/render-template.js';
+import { parseTemplateV1, renderTemplate } from '../../contracts/prompts/render-template.js';
 import { byKey, utf8Bytes } from './context-support.js';
-import type { OptionalRow, OptionalSectionName } from './context-types.js';
+import type {
+  ContextRenderMaterialV1, ContextRerenderV1, ContextSectionPlanV1, ContextTemplateId,
+  OptionalRow, OptionalSectionName,
+} from './context-types.js';
 
 /** A direct call without a resolved pack keeps the generated platform pack (ruling 14). */
 const DEFAULT_TEXTS: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1;
@@ -48,66 +51,100 @@ export function queryContextPrelude(texts: PromptTextsV1): string { return packS
 /** The frozen format version of an assembled context binding (§4.3). */
 export const CONTEXT_FORMAT_VERSION = 's3-context-v1' as const;
 
+/**
+ * The platform pack v2 `work-input` order (ruling 9). It is also the vocabulary
+ * of section names the template scan recognizes, so a pack cannot smuggle in a
+ * name the binding format does not know.
+ */
 export const CONTEXT_SECTION_ORDER: readonly ContextSectionNameV1[] = [
-  'role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation',
+  'role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'unknown_call_review', 'reminders',
 ];
 
-/** R1: the review instruction is the last section, legal only for the `work` call kind. */
-const SECTION_ORDER_WITH_REVIEW: readonly ContextSectionNameV1[] = [...CONTEXT_SECTION_ORDER, 'unknown_call_review'];
+const SECTION_NAMES: ReadonlySet<string> = new Set(CONTEXT_SECTION_ORDER);
 
-/** The sections each template declares a slot for (the template half of ruling 18). */
-const TEMPLATE_SECTIONS: Readonly<Record<ContextTemplateId, readonly ContextSectionNameV1[]>> = {
-  'work-input': SECTION_ORDER_WITH_REVIEW,
-  'query-planning-input': ['role', 'goal', 'task', 'footprint'],
-  'query-copy-input': ['role', 'goal', 'task'],
-};
-
-/** The call-kind half of ruling 18 (the table of state/context-input.ts ~65-73, for the kinds a preparation produces). */
+/** The call-kind half of ruling 9 (the table of state/context-input.ts, for the kinds a preparation produces). */
 const CALL_KIND_SECTIONS: Readonly<Partial<Record<ContextCallKindV1, readonly ContextSectionNameV1[]>>> = {
-  work: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'unknown_call_review'],
-  continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation'],
+  work: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'unknown_call_review', 'reminders'],
+  continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
   planning: ['role', 'goal', 'task', 'footprint'],
   copy: ['role', 'goal', 'task'],
 };
 
 /**
- * Ruling 18: today's fixed section order projected onto what a template and a
- * call kind allow. PC-1 records it; nothing reads it yet.
+ * Ruling 9: the order lives in the input template's text. The resolver has
+ * already validated the template, so a failure here is a pack bug.
+ */
+export function templateSectionOrder(texts: PromptTextsV1, templateId: ContextTemplateId): ContextSectionNameV1[] {
+  const source = texts.templates[templateId];
+  if (source === undefined) throw new Error(`the resolved prompt pack has no template "${templateId}"`);
+  const parsed = parseTemplateV1(templateId, source);
+  if (parsed.status === 'invalid') throw new Error(parsed.error.message);
+  const order: ContextSectionNameV1[] = [];
+  for (const node of parsed.nodes) {
+    if (node.kind === 'slot' && SECTION_NAMES.has(node.name)) order.push(node.name as ContextSectionNameV1);
+  }
+  return order;
+}
+
+/**
+ * Ruling 9/11: the template's slot order projected onto the call kind's legal
+ * sections. A person's pack that declares another legal order is followed.
  */
 export function sectionOrderFor(
   callKind: 'work' | 'continuation' | 'planning' | 'copy',
   templateId: ContextTemplateId,
+  texts: PromptTextsV1 = DEFAULT_TEXTS,
 ): ContextSectionNameV1[] {
-  const callKindAllowed = new Set(CALL_KIND_SECTIONS[callKind] ?? []);
-  const templateAllowed = new Set(TEMPLATE_SECTIONS[templateId]);
-  return SECTION_ORDER_WITH_REVIEW.filter(name => callKindAllowed.has(name) && templateAllowed.has(name));
+  const allowed = new Set(CALL_KIND_SECTIONS[callKind] ?? []);
+  return templateSectionOrder(texts, templateId).filter(name => allowed.has(name));
 }
 
 /** Every call kind a Work preparation can produce (`work` also covers a review-purpose Run). */
-export function workPreparedSectionOrder(): PromptSetV1['sectionOrder'] {
-  return { work: sectionOrderFor('work', 'work-input'),
-    continuation: sectionOrderFor('continuation', 'work-input') };
+export function workPreparedSectionOrder(texts: PromptTextsV1 = DEFAULT_TEXTS): PromptSetV1['sectionOrder'] {
+  return { work: sectionOrderFor('work', 'work-input', texts),
+    continuation: sectionOrderFor('continuation', 'work-input', texts) };
 }
 
-/** Every call kind a Query preparation can produce. */
-export function queryPreparedSectionOrder(): PromptSetV1['sectionOrder'] {
-  return { planning: sectionOrderFor('planning', 'query-planning-input'),
-    copy: sectionOrderFor('copy', 'query-copy-input') };
+/**
+ * Every call kind a Query preparation can produce. PC-1 records only the call
+ * kinds the pack covers, so a pack that declares one Query template records one
+ * kind; the platform pack declares both.
+ */
+export function queryPreparedSectionOrder(texts: PromptTextsV1 = DEFAULT_TEXTS): PromptSetV1['sectionOrder'] {
+  const order: PromptSetV1['sectionOrder'] = {};
+  if (texts.templates['query-planning-input'] !== undefined)
+    order.planning = sectionOrderFor('planning', 'query-planning-input', texts);
+  if (texts.templates['query-copy-input'] !== undefined)
+    order.copy = sectionOrderFor('copy', 'query-copy-input', texts);
+  return order;
 }
 
-const OPTIONAL_SECTIONS: readonly OptionalSectionName[] = CONTEXT_SECTION_ORDER.filter(
-  (name): name is OptionalSectionName =>
-    name === 'footprint' || name === 'notes' || name === 'reminders' || name === 'inputs',
-);
+/**
+ * Ruling 10/18: a Skill renders like `base`, through the renderer with the
+ * frozen final tool list and no slots. Q builds each `SkillContext` with it.
+ */
+export function renderSkillTextV1(
+  texts: PromptTextsV1, templateId: string, toolNames: readonly string[],
+): string {
+  return renderTemplate(texts, templateId, {}, toolNames).text;
+}
+
+/** Absent `toolNames` means every tool block renders (ruling 10): the generated pack's full set. */
+function everyToolName(): readonly string[] {
+  return Object.keys(PLATFORM_PROMPT_PACK_V1.tools);
+}
+
+/** Ruling 10: the BUDGET order stays footprint, notes, reminders, inputs; a template cannot change it. */
+const OPTIONAL_SECTIONS: readonly OptionalSectionName[] = ['footprint', 'notes', 'reminders', 'inputs'];
 
 export const ATTENTION_HEADER = '[attention s3-v1]';
 export const ATTENTION_MAX_BYTES = 16_384;
 
 type RenderResult = {
   input: string; sections: ContextAssemblyBindingV1['sections']; residentBytes: number; totalBytes: number;
+  /** Ruling 13 L4: what the review shrink re-renders from, filled from this one render. */
+  material: ContextRenderMaterialV1;
 };
-
-type ContextTemplateId = 'work-input' | 'query-planning-input' | 'query-copy-input';
 
 /** The optional sections each frozen template actually declares a slot for. */
 const TEMPLATE_OPTIONAL_SECTIONS: Readonly<Record<ContextTemplateId, readonly OptionalSectionName[]>> = {
@@ -122,14 +159,24 @@ const omissionLine = (texts: PromptTextsV1, count: number): string =>
 
 type RenderInput = {
   templateId: ContextTemplateId;
+  /** Ruling 10: the display order, already projected onto this call kind. */
+  sectionOrder: readonly ContextSectionNameV1[];
   prelude: string;
   required: { role: string; goal: string | null; task: string | null };
   optional: Partial<Record<OptionalSectionName, OptionalRow[]>>;
   continuationSuffix: string | null;
   reviewSuffix: string | null;
+  /** Ruling 15: the history decision takes the stale-files reminder at the role slot's end. */
+  takesSessionHistory: boolean;
   residentBudgetBytes: number;
+  toolNames: readonly string[];
   texts: PromptTextsV1;
 };
+
+/** Ruling 15: the reminder is a template rendered with the same frozen tool list, appended inside the role range. */
+function staleFilesReminder(texts: PromptTextsV1, toolNames: readonly string[]): string {
+  return renderTemplate(texts, 'stale-files-reminder', {}, toolNames).text;
+}
 
 function renderWithTemplate(input: RenderInput): RenderResult {
   const texts = input.texts;
@@ -175,9 +222,12 @@ function renderWithTemplate(input: RenderInput): RenderResult {
 
   const goal = input.required.goal;
   const task = input.required.task;
+  const role = input.takesSessionHistory
+    ? input.required.role + '\n' + staleFilesReminder(texts, input.toolNames)
+    : input.required.role;
   const slots: Record<string, string | undefined> = {
     prelude: input.prelude,
-    role: headers.role + '\n' + input.required.role,
+    role: headers.role + '\n' + role,
     goal: goal === null ? undefined : '\n\n' + headers.goal + '\n' + goal,
     task: task === null ? undefined : '\n\n' + headers.task + '\n' + task,
   };
@@ -193,9 +243,8 @@ function renderWithTemplate(input: RenderInput): RenderResult {
   }
   if (input.templateId === 'query-planning-input') slots.footprint = undefined;
 
-  const omittedSections: { name: OptionalSectionName; count: number }[] = [];
-  const optionalSections: { name: OptionalSectionName; omitted: number }[] = [];
-  let residentBytes = 0;
+  const omittedRows = new Map<ContextSectionNameV1, number>();
+  const whollyOmitted = new Set<ContextSectionNameV1>();
   const fallback = chosen < 0 || chosenRender === null;
 
   if (!fallback && present.length > 0) {
@@ -208,7 +257,7 @@ function renderWithTemplate(input: RenderInput): RenderResult {
       if (kept > 0) text += '\n' + section.rows.slice(0, kept).map((row) => row.text).join('\n');
       if (missing > 0) text += '\n' + omissionLine(texts, missing);
       slots[section.name] = '\n\n' + text;
-      optionalSections.push({ name: section.name, omitted: missing });
+      omittedRows.set(section.name, missing);
     }
   }
 
@@ -220,7 +269,8 @@ function renderWithTemplate(input: RenderInput): RenderResult {
       const count = (input.optional[name] ?? []).length;
       if (count === 0) continue;
       lines.push(`${name}${packString(texts, 'context.omissions.nameSeparator')}${omissionLine(texts, count)}`);
-      omittedSections.push({ name, count });
+      omittedRows.set(name, count);
+      whollyOmitted.add(name);
     }
     if (lines.length > 0) {
       const block = '\n\n' + packString(texts, 'context.omissions.heading') + '\n' + lines.join('\n');
@@ -235,7 +285,7 @@ function renderWithTemplate(input: RenderInput): RenderResult {
     }
   }
 
-  const rendered = renderTemplate(texts, input.templateId, slots, []);
+  const rendered = renderTemplate(texts, input.templateId, slots, input.toolNames);
   const rangeOf = (name: string) => {
     const range = rendered.sectionRanges[name];
     // Every slot below has a non-empty value, so a missing range is a code bug.
@@ -243,51 +293,58 @@ function renderWithTemplate(input: RenderInput): RenderResult {
     return range;
   };
 
+  // Ruling 10: the display order is the frozen order; every rendered section and
+  // every wholly omitted one appears, in that order.
   const sections: ContextAssemblyBindingV1['sections'] = [];
-  const roleRange = rangeOf('role');
-  sections.push({ name: 'role', startByte: roleRange.startByte, endByte: roleRange.endByte, omitted: 0 });
-  let lastRequiredEnd = roleRange.endByte;
-  if (goal !== null) {
-    const range = rangeOf('goal');
-    sections.push({ name: 'goal', startByte: range.startByte + 2, endByte: range.endByte, omitted: 0 });
-    lastRequiredEnd = range.endByte;
-  }
-  if (task !== null) {
-    const range = rangeOf('task');
-    sections.push({ name: 'task', startByte: range.startByte + 2, endByte: range.endByte, omitted: 0 });
-    lastRequiredEnd = range.endByte;
+  const budgetSections = new Set<string>(OPTIONAL_SECTIONS);
+  for (const name of input.sectionOrder) {
+    if (name === 'role') {
+      const range = rangeOf('role');
+      sections.push({ name: 'role', startByte: range.startByte, endByte: range.endByte, omitted: 0 });
+      continue;
+    }
+    if (budgetSections.has(name)) {
+      const omitted = omittedRows.get(name);
+      // A budget section with no rows at all is not a section of this input.
+      if (omitted === undefined) continue;
+      if (whollyOmitted.has(name)) {
+        sections.push({ name, startByte: null, endByte: null, omitted });
+        continue;
+      }
+      const range = rangeOf(name);
+      sections.push({ name, startByte: range.startByte + 2, endByte: range.endByte, omitted });
+      continue;
+    }
+    if (name === 'goal' && goal === null) continue;
+    if (name === 'task' && task === null) continue;
+    if (name === 'continuation' && input.continuationSuffix === null) continue;
+    if (name === 'unknown_call_review' && input.reviewSuffix === null) continue;
+    const range = rangeOf(name);
+    sections.push({ name, startByte: range.startByte + 2, endByte: range.endByte, omitted: 0 });
   }
 
-  if (fallback) {
-    for (const omitted of omittedSections) {
-      sections.push({ name: omitted.name, startByte: null, endByte: null, omitted: omitted.count });
-    }
-  } else {
-    for (const section of optionalSections) {
-      const range = rangeOf(section.name);
-      sections.push({
-        name: section.name, startByte: range.startByte + 2, endByte: range.endByte, omitted: section.omitted,
-      });
-    }
-    if (present.length > 0) {
-      const lastOptional = present[present.length - 1];
-      if (lastOptional !== undefined) residentBytes = rangeOf(lastOptional.name).endByte - lastRequiredEnd;
-    }
-  }
+  // Ruling 10: `residentBytes` is what the budget choice BILLED (its rendered
+  // prefix text), never the last-optional-end difference.
+  const residentBytes = fallback || chosenRender === null ? 0 : utf8Bytes(chosenRender.text);
 
-  if (input.templateId === 'work-input' && input.continuationSuffix !== null) {
-    const range = rangeOf('continuation');
-    sections.push({ name: 'continuation', startByte: range.startByte + 2, endByte: range.endByte, omitted: 0 });
-  }
-  // R1/D1: the review instruction is the LAST section and is emitted only for a
-  // review-purpose Work Run (`reviewSuffix` is null on every other call).
-  if (input.templateId === 'work-input' && input.reviewSuffix !== null) {
-    const range = rangeOf('unknown_call_review');
-    sections.push({ name: 'unknown_call_review', startByte: range.startByte + 2, endByte: range.endByte, omitted: 0 });
-  }
+  const materialSlots: Record<string, string | undefined> = { ...slots };
+  delete materialSlots.unknown_call_review;
 
   const text = rendered.text;
-  return { input: text, sections, residentBytes, totalBytes: utf8Bytes(text) };
+  return {
+    input: text, sections, residentBytes, totalBytes: utf8Bytes(text),
+    material: {
+      pack: texts,
+      templateId: input.templateId,
+      slots: materialSlots,
+      toolNames: input.toolNames,
+      residentBudgetBytes: input.residentBudgetBytes,
+      residentBytes,
+      sections: sections.map((section): ContextSectionPlanV1 => ({
+        name: section.name, omitted: section.omitted, wholeOmitted: section.startByte === null,
+      })),
+    },
+  };
 }
 
 export function renderContext(input: {
@@ -298,18 +355,29 @@ export function renderContext(input: {
   /** R1: the rendered `unknown_call_review` section of a review-purpose Work Run. */
   reviewSuffix?: string | null;
   residentBudgetBytes: number;
+  /** Ruling 10: the frozen tool list; absent renders every tool block (direct call). */
+  toolNames?: readonly string[];
+  /** Ruling 15: append the stale-files reminder to the role slot. */
+  takesSessionHistory?: boolean;
+  /** Ruling 10/11: the frozen display order; absent keeps the platform `work` order. */
+  sectionOrder?: readonly ContextSectionNameV1[];
   /** The resolved pack; absent keeps the generated pack for a direct call. */
   texts?: PromptTextsV1;
 }): RenderResult {
+  const texts = input.texts ?? DEFAULT_TEXTS;
   return renderWithTemplate({
     templateId: 'work-input',
+    sectionOrder: input.sectionOrder ?? sectionOrderFor(
+      input.continuationSuffix === null ? 'work' : 'continuation', 'work-input', texts),
     prelude: input.prelude,
     required: input.required,
     optional: input.optional,
     continuationSuffix: input.continuationSuffix,
     reviewSuffix: input.reviewSuffix ?? null,
+    takesSessionHistory: input.takesSessionHistory === true,
     residentBudgetBytes: input.residentBudgetBytes,
-    texts: input.texts ?? DEFAULT_TEXTS,
+    toolNames: input.toolNames ?? everyToolName(),
+    texts,
   });
 }
 
@@ -319,19 +387,78 @@ export function renderQueryContext(input: {
   required: { role: string; goal: string | null; task: string | null };
   optional: Partial<Record<'footprint', OptionalRow[]>>;
   residentBudgetBytes: number;
+  /** Ruling 10: the frozen tool list; absent renders every tool block (direct call). */
+  toolNames?: readonly string[];
+  /** Ruling 15: append the stale-files reminder to the role slot. */
+  takesSessionHistory?: boolean;
+  /** Ruling 10/11: the frozen display order; absent keeps the platform order. */
+  sectionOrder?: readonly ContextSectionNameV1[];
   /** The resolved pack; absent keeps the generated pack for a direct call. */
   texts?: PromptTextsV1;
 }): RenderResult {
+  const texts = input.texts ?? DEFAULT_TEXTS;
   return renderWithTemplate({
     templateId: input.templateId,
+    sectionOrder: input.sectionOrder ?? sectionOrderFor(
+      input.templateId === 'query-planning-input' ? 'planning' : 'copy', input.templateId, texts),
     prelude: input.prelude,
     required: input.required,
     optional: input.optional,
     continuationSuffix: null,
     reviewSuffix: null,
+    takesSessionHistory: input.takesSessionHistory === true,
     residentBudgetBytes: input.residentBudgetBytes,
-    texts: input.texts ?? DEFAULT_TEXTS,
+    toolNames: input.toolNames ?? everyToolName(),
+    texts,
   });
+}
+
+/**
+ * Ruling 13: re-render the whole input with only `unknown_call_review` replaced.
+ * The frozen slots, pack and tool list are rendered once more; every range and
+ * `totalBytes` are recomputed, while `residentBytes` and the omission metadata
+ * are copied unchanged (the budget choice is not run again).
+ */
+export function rerenderContextV1(
+  material: ContextRenderMaterialV1,
+  review: string,
+): ContextRerenderV1 {
+  const slots: Record<string, string | undefined> = { ...material.slots };
+  if (material.templateId === 'work-input') {
+    slots.unknown_call_review = review === '' ? undefined : '\n\n' + review;
+  } else if (review !== '') {
+    throw new Error(`template "${material.templateId}" has no unknown_call_review slot`);
+  }
+  const rendered = renderTemplate(material.pack, material.templateId, slots, material.toolNames);
+  // Rebuild in the template's frozen order: the review section may be added or
+  // removed by this call, so the plan alone cannot fix the order.
+  const plan = new Map(material.sections.map(section => [section.name, section]));
+  const sections: ContextAssemblyBindingV1['sections'] = [];
+  for (const name of templateSectionOrder(material.pack, material.templateId)) {
+    const planned = plan.get(name);
+    if (planned?.wholeOmitted === true) {
+      sections.push({ name, startByte: null, endByte: null, omitted: planned.omitted });
+      continue;
+    }
+    const range = rendered.sectionRanges[name];
+    // A budget section the plan does not know had no rows; a required or fixed
+    // section that did not render is absent from this input.
+    if (range === undefined) {
+      if (planned !== undefined && OPTIONAL_SECTIONS.includes(name as OptionalSectionName)) {
+        throw new Error(`the re-render of "${material.templateId}" rendered no "${name}" slot`);
+      }
+      continue;
+    }
+    sections.push({
+      name,
+      startByte: name === 'role' ? range.startByte : range.startByte + 2,
+      endByte: range.endByte,
+      omitted: planned?.omitted ?? 0,
+    });
+  }
+  return {
+    input: rendered.text, sections, residentBytes: material.residentBytes, totalBytes: utf8Bytes(rendered.text),
+  };
 }
 
 export function renderAttentionChanges(input: AttentionChangesV1): string {

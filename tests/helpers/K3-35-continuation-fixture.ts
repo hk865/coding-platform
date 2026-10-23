@@ -213,6 +213,7 @@ type K3_35BlockingSeam = {
 type K3_35RealRunHarnessOptions = {
   now?: () => string;
   eventId?: () => string;
+  finalizeCompletedBeforeRequeue?: boolean;
   /** The claim owner's Run-id generator. */
   newId?: () => string;
   shellSeam?: K3_35BlockingSeam;
@@ -541,7 +542,9 @@ export async function openRealRunHarness(
     kernelStores: { entries: [kernelEntry] },
     workspace: {
       async resolveRoot() {
-        return { status: 'ready' as const, value: { root: directory, workspaceRevision: 1 } };
+        return { status: 'ready' as const, value: { root: directory,
+          workspaceRevision: options.finalizeCompletedBeforeRequeue === true
+            ? world.fixture.workspace.revision : 1 } };
       },
       async authorize() {
         return { status: 'ready' as const, value: { subjectKey: 'k3-35-platform-host',
@@ -708,8 +711,35 @@ export async function openRealRunHarness(
   }
 
   async function requeue(claim: TaskClaim, note: string): Promise<TaskRequeueSnapshotV1> {
-    const current = await reads.readExecution(world.fixture.ctx, claim.runRef);
+    let current = await reads.readExecution(world.fixture.ctx, claim.runRef);
     if (current.status !== 'ready') throw new Error(JSON.stringify(current));
+    if (options.finalizeCompletedBeforeRequeue === true
+      && current.value.run.status === 'ended' && current.value.run.outcome === 'completed') {
+      const platform = await hostPlatform();
+      platform.registerCheckConfiguration({ configuration: {
+        configurationRevision: 'k3-35-requeue-checks@1',
+        workspace: world.fixture.base.workspaceRef,
+        executor: world.fixture.operatorActor,
+        permissionRevision: K3_35_HOST_REVISION,
+        sourceAccess: 'verification_workspace',
+        processAccess: 'all_except_denied',
+        deniedPrefixes: ['.git'],
+        checks: [],
+      } });
+      const opened = await platform.evidence.openVerification(world.fixture.ctx, {
+        input: { subjectRunRef: claim.runRef, subject: claim.task, planRef: claim.planRef },
+        meta: { requestId: `k3-35-open:${claim.runRef.runId}`, expected: [] },
+      });
+      if (opened.status !== 'committed') throw new Error(JSON.stringify(opened));
+      const finalized = await platform.evidence.finalizeChecks(world.fixture.ctx, {
+        input: { roundRef: opened.value.ref },
+        meta: { requestId: `k3-35-final:${claim.runRef.runId}`,
+          expected: [{ ref: opened.value.ref, revision: opened.value.revision }] },
+      });
+      if (finalized.status !== 'committed') throw new Error(JSON.stringify(finalized));
+      current = await reads.readExecution(world.fixture.ctx, claim.runRef);
+      if (current.status !== 'ready') throw new Error(JSON.stringify(current));
+    }
     const result = await requeues.requeueTask(world.fixture.ctx, { input: {
       taskRef: claim.task, afterRunRef: claim.runRef, reason: 'continue the K3-35 Task', note },
     meta: { requestId: `k3-35-requeue-${claim.runRef.runId}`, expected: [{ ref: GOAL_B, revision: await goalRevision() },

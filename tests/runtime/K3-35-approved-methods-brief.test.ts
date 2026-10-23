@@ -68,6 +68,13 @@ const BLOCKED_TITLE = '### 被拦的命令';
 const BLOCKED_LINE = '- #1@00000000：被拦';
 const PREPARED_SUMMARY = '这是任务 k3-20-a 的接续执行（返工）：第 9 次重新入队，失败类别：执行失败，发起方：人工。';
 
+/** The brief's own interval: it ends before the reminders section that now sits last. */
+function briefOf(input: string): string {
+  const start = input.indexOf('## 接续说明');
+  const reminders = input.indexOf('\n\n## Reminders', start);
+  return input.slice(start, reminders === -1 ? input.length : reminders);
+}
+
 /** The canonical Kernel history cursor's own payload (position `i`, tail `u`). */
 function cursorPayload(cursor: string): { i: number; u: number } {
   const payload = cursor.split('.')[1];
@@ -149,7 +156,7 @@ describe.each(['memory', 'sqlite'] as const)('K3-35 (L20): the real continuation
     const prepared = await prepareWorstCase(facts);
     expect(prepared.result.status).toBe('ready');
     expect(prepared.input).not.toBeNull();
-    const suffix = prepared.input!.slice(prepared.input!.indexOf('## 接续说明'));
+    const suffix = briefOf(prepared.input!);
     // The real T = 7 total, hand-summed from the rendered parts (never read
     // from the renderer): head 110 (15 + 95); body 1,706 = summary 126
     // (119 + T) + earlier requeues 309 + continuation Session 151 + previous
@@ -159,9 +166,9 @@ describe.each(['memory', 'sqlite'] as const)('K3-35 (L20): the real continuation
     // (title 43 + count 126 + disposition 314 + targets 22 + not-listed 44
     // + blocked sentence 62) + the 5,120-byte method string (its 601 line
     // breaks included) + the one optional conclusion 4,182; the kept blocked
-    // section 41 (heading 19 + line 22); tail 357; joins 44 (45 elements - 1).
-    // 110 + 1,706 + 9,913 + 41 + 357 + 44 = 12,171.
-    expect(Buffer.byteLength(suffix, 'utf8')).toBe(12_171);
+    // section 41 (heading 19 + line 22); tail 301; joins 43 (44 elements - 1).
+    // 110 + 1,706 + 9,913 + 41 + 301 + 43 = 12,114.
+    expect(Buffer.byteLength(suffix, 'utf8')).toBe(12_114);
     expect(Buffer.byteLength(suffix, 'utf8')).toBeLessThanOrEqual(16_384);
     expect(suffix).toContain(PREPARED_SUMMARY);
     expect(requiredReviewBlock(suffix)).toBe(K3_35_REQUIRED_REVIEW_BLOCK_ONE);
@@ -175,7 +182,7 @@ describe.each(['memory', 'sqlite'] as const)('K3-35 (L20): the real continuation
 
 /**
  * K3-35 (三): T = 600 is reachable through the same public steps; the new
- * `K3-35-T-by-hand.test.ts` proves the real 12,676 (T = 512) and 12,764
+ * `K3-35-T-by-hand.test.ts` proves the real 12,619 (T = 512) and 12,707
  * (T = 600) totals, both within 16,384 because the real path leaves no anomaly
  * section and the one blocked call fits at the first text cap. The pure
  * renderer keeps L20's anomaly bound.

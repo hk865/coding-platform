@@ -36,14 +36,13 @@ const OMITTED_LINE = '- 另有 10 条异常锚点没有装入本说明。';
 const MIXED_OWNERSHIP = '工作区里还没提交的改动，可能混有别的执行的改动，不一定是这次执行改的';
 const TAIL = [
   '', '### 继续之前',
-  '- 文件可能已经变化，编辑前先重新读取。',
   '- “结果未知”的工具调用可能已经产生副作用，重做之前先核实当前状态。',
   '- “没有执行”的工具调用没有产生结果，需要时重新发起。',
   '- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。',
 ];
 /** 249 + T first anchor line, 238 changed-files line, 118 mixed-ownership line, 16 title, 87 last. */
-const MANDATORY_512 = 15_692;
-const MANDATORY_600 = 16_396;
+const MANDATORY_512 = 15_635;
+const MANDATORY_606 = 16_387;
 
 /** The constructed base brief: input, not a platform record. */
 const BASE_BRIEF: ContinuationBriefV1 = {
@@ -197,15 +196,13 @@ function anchorLines(taskIdBytes: number): string[] {
   return lines;
 }
 
-/** The optional lines that fit at the 60-char cap: conclusions #1-#3, files for #1-#2. */
+/** The optional lines that fit at the 60-char cap: conclusions #1-#3, files for #1-#3, excerpts for #1-#2. */
 function optionalLines(): string[] {
   const lines: string[] = [];
   heavySection().items.slice(0, 3).forEach((entry, index) => {
     lines.push(`- #${String(index + 1)} = ${entry.callId.slice(0, 60)}…（已截断）（shell）：已做`);
-    if (index < 2) {
-      lines.push('  - 文件 src/a.ts（替换）：有改动。');
-      lines.push(`    - 旧摘录：${'x'.repeat(60)}…（已截断）`);
-    }
+    lines.push('  - 文件 src/a.ts（替换）：有改动。');
+    if (index < 2) lines.push(`    - 旧摘录：${'x'.repeat(60)}…（已截断）`);
   });
   return lines;
 }
@@ -275,10 +272,10 @@ describe('K3-35: the whole L20 extreme renders verbatim on pure input', () => {
     ];
     // Complete output, not a substring or a review-block extract.
     expect(text).toBe(expected.join('\n'));
-    // Hand total of the complete output: mandatory 15,692 + the 51-byte
-    // omitted-anchor line and its join = 15,744, plus the optional lines that
+    // Hand total of the complete output: mandatory 15,635 + the 51-byte
+    // omitted-anchor line and its join = 15,687, plus the optional lines that
     // fit at the 60-char cap.
-    expect(Buffer.byteLength(text, 'utf8')).toBe(15_744 + utf8Bytes(optionalLines()) + 1);
+    expect(Buffer.byteLength(text, 'utf8')).toBe(15_687 + utf8Bytes(optionalLines()) + 1);
     expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(16_384);
     // D8 on the WHOLE output: no Kernel callId, and no review conclusion line.
     for (const callId of heavySection().items.map(entry => entry.callId)) {
@@ -287,7 +284,7 @@ describe('K3-35: the whole L20 extreme renders verbatim on pure input', () => {
     expect(text).not.toContain(heavySection().items[3]!.callId);
   });
 
-  it('T = 512 fits under 16 KiB; T = 600 refuses capacity with the mandatory part 12 bytes over', () => {
+  it('T = 512 fits under 16 KiB; T = 606 refuses capacity with the mandatory part 3 bytes over', () => {
     const under = heavyBrief(512);
     const text = renderContinuationBriefZh(under, continuationBriefDigest(under));
     expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(16_384);
@@ -296,11 +293,11 @@ describe('K3-35: the whole L20 extreme renders verbatim on pure input', () => {
     expect(text).not.toContain('- 另有 1 条被拦的命令');
 
     // L20 hand arithmetic: head 110 + anomaly 16 + 8 × (249 + T + 238 + 118)
-    // + last sentence 87 + review 6,143 + tail 357 + 43 joins.
-    expect(MANDATORY_512).toBe(110 + 16 + 8 * (249 + 512 + 238 + 118) + 87 + 6_143 + 357 + 43);
-    expect(MANDATORY_600 - MANDATORY_512).toBe(8 * (600 - 512));
-    expect(MANDATORY_600 - MANDATORY_512).toBe(704);
-    expect(MANDATORY_600 - 16_384).toBe(12);
+    // + last sentence 87 + review 6,143 + tail 301 + 42 joins.
+    expect(MANDATORY_512).toBe(110 + 16 + 8 * (249 + 512 + 238 + 118) + 87 + 6_143 + 301 + 42);
+    expect(MANDATORY_606 - MANDATORY_512).toBe(8 * (606 - 512));
+    expect(MANDATORY_606 - MANDATORY_512).toBe(752);
+    expect(MANDATORY_606 - 16_384).toBe(3);
     // The same complete lines without the 51-byte omitted line and its join.
     const mandatoryLines = [
       '## 接续说明',
@@ -312,9 +309,9 @@ describe('K3-35: the whole L20 extreme renders verbatim on pure input', () => {
       ...TAIL,
     ].filter(line => line !== OMITTED_LINE && !line.startsWith('- #')
       && !line.startsWith('  - 文件') && !line.startsWith('    - 旧摘录'));
-    expect(utf8Bytes(mandatoryLines)).toBe(15_692);
+    expect(utf8Bytes(mandatoryLines)).toBe(15_635);
 
-    const over = heavyBrief(600);
+    const over = heavyBrief(606);
     expect(() => renderContinuationBriefZh(over, continuationBriefDigest(over)))
       .toThrow(ContinuationBriefCapacityError);
   });

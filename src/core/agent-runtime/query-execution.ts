@@ -33,7 +33,8 @@ import { projectQueryConfiguration } from './query-preparation.js';
 import { createQueryObservation } from './query-observation.js';
 import { createQuerySourceCaptureFactory } from './source-capture-access.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
-import { createQueryGraphToolGroup, type ToolGroup } from './tool-group-assembly.js';
+import { createQueryGraphToolGroup, finalToolNamesOf, type ToolGroup } from './tool-group-assembly.js';
+import { sessionHistoryDecision } from './context-history-facts.js';
 import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import type {
   ResolvedRuntimeConfiguration, RuntimeExecutionDependencies, StartQueryExecutionRequest,
@@ -240,6 +241,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         skills: promptTexts.value.skills,
         reasoningReplay: manifest.promptSet.reasoningReplay,
       };
+      const toolTexts = promptTexts.value.tools;
       const execution = record.job.job.intent.execution;
       if (signal.aborted) return rejected('cancelled', 'the Query start was cancelled before the Host configuration read');
 
@@ -266,8 +268,52 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         return rejected('forbidden', 'the prepared Query permissions no longer fit the current Host and Role ceilings');
       }
       const hostConfig: ResolvedRuntimeConfiguration = configured.value;
+      const workspace = { aggregateType: 'Workspace' as const, projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId };
       const builtinTools = manifest.permissions.tools.filter(tool => BUILTIN_TOOL_NAMES.has(tool));
       const hasFileRead = builtinTools.includes('read');
+      const readonlyRequested = manifest.permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
+      let currentAuthorization: Awaited<ReturnType<typeof deps.workspaceHost.authorize>> | undefined;
+      if (hasFileRead || readonlyRequested) {
+        try {
+          currentAuthorization = await deps.workspaceHost.authorize(owned, workspace);
+        } catch (error) {
+          return rejected('unavailable', `the Host read policy could not be resolved: ${messageOf(error)}`);
+        }
+        if (currentAuthorization.status !== 'ready') return rejected('unavailable', currentAuthorization.reason);
+      }
+      // Ruling 16: the one final tool list, compared with the frozen one before
+      // any entry write. A difference is `forbidden`.
+      const startToolNames = finalToolNamesOf({
+        callKind: 'query',
+        selected: manifest.permissions.tools,
+        readOnly: true,
+        reviewPhase: null,
+        hasBlockedCommands: false,
+        reviewSource: false,
+        frozenSource: hasFileRead && currentAuthorization?.status === 'ready',
+        materialTools: false,
+        owners: {
+          mailbox: false, decisionMessages: false, applicationReceipt: false,
+          sessions: false, plans: false,
+          graph: deps.graphContext !== undefined && deps.taskInputs !== undefined,
+          notes: false, unknownCallReviews: false, commandRerunRequests: false,
+        },
+        // The read-only command is a Host-gated capability: the start reads the
+        // real whole-workspace read policy again (the same fact preparation
+        // froze), so a policy that moved between preparation and start changes
+        // the current list and the comparison below answers `forbidden`.
+        readonlyCommand: {
+          requested: readonlyRequested,
+          access: hostConfig.readonlyCommandAccess,
+          allowsReadWholeWorkspace: currentAuthorization !== undefined
+            && currentAuthorization.status === 'ready' && currentAuthorization.value.allowsRead('.'),
+        },
+      });
+      if (!startToolNames.ok) return startToolNames.rejection;
+      const frozenToolNames = manifest.promptSet.toolNames;
+      const sameToolList = frozenToolNames.length === startToolNames.value.length
+        && frozenToolNames.every((name, index) => name === startToolNames.value[index]);
+      if (!sameToolList) return rejected('forbidden', 'the prepared tool list no longer fits this Run');
 
       // Slice 3: the Query grant may name the two read-only graph tools. They
       // are the ONLY coordination tools a Query ever injects (no mailbox or
@@ -308,6 +354,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           inputs: deps.taskInputs,
           history: deps.graphHistory,
           hostContext: trustedHostContext,
+          texts: toolTexts,
         });
       }
 
@@ -349,7 +396,6 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         kernel: { ...ticket.kernel },
       };
 
-      const workspace = { aggregateType: 'Workspace' as const, projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId };
       let rootResolved;
       try {
         rootResolved = await deps.workspaceHost.resolveRoot(workspace);
@@ -367,16 +413,6 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
 
       let sourceTools: SourceToolOptions | undefined;
       let sourceFactory: RuntimeSourceCaptureFactory | undefined;
-      const readonlyRequested = manifest.permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
-      let currentAuthorization: Awaited<ReturnType<typeof deps.workspaceHost.authorize>> | undefined;
-      if (hasFileRead || readonlyRequested) {
-        try {
-          currentAuthorization = await deps.workspaceHost.authorize(owned, workspace);
-        } catch (error) {
-          return rejected('unavailable', `the Host read policy could not be resolved: ${messageOf(error)}`);
-        }
-        if (currentAuthorization.status !== 'ready') return rejected('unavailable', currentAuthorization.reason);
-      }
       if (hasFileRead && currentAuthorization !== undefined && currentAuthorization.status === 'ready') {
         const permissionRevision = currentAuthorization.value.permissionRevision;
         const granted = currentAuthorization.value;
@@ -421,6 +457,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         processSandboxOptions: hostConfig.processSandboxOptions,
         ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
         authorizeCurrent: () => deps.workspaceHost.authorize(owned, workspace),
+        texts: toolTexts,
       });
 
       const taskBudget: ModelTokenBudget = { tokenBudget: record.job.job.intent.budget.maxTokens, deadline: record.job.job.intent.budget.deadline };
@@ -540,15 +577,11 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         },
       };
 
-      let sessionContext;
+      // Ruling 14: the same pure rule runs at start. A Query with a formal basis
+      // reads no boundary (C7); without one it reads the real completed boundary.
+      let currentHistory;
       if (manifest.sessionBasis !== undefined) {
-        // A formal isolated A′ uses the fixed SOURCE prefix; null throughPosition
-        // is the explicit empty baseline, never an unfinished inherited turn.
-        sessionContext = manifest.sessionBasis.throughPosition === null
-          ? { version: 1 as const, mode: 'current_turn' as const }
-          : { version: 1 as const, mode: 'session_history' as const,
-              throughPosition: manifest.sessionBasis.throughPosition,
-              sourceSessionId: manifest.sessionBasis.sourceKernelSessionId };
+        currentHistory = sessionHistoryDecision({ callKind: 'query', sessionBasis: manifest.sessionBasis });
       } else {
         const cursorOwner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
         let boundary;
@@ -558,10 +591,16 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           return rejected('unavailable', `reading the completed Query history boundary failed: ${messageOf(error)}`);
         }
         if (boundary.status === 'rejected') return boundary;
-        sessionContext = boundary.cursor === null
-          ? { version: 1 as const, mode: 'current_turn' as const }
-          : { version: 1 as const, mode: 'session_history' as const, throughPosition: boundary.position };
+        currentHistory = sessionHistoryDecision({ callKind: 'query',
+          sessionBasis: undefined, completedBoundary: { cursor: boundary.cursor, position: boundary.position } });
       }
+      const historyDecision = !manifest.takesSessionHistory && currentHistory.takesSessionHistory
+        ? { mode: 'current_turn' as const, takesSessionHistory: false as const }
+        : currentHistory;
+      const sessionContext = historyDecision.mode === 'session_history'
+        ? { version: 1 as const, mode: 'session_history' as const, throughPosition: historyDecision.throughPosition,
+          ...(historyDecision.sourceSessionId === null ? {} : { sourceSessionId: historyDecision.sourceSessionId }) }
+        : { version: 1 as const, mode: 'current_turn' as const };
 
       try {
         await runObservedModel({
@@ -595,6 +634,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           // Ruling 22: the frozen base (Host instruction merged), frozen Skills
           // and frozen replay; the Host options no longer exist here.
           prompt: frozenPrompt,
+          texts: toolTexts,
           bodies: deps.bodies,
           origin: { kind: 'run', owner: queryRunRef },
           promptFacts,

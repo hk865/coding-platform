@@ -8,11 +8,15 @@ import type { ArtifactRef } from '../artifact.js';
 import type { ReadResult } from '../core/results.js';
 import type { ContextCallKindV1, ContextSectionNameV1 } from '../graph-context.js';
 import { sha256Hex } from '../fingerprint.js';
+import type { ToolTextV1 } from './prompt-pack.js';
 
 /** Content type of a prompt text body: a template, the merged string table, the merged base or a Skill content. */
 export const PROMPT_TEXT_CONTENT_TYPE = 'application/vnd.coding-platform.prompt-text;version=1';
 /** Content type of a body holding `JSON.stringify` of the request's tool specs. */
 export const PROMPT_TOOL_SPECS_CONTENT_TYPE = 'application/vnd.coding-platform.prompt-tool-specs+json;version=1';
+/** Content type of one tool text's canonical body (ruling 19). */
+export const PROMPT_TOOL_TEXT_CONTENT_TYPE =
+    'application/vnd.coding-platform.prompt-tool-text+json;version=1';
 
 /**
  * The narrow text surface every renderer takes (ruling 14). A resolved pack
@@ -69,8 +73,9 @@ export type PromptRecordReadV1 = ReadResult<PromptRecordReadResultV1>;
 
 /**
  * The prepared manifest's prompt set (spec §2). `skills[]` entries carry the
- * same `schemaVersion: 1` as a Kernel `SkillContext`; `sectionOrder` is present
- * and holds today's order (PC-1), with only the call kinds it covers.
+ * same `schemaVersion: 1` as a Kernel `SkillContext`; `sectionOrder` holds the
+ * order the input template's own slot text declares (ruling 9), with only the
+ * call kinds it covers.
  */
 export type PromptSetV1 = {
     schemaVersion: 1;
@@ -95,6 +100,10 @@ export type PromptSetV1 = {
         digest: string;
         ref: ArtifactRef;
     }[];
+    /** The final Kernel tool list in its frozen order (ruling 16), never sorted. */
+    toolNames: string[];
+    /** Each frozen tool text, sorted by name (ruling 19). */
+    tools: { name: string; packId: string; digest: string; ref: ArtifactRef }[];
 };
 
 /**
@@ -150,6 +159,12 @@ export function decodePromptSetV1(value: unknown): PromptSetV1 | null {
         && hasExactKeys(input, ['id', 'version', 'packId', 'digest', 'ref'])
         && isString(input['id']) && isNumber(input['version']) && isString(input['packId'])
         && isString(input['digest']) && DIGEST.test(input['digest']) && isRef(input['ref']);
+    const isTool = (input: unknown): boolean => isRecord(input)
+        && hasExactKeys(input, ['name', 'packId', 'digest', 'ref'])
+        && isString(input['name']) && input['name'] !== ''
+        && isString(input['packId']) && input['packId'] !== ''
+        && isString(input['digest']) && DIGEST.test(input['digest'])
+        && isRef(input['ref']);
     const isSkill = (input: unknown): boolean => isRecord(input)
         && hasExactKeys(input, ['schemaVersion', 'id', 'title', 'kind', 'priority', 'source', 'digest', 'ref'])
         && input['schemaVersion'] === 1
@@ -161,7 +176,7 @@ export function decodePromptSetV1(value: unknown): PromptSetV1 | null {
     if (!isRecord(value)) return null;
     if (!hasExactKeys(value, [
         'schemaVersion', 'modelId', 'provider', 'model', 'packId', 'reasoningReplay',
-        'sectionOrder', 'templates', 'strings', 'base', 'skills',
+        'sectionOrder', 'templates', 'strings', 'base', 'skills', 'toolNames', 'tools',
     ])) return null;
     if (value['schemaVersion'] !== 1) return null;
     for (const field of ['modelId', 'provider', 'model', 'packId'] as const)
@@ -190,7 +205,38 @@ export function decodePromptSetV1(value: unknown): PromptSetV1 | null {
     const skills = value['skills'];
     if (!Array.isArray(skills) || !skills.every(isSkill)) return null;
 
+    const toolNames = value['toolNames'];
+    if (!Array.isArray(toolNames)
+        || !toolNames.every(name => isString(name) && name !== '')
+        || new Set(toolNames).size !== toolNames.length) return null;
+
+    const tools = value['tools'];
+    if (!Array.isArray(tools) || !tools.every(isTool)) return null;
+    const toolEntries = tools as Record<string, unknown>[];
+    const names = toolEntries.map(entry => entry['name'] as string);
+    if (new Set(names).size !== names.length) return null;
+    for (let index = 1; index < names.length; index += 1) {
+        if (names[index - 1]!.localeCompare(names[index]!, 'en') >= 0) return null;
+    }
+
     return value as unknown as PromptSetV1;
+}
+
+/**
+ * The canonical body of one tool text (ruling 19): the description and the
+ * parameters, whose keys are sorted the same way the frozen set sorts tool
+ * names. The store and the editing routes both hash exactly this string.
+ */
+export function canonicalToolTextBody(entry: ToolTextV1): string {
+    const parameters: Record<string, string> = {};
+    for (const key of Object.keys(entry.parameters).sort((left, right) => left.localeCompare(right, 'en')))
+        parameters[key] = entry.parameters[key]!;
+    return JSON.stringify({ description: entry.description, parameters });
+}
+
+/** `sha256` of the canonical body: the frozen set's tool-text digest. */
+export function promptToolTextDigest(entry: ToolTextV1): string {
+    return sha256Hex(canonicalToolTextBody(entry));
 }
 
 /**

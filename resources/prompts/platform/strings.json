@@ -1,6 +1,4 @@
 {
-  "toolSchema.whiteboardPin.ref": "One of the five W1 caller-visible refs: Project | Workspace | Goal | PlanRevision | PlanProposal.",
-  "toolSchema.whiteboardPin.revision": "The exact version the caller saw for `ref`; the plan service rejects a mismatch with the current record.",
   "role.executor.label": "Executor",
   "role.executor.purpose": "Execute the assigned task.",
   "role.secretary.label": "Secretary",

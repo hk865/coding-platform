@@ -390,6 +390,8 @@ describe('S4C2 real-chain assembly', () => {
         configuration: runtimeConfiguration(),
         permissions: { tools: ['read'], writeScope: [] },
         question: 'What is the current understanding?',
+        toolNames: ['read'],
+        history: { callKind: 'query' as const, hasCompletedCursor: false },
       });
       expect(result.status, JSON.stringify(result)).toBe('ready');
       if (result.status !== 'ready') return;

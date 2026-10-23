@@ -124,7 +124,8 @@ function literalPack(base: string): ResolvedPromptPackV1 {
       templates: Object.fromEntries(ids.map(id => [id, { file: `${id}.md`, version: 1, mentionsTools: [] }])),
       strings: 'strings.json', tools: {} },
     templates, strings: { ...STRINGS }, tools: {},
-    origins: Object.fromEntries(ids.map(id => [id, { packId: 'platform', version: 1 }])),
+    origins: Object.fromEntries(ids.map(id => [id, { packId: 'platform', version: 1, mentionsTools: [] }])),
+    toolOrigins: {},
   };
 }
 

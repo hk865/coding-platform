@@ -22,6 +22,7 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef, WorkLinkTarget } from '../../contracts/core/identity.js';
 import type { ReadResult } from '../../contracts/core/results.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import {
   toolSchema as z,
   type ToolCall,
@@ -31,19 +32,18 @@ import {
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 
+/** Typed view: the generated pack's literal `tools` object has no string index signature. */
+const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMPT_PACK_V1.tools;
+
 /** Fixed production tool names. The Kernel host-authorization list comes from here. */
 export const SESSION_DISCOVERY_TOOL_NAMES = ['find_related_sessions', 'read_session_card'] as const;
-
-/** The final expanded description of each tool, from platform pack v1. */
-const DESCRIPTIONS = {
-  find_related_sessions: PLATFORM_PROMPT_PACK_V1.tools.find_related_sessions.description,
-  read_session_card: PLATFORM_PROMPT_PACK_V1.tools.read_session_card.description,
-} as const;
 
 export type SessionDiscoveryToolsConfig = {
   sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession'>;
   /** Trusted, already-bound context. Snapshotted per call; never model JSON. */
   context: CoreCallContext;
+  /** The platform tools' model-facing texts; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
 };
 
 export type SessionDiscoveryToolsHandle = {
@@ -102,6 +102,13 @@ const schemas: readonly z.ZodType[] = [
 ];
 
 export function createSessionDiscoveryTools(config: SessionDiscoveryToolsConfig): SessionDiscoveryToolsHandle {
+  const textOf = (name: string): ToolTextV1 =>
+    config.texts?.[name] ?? PLATFORM_TOOL_TEXTS[name]!;
+  /** The final expanded description of each tool, from the given texts. */
+  const descriptions = {
+    find_related_sessions: textOf('find_related_sessions').description,
+    read_session_card: textOf('read_session_card').description,
+  } as const;
   function snapshotContext(signal: AbortSignal): CoreCallContext {
     return {
       projectId: config.context.projectId,
@@ -141,7 +148,7 @@ export function createSessionDiscoveryTools(config: SessionDiscoveryToolsConfig)
     const schema = schemas[index]!;
     return {
       name,
-      description: DESCRIPTIONS[name],
+      description: descriptions[name],
       inputSchema: schema,
       effectClass: 'read_only',
       // A platform directory read is not a workspace file read, but

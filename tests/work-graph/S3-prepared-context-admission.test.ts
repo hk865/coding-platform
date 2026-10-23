@@ -92,6 +92,8 @@ const PROMPT_SET: PromptSetV1 = {
   strings: { digest: sha256Hex('{}'), ref: promptTextRef('{}') },
   base: { templateId: 'base', version: 1, digest: sha256Hex(''), ref: promptTextRef('') },
   skills: [],
+  toolNames: [],
+  tools: [],
 };
 const H = (value: string): string => sha256Hex(value);
 const B = (value: string): number => Buffer.byteLength(value, 'utf8');
@@ -203,6 +205,7 @@ export type PrepareOptions = {
 function makeBinding(selections: InputSelectionV1[], sources: ContextSourceV1[], input: string): ContextAssemblyBindingV1 {
   return {
     schemaVersion: 1, formatVersion: 's3-context-v1', callKind: 'work', duty: 'executor',
+    sectionOrder: PROMPT_SET.sectionOrder.work!,
     residentBudgetBytes: 4096, residentBytes: 0, totalBytes: B(input),
     sections: requiredSections(input), sources, inputSelections: selections, extensions: emptyExtensions(),
   };
@@ -544,7 +547,7 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
       sessionRole: roleRef, workspaceSnapshot, permissions: HOST_PERMISSIONS, budget: base.budget,
       selectedTaskInputs, materialBasis: null, materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [],
       sourceRefs: [{ kind: 'workspace', refId: WORKSPACE_ID, revision: String(workspaceRevision) }],
-      contextAssembly: binding, promptSet: PROMPT_SET, input, inputDigest,
+      contextAssembly: binding, takesSessionHistory: false, promptSet: PROMPT_SET, input, inputDigest,
     };
     const stored = await bodies.put({ body: JSON.stringify(manifest),
       contentType: 'application/vnd.coding-platform.task-execution-manifest+json;version=1',

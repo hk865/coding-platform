@@ -160,7 +160,7 @@ it('RL-31 an invalid argument refusal never starts a command and carries no reso
 it('RL-31 a permission change before launch carries no resourceCaps and starts nothing', async () => {
   rlSandbox.next = () => defaultRLSandboxResult({ resourceCaps: APPLIED_NONE });
   const f = await createRLQueryFixture({ replies: [readonlyCall('rl31-forbidden'), text('RL-31 forbidden done')],
-    tools: ['run_readonly_command'], revisionFor: read => read === 1 ? 'rl-read-1' : 'rl-read-2' });
+    tools: ['run_readonly_command'], revisionFor: read => read <= 2 ? 'rl-read-1' : 'rl-read-2' });
   queryFixtures.push(f);
   const result = await runQueryAndRead(f, 'rl31-forbidden');
   expect(result?.status).toBe('error');

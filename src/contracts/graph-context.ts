@@ -105,6 +105,8 @@ export type ContextAssemblyBindingV1 = {
   schemaVersion: 1;
   formatVersion: 's3-context-v1';
   callKind: ContextCallKindV1;
+  /** The frozen section order this call kind rendered (ruling 9/11); `role` first. */
+  sectionOrder: ContextSectionNameV1[];
   duty: PlatformDutyV1;
   residentBudgetBytes: number;
   residentBytes: number;

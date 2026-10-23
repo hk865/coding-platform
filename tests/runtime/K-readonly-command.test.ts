@@ -731,7 +731,7 @@ it('KB-08 a Query whose Host read permission changed during execution gets forbi
       { kind: 'text', text: 'K readonly forbidden answer' },
     ],
     tools: ['run_readonly_command'],
-    revisionFor: read => read === 1 ? 'k-read-1' : 'k-read-2',
+    revisionFor: read => read <= 2 ? 'k-read-1' : 'k-read-2',
   });
   try {
     const { observed } = await runQuery(platform, state);
@@ -1066,7 +1066,7 @@ it('KB-10 an early permission refusal with an oversized input is bounded and nam
   const { platform, scripted, state } = await queryPlatform({
     replies: [readonlyCall({ command: oversizedCommand }), { kind: 'text', text: 'K oversized refusal answer' }],
     tools: ['run_readonly_command'],
-    revisionFor: read => read === 1 ? 'k-read-1' : 'k-read-2',
+    revisionFor: read => read <= 2 ? 'k-read-1' : 'k-read-2',
   });
   try {
     await runQuery(platform, state);

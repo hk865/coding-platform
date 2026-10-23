@@ -40,6 +40,80 @@ export type ContextAssemblerDependencies = Pick<RuntimeExecutionDependencies,
     /** K3 B3 item 7: the Task's requests for the blocked section; optional for old test doubles. */
     commandRerunRequests?: CommandRerunRequestReadPort };
 
+/**
+ * The one template id vocabulary. The material carries it so a re-render never
+ * guesses which input template produced the text.
+ */
+export type ContextTemplateId = 'work-input' | 'query-planning-input' | 'query-copy-input';
+
+/** One section's frozen omission state; `wholeOmitted` means the range is null. */
+export type ContextSectionPlanV1 = {
+  name: ContextAssemblyBindingV1['sections'][number]['name'];
+  omitted: number;
+  wholeOmitted: boolean;
+};
+
+/**
+ * Everything the assembler used, so `prepare` can re-render the whole input with
+ * only the review slot replaced. `slots` is every slot except
+ * `unknown_call_review`.
+ */
+export type ContextRenderMaterialV1 = {
+  pack: PromptTextsV1;
+  templateId: ContextTemplateId;
+  slots: Readonly<Record<string, string | undefined>>;
+  toolNames: readonly string[];
+  residentBudgetBytes: number;
+  residentBytes: number;
+  sections: readonly ContextSectionPlanV1[];
+};
+
+/** The result of re-rendering one input with a replacement review instruction. */
+export type ContextRerenderV1 = {
+  input: string;
+  sections: ContextAssemblyBindingV1['sections'];
+  residentBytes: number;
+  totalBytes: number;
+};
+
+/** Whether the Run's input announces Session history, and through where. */
+export type HistoryDecisionV1 =
+  | { mode: 'current_turn'; takesSessionHistory: false }
+  | { mode: 'session_history'; takesSessionHistory: true;
+      throughPosition: number; sourceSessionId: string | null };
+
+/** The completed Turn boundary the history decision was read from (LA-1). */
+export type CompletedHistoryBoundaryV1 = { cursor: string | null; position: number };
+
+/** The one input the pure history rule takes (ruling 14). */
+export type SessionHistoryDecisionInputV1 = {
+  callKind: 'work' | 'query';
+  sessionBasis: { sourceKernelSessionId: string; throughPosition: number | null } | undefined;
+  /** C7: absent only for a Query with `sessionBasis`. */
+  completedBoundary?: CompletedHistoryBoundaryV1;
+};
+
+/** The history seed a continuation or review Run derives at preparation. */
+export type SessionBasisV1 = { sourceKernelSessionId: string; throughPosition: number | null };
+
+/**
+ * Ruling 14 C6: the Work history facts crossing the assembler seam. Preparation
+ * reads no Kernel history: the presence of the Session's completed cursor is
+ * all the recipe needs to decide whether the Run announces Session history.
+ */
+export type ContextWorkHistoryInputV1 = {
+  callKind: 'work';
+  hasCompletedCursor: boolean;
+};
+
+/**
+ * Ruling 14 C7: a Query with a formal `sessionBasis` passes it and reads no
+ * boundary; a Query without one passes the stored cursor's presence.
+ */
+export type ContextQueryHistoryInputV1 =
+  | { callKind: 'query'; sessionBasis: SessionBasisV1 }
+  | { callKind: 'query'; sessionBasis?: undefined; hasCompletedCursor: boolean };
+
 export type AssembledContextV1 = {
   input: string; binding: ContextAssemblyBindingV1;
   continuationBrief: ContinuationBriefV1 | null;
@@ -49,12 +123,10 @@ export type AssembledContextV1 = {
   anomalyAnchorRefs?: SessionAnomalyAnchorRef[] | null;
   /** K3 L13: the structured review instruction of a review-purpose Run. */
   unknownCallReview?: UnknownCallReviewInputV1;
-  /**
-   * K3 L13 (D8): the byte offset where the rendered review instruction starts
-   * in `input` (its trailing section). `prepare` re-renders from this offset when
-   * it trims the instruction to fit the manifest.
-   */
-  reviewSectionStart?: number | null;
+  /** Whether the recipe used Session history. */
+  takesSessionHistory: boolean;
+  /** What the review shrink re-renders from. */
+  renderMaterial: ContextRenderMaterialV1;
 };
 
 export interface ContextAssembler {
@@ -63,6 +135,9 @@ export interface ContextAssembler {
     configuration: ResolvedRuntimeConfiguration;
     permissions: TaskEnvelopeV1['permissions'];
     texts?: PromptTextsV1;
+    /** The frozen `PromptSetV1.toolNames`, never recomputed here (ruling 10/16). */
+    toolNames: readonly string[];
+    history: ContextWorkHistoryInputV1;
   }): Promise<ReadResult<AssembledContextV1>>;
   assembleQuery(ctx: CoreCallContext, input: {
     facts: QueryPreparationFacts;
@@ -71,6 +146,8 @@ export interface ContextAssembler {
     permissions: PreparedQueryManifestV1['permissions'];
     question: string;
     texts?: PromptTextsV1;
+    toolNames: readonly string[];
+    history: ContextQueryHistoryInputV1;
   }): Promise<ReadResult<AssembledContextV1>>;
   readAttentionGraph(ctx: CoreCallContext, request: AttentionGraphReadRequestV1): Promise<ReadResult<GraphAttentionFactsV1>>;
 }

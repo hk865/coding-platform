@@ -31,6 +31,7 @@ import { continuationBriefDigest } from '../../contracts/continuation-brief.js';
 import { createPlatformPromptPackSource } from '../../contracts/prompts/prompt-pack.js';
 import {
   checkPromptBody, decodePromptSetV1, PROMPT_TEXT_CONTENT_TYPE, PROMPT_TOOL_SPECS_CONTENT_TYPE,
+  PROMPT_TOOL_TEXT_CONTENT_TYPE,
   type PromptRecordRequestV1, type PromptSetV1,
 } from '../../contracts/prompts/prompt-set.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
@@ -680,6 +681,11 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
       if (base !== null) return base;
       for (const skill of set.skills) {
         const problem = await read(skill.ref, PROMPT_TEXT_CONTENT_TYPE, `the frozen Skill ${skill.id}`);
+        if (problem !== null) return problem;
+      }
+      // The frozen tool-text bodies are part of the record.
+      for (const tool of set.tools) {
+        const problem = await read(tool.ref, PROMPT_TOOL_TEXT_CONTENT_TYPE, `the frozen tool text ${tool.name}`);
         if (problem !== null) return problem;
       }
       for (const request of requests) {

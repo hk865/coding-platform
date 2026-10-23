@@ -4,6 +4,9 @@ import type { QueryJobAnswerRef } from '../contracts/query-job.js';
 import type { RegisteredCommandCheck } from '../contracts/verification.js';
 import type { TaskAutomationPolicyV1 } from '../contracts/task-requeue.js';
 import type { ResourceCapUnavailableReasonV1 } from '../contracts/resource-caps.js';
+import type {
+  PromptPackProblemV1, TemplateSlotTableV1, ToolTextV1,
+} from '../contracts/prompts/prompt-pack.js';
 
 export const SETTINGS_API_PREFIX = '/api/real/settings/';
 export type SettingsProvider = 'deepseek' | 'openai';
@@ -12,6 +15,10 @@ export type SettingsModel = {
   credentialConfigured: boolean;
   thinking?: 'enabled' | 'disabled';
   reasoningEffort?: 'low' | 'high' | 'max';
+  /** The person's prompt pack for this model; absent means `platform`. */
+  promptPack?: string;
+  /** The reasoning-replay policy; absent means `current_run`. */
+  reasoningReplay?: 'current_run' | 'none';
 };
 export type SettingsWorkspace = {
   scope: CoreScope; name: string; root: string; modelId: string | null;
@@ -72,6 +79,10 @@ export type SaveSettingsModel = {
   apiKey?: string;
   thinking?: 'enabled' | 'disabled';
   reasoningEffort?: 'low' | 'high' | 'max';
+  /** Omitted clears the stored pack (it resolves to `platform`). */
+  promptPack?: string;
+  /** Omitted clears the stored policy (it resolves to `current_run`). */
+  reasoningReplay?: 'current_run' | 'none';
 };
 export type OpenSettingsWorkspace = {
   path: string; name?: string; modelId?: string;
@@ -93,6 +104,43 @@ export type ApproveWorkspaceChecks = {
   answerRef: QueryJobAnswerRef;
   checks: RegisteredCommandCheck[];
 };
+export type PromptPackListV1 = {
+  packs: {
+    packId: string;
+    extends: string | null;
+    problems: readonly PromptPackProblemV1[];
+    templates: readonly {
+      templateId: string; version: number; fromPack: string; problems: readonly PromptPackProblemV1[];
+    }[];
+  }[];
+};
+
+export type PromptPackCreateV1 = {
+  packId: string;
+  extends: 'platform';
+  templates: readonly [];
+  strings: Readonly<Record<string, never>>;
+  tools: Readonly<Record<string, never>>;
+};
+
+export type PromptTemplateReadV1 = {
+  templateId: string;
+  version: number;
+  fromPack: string;
+  text: string;
+  slots: TemplateSlotTableV1;
+  mentionsTools: readonly string[];
+};
+
+export type PromptTemplateSaveV1 = PromptTemplateReadV1;
+export type PromptToolReadV1 = {
+  toolName: string;
+  fromPack: string;
+  entry: ToolTextV1;
+  digest: string;
+};
+export type PromptToolSaveV1 = PromptToolReadV1;
+
 export type SettingsRoutes = {
   snapshot: { input: Record<string, never>; value: HostSettingsSnapshot };
   directories: { input: { path?: string; showHidden?: boolean }; value: DirectoryListing };
@@ -102,10 +150,23 @@ export type SettingsRoutes = {
   'checks/approve': { input: ApproveWorkspaceChecks; value: HostSettingsSnapshot };
   'automation/save': { input: SaveAutomationSettings; value: HostSettingsSnapshot };
   'resource-caps/save': { input: SaveResourceCapSettings; value: HostSettingsSnapshot };
+  'prompts/packs/list': { input: Record<string, never>; value: PromptPackListV1 };
+  'prompts/packs/create': { input: { packId: string }; value: PromptPackCreateV1 };
+  'prompts/templates/read': { input: { packId: string; templateId: string }; value: PromptTemplateReadV1 };
+  'prompts/templates/save': {
+    input: { packId: string; templateId: string; expectedVersion: number; text: string; mentionsTools: string[] };
+    value: PromptTemplateSaveV1;
+  };
+  'prompts/tools/read': { input: { packId: string; toolName: string }; value: PromptToolReadV1 };
+  'prompts/tools/save': {
+    input: { packId: string; toolName: string; expectedDigest: string; entry: ToolTextV1 };
+    value: PromptToolSaveV1;
+  };
 };
 export type SettingsRoute = keyof SettingsRoutes;
 export type SettingsResponse<T> = { status: 'ready'; value: T }
-  | { status: 'rejected'; code: 'invalid' | 'forbidden' | 'not_found' | 'unavailable' | 'unsupported'; reason: string };
+  | { status: 'rejected'; code: 'invalid' | 'forbidden' | 'not_found' | 'revision_conflict' | 'unavailable' | 'unsupported';
+      reason: string; problems?: readonly PromptPackProblemV1[] };
 export interface HostSettingsPort {
   call<K extends SettingsRoute>(route: K, input: SettingsRoutes[K]['input']): Promise<SettingsResponse<SettingsRoutes[K]['value']>>;
 }

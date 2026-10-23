@@ -19,7 +19,8 @@
  * toggles the double, this helper only drives the real Runtime. No model call
  * reaches the network.
  */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PLATFORM_TOKEN_PLACEHOLDER } from '../../src/app/core-http-types.js';
@@ -132,14 +133,26 @@ export async function startKernelBackfillHost(
   await mkdir(HOST_PUBLIC_DIR, { recursive: true });
   await writeFile(join(HOST_PUBLIC_DIR, 'index.html'),
     `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
-  return await hostModule.createLocalWorkbenchHost({
+  // PC-2 ruling 2: the prompt directory lives under the settings directory, so
+  // the settings directory must be outside the workspace root.
+  const settingsDirectory = await mkdtemp(join(tmpdir(), 's2b-r2-kernel-settings-'));
+  const host = await hostModule.createLocalWorkbenchHost({
     storage: { kind: 'sqlite', directory: fixture.directory },
     actor: { kind: 'human', id: actorId },
     workspaces: [{ scope: { projectId: fixture.scope.projectId, workspaceId: fixture.scope.workspaceId },
       name: 'S2B round-2 kernel backfill host', root: fixture.directory, workspaceRevision: 1, readPrefixes: ['.'] }],
     kernelStores: { entries: [{ adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',
       workspace: fixture.scope, databasePath: join(fixture.directory, 'kernel.sqlite') }] },
+    settings: { settingsDirectory },
     now,
     publicDir: HOST_PUBLIC_DIR,
   });
+  const close = host.close.bind(host);
+  return {
+    ...host,
+    close: async () => {
+      try { await close(); }
+      finally { await rm(settingsDirectory, { recursive: true, force: true }); }
+    },
+  };
 }

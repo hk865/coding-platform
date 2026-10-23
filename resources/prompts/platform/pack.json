@@ -25,6 +25,11 @@
     },
     "continuation-brief": {
       "file": "templates/continuation-brief.txt",
+      "version": 2,
+      "mentionsTools": []
+    },
+    "stale-files-reminder": {
+      "file": "templates/stale-files-reminder.txt",
       "version": 1,
       "mentionsTools": []
     },
@@ -42,47 +47,47 @@
     },
     "work-input": {
       "file": "templates/work-input.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "query-planning-input": {
       "file": "templates/query-planning-input.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "query-copy-input": {
       "file": "templates/query-copy-input.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "base": {
       "file": "templates/base.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "skill-platform-work": {
       "file": "templates/skill-platform-work.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "skill-platform-secretary": {
       "file": "templates/skill-platform-secretary.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "skill-platform-adviser": {
       "file": "templates/skill-platform-adviser.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "skill-platform-scribe": {
       "file": "templates/skill-platform-scribe.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "skill-platform-reviewer": {
       "file": "templates/skill-platform-reviewer.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     }
   },

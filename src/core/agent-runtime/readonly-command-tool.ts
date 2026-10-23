@@ -18,6 +18,10 @@ import type {
   ResourceCapSource, ResourceCapsReport, ToolDefinition, ToolResult, WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
+
+/** Typed view: the generated pack's literal `tools` object has no string index signature. */
+const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMPT_PACK_V1.tools;
 
 export const READONLY_COMMAND_TOOL_NAME = 'run_readonly_command';
 
@@ -55,15 +59,18 @@ const NONE_EFFECTS = {
   artifactRefs: [] as string[],
 };
 
-const inputSchema = z
-  .object({
-    command: z.string().min(1).describe(PLATFORM_PROMPT_PACK_V1.tools['run_readonly_command'].parameters['command']),
-    cwd: z.string().optional().describe(PLATFORM_PROMPT_PACK_V1.tools['run_readonly_command'].parameters['cwd']),
-    timeoutMs: z.number().int().min(READONLY_MIN_TIMEOUT_MS).max(READONLY_MAX_TIMEOUT_MS)
-      .describe(PLATFORM_PROMPT_PACK_V1.tools['run_readonly_command'].parameters['timeoutMs']).optional(),
-  })
-  .strict();
-type ReadonlyCommandArguments = z.infer<typeof inputSchema>;
+function buildInputSchema(text: ToolTextV1) {
+  const parameters = text.parameters;
+  return z
+    .object({
+      command: z.string().min(1).describe(parameters['command']!),
+      cwd: z.string().optional().describe(parameters['cwd']!),
+      timeoutMs: z.number().int().min(READONLY_MIN_TIMEOUT_MS).max(READONLY_MAX_TIMEOUT_MS)
+        .describe(parameters['timeoutMs']!).optional(),
+    })
+    .strict();
+}
+type ReadonlyCommandArguments = z.infer<ReturnType<typeof buildInputSchema>>;
 
 export type ReadonlyCommandAuthorization = {
   /** The workspace read grant revision this Run was authorized under. */
@@ -83,6 +90,8 @@ export type ReadonlyCommandToolInput = {
   /** L13: the Host's live resource-cap source; read once per `execute`. */
   resourceCaps?: ResourceCapSource;
   authorization: ReadonlyCommandAuthorization;
+  /** The platform tools' model-facing texts; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
 };
 
 /**
@@ -241,6 +250,9 @@ function boundResult<T extends { output: ToolResult['output'] }>(result: T): T {
 }
 
 export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): ToolDefinition {
+  const text = input.texts?.[READONLY_COMMAND_TOOL_NAME]
+    ?? PLATFORM_TOOL_TEXTS[READONLY_COMMAND_TOOL_NAME]!;
+  const inputSchema = buildInputSchema(text);
   const handler: ToolDefinition['handler'] = {
     async execute(call, options): Promise<ToolResult> {
       const parsed = inputSchema.safeParse(call.arguments);
@@ -352,7 +364,7 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
   };
   return {
     name: READONLY_COMMAND_TOOL_NAME,
-    description: PLATFORM_PROMPT_PACK_V1.tools['run_readonly_command'].description,
+    description: text.description,
     inputSchema,
     handler,
     effectClass: 'process',
@@ -393,6 +405,8 @@ export type ReadonlyCommandRegistrationInput = {
   resourceCaps?: ResourceCapSource;
   /** Re-reads the current Host read grant at the handler boundary (layer 3). */
   authorizeCurrent: () => Promise<ReadonlyCommandCurrentAuthorization>;
+  /** The platform tools' model-facing texts; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
 };
 
 /**
@@ -420,6 +434,7 @@ export function registerReadonlyCommandTool(
     ...(readOnlyPaths === undefined ? {} : { readOnlyPaths }),
     ...(executablePath === undefined ? {} : { executablePath }),
     ...(resourceCaps === undefined ? {} : { resourceCaps }),
+    ...(input.texts === undefined ? {} : { texts: input.texts }),
     authorization: {
       permissionRevision,
       current: async () => {

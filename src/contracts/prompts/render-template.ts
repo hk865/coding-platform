@@ -4,13 +4,45 @@ import { TEMPLATE_SLOTS } from './slot-tables.js';
 /** A rendered slot's UTF-8 byte span in `text`; `endByte` is exclusive. */
 export type SlotRangeV1 = { startByte: number; endByte: number };
 
-type TemplateNode =
+/** One parsed template construct. `tool` blocks render when the final tool list names the tool. */
+export type TemplateNodeV1 =
     | { readonly kind: 'text'; readonly text: string }
     | { readonly kind: 'slot'; readonly name: string }
-    | { readonly kind: 'block'; readonly name: string; readonly children: readonly TemplateNode[] }
-    | { readonly kind: 'tool'; readonly name: string; readonly children: readonly TemplateNode[] };
+    | { readonly kind: 'block'; readonly name: string; readonly children: readonly TemplateNodeV1[] }
+    | { readonly kind: 'tool'; readonly name: string; readonly children: readonly TemplateNodeV1[] };
 
 type Closing = { readonly kind: 'slot' | 'tool'; readonly name: string };
+
+/**
+ * The one code-bug class of template parsing and rendering (ruling 4). A pack
+ * problem is reported as data by the resolver; a render-time failure throws
+ * this, and preparation maps it to `invalid`.
+ */
+export class PromptRenderError extends Error {
+    readonly code: 'template_invalid' | 'required_slot_empty' | 'illegal_section_order';
+    readonly templateId: string;
+    readonly slot: string | null;
+
+    constructor(
+        code: 'template_invalid' | 'required_slot_empty' | 'illegal_section_order',
+        templateId: string,
+        slot: string | null,
+        message: string,
+    ) {
+        super(message);
+        this.name = 'PromptRenderError';
+        this.code = code;
+        this.templateId = templateId;
+        this.slot = slot;
+    }
+}
+
+const SECTION_NAMES: ReadonlySet<string> = new Set([
+    'role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation', 'unknown_call_review',
+]);
+
+/** The input templates whose text also fixes the section order (ruling 9). */
+const INPUT_TEMPLATES: ReadonlySet<string> = new Set(['work-input', 'query-planning-input', 'query-copy-input']);
 
 type RenderState = {
     readonly parts: string[];
@@ -66,14 +98,22 @@ function registerSlot(
     templateId: string,
     name: string,
     counts: Map<string, number>,
+    errors: PromptRenderError[],
 ): void {
     // A template may only use slots the code-owned table declares. The table is
     // the contract the pack editor validates against, so anything else is a bug.
-    if (!Object.hasOwn(table, name)) throw new Error(`slot "${name}" is not declared by template "${templateId}"`);
+    // Parsing continues: the remaining markers and required slots stay decidable.
+    if (!Object.hasOwn(table, name)) {
+        errors.push(new PromptRenderError('template_invalid', templateId, name,
+            `slot "${name}" is not declared by template "${templateId}"`));
+        return;
+    }
     // One slot may appear once: two occurrences would make section ranges and
     // presence ambiguous, and no platform template needs it.
     const count = (counts.get(name) ?? 0) + 1;
-    if (count > 1) throw new Error(`template "${templateId}" uses slot "${name}" more than once`);
+    if (count > 1)
+        errors.push(new PromptRenderError('template_invalid', templateId, name,
+            `template "${templateId}" uses slot "${name}" more than once`));
     counts.set(name, count);
 }
 
@@ -90,8 +130,9 @@ function parseSequence(
     templateId: string,
     table: Readonly<Record<string, { required: boolean }>>,
     counts: Map<string, number>,
-): { nodes: TemplateNode[]; next: number } {
-    const nodes: TemplateNode[] = [];
+    errors: PromptRenderError[],
+): { nodes: TemplateNodeV1[]; next: number } {
+    const nodes: TemplateNodeV1[] = [];
     let index = start;
     let textStart = start;
     while (index < source.length) {
@@ -114,19 +155,20 @@ function parseSequence(
             if (name.startsWith('tool:')) {
                 const toolName = name.slice('tool:'.length);
                 if (toolName === '') throw new Error(`template "${templateId}" has a tool block without a tool name`);
-                const child = parseSequence(source, index, { kind: 'tool', name: toolName }, templateId, table, counts);
+                const child = parseSequence(source, index, { kind: 'tool', name: toolName }, templateId, table, counts,
+                    errors);
                 nodes.push({ kind: 'tool', name: toolName, children: child.nodes });
                 index = child.next;
             } else {
-                registerSlot(table, templateId, name, counts);
-                const child = parseSequence(source, index, { kind: 'slot', name }, templateId, table, counts);
+                registerSlot(table, templateId, name, counts, errors);
+                const child = parseSequence(source, index, { kind: 'slot', name }, templateId, table, counts, errors);
                 nodes.push({ kind: 'block', name, children: child.nodes });
                 index = child.next;
             }
             textStart = index;
             continue;
         }
-        registerSlot(table, templateId, marker, counts);
+        registerSlot(table, templateId, marker, counts, errors);
         nodes.push({ kind: 'slot', name: marker });
         textStart = index;
     }
@@ -138,8 +180,96 @@ function parseSequence(
     return { nodes, next: index };
 }
 
+type SectionUse = { readonly name: string; readonly topLevel: boolean; readonly block: boolean };
+
+function collectSectionUses(nodes: readonly TemplateNodeV1[], nested: boolean, out: SectionUse[]): void {
+    for (const node of nodes) {
+        if (node.kind === 'slot') {
+            if (SECTION_NAMES.has(node.name)) out.push({ name: node.name, topLevel: !nested, block: false });
+        } else if (node.kind === 'block') {
+            if (SECTION_NAMES.has(node.name)) out.push({ name: node.name, topLevel: !nested, block: true });
+            collectSectionUses(node.children, true, out);
+        } else if (node.kind === 'tool') {
+            collectSectionUses(node.children, true, out);
+        }
+    }
+}
+
+function templateInvalid(
+    code: 'template_invalid' | 'illegal_section_order',
+    templateId: string,
+    slot: string | null,
+    message: string,
+): TemplateParseV1 {
+    const error = new PromptRenderError(code, templateId, slot, message);
+    return { status: 'invalid', error, errors: [error] };
+}
+
+/**
+ * The one parse result: the parsed nodes, or every independently decidable
+ * problem. `error` is the first of `errors`, for the renderer, which must throw
+ * one; the resolver reports all of them.
+ */
+export type TemplateParseV1 =
+    | { status: 'parsed'; nodes: readonly TemplateNodeV1[] }
+    | { status: 'invalid'; error: PromptRenderError; errors: readonly PromptRenderError[] };
+
+/**
+ * Parses one template and checks what is decidable from its text alone: the
+ * three template constructs (`{{slot}}`, `{{#slot}}…{{/slot}}` and
+ * `{{#tool:name}}…{{/tool:name}}`), the code-owned slots, required slots
+ * appearing exactly once, and (for the three input templates) the ruling 9
+ * section order. Slot problems accumulate, so later markers and required slots
+ * stay decidable; only a structural error that prevents further parsing ends it.
+ * Never throws, so the resolver can collect the problems as data; the renderer
+ * throws the first one.
+ */
+export function parseTemplateV1(templateId: string, source: string): TemplateParseV1 {
+    const table = Object.hasOwn(TEMPLATE_SLOTS, templateId) ? TEMPLATE_SLOTS[templateId] : undefined;
+    if (table === undefined)
+        return templateInvalid('template_invalid', templateId, null, `unknown prompt template "${templateId}"`);
+    const counts = new Map<string, number>();
+    const errors: PromptRenderError[] = [];
+    let nodes: readonly TemplateNodeV1[];
+    try {
+        nodes = parseSequence(stripAloneBlockMarkerLines(source, templateId), 0, null, templateId, table, counts,
+            errors).nodes;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // A structural error ends parsing; problems already decided stay reported.
+        errors.push(new PromptRenderError('template_invalid', templateId, null, message));
+        return { status: 'invalid', error: errors[0]!, errors };
+    }
+    const invalid = (): TemplateParseV1 => ({ status: 'invalid', error: errors[0]!, errors });
+    for (const [name, spec] of Object.entries(table)) {
+        if (spec.required && (counts.get(name) ?? 0) === 0)
+            errors.push(new PromptRenderError('template_invalid', templateId, name,
+                `template "${templateId}" is missing required slot "${name}"`));
+    }
+    if (!INPUT_TEMPLATES.has(templateId)) return errors.length === 0 ? { status: 'parsed', nodes } : invalid();
+    const uses: SectionUse[] = [];
+    collectSectionUses(nodes, false, uses);
+    const expected = new Set(Object.keys(table).filter(name => SECTION_NAMES.has(name)));
+    const seen = new Set<string>();
+    for (const use of uses) {
+        if (!use.topLevel || use.block)
+            errors.push(new PromptRenderError('template_invalid', templateId, use.name,
+                `section "${use.name}" must be a top-level slot in template "${templateId}"`));
+        seen.add(use.name);
+    }
+    for (const name of expected) {
+        if (!seen.has(name))
+            errors.push(new PromptRenderError('template_invalid', templateId, name,
+                `template "${templateId}" is missing section "${name}"`));
+    }
+    if (uses[0]?.name !== 'role')
+        errors.push(new PromptRenderError('illegal_section_order', templateId, 'role',
+            `template "${templateId}" must start with the role section`));
+    return errors.length === 0 ? { status: 'parsed', nodes } : invalid();
+}
+
 function renderNodes(
-    nodes: readonly TemplateNode[],
+    nodes: readonly TemplateNodeV1[],
     slots: Readonly<Record<string, string | undefined>>,
     finalToolNames: readonly string[],
     state: RenderState,
@@ -171,18 +301,19 @@ function renderNodes(
             if (state.bytes > startByte) state.ranges[node.name] = { startByte, endByte: state.bytes };
             continue;
         }
-        // Tool blocks render only when the final Kernel tool list names the tool;
-        // no platform v1 template uses one.
+        // Tool blocks render only when the final Kernel tool list names the tool.
         if (finalToolNames.includes(node.name)) renderNodes(node.children, slots, finalToolNames, state);
     }
 }
 
 /**
- * Renders one platform template. Only the three P1 constructs are honoured;
- * slot values are inserted verbatim. All failures below are code bugs that the
- * fixed pack cannot produce, so they throw a plain Error instead of returning a
- * result union. `texts` is the narrow surface (ruling 14): a resolved pack
- * satisfies it structurally.
+ * Renders one platform template. Only the three template constructs
+ * (`{{slot}}`, `{{#slot}}…{{/slot}}` and `{{#tool:name}}…{{/tool:name}}`) are
+ * honoured; slot values are inserted verbatim. A bad template text or an empty
+ * required slot is a code bug that preparation maps to `invalid`, so it throws
+ * `PromptRenderError`; an unknown template id or an undeclared caller slot
+ * throws a plain `Error`. `texts` is the narrow surface (ruling 14): a resolved
+ * pack satisfies it structurally.
  */
 export function renderTemplate(
     texts: PromptTextsV1,
@@ -196,8 +327,8 @@ export function renderTemplate(
     // A caller may not smuggle in a slot the template's table does not declare.
     for (const name of Object.keys(slots))
         if (!Object.hasOwn(table, name)) throw new Error(`slot "${name}" is not declared by template "${templateId}"`);
-    const counts = new Map<string, number>();
-    const parsed = parseSequence(stripAloneBlockMarkerLines(source, templateId), 0, null, templateId, table, counts);
+    const parsed = parseTemplateV1(templateId, source);
+    if (parsed.status === 'invalid') throw parsed.error;
     // Every required slot of the table must have a formatted value, whether or
     // not this template's text uses it: the table is the contract the pack
     // editor validates against, and a template is only one consumer of it.
@@ -206,7 +337,8 @@ export function renderTemplate(
         // Required is about the formatted slot value: an empty string counts as
         // missing, never as a rendered section.
         if (spec?.required && (slots[name] === undefined || slots[name] === ''))
-            throw new Error(`required slot "${name}" is empty in template "${templateId}"`);
+            throw new PromptRenderError('required_slot_empty', templateId, name,
+                `required slot "${name}" is empty in template "${templateId}"`);
     }
     const state: RenderState = { parts: [], bytes: 0, ranges: {} };
     renderNodes(parsed.nodes, slots, finalToolNames, state);

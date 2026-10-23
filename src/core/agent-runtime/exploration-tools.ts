@@ -8,7 +8,11 @@ import { CppSourceIndex } from '../../core/workspace/cpp-source-index.js';
 import type { RuntimeSourceCaptureAccess } from './source-tool-ports.js';
 import { createProjectSourceTool } from './project-source-tool.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import { DefaultPermissionPolicy, toolSchema as z, type ToolDefinition, type WorkspaceSandbox } from '../../../vendor/coding-agent/dist/public-api.js';
+
+/** Typed view: the generated pack's literal `tools` object has no string index signature. */
+const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMPT_PACK_V1.tools;
 
 const NONE = { sideEffect: 'none' as const, changedPaths: [], workspaceRevision: null, artifactRefs: [] };
 const maxBytes = 256 * 1024;
@@ -83,6 +87,8 @@ export type SourceToolOptions = {
    */
   sourceAnalyzers?: { directory?: string; pythonPath?: string; cppLibraryPath?: string;
     unitTimeoutMs?: number; languageTimeoutMs?: number };
+  /** The platform tools' model-facing texts; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
 };
 export type ExplorationToolsHandle = {
   tools: ToolDefinition[];
@@ -97,6 +103,8 @@ export type ExplorationToolsHandle = {
  * so none is fabricated for it.
  */
 export function createExplorationTools(workspace: WorkspaceSandbox, options: SourceToolOptions = {}): ExplorationToolsHandle {
+  const textOf = (name: string): ToolTextV1 =>
+    options.texts?.[name] ?? PLATFORM_TOOL_TEXTS[name]!;
   const cache = new Map<string, Analysis>();
   const lifecycle = new AbortController();
   const inFlight = new Set<Promise<unknown>>();
@@ -163,28 +171,29 @@ export function createExplorationTools(workspace: WorkspaceSandbox, options: Sou
     };
   }
   const projectTools: ToolDefinition[] = frozenAccess === undefined ? [] : [createProjectSourceTool({ access: frozenAccess, requireVisible,
-    ...(options.assertCurrent ? { assertCurrent: options.assertCurrent } : {}) })];
+    ...(options.assertCurrent ? { assertCurrent: options.assertCurrent } : {}),
+    ...(options.texts === undefined ? {} : { texts: options.texts }) })];
   const definitions: ToolDefinition[] = [
-    ...(options.includeReadSource ? [tool('read_source',PLATFORM_PROMPT_PACK_V1.tools['read_source'].description,z.object({path:safePath,startLine:z.number().int().positive().default(1),maxLines:z.number().int().min(1).max(500).default(150)}).strict(),async args=>{
+    ...(options.includeReadSource ? [tool('read_source',textOf('read_source').description,z.object({path:safePath,startLine:z.number().int().positive().default(1),maxLines:z.number().int().min(1).max(500).default(150)}).strict(),async args=>{
       const file=await read(args['path'] as string,maxBytes);
       const lines=file.content.split('\n'),startLine=args['startLine'] as number,maxLines=args['maxLines'] as number;
       if(startLine>lines.length)throw Error('Requested source range is outside the file');
       const selected=lines.slice(startLine-1,startLine-1+maxLines);
       return {materialId:'source:'+file.path,path:file.path,sourceDigest:digest(file.content),revision:file.revision,startLine,endLine:startLine+selected.length-1,totalLines:lines.length,content:selected.join('\n'),truncated:startLine-1+selected.length<lines.length};
     })] : []),
-    {...tool('cpp_index',PLATFORM_PROMPT_PACK_V1.tools['cpp_index'].description,z.object({operation:z.enum(['symbols','definitions','references','imports','calls']),configPath:safePath.optional(),prefix:safePath.optional(),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),offset:z.number().int().min(0).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>cppIndex.query(args as unknown as import('../../core/workspace/project-source-snapshot.js').ProjectSourceQuery,signal)),defaultTimeoutMs:60000},
-    {...tool('python_index',PLATFORM_PROMPT_PACK_V1.tools['python_index'].description,z.object({operation:z.enum(['symbols','definitions','references','imports','calls']),configPath:safePath.optional(),prefix:safePath.optional(),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),offset:z.number().int().min(0).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>pythonIndex.query(args as unknown as import('../../core/workspace/project-source-snapshot.js').ProjectSourceQuery,signal)),defaultTimeoutMs:60000},
+    {...tool('cpp_index',textOf('cpp_index').description,z.object({operation:z.enum(['symbols','definitions','references','imports','calls']),configPath:safePath.optional(),prefix:safePath.optional(),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),offset:z.number().int().min(0).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>cppIndex.query(args as unknown as import('../../core/workspace/project-source-snapshot.js').ProjectSourceQuery,signal)),defaultTimeoutMs:60000},
+    {...tool('python_index',textOf('python_index').description,z.object({operation:z.enum(['symbols','definitions','references','imports','calls']),configPath:safePath.optional(),prefix:safePath.optional(),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),offset:z.number().int().min(0).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>pythonIndex.query(args as unknown as import('../../core/workspace/project-source-snapshot.js').ProjectSourceQuery,signal)),defaultTimeoutMs:60000},
     ...projectTools,
-    tool('code_index',PLATFORM_PROMPT_PACK_V1.tools['code_index'].description,z.object({paths:z.array(safePath).min(1).max(64),operation:z.enum(['symbols','definitions','references']),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>sourceIndex.query(args as unknown as import('../../core/workspace/source-index.js').SourceQuery,signal)),
-    tool('source_excerpt',PLATFORM_PROMPT_PACK_V1.tools['source_excerpt'].description,z.object({path:safePath,expectedDigest:z.string().regex(/^[a-f0-9]{64}$/),startLine:z.number().int().positive(),endLine:z.number().int().positive()}).strict(),async args=>sourceIndex.excerpt(args['path'] as string,args['expectedDigest'] as string,args['startLine'] as number,args['endLine'] as number)),
-    tool('list_files',PLATFORM_PROMPT_PACK_V1.tools['list_files'].description,z.object({prefix:safePath.describe(PLATFORM_PROMPT_PACK_V1.tools['list_files'].parameters['prefix']).optional(),offset:z.number().int().min(0).max(20000).default(0),limit:z.number().int().min(1).max(300).default(100)}).strict(),async(args,signal)=>{
+    tool('code_index',textOf('code_index').description,z.object({paths:z.array(safePath).min(1).max(64),operation:z.enum(['symbols','definitions','references']),path:safePath.optional(),line:z.number().int().positive().optional(),column:z.number().int().positive().optional(),expectedSnapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),limit:z.number().int().min(1).max(200).default(100)}).strict(),async(args,signal)=>sourceIndex.query(args as unknown as import('../../core/workspace/source-index.js').SourceQuery,signal)),
+    tool('source_excerpt',textOf('source_excerpt').description,z.object({path:safePath,expectedDigest:z.string().regex(/^[a-f0-9]{64}$/),startLine:z.number().int().positive(),endLine:z.number().int().positive()}).strict(),async args=>sourceIndex.excerpt(args['path'] as string,args['expectedDigest'] as string,args['startLine'] as number,args['endLine'] as number)),
+    tool('list_files',textOf('list_files').description,z.object({prefix:safePath.describe(textOf('list_files').parameters['prefix']!).optional(),offset:z.number().int().min(0).max(20000).default(0),limit:z.number().int().min(1).max(300).default(100)}).strict(),async(args,signal)=>{
       const prefix=args['prefix'] as string|undefined; if(prefix)requireVisible(prefix);
       const inventory=await directoryInventory(prefix,signal);
       const paths=inventory.paths.filter(visible);
       const offset=args['offset'] as number,limit=args['limit'] as number;
       return {paths:paths.slice(offset,offset+limit),nextOffset:offset+limit<paths.length?offset+limit:null,truncated:inventory.truncated,totalListed:paths.length,coverage:'bounded file enumeration; denied paths and symlinks excluded',excludedPrefixes:workspace.deniedPrefixes};
     }),
-    tool('search',PLATFORM_PROMPT_PACK_V1.tools['search'].description,z.object({query:z.string().min(1).max(200),paths:z.array(safePath).min(1).max(32).optional(),prefix:safePath.describe(PLATFORM_PROMPT_PACK_V1.tools['search'].parameters['prefix']).optional(),maxResults:z.number().int().min(1).max(100).default(40),maxFiles:z.number().int().min(1).max(500).default(200)}).strict(),async(args,signal)=>{
+    tool('search',textOf('search').description,z.object({query:z.string().min(1).max(200),paths:z.array(safePath).min(1).max(32).optional(),prefix:safePath.describe(textOf('search').parameters['prefix']!).optional(),maxResults:z.number().int().min(1).max(100).default(40),maxFiles:z.number().int().min(1).max(500).default(200)}).strict(),async(args,signal)=>{
       const prefix=args['prefix'] as string|undefined; if(prefix)requireVisible(prefix);
       const explicit=args['paths'] as string[]|undefined; explicit?.forEach(requireVisible);
       const inventory=explicit?{paths:explicit,truncated:false}:await directoryInventory(prefix,signal);
@@ -207,7 +216,7 @@ export function createExplorationTools(workspace: WorkspaceSandbox, options: Sou
       }
       return {query,matches,filesRead,bytesRead,skipped:skipped.slice(0,50),skippedCount:skipped.length,truncated:truncated||skipped.length>0,coverage:'literal text search, not semantic references'};
     }),
-    tool('symbols',PLATFORM_PROMPT_PACK_V1.tools['symbols'].description,z.object({path:safePath}).strict(),async(args,signal)=>{
+    tool('symbols',textOf('symbols').description,z.object({path:safePath}).strict(),async(args,signal)=>{
       requireVisible(args['path'] as string);
       const file=await read(args['path'] as string,maxBytes);
       const key=file.path+':'+file.revision;let analysis=cache.get(key);

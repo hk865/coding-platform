@@ -18,6 +18,7 @@ import type {
   CommandRerunRequestPort, CommandRerunRequestReplyV1,
 } from '../work-graph/model/command-rerun-request-contracts.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import {
   toolSchema as z,
   type ToolCall,
@@ -25,6 +26,9 @@ import {
   type ToolResult,
   type WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
+
+/** Typed view: the generated pack's literal `tools` object has no string index signature. */
+const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMPT_PACK_V1.tools;
 
 export const REQUEST_COMMAND_RERUN_TOOL_NAME = 'request_command_rerun';
 export const REQUEST_COMMAND_RERUN_TOOL_NAMES = [REQUEST_COMMAND_RERUN_TOOL_NAME] as const;
@@ -35,17 +39,20 @@ export const REQUEST_COMMAND_RERUN_TOOL_NAMES = [REQUEST_COMMAND_RERUN_TOOL_NAME
  * byte and code-point limits, the alias range and the record identity. `.strict`
  * rejects any extra key (and a literal `null` rewriteOf).
  */
-const inputSchema = z
-  .object({
-    command: z.string().describe(PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].parameters['command']),
-    reason: z.string().describe(PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].parameters['reason']),
-    rewriteOf: z.object({
-      review: z.string().describe(PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].parameters['rewriteOf.review']),
-      alias: z.number().describe(PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].parameters['rewriteOf.alias']),
-    }).strict().optional().describe(PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].parameters['rewriteOf']),
-  })
-  .strict();
-type RequestCommandRerunArguments = z.infer<typeof inputSchema>;
+function buildInputSchema(text: ToolTextV1) {
+  const parameters = text.parameters;
+  return z
+    .object({
+      command: z.string().describe(parameters['command']!),
+      reason: z.string().describe(parameters['reason']!),
+      rewriteOf: z.object({
+        review: z.string().describe(parameters['rewriteOf.review']!),
+        alias: z.number().describe(parameters['rewriteOf.alias']!),
+      }).strict().optional().describe(parameters['rewriteOf']!),
+    })
+    .strict();
+}
+type RequestCommandRerunArguments = z.infer<ReturnType<typeof buildInputSchema>>;
 
 export type CommandRerunToolsConfig = {
   /**
@@ -60,6 +67,8 @@ export type CommandRerunToolsConfig = {
   task: TaskTriple;
   /** Trusted command identity: Kernel `ToolCall.callId` + the bound Run. */
   requestIdForCall: (call: Readonly<ToolCall>) => string;
+  /** The platform tools' model-facing texts; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
 };
 
 export type CommandRerunToolsHandle = {
@@ -133,6 +142,9 @@ function outcomeText(callId: string, outcome: ReplyOutcome, committedCommand: st
 }
 
 export function createCommandRerunTools(config: CommandRerunToolsConfig): CommandRerunToolsHandle {
+  const text = config.texts?.[REQUEST_COMMAND_RERUN_TOOL_NAME]
+    ?? PLATFORM_TOOL_TEXTS[REQUEST_COMMAND_RERUN_TOOL_NAME]!;
+  const inputSchema = buildInputSchema(text);
   // Freeze the trusted principal before returning the factory: the model cannot
   // rebind the request Run or the request identity.
   const fixedPrincipal = structuredClone(config.context.principal);
@@ -204,7 +216,7 @@ export function createCommandRerunTools(config: CommandRerunToolsConfig): Comman
   function definition(): ToolDefinition {
     return {
       name: REQUEST_COMMAND_RERUN_TOOL_NAME,
-      description: PLATFORM_PROMPT_PACK_V1.tools['request_command_rerun'].description,
+      description: text.description,
       inputSchema,
       // A platform-state write: the Kernel permission policy and the Host
       // authorization list apply, but no workspace write or process capability

@@ -13,10 +13,13 @@ import {
   queryFocusLines, queryPlanSummary, rolePayload, topLevelModuleCards,
 } from './context-fact-text.js';
 import {
-  CONTEXT_FORMAT_VERSION, queryContextPrelude, renderQueryContext,
+  CONTEXT_FORMAT_VERSION, queryContextPrelude, renderQueryContext, sectionOrderFor,
 } from './context-rendering.js';
+import { takesSessionHistoryOf } from './context-history-facts.js';
 import { messageOf, rejected, sortedSources } from './context-support.js';
-import type { AssembledContextV1, ContextAssemblerDependencies } from './context-types.js';
+import type {
+  AssembledContextV1, ContextAssemblerDependencies, ContextQueryHistoryInputV1,
+} from './context-types.js';
 import type { ResolvedRuntimeConfiguration } from './execution-contracts.js';
 
 /** One fixed string of the resolved pack; a missing key is a pack bug. */
@@ -36,6 +39,10 @@ export async function assembleQueryContext(
     question: string;
     /** The resolved pack (ruling 14); absent keeps the generated pack. */
     texts?: PromptTextsV1;
+    /** The frozen `PromptSetV1.toolNames` (ruling 10/16). */
+    toolNames: readonly string[];
+    /** Ruling 14 C7: the Query's formal basis, or the real completed boundary. */
+    history: ContextQueryHistoryInputV1;
   },
 ): Promise<ReadResult<AssembledContextV1>> {
   const texts = input.texts ?? PLATFORM_PROMPT_PACK_V1;
@@ -82,18 +89,32 @@ export async function assembleQueryContext(
     ? queryPlanSummary(input.facts.focusPlan, texts)
     : planning ? null : queryFocusLines(input.facts, facts?.graph ?? null, texts);
   const footprintRows = planning ? topLevelModuleCards(facts?.architecture ?? null) : [];
+  // Ruling 14: the ONE pure mode rule. A Query with a formal basis follows it
+  // and reads no boundary (C7); without one it follows the stored cursor.
+  const history = input.history;
+  const takesSessionHistory = takesSessionHistoryOf({
+    callKind: 'query',
+    sessionBasis: history.sessionBasis,
+    hasCompletedCursor: history.sessionBasis === undefined && history.hasCompletedCursor,
+  });
+  const templateId = planning ? 'query-planning-input' as const : 'query-copy-input' as const;
+  const sectionOrder = sectionOrderFor(planning ? 'planning' : 'copy', templateId, texts);
   const rendered = renderQueryContext({
-    templateId: planning ? 'query-planning-input' : 'query-copy-input',
+    templateId,
     prelude: queryContextPrelude(texts),
     required: { role: roleSection, goal: goalSection, task: taskSection },
     optional: planning ? { footprint: footprintRows } : {},
     residentBudgetBytes,
+    sectionOrder,
+    toolNames: input.toolNames,
+    takesSessionHistory,
     texts,
   });
   const binding: ContextAssemblyBindingV1 = {
     schemaVersion: 1,
     formatVersion: CONTEXT_FORMAT_VERSION,
     callKind: planning ? 'planning' : 'copy',
+    sectionOrder,
     duty,
     residentBudgetBytes,
     residentBytes: rendered.residentBytes,
@@ -105,5 +126,6 @@ export async function assembleQueryContext(
     inputSelections: [],
     extensions: annotations(extensions),
   };
-  return { status: 'ready', value: { input: rendered.input, binding, continuationBrief: null, sessionBasis: undefined, selectedTaskInputs: [] } };
+  return { status: 'ready', value: { input: rendered.input, binding, continuationBrief: null,
+    sessionBasis: undefined, selectedTaskInputs: [], takesSessionHistory, renderMaterial: rendered.material } };
 }

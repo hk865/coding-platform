@@ -20,10 +20,19 @@ import type { RegisteredCommandCheck } from '../contracts/verification.js';
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, type TaskAutomationPolicyV1,
 } from '../contracts/task-requeue.js';
-import { mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
+import type { PromptPackChainEntryV1, PromptPackManifestV1, PromptPackProblemV1, ToolTextV1 } from '../contracts/prompts/prompt-pack.js';
+import { resolvePromptPackV1 } from '../contracts/prompts/resolve-pack.js';
+import { canonicalToolTextBody, promptToolTextDigest } from '../contracts/prompts/prompt-set.js';
+import { TEMPLATE_SLOTS } from '../contracts/prompts/slot-tables.js';
+import {
+  createDiskPromptPack, effectiveTemplateVersionOf, effectiveToolTextOf, isPromptPackId,
+  listDiskPromptPacks, preparePackWriteTarget, readDiskPromptPack,
+  type DiskPromptPackReadV1,
+} from './prompt-packs.js';
 import {
   MIB, RESOURCE_CAP_MAX_TASKS, RESOURCE_CAP_MIN_MEMORY_MIB, RESOURCE_CAP_MIN_TASKS,
   defaultResourceCapSettings, type ResourceCapSettingsV1, type ResourceCapUnavailableReasonV1,
@@ -50,12 +59,17 @@ import type {
   SettingsResponse,
   SettingsRoute,
   SettingsRoutes,
+  PromptPackCreateV1,
+  PromptPackListV1,
+  PromptTemplateReadV1,
+  PromptToolReadV1,
 } from './host-settings-types.js';
 
 /** The published settings route set. `SettingsRoutes` stays the type truth. */
 export const SETTINGS_ROUTE_SUFFIXES = [
   'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'checks/approve', 'automation/save',
-  'resource-caps/save',
+  'resource-caps/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
+  'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save',
 ] as const satisfies readonly SettingsRoute[];
 
 export function isSettingsRoute(value: string): value is SettingsRoute {
@@ -105,6 +119,8 @@ export type HostSettingsModelDefinition = {
   baseUrl?: string;
   thinking?: 'enabled' | 'disabled';
   reasoningEffort?: 'low' | 'high' | 'max';
+  promptPack?: string;
+  reasoningReplay?: 'current_run' | 'none';
   secretEnvironmentVariable?: string;
 };
 
@@ -117,6 +133,8 @@ export type HostSettingsStoredModel = {
   baseUrl?: string;
   thinking?: 'enabled' | 'disabled';
   reasoningEffort?: 'low' | 'high' | 'max';
+  promptPack?: string;
+  reasoningReplay?: 'current_run' | 'none';
   secretEnvironmentVariable?: string;
   apiKey?: string;
 };
@@ -192,6 +210,13 @@ export type HostSettingsCallbacks = {
  * `unsupported`. The provider seam is Host-internal. */
 export type HostSettingsConfig = {
   settingsDirectory?: string;
+  /** The real `<settings directory>/prompts` the Host created at start-up; the
+   * editing routes read and write exactly this tree. */
+  promptsRoot?: string;
+  /** The Host's own start-up directory check for a restored workspace root. It
+   * throws a configuration error naming both paths, so a restored root that
+   * covers the prompt directory never reaches the restore loop. */
+  assertWorkspaceRoot?: (root: string) => Promise<void>;
   models?: HostSettingsModelDefinition[];
   /** Trusted startup selection projected from the Host runtime configuration.
    * Used only when no private file exists yet; an explicit user selection later
@@ -380,12 +405,19 @@ function parseStoredModel(value: unknown): HostSettingsStoredModel {
     if (typeof value['baseUrl'] !== 'string' || validateSettingsBaseUrl(value['baseUrl']) !== null)
       throw new Error('the private host settings file is invalid');
   }
+  if (value['promptPack'] !== undefined && !isPromptPackId(value['promptPack']))
+    throw new Error('the private host settings file is invalid');
+  if (value['reasoningReplay'] !== undefined
+    && value['reasoningReplay'] !== 'current_run' && value['reasoningReplay'] !== 'none')
+    throw new Error('the private host settings file is invalid');
   return {
     id: value['id'], label: value['label'], provider: value['provider'], model: value['model'],
     ...(value['baseUrl'] === undefined ? {} : { baseUrl: value['baseUrl'] }),
     ...(value['thinking'] === 'enabled' || value['thinking'] === 'disabled' ? { thinking: value['thinking'] } : {}),
     ...(value['reasoningEffort'] === 'low' || value['reasoningEffort'] === 'high' || value['reasoningEffort'] === 'max'
       ? { reasoningEffort: value['reasoningEffort'] } : {}),
+    ...(value['promptPack'] === undefined ? {} : { promptPack: value['promptPack'] }),
+    ...(value['reasoningReplay'] === undefined ? {} : { reasoningReplay: value['reasoningReplay'] }),
     ...(nonEmpty(value['secretEnvironmentVariable']) ? { secretEnvironmentVariable: value['secretEnvironmentVariable'] } : {}),
     ...(typeof value['apiKey'] === 'string' && value['apiKey'].length > 0 ? { apiKey: value['apiKey'] } : {}),
   };
@@ -429,6 +461,8 @@ function toStoredModel(model: HostSettingsModelDefinition): HostSettingsStoredMo
     ...(model.baseUrl === undefined ? {} : { baseUrl: model.baseUrl }),
     ...(model.thinking === undefined ? {} : { thinking: model.thinking }),
     ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }),
+    ...(model.promptPack === undefined ? {} : { promptPack: model.promptPack }),
+    ...(model.reasoningReplay === undefined ? {} : { reasoningReplay: model.reasoningReplay }),
     ...(model.secretEnvironmentVariable === undefined ? {} : { secretEnvironmentVariable: model.secretEnvironmentVariable }),
   };
 }
@@ -441,6 +475,7 @@ export async function createHostSettings(
   if (!nonEmpty(settingsDirectory)) throw new Error('host settings require an explicit persistent directory');
   const assembly = options.assembly;
   const filePath = join(settingsDirectory, 'host-settings.json');
+  const promptsRoot = options.promptsRoot ?? join(settingsDirectory, 'prompts');
 
   let persisted: PersistedSettingsV1;
   try {
@@ -537,6 +572,8 @@ export async function createHostSettings(
       credentialConfigured: (typeof model.apiKey === 'string' && model.apiKey.length > 0) || envConfigured,
       ...(model.thinking === undefined ? {} : { thinking: model.thinking }),
       ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }),
+      ...(model.promptPack === undefined ? {} : { promptPack: model.promptPack }),
+      ...(model.reasoningReplay === undefined ? {} : { reasoningReplay: model.reasoningReplay }),
     };
   };
 
@@ -568,6 +605,11 @@ export async function createHostSettings(
 
   // Restore every persisted directory registration through the real owners
   // BEFORE the Host listens. A failed restore is an explicit startup failure.
+  // Every restored root is checked against the prompt directory first, so a
+  // covering root fails before any earlier entry's restore has run.
+  if (options.assertWorkspaceRoot !== undefined) {
+    for (const entry of workspaces) await options.assertWorkspaceRoot(entry.root);
+  }
   for (const entry of workspaces) {
     const opened = await assembly.openWorkspace({
       path: entry.root, projectId: entry.scope.projectId, workspaceId: entry.scope.workspaceId,
@@ -621,6 +663,11 @@ export async function createHostSettings(
     if (input['reasoningEffort'] !== undefined && input['reasoningEffort'] !== 'low'
       && input['reasoningEffort'] !== 'high' && input['reasoningEffort'] !== 'max')
       return invalid('reasoningEffort must be low, high, max');
+    if (input['promptPack'] !== undefined && !isPromptPackId(input['promptPack']))
+      return invalid('promptPack must be a pack id');
+    if (input['reasoningReplay'] !== undefined
+      && input['reasoningReplay'] !== 'current_run' && input['reasoningReplay'] !== 'none')
+      return invalid('reasoningReplay must be current_run or none');
     if (input['id'] !== undefined && !nonEmpty(input['id'])) return invalid('id must be a non-empty string when present');
     if (input['apiKey'] !== undefined && typeof input['apiKey'] !== 'string') return invalid('apiKey must be a string when present');
 
@@ -631,6 +678,9 @@ export async function createHostSettings(
     const thinking = input['thinking'] === 'enabled' || input['thinking'] === 'disabled' ? input['thinking'] : undefined;
     const reasoningEffort = input['reasoningEffort'] === 'low' || input['reasoningEffort'] === 'high'
       || input['reasoningEffort'] === 'max' ? input['reasoningEffort'] : undefined;
+    const promptPack = typeof input['promptPack'] === 'string' ? input['promptPack'] : undefined;
+    const reasoningReplay = input['reasoningReplay'] === 'current_run' || input['reasoningReplay'] === 'none'
+      ? input['reasoningReplay'] : undefined;
     const modelId = nonEmpty(input['id']) ? input['id'] : randomUUID();
     const existingIndex = models.findIndex(entry => entry.id === modelId);
     const previous = existingIndex >= 0 ? models[existingIndex] : undefined;
@@ -641,6 +691,10 @@ export async function createHostSettings(
       ...(baseUrl === undefined ? {} : { baseUrl }),
       ...(thinking === undefined ? {} : { thinking }),
       ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+      // Ruling 7: a save without the field CLEARS it; absence is what resolves to
+      // `platform` / `current_run`, so a later save never inherits the old pack.
+      ...(promptPack === undefined ? {} : { promptPack }),
+      ...(reasoningReplay === undefined ? {} : { reasoningReplay }),
       ...(previous?.secretEnvironmentVariable === undefined ? {} : { secretEnvironmentVariable: previous.secretEnvironmentVariable }),
       ...(nextApiKey === undefined ? {} : { apiKey: nextApiKey }),
     };
@@ -880,6 +934,270 @@ export async function createHostSettings(
     return { status: 'ready', value: snapshotOf() };
   }
 
+  // -------------------------------------------------------------------------
+  // Prompt-pack editing routes. They read the disk tree at
+  // `<settings directory>/prompts`, validate the whole resulting chain before
+  // writing and replace `pack.json` atomically, so a failed save leaves the
+  // visible version unchanged.
+  // -------------------------------------------------------------------------
+
+  const forbidden = (reason: string): SettingsResponse<never> => ({ status: 'rejected', code: 'forbidden', reason });
+  const revisionConflict = (reason: string): SettingsResponse<never> =>
+    ({ status: 'rejected', code: 'revision_conflict', reason });
+  const invalidProblems = (reason: string, problems: readonly PromptPackProblemV1[]): SettingsResponse<never> =>
+    ({ status: 'rejected', code: 'invalid', reason, problems });
+
+  /** A request-shape rejection on a prompt route carries the same `problems`
+   * contract as a broken pack, so the caller sees which request field failed. */
+  const invalidRequest = (
+    reason: string, packId?: unknown, templateId?: unknown, toolName?: string,
+  ): SettingsResponse<never> => invalidProblems(reason, [{
+    packId: typeof packId === 'string' ? packId : '',
+    templateId: typeof templateId === 'string' ? templateId : null,
+    ...(toolName === undefined ? {} : { toolName }),
+    reason,
+  }]);
+  type ReadyPackRead = Extract<DiskPromptPackReadV1, { status: 'ready' }>;
+
+  async function packForRoute(packId: unknown): Promise<
+    { kind: 'ready'; read: ReadyPackRead } | { kind: 'rejected'; response: SettingsResponse<never> }
+  > {
+    if (typeof packId !== 'string' || !isPromptPackId(packId))
+      return { kind: 'rejected', response: notFound('the prompt pack does not exist') };
+    const read = await readDiskPromptPack(promptsRoot, packId);
+    if (read.status === 'not_found') return { kind: 'rejected', response: notFound('the prompt pack does not exist') };
+    if (read.status === 'rejected')
+      return { kind: 'rejected', response: invalidProblems('the prompt pack is invalid', read.problems) };
+    return { kind: 'ready', read };
+  }
+
+  type SavePackRead = {
+    chain: readonly PromptPackChainEntryV1[];
+    directory: string | null;
+    problems: readonly PromptPackProblemV1[];
+  };
+
+  /** Reads a pack for a save without requiring it to be valid as a whole: the
+   * effective version or digest decides the conflict and the candidate pack is
+   * validated after the replacement. A manifest that cannot be read cannot be
+   * replaced, so that case stays an explicit rejection. */
+  async function packChainForSave(packId: string): Promise<
+    { kind: 'ready'; read: SavePackRead } | { kind: 'rejected'; response: SettingsResponse<never> }
+  > {
+    const read = await readDiskPromptPack(promptsRoot, packId);
+    if (read.status === 'not_found') return { kind: 'rejected', response: notFound('the prompt pack does not exist') };
+    const problems = read.status === 'rejected' ? read.problems : [];
+    if (read.chain.length === 0 || read.chain[0]?.packId !== packId)
+      return { kind: 'rejected', response: invalidProblems('the prompt pack is invalid', problems) };
+    const directory = await realpath(join(promptsRoot, packId)).catch(() => null);
+    return { kind: 'ready', read: { chain: read.chain, directory, problems } };
+  }
+
+  function proposeTemplateChain(
+    chain: readonly PromptPackChainEntryV1[], templateId: string,
+    file: string, version: number, mentionsTools: readonly string[], text: string,
+  ): PromptPackChainEntryV1[] {
+    const first = chain[0]!;
+    const manifest = JSON.parse(first.manifest.text) as PromptPackManifestV1;
+    // Replace an entry only in an object table. A non-object original stays as
+    // written, so the whole-pack validation reports it instead of this throwing.
+    if (isRecord(manifest.templates))
+      manifest.templates[templateId] = { file, version, mentionsTools: [...mentionsTools] };
+    return [
+      { ...first, manifest: { file: 'pack.json', text: JSON.stringify(manifest) },
+        templates: { ...first.templates, [templateId]: { file, text } } },
+      ...chain.slice(1),
+    ];
+  }
+
+  function proposeToolChain(
+    chain: readonly PromptPackChainEntryV1[], toolName: string, file: string, text: string,
+  ): PromptPackChainEntryV1[] {
+    const first = chain[0]!;
+    const manifest = JSON.parse(first.manifest.text) as PromptPackManifestV1;
+    // The same rule as a template: keep a non-object table for validation.
+    if (isRecord(manifest.tools)) manifest.tools[toolName] = file;
+    return [
+      { ...first, manifest: { file: 'pack.json', text: JSON.stringify(manifest) },
+        tools: { ...first.tools, [toolName]: { file, text } } },
+      ...chain.slice(1),
+    ];
+  }
+
+  /** Temp file and rename: a failure before the rename leaves the old manifest. */
+  async function replacePackManifest(directory: string, chain: readonly PromptPackChainEntryV1[]): Promise<void> {
+    const manifest = chain[0]!.manifest;
+    const temporary = join(directory, `.pack.${randomUUID()}.tmp`);
+    await writeFile(temporary, manifest.text, 'utf8');
+    try { await rename(temporary, join(directory, 'pack.json')); }
+    catch (error) {
+      await rm(temporary, { force: true });
+      throw error;
+    }
+  }
+
+  async function packsListRoute(): Promise<SettingsResponse<PromptPackListV1>> {
+    try {
+      return { status: 'ready', value: { packs: await listDiskPromptPacks(promptsRoot) } };
+    } catch {
+      return unavailable('the prompt packs could not be read');
+    }
+  }
+
+  async function packsCreateRoute(input: unknown): Promise<SettingsResponse<PromptPackCreateV1>> {
+    if (!isRecord(input)) return invalidRequest('prompts/packs/create requires an object body');
+    const packId = input['packId'];
+    if (packId === 'platform') return forbidden('the platform prompt pack cannot be created');
+    if (typeof packId !== 'string' || !isPromptPackId(packId))
+      return invalidRequest('packId must be a pack id', packId);
+    const created = await createDiskPromptPack(promptsRoot, packId);
+    if (created.status === 'exists') return invalid('the prompt pack already exists');
+    if (created.status === 'unavailable') return unavailable(created.reason);
+    return { status: 'ready', value: { packId, extends: 'platform', templates: [], strings: {}, tools: {} } };
+  }
+
+  async function templateReadRoute(input: unknown): Promise<SettingsResponse<PromptTemplateReadV1>> {
+    if (!isRecord(input)) return invalidRequest('prompts/templates/read requires an object body');
+    const read = await packForRoute(input['packId']);
+    if (read.kind === 'rejected') return read.response;
+    const templateId = input['templateId'];
+    if (typeof templateId !== 'string' || !Object.hasOwn(TEMPLATE_SLOTS, templateId))
+      return notFound('the prompt template does not exist');
+    const text = read.read.value.templates[templateId];
+    const origin = read.read.value.origins[templateId];
+    if (text === undefined || origin === undefined) return notFound('the prompt template does not exist');
+    return { status: 'ready', value: {
+      templateId, version: origin.version, fromPack: origin.packId, text,
+      slots: TEMPLATE_SLOTS[templateId]!, mentionsTools: [...origin.mentionsTools],
+    } };
+  }
+
+  async function templateSaveRoute(input: unknown): Promise<SettingsResponse<PromptTemplateReadV1>> {
+    if (!isRecord(input)) return invalidRequest('prompts/templates/save requires an object body');
+    const packId = input['packId'];
+    // The platform pack is forbidden before anything else.
+    if (packId === 'platform') return forbidden('the platform prompt pack cannot be saved');
+    if (typeof packId !== 'string' || !isPromptPackId(packId))
+      return notFound('the prompt pack does not exist');
+    const templateId = input['templateId'];
+    if (typeof templateId !== 'string' || !Object.hasOwn(TEMPLATE_SLOTS, templateId))
+      return notFound('the prompt template does not exist');
+    const expectedVersion = input['expectedVersion'];
+    if (typeof expectedVersion !== 'number' || !Number.isSafeInteger(expectedVersion))
+      return invalidRequest('expectedVersion must be an integer', packId, templateId);
+    const read = await packChainForSave(packId);
+    if (read.kind === 'rejected') return read.response;
+    // The effective version is the nearest declaration's, so an old body that
+    // breaks the pack does not block saving a valid replacement. The conflict
+    // is compared before the request text is checked.
+    const effectiveVersion = effectiveTemplateVersionOf(read.read.chain, templateId);
+    if (effectiveVersion === null) {
+      return invalidProblems('the prompt pack is invalid', read.read.problems.length > 0 ? read.read.problems
+        : [{ packId, templateId, reason: 'the template has no declared version' }]);
+    }
+    if (expectedVersion !== effectiveVersion)
+      return revisionConflict('the prompt template version changed since it was read');
+    const text = input['text'];
+    if (typeof text !== 'string') return invalidRequest('text must be a string', packId, templateId);
+    const mentionsTools = input['mentionsTools'];
+    if (!Array.isArray(mentionsTools) || !mentionsTools.every(value => typeof value === 'string'))
+      return invalidRequest('mentionsTools must be a string array', packId, templateId);
+    const newVersion = effectiveVersion + 1;
+    const file = `templates/${templateId}@${String(newVersion)}.txt`;
+    const chain = proposeTemplateChain(read.read.chain, templateId, file, newVersion, mentionsTools, text);
+    const validation = resolvePromptPackV1(chain);
+    if (validation.status === 'rejected')
+      return invalidProblems('the prompt pack would be invalid', validation.problems);
+    const directory = read.read.directory;
+    if (directory === null) return unavailable('the prompt pack has no directory');
+    const target = await preparePackWriteTarget(promptsRoot, directory, file, text);
+    if (target.status === 'rejected')
+      return invalidProblems('the prompt pack has an unsafe save target',
+        [{ packId: packId, templateId, reason: target.reason }]);
+    if (target.status === 'collision') return unavailable(target.reason);
+    try {
+      if (target.status === 'create') await writeFile(target.target, text, { encoding: 'utf8', flag: 'wx' });
+      await replacePackManifest(directory, chain);
+    } catch {
+      return unavailable('the prompt pack could not be written');
+    }
+    return { status: 'ready', value: {
+      templateId, version: newVersion, fromPack: packId, text,
+      slots: TEMPLATE_SLOTS[templateId]!, mentionsTools: [...mentionsTools],
+    } };
+  }
+
+  async function toolReadRoute(input: unknown): Promise<SettingsResponse<PromptToolReadV1>> {
+    if (!isRecord(input)) return invalidRequest('prompts/tools/read requires an object body');
+    const read = await packForRoute(input['packId']);
+    if (read.kind === 'rejected') return read.response;
+    const toolName = input['toolName'];
+    if (typeof toolName !== 'string' || !Object.hasOwn(read.read.value.tools, toolName))
+      return notFound('the prompt tool does not exist');
+    const entry = read.read.value.tools[toolName];
+    const fromPack = read.read.value.toolOrigins[toolName];
+    if (entry === undefined || fromPack === undefined) return notFound('the prompt tool does not exist');
+    return { status: 'ready', value: { toolName, fromPack, entry, digest: promptToolTextDigest(entry) } };
+  }
+
+  async function toolSaveRoute(input: unknown): Promise<SettingsResponse<PromptToolReadV1>> {
+    if (!isRecord(input)) return invalidRequest('prompts/tools/save requires an object body');
+    const packId = input['packId'];
+    if (packId === 'platform') return forbidden('the platform prompt pack cannot be saved');
+    if (typeof packId !== 'string' || !isPromptPackId(packId))
+      return notFound('the prompt pack does not exist');
+    const toolName = input['toolName'];
+    if (typeof toolName !== 'string') return notFound('the prompt tool does not exist');
+    const read = await packChainForSave(packId);
+    if (read.kind === 'rejected') return read.response;
+    // The same save order as a template: the nearest declaration's digest
+    // decides the conflict before the request entry is checked.
+    const effective = effectiveToolTextOf(read.read.chain, toolName);
+    if (effective.status === 'missing') return notFound('the prompt tool does not exist');
+    if (effective.status === 'unreadable') {
+      return invalidProblems('the prompt pack is invalid', read.read.problems.length > 0 ? read.read.problems
+        : [{ packId, templateId: null, toolName, reason: `tool "${toolName}" text could not be read` }]);
+    }
+    const expectedDigest = input['expectedDigest'];
+    if (typeof expectedDigest !== 'string')
+      return invalidRequest('expectedDigest must be a string', packId, null, toolName);
+    if (expectedDigest !== promptToolTextDigest(effective.entry))
+      return revisionConflict('the prompt tool text changed since it was read');
+    const rawEntry = input['entry'];
+    if (!isRecord(rawEntry)) return invalidRequest('entry must be an object', packId, null, toolName);
+    const description = rawEntry['description'];
+    const parameters = rawEntry['parameters'];
+    if (typeof description !== 'string' || !isRecord(parameters)
+      || !Object.values(parameters).every(value => typeof value === 'string')) {
+      return invalidRequest('entry must carry a description and named string parameters', packId, null, toolName);
+    }
+    const entry: ToolTextV1 = {
+      description,
+      parameters: { ...parameters as Record<string, string> },
+    };
+    const digest = promptToolTextDigest(entry);
+    const body = canonicalToolTextBody(entry);
+    const file = `tools/${toolName}@${digest.slice(0, 16)}.json`;
+    const chain = proposeToolChain(read.read.chain, toolName, file, body);
+    const validation = resolvePromptPackV1(chain);
+    if (validation.status === 'rejected')
+      return invalidProblems('the prompt pack would be invalid', validation.problems);
+    const directory = read.read.directory;
+    if (directory === null) return unavailable('the prompt pack has no directory');
+    const target = await preparePackWriteTarget(promptsRoot, directory, file, body);
+    if (target.status === 'rejected')
+      return invalidProblems('the prompt pack has an unsafe save target',
+        [{ packId: packId, templateId: null, toolName, reason: target.reason }]);
+    if (target.status === 'collision') return unavailable(target.reason);
+    try {
+      if (target.status === 'create') await writeFile(target.target, body, { encoding: 'utf8', flag: 'wx' });
+      await replacePackManifest(directory, chain);
+    } catch {
+      return unavailable('the prompt pack could not be written');
+    }
+    return { status: 'ready', value: { toolName, fromPack: packId, entry, digest } };
+  }
+
   const dispatch = async (route: SettingsRoute, input: unknown): Promise<SettingsResponse<unknown>> => {
     switch (route) {
       case 'snapshot': return { status: 'ready', value: snapshotOf() };
@@ -890,6 +1208,12 @@ export async function createHostSettings(
       case 'checks/approve': return await approveChecksRoute(input);
       case 'automation/save': return await saveAutomationRoute(input);
       case 'resource-caps/save': return await saveResourceCapsRoute(input);
+      case 'prompts/packs/list': return await packsListRoute();
+      case 'prompts/packs/create': return await packsCreateRoute(input);
+      case 'prompts/templates/read': return await templateReadRoute(input);
+      case 'prompts/templates/save': return await templateSaveRoute(input);
+      case 'prompts/tools/read': return await toolReadRoute(input);
+      case 'prompts/tools/save': return await toolSaveRoute(input);
     }
   };
 

@@ -433,7 +433,9 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
     status: 'absent', roleId: 'builder', reason: 'The fixture uses the trusted legacy template',
   };
   const taskInput: AssemblerFactsFixture['taskInput'] = { execution, role, configuration,
-    permissions: { policyRevision: 'legacy-template', tools: ['read'], writeScope: [] } };
+    permissions: { policyRevision: 'legacy-template', tools: ['read'], writeScope: [] },
+    toolNames: ['read'],
+    history: { callKind: 'work', hasCompletedCursor: false } };
   // S3-context-assembler.test.ts:551 supplies the same Query seam; retain a
   // complete typed record here so no cast masks a missing field in the double.
   const queryJobRef: QueryPreparationFacts['record']['job']['ref'] = {
@@ -468,7 +470,9 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
     goal, workspace, focusPlan: null, initiator: actor,
   };
   const queryInput: AssemblerFactsFixture['queryInput'] = { facts: queryFacts, role, configuration,
-    permissions: { tools: ['read'], writeScope: [] }, question };
+    permissions: { tools: ['read'], writeScope: [] }, question,
+    toolNames: ['read'],
+    history: { callKind: 'query', hasCompletedCursor: false } };
   let graphReads = 0;
   const assembler = createContextAssembler({
     executions: { readExecution: async () => forbidden() },
@@ -516,6 +520,8 @@ const PROMPT_SET: PromptSetV1 = {
   strings: { digest: sha256Hex('{}'), ref: promptTextRef('{}') },
   base: { templateId: 'base', version: 1, digest: sha256Hex(''), ref: promptTextRef('') },
   skills: [],
+  toolNames: ['read'],
+  tools: [],
 };
 
 /** WF01/WF02. workflow.ts:425-507 validates ctx/base but reads no owner before
@@ -541,7 +547,8 @@ export async function startRefusalWorkflow(
     permissions: f.taskInput.permissions, budget: f.taskInput.execution.run.budget,
     selectedTaskInputs: assembled.value.selectedTaskInputs,
     materialBasis: null, materialAccessRefs: [], additionalMaterialRefs: [],
-    deliveryRefs: [], sourceRefs: [], contextAssembly: assembled.value.binding, promptSet: PROMPT_SET,
+    deliveryRefs: [], sourceRefs: [], contextAssembly: assembled.value.binding,
+    takesSessionHistory: assembled.value.takesSessionHistory, promptSet: PROMPT_SET,
     ...(assembled.value.sessionBasis === undefined ? {} : { sessionBasis: assembled.value.sessionBasis }),
     input: inputText, inputDigest: sha256Hex(inputText),
   };

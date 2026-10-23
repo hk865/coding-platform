@@ -198,11 +198,15 @@ async function startHost(actor: { kind: 'human' | 'system'; id: string }, scope:
     // the production path and keep it, so the next Host reads a live pid.
     await acquireHostInstanceLease({ directory, now: () => B2_AT });
   }
+  // PC-2 ruling 2: `<settings>/prompts` must not be under the workspace root.
+  const settingsDirectory = await mkdtemp(join(tmpdir(), 's2b-35-settings-'));
+  temporary.push(settingsDirectory);
   const host = await createLocalWorkbenchHost({
     storage: { kind: 'sqlite', directory },
     actor,
     publicDir: await placeholderPublicDirectory(),
     now: () => B2_AT,
+    settings: { settingsDirectory },
     workspaces: [{ scope, name: 'S2B-35 host', root: directory, workspaceRevision: 1, readPrefixes: ['.'] }],
   });
   const address = await host.listen(0);

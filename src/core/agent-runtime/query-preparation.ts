@@ -27,8 +27,12 @@ import { WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
 import type { ContextAssembler } from './context-assembler.js';
 import { createContextAssembler } from './context-assembler.js';
 import { queryPreparedSectionOrder } from './context-rendering.js';
+import { finalToolNamesOf, BUILTIN_TOOL_NAMES, RUNTIME_TOOL_NAMES } from './tool-group-assembly.js';
+import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
+import type { ContextQueryHistoryInputV1 } from './context-types.js';
 import {
-  resolvePromptPack, selectPromptSkills, storePromptTexts, trackPromptTexts, type PromptPartsV1,
+  promptDeclarationProblem, promptRenderProblem, resolvePromptPack, selectPromptSkills,
+  storePromptTexts, trackPromptTexts, type PromptPartsV1,
 } from './prompt-set-texts.js';
 import type {
   PrepareQueryExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies,
@@ -247,13 +251,83 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       if (focusPlan !== null) {
         sourceRefs.push({ kind: 'plan-revision', refId: focusPlan.ref.planId, revision: String(focusPlan.planRevision) });
       }
-      const planningGuide = tracked.texts.templates['initial-planning-answer'];
-      if (execution.kind === 'initial_coordination' && planningGuide === undefined) {
-        return rejected('invalid', 'the resolved prompt pack has no initial-planning-answer template');
+      // The final tool list is computed once here and frozen as
+      // `PromptSetV1.toolNames`. Query builds only the graph group and the
+      // read-only command; every other coordination family fails closed.
+      const builtinTools = projected.permissions.tools.filter(tool => BUILTIN_TOOL_NAMES.has(tool));
+      const readonlyRequested = projected.permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
+      // The whole-workspace read gate is the real Host authorization, exactly
+      // as the Work preparation reads it. A failed or denied authorization
+      // leaves the read-only command out of the frozen list; the start reads
+      // the same fact again and its comparison answers `forbidden` if it moved.
+      let readonlyAllowsWholeWorkspace = false;
+      if (readonlyRequested) {
+        try {
+          const authorized = await deps.workspaceHost.authorize(owned, {
+            aggregateType: 'Workspace', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId,
+          });
+          readonlyAllowsWholeWorkspace = authorized.status === 'ready' && authorized.value.allowsRead('.');
+        } catch { readonlyAllowsWholeWorkspace = false; }
       }
-      const question = execution.kind === 'initial_coordination'
-        ? `${record.job.job.intent.question}\n\n${planningGuide ?? ''}`
-        : record.job.job.intent.question;
+      const finalNames = finalToolNamesOf({
+        callKind: 'query',
+        // Preparation freezes only the names this Runtime knows; the start
+        // checks the real selection and rejects an unknown name first.
+        selected: projected.permissions.tools.filter(tool => RUNTIME_TOOL_NAMES.has(tool)),
+        readOnly: true,
+        reviewPhase: null,
+        hasBlockedCommands: false,
+        reviewSource: false,
+        frozenSource: builtinTools.includes('read'),
+        materialTools: false,
+        // Preparation freezes the CAPABILITY set; the actual owner wiring is
+        // re-checked by the same function at start. Query builds only the graph
+        // group and the read-only command; every other family fails closed there.
+        owners: {
+          mailbox: true, decisionMessages: true, applicationReceipt: true,
+          sessions: true, plans: true, graph: true, notes: true,
+          unknownCallReviews: true, commandRerunRequests: true,
+        },
+        readonlyCommand: {
+          requested: readonlyRequested,
+          access: configured.value.readonlyCommandAccess,
+          allowsReadWholeWorkspace: readonlyAllowsWholeWorkspace,
+        },
+      });
+      if (!finalNames.ok) return finalNames.rejection;
+      const toolNames = finalNames.value;
+      // The initial-planning guide belongs only to an initial coordination
+      // Query: render it now with the frozen final tool list so its tool blocks
+      // expand like every other template, then append it to the question. A
+      // semantic Query never reads it, so an unused declaration stays unused.
+      let question = record.job.job.intent.question;
+      if (execution.kind === 'initial_coordination') {
+        if (tracked.texts.templates['initial-planning-answer'] === undefined) {
+          return rejected('invalid', 'the resolved prompt pack has no initial-planning-answer template');
+        }
+        let planningGuide: string;
+        try {
+          planningGuide = renderTemplate(tracked.texts, 'initial-planning-answer', {}, toolNames).text;
+        } catch (error) {
+          const renderProblem = promptRenderProblem(error, pack.manifest.packId);
+          if (renderProblem !== null) return renderProblem;
+          throw error;
+        }
+        question = `${question}\n\n${planningGuide}`;
+      }
+      // Ruling 14: the formal isolated derivation decides the Kernel session
+      // basis; without one preparation passes the stored cursor's presence (C7).
+      const consultationDerivation = execution.kind === 'semantic_query' ? execution.consultation?.derivation : undefined;
+      const sessionBasis = consultationDerivation === undefined ? undefined : {
+        sourceKernelSessionId: consultationDerivation.sourceKernel.kernelSessionId,
+        throughPosition: consultationDerivation.throughPosition,
+      };
+      let history: ContextQueryHistoryInputV1;
+      if (sessionBasis !== undefined) {
+        history = { callKind: 'query', sessionBasis };
+      } else {
+        history = { callKind: 'query', hasCompletedCursor: record.session.historyCursor !== null };
+      }
       // Slice 3 C7 (§4.2/§4.3): the ONE assembler owns the Query text and its
       // binding. A non-ready assembler result is propagated unchanged; its
       // rejection (in particular a failing `graphContext` read) is passed back as-is.
@@ -265,38 +339,54 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
           configuration: configured.value,
           permissions: projected.permissions,
           question,
-          texts: tracked.texts,
+          texts: tracked.texts, toolNames, history,
         });
       } catch (error) {
+        const renderProblem = promptRenderProblem(error, pack.manifest.packId);
+        if (renderProblem !== null) return renderProblem;
         return rejected('unavailable', `the Query context assembly failed: ${messageOf(error)}`);
       }
       if (assembled.status !== 'ready') return assembled;
       const input = assembled.value.input;
       const contextAssembly = assembled.value.binding;
       const inputDigest = sha256Hex(input);
-      // The query's formal isolated derivation decides the Kernel session basis.
-      const consultationDerivation = execution.kind === 'semantic_query' ? execution.consultation?.derivation : undefined;
-      const sessionBasis = consultationDerivation === undefined ? undefined : {
-        sourceKernelSessionId: consultationDerivation.sourceKernel.kernelSessionId,
-        throughPosition: consultationDerivation.throughPosition,
-      };
+      const takesSessionHistory = assembled.value.takesSessionHistory;
       // Ruling 14 items 4-6: base + Host instruction, Skills from the same pack,
       // then the frozen texts and the set.
-      const baseText = renderTemplate(tracked.texts, 'base', {}, []).text;
+      let baseText: string;
+      try {
+        baseText = renderTemplate(tracked.texts, 'base', {}, toolNames).text;
+      } catch (error) {
+        const renderProblem = promptRenderProblem(error, pack.manifest.packId);
+        if (renderProblem !== null) return renderProblem;
+        throw error;
+      }
       const mergedBase = baseText + (configured.value.systemInstruction ? '\n\n' + configured.value.systemInstruction : '');
       const selectedSkills = await selectPromptSkills(configured.value.skills, tracked.texts, {
-        signal, ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }),
+        signal, ...(deps.kernel === undefined ? {} : { kernel: deps.kernel }), toolNames,
       });
       if (selectedSkills.status !== 'ready') return selectedSkills;
       if (signal.aborted) return rejected('cancelled', 'the Query preparation was cancelled while the Skills were selected');
+      const usedTemplates = tracked.usedTemplates();
+      const declarationProblem = promptDeclarationProblem(pack, usedTemplates, toolNames);
+      if (declarationProblem !== null) return declarationProblem;
+      const toolParts = toolNames.flatMap((name) => {
+        const entry = pack.tools[name];
+        if (entry === undefined) return [];
+        const packId = pack.toolOrigins[name];
+        if (packId === undefined) throw new Error(`the resolved prompt pack has no origin for tool ${name}`);
+        return [{ name, packId, entry }];
+      });
       const promptParts: PromptPartsV1 = {
         selection: { modelId: selection.modelId, provider: boundProvider, model: boundModel,
           packId: pack.manifest.packId, reasoningReplay: selection.reasoningReplay },
-        sectionOrder: queryPreparedSectionOrder(),
-        templates: tracked.usedTemplates().map(id => promptTemplatePart(pack, id)),
+        sectionOrder: queryPreparedSectionOrder(tracked.texts),
+        templates: usedTemplates.map(id => promptTemplatePart(pack, id)),
         strings: pack.strings,
         base: { templateId: 'base', version: promptTemplateVersion(pack, 'base'), text: mergedBase },
         skills: selectedSkills.value,
+        toolNames: [...toolNames],
+        tools: toolParts,
       };
       const storedPrompts = await storePromptTexts(deps.bodies, { kind: 'run', owner: queryRunRef }, promptParts, deps.now());
       if (storedPrompts.status !== 'ready') {
@@ -322,6 +412,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         sourceRefs,
         ...(sessionBasis === undefined ? {} : { sessionBasis }),
         contextAssembly,
+        takesSessionHistory,
         promptSet: storedPrompts.value,
         input,
         inputDigest,

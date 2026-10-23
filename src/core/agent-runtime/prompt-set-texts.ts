@@ -15,12 +15,19 @@ import type { SourceRefV1 } from '../../contracts/dispatch.js';
 import type { BaseSystemPromptInput } from '../../../vendor/coding-agent/dist/public-api.js';
 import { FileSkillLoader as KernelFileSkillLoader } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { CoreRejection } from '../../contracts/core/results.js';
-import { checkPromptBody, PROMPT_TEXT_CONTENT_TYPE, type PromptSetV1, type PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
+import {
+  canonicalToolTextBody, checkPromptBody, PROMPT_TEXT_CONTENT_TYPE, PROMPT_TOOL_TEXT_CONTENT_TYPE,
+  type PromptSetV1, type PromptTextsV1,
+} from '../../contracts/prompts/prompt-set.js';
+import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
+import { renderSkillTextV1 } from './context-rendering.js';
 import { PLATFORM_SKILLS } from '../../contracts/prompts/platform-skills.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import {
   createPlatformPromptPackSource, type PromptPackSourcePort, type ResolvedPromptPackV1,
 } from '../../contracts/prompts/prompt-pack.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
+import { PromptRenderError } from '../../contracts/prompts/render-template.js';
 import type { MaterialOrigin, RawArtifactStorePort } from '../record-store/body-ports.js';
 import { PLATFORM_SKILL_RESOURCE_ROOT } from './platform-skill-root.js';
 
@@ -56,6 +63,10 @@ export type PromptPartsV1 = {
   strings: Readonly<Record<string, string>>;
   base: { templateId: string; version: number; text: string };
   skills: readonly PromptSkillV1[];
+  /** Ruling 16: the frozen final tool list, never sorted. */
+  toolNames: string[];
+  /** Ruling 19: the RAW tool entries; `storePromptTexts` builds each canonical body. */
+  tools: readonly { name: string; packId: string; entry: ToolTextV1 }[];
 };
 
 /** The texts a preparation reads, plus the ids read through the resolved pack. */
@@ -87,6 +98,37 @@ export function trackPromptTexts(pack: { templates: Readonly<Record<string, stri
 
 function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
+}
+
+/**
+ * A render-time pack/template failure is `invalid`, naming the
+ * pack, the template and the reason. Any other error keeps its own handling.
+ */
+export function promptRenderProblem(error: unknown, packId: string): CoreRejection | null {
+  if (!(error instanceof PromptRenderError)) return null;
+  const slot = error.slot === null ? '' : ` slot "${error.slot}"`;
+  return rejected('invalid', `the prompt pack ${packId} template "${error.templateId}"${slot}: ${error.message}`);
+}
+
+/**
+ * Every tool a USED template declares must be in the frozen
+ * final list. Only used templates are checked; the declaration comes from the
+ * supplying manifest entry (`origins[templateId].mentionsTools`).
+ */
+export function promptDeclarationProblem(
+  pack: ResolvedPromptPackV1,
+  usedTemplates: readonly string[],
+  toolNames: readonly string[],
+): CoreRejection | null {
+  const frozen = new Set(toolNames);
+  for (const templateId of usedTemplates) {
+    for (const name of pack.origins[templateId]?.mentionsTools ?? []) {
+      if (!frozen.has(name)) {
+        return rejected('invalid', `the prompt pack ${pack.manifest.packId} template "${templateId}" declares tool "${name}", which is not in the frozen tool list`);
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -138,38 +180,48 @@ export async function storePromptTexts(
   // The body store wants provenance: the pack and the base template version
   // name where these texts came from. §4's signature has no sourceRefs argument.
   const sourceRefs: SourceRefV1[] = [{ kind: 'governance', refId: parts.selection.packId, revision: String(parts.base.version) }];
-  const store = async (text: string): Promise<StoredText | CoreRejection> => {
-    const hit = byText.get(text);
+  const store = async (text: string, contentType: string): Promise<StoredText | CoreRejection> => {
+    const cacheKey = `${contentType}|${text}`;
+    const hit = byText.get(cacheKey);
     if (hit !== undefined) return hit;
     let put;
     try {
-      put = await bodies.put({ body: text, contentType: PROMPT_TEXT_CONTENT_TYPE, sourceRefs, origin, requestedAt });
+      put = await bodies.put({ body: text, contentType, sourceRefs, origin, requestedAt });
     } catch (error) {
       return rejected('unavailable', `storing a prompt text failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (put.status !== 'ready') return rejected('unavailable', `storing a prompt text failed: ${put.reason}`);
     const stored = { digest: sha256Hex(text), ref: put.value.ref };
-    byText.set(text, stored);
+    byText.set(cacheKey, stored);
     return stored;
   };
 
   const templates: PromptSetV1['templates'] = [];
   for (const template of parts.templates) {
-    const stored = await store(template.text);
+    const stored = await store(template.text, PROMPT_TEXT_CONTENT_TYPE);
     if ('status' in stored) return stored;
     templates.push({ id: template.id, version: template.version, packId: template.packId,
       digest: stored.digest, ref: stored.ref });
   }
-  const strings = await store(JSON.stringify(parts.strings));
+  const strings = await store(JSON.stringify(parts.strings), PROMPT_TEXT_CONTENT_TYPE);
   if ('status' in strings) return strings;
-  const base = await store(parts.base.text);
+  const base = await store(parts.base.text, PROMPT_TEXT_CONTENT_TYPE);
   if ('status' in base) return base;
   const skills: PromptSetV1['skills'] = [];
   for (const skill of parts.skills) {
-    const stored = await store(skill.content);
+    const stored = await store(skill.content, PROMPT_TEXT_CONTENT_TYPE);
     if ('status' in stored) return stored;
     skills.push({ schemaVersion: 1, id: skill.id, title: skill.title, kind: skill.kind,
       priority: skill.priority, source: skill.source, digest: stored.digest, ref: stored.ref });
+  }
+  // Ruling 19: the canonical body of every raw tool entry this preparation
+  // froze. A failed store is `unavailable`, like every other body.
+  const tools: PromptSetV1['tools'] = [];
+  for (const tool of [...parts.tools].sort((left, right) => left.name.localeCompare(right.name, 'en'))) {
+    const body = canonicalToolTextBody(tool.entry);
+    const stored = await store(body, PROMPT_TOOL_TEXT_CONTENT_TYPE);
+    if ('status' in stored) return stored;
+    tools.push({ name: tool.name, packId: tool.packId, digest: stored.digest, ref: stored.ref });
   }
   return {
     status: 'ready',
@@ -182,6 +234,8 @@ export async function storePromptTexts(
       base: { templateId: parts.base.templateId, version: parts.base.version,
         digest: base.digest, ref: base.ref },
       skills,
+      toolNames: [...parts.toolNames],
+      tools,
     },
   };
 }
@@ -195,9 +249,15 @@ export async function storePromptTexts(
 export async function readPromptTexts(
   bodies: Pick<RawArtifactStorePort, 'read'>,
   set: PromptSetV1,
-): Promise<{ status: 'ready'; value: PromptTextsV1 & { base: BaseSystemPromptInput; skills: PromptSkillV1[] } } | CoreRejection> {
+): Promise<{ status: 'ready'; value: PromptTextsV1 & { base: BaseSystemPromptInput; skills: PromptSkillV1[];
+  tools: Readonly<Record<string, ToolTextV1>> } } | CoreRejection> {
   const cache = new Map<string, string>();
-  const read = async (ref: ArtifactRef, what: string): Promise<string | CoreRejection> => {
+  const read = async (ref: ArtifactRef, what: string,
+    contentType: string = PROMPT_TEXT_CONTENT_TYPE): Promise<string | CoreRejection> => {
+    // The ref's own type is verified before the cache: two refs may share a
+    // digest and size while naming another type, and a cache hit must not skip
+    // the expected-type check that a fresh read's body verification applies.
+    if (ref.contentType !== contentType) return rejected('invalid', `${what} does not match its reference`);
     const key = `${ref.contentType}|${ref.digest}|${String(ref.sizeBytes)}`;
     const hit = cache.get(key);
     if (hit !== undefined) return hit;
@@ -208,7 +268,7 @@ export async function readPromptTexts(
       return rejected('unavailable', `reading ${what} failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (stored.status !== 'ready') return rejected('unavailable', `${what} is not readable`);
-    const body = checkPromptBody(ref, stored.value, PROMPT_TEXT_CONTENT_TYPE);
+    const body = checkPromptBody(ref, stored.value, contentType);
     if (body === null) return rejected('invalid', `${what} does not match its reference`);
     cache.set(key, body);
     return body;
@@ -234,6 +294,22 @@ export async function readPromptTexts(
     skills.push({ schemaVersion: 1, id: skill.id, title: skill.title, kind: skill.kind,
       priority: skill.priority, source: skill.source, content });
   }
+  // Ruling 20: the frozen tool texts are read and verified exactly like the
+  // other bodies; a body that is not a tool text is `invalid`.
+  const tools: Record<string, ToolTextV1> = {};
+  for (const tool of set.tools) {
+    const body = await read(tool.ref, `the frozen tool text ${tool.name}`, PROMPT_TOOL_TEXT_CONTENT_TYPE);
+    if (typeof body !== 'string') return body;
+    let parsed: unknown;
+    try { parsed = JSON.parse(body); } catch { return rejected('invalid', `the frozen tool text ${tool.name} is not valid JSON`); }
+    if (!isRecord(parsed) || typeof parsed['description'] !== 'string'
+      || !isRecord(parsed['parameters'])
+      || !Object.values(parsed['parameters']).every(value => typeof value === 'string')) {
+      return rejected('invalid', `the frozen tool text ${tool.name} is not a tool text`);
+    }
+    tools[tool.name] = { description: parsed['description'],
+      parameters: { ...(parsed['parameters'] as Record<string, string>) } };
+  }
   return {
     status: 'ready',
     value: {
@@ -241,6 +317,7 @@ export async function readPromptTexts(
       strings,
       base: { templateId: set.base.templateId, version: set.base.version, text: baseText },
       skills,
+      tools,
     },
   };
 }
@@ -262,7 +339,12 @@ export type PromptSkillSelectionV1 = { resourceRoot: string; enabledIds: string[
 export async function selectPromptSkills(
   selection: PromptSkillSelectionV1 | undefined,
   texts: PromptTextsV1,
-  options: { signal: AbortSignal; kernel?: typeof import('../../../vendor/coding-agent/dist/public-api.js') },
+  options: {
+    signal: AbortSignal;
+    kernel?: typeof import('../../../vendor/coding-agent/dist/public-api.js');
+    /** Ruling 10/18: the frozen final tool list; absent renders every tool block. */
+    toolNames?: readonly string[];
+  },
 ): Promise<{ status: 'ready'; value: PromptSkillV1[] } | CoreRejection> {
   if (selection === undefined) selection = DEFAULT_SKILL_SELECTION;
   if (selection.enabledIds.length === 0) return { status: 'ready', value: [] };
@@ -275,8 +357,13 @@ export async function selectPromptSkills(
       const id = requestedId.trim();
       const entry = known.get(id);
       if (entry === undefined) return rejected('invalid', `the platform Skill ${id} is not available`);
-      const content = texts.templates[entry.templateId];
-      if (content === undefined) return rejected('invalid', `the prompt pack has no template ${entry.templateId} for Skill ${id}`);
+      if (texts.templates[entry.templateId] === undefined) {
+        return rejected('invalid', `the prompt pack has no template ${entry.templateId} for Skill ${id}`);
+      }
+      // Ruling 18: a Skill renders like `base`, through the renderer with the
+      // frozen final list and no slots.
+      const content = renderSkillTextV1(texts, entry.templateId,
+        options.toolNames ?? Object.keys(PLATFORM_PROMPT_PACK_V1.tools));
       skills.push({ schemaVersion: 1, id: entry.id, title: entry.title, kind: entry.kind,
         priority: entry.priority, content, source: `skill:${entry.id}@sha256:${sha256Hex(content)}` });
     }

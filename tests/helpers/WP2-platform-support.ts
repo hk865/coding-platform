@@ -60,6 +60,8 @@ type WP2PlatformOptions = {
   scriptedReplies?: readonly ScriptedReply[];
   beforeReply?: (request: import('../../vendor/coding-agent/dist/public-api.js').ModelRequest,
     index: number, signal: AbortSignal) => Promise<void>;
+  /** Whole-workspace Work grant; true overrides writeScope, without adding tools. */
+  writable?: boolean;
   writeScope?: string[];
   systemInstruction?: string | null;
   skillIds?: string[];
@@ -355,7 +357,8 @@ async function createWP2MemoryPlatform(options: WP2PlatformOptions): Promise<WP2
         model: { configuration: { revision: 'wp2-host-config@1', provider: 'deepseek', model: 'wp2-local-scripted', baseUrl: 'http://127.0.0.1' },
           client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'wp2-fixture-counter' }) } },
         budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 12, maxToolCalls: 16, timeoutMs: 30000, perResponseTokens: 512 },
-        tools: [...toolNames], writeScope: [...(options.writeScope ?? [])],
+        tools: [...toolNames], writeScope: [...(options.writable === true ? ['.'] : options.writeScope ?? [])],
+        ...(options.writable === true ? { shellWorkspaceAccess: 'all_except_denied' as const } : {}),
         ...(options.contextResidentBytes === undefined ? {} : { contextResidentBytes: options.contextResidentBytes }),
         hostTemplate: request.role.kind === 'legacy_template'
           ? { templateId: request.role.templateId, revision: request.role.templateRevision, digest: sha256Hex(systemInstruction ?? '') } : null,
@@ -557,7 +560,9 @@ export async function createWP2Platform(options: WP2PlatformOptions = {}): Promi
     schemaVersion: 1, platformDuty: duty, label: 'WP2 platform role', purpose: 'WP2_PLATFORM_DUTY_PIN',
     responsibility: ['human_decision_support'],
     requiredMaterials: [{ kind: 'contract', reason: 'Read the assigned Plan/Task' }],
-    optionalMaterials: [], permissions: { tools: [...toolNames], writeScope: 'none' },
+    optionalMaterials: [], permissions: {
+      tools: [...toolNames], writeScope: options.writable === true ? 'workspace' : 'none',
+    },
     budget: { source: 'task-budget', scope: 'assigned-task' },
     requiredOutputs: [{ kind: 'answer-with-sources', reason: 'Report the actual result' }],
     exit: { success: 'Report result', stop: 'Stop on missing permission', handoff: 'Keep references' },
@@ -731,7 +736,9 @@ export async function createWP2Platform(options: WP2PlatformOptions = {}): Promi
         model: { configuration: { revision: 'wp2-host-config@1', provider: 'deepseek', model: 'wp2-local-scripted', baseUrl: 'http://127.0.0.1' },
           client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'wp2-fixture-counter' }) } },
         budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 12, maxToolCalls: 16, timeoutMs: 30000, perResponseTokens: 512 },
-        tools: [...toolNames], writeScope: [...(options.writeScope ?? [])], hostTemplate: null,
+        tools: [...toolNames], writeScope: [...(options.writable === true ? ['.'] : options.writeScope ?? [])],
+        ...(options.writable === true ? { shellWorkspaceAccess: 'all_except_denied' as const } : {}),
+        hostTemplate: null,
         ...(options.contextResidentBytes === undefined ? {} : { contextResidentBytes: options.contextResidentBytes }),
         skills: { resourceRoot: C2_SKILL_ROOT, enabledIds: [...(options.skillIds ?? C2_SKILL_IDS)] },
         systemInstruction,

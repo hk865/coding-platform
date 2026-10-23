@@ -89,6 +89,7 @@ const OPTIONAL_BILLED = '\n\n' + ['## Footprint\nF', '## Note index\nN', '## Rem
 function workBinding(over: Partial<ContextAssemblyBindingV1> = {}): ContextAssemblyBindingV1 {
   return {
     schemaVersion: 1, formatVersion: 's3-context-v1', callKind: 'work', duty: 'executor',
+    sectionOrder: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs'],
     residentBudgetBytes: 4096, residentBytes: B(OPTIONAL_BILLED), totalBytes: B(BASE.text),
     sections: BASE.sections, sources: [], inputSelections: [], extensions: NO_EXTENSIONS,
     ...over,
@@ -159,21 +160,45 @@ describe('context-input ST01-ST15', () => {
     expect(problem).toMatchObject({ status: 'rejected', code: 'invalid' } satisfies Partial<CoreRejection>);
   });
 
-  it('ST08 rejects any line appended after the continuation brief', () => {
+  it('ST08 checks the non-tail continuation brief by its range and its single occurrence', () => {
     const brief = 'C3 continuation brief';
-    const text = `${BASE.text}\n\n${brief}\nextra`;
-    const continuationStart = B(`${BASE.text}\n\n`);
-    const sections = [...BASE.sections, {
-      name: 'continuation' as ContextSectionNameV1, startByte: continuationStart,
-      endByte: continuationStart + B(brief), omitted: 0,
-    }];
-    // `continuation` is a legal section only for `callKind: 'continuation'`; the
-    // brief itself is otherwise exact, and the sole break is the trailing `extra`.
-    const problem = contextAssemblyProblem({
-      binding: workBinding({ callKind: 'continuation', sections, totalBytes: B(text) }), text,
-      selectedTaskInputs: [], continuationSuffix: brief,
+    const parts: ContextPart[] = [
+      { name: 'role', text: '## Runtime context\nR' },
+      { name: 'goal', text: '## Goal\nG' },
+      { name: 'continuation', text: brief },
+      { name: 'task', text: '## Accepted task\nT' },
+    ];
+    const nonTail = layout(parts);
+    const order: ContextSectionNameV1[] = ['role', 'goal', 'continuation', 'task',
+      'footprint', 'notes', 'reminders', 'inputs'];
+    const binding = workBinding({
+      callKind: 'continuation', sectionOrder: order, sections: nonTail.sections, totalBytes: B(nonTail.text),
     });
-    expect(problem).toMatchObject({ status: 'rejected', code: 'invalid' } satisfies Partial<CoreRejection>);
+    // The brief sits before the task: no longer last, and still legal.
+    expect(contextAssemblyProblem({
+      binding, text: nonTail.text, selectedTaskInputs: [], continuationSuffix: brief,
+    })).toBeNull();
+
+    // The interval, sliced from the input, is no longer the rendered brief.
+    const shifted = nonTail.sections.map((section) => section.name === 'continuation'
+      ? { ...section, endByte: section.endByte! - 1 } : section);
+    expect(contextAssemblyProblem({
+      binding: workBinding({ ...binding, sections: shifted }), text: nonTail.text,
+      selectedTaskInputs: [], continuationSuffix: brief,
+    })).toMatchObject({
+      status: 'rejected', code: 'invalid',
+      reason: 'the continuation section interval must equal the rendered continuation brief',
+    } satisfies Partial<CoreRejection>);
+
+    // A second copy of the rendered brief makes the text non-unique.
+    const duplicated = `${nonTail.text}\n\n${brief}`;
+    expect(contextAssemblyProblem({
+      binding: workBinding({ ...binding, totalBytes: B(duplicated) }), text: duplicated,
+      selectedTaskInputs: [], continuationSuffix: brief,
+    })).toMatchObject({
+      status: 'rejected', code: 'invalid',
+      reason: 'the rendered continuation brief must occur exactly once in the input',
+    } satisfies Partial<CoreRejection>);
   });
 
   // ---------------------------------------------------------------------- //

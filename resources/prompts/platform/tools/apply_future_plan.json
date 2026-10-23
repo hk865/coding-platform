@@ -4,6 +4,8 @@
     "proposalRef": "Your own candidate_v2 proposal ref; the plan service refuses another Run/author candidate.",
     "expectedProposalRevision": "The exact revision of proposalRef, as read.",
     "expected": "The exact W1 version pins the caller saw; omit a pin rather than guessing a fresh revision.",
+    "expected[].ref": "One of the five W1 caller-visible refs: Project | Workspace | Goal | PlanRevision | PlanProposal.",
+    "expected[].revision": "The exact version the caller saw for `ref`; the plan service rejects a mismatch with the current record.",
     "acknowledgementRef": "The user answer message this adoption is attributed to, when the user answered a card for this candidate. Attribution only; the plan owner re-reads the formal answer and derives the decision source itself. Omit it when the adoption is not attributed to a user answer."
   }
 }

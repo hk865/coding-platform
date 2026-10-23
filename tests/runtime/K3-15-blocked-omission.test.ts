@@ -7,7 +7,7 @@
  * entries); no store, no state machine, no owner. All expected byte totals are
  * hand arithmetic from the literal strings, never `byteLength(render(...))`:
  *
- *   base brief                        1,504 bytes (31 lines: 1,474 + 30 joins)
+ *   base brief                        1,447 bytes (30 lines: 1,418 + 29 joins)
  *   padding steer line `sN`          40 + x bytes, plus 1 join per line
  *   `### 被拦的命令`                 19 bytes, plus 1 join
  *   the empty section line            0 bytes, plus 1 join
@@ -50,7 +50,7 @@ function blockedEntries() {
 /**
  * `n` unaccepted steers `s1..sn` with `xs` bytes of text each: every line is
  * `- 没有被 Kernel 接受的引导 sN：` (40 bytes) plus the text, and every line
- * adds one `\n` join. The padded brief is therefore `1,504 + Σ(41 + x)` bytes.
+ * adds one `\n` join. The padded brief is therefore `1,447 + Σ(41 + x)` bytes.
  */
 function padded(xs: readonly number[]): ContinuationBriefV1 {
   const brief = baseBrief();
@@ -74,13 +74,13 @@ function commandLines(text: string): string[] {
 
 describe('K3-15 (二) / B3 item 9: the blocked section is measured with its own note', () => {
   it('drops only the count line when the 16 command lines fit exactly at 16,384', () => {
-    // Padding 11,540 = 41 × 3 + (4,000 + 4,000 + 3,417); padded brief 13,044.
+    // Padding 11,597 = 41 × 3 + (4,000 + 4,000 + 3,474); padded brief 13,044.
     // The 16-line section is 18 lines (empty 0 + heading 19 + 3,303 + 18 joins)
     // = 3,340, so the brief is 13,044 + 3,340 = 16,384 exactly.
     // The count line plus its join is 80 bytes more (16,464), so only the count
     // line is removed: all 16 command lines stay and no command line is counted.
     const brief: ContinuationBriefV1 = {
-      ...padded([4_000, 4_000, 3_417]),
+      ...padded([4_000, 4_000, 3_474]),
       blockedCommands: blockedEntries(),
     };
     const text = render(brief);
@@ -94,12 +94,12 @@ describe('K3-15 (二) / B3 item 9: the blocked section is measured with its own 
   });
 
   it('keeps 15 command lines and counts exactly the one command line it removed', () => {
-    // Padding 11,600 = 41 × 3 + (4,000 + 4,000 + 3,477); padded brief 13,104.
+    // Padding 11,657 = 41 × 3 + (4,000 + 4,000 + 3,534); padded brief 13,104.
     // 16 lines without the count line: 13,104 + 3,340 = 16,444 > 16,384.
     // 15 lines are 17 lines (empty 0 + heading 19 + 3,096 + 17 joins) = 3,132;
     // with the 1-line note (67 + 1 join): 13,104 + 3,132 + 68 = 16,304.
     const brief: ContinuationBriefV1 = {
-      ...padded([4_000, 4_000, 3_477]),
+      ...padded([4_000, 4_000, 3_534]),
       blockedCommands: blockedEntries(),
     };
     const text = render(brief);
@@ -111,17 +111,17 @@ describe('K3-15 (二) / B3 item 9: the blocked section is measured with its own 
   });
 
   it('removes the whole section and counts all 16 command lines on a shortened body', () => {
-    // Padding 16,164 = 41 × 4 + 4 × 4,000; the full body is 17,668 bytes, so
+    // Padding 16,164 = 41 × 4 + 4 × 4,000; the full body is 17,611 bytes, so
     // even the section gone it is over. At the 1,000-unit cap each 4,000-byte
     // steer text becomes 1,000 bytes + the 18-byte `…（已截断）` marker, so the
-    // body is 1,504 + 4 × (41 + 1,018) = 5,740 and the 16-line note adds 69:
-    // 5,809 bytes.
+    // body is 1,447 + 4 × (41 + 1,018) = 5,683 and the 16-line note adds 69:
+    // 5,752 bytes.
     const brief: ContinuationBriefV1 = {
       ...padded([4_000, 4_000, 4_000, 4_000]),
       blockedCommands: blockedEntries(),
     };
     const text = render(brief);
-    expect(Buffer.byteLength(text, 'utf8')).toBe(5_809);
+    expect(Buffer.byteLength(text, 'utf8')).toBe(5_752);
     expect(text).not.toContain(HEADING);
     expect(text).not.toContain(`\n\n${HEADING}`);
     expect(text).toContain(NOTE_16);
@@ -129,14 +129,14 @@ describe('K3-15 (二) / B3 item 9: the blocked section is measured with its own 
   });
 
   it('drops the whole section first and leaves the other optional body at full length', () => {
-    // Padding 14,700 = 41 × 4 + (4,000 + 4,000 + 4,000 + 2,536); padded brief
+    // Padding 14,757 = 41 × 4 + (4,000 + 4,000 + 4,000 + 2,593); padded brief
     // 16,204. The section with one command line plus the 15-line note is
     // 16,204 + (empty 0 + heading 19 + line 206 + 3 joins = 228) + 69 = 16,501
     // > 16,384; with the whole section
     // gone the brief is 16,204 + (68 + 1 join for the 16-line note) = 16,273,
     // so every body text stays at its full 4,000 bytes (no `已截断`).
     const brief: ContinuationBriefV1 = {
-      ...padded([4_000, 4_000, 4_000, 2_536]),
+      ...padded([4_000, 4_000, 4_000, 2_593]),
       blockedCommands: blockedEntries(),
     };
     const text = render(brief);

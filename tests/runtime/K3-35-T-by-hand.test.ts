@@ -34,11 +34,11 @@
  *     + disposition 314 + targets 22 + not-listed 44 + blocked sentence 62)
  *     + the 5,120-byte method string (25 + 600x7 + 294, its 601 line breaks
  *     included) + the one optional conclusion 4,182 (#1 at the first text cap);
- *   the kept blocked section 41 (heading 19 + line 22); tail 357;
- *   joins 44 (45 rendered elements - 1; the method string holds its own 601
+ *   the kept blocked section 41 (heading 19 + line 22); tail 301;
+ *   joins 43 (44 rendered elements - 1; the method string holds its own 601
  *   line breaks inside the 5,120).
- *   110 + 2,211 + 9,913 + 41 + 357 + 44 = 12,676 bytes, 3,708 under 16,384.
- * T = 600 adds 88 (the Task id appears once, in the summary) = 12,764.
+ *   110 + 2,211 + 9,913 + 41 + 301 + 43 = 12,619 bytes, 3,765 under 16,384.
+ * T = 600 adds 88 (the Task id appears once, in the summary) = 12,707.
  *
  * The real one-item brief fits at the first text cap, so the blocked-command
  * section is KEPT and no omission note is rendered (the old 32-item 14,567 /
@@ -90,8 +90,11 @@ afterEach(() => { shellSeam.release(); });
 const TASK_512 = 't'.repeat(512);
 const TASK_600 = 't'.repeat(600);
 
-function suffixOf(input: string): string {
-  return input.slice(input.indexOf('## 接续说明'));
+/** The brief's own interval: it ends before the reminders section that now sits last. */
+function briefOf(input: string): string {
+  const start = input.indexOf('## 接续说明');
+  const reminders = input.indexOf('\n\n## Reminders', start);
+  return input.slice(start, reminders === -1 ? input.length : reminders);
 }
 
 describe.each(['memory', 'sqlite'] as const)('K3-35 (二) T = 512 through the public steps (%s)', (kind) => {
@@ -135,8 +138,8 @@ describe.each(['memory', 'sqlite'] as const)('K3-35 (二) T = 512 through the pu
     const prepared = await prepareWorstCase(facts);
     expect(prepared.result.status).toBe('ready');
     expect(prepared.input).not.toBeNull();
-    const suffix = suffixOf(prepared.input!);
-    expect(Buffer.byteLength(suffix, 'utf8')).toBe(12_676);
+    const suffix = briefOf(prepared.input!);
+    expect(Buffer.byteLength(suffix, 'utf8')).toBe(12_619);
     expect(Buffer.byteLength(suffix, 'utf8')).toBeLessThanOrEqual(16_384);
     expect(requiredReviewBlock(suffix)).toBe(K3_35_REQUIRED_REVIEW_BLOCK_ONE);
     // The one-item brief fits at the first text cap: the blocked command stays
@@ -167,9 +170,9 @@ describe.each(['memory', 'sqlite'] as const)('K3-35 (三) T = 600 through the sa
     const prepared = await prepareWorstCase(facts);
     expect(prepared.result.status).toBe('ready');
     if (prepared.result.status !== 'ready') throw new Error('unreachable');
-    const suffix = suffixOf(prepared.input!);
-    // 12,676 + (600 - 512) = 12,764: the Task id occurs once, in the summary.
-    expect(Buffer.byteLength(suffix, 'utf8')).toBe(12_764);
+    const suffix = briefOf(prepared.input!);
+    // 12,619 + (600 - 512) = 12,707: the Task id occurs once, in the summary.
+    expect(Buffer.byteLength(suffix, 'utf8')).toBe(12_707);
     expect(Buffer.byteLength(suffix, 'utf8')).toBeLessThanOrEqual(16_384);
     expect(requiredReviewBlock(suffix)).toBe(K3_35_REQUIRED_REVIEW_BLOCK_ONE);
     expect(suffix).toContain('### 被拦的命令');

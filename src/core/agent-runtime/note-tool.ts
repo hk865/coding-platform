@@ -25,6 +25,7 @@ import {
   recordNoteRequestOf, type RecordNoteArgs, type RecordNoteRequestV1,
 } from '../work-graph/model/note-contracts.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import {
   toolSchema as z,
   type ToolCall,
@@ -32,6 +33,9 @@ import {
   type ToolResult,
   type WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
+
+/** Typed view: the generated pack's literal `tools` object has no string index signature. */
+const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMPT_PACK_V1.tools;
 
 // K3 (decision 72, U1): the shared builder lives in WorkGraph/model so the owner
 // lookup can use it too; it stays exported here for the existing tool surface.
@@ -49,6 +53,8 @@ export type NoteToolsConfig = {
   check: Pick<NoteCheckPort, 'checkNotes'>;
   /** Trusted command identity: Kernel `ToolCall.callId` + bound Run/operation. */
   requestIdForCall: (call: Readonly<ToolCall>) => string;
+  /** The platform tools' model-facing texts; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
 };
 
 export type NoteToolsHandle = {
@@ -185,9 +191,9 @@ type WriteArgs = z.infer<typeof writeSchema>;
 type ReviewArgs = z.infer<typeof reviewSchema>;
 type WithdrawArgs = z.infer<typeof withdrawSchema>;
 
-const description = PLATFORM_PROMPT_PACK_V1.tools['record_note'].description;
-
 export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
+  const description = (config.texts?.['record_note']
+    ?? PLATFORM_TOOL_TEXTS['record_note']!).description;
   // Freeze the trusted scope/identity before returning the factory.
   const fixedProjectId = config.context.projectId;
   const fixedWorkspaceId = config.context.workspaceId;

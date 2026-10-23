@@ -24,6 +24,7 @@ import type { GraphNodeRefV1, TaskInputPageRequestV1 } from '../../contracts/gra
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../contracts/plan.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import { MEMORY_PAGE_DEFAULT, TEXT_SEARCH_MAX_TERMS } from '../work-graph/model/note-contracts.js';
 import type {
   MemoryConflictsRequest, MemoryFindRequest, MemoryHistoryRequest, MemoryLookupRequest,
@@ -43,6 +44,9 @@ import type {
 } from '../work-graph/model/graph-context-contracts.js';
 import type { GraphExecutionHistoryReadPort } from './execution-history-contracts.js';
 
+/** Typed view: the generated pack's literal `tools` object has no string index signature. */
+const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMPT_PACK_V1.tools;
+
 export const GRAPH_TOOL_NAMES = ['look_graph', 'find_graph'] as const;
 
 export type GraphToolsConfig = {
@@ -52,6 +56,8 @@ export type GraphToolsConfig = {
   /** Slice 4C L13: `platform.notes`' six reads for the `{ memory: ... }` branch.
    * Absent, a memory call fails closed before any note owner is reached. */
   notes?: NoteMemoryReadPort;
+  /** The platform tools' model-facing texts; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
 };
 
 type LookArgs =
@@ -324,15 +330,16 @@ const findMemorySchema = z.object({ memory: z.discriminatedUnion('op', [memoryFi
 const findSchema: z.ZodType = z.union([findGraphSchema, findMemorySchema]);
 const lookSchema: z.ZodType = z.union([lookGraphSchema, lookMemorySchema]);
 
-const descriptions = {
-  look_graph: PLATFORM_PROMPT_PACK_V1.tools.look_graph.description,
-  find_graph: PLATFORM_PROMPT_PACK_V1.tools.find_graph.description,
-} as const;
-
 export function createGraphTools(config: GraphToolsConfig): {
   names: readonly string[];
   create(workspace: WorkspaceSandbox): ToolDefinition[];
 } {
+  const textOf = (name: string): ToolTextV1 =>
+    config.texts?.[name] ?? PLATFORM_TOOL_TEXTS[name]!;
+  const descriptions = {
+    look_graph: textOf('look_graph').description,
+    find_graph: textOf('find_graph').description,
+  } as const;
   // Freeze the trusted scope/Goal before returning the factory: a caller that
   // mutates its config object afterwards can never retarget a handler.
   const fixedProjectId = config.context.projectId;

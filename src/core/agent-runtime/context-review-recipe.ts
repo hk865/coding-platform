@@ -5,7 +5,6 @@ import {
 } from '../../contracts/core/prepared-execution.js';
 import type { CoreRejection } from '../../contracts/core/results.js';
 import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
-import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { RunRef } from '../../contracts/dispatch.js';
 import type { UnknownCallReviewRef, UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
@@ -62,7 +61,8 @@ async function reviewCommandFacts(
 export async function assembleReviewForContext(
   deps: ContextAssemblerDependencies, ctx: CoreCallContext, record: TaskExecutionRecord,
   purpose: { reviewRef: UnknownCallReviewRef; phase: 'review' | 'proposal'; round: number },
-  texts: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1,
+  texts: PromptTextsV1,
+  toolNames: readonly string[],
 ): Promise<{ ok: true; review: UnknownCallReviewInputV1; text: string; sessionBasis: PreparedTaskManifestV1['sessionBasis'] | undefined }
   | { ok: false; rejection: CoreRejection }> {
   const owner = deps.unknownCallReviews;
@@ -117,5 +117,5 @@ export async function assembleReviewForContext(
   const structured = buildUnknownCallReviewInputV1({ review, reviewRef: purpose.reviewRef,
     phase: purpose.phase, round: purpose.round, commandFacts: commandFacts.value, fullChanges,
     targets, personText, annotations, platformTargets });
-  return { ok: true, review: structured, text: renderUnknownCallReviewZh(structured, texts), sessionBasis };
+  return { ok: true, review: structured, text: renderUnknownCallReviewZh(structured, texts, toolNames), sessionBasis };
 }

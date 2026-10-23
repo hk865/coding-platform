@@ -13,11 +13,11 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "ce1b6e5c5a7bf25f982d569db4b3cf20a2fbb767de198448a9d6d63b21383643"
+    "sha256": "9ae59b610765acf3490652948da331792a157a8602be6d24782e5c541033e528"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "25c399e0bd9983bbbd99d99c1d5613597218549dbb9a9a5485ede64119bc51ad"
+    "sha256": "4b50399bbd0dca5d04d9817d5abec65873989764fc5ff3b402651c4a5c19bee0"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
@@ -37,7 +37,11 @@
   },
   {
     "path": "resources/prompts/platform/templates/continuation-brief.txt",
-    "sha256": "7078cba04345071fa640fac3838ece49972385844719db572a000f2135e6fd5a"
+    "sha256": "e86eecf0aa9d49cf99feb66cad7f8461408299a05affdaaf83ffd142375f148f"
+  },
+  {
+    "path": "resources/prompts/platform/templates/stale-files-reminder.txt",
+    "sha256": "ba4470ebffa0346718d51b7499e963eb229a520f1388ea390b7ae2aa06fff386"
   },
   {
     "path": "resources/prompts/platform/templates/unknown-call-review.txt",
@@ -49,7 +53,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/work-input.txt",
-    "sha256": "9692b55ea1dfd41e55768b9d3db29e0a52ba7b8d0b87fd6bff5953b39eab5e12"
+    "sha256": "f3ebad58e28d7f5a2d8bc8831b7974b03057c0590982d23fc325be933f5aed7a"
   },
   {
     "path": "resources/prompts/platform/templates/query-planning-input.txt",
@@ -61,23 +65,23 @@
   },
   {
     "path": "resources/prompts/platform/templates/base.txt",
-    "sha256": "860d951d7f60787371922438b5935842c76ea90aa8a75fdf75d55297727f7cc2"
+    "sha256": "5a9fa326d215e82d8329a0ddce8ff2da29463430550dd8320695b760ef7f03b5"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-work.txt",
-    "sha256": "5e1feacc1aed9901b3a5c0fb5870ccb8642b6cb43e3b1ac28f9cb02f2ed4f95f"
+    "sha256": "e258bef4180c56177bcd6a083e5927e3e374cf1dcd50636cf74171bfd8abf053"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-secretary.txt",
-    "sha256": "a8644c9adebb22df4e920fc823ede079fc7caee44d959f84394546b63dffc8ee"
+    "sha256": "3842e7592faceea16b868ae8e364f261d93cfd859f00c00be8fc1809af8c4f84"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "3e9bf8beaed4064e7c992fefba9729d57a5317a01227976926029915dad3dc85"
+    "sha256": "99e51b8b684661c215258afe57e07d4bf40a44163a5d2e97208699465715c977"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",
-    "sha256": "e2384821311341bfd440a50cd4b68bc818126d3b8d0792f23e9357c619bae043"
+    "sha256": "dc0671546449950d91ab03fdfa7a8fa3858473a9cda84779e4c4eb3f5564f59f"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-reviewer.txt",
@@ -93,11 +97,11 @@
   },
   {
     "path": "resources/prompts/platform/tools/propose_future_plan.json",
-    "sha256": "7558605da4515a9cd4d2cad55efbf634ef8671eaa6def1a7643ddbf581670197"
+    "sha256": "0cc4c6f1faabcf562a3b2b71eb5a07a5f46b9d8f00b4b1d6595cdb083eb1a899"
   },
   {
     "path": "resources/prompts/platform/tools/apply_future_plan.json",
-    "sha256": "89d4a7728988cc5b22e8acb3620a27117f3bfdb5c4830ecf14ebf935ee85660d"
+    "sha256": "93d34c4663e70715fc2edb07d7028d160b820417b8e82a1f75c1d4fd9a24292a"
   },
   {
     "path": "resources/prompts/platform/tools/record_note.json",

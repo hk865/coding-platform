@@ -1,20 +1,31 @@
 /**
- * PC-1a — ruling 13: the frozen `PromptSetV1` shape, its strict decoder and the
- * one selection reader. Expected values are hand-written literals from spec §2
- * and ruling 13; nothing here reaches a store or a Host.
+ * PC-1a / PC-2 — ruling 13: the frozen `PromptSetV1` shape, its strict decoder
+ * and the one selection reader. Rulings 16 and 19 add the required `toolNames`
+ * (the Kernel's order, never sorted) and `tools` (sorted by name). Expected
+ * values are hand-written literals from spec §2 and rulings 13, 16 and 19;
+ * nothing here reaches a store or a Host.
  */
 import { describe, expect, it } from 'vitest';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import {
     PROMPT_TEXT_CONTENT_TYPE,
     PROMPT_TOOL_SPECS_CONTENT_TYPE,
+    canonicalToolTextBody,
     decodePromptSetV1,
     promptSelectionOf,
+    promptToolTextDigest,
 } from '../../src/contracts/prompts/prompt-set.js';
 
 const DIGEST_A = 'a'.repeat(64);
 const DIGEST_B = 'b'.repeat(64);
 const DIGEST_C = 'c'.repeat(64);
+/** sha256 of each canonical tool body, hand-computed with parameters sorted by `localeCompare(…, 'en')`:
+ *  edit `{"description":"Edit a file.","parameters":{"offset":"First line.","path":"File path."}}`,
+ *  read `{"description":"Read a file.","parameters":{}}` and shell
+ *  `{"description":"Run a command.","parameters":{}}`. The decoder checks the digest's shape only. */
+const TOOL_DIGEST_EDIT = '4616a93e2dc7479226a0275ccedde548a99e1caa8a618a2054eb55e343747136';
+const TOOL_DIGEST_READ = 'b6d6a45b98d8d6ed51ec23c52a5981eca555fa33a5b5d1a35f999ce8175a95cc';
+const TOOL_DIGEST_SHELL = 'ac7c29e1cbc3e69f6b211c69ab92dbb713d86087322764a2ec4c7ec5f700be8c';
 
 /** The smallest valid artifact reference: the decoder checks its own fields only. */
 const artifactRef = (digest: string) => ({
@@ -50,6 +61,14 @@ const VALID = {
         digest: DIGEST_C,
         ref: artifactRef(DIGEST_C),
     }],
+    /** Ruling 16's final order is the Kernel's, never sorted; read, edit, shell is not sorted. */
+    toolNames: ['read', 'edit', 'shell'],
+    /** Ruling 19: sorted by name with `localeCompare(…, 'en')`; edit, read, shell. */
+    tools: [
+        { name: 'edit', packId: 'platform', digest: TOOL_DIGEST_EDIT, ref: artifactRef(TOOL_DIGEST_EDIT) },
+        { name: 'read', packId: 'platform', digest: TOOL_DIGEST_READ, ref: artifactRef(TOOL_DIGEST_READ) },
+        { name: 'shell', packId: 'platform', digest: TOOL_DIGEST_SHELL, ref: artifactRef(TOOL_DIGEST_SHELL) },
+    ],
 };
 
 /**
@@ -74,12 +93,14 @@ function rejectionTable(): Array<{ name: string; value: unknown }> {
     const strings = (copy: Record<string, unknown>): Record<string, unknown> => record(copy['strings']);
     const base = (copy: Record<string, unknown>): Record<string, unknown> => record(copy['base']);
     const skill = (copy: Record<string, unknown>): Record<string, unknown> => element(copy['skills'], 0);
+    const tool = (copy: Record<string, unknown>, index = 0): Record<string, unknown> =>
+        element(copy['tools'], index);
 
     // Top level: every field missing and wrong-typed, plus an unknown key.
     const TOP_LEVEL_WRONG: Array<[string, unknown]> = [
         ['schemaVersion', 2], ['modelId', 42], ['provider', 42], ['model', 42], ['packId', 42],
         ['reasoningReplay', 'all'], ['sectionOrder', []], ['templates', {}], ['strings', []],
-        ['base', []], ['skills', {}],
+        ['base', []], ['skills', {}], ['toolNames', {}], ['tools', {}],
     ];
     for (const [field, wrong] of TOP_LEVEL_WRONG) {
         mutate(`top level: ${field} missing`, copy => { delete copy[field]; });
@@ -128,6 +149,38 @@ function rejectionTable(): Array<{ name: string; value: unknown }> {
     mutate('skills[]: unknown key', copy => { skill(copy)['unknown'] = 1; });
     mutate('skills: non-object entry', copy => { copy['skills'] = [42]; });
 
+    // toolNames: ruling 16's order is the Kernel's, never sorted; unique non-empty strings.
+    mutate('toolNames: empty element', copy => { copy['toolNames'] = ['read', '', 'edit']; });
+    mutate('toolNames: duplicate element', copy => { copy['toolNames'] = ['read', 'read']; });
+    mutate('toolNames: non-string element', copy => { copy['toolNames'] = ['read', 42]; });
+    mutate('toolNames: string instead of list', copy => { copy['toolNames'] = 'read'; });
+
+    // tools[]: ruling 19's strictly sorted whole entries with a digest and a ref.
+    const TOOL_WRONG: Array<[string, unknown]> = [
+        ['name', 42], ['packId', 42], ['digest', 42], ['ref', 'not-a-ref'],
+    ];
+    for (const [field, wrong] of TOOL_WRONG) {
+        mutate(`tools[]: ${field} missing`, copy => { delete tool(copy)[field]; });
+        mutate(`tools[]: ${field} wrong type`, copy => { tool(copy)[field] = wrong; });
+    }
+    mutate('tools[]: unknown key', copy => { tool(copy)['unknown'] = 1; });
+    mutate('tools[]: empty name', copy => { tool(copy)['name'] = ''; });
+    mutate('tools[]: empty packId', copy => { tool(copy)['packId'] = ''; });
+    mutate('tools: non-object entry', copy => { copy['tools'] = [42]; });
+    mutate('tools: duplicate name', copy => { tool(copy, 1)['name'] = 'edit'; });
+    mutate('tools: unsorted names', copy => {
+        const list = copy['tools'] as Record<string, unknown>[];
+        [list[0]!['name'], list[1]!['name']] = [list[1]!['name'], list[0]!['name']];
+    });
+    // `localeCompare(…, 'en')` puts 'apple' before 'Zebra' (case first); a
+    // code-unit comparison puts 'Zebra' first, so this order must be rejected.
+    mutate('tools: sorted by code unit, not localeCompare', copy => {
+        copy['tools'] = [
+            { name: 'Zebra', packId: 'platform', digest: DIGEST_A, ref: artifactRef(DIGEST_A) },
+            { name: 'apple', packId: 'platform', digest: DIGEST_B, ref: artifactRef(DIGEST_B) },
+        ];
+    });
+
     // sectionOrder: illegal call kind, section name and element shapes.
     mutate('sectionOrder: unknown call kind', copy => { record(copy['sectionOrder'])['not-a-call'] = ['role']; });
     mutate('sectionOrder: unknown section name', copy => { record(copy['sectionOrder'])['work'] = ['not-a-section']; });
@@ -141,6 +194,7 @@ function rejectionTable(): Array<{ name: string; value: unknown }> {
         ['strings.ref', copy => record(strings(copy)['ref'])],
         ['base.ref', copy => record(base(copy)['ref'])],
         ['skills[].ref', copy => record(skill(copy)['ref'])],
+        ['tools[].ref', copy => record(tool(copy)['ref'])],
     ];
     const REF_WRONG: Array<[string, unknown]> = [
         ['kind', 'blob'], ['contentType', 42], ['digest', 42], ['sizeBytes', '3'], ['source', 'workspace'],
@@ -173,6 +227,7 @@ function rejectionTable(): Array<{ name: string; value: unknown }> {
         ['strings.digest', strings],
         ['base.digest', base],
         ['skills[].digest', skill],
+        ['tools[].digest', copy => tool(copy)],
     ];
     for (const [label, digestAt] of DIGEST_SITES)
         for (const [why, digest] of BAD_DIGESTS)
@@ -183,7 +238,13 @@ function rejectionTable(): Array<{ name: string; value: unknown }> {
 
 describe('PromptSetV1 decode (ruling 13)', () => {
     it('accepts a complete set and returns the same value', () => {
-        expect(decodePromptSetV1(VALID)).toEqual(VALID);
+        const input = structuredClone(VALID);
+        const decoded = decodePromptSetV1(input);
+        expect(decoded).toEqual(VALID);
+        // Independent literals: a decoder that sorts the passed array in place
+        // would change both the returned list and the caller's own object.
+        expect(decoded!.toolNames).toEqual(['read', 'edit', 'shell']);
+        expect(input.toolNames).toEqual(['read', 'edit', 'shell']);
     });
 
     it('accepts an empty section order but rejects a set without it', () => {
@@ -243,7 +304,7 @@ describe('PromptSetV1 decode (ruling 13)', () => {
         })).toBeNull();
     });
 
-    it('rejects every malformed field of the set, templates, strings, base, Skills and every ArtifactRef source', () => {
+    it('rejects every malformed field of the set, tools, toolNames, templates, strings, base, Skills and every ArtifactRef source', () => {
         for (const row of rejectionTable()) expect(decodePromptSetV1(row.value), row.name).toBeNull();
     });
 
@@ -273,6 +334,21 @@ describe('promptSelectionOf (ruling 13)', () => {
     it('falls back to the revision, the platform pack and the current run', () => {
         expect(promptSelectionOf({ configuration: { revision: 'revision-fallback' } }))
             .toEqual({ modelId: 'revision-fallback', promptPack: 'platform', reasoningReplay: 'current_run' });
+    });
+});
+
+describe('canonicalToolTextBody (ruling 19)', () => {
+    it('sorts parameter keys by the English order and digests the exact body', () => {
+        // Inserted Zebra first. `localeCompare(…, 'en')` puts apple first; a
+        // code-unit sort would put Zebra first, so both orders differ.
+        const entry = {
+            description: 'List files.',
+            parameters: { Zebra: 'Animal.', apple: 'Fruit.' },
+        };
+        const body = '{"description":"List files.","parameters":{"apple":"Fruit.","Zebra":"Animal."}}';
+        expect(canonicalToolTextBody(entry)).toBe(body);
+        // sha256 of the literal body above, computed outside the production code.
+        expect(promptToolTextDigest(entry)).toBe('4c6f8b40431a75c9581888fb0359022e42aacf3f7a5a3d8487cb5d234eeb14fa');
     });
 });
 

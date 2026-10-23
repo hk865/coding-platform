@@ -36,10 +36,16 @@
 
 - 什么时候写：任务结束、返工、采用计划、归档（MVP B09）。把做对的约定、踩过的坑、定下的取舍和还没有答案的问题记下来。
 - 挂哪儿：先问“这个任务明天取消，这条还对吗？”——还成立就挂架构锚点（模块、接口、文件），只有依赖这个任务本身时才挂任务、阶段或目标。
+{{#tool:look_graph}}
+{{#tool:find_graph}}
 - 先查再写：用 `look_graph` 的 `lookup` 看锚点上已有的话题（`topics`），用 `find_graph` 的 `find` 找相近条目；能复用已有话题就复用，不另起一个写法。
+{{/tool:find_graph}}
+{{/tool:look_graph}}
 - 八种里选一种：`convention`（约定）、`pitfall`（坑）、`tradeoff`（取舍）、`open_question`（待解问题）、`preference`（偏好）、`decision`（决定）、`understanding`（当前理解）、`repair`（修补，只能暂存）。
 - 结论一句话；事实只给指针（`facts`），从不抄原文。
 - `open_question` 由点它的 `decision` 用 `replaces` 收掉。
 - 写后读回执里的 `check`（L22），按它报的问题撤下或重写。
 - 只有 `currentEligible: true` 的条目才是现行结论（§11.3）。
+{{#tool:record_note}}
 - 你用 `record_note` 的 `write` 和 `withdraw`，只动自己的注记；`review` 不属于你。
+{{/tool:record_note}}

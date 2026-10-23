@@ -30,11 +30,14 @@ import {
   notImplementedExtensions, optionalRowsFromExtensions, rolePayload, taskPayload,
 } from './context-fact-text.js';
 import {
-  CONTEXT_FORMAT_VERSION, renderContext, workContextPrelude,
+  CONTEXT_FORMAT_VERSION, renderContext, sectionOrderFor, workContextPrelude,
 } from './context-rendering.js';
+import { takesSessionHistoryOf } from './context-history-facts.js';
 import { assembleReviewForContext } from './context-review-recipe.js';
 import { canonical, messageOf, rejected, requirementIdOf, sortedSources } from './context-support.js';
-import type { AssembledContextV1, ContextAssemblerDependencies, OptionalRow } from './context-types.js';
+import type {
+  AssembledContextV1, ContextAssemblerDependencies, ContextWorkHistoryInputV1, OptionalRow,
+} from './context-types.js';
 import type { ResolvedRuntimeConfiguration } from './execution-contracts.js';
 
 /** One fixed string of the resolved pack; a missing key is a pack bug. */
@@ -54,6 +57,10 @@ export async function assembleWorkContext(
     taskReviews?: readonly UnknownCallReviewV1[];
     /** The resolved pack (ruling 14); absent keeps the generated pack. */
     texts?: PromptTextsV1;
+    /** The frozen `PromptSetV1.toolNames` (ruling 10/16). */
+    toolNames: readonly string[];
+    /** Ruling 14 C6: the real completed boundary Q read once at preparation. */
+    history: ContextWorkHistoryInputV1;
   },
 ): Promise<ReadResult<AssembledContextV1>> {
   const texts = input.texts ?? PLATFORM_PROMPT_PACK_V1;
@@ -251,27 +258,40 @@ export async function assembleWorkContext(
     // Slice 1 N7 (§2.7): the anomaly section is budgeted; when even the mandatory content cannot fit the
     // 16 KiB brief the preparation is refused `capacity`, never rendered truncated or thrown out of the port.
     try {
-      continuationSuffix = renderContinuationBriefZh(continuationBrief, continuationBriefDigest(continuationBrief), texts);
+      continuationSuffix = renderContinuationBriefZh(
+        continuationBrief, continuationBriefDigest(continuationBrief), texts, input.toolNames);
     } catch (error) {
       if (error instanceof ContinuationBriefCapacityError) return rejected('capacity', error.message);
       throw error;
     }
   }
 
-  // K3 L13: a review-purpose Run renders the review instruction as the
-  // trailing section and carries it structurally; its history source is the
-  // original Run (L12), never a TaskRequeue.
+  // K3 L13: a review-purpose Run renders the review instruction as its own
+  // `unknown_call_review` section in the frozen order and carries it
+  // structurally; its history source is the original Run (L12), never a
+  // TaskRequeue.
   const reviewPurpose = run?.purpose?.kind === 'unknown_call_review' ? run.purpose : undefined;
   if (reviewPurpose !== undefined) {
-    const assembledReview = await assembleReviewForContext(deps, ctx, execution, reviewPurpose, texts);
+    const assembledReview = await assembleReviewForContext(
+      deps, ctx, execution, reviewPurpose, texts, input.toolNames);
     if (!assembledReview.ok) return assembledReview.rejection;
-    // R1: the review text is its OWN trailing section, never the continuation
-    // section; review and continuation are mutually exclusive.
+    // R1: the review text is its own `unknown_call_review` section in the frozen
+    // order, never the continuation section; review and continuation are
+    // mutually exclusive.
     reviewSuffix = assembledReview.text;
     unknownCallReview = assembledReview.review;
     sessionBasis = assembledReview.sessionBasis;
   }
 
+  // Ruling 14: the ONE pure mode rule decides from the seed fixed above and the
+  // Session's stored cursor; the recipe never reads a Kernel boundary.
+  const takesSessionHistory = takesSessionHistoryOf({
+    callKind: 'work',
+    sessionBasis,
+    hasCompletedCursor: input.history.hasCompletedCursor,
+  });
+  const callKind = continuationSuffix === null ? 'work' : 'continuation';
+  const sectionOrder = sectionOrderFor(callKind, 'work-input', texts);
   const rendered = renderContext({
     prelude: workContextPrelude(texts),
     required: { role: roleSection, goal: goalSection, task: taskSection },
@@ -281,6 +301,9 @@ export async function assembleWorkContext(
     continuationSuffix,
     reviewSuffix,
     residentBudgetBytes,
+    sectionOrder,
+    toolNames: input.toolNames,
+    takesSessionHistory,
     texts,
   });
 
@@ -311,7 +334,8 @@ export async function assembleWorkContext(
   const binding: ContextAssemblyBindingV1 = {
     schemaVersion: 1,
     formatVersion: CONTEXT_FORMAT_VERSION,
-    callKind: continuationSuffix === null ? 'work' : 'continuation',
+    callKind,
+    sectionOrder,
     duty,
     residentBudgetBytes,
     residentBytes: rendered.residentBytes,
@@ -321,12 +345,11 @@ export async function assembleWorkContext(
     inputSelections: [...inputSelections],
     extensions: annotations(extensions),
   };
-  const reviewSectionStart = unknownCallReview === undefined ? null
-    : rendered.sections.find(section => section.name === 'unknown_call_review')?.startByte ?? null;
   return {
     status: 'ready',
     value: { input: rendered.input, binding, continuationBrief, sessionBasis, selectedTaskInputs,
       ...(anomalyAnchorRefs === null ? {} : { anomalyAnchorRefs }),
-      ...(unknownCallReview === undefined ? {} : { unknownCallReview, reviewSectionStart }) },
+      ...(unknownCallReview === undefined ? {} : { unknownCallReview }),
+      takesSessionHistory, renderMaterial: rendered.material },
   };
 }

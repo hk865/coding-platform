@@ -27,7 +27,7 @@ import type { ResourceCapSource } from '../../vendor/coding-agent/dist/public-ap
 import { totalmem } from 'node:os';
 import { MIB, defaultResourceCapSettings } from '../contracts/resource-caps.js';
 import { mkdirSync } from 'node:fs';
-import { realpath, stat } from 'node:fs/promises';
+import { mkdir, realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { canonicalJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
@@ -92,6 +92,7 @@ import {
   type WorkbenchRuntimeProviderDependencies,
 } from './runtime-configuration.js';
 import { createWorkbenchServer, type WorkbenchAddress, type WorkbenchServer } from './server.js';
+import { createDiskPromptPackSource, isPathWithin } from './prompt-packs.js';
 
 /** One explicitly readable workspace. `root`, `workspaceRevision` and
  * `readPrefixes` are trusted startup facts, never request input. */
@@ -246,6 +247,26 @@ function validateWorkspaces(workspaces: WorkbenchWorkspaceConfig[], allowEmpty: 
   }
 }
 
+/** create the one prompt directory and take its real path. */
+async function preparePromptsDirectory(settingsDirectory: string): Promise<string> {
+  const directory = join(settingsDirectory, 'prompts');
+  await mkdir(directory, { recursive: true });
+  return await realpath(directory);
+}
+
+/** A configured/restored root is compared by real path. A root whose real path
+ * cannot be taken cannot be proved outside the prompt directory, so startup
+ * fails instead of admitting it unchecked. */
+async function assertRootOutsidePrompts(root: string, promptsRoot: string): Promise<void> {
+  let realRoot: string;
+  try { realRoot = await realpath(root); }
+  catch {
+    throw new Error(`the workspace root ${root} could not be resolved against the prompt directory ${promptsRoot}`);
+  }
+  if (isPathWithin(realRoot, promptsRoot))
+    throw new Error(`the workspace root ${realRoot} covers the prompt directory ${promptsRoot}`);
+}
+
 /** Deterministic permission generation derived from the isolated scope and the
  * exact read prefixes. It is NOT the workspaceRevision and NOT a refresh count. */
 function permissionRevision(actor: WorkbenchActor, workspace: WorkbenchWorkspaceConfig): string {
@@ -329,7 +350,15 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const settingsDirectory = options.settings?.settingsDirectory
     ?? (storage.kind === 'sqlite' ? join(storage.directory, 'host-settings') : undefined);
   const settingsEnabled = settingsDirectory !== undefined;
+  // The prompt directory exists before the platform is built,
+  // because the disk pack source roots there. It is a sibling of the workspace
+  // roots by rule, never a subtree of one.
+  const promptsRoot = settingsDirectory === undefined
+    ? undefined : await preparePromptsDirectory(settingsDirectory);
   validateWorkspaces(workspaces, settingsEnabled);
+  if (promptsRoot !== undefined) {
+    for (const workspace of workspaces) await assertRootOutsidePrompts(workspace.root, promptsRoot);
+  }
   const architectureSource = options.architectureSource === undefined
     ? undefined
     : { provider: options.architectureSource.provider, configPath: options.architectureSource.configPath };
@@ -394,8 +423,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const startupCatalogOptions = new Map<string, {
     provider: string;
     options: Record<string, JsonValue>;
-    promptPack?: string;
-    reasoningReplay?: 'current_run' | 'none';
   }>();
   const providerSecretName = (model: WorkbenchModelConfiguration): string =>
     model.secretEnvironmentVariable ?? providerRegistry.get(model.provider).secretEnvironmentVariable;
@@ -528,6 +555,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       sourcePolicyFor,
       resourceCaps,
       operatorActor: actor,
+      ...(promptsRoot === undefined ? {} : { promptPacks: createDiskPromptPackSource(promptsRoot) }),
       // L8: the sink exists before the driver; its calls are ignored until then.
       onArchitectureCaptureTrigger: event => { architectureCaptureTrigger?.(event); },
     });
@@ -686,8 +714,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       model: model.model,
       ...(model.baseUrl === undefined || model.baseUrl.length === 0 ? {} : { baseUrl: model.baseUrl }),
       ...(Object.keys(options).length === 0 ? {} : { options }),
-      ...(restored === undefined || restored.promptPack === undefined ? {} : { promptPack: restored.promptPack }),
-      ...(restored === undefined || restored.reasoningReplay === undefined ? {} : { reasoningReplay: restored.reasoningReplay }),
+      // Ruling 7: the stored model is the only source of these two; a save that
+      // omitted them already cleared them, so the startup catalog never wins.
+      ...(model.promptPack === undefined ? {} : { promptPack: model.promptPack }),
+      ...(model.reasoningReplay === undefined ? {} : { reasoningReplay: model.reasoningReplay }),
       secretEnvironmentVariable: variable,
     };
   }
@@ -824,14 +854,14 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       startupCatalogOptions.set(id, {
         provider,
         options: structuredClone(binding.model.options ?? {}),
-        ...(binding.model.promptPack === undefined ? {} : { promptPack: binding.model.promptPack }),
-        ...(binding.model.reasoningReplay === undefined ? {} : { reasoningReplay: binding.model.reasoningReplay }),
       });
       if (!modelsById.has(id)) {
         modelsById.set(id, {
           id, label: `${provider} ${binding.model.model}`, provider, model: binding.model.model,
           ...(baseUrl === undefined ? {} : { baseUrl }),
           secretEnvironmentVariable,
+          ...(binding.model.promptPack === undefined ? {} : { promptPack: binding.model.promptPack }),
+          ...(binding.model.reasoningReplay === undefined ? {} : { reasoningReplay: binding.model.reasoningReplay }),
           ...(binding.model.options?.['thinking'] === 'enabled' || binding.model.options?.['thinking'] === 'disabled'
             ? { thinking: binding.model.options['thinking'] } : {}),
           ...(binding.model.options?.['reasoningEffort'] === 'low' || binding.model.options?.['reasoningEffort'] === 'high' || binding.model.options?.['reasoningEffort'] === 'max'
@@ -893,6 +923,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       canonical = resolved;
     } catch {
       return { status: 'rejected', code: 'not_found', reason: 'the requested directory does not exist or is not a directory' };
+    }
+    // a new root may not equal or cover the prompt directory;
+    // this runs before the existing-root shortcut and any registration.
+    if (promptsRoot !== undefined && isPathWithin(canonical, promptsRoot)) {
+      return { status: 'rejected', code: 'invalid',
+        reason: `the workspace root ${canonical} would cover the prompt directory ${promptsRoot}` };
     }
     const requestedProjectId = request.projectId;
     const isRestore = request.workspaceId !== undefined;
@@ -1039,6 +1075,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const hostSettings: HostSettingsPort | undefined = settingsEnabled
     ? await createHostSettings({
       settingsDirectory: settingsDirectory as string,
+      ...(promptsRoot === undefined ? {} : {
+        promptsRoot,
+        assertWorkspaceRoot: async (root: string) => {
+          await assertRootOutsidePrompts(root, promptsRoot as string);
+        },
+      }),
       models: [
         ...settingsCatalog.models,
         ...((options.settings?.models ?? []).map(model => structuredClone(model))),

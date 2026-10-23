@@ -19,6 +19,8 @@
  * nothing without the instance lease.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
@@ -41,12 +43,21 @@ const at = (offsetDays: number): string => new Date(T0 + offsetDays * DAY).toISO
 
 let fixture: S2BActivityFixture | null = null;
 let host: Awaited<ReturnType<typeof createLocalWorkbenchHost>> | null = null;
+/** PC-2 ruling 2: the prompt directory is `<settings>/prompts`, so the settings
+ * directory must not live under the workspace root; only that path changes. */
+const settingsDirectories: string[] = [];
+async function isolatedSettingsDirectory(): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), 's2b-backfill-settings-'));
+  settingsDirectories.push(directory);
+  return directory;
+}
 let secondary: Awaited<ReturnType<S2BActivityFixture['b2']['base']['reopenService']>> | null = null;
 
 afterEach(async () => {
   await host?.close().catch(() => undefined);
   await secondary?.close().catch(() => undefined);
   await fixture?.close().catch(() => undefined);
+  await Promise.all(settingsDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
   host = null; secondary = null; fixture = null;
 });
 
@@ -80,6 +91,7 @@ describe('S2B Group B — Host backfill wiring (BE3)', () => {
       workspaces: [{ scope, name: 'S2B backfill host', root: directory, workspaceRevision: 1, readPrefixes: ['.'] }],
       kernelStores: { entries: [{ adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',
         workspace: scope, databasePath: join(directory, 'kernel.sqlite') }] },
+      settings: { settingsDirectory: await isolatedSettingsDirectory() },
       now: () => now,
     });
     secondary = await f.b2.base.reopenService();
@@ -120,6 +132,7 @@ describe('S2B Group B — Host backfill wiring (BE3)', () => {
       workspaces: [{ scope, name: 'S2B backfill host', root: directory, workspaceRevision: 1, readPrefixes: ['.'] }],
       kernelStores: { entries: [{ adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',
         workspace: scope, databasePath: join(directory, 'kernel.sqlite') }] },
+      settings: { settingsDirectory: await isolatedSettingsDirectory() },
       now: () => now,
     });
     const reread = await reads.readRunActivities(f.ctx, { runRefs: [r2] });
@@ -144,6 +157,7 @@ describe('S2B Group B — Host backfill wiring (BE3)', () => {
       workspaces: [{ scope, name: 'S2B no-lease host', root: directory, workspaceRevision: 1, readPrefixes: ['.'] }],
       kernelStores: { entries: [{ adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',
         workspace: scope, databasePath: join(directory, 'kernel.sqlite') }] },
+      settings: { settingsDirectory: await isolatedSettingsDirectory() },
       now: () => at(0),
     });
     expect(host.reconcile.lease).toBe('held_by_other');

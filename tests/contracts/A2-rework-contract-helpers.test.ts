@@ -384,7 +384,7 @@ describe('compareSourceCheckpoints (C3)', () => {
 
 describe('renderContinuationBriefZh (C3, §6.1 (e))', () => {
   const bytes = (text: string): number => new TextEncoder().encode(text).length;
-  const fixedBlock = ['### 继续之前', '- 文件可能已经变化，编辑前先重新读取。',
+  const fixedBlock = ['### 继续之前',
     '- “结果未知”的工具调用可能已经产生副作用，重做之前先核实当前状态。',
     '- “没有执行”的工具调用没有产生结果，需要时重新发起。',
     '- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。'].join('\n');
@@ -397,7 +397,8 @@ describe('renderContinuationBriefZh (C3, §6.1 (e))', () => {
     const lines = text.split('\n');
     expect(lines[1]).toBe(continuationBriefMarker(digest));
     expect(text.endsWith(fixedBlock)).toBe(true);
-    expect(text).toContain('文件可能已经变化，编辑前先重新读取');
+    // PC-2 ruling 15: the brief no longer carries the stale-files sentence.
+    expect(text).not.toContain('文件可能已经变化');
     expect(bytes(text)).toBeLessThanOrEqual(CONTINUATION_BRIEF_LIMITS.renderedBytes);
     // Pure: the same brief renders the same text; only the marker follows the digest.
     expect(renderContinuationBriefZh(JSON.parse(JSON.stringify(value)) as ContinuationBriefV1, digest)).toBe(text);

@@ -94,10 +94,21 @@ describe('K3-35 (一) the owner review round is reachable and ends through the R
     // The single process item reached the real review render unchanged.
     expect(manifest.unknownCallReview?.items).toHaveLength(1);
     expect(manifest.unknownCallReview?.items[0]?.alias).toBe(1);
-    // F-063: the real manifest input and the review render are joined by the
-    // one blank line (two newlines); the render is the record's own section.
-    const reviewRender = renderUnknownCallReviewZh(manifest.unknownCallReview!);
-    expect(manifest.input.endsWith(`\n\n${reviewRender}`)).toBe(true);
+    // F-063: the real manifest input carries the review render at the binding's
+    // own byte range; PC-2 ruling 9 moved the reminders after it, so it is no
+    // longer the last section.
+    const reviewRender = renderUnknownCallReviewZh(
+      manifest.unknownCallReview!, undefined, manifest.promptSet.toolNames);
+    const reviewSection = manifest.contextAssembly.sections
+      .find(section => section.name === 'unknown_call_review');
+    expect(reviewSection?.startByte).toEqual(expect.any(Number));
+    expect(reviewSection?.endByte).toEqual(expect.any(Number));
+    const inputBytes = Buffer.from(manifest.input, 'utf8');
+    // The review instruction is not last, but the two LF before its range are
+    // still the blank-line separator the old assertion protected.
+    expect(reviewSection!.startByte!).toBeGreaterThanOrEqual(2);
+    expect(inputBytes.subarray(reviewSection!.startByte! - 2, reviewSection!.endByte!).toString('utf8'))
+      .toBe(`\n\n${reviewRender}`);
 
     const settled = round.settled;
     if (settled === null) throw new Error('the round must be settled');

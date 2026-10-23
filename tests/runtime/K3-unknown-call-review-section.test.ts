@@ -2,9 +2,9 @@
  * K3 R1/D1 (L10, L13): the `unknown_call_review` context section.
  *
  * A review-purpose Run is a Work Run: `callKind` stays `'work'`, the review
- * instruction is its own last section, present exactly when the caller supplies
- * the rendered `reviewSuffix`. Query and ordinary Work bindings are unchanged
- * (the new input field defaults to null).
+ * instruction is its own section, present exactly when the caller supplies
+ * the rendered `reviewSuffix` at the binding's byte range. Query and ordinary
+ * Work bindings are unchanged (the new input field defaults to null).
  */
 import { describe, expect, it } from 'vitest';
 import type {
@@ -53,6 +53,7 @@ function workBinding(over: Partial<ContextAssemblyBindingV1> = {}): ContextAssem
   const base = layout(BASE);
   return {
     schemaVersion: 1, formatVersion: 's3-context-v1', callKind: 'work', duty: 'executor',
+    sectionOrder: ['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'unknown_call_review'],
     residentBudgetBytes: 4096, residentBytes: 0, totalBytes: B(base.text),
     sections: base.sections, sources: [], inputSelections: [], extensions: NO_EXTENSIONS,
     ...over,
@@ -60,7 +61,7 @@ function workBinding(over: Partial<ContextAssemblyBindingV1> = {}): ContextAssem
 }
 
 describe('K3-R1 unknown_call_review section', () => {
-  it('K3-R1-1 accepts a work binding whose last section is the rendered review instruction', () => {
+  it('K3-R1-1 accepts a work binding whose review section is the rendered instruction', () => {
     const withReview = layout([...BASE, REVIEW_PART]);
     const binding = workBinding({
       sections: withReview.sections, totalBytes: B(withReview.text),
@@ -119,14 +120,41 @@ describe('K3-R1 unknown_call_review section', () => {
     })).toBeNull();
   });
 
-  it('K3-R1-7 leaves the continuation brief check unchanged', () => {
+  it('K3-R1-7 checks a non-tail continuation brief by its binding range', () => {
     const brief = 'C3 continuation brief';
-    const withBrief = layout([...BASE, { name: 'continuation', text: brief }]);
+    const parts: Part[] = [
+      { name: 'role', text: BASE[0]!.text },
+      { name: 'goal', text: BASE[1]!.text },
+      { name: 'continuation', text: brief },
+      { name: 'task', text: BASE[2]!.text },
+    ];
+    const withBrief = layout(parts);
     const binding = workBinding({
-      callKind: 'continuation', sections: withBrief.sections, totalBytes: B(withBrief.text),
+      callKind: 'continuation',
+      sectionOrder: ['role', 'goal', 'continuation', 'task', 'footprint', 'notes', 'reminders', 'inputs'],
+      sections: withBrief.sections, totalBytes: B(withBrief.text),
     });
     expect(contextAssemblyProblem({
       binding, text: withBrief.text, selectedTaskInputs: [], continuationSuffix: brief,
+    })).toBeNull();
+  });
+
+  it('K3-R1-8 accepts the review instruction before a later reminders section', () => {
+    const parts: Part[] = [
+      { name: 'role', text: BASE[0]!.text }, { name: 'goal', text: BASE[1]!.text },
+      { name: 'task', text: BASE[2]!.text }, { name: 'footprint', text: BASE[3]!.text },
+      { name: 'notes', text: BASE[4]!.text }, { name: 'inputs', text: BASE[6]!.text },
+      REVIEW_PART, { name: 'reminders', text: BASE[5]!.text },
+    ];
+    const withReview = layout(parts);
+    const binding = workBinding({
+      sectionOrder: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs',
+        'unknown_call_review', 'reminders'],
+      sections: withReview.sections, totalBytes: B(withReview.text),
+    });
+    expect(contextAssemblyProblem({
+      binding, text: withReview.text, selectedTaskInputs: [], continuationSuffix: null,
+      reviewSuffix: REVIEW_SUFFIX,
     })).toBeNull();
   });
 });

@@ -231,6 +231,7 @@ const BASE_SECTIONS: ContextAssemblyBindingV1['sections'] = (() => {
 const REVIEW_SECTION_START = Buffer.byteLength(BASE_INPUT, 'utf8');
 const CONTEXT_ASSEMBLY: ContextAssemblyBindingV1 = {
   schemaVersion: 1, formatVersion: 's3-context-v1', callKind: 'review', duty: 'executor',
+  sectionOrder: ['role', 'goal', 'task', 'inputs', 'unknown_call_review'],
   residentBudgetBytes: 16_384,
   // `totalBytes`/the review end are replaced on every measure, as production does.
   residentBytes: 0, totalBytes: REVIEW_SECTION_START,
@@ -261,6 +262,8 @@ const PROMPT_SET: PromptSetV1 = {
   strings: { digest: sha256Hex('{}'), ref: promptTextRef('{}') },
   base: { templateId: 'base', version: 1, digest: sha256Hex(''), ref: promptTextRef('') },
   skills: [],
+  toolNames: [],
+  tools: [],
 };
 
 /** The production manifest build (`execution-preparation.ts` ~505-548). */
@@ -280,7 +283,8 @@ function manifestFor(review: UnknownCallReviewInputV1, inputText: string): Prepa
     selectedTaskInputs: [{ requirementId: 'k335-pure-requirement', ref: CAPTURE_REF }],
     materialBasis: { planRef: PLAN_REF, workspaceRevision: 3, sourceDigest: sha256Hex('k335-pure-source') },
     materialAccessRefs: [], additionalMaterialRefs: [], deliveryRefs: [], sourceRefs: SOURCE_REFS,
-    contextAssembly: assembly, promptSet: PROMPT_SET, continuationBrief: CONTINUATION_BRIEF,
+    contextAssembly: assembly, takesSessionHistory: false, promptSet: PROMPT_SET,
+    continuationBrief: CONTINUATION_BRIEF,
     sessionBasis: { sourceKernelSessionId: 'k335-pure-source-kernel', throughPosition: 4 },
     workspaceBaseline: { status: 'captured', ref: BASELINE_REF, digest: BASELINE_REF.digest },
     unknownCallReview: review,
@@ -411,7 +415,7 @@ describe('K3-35 (一) pure 32-item renderer/codec extreme', () => {
       'continuationBrief', 'deliveryRefs', 'hostConfigurationRevision', 'hostTemplate', 'input',
       'inputDigest', 'kind', 'materialAccessRefs', 'materialBasis', 'permissions', 'promptSet', 'role',
       'roleBinding', 'schemaVersion', 'selectedTaskInputs', 'sessionBasis', 'sessionRole',
-      'sourceRefs', 'unknownCallReview', 'workspaceBaseline', 'workspaceSnapshot',
+      'sourceRefs', 'takesSessionHistory', 'unknownCallReview', 'workspaceBaseline', 'workspaceSnapshot',
     ].sort());
     expect(measured.input).toBe(BASE_INPUT + rendered);
     expect(measured.inputDigest).toBe(sha256Hex(measured.input));

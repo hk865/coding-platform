@@ -23,6 +23,7 @@ import type {
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import { runObservedModel } from './observed-model-run.js';
 import { readPromptTexts } from './prompt-set-texts.js';
+import { sessionHistoryDecision } from './context-history-facts.js';
 import { promptSelectionOf, type PromptSetV1 } from '../../contracts/prompts/prompt-set.js';
 import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../../contracts/review-admission.js';
 import { createControlOnlyInputSupply, createMailboxInputSupply, type InputSupply } from './execution-inputs.js';
@@ -35,7 +36,7 @@ import { loadPreparedManifest, snapshotRuntimeConfiguration } from './execution-
 import { createRuntimeSourceCaptureFactory } from './source-capture-access.js';
 import { registerReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import {
-  BUILTIN_TOOL_NAMES, createReviewToolGroup, createRerunToolGroup,
+  BUILTIN_TOOL_NAMES, createReviewToolGroup, createRerunToolGroup, finalToolNamesOf,
   selectWorkToolGroup, type ToolGroup,
 } from './tool-group-assembly.js';
 import {
@@ -420,143 +421,8 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         return deps.observation.observe(owned, { runRef });
       }
 
-      // 3b. Assemble the effective coordination tools from the reviewed C1/W2
-      //     factories. The selection set is the formal manifest/Role/Host
-      //     intersection; declaring a name grants nothing. An unknown selected
-      //     name or a selected platform tool whose dependency is unbound fails
-      //     closed here, before the provider, the authorize/begin writes and any
-      //     new-entry Host call. A begun/entered/settled Run already returned
-      //     through observation above and is never re-judged by this fresh check.
       const builtinTools = manifest.permissions.tools.filter(tool => BUILTIN_TOOL_NAMES.has(tool));
       const hasFileRead = builtinTools.includes('read');
-      const sessionRef: SessionRef = { projectId: record.session.ref.projectId, sessionId: record.session.ref.sessionId };
-      const goalRef: GoalRef = { aggregateType: 'Goal', projectId: runRef.projectId, goalId: runRef.goalId };
-      const toolContext: CoreCallContext = {
-        projectId: runRef.projectId,
-        workspaceId: record.session.workspaceId,
-        principal: { kind: 'work_run', runRef, roleBinding: structuredClone(record.run.roleBinding) },
-        materialReader: { kind: 'run', requester: runRef },
-        signal,
-      };
-      const requestIdForCall = (call: Readonly<ToolCall>): string => {
-        if (!nonEmpty(call.callId) || !nonEmpty(call.name)) throw new Error('the Kernel tool call carries no trusted identity');
-        // Decision 72 (U1): the ONE request builder every owner lookup shares;
-        // passing the plain `{projectId, sessionId}` ref here is the live path
-        // the draft's claim-Session origin and the owner lookups must match.
-        return toolCommitRequestId({
-          origin: { runRef, sessionRef, generation: record.outbox.claim.generation,
-            workspaceId: record.session.workspaceId },
-          toolName: call.name, kernelCallId: call.callId,
-        });
-      };
-      // The explicit wait registration for THIS Run. It is set only after a
-      // waitAfterSend message is durably committed; the tool-group barrier reads
-      // it at the real after_group boundary and commits the yielded terminal.
-      // No polling, no held model promise and no second schedule exist.
-      let waitRegistered: { message: SessionMessage } | null = null;
-      // The wait is registered on the SAME live control handle the observer reads,
-      // so a real yielded terminal can persist the exact original Task/Session and
-      // saved message. The handle is created below and assigned before any tool
-      // can run, so this callback always sees it.
-      let waitHandle: RuntimeControlHandle | null = null;
-      const onWaitRegistered = (message: SessionMessage): void => {
-        waitRegistered ??= { message };
-        if (waitHandle !== null) waitHandle.waitMessage = structuredClone(message);
-      };
-      const coordination = selectWorkToolGroup({
-        selected: manifest.permissions.tools,
-        mailbox: deps.messages,
-        ...(deps.decisionMessages === undefined ? {} : { decisionMessages: deps.decisionMessages }),
-        ...(deps.applicationReceipt === undefined ? {} : { applicationReceipt: deps.applicationReceipt }),
-        sessions: deps.sessions,
-        plans: deps.plans,
-        context: toolContext,
-        sessionRef,
-        goalRef,
-        requestIdForCall,
-        onWaitRegistered,
-        ...(deps.graphContext === undefined || deps.taskInputs === undefined ? {} : {
-          graph: {
-            graphContext: deps.graphContext,
-            taskInputs: deps.taskInputs,
-            graphHistory: deps.graphHistory,
-            // Work uses the ORIGINAL startRun Host context; the proxy swaps only
-            // this tool call's signal in and never exposes it to the model.
-            hostContext: owned,
-          },
-        }),
-        ...(deps.notes === undefined ? {} : { notes: deps.notes }),
-        extensionNames: new Set([READONLY_COMMAND_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
-          PROPOSE_SAFER_METHOD_TOOL_NAME, REQUEST_COMMAND_RERUN_TOOL_NAME]),
-      });
-      if (!coordination.ok) return coordination.rejection;
-      const coordinationTools: ToolGroup | null = coordination.value;
-
-      // K3 L14/L20: the one review-purpose write tool is registered on BOTH
-      // phases — `record_unknown_call_review` for `review`,
-      // `propose_safer_method` for `proposal`. The record ref and this round's
-      // Run are trusted (the Run purpose and the `work_run` principal); the
-      // model supplies neither. A review Run whose owner is not bound fails
-      // closed before the model.
-      const reviewPurpose = record.run.purpose?.kind === 'unknown_call_review' ? record.run.purpose : null;
-      let unknownCallReviewTool: ((workspace: WorkspaceSandbox) => ToolDefinition) | undefined;
-      let unknownCallReviewToolName: string | undefined;
-      if (reviewPurpose !== null) {
-        if (deps.unknownCallReviews === undefined) {
-          return rejected('unsupported', 'the review Run requires the unknownCallReviews owner to register its review tool');
-        }
-        const reviewGroup = createReviewToolGroup({
-          reviews: deps.unknownCallReviews,
-          context: toolContext,
-          reviewRef: reviewPurpose.reviewRef,
-          requestIdForCall,
-          phase: reviewPurpose.phase,
-        });
-        if (!reviewGroup.ok) return reviewGroup.rejection;
-        unknownCallReviewToolName = reviewGroup.value.names[0]!;
-        unknownCallReviewTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => reviewGroup.value.create(workspaceHandle)[0]!;
-      }
-
-      // L19a: `request_command_rerun` is registered ONLY on a Work Run whose
-      // prepared manifest carries blocked commands. Review/proposal rounds are
-      // read-only and never see it. Its owner is the SAME CRR port the routes
-      // publish; a missing owner with a non-empty binding is a wiring error.
-      const blockedBinding = manifest.blockedCommands ?? [];
-      let commandRerunTool: ((workspace: WorkspaceSandbox) => ToolDefinition) | undefined;
-      let commandRerunToolName: string | undefined;
-      if (record.run.purpose === undefined && blockedBinding.length > 0) {
-        if (deps.commandRerunRequests === undefined) {
-          return rejected('unsupported', 'the blocked Work Run requires the commandRerunRequests owner to register its request tool');
-        }
-        if (deps.unknownCallReviews === undefined) {
-          return rejected('unsupported', 'the blocked Work Run requires the unknownCallReviews read port for its shell hook');
-        }
-        const rerunGroup = createRerunToolGroup({
-          requests: deps.commandRerunRequests,
-          context: toolContext,
-          task: manifest.claim.task,
-          requestIdForCall,
-        });
-        if (!rerunGroup.ok) return rerunGroup.rejection;
-        commandRerunToolName = rerunGroup.value.names[0]!;
-        commandRerunTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => rerunGroup.value.create(workspaceHandle)[0]!;
-      }
-
-      // L19a "在哪拦": the `before_tool` shell gate for a Work Run with a
-      // non-empty binding. It reads the records' current state and the Task's
-      // CRRs per `shell` call; a task without a binding installs no hook and
-      // pays zero extra reads.
-      const shellBlockedHook: HookPort | undefined = blockedBinding.length === 0 || deps.commandRerunRequests === undefined
-        || deps.unknownCallReviews === undefined ? undefined : createShellBlockedHook({
-        ctx: toolContext,
-        runRef,
-        taskId: manifest.claim.task.taskId,
-        workspace: { projectId: runRef.projectId, workspaceId: record.session.workspaceId },
-        binding: blockedBinding,
-        reviews: deps.unknownCallReviews,
-        requests: deps.commandRerunRequests,
-        ...(deps.commandRecognizer === undefined ? {} : { recognizer: deps.commandRecognizer }),
-      });
 
       // 4. A fresh authorization (or the existing authorized binding) still
       //    re-checks the current Role and Host. The accepted Run grant is kept:
@@ -659,6 +525,192 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         reasoningReplay: manifest.promptSet.reasoningReplay,
       };
 
+      // The frozen tool texts are read ONCE, before any tool is
+      // built. The current pack is never read at start.
+      const toolTexts = promptTexts.value.tools;
+      // Ruling 16: the final list is recomputed from the same facts here; a
+      // difference from the frozen list is `forbidden`, the PC-1 ruling 16 path.
+      const readOnly = manifest.permissions.writeScope.length === 0;
+      const readonlyRequested = readOnly && manifest.permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
+      let currentAuthorization: Awaited<ReturnType<typeof deps.workspaceHost.authorize>> | undefined;
+      if (hasFileRead || readonlyRequested) {
+        try {
+          currentAuthorization = await deps.workspaceHost.authorize(owned, workspace);
+        } catch (error) {
+          return rejected('unavailable', `the Host read policy could not be resolved: ${messageOf(error)}`);
+        }
+        if (currentAuthorization.status !== 'ready') return rejected('unavailable', currentAuthorization.reason);
+      }
+      const blockedBinding = manifest.blockedCommands ?? [];
+      const reviewPurpose = record.run.purpose?.kind === 'unknown_call_review' ? record.run.purpose : null;
+      const startToolNames = finalToolNamesOf({
+        callKind: 'work',
+        selected: manifest.permissions.tools,
+        readOnly,
+        reviewPhase: reviewPurpose?.phase ?? null,
+        hasBlockedCommands: blockedBinding.length > 0,
+        reviewSource: false,
+        frozenSource: hasFileRead && currentAuthorization?.status === 'ready',
+        materialTools: false,
+        owners: {
+          mailbox: deps.messages !== undefined,
+          decisionMessages: deps.decisionMessages !== undefined,
+          applicationReceipt: deps.applicationReceipt !== undefined,
+          sessions: deps.sessions !== undefined,
+          plans: deps.plans !== undefined,
+          graph: deps.graphContext !== undefined && deps.taskInputs !== undefined,
+          notes: deps.notes?.write !== undefined && deps.notes?.check !== undefined,
+          unknownCallReviews: deps.unknownCallReviews !== undefined,
+          commandRerunRequests: deps.commandRerunRequests !== undefined,
+        },
+        readonlyCommand: {
+          requested: readonlyRequested,
+          access: hostConfig.readonlyCommandAccess,
+          allowsReadWholeWorkspace: currentAuthorization?.status === 'ready'
+            && currentAuthorization.value.allowsRead('.'),
+        },
+      });
+      if (!startToolNames.ok) return startToolNames.rejection;
+      const frozenToolNames = manifest.promptSet.toolNames;
+      const sameToolList = frozenToolNames.length === startToolNames.value.length
+        && frozenToolNames.every((name, index) => name === startToolNames.value[index]);
+      if (!sameToolList) return rejected('forbidden', 'the prepared tool list no longer fits this Run');
+
+      // 3b. Assemble the effective coordination tools from the reviewed C1/W2
+      //     factories. The selection set is the formal manifest/Role/Host
+      //     intersection; declaring a name grants nothing. A begun/entered/
+      //     settled Run already returned through observation above and is never
+      //     re-judged by this fresh check.
+      const sessionRef: SessionRef = { projectId: record.session.ref.projectId, sessionId: record.session.ref.sessionId };
+      const goalRef: GoalRef = { aggregateType: 'Goal', projectId: runRef.projectId, goalId: runRef.goalId };
+      const toolContext: CoreCallContext = {
+        projectId: runRef.projectId,
+        workspaceId: record.session.workspaceId,
+        principal: { kind: 'work_run', runRef, roleBinding: structuredClone(record.run.roleBinding) },
+        materialReader: { kind: 'run', requester: runRef },
+        signal,
+      };
+      const requestIdForCall = (call: Readonly<ToolCall>): string => {
+        if (!nonEmpty(call.callId) || !nonEmpty(call.name)) throw new Error('the Kernel tool call carries no trusted identity');
+        // Decision 72 (U1): the ONE request builder every owner lookup shares;
+        // passing the plain `{projectId, sessionId}` ref here is the live path
+        // the draft's claim-Session origin and the owner lookups must match.
+        return toolCommitRequestId({
+          origin: { runRef, sessionRef, generation: record.outbox.claim.generation,
+            workspaceId: record.session.workspaceId },
+          toolName: call.name, kernelCallId: call.callId,
+        });
+      };
+      // The explicit wait registration for THIS Run. It is set only after a
+      // waitAfterSend message is durably committed; the tool-group barrier reads
+      // it at the real after_group boundary and commits the yielded terminal.
+      // No polling, no held model promise and no second schedule exist.
+      let waitRegistered: { message: SessionMessage } | null = null;
+      // The wait is registered on the SAME live control handle the observer reads,
+      // so a real yielded terminal can persist the exact original Task/Session and
+      // saved message. The handle is created below and assigned before any tool
+      // can run, so this callback always sees it.
+      let waitHandle: RuntimeControlHandle | null = null;
+      const onWaitRegistered = (message: SessionMessage): void => {
+        waitRegistered ??= { message };
+        if (waitHandle !== null) waitHandle.waitMessage = structuredClone(message);
+      };
+      const coordination = selectWorkToolGroup({
+        selected: manifest.permissions.tools,
+        mailbox: deps.messages,
+        ...(deps.decisionMessages === undefined ? {} : { decisionMessages: deps.decisionMessages }),
+        ...(deps.applicationReceipt === undefined ? {} : { applicationReceipt: deps.applicationReceipt }),
+        sessions: deps.sessions,
+        plans: deps.plans,
+        context: toolContext,
+        sessionRef,
+        goalRef,
+        requestIdForCall,
+        onWaitRegistered,
+        ...(deps.graphContext === undefined || deps.taskInputs === undefined ? {} : {
+          graph: {
+            graphContext: deps.graphContext,
+            taskInputs: deps.taskInputs,
+            graphHistory: deps.graphHistory,
+            // Work uses the ORIGINAL startRun Host context; the proxy swaps only
+            // this tool call's signal in and never exposes it to the model.
+            hostContext: owned,
+          },
+        }),
+        ...(deps.notes === undefined ? {} : { notes: deps.notes }),
+        texts: toolTexts,
+        extensionNames: new Set([READONLY_COMMAND_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
+          PROPOSE_SAFER_METHOD_TOOL_NAME, REQUEST_COMMAND_RERUN_TOOL_NAME]),
+      });
+      if (!coordination.ok) return coordination.rejection;
+      const coordinationTools: ToolGroup | null = coordination.value;
+
+      // K3 L14/L20: the one review-purpose write tool is registered on BOTH
+      // phases — `record_unknown_call_review` for `review`,
+      // `propose_safer_method` for `proposal`. The record ref and this round's
+      // Run are trusted (the Run purpose and the `work_run` principal); the
+      // model supplies neither. A review Run whose owner is not bound fails
+      // closed before the model.
+      let unknownCallReviewTool: ((workspace: WorkspaceSandbox) => ToolDefinition) | undefined;
+      let unknownCallReviewToolName: string | undefined;
+      if (reviewPurpose !== null) {
+        if (deps.unknownCallReviews === undefined) {
+          return rejected('unsupported', 'the review Run requires the unknownCallReviews owner to register its review tool');
+        }
+        const reviewGroup = createReviewToolGroup({
+          reviews: deps.unknownCallReviews,
+          context: toolContext,
+          reviewRef: reviewPurpose.reviewRef,
+          requestIdForCall,
+          phase: reviewPurpose.phase,
+          texts: toolTexts,
+        });
+        if (!reviewGroup.ok) return reviewGroup.rejection;
+        unknownCallReviewToolName = reviewGroup.value.names[0]!;
+        unknownCallReviewTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => reviewGroup.value.create(workspaceHandle)[0]!;
+      }
+
+      // L19a: `request_command_rerun` is registered ONLY on a Work Run whose
+      // prepared manifest carries blocked commands. Review/proposal rounds are
+      // read-only and never see it. Its owner is the SAME CRR port the routes
+      // publish; a missing owner with a non-empty binding is a wiring error.
+      let commandRerunTool: ((workspace: WorkspaceSandbox) => ToolDefinition) | undefined;
+      let commandRerunToolName: string | undefined;
+      if (reviewPurpose === null && blockedBinding.length > 0) {
+        if (deps.commandRerunRequests === undefined) {
+          return rejected('unsupported', 'the blocked Work Run requires the commandRerunRequests owner to register its request tool');
+        }
+        if (deps.unknownCallReviews === undefined) {
+          return rejected('unsupported', 'the blocked Work Run requires the unknownCallReviews read port for its shell hook');
+        }
+        const rerunGroup = createRerunToolGroup({
+          requests: deps.commandRerunRequests,
+          context: toolContext,
+          task: manifest.claim.task,
+          requestIdForCall,
+          texts: toolTexts,
+        });
+        if (!rerunGroup.ok) return rerunGroup.rejection;
+        commandRerunToolName = rerunGroup.value.names[0]!;
+        commandRerunTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => rerunGroup.value.create(workspaceHandle)[0]!;
+      }
+
+      // L19a "在哪拦": the `before_tool` shell gate for a Work Run with a
+      // non-empty binding. It reads the records' current state and the Task's
+      // CRRs per `shell` call; a task without a binding installs no hook and
+      // pays zero extra reads.
+      const shellBlockedHook: HookPort | undefined = blockedBinding.length === 0 || deps.commandRerunRequests === undefined
+        || deps.unknownCallReviews === undefined ? undefined : createShellBlockedHook({
+        ctx: toolContext,
+        runRef,
+        taskId: manifest.claim.task.taskId,
+        workspace: { projectId: runRef.projectId, workspaceId: record.session.workspaceId },
+        binding: blockedBinding,
+        reviews: deps.unknownCallReviews,
+        requests: deps.commandRerunRequests,
+        ...(deps.commandRecognizer === undefined ? {} : { recognizer: deps.commandRecognizer }),
+      });
+
       // 6. Obtain the entry permit: reuse the persisted V2 permit when the Run
       //    is already authorized, otherwise read the current revision and
       //    authorize a fresh grant.
@@ -720,14 +772,22 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       // LA-1 (A.2 step 5.6): the first Run of a continuation Session seeded by `prepare`
       // (`sessionBasis`) continues the ORIGINAL Session's last completed history through
       // `session_history.sourceSessionId`; the interrupted Turn is not in it (the brief covers it).
-      const seeded = manifest.sessionBasis !== undefined && manifest.sessionBasis.throughPosition !== null
-        && boundary.cursor === null ? manifest.sessionBasis : null;
-      const sessionContext = seeded !== null && seeded.throughPosition !== null
-        ? { version: 1 as const, mode: 'session_history' as const, throughPosition: seeded.throughPosition,
-          sourceSessionId: seeded.sourceKernelSessionId }
-        : boundary.cursor === null
-          ? { version: 1 as const, mode: 'current_turn' as const }
-          : { version: 1 as const, mode: 'session_history' as const, throughPosition: boundary.position };
+      // The SAME pure rule runs again at start. A frozen `false`
+      // with a would-take-history current result uses `current_turn`, so a Run
+      // never gets history its input did not announce; a frozen `true` cannot
+      // turn false.
+      const currentHistory = sessionHistoryDecision({
+        callKind: 'work',
+        sessionBasis: manifest.sessionBasis,
+        completedBoundary: { cursor: boundary.cursor, position: boundary.position },
+      });
+      const historyDecision = !manifest.takesSessionHistory && currentHistory.takesSessionHistory
+        ? { mode: 'current_turn' as const, takesSessionHistory: false as const }
+        : currentHistory;
+      const sessionContext = historyDecision.mode === 'session_history'
+        ? { version: 1 as const, mode: 'session_history' as const, throughPosition: historyDecision.throughPosition,
+          ...(historyDecision.sourceSessionId === null ? {} : { sourceSessionId: historyDecision.sourceSessionId }) }
+        : { version: 1 as const, mode: 'current_turn' as const };
 
       // R4.3a: the ONE independent live handle for this fixed Run identity. The
       // caller signal is linked to this own controller so a caller cancel stops
@@ -760,7 +820,6 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       waitHandle = handle;
       control?.register(handle);
 
-      const readOnly = manifest.permissions.writeScope.length === 0;
       let enteredFailure: CoreRejection | undefined;
       let enteredDone = resumeEntered;
       const shouldPause = (reason: string): { point: 'before_model'; kind: 'pause'; reason: string } => ({ point: 'before_model', kind: 'pause', reason });
@@ -907,16 +966,6 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       // tool. It is registered only when the Host selected it, the explicit
       // `readonlyCommandAccess` grant is present and the current read is the
       // whole workspace; a Run with writes keeps `shell` instead.
-      const readonlyRequested = readOnly && manifest.permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
-      let currentAuthorization: Awaited<ReturnType<typeof deps.workspaceHost.authorize>> | undefined;
-      if (hasFileRead || readonlyRequested) {
-        try {
-          currentAuthorization = await deps.workspaceHost.authorize(owned, workspace);
-        } catch (error) {
-          return rejected('unavailable', `the Host read policy could not be resolved: ${messageOf(error)}`);
-        }
-        if (currentAuthorization.status !== 'ready') return rejected('unavailable', currentAuthorization.reason);
-      }
       if (hasFileRead && currentAuthorization !== undefined && currentAuthorization.status === 'ready') {
         const granted = currentAuthorization;
         const permissionRevision = granted.value.permissionRevision;
@@ -947,6 +996,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         processSandboxOptions: hostConfig.processSandboxOptions,
         ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
         authorizeCurrent: () => deps.workspaceHost.authorize(owned, workspace),
+        texts: toolTexts,
       });
 
       // R4.3a real tool-group safe point: it reads the CURRENT canonical Run and
@@ -1024,6 +1074,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             // merged), the frozen Skills and the frozen thinking policy. The
             // Host's `skills`/`systemInstruction` options no longer exist here.
             prompt: frozenPrompt,
+            texts: toolTexts,
             bodies: deps.bodies,
             origin: { kind: 'run', owner: runRef },
             promptFacts: new Map(),

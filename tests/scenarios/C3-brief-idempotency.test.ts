@@ -74,10 +74,10 @@ async function requeuedRunPrepared(h: HostScenario, flowId: string) {
   const manifest = manifestOf(h.database, prepared.inputBinding.manifestDigest);
   const brief = manifest.continuationBrief;
   if (brief === undefined) throw new Error('the prepared manifest must carry the brief');
-  // §6.1 (e): the brief names the new Run and its TaskRequeue; the digest pins it; it is the input's last section.
+  // §6.1 (e): the brief names the new Run and its TaskRequeue; the digest pins it; it is in the input (PC-2 moves the reminders section after it).
   expect(brief).toMatchObject({ runRef: run2Ref, requeueRef: requeue.ref, mode: 'rework', failureClass: 'check_failed' });
   expect(continuationBriefDigest(brief)).toBe(digest);
-  expect(manifest.input.endsWith(`\n\n${renderContinuationBriefZh(brief, digest)}`)).toBe(true);
+  expect(manifest.input).toContain(`\n\n${renderContinuationBriefZh(brief, digest)}`);
   return { run2Ref, prepared, brief, digest, requeue };
 }
 
@@ -192,10 +192,10 @@ it('C3-R1 (W-24), W-02, W-05 → RUN-16 → RUN-03: one requeue Run passes every
     executionAuthorization: { schemaVersion: 2, generation: 2 } });
   expect(authorizations(), 'RUN-03: one re-authorization').toBe(3);
   expect(await briefOf(h.host, run2Ref), 'I-19: the brief bound at RUN-02 is the one Run 2 ran with').toEqual({ brief, digest });
-  // The Kernel Turn of Run 2 started with that brief as the last section of its input; the model got it.
+  // The Kernel Turn of Run 2 started with that brief; PC-2 puts the reminders section after it.
   const run2Turns = turnStarts(h.database).filter(turn => turn.runId === ended.run.executionHistory?.kernel.runId);
   expect(run2Turns).toHaveLength(1);
-  expect(run2Turns[0]!.content.endsWith(`\n\n${renderContinuationBriefZh(brief, digest)}`)).toBe(true);
+  expect(run2Turns[0]!.content).toContain(`\n\n${renderContinuationBriefZh(brief, digest)}`);
   expect(JSON.stringify(h.modelRequests()[2]?.messages)).toContain(continuationBriefMarker(digest));
   expect(h.counts()).toMatchObject({ modelCalls: 4, kernelTurnsStarted: 2 });
   expect(h.lastWorld?.requeues, 'no further requeue').toHaveLength(1);

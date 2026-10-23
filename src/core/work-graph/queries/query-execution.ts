@@ -51,7 +51,7 @@ import {
   transitionQueryRunRecovery, type QueryRecoveryEffect, type QueryRecoveryEvent, type QueryRecoveryGuardContext,
   type QueryRecoveryPhase,
 } from '../state/query-run-recovery.js';
-import { contextAssemblyProblem } from '../state/context-input.js';
+import { contextAssemblyProblem, frozenSectionOrderProblem } from '../state/context-input.js';
 import {
   bindSessionUnavailableCursor, occupySessionRecord, ownsQuery, releaseSessionRecord, sessionDispatchAdmissionProblem, sessionMachineStateOf,
   transitionSession, type SessionGuardContext, type SessionRelease, type SessionReleaseCause,
@@ -467,6 +467,11 @@ function loadQueryManifest(
     // broken `promptSet` is `invalid` before the bind can commit.
     if (decodePromptSetV1(manifest.promptSet) === null) {
       return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest has no valid prompt set');
+    }
+    // Ruling 14: the Query preparation freezes its history decision unchanged; a
+    // missing or non-boolean value is `invalid` at bind, never read as false.
+    if (typeof parsed['takesSessionHistory'] !== 'boolean') {
+      return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest has no takesSessionHistory decision');
     }
     if (sha256Hex(manifest.input) !== manifest.inputDigest) return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest input digest is not the digest of its input');
     if (manifest.inputDigest !== prepared.inputDigest) return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest digest disagrees with the Prepared value');
@@ -1062,6 +1067,13 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       continuationSuffix: null,
     });
     if (assemblyProblem !== null) return assemblyProblem;
+    // Ruling 11: the Query binding's order is the frozen prompt set's order
+    // for its call kind, element for element; a set without that call kind rejects.
+    const sectionOrderProblem = frozenSectionOrderProblem({
+      binding: manifest.contextAssembly,
+      expectedSectionOrder: manifest.promptSet.sectionOrder[manifest.contextAssembly.callKind],
+    });
+    if (sectionOrderProblem !== null) return sectionOrderProblem;
     // §3.2 G-CTX: the saved call scope and duty must match the canonical Query
     // facts (the intent's execution kind and the Query's resolved Role). An
     // initial coordination accepts `planning` or `copy` (see

@@ -46,6 +46,8 @@ const PARTS: PromptPartsV1 = {
   base: { templateId: 'base', version: 1, text: 'MERGED_BASE' },
   skills: [{ schemaVersion: 1, id: 'platform-work', title: 'Platform work', kind: 'instruction', priority: 90,
     source: `skill:platform-work@sha256:${sha('SKILL_TEXT')}`, content: 'SKILL_TEXT' }],
+  toolNames: ['read'],
+  tools: [],
 };
 
 /** A real put/read store that remembers the first body per content key. */

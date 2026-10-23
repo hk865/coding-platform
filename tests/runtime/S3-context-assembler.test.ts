@@ -259,7 +259,9 @@ function endedRecordA(): TaskExecutionRecord {
 }
 
 function assemblerInput(record: TaskExecutionRecord) {
-  return { execution: record, role: roleResolution(), configuration: runtimeConfiguration(), permissions: CA_PERMISSIONS };
+  return { execution: record, role: roleResolution(), configuration: runtimeConfiguration(), permissions: CA_PERMISSIONS,
+    toolNames: ['read'], history: { callKind: 'work' as const,
+      hasCompletedCursor: false } };
 }
 
 const CA_ASSEMBLER_INPUT = assemblerInput(workRecord());
@@ -461,7 +463,7 @@ const ROWS = {
   inputs: [{ key: 'I', text: 'I' }],
 };
 const CA01_INPUT = `${WORK_CONTEXT_PRELUDE}\n\n## Runtime context\nR\n\n## Goal\nG\n\n## Accepted task\nT`
-  + '\n\n## Footprint\nF\n\n## Note index\nN\n\n## Reminders\nM\n\n## Selected inputs\nI';
+  + '\n\n## Footprint\nF\n\n## Note index\nN\n\n## Selected inputs\nI\n\n## Reminders\nM';
 
 /** The optional part of CA01, used as the exact CA06 budget and string. */
 const OPTIONAL_BILLED = '\n\n## Footprint\nF\n\n## Note index\nN\n\n## Reminders\nM\n\n## Selected inputs\nI';
@@ -610,7 +612,7 @@ describe('S3 context assembler CA01-CA15', () => {
     expect(result.totalBytes).toBe(B(CA01_INPUT));
     expect(H(result.input)).toBe(H(CA01_INPUT));
     expect(CONTEXT_FORMAT_VERSION).toBe('s3-context-v1');
-    expect(CONTEXT_SECTION_ORDER).toEqual(['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation']);
+    expect(CONTEXT_SECTION_ORDER).toEqual(['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'unknown_call_review', 'reminders']);
   });
 
   it('CA02 ignores the insertion order of the optional row arrays', () => {
@@ -806,7 +808,7 @@ describe('S3 context assembler CA01-CA15', () => {
     expect(result.status).toBe('ready');
     const input = ready(result).value.input;
     // The missing declaration and tA's current facts are reminders, not a silent empty section.
-    const reminders = sectionText(input, '## Reminders', '## Selected inputs');
+    const reminders = sectionText(input, '## Reminders', '');
     expect(reminders).toContain('d1');
     expect(reminders).toContain('tA');
     // Lead fix after the freeze: the fixture's extensions are not_implemented, so spec §4.3
@@ -814,7 +816,7 @@ describe('S3 context assembler CA01-CA15', () => {
     // asks only for the missing declaration and tA's facts.
   });
 
-  it('CA12 the continuation brief is last and anomaly anchors live in the reminders index', () => {
+  it('CA12 the continuation brief renders and anomaly anchors live in the reminders index', () => {
     const brief = c3Brief();
     const digest = continuationBriefDigest(brief);
     const suffix = renderContinuationBriefZh(brief, digest);
@@ -831,11 +833,13 @@ describe('S3 context assembler CA01-CA15', () => {
       prelude: WORK_CONTEXT_PRELUDE, required: REQUIRED,
       optional: { reminders: reminderRows }, continuationSuffix: suffix, residentBudgetBytes: 4096,
     });
-    expect(result.input.endsWith(`\n\n${suffix}`)).toBe(true);
-    expect(sectionText(result.input, '## Reminders', '## Selected inputs')).toContain(anchorKey);
-    expect(result.sections.at(-1)?.name).toBe('continuation');
-    // Nothing follows the rendered brief.
-    expect(result.input.slice(result.input.indexOf(suffix) + suffix.length)).toBe('');
+    // PC-2 ruling 9: the brief is no longer last; the reminders section follows it.
+    expect(result.input).toContain(`\n\n${suffix}`);
+    expect(result.sections.map(section => section.name)).toContain('continuation');
+    expect(result.sections.at(-1)?.name).toBe('reminders');
+    expect(sectionText(result.input, '## Reminders', '')).toContain(anchorKey);
+    // The brief itself is untouched by the sections after it.
+    expect(result.input.slice(result.input.indexOf(suffix) + suffix.length)).toContain('## Reminders');
   });
 
   it('CA13 a Query question with CRLF and Chinese keeps the question and guide verbatim', async () => {
@@ -847,6 +851,8 @@ describe('S3 context assembler CA01-CA15', () => {
       configuration: runtimeConfiguration(),
       permissions: { tools: ['read'], writeScope: [] as [] },
       question: `${question}\n\n${INITIAL_COORDINATION_RESPONSE_GUIDE}`,
+      toolNames: ['read'],
+      history: { callKind: 'query' as const, hasCompletedCursor: false },
     })).value;
     expect(result.input).toContain(question);
     expect(result.input).toContain(INITIAL_COORDINATION_RESPONSE_GUIDE);
@@ -865,7 +871,7 @@ describe('S3 context assembler CA01-CA15', () => {
       goalSettings: 'not_implemented', decisions: 'not_implemented',
     });
     // The specific not-connected wording of §4.3, never an empty-but-available section.
-    const reminders = sectionText(result.input, '## Reminders', '## Selected inputs');
+    const reminders = sectionText(result.input, '## Reminders', '');
     expect(reminders).toContain('注记索引尚未接入');
     expect(reminders).toContain('异常锚点投影尚未接入');
   });

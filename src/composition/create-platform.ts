@@ -18,7 +18,7 @@ import type { MaterialPort } from '../core/work-graph/model/material-contracts.j
 import { createWorkspaceAccessFactory, type WorkspaceHostBindings } from '../core/workspace/access.js';
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../core/workspace/workspace-tools.js';
 import { createAgentRuntime } from '../core/agent-runtime/runtime.js';
-import { createPlatformPromptPackSource } from '../contracts/prompts/prompt-pack.js';
+import { createPlatformPromptPackSource, type PromptPackSourcePort } from '../contracts/prompts/prompt-pack.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import { createExecutionEntryService, readManifestFromEnvelope } from '../core/work-graph/tasks/execution-entry-service.js';
 import { createModelCallService, createModelRequestReadPort } from '../core/work-graph/tasks/model-call-service.js';
@@ -247,6 +247,10 @@ export type TargetPlatformOptions = {
    * permission or database here. When absent, execution stays explicitly
    * unsupported while Session creation/history keep their accepted behavior. */
   runtime?: RuntimeHostBindings;
+  /** The Host's disk-backed pack source. When present the
+   * preparation reads person's packs through it; absent keeps the platform
+   * source (a Host without a settings directory). */
+  promptPacks?: PromptPackSourcePort;
   /**
    * L13: the Host's live resource-cap source handed to the Runtime and the
    * registered-check runner. Absent uses the machine-memory default (a test
@@ -1182,10 +1186,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         readTaskClosure: (ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) => Promise<import('../contracts/core/results.js').ReadResult<TaskClosureV1>>;
       } = {
         claims: claimService, executions: executionReader, entry, historyWriter, modelRequests,
-        // Ruling 30: the Work permit read over the SAME record backend; PC-2
-        // swaps the pack source for the disk one.
+        // Ruling 30: the Work permit read over the SAME record backend. The pack
+        // source is the Host's disk-backed one when a settings directory is
+        // configured, the generated platform pack otherwise.
         modelRequestReads: createModelRequestReadPort(entryDependencies),
-        promptPacks: createPlatformPromptPackSource(),
+        promptPacks: options.promptPacks ?? createPlatformPromptPackSource(),
         roles: roleService, plans: planService, messages: mailbox, sessions: sessionDirectory,
         // Slice 5 §4.6: the SAME user-decision owner the platform publishes, so
         // the three user tools call the real owners and never fail closed.

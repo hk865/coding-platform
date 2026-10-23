@@ -21,8 +21,10 @@ import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools
 import { createSessionDiscoveryTools, SESSION_DISCOVERY_TOOL_NAMES } from './session-discovery-tools.js';
 import { createGraphTools, GRAPH_TOOL_NAMES } from './graph-tools.js';
 import { createNoteTools, NOTE_TOOL_NAMES } from './note-tool.js';
-import { createUnknownCallReviewTools } from './unknown-call-review-tools.js';
-import { createCommandRerunTools } from './command-rerun-tools.js';
+import {
+  createUnknownCallReviewTools, PROPOSE_SAFER_METHOD_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
+} from './unknown-call-review-tools.js';
+import { createCommandRerunTools, REQUEST_COMMAND_RERUN_TOOL_NAME } from './command-rerun-tools.js';
 import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import { kernelToolNameOf } from '../work-graph/state/unknown-call-kinds.js';
 import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
@@ -35,6 +37,7 @@ import type {
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { RuntimeExecutionDependencies } from './execution-contracts.js';
 import type { ObservedModelRunOptions } from './observed-model-run.js';
+import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 
 export type ToolGroup = { names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] };
 export type ToolGroupResult<T = ToolGroup> = { ok: true; value: T } | { ok: false; rejection: CoreRejection };
@@ -76,6 +79,20 @@ export const BUILTIN_TOOL_NAMES = new Set<string>(['read', 'write', 'shell']);
 export const RESERVED_TOOL_NAMES = new Set<string>([
   ...BUILTIN_TOOL_NAMES, 'edit', 'check', 'list_files', 'search', 'symbols', 'code_index',
   'project_source', 'python_index', 'cpp_index', 'source_excerpt', 'read_source', 'read_material',
+]);
+
+/**
+ * Every tool name this Runtime can register: the builtin file/process tools,
+ * the exploration tools, the platform coordination families and the platform
+ * extension tools (read-only command, review/proposal and rerun). It is the one
+ * definition of "known to this Runtime": preparation drops any other selected
+ * name and the start still rejects it, so the registration facts stay with the
+ * start where the real owner wiring is known.
+ */
+export const RUNTIME_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
+  ...BUILTIN_TOOL_NAMES, ...EXPLORATION_TOOL_NAMES, ...PLATFORM_COORDINATION_TOOL_NAMES,
+  READONLY_COMMAND_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
+  PROPOSE_SAFER_METHOD_TOOL_NAME, REQUEST_COMMAND_RERUN_TOOL_NAME,
 ]);
 
 export type GraphHistoryProxyInput = {
@@ -182,6 +199,8 @@ export type WorkToolGroupInput = {
   /** Names this Runtime handles outside the coordination factories (the
    * read-only process tool). They are recognized but never built here. */
   extensionNames?: ReadonlySet<string>;
+  /** The frozen tool texts every coordination factory reads. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
 };
 
 /**
@@ -231,6 +250,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       sessionRef: input.sessionRef,
       requestIdForCall: input.requestIdForCall,
       ...(input.onWaitRegistered === undefined ? {} : { onWaitRegistered: input.onWaitRegistered }),
+      ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
   if (whiteboardNames.length > 0) {
@@ -240,10 +260,12 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       goalRef: input.goalRef,
       requestIdForCall: input.requestIdForCall,
       ...(input.applicationReceipt === undefined ? {} : { applicationReceipt: input.applicationReceipt }),
+      ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
   if (discoveryNames.length > 0) {
-    handles.push(createSessionDiscoveryTools({ sessions: input.sessions, context: input.context }));
+    handles.push(createSessionDiscoveryTools({ sessions: input.sessions, context: input.context,
+      ...(input.texts === undefined ? {} : { texts: input.texts }) }));
   }
   if (graphNames.length > 0) {
     const graphDeps = input.graph as NonNullable<typeof input.graph>;
@@ -259,6 +281,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
         hostContext: graphDeps.hostContext,
       }),
       ...(input.notes?.memory === undefined ? {} : { notes: input.notes.memory }),
+      ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
   if (noteNames.length > 0) {
@@ -271,6 +294,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       notes: noteDeps.write,
       check: noteDeps.check,
       requestIdForCall: input.requestIdForCall,
+      ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
   const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames, ...noteNames];
@@ -312,6 +336,8 @@ export function createQueryGraphToolGroup(input: {
   inputs: TaskContextInputPort;
   history: GraphExecutionHistoryReadPort;
   hostContext: CoreCallContext;
+  /** The frozen tool texts the graph factory reads. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
 }): ToolGroup {
   const names = input.names;
   // The original query_run tool context (spec §4.1: tool inputs never
@@ -328,6 +354,7 @@ export function createQueryGraphToolGroup(input: {
       goalRef: input.goalRef,
       hostContext: input.hostContext,
     }),
+    ...(input.texts === undefined ? {} : { texts: input.texts }),
   });
   return {
     names,
@@ -442,4 +469,116 @@ export function kernelEnabledToolNames(input: {
   return input.hasRead && input.reviewSource
     ? ['read_source', ...(input.hasMaterialTools ? ['read_material'] : []), ...readTools, ...input.extensionNames]
     : [...input.allowed.map(kernelToolNameOf), ...readTools, ...input.extensionNames];
+}
+
+/**
+ * Every fact the final tool list needs, all of them facts the
+ * preparation and the start already hold. The list is computed once at
+ * preparation and compared exactly at start, never sorted.
+ */
+export type FinalToolListInputV1 = {
+  callKind: 'work' | 'query';
+  /** `manifest.permissions.tools`, already intersected with Host/Role/Query ceilings. */
+  selected: readonly string[];
+  readOnly: boolean;
+  reviewPhase: 'review' | 'proposal' | null;
+  hasBlockedCommands: boolean;
+  /** `sourceTools.includeReadSource`: independent of the frozen project source. */
+  reviewSource: boolean;
+  /** `projectSource.mode === 'frozen'`. */
+  frozenSource: boolean;
+  materialTools: boolean;
+  owners: {
+    mailbox: boolean; decisionMessages: boolean; applicationReceipt: boolean;
+    sessions: boolean; plans: boolean; graph: boolean; notes: boolean;
+    unknownCallReviews: boolean; commandRerunRequests: boolean;
+  };
+  readonlyCommand: {
+    requested: boolean;
+    access: 'all_except_denied' | undefined;
+    allowsReadWholeWorkspace: boolean;
+  };
+};
+
+/**
+ * The ONE final tool list (ruling 16). Rejections come first — an unknown
+ * selected name or a selected family whose owner is missing is `unsupported`,
+ * never a silent drop — then the exact `kernelEnabledToolNames` order.
+ */
+export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<string[]> {
+  const unknown = input.selected.filter(name => !RUNTIME_TOOL_NAMES.has(name));
+  if (unknown.length > 0) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects tool names this Runtime does not know: ${[...new Set(unknown)].join(', ')}`) };
+  }
+  const wanted = new Set(input.selected);
+  const owners = input.owners;
+  // A Query builds ONLY its graph group and the read-only command (ruling 16
+  // and the Query execution's own factory set). Every other coordination
+  // family a Query's projected permissions may name is neither built nor a
+  // rejection: it is outside this call kind's final list.
+  const query = input.callKind === 'query';
+  // Review and proposal tools follow the Run, not `selected`. A review-purpose
+  // Work Run without its owner fails closed before any tool is added.
+  const reviewToolName = input.callKind === 'work' && input.reviewPhase !== null
+    ? input.reviewPhase === 'proposal' ? PROPOSE_SAFER_METHOD_TOOL_NAME : RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME
+    : null;
+  if (reviewToolName !== null && !owners.unknownCallReviews) {
+    return { ok: false, rejection: rejected('unsupported', 'the review Run requires the unknownCallReviews owner to register its review tool') };
+  }
+  const mailboxNames = query ? [] : SESSION_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name));
+  const decisionNames = query ? [] : USER_DECISION_TOOL_NAMES.filter(name => wanted.has(name));
+  const whiteboardNames = query ? [] : WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
+  const discoveryNames = query ? [] : SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
+  const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
+  const noteNames = query ? [] : NOTE_TOOL_NAMES.filter(name => wanted.has(name));
+  if ((mailboxNames.length > 0 || decisionNames.length > 0) && !owners.mailbox) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects communication tools but no SessionMailbox dependency is bound: ${[...mailboxNames, ...decisionNames].join(', ')}`) };
+  }
+  if (decisionNames.length > 0 && !owners.decisionMessages) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects user decision tools but no decisionMessages dependency is bound: ${decisionNames.join(', ')}`) };
+  }
+  if (whiteboardNames.length > 0 && !owners.plans) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects plan tools but no plans dependency is bound: ${whiteboardNames.join(', ')}`) };
+  }
+  if (discoveryNames.length > 0 && !owners.sessions) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects Session discovery tools but no sessions dependency is bound: ${discoveryNames.join(', ')}`) };
+  }
+  if (graphNames.length > 0 && !owners.graph) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects graph read tools but no graph read dependency is bound: ${graphNames.join(', ')}`) };
+  }
+  if (noteNames.length > 0 && !owners.notes) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects note tools but no note write/check dependency is bound: ${noteNames.join(', ')}`) };
+  }
+  // L19a: the rerun tool is registered only on a blocked ordinary Work Run.
+  const rerun = input.callKind === 'work' && input.hasBlockedCommands && input.reviewPhase === null;
+  if (rerun && (!owners.commandRerunRequests || !owners.unknownCallReviews)) {
+    return { ok: false, rejection: rejected('unsupported', 'the blocked Work Run requires the commandRerunRequests owner and the unknownCallReviews read port to register its request tool') };
+  }
+  const coordinationNames = [...mailboxNames, ...decisionNames, ...whiteboardNames,
+    ...discoveryNames, ...graphNames, ...noteNames];
+  if (new Set(coordinationNames).size !== coordinationNames.length) {
+    return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
+  }
+  if (coordinationNames.some(name => RESERVED_TOOL_NAMES.has(name))) {
+    return { ok: false, rejection: rejected('unsupported', 'a coordination tool name collides with a builtin, exploration or material tool') };
+  }
+  const readonlyName = input.readOnly && input.readonlyCommand.requested
+    && input.readonlyCommand.access === 'all_except_denied' && input.readonlyCommand.allowsReadWholeWorkspace
+    ? READONLY_COMMAND_TOOL_NAME : null;
+  const extensionNames = [...coordinationNames,
+    ...(readonlyName === null ? [] : [readonlyName]),
+    ...(reviewToolName === null ? [] : [reviewToolName]),
+    ...(rerun ? [REQUEST_COMMAND_RERUN_TOOL_NAME] : [])];
+  // The builtin allowlist is the only part `kernelEnabledToolNames` maps; the
+  // coordination/extension names are appended in today's order.
+  const allowed = input.selected.filter(name => BUILTIN_TOOL_NAMES.has(name));
+  const hasRead = allowed.includes('read');
+  return { ok: true, value: kernelEnabledToolNames({
+    allowed,
+    hasRead,
+    reviewSource: input.reviewSource,
+    hasFrozenSource: input.frozenSource,
+    hasMaterialTools: input.materialTools,
+    extensionNames,
+  }) };
 }

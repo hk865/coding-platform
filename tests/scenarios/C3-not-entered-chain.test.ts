@@ -98,7 +98,7 @@ it('C3 (D-7, factsFrom): Run 2 cancelled while Claimed never enters the Kernel; 
   const rendered = renderContinuationBriefZh(brief, digest);
   const firstRequest = h.modelRequests()[2]?.messages.at(-1);
   if (firstRequest?.role !== 'user') throw new Error('Run 3\'s first model request must end with its input');
-  expect(firstRequest.content.endsWith(`\n\n${rendered}`)).toBe(true);
+  expect(firstRequest.content).toContain(`\n\n${rendered}`);
   const lines = rendered.split('\n');
   expect(lines).toContain(`- 执行 ${run2Ref.runId}（Session ${run2.outbox.claim.sessionRef.sessionId}）没有进入 Kernel 就结束（cancelled）。`);
   expect(lines).toContain(`- 下面的执行事实来自更早的执行 ${run1Ref.runId}（向前第 1 次）。`);

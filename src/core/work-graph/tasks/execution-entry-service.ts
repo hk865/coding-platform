@@ -119,7 +119,7 @@ import { readGoal, readGoalPhase, readGoalScope, sameCursor } from './plan-reade
 import { goalStartPolicy } from '../state/goal-settings-machine.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import { executionStoreFailureToRejection } from '../persistence/read-result-failures.js';
-import { contextAssemblyProblem, contextGoalContentProblem, declaredInputProblem, effectivePlatformDuty } from '../state/context-input.js';
+import { contextAssemblyProblem, contextAssemblyStructureProblem, contextGoalContentProblem, declaredInputProblem, effectivePlatformDuty, frozenSectionOrderProblem, renderedSectionProblem } from '../state/context-input.js';
 import { isolatedWriteOf, trustedContextOf } from './trusted-context.js';
 
 // --------------------------------------------------------------------------
@@ -489,6 +489,11 @@ function manifestProblem(value: unknown): string | null {
   }
   if (typeof value['input'] !== 'string') return 'manifest input must be a string';
   if (!isSha256Hex(value['inputDigest'])) return 'manifest inputDigest must be a sha256 hex';
+  // Ruling 14: the decision the recipe used is frozen inside the manifest
+  // digest; a missing or non-boolean value is never read as `current_turn`.
+  if (typeof value['takesSessionHistory'] !== 'boolean') {
+    return 'manifest takesSessionHistory must be a boolean';
+  }
   // Ruling 13/17: every manifest loader decodes the frozen prompt set; the entry
   // reads its text bodies when it re-renders a section.
   if (decodePromptSetV1(value['promptSet']) === null) return 'manifest promptSet must be a PromptSetV1';
@@ -1043,10 +1048,12 @@ async function readFrozenPromptTexts(
  * The frozen texts of the manifest's `promptSet` are the ONLY source (ruling 17):
  * the caller reads them first and never re-renders from the current pack.
  */
-function continuationSuffixOf(manifest: PreparedTaskManifestV1, frozenTexts: PromptTextsV1): string | null {
+function continuationSuffixOf(
+  manifest: PreparedTaskManifestV1, frozenTexts: PromptTextsV1, toolNames: readonly string[],
+): string | null {
   if (manifest.continuationBrief === undefined) return null;
   return renderContinuationBriefZh(manifest.continuationBrief,
-    continuationBriefDigest(manifest.continuationBrief), frozenTexts);
+    continuationBriefDigest(manifest.continuationBrief), frozenTexts, toolNames);
 }
 
 /**
@@ -1109,6 +1116,8 @@ function contextConsumptionProblem(input: {
   run: RunSnapshot;
   /** Ruling 17: the frozen template texts the saved manifest's `promptSet` names. */
   promptTexts: PromptTextsV1;
+  /** Ruling 10/16: the frozen `PromptSetV1.toolNames`, never recomputed from the current pack. */
+  toolNames: readonly string[];
 }): CoreRejection | null {
   const binding = input.manifest.contextAssembly;
   const roleDuty = roleDutyOf(input.manifest.role);
@@ -1127,15 +1136,22 @@ function contextConsumptionProblem(input: {
     return forbidden('the prepared review instruction disagrees with the Run purpose');
   }
   const reviewSuffix = manifestReview === undefined ? null
-    : renderUnknownCallReviewZh(manifestReview, input.promptTexts);
+    : renderUnknownCallReviewZh(manifestReview, input.promptTexts, input.toolNames);
   const assemblyProblem = contextAssemblyProblem({
     binding,
     text: input.manifest.input,
     selectedTaskInputs: input.manifest.selectedTaskInputs,
-    continuationSuffix: continuationSuffixOf(input.manifest, input.promptTexts),
+    continuationSuffix: continuationSuffixOf(input.manifest, input.promptTexts, input.toolNames),
     reviewSuffix,
   });
   if (assemblyProblem !== null) return assemblyProblem;
+  // Ruling 11: the binding's order is the frozen prompt set's order for
+  // its call kind, element for element; a set without that call kind rejects.
+  const sectionOrderProblem = frozenSectionOrderProblem({
+    binding,
+    expectedSectionOrder: input.manifest.promptSet.sectionOrder[binding.callKind],
+  });
+  if (sectionOrderProblem !== null) return sectionOrderProblem;
   // §3.2 G-CTX: the saved call scope (the manifest's continuation brief fixes a
   // continuation call) and duty must agree with the canonical Run facts.
   // Only a duty the Role or the Session's versioned template fixes is compared; otherwise the
@@ -1254,7 +1270,7 @@ async function authorizeAdmission(
   const rebinding = facts.run.executionAuthorization?.phase === 'revoked';
   const consumption = contextConsumptionProblem({
     manifest, plan: facts.plan, claim, scope, workspaceRevision, goal, rebinding, run: facts.run,
-    promptTexts: frozenTexts.value,
+    promptTexts: frozenTexts.value, toolNames: manifest.promptSet.toolNames,
   });
   if (consumption !== null) return { ok: false, rejection: consumption };
   return { ok: true, value: { ...admitted.value,
@@ -1265,7 +1281,8 @@ async function authorizeAdmission(
  * RUN-02's `continuationBrief` (C3, §6.1 contract (e), §11 I-19): `absent_ok`
  * for a Run without `requeueRef` and without brief or digest; `bound` for a
  * requeue Run whose manifest brief names this Run and its `requeueRef`, whose
- * digest is the binding's, and whose rendered text ends `manifest.input`;
+ * digest is the binding's, and whose rendered text is exactly the binding's
+ * `continuation` range and occurs nowhere else;
  * `missing` (a requeue Run without brief or digest), `unexpected` (a brief or
  * digest without `requeueRef`) or `mismatch` otherwise. An unreadable manifest
  * is judged by the binding alone; the fresh admission refuses it next.
@@ -1281,11 +1298,15 @@ function continuationBriefVerdict(
   if (digest === undefined || (manifest !== null && brief === undefined)) return 'missing';
   if (manifest === null || brief === undefined) return 'bound';
   if (!sameRef(brief.runRef, claim.runRef) || !sameRef(brief.requeueRef, requeueRef)
-    || continuationBriefDigest(brief) !== digest
-    || !manifest.input.endsWith(`\n\n${renderContinuationBriefZh(brief, digest, frozenTexts)}`)) {
+    || continuationBriefDigest(brief) !== digest) {
     return 'mismatch';
   }
-  return 'bound';
+  const rendered = renderContinuationBriefZh(brief, digest, frozenTexts, manifest.promptSet.toolNames);
+  const problem = renderedSectionProblem({
+    text: manifest.input, sections: manifest.contextAssembly.sections,
+    name: 'continuation', rendered, noun: 'continuation brief',
+  });
+  return problem === null ? 'bound' : 'mismatch';
 }
 
 /**
@@ -1554,6 +1575,13 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
 
       // C3 (RUN-02, contract (e)): the continuation brief binding of the prepared manifest.
       const briefManifest = await readManifestFromEnvelope(deps, prepared.envelope as unknown as Record<string, unknown>, claim.runRef);
+      // The verdict below reads `contextAssembly.sections` before the full guard.
+      // Check the binding/sections structure here so a malformed value is `invalid`,
+      // not the `unavailable` an exception would become.
+      if (briefManifest.ok) {
+        const structureProblem = contextAssemblyStructureProblem(briefManifest.value.manifest.contextAssembly);
+        if (structureProblem !== null) return structureProblem;
+      }
       // R2/D5: an unreadable manifest on a review Run is its read error, never a
       // silent hold (the review instruction can no longer be checked).
       if (reviewFacts !== null && !briefManifest.ok) return briefManifest.rejection;

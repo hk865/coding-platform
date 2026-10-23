@@ -30,7 +30,7 @@ import {
 import { ROUND_CHECK_INCOMPLETE_CAUSES, type VerificationRoundRef } from './verification.js';
 import { PLATFORM_PROMPT_PACK_V1 } from './prompts/platform-pack.generated.js';
 import type { PromptTextsV1 } from './prompts/prompt-set.js';
-import { renderTemplate } from './prompts/render-template.js';
+import { parseTemplateV1, renderTemplate, type TemplateNodeV1 } from './prompts/render-template.js';
 
 // ------------------------------------------------------------------------ //
 // Shapes                                                                    //
@@ -302,7 +302,7 @@ export const CONTINUATION_BRIEF_LIMITS = Object.freeze({
 export function continuationBriefDigest(brief: ContinuationBriefV1): string {
   return sha256Hex(canonicalJson(brief as unknown as JsonValue));
 }
-/** The second line of the rendered brief; WorkGraph re-renders and compares the suffix. */
+/** The second line of the rendered brief; WorkGraph re-renders and compares this text. */
 export function continuationBriefMarker(digest: string): string {
   return `[continuation-brief v1 sha256:${digest}]`;
 }
@@ -339,9 +339,6 @@ function because(stamp: SourceCheckpointStampV1): string {
 type BriefTexts = {
   pack: PromptTextsV1;
   S: (key: string) => string;
-  template: string;
-  heading: string;
-  standing: readonly string[];
   failureClass: Readonly<Record<ReworkFailureClass, string>>;
   actorClass: Readonly<Record<ReworkActorClass, string>>;
   stopRequester: Readonly<Record<StopRequester, string>>;
@@ -377,13 +374,9 @@ function packString(texts: PromptTextsV1, key: string): string {
 /** Builds the whole fixed-text table from one pack; nothing falls back per key. */
 function briefTexts(texts: PromptTextsV1): BriefTexts {
   const S = (key: string): string => packString(texts, key);
-  const template = texts.templates['continuation-brief'] ?? '';
   return {
     pack: texts,
     S,
-    template,
-    heading: template.slice(0, template.indexOf('\n')),
-    standing: Object.freeze(template.slice(template.lastIndexOf('\n\n') + 2).split('\n')),
     failureClass: Object.freeze({
       interrupted: S('brief.failureClass.interrupted') ?? '', cancelled: S('brief.failureClass.cancelled') ?? '',
       check_failed: S('brief.failureClass.check_failed') ?? '', run_failed: S('brief.failureClass.run_failed') ?? '',
@@ -461,6 +454,33 @@ function briefTexts(texts: PromptTextsV1): BriefTexts {
 
 const DEFAULT_TEXTS: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1;
 
+/**
+ * Every tool block a template declares, in first-read order, recursively. A
+ * renderer called without an explicit frozen list uses this to render every
+ * block the CURRENT template names (ruling 10); the generated pack's platform
+ * tool table is not that declaration. An absent or unparseable template has no
+ * names, and `renderTemplate` reports the real problem when it renders.
+ */
+export function templateToolNames(texts: PromptTextsV1, templateId: string): readonly string[] {
+  const source = Object.hasOwn(texts.templates, templateId) ? texts.templates[templateId] : undefined;
+  if (source === undefined) return [];
+  const parsed = parseTemplateV1(templateId, source);
+  if (parsed.status === 'invalid') return [];
+  const names: string[] = [];
+  const visit = (nodes: readonly TemplateNodeV1[]): void => {
+    for (const node of nodes) {
+      if (node.kind === 'tool') {
+        if (!names.includes(node.name)) names.push(node.name);
+        visit(node.children);
+      } else if (node.kind === 'block') {
+        visit(node.children);
+      }
+    }
+  };
+  visit(parsed.nodes);
+  return names;
+}
+
 /** Successively shorter caps (UTF-16 code units) tried on every text before body items are left out. */
 const RENDER_TEXT_CAPS: readonly number[] = [CONTINUATION_BRIEF_LIMITS.textChars, 1000, 250, 60];
 const UTF8 = new TextEncoder();
@@ -480,7 +500,9 @@ type ContinuationBriefTemplateParts = {
  * prefixed with the single LF the old array join supplied, so an empty part
  * renders no bytes at all. `sectionRanges` is not part of the brief output.
  */
-function renderBriefTemplateZh(B: BriefTexts, marker: string, parts: ContinuationBriefTemplateParts): string {
+function renderBriefTemplateZh(
+  B: BriefTexts, marker: string, parts: ContinuationBriefTemplateParts, toolNames: readonly string[],
+): string {
   const slot = (lines: readonly string[]): string => (lines.length === 0 ? '' : `\n${lines.join('\n')}`);
   return renderTemplate(B.pack, 'continuation-brief', {
     marker,
@@ -490,15 +512,16 @@ function renderBriefTemplateZh(B: BriefTexts, marker: string, parts: Continuatio
     anomalies: slot(parts.anomalies),
     review: slot(parts.review),
     blocked: slot(parts.blocked),
-  }, []).text;
+  }, toolNames).text;
 }
 
 /**
- * Renders the brief as the last section of `manifest.input` (spec §6.1 (e)):
- * line 1 is the title, line 2 `continuationBriefMarker(digest)`; WorkGraph
- * re-renders and compares this suffix. Pure and deterministic. The result stays
- * within `renderedBytes` UTF-8 bytes: every text is first cut shorter step by
- * step, then trailing body lines are left out with a note; the fixed
+ * Renders the brief into the `continuation` slot of `manifest.input` (spec §6.1
+ * (e)): an independent section in the frozen order, never the tail of another
+ * section. Line 1 is the title, line 2 `continuationBriefMarker(digest)`;
+ * WorkGraph re-renders and compares this text. Pure and deterministic. The result
+ * stays within `renderedBytes` UTF-8 bytes: every text is first cut shorter step
+ * by step, then trailing body lines are left out with a note; the fixed
  * instruction block is always kept. Where the records cannot tell, it says so
  * and never claims "no change".
  *
@@ -509,11 +532,15 @@ function renderBriefTemplateZh(B: BriefTexts, marker: string, parts: Continuatio
  * (`cancelled_at_reconcile`: Host-restart wording; `cancelled_while_paused`:
  * the in-process wording).
  */
-export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: string, texts: PromptTextsV1 = DEFAULT_TEXTS): string {
+export function renderContinuationBriefZh(
+  brief: ContinuationBriefV1,
+  digest: string,
+  texts: PromptTextsV1 = DEFAULT_TEXTS,
+  /** Ruling 10: the frozen tool list; absent renders every tool block the template names. */
+  toolNames: readonly string[] = templateToolNames(texts, 'continuation-brief'),
+): string {
   const B = briefTexts(texts);
   const marker = continuationBriefMarker(digest);
-  const head = [B.heading, marker];
-  const tail = ['', ...B.standing];
   const limit = CONTINUATION_BRIEF_LIMITS.renderedBytes;
   const anomalies = brief.anomalies;
   const review = brief.unknownCallReview ?? null;
@@ -549,7 +576,7 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
       return renderBriefTemplateZh(B, marker, {
         body: fullBody, blockedOmission: [], bodyOmission: [], anomalies: fullAnomaly, review: fullReview,
         blocked: [...blockedCommandsLinesZh(B, blockedAll, keep, withCountLine), ...note],
-      });
+      }, toolNames);
     };
     if (blockedAll.length > blockedKeepMax) {
       const text = candidate(blockedKeepMax, true);
@@ -572,53 +599,64 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
     const note = blockedOmitted > 0 ? [omittedNoteZh(B, blockedOmitted)] : [];
     const text = renderBriefTemplateZh(B, marker, {
       body, blockedOmission: note, bodyOmission: [], anomalies: anomaly, review: reviewLines, blocked: [],
-    });
+    }, toolNames);
     if (utf8Length(text) <= limit) return text;
   }
   if (anomalies === undefined && review === null && blockedAll.length === 0) {
-    // A brief without either mandatory section keeps its old bytes: this is the
-    // original bounded fallback, the longest prefix of ordinary body lines.
-    const fixed = utf8Length([...head, ...tail].join('\n'));
-    let used = fixed;
-    let kept = 0;
-    for (const line of body) {
-      const next = used + 1 + utf8Length(line);
-      if (next + 1 + utf8Length(omittedNoteZh(B, body.length - kept - 1)) > limit) break;
-      used = next;
-      kept += 1;
+    // A brief without either mandatory section: the longest prefix of ordinary
+    // body lines whose FULL text fits, rendered through the frozen template and
+    // tool list. The candidate with no body lines (its omission note included)
+    // is the smallest one; when even that is over the limit the template's own
+    // fixed text cannot fit, so refuse `capacity` instead of returning it.
+    for (let kept = body.length; kept >= 0; kept -= 1) {
+      const text = renderBriefTemplateZh(B, marker, {
+        body: body.slice(0, kept), blockedOmission: [], bodyOmission: [omittedNoteZh(B, body.length - kept)],
+        anomalies: [], review: [], blocked: [],
+      }, toolNames);
+      if (utf8Length(text) <= limit) return text;
     }
-    return renderBriefTemplateZh(B, marker, {
-      body: body.slice(0, kept), blockedOmission: [], bodyOmission: [omittedNoteZh(B, body.length - kept)],
-      anomalies: [], review: [], blocked: [],
-    });
+    throw new ContinuationBriefCapacityError(
+      `the fixed text of the continuation brief does not fit in the ${String(limit)}-byte limit`);
   }
   // Still too long with the shortest texts. Every present mandatory section is
   // kept in full (spec §2.7; K3 L20 "必需部分"); only its optional lines are
-  // budgeted, counting what is left out. If even the mandatory lines do not fit,
-  // refuse `capacity` instead of silently dropping a section.
+  // budgeted, counting what is left out. Every candidate is rendered through the
+  // frozen template and tool list and measured by its actual bytes. If even the
+  // mandatory lines do not fit, refuse `capacity` instead of dropping a section.
   const cap = RENDER_TEXT_CAPS[RENDER_TEXT_CAPS.length - 1]!;
-  let suffixMandatory: string[];
+  const fixedCandidate = (anomalyLines: readonly string[], reviewLines: readonly string[]): string =>
+    renderBriefTemplateZh(B, marker, {
+      body: [], blockedOmission: [], bodyOmission: [], anomalies: anomalyLines, review: reviewLines, blocked: [],
+    }, toolNames);
+  // The two mandatory sections are always kept as separate parts: a template may
+  // place, format or condition them independently, so merging them into one
+  // array would measure (and render) a different text than the template says.
+  let suffixMandatory: { anomaly: readonly string[]; review: readonly string[] };
   if (review === null) {
     let budgeted: string[] | null = null;
     for (let allowed = allPaths; allowed >= 0; allowed -= 1) {
       const candidate = anomalyLinesZh(B, brief, cap, allowed);
-      if (utf8Length([...head, ...candidate, ...tail].join('\n')) <= limit) { budgeted = candidate; break; }
+      if (utf8Length(fixedCandidate(candidate, [])) <= limit) { budgeted = candidate; break; }
     }
     if (budgeted === null) {
       throw new ContinuationBriefCapacityError(
         `the mandatory anomaly section does not fit in the ${String(limit)}-byte continuation brief limit`);
     }
-    suffixMandatory = budgeted;
+    suffixMandatory = { anomaly: budgeted, review: [] };
   } else {
     // K3 L20: the review section is a second mandatory part, placed after the
     // anomaly section and before the fixed closing block. Budget the optional
     // lines of both sections (anomaly paths first, then the review detail) while
     // keeping every mandatory line.
-    let chosen: string[] | null = null;
+    let chosen: { anomaly: readonly string[]; review: readonly string[] } | null = null;
     for (let allowedAnomaly = allPaths; allowedAnomaly >= 0 && chosen === null; allowedAnomaly -= 1) {
+      const anomalyCandidate = anomalyLinesZh(B, brief, cap, allowedAnomaly);
       for (let allowedReview = allReviewLines; allowedReview >= 0; allowedReview -= 1) {
-        const candidate = [...anomalyLinesZh(B, brief, cap, allowedAnomaly), ...unknownCallReviewLinesZh(B, brief, cap, allowedReview)];
-        if (utf8Length([...head, ...candidate, ...tail].join('\n')) <= limit) { chosen = candidate; break; }
+        const reviewCandidate = unknownCallReviewLinesZh(B, brief, cap, allowedReview);
+        if (utf8Length(fixedCandidate(anomalyCandidate, reviewCandidate)) <= limit) {
+          chosen = { anomaly: anomalyCandidate, review: reviewCandidate };
+          break;
+        }
       }
     }
     if (chosen === null) {
@@ -627,21 +665,19 @@ export function renderContinuationBriefZh(brief: ContinuationBriefV1, digest: st
     }
     suffixMandatory = chosen;
   }
-  const suffix = [...suffixMandatory, ...tail];
-  const fixed = utf8Length([...head, ...suffix].join('\n'));
-  let used = fixed;
-  let kept = 0;
-  for (const line of body) {
-    const next = used + 1 + utf8Length(line);
-    if (next + 1 + utf8Length(omittedNoteZh(B, body.length - kept - 1 + blockedOmitted)) > limit) break;
-    used = next;
-    kept += 1;
+  // Body lines are optional: take the longest prefix whose FULL text fits with
+  // the note for every omitted line (the removed blocked lines included). The
+  // mandatory-only minimum was measured above, so it is the final fallback, also
+  // rendered through the same template.
+  for (let kept = body.length; kept >= 0; kept -= 1) {
+    const text = renderBriefTemplateZh(B, marker, {
+      body: body.slice(0, kept), blockedOmission: [],
+      bodyOmission: [omittedNoteZh(B, body.length - kept + blockedOmitted)],
+      anomalies: suffixMandatory.anomaly, review: suffixMandatory.review, blocked: [],
+    }, toolNames);
+    if (utf8Length(text) <= limit) return text;
   }
-  const withNote = renderBriefTemplateZh(B, marker, {
-    body: body.slice(0, kept), blockedOmission: [], bodyOmission: [omittedNoteZh(B, body.length - kept + blockedOmitted)],
-    anomalies: suffixMandatory, review: [], blocked: [],
-  });
-  return kept === 0 && utf8Length(withNote) > limit ? [...head, ...suffix].join('\n') : withNote;
+  return fixedCandidate(suffixMandatory.anomaly, suffixMandatory.review);
 }
 
 function omittedNoteZh(B: BriefTexts, lines: number): string {

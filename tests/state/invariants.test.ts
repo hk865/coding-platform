@@ -1369,15 +1369,30 @@ describe('every checker: a satisfying world and a violating world per clause (ex
     expect(changed((records) => { records.run2!.consumedWait = consumedWait(records.run1.ref); })).toEqual([`continuation Run ${r2} binds a brief`]);
     expect(changed((records) => { records.run3!.inputBinding!.continuationBriefDigest = sha256Hex('another brief'); }))
       .toEqual([`the manifest brief of Run ${r3} does not match its bound digest`,
-        `the manifest input of Run ${r3} does not end with the rendered brief and its marker`]);
+        `the manifest continuation range of Run ${r3} is not the rendered brief`]);
     expect(changed((records) => {
       const outbox = records.outboxOf(records.run2!);
       outbox.claim = { ...outbox.claim, runRef: { ...outbox.claim.runRef, runId: 'inv-other-run' } };
     })).toEqual([`the brief of Run ${r2} names another Run or requeue`]);
     expect(changed((_, next) => { next.manifests!.find((manifest) => manifest.runRef.runId === r2)!.problem = 'unreadable'; }))
       .toEqual([`the manifest of Run ${r2} has no readable brief: unreadable`]);
-    expect(changed((_, next) => { next.manifests!.find((manifest) => manifest.runRef.runId === r2)!.input += '\n'; }))
-      .toEqual([`the manifest input of Run ${r2} does not end with the rendered brief and its marker`]);
+    // The brief is not required to be last: a valid final line after it is not a
+    // finding, but a moved range or a second copy of the rendered text is.
+    expect(changed((_, next) => { next.manifests!.find((manifest) => manifest.runRef.runId === r2)!.input += '\n'; })).toEqual([]);
+    expect(changed((_, next) => {
+      const manifest = next.manifests!.find((candidate) => candidate.runRef.runId === r2)!;
+      manifest.continuationRange = { ...manifest.continuationRange!, endByte: manifest.continuationRange!.endByte - 1 };
+    })).toEqual([`the manifest continuation range of Run ${r2} is not the rendered brief`]);
+    expect(changed((_, next) => {
+      const manifest = next.manifests!.find((candidate) => candidate.runRef.runId === r2)!;
+      const range = manifest.continuationRange!;
+      const bytes = Buffer.from(manifest.input, 'utf8');
+      const rendered = Buffer.from(bytes.subarray(range.startByte, range.endByte));
+      manifest.input = Buffer.concat([rendered, bytes]).toString('utf8');
+      manifest.continuationRange = {
+        startByte: range.startByte + rendered.length, endByte: range.endByte + rendered.length,
+      };
+    })).toEqual([`the rendered brief of Run ${r2} does not occur exactly once`]);
     expect(changed((records) => { records.run2!.inputBinding!.inputDigest = sha256Hex('rebound'); }, flow.final))
       .toEqual([`Run ${r2} rewrote its inputBinding`]);
   });

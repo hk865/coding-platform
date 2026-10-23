@@ -61,6 +61,7 @@ function expectRecord(
     set.strings.digest,
     set.base.digest,
     ...set.skills.map(skill => skill.digest),
+    ...set.tools.map(tool => tool.digest),
     ...requests.map(request => request.toolSpecsRef.digest),
   ])].sort();
   expect(Object.keys(texts).sort()).toEqual(referred);

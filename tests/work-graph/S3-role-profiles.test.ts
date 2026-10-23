@@ -199,6 +199,8 @@ describe.each(['memory', 'sqlite'] as const)('%s: S3 role profiles', kind => {
         role: { status: 'resolved', roleId: read.value.roleId, revision: read.value.ref, spec: read.value.content },
         configuration: {} as never,
         permissions: { policyRevision: 's3-role', tools: [], writeScope: [] },
+        toolNames: ['read'],
+        history: { callKind: 'work' as const, hasCompletedCursor: false },
       });
       expect(assembled).toMatchObject({ status: 'ready' });
       if (assembled.status !== 'ready') throw new Error(`RP01 assembler role section was not ready: ${assembled.status}`);

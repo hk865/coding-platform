@@ -7,12 +7,78 @@ import type { ContinuationBasis, TaskExecutionRecord } from '../work-graph/model
 import type { KernelCommandFactV1 } from '../work-graph/model/kernel-command-read-contracts.js';
 import { requeueHistorySourceOf } from '../work-graph/state/task-failure.js';
 import { isRecord, messageOf, rejected } from './context-support.js';
-import type { ContextAssemblerDependencies } from './context-types.js';
+import type {
+  ContextAssemblerDependencies, HistoryDecisionV1, SessionBasisV1,
+  SessionHistoryDecisionInputV1,
+} from './context-types.js';
 import { decodeKernelEntry } from './kernel-turn-facts.js';
 import { createSessionHistoryCursorOwner, type SessionHistoryCursorOwner } from './session-operations.js';
 
 /** The Kernel `agent.event` types that end a Turn: a completed history boundary (LA-1). */
 const KERNEL_TERMINAL_EVENTS: readonly string[] = ['run.completed', 'run.failed', 'run.cancelled', 'run.limit_exceeded', 'run.yielded', 'run.interrupted'];
+
+/**
+ * Ruling 14: the ONE pure mode rule preparation and start share. Work takes its
+ * formal seed when it has a non-null position, else any completed cursor; a
+ * Query with a formal basis follows the basis's position and never the cursor,
+ * without one it follows the cursor. `sessionHistoryDecision` computes its mode
+ * through this function, so the two cannot drift.
+ */
+export function takesSessionHistoryOf(input: {
+  callKind: 'work' | 'query';
+  sessionBasis: SessionBasisV1 | undefined;
+  hasCompletedCursor: boolean;
+}): boolean {
+  if (input.callKind === 'work') {
+    return input.sessionBasis?.throughPosition != null || input.hasCompletedCursor;
+  }
+  return input.sessionBasis !== undefined
+    ? input.sessionBasis.throughPosition !== null
+    : input.hasCompletedCursor;
+}
+
+/**
+ * Ruling 14: the ONE pure history rule. Start chooses the history boundary and
+ * the source Session; the mode itself delegates to `takesSessionHistoryOf`, the
+ * same pure rule preparation uses. A Work seed wins only when its basis has a
+ * non-null throughPosition and the Session has no completed cursor; a Query with
+ * a formal basis never looks at a boundary (C7).
+ */
+export function sessionHistoryDecision(input: SessionHistoryDecisionInputV1): HistoryDecisionV1 {
+  const basis = input.sessionBasis;
+  const boundary = input.completedBoundary ?? null;
+  const takesSessionHistory = takesSessionHistoryOf({
+    callKind: input.callKind,
+    sessionBasis: basis,
+    hasCompletedCursor: boundary !== null && boundary.cursor !== null,
+  });
+  if (!takesSessionHistory) return { mode: 'current_turn', takesSessionHistory: false };
+  if (input.callKind === 'work') {
+    // A non-null cursor is the start rule's same-Session reuse; otherwise the
+    // basis is the LA-1 seed. At least one of them is present whenever the mode
+    // above is true, so the branches below are exhaustive in practice.
+    if (boundary !== null && boundary.cursor !== null) {
+      return { mode: 'session_history', takesSessionHistory: true,
+        throughPosition: boundary.position, sourceSessionId: null };
+    }
+    if (basis !== undefined && basis.throughPosition !== null) {
+      return { mode: 'session_history', takesSessionHistory: true,
+        throughPosition: basis.throughPosition, sourceSessionId: basis.sourceKernelSessionId };
+    }
+    return { mode: 'current_turn', takesSessionHistory: false };
+  }
+  if (basis !== undefined) {
+    if (basis.throughPosition !== null) {
+      return { mode: 'session_history', takesSessionHistory: true,
+        throughPosition: basis.throughPosition, sourceSessionId: basis.sourceKernelSessionId };
+    }
+    return { mode: 'current_turn', takesSessionHistory: false };
+  }
+  return boundary !== null && boundary.cursor !== null
+    ? { mode: 'session_history', takesSessionHistory: true,
+        throughPosition: boundary.position, sourceSessionId: null }
+    : { mode: 'current_turn', takesSessionHistory: false };
+}
 
 export type SessionBasisOutcome =
   | { status: 'ready'; value: PreparedTaskManifestV1['sessionBasis'] | null }

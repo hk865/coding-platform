@@ -56,8 +56,9 @@ describe('ruling 14: a review-purpose Work Run renders from the resolved pack', 
       expect(prepared.set.templates.find(template => template.id === 'unknown-call-review')).toMatchObject({
         id: 'unknown-call-review', version: 1, packId: 'platform', digest: sha(REVIEW_TEMPLATE),
       });
-      expect(prepared.texts.base).toEqual({ templateId: 'base', version: 1, text: `${BASE}\n\n${INSTRUCTION}` });
-      expect(prepared.set.base).toMatchObject({ templateId: 'base', version: 1, digest: sha(`${BASE}\n\n${INSTRUCTION}`) });
+      // PC-2 platform pack v2: the platform base version is 2.
+      expect(prepared.texts.base).toEqual({ templateId: 'base', version: 2, text: `${BASE}\n\n${INSTRUCTION}` });
+      expect(prepared.set.base).toMatchObject({ templateId: 'base', version: 2, digest: sha(`${BASE}\n\n${INSTRUCTION}`) });
       expect(prepared.texts.skills).toEqual([{ schemaVersion: 1, id: 'platform-secretary',
         title: 'Platform secretary', kind: 'instruction', priority: 70,
         source: `skill:platform-secretary@sha256:${sha(SKILL)}`, content: SKILL }]);
