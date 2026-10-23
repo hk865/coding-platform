@@ -1,0 +1,14 @@
+PC-1b-R2 full suite: /home/han001/dsh-work/slices/s9pc1b-full at 68dfb10 PC-1b R2: X-01, P2, S2, R2, J2; bubblewrap, 5 workers, scope 7G; started 20:57 available 14133 MB
+tracked under resources/skills: 0; directory present in the clone: no
+build 0
+typecheck 0
+check:architecture 0
+build-kernel-patch --check 0
+build-platform-prompts --check 0
+vitest exit 0
+ Test Files  792 passed (792)
+      Tests  9820 passed | 3 skipped (9823)
+   Duration  1437.03s (transform 26.34s, setup 0ms, import 493.57s, tests 6615.26s, environment 59ms)
+failing files:
+clone clean after the run: 1 changed
+ended 21:21

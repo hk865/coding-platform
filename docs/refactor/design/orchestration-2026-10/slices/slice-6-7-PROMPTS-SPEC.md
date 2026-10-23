@@ -10,6 +10,15 @@
 - 编辑路由加 `settings/prompts/tools/read` 和 `settings/prompts/tools/save { packId, toolName, expectedDigest, entry: { description, parameters } }`：digest 对不上回 `revision_conflict`，校验不过回 `invalid`，在平台包上存回 `forbidden`。
 - Kernel 自带工具（如 read、shell）的说明这一轮不能改。它们由每次请求的 `toolSpecsRef` 记下，不搬进包。§0.4 那句“归 PC”按此读。
 
+**后注（PC-1、PC-2 合入，lead 2026-10-23）：** PC-1 `20f20ae2`（10-22）、PC-2 `fd4be391`（10-23）。正文原样保留，施工中定下的几处按这些读（HANDOFF 决定 83-6）：
+- **开始时的比对（S-01）保持严格：** 五个选包字段逐项比对；准备和开始要用同一个模型绑定。
+- **接不接 Session 历史（P8 的提醒、F1）：** 准备时不读 Kernel 历史，只看 Session 是否存有已完成的游标：Work 有 `sessionBasis` 的位置或有已完成的游标就接；Query 有 `sessionBasis` 看它的位置，没有就看游标（`context-history-facts.ts` 的 `takesSessionHistoryOf`，开始时的 `sessionHistoryDecision` 也用它）。开始时照旧读真实边界，冻结的 `false` 仍然只发这一轮。P8 说的“实际接了 Session 历史”，准备时就按这条判断，提醒随输入冻结。
+- **工具授权的拒绝（P9、F2）：** Runtime 不认识的工具名、缺负责方的工具，仍在开始时拒绝（`unsupported`，任何模型调用之前），和 PC 之前一样；准备时只用认识的名字算最终工具清单。
+- `promptSelectionOf` 收结构类型的参数（契约层不能引用 Core），每个 `BoundModel` 都满足；Kernel 输入的 `skills` 是 `readonly SkillContext[]`。
+- 足迹段在生产里仍然为空（以后的段）。
+
+经过见 [证据](../../../reviews/evidence/prompts-pc-2026-10-22/README.md)。
+
 第 6、7 片已冻结（决定 64），这一节是冻结后的补充，不改它们已定的行为。它定这几件事：
 - 提示词放在哪、谁能改、按什么选；
 - 超长时怎么删；

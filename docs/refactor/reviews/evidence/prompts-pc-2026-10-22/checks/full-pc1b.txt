@@ -1,0 +1,27 @@
+PC-1b full suite: /home/han001/dsh-work/slices/s9pc1b-full at c1c7af4 PC-1b joint: freeze, pin, records, failure and allowlist cleanup; bubblewrap, 5 workers, scope 7G; started 13:36 available 14115 MB
+tracked under resources/skills: 0; directory present in the clone: no
+build 0
+typecheck 0
+check:architecture 0
+build-kernel-patch --check 0
+build-platform-prompts --check 0
+vitest exit 1
+ Test Files  3 failed | 786 passed (789)
+      Tests  5 failed | 9792 passed | 3 skipped (9800)
+   Duration  1455.75s (transform 22.46s, setup 0ms, import 444.23s, tests 6765.19s, environment 54ms)
+failing files:
+ FAIL  tests/app/PC-host-prompt-selection.test.ts > PC-1a prompt selection through a full Host start > keeps the platform Skill root at the identical absolute path and re-exports the same binding
+ FAIL  tests/business/S1-archive-flow.test.ts > S1 archive flow (sqlite) > IT16 after the anchor the ordinary Workflow re-dispatch claims in D, keeps D history and starts no new Session
+ FAIL  tests/business/S1-archive-flow.test.ts > S1 archive flow (sqlite) > IT27 with no other available Session the ordinary Workflow creates exactly one new Session with provenance new
+ FAIL  tests/work-graph/R3c-plan-adoption.test.ts > memory: real Goal→candidate→accepted Plan is atomic, immutable and queryable
+ FAIL  tests/work-graph/R3c-plan-adoption.test.ts > sqlite: real Goal→candidate→accepted Plan is atomic, immutable and queryable
+ ❯ Object.reDispatch tests/business/S1-archive-flow.test.ts:389:45
+ ❯ prepareTaskForReal tests/helpers/task-claim-fixture.ts:601:40
+ ❯ tests/app/PC-host-prompt-selection.test.ts (5 tests | 1 failed)
+ ❯ tests/app/PC-host-prompt-selection.test.ts:262:62
+ ❯ tests/business/S1-archive-flow.test.ts (7 tests | 2 failed)
+ ❯ tests/business/S1-archive-flow.test.ts:569:19
+ ❯ tests/business/S1-archive-flow.test.ts:640:19
+ ❯ tests/work-graph/R3c-plan-adoption.test.ts (2 tests | 2 failed)
+ ❯ tests/work-graph/R3c-plan-adoption.test.ts:246:28
+ended 14:00

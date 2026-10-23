@@ -1,0 +1,7 @@
+[2m Test Files [22m [1m[32m6 passed[39m[22m[90m (6)[39m
+[2m      Tests [22m [1m[32m64 passed[39m[22m[90m (64)[39m
+   [33m[2m✓[22m[39m C8 (§15.2 5.8): the verdict follows the failure facts and the live policy: FAIL → requeue, cap 0 → stopped, requeue → claim_requeued, no new basis → stopped [33m 2143[2mms[22m[39m
+   [33m[2m✓[22m[39m verification/reverify: a FAIL head is refused source_unchanged, then after the fix its successor completes the Goal [33m 1989[2mms[22m[39m
+[2m Test Files [22m [1m[32m8 passed[39m[22m[90m (8)[39m
+[2m      Tests [22m [1m[32m43 passed[39m[22m[90m (43)[39m
+12:29

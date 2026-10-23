@@ -1,0 +1,60 @@
+diff --git a/tests/helpers/PC2-pack-fixture.ts b/tests/helpers/PC2-pack-fixture.ts
+--- a/tests/helpers/PC2-pack-fixture.ts
++++ b/tests/helpers/PC2-pack-fixture.ts
+@@ -9,6 +9,7 @@
+ import { lstat, mkdir, readFile, readdir, readlink, writeFile } from 'node:fs/promises';
+ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+ import { vi } from 'vitest';
++import * as workflowModule from '../../src/business/workflow/workflow.js';
+ import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
+ import type {
+   PreparedQueryExecution, PreparedQueryManifestV1, PreparedTaskManifestV1,
+@@ -381,18 +382,27 @@
+ 
+ /** Completed Work -> real inquiry derivation; also a standalone Query on the source Session. */
+ export async function openPC2QueryHistoryFixture(options: PCOptions = {}) {
+-  const fixture = await openPCWorkFixture({
+-    ...options,
+-    model: options.model ?? scriptedModel([
+-      { text: 'PC2 completed history.' }, { text: 'PC2 derived answer.' }, { text: 'PC2 reused answer.' },
+-    ]),
++  const createWorkflow = workflowModule.createWorkflow;
++  let workflowRuntime: Parameters<typeof createWorkflow>[0]['runtime'] | undefined;
++  const factorySpy = vi.spyOn(workflowModule, 'createWorkflow').mockImplementation(deps => {
++    workflowRuntime = deps.runtime;
++    return createWorkflow(deps);
+   });
++  let fixture: Awaited<ReturnType<typeof openPCWorkFixture>>;
+   try {
++    fixture = await openPCWorkFixture({
++      ...options,
++      model: options.model ?? scriptedModel([
++        { text: 'PC2 completed history.' }, { text: 'PC2 derived answer.' }, { text: 'PC2 reused answer.' },
++      ]),
++    });
++  } finally { factorySpy.mockRestore(); }
++  try {
+     const { base, runtime } = fixture;
+     const platform = base.platform;
+     await fixture.work.prepare();
+     ready(await fixture.work.start());
+-    if (!runtime.readCompletedBoundary || !runtime.startQuery || !runtime.prepareQuery) {
++    if (!runtime.readCompletedBoundary || !workflowRuntime?.startQuery || !runtime.prepareQuery) {
+       throw new Error('The Runtime has no public Query/history port');
+     }
+     const boundary = ready(await runtime.readCompletedBoundary(base.ctx, { sessionRef: base.sessionRef }));
+@@ -408,11 +418,11 @@
+       contextWindowTokens: 200_000, inputTokens: null, outputTokens: null,
+       maxRequests: 8, maxToolCalls: 8, timeoutMs: 30_000, perResponseTokens: 512,
+     };
+-    const actualStart = runtime.startQuery.bind(runtime);
++    const actualStart = workflowRuntime.startQuery.bind(workflowRuntime);
+     type StartArgs = Parameters<typeof actualStart>;
+     const captured: StartArgs[] = [];
+-    // Workflow uses this raw public Runtime port, not the composition wrapper.
+-    const spy = vi.spyOn(runtime, 'startQuery').mockImplementation(async (ctx, request) => {
++    // Capture on the exact port passed to Workflow, including composition's copy.
++    const spy = vi.spyOn(workflowRuntime, 'startQuery').mockImplementation(async (ctx, request) => {
+       captured.push([ctx, structuredClone(request)]);
+       return { status: 'rejected', code: 'busy', reason: 'PC2 captured before Query start' };
+     });

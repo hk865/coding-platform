@@ -1,0 +1,95 @@
+A1 with bubblewrap in /home/han001/dsh-work/slices/s9pc1b:
+   ✓ A1 (C8, §15.2 5.8, AV-12, W-21, L-3, C3): a FAILed round is requeued automatically, claimed in Run 1's Session with the brief, passes and completes the Goal  4181ms
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+PC-1b-R1 full suite: /home/han001/dsh-work/slices/s9pc1b-full at 1b5183a PC-1b R1: joint, PC-15, J-07, J-08; bubblewrap, 5 workers, scope 7G; started 19:28 available 14061 MB
+tracked under resources/skills: 0; directory present in the clone: no
+build 0
+typecheck 0
+check:architecture 0
+build-kernel-patch --check 0
+build-platform-prompts --check 0
+vitest exit 1
+ Test Files  16 failed | 776 passed (792)
+      Tests  32 failed | 9788 passed | 3 skipped (9823)
+   Duration  1795.50s (transform 20.72s, setup 0ms, import 420.33s, tests 8489.90s, environment 51ms)
+failing files:
+ FAIL  tests/scenarios/A8-host-restart-entry.test.ts > A8-1b (W-02, I-19, LA-6, §12.1 step 6b (b)): a requeue Run authorized and never begun is re-driven by the start-up re-drive with no workflow/advance; the bound brief is rebuilt (rehydratePreparedExecution): the same digest after the source changed, the same permit
+ FAIL  tests/scenarios/A8-host-restart-entry.test.ts > A8-2d (W-08, W-11, RUN-19, ATT-31..34, LA-1): the begin committed and the Kernel Turn started, the entered fact was never booked; the restart classifies the Turn by the W-11 rule and records the entry facts in the same commit
+ FAIL  tests/scenarios/A8-host-restart.test.ts > A8-3b (W-10, RD-3, L-5, RUN-18, contract (f)): the Kernel yielded on a saved wait message and the yielded terminal was never booked; the restart rebuilds the continuation from the durable facts and books the yield
+ FAIL  tests/scenarios/A8-host-restart.test.ts > A8-3h (W-16, CTL-08(e), CI-08, CD-4): the terminal was booked and the crash lost its control acks; the restart settles the queued steer from its Kernel event and supersedes the pause the Turn never reached
+ FAIL  tests/scenarios/A8-host-restart.test.ts > A8-3j (W-18, D-17, W-13, RUN-20(i)): the wait message was saved and the Host stopped before the Kernel recorded the send; the restart ends the Run outcome_unknown on the send still in flight; the message stays as saved and no continuation waits for its reply
+ FAIL  tests/scenarios/C3-brief-idempotency.test.ts > C3-R1 (W-24), W-02, W-05 → RUN-16 → RUN-03: one requeue Run passes every crash point before the Kernel and keeps one brief
+ FAIL  tests/scenarios/C7-defer-reactivate.test.ts > C7 TASK-19 against the selected Run's pointer ControlIntent moving in its window (§3.6 PLAN-05, Q10's reachable form): the restart settles a queued pause left on the ended Run (CTL-08(e)) inside TASK-19's read→commit window; TASK-19 is refused revision_conflict and writes nothing; retried, guards 3 and 7 are judged again: the automation is forbidden, the operator defers
+ FAIL  tests/scenarios/K-R-attested-facts-source.test.ts > KA-09 (KE3, L9/D12): a never-entered, requeued Run between the attested Run and the prepared Run leaves the attested Run as the nearest facts source
+ FAIL  tests/scenarios/K-R-attested-facts-source.test.ts > KA-09 (KE3, L9/D2): an entered, locator-less, attested requeue continuation is its own facts source and lists the later accepted input
+ FAIL  tests/scenarios/K3-06-mixed-batch.test.ts > K3-06 single-item R2 chains, one per kind (ruling 2) > K3-06 (file_edit, L3/L8/L9): one in-flight edit is compare_in_continuation and settles at creation
+ FAIL  tests/scenarios/K3-06-mixed-batch.test.ts > K3-06 single-item R2 chains, one per kind (ruling 2) > K3-06 (platform, L3/L4/L8/L9): one in-flight send is not_done and settles at creation
+ FAIL  tests/scenarios/K3-08-wait-reply.test.ts > K3-08 the wait reply and the review round mailbox fence > K3-08 (一): a wait send in flight is observed done, the wait relation is gone, and the continuation receives the reply
+ FAIL  tests/scenarios/K3-26-inventory-scenarios.test.ts > K3-26 the attestation inventory through the Host entry > K3-26 (二): Kernel readable with no unresolved calls -> an empty, resolved inventory
+ FAIL  tests/scenarios/K3-29-recovery-continuation.test.ts > K3-29 rows 8/9: the review claim after the Session change > K3-29 row 9: after the Session change the record still follows the original Run; the review and continuation briefs come from it and the nearest holder claims in the new Session
+ FAIL  tests/scenarios/K3-R1-continuation-protection.test.ts > K3 L6 symlink and protection reads > K3-04 (L6): a path with a baseline entry is status only (baseline_dirty), never reading HEAD or a baseline blob
+ FAIL  tests/scenarios/K3-R1-continuation-protection.test.ts > K3 L6 symlink and protection reads > K3-04 (L6): an edit path replaced by a symlink to a protected file is status only with no target bytes in the note
+ FAIL  tests/scenarios/K3-R1-continuation-protection.test.ts > K3 L6 symlink and protection reads > K3-04 (L6): an edit path under a public directory symlinked to a protected directory is protected, no target bytes in the note
+ FAIL  tests/scenarios/K3-R1-file-change.test.ts > K3 R1 file change (K3-04) > K3-04 (create, L5/L6): one in-flight create of an untracked file is added
+ FAIL  tests/scenarios/K3-R1-file-change.test.ts > K3 R1 file change (K3-04) > K3-04 (replace, L5/L6): one in-flight replace of a clean tracked file is modified and carries the hand-computed diff
+ FAIL  tests/scenarios/K3-R1-restart-flows.test.ts > K3 R1 restart flows > K3-01 (W-26, L2/L4/L24/L25; decision 52): a committed send without a Kernel result is auto-closed, resolved done, and the same Session claims the continuation
+ FAIL  tests/scenarios/K3-R1-restart-flows.test.ts > K3 R1 restart flows > K3-02 (L4): the crash lands before the message commit, so the item is not_done and the note says 没做
+ FAIL  tests/scenarios/K3-R1-restart-flows.test.ts > K3 R1 restart flows > K3-03 (ruling 4, L4/L17): the one lookupCommit failure leaves the item undetermined (lookup_failed) and the record needs_decision
+ FAIL  tests/scenarios/K3-R1-second-cleanup.test.ts > K3 R1 second_auto_cleanup (K3-21 G9) > K3-21 second_auto_cleanup: A ends by RUN-25, B in flight again is blocked with W-13/blockedBy second_auto_cleanup and its record carries the L23 example 1 streak
+ FAIL  tests/scenarios/K3-R1-session-not-closable.test.ts > K3 R1 session_not_closable (K3-21 G7) > K3-21 session_not_closable: a pending archive request on the claim Session blocks RUN-25 with W-13 and blockedBy session_not_closable
+ FAIL  tests/scenarios/K3-R1-workspace-capture.test.ts > K3 R1 workspace capture (K3-40) > K3 A.2: a reject while storing the capture with a missing baseline reports runBaselineKnown false
+ FAIL  tests/scenarios/K3-R1-workspace-capture.test.ts > K3 R1 workspace capture (K3-40) > K3 A.2: a throw while storing the capture with a missing baseline reports runBaselineKnown false
+ FAIL  tests/scenarios/K3-R1-workspace-capture.test.ts > K3 R1 workspace capture (K3-40) > K3-40 (一): a tracked file deleted before the Run start and still absent is not in the capture
+ FAIL  tests/scenarios/K3-R1-workspace-capture.test.ts > K3 R1 workspace capture (K3-40) > K3-40 (三): a file modified before the start and replaced by a symlink in flight is mode_changed
+ FAIL  tests/scenarios/K3-R1-workspace-capture.test.ts > K3 R1 workspace capture (K3-40) > K3-40 (二): a tracked file deleted before the start and rebuilt in flight is added
+ FAIL  tests/scenarios/K3-R1-workspace-capture.test.ts > K3 R1 workspace capture (K3-40) > K3-40 (五): only the content changed in flight is modified
+ FAIL  tests/scenarios/K3-R1-workspace-capture.test.ts > K3 R1 workspace capture (K3-40) > K3-40 (四): only the executable bit changed in flight is mode_changed
+ FAIL  tests/state/invariants-fuzz.test.ts > coverage: every kind of operation the row lists actually ran (counts merged over the seeds)
+ ❯ Timeout._onTimeout tests/scenarios/K3-R1-workspace-capture.test.ts:182:33
+ ❯ crashOnWaitSend tests/scenarios/K3-08-wait-reply.test.ts:102:80
+ ❯ crashSendFlow tests/scenarios/K3-R1-restart-flows.test.ts:97:76
+ ❯ openAttestedEnteringRun tests/scenarios/K-R-attested-facts-source.test.ts:140:69
+ ❯ tests/scenarios/A8-host-restart-entry.test.ts (8 tests | 2 failed)
+ ❯ tests/scenarios/A8-host-restart-entry.test.ts:378:72
+ ❯ tests/scenarios/A8-host-restart-entry.test.ts:476:69
+ ❯ tests/scenarios/A8-host-restart.test.ts (12 tests | 3 failed)
+ ❯ tests/scenarios/A8-host-restart.test.ts:171:78
+ ❯ tests/scenarios/A8-host-restart.test.ts:241:80
+ ❯ tests/scenarios/A8-host-restart.test.ts:379:79
+ ❯ tests/scenarios/C3-brief-idempotency.test.ts (4 tests | 1 failed)
+ ❯ tests/scenarios/C3-brief-idempotency.test.ts:125:72
+ ❯ tests/scenarios/C7-defer-reactivate.test.ts (5 tests | 1 failed)
+ ❯ tests/scenarios/C7-defer-reactivate.test.ts:502:8
+ ❯ tests/scenarios/K-R-attested-facts-source.test.ts (4 tests | 2 failed)
+ ❯ tests/scenarios/K-R-attested-facts-source.test.ts:178:31
+ ❯ tests/scenarios/K-R-attested-facts-source.test.ts:208:31
+ ❯ tests/scenarios/K3-06-mixed-batch.test.ts (2 tests | 2 failed)
+ ❯ tests/scenarios/K3-06-mixed-batch.test.ts:160:3
+ ❯ tests/scenarios/K3-06-mixed-batch.test.ts:184:3
+ ❯ tests/scenarios/K3-08-wait-reply.test.ts (2 tests | 1 failed)
+ ❯ tests/scenarios/K3-08-wait-reply.test.ts:119:21
+ ❯ tests/scenarios/K3-26-inventory-scenarios.test.ts (7 tests | 1 failed)
+ ❯ tests/scenarios/K3-26-inventory-scenarios.test.ts:280:27
+ ❯ tests/scenarios/K3-29-recovery-continuation.test.ts (8 tests | 1 failed)
+ ❯ tests/scenarios/K3-29-recovery-continuation.test.ts:431:21
+ ❯ tests/scenarios/K3-R1-continuation-protection.test.ts (7 tests | 3 failed)
+ ❯ tests/scenarios/K3-R1-continuation-protection.test.ts:165:3
+ ❯ tests/scenarios/K3-R1-continuation-protection.test.ts:199:3
+ ❯ tests/scenarios/K3-R1-continuation-protection.test.ts:235:3
+ ❯ tests/scenarios/K3-R1-file-change.test.ts (2 tests | 2 failed)
+ ❯ tests/scenarios/K3-R1-file-change.test.ts:188:3
+ ❯ tests/scenarios/K3-R1-file-change.test.ts:241:3
+ ❯ tests/scenarios/K3-R1-restart-flows.test.ts (3 tests | 3 failed)
+ ❯ tests/scenarios/K3-R1-restart-flows.test.ts:146:21
+ ❯ tests/scenarios/K3-R1-restart-flows.test.ts:210:3
+ ❯ tests/scenarios/K3-R1-restart-flows.test.ts:241:21
+ ❯ tests/scenarios/K3-R1-second-cleanup.test.ts (1 test | 1 failed)
+ ❯ tests/scenarios/K3-R1-second-cleanup.test.ts:138:3
+ ❯ tests/scenarios/K3-R1-session-not-closable.test.ts (1 test | 1 failed)
+ ❯ tests/scenarios/K3-R1-session-not-closable.test.ts:80:75
+ ❯ tests/scenarios/K3-R1-workspace-capture.test.ts (7 tests | 7 failed)
+ ❯ tests/state/invariants-fuzz.test.ts (13 tests | 1 failed)
+ ❯ tests/state/invariants-fuzz.test.ts:217:114
+clone clean after the run: 1 changed
+ended 19:57

@@ -1,0 +1,16 @@
+^vendor/coding-agent/patches/
+^vendor/coding-agent/dist/
+^scripts/build-kernel-patch\.mjs$
+^scripts/build-platform-prompts\.mjs$
+^src/contracts/prompts/
+^resources/prompts/platform/
+^runtime-assets\.json$
+^src/core/agent-runtime/source-tool-ports\.ts$
+^src/core/agent-runtime/platform-skill-root\.ts$
+^src/app/runtime-configuration\.ts$
+^src/app/host\.ts$
+^tests/architecture/production-reach-allowlist\.json$
+^tests/kernel/PC-
+^tests/contracts/PC-
+^tests/app/PC-
+^tests/helpers/PC-kernel-fixture\.ts$

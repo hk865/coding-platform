@@ -1,0 +1,22 @@
+ tests/runtime/PC2-joint-budget.test.ts     |  4 ++--
+ tests/runtime/PC2-joint-k3-history.test.ts | 31 ++++++++++++++++++++++--------
+ 2 files changed, 25 insertions(+), 10 deletions(-)
+typecheck 0
+== the two changed files
+ Test Files  2 passed (2)
+      Tests  2 passed (2)
+== A3-01 mutation: src/core/agent-runtime/context-history-facts.ts:33 -> return false
+1
+ src/core/agent-runtime/context-history-facts.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+-- RED expected
+ FAIL  tests/runtime/PC2-joint-k3-history.test.ts > PC-2 J-06: a K3 review seeds the completed source Turn > starts ready with the whole source prefix and one reminder at the review role end
+AssertionError: expected [ { role: 'user', …(2) } ] to deeply equal [ { role: 'user', …(2) }, …(1) ]
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+production changes left: 0
+-- GREEN expected
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+ M tests/runtime/PC2-joint-budget.test.ts
+ M tests/runtime/PC2-joint-k3-history.test.ts

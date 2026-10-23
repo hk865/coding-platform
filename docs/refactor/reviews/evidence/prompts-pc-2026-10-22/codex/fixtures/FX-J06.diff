@@ -1,0 +1,45 @@
+--- a/tests/helpers/K3-35-continuation-fixture.ts
++++ b/tests/helpers/K3-35-continuation-fixture.ts
+@@ -215,0 +216 @@
++  finalizeCompletedBeforeRequeue?: boolean;
+@@ -544 +545,3 @@
+-        return { status: 'ready' as const, value: { root: directory, workspaceRevision: 1 } };
++        return { status: 'ready' as const, value: { root: directory,
++          workspaceRevision: options.finalizeCompletedBeforeRequeue === true
++            ? world.fixture.workspace.revision : 1 } };
+@@ -711 +714 @@
+-    const current = await reads.readExecution(world.fixture.ctx, claim.runRef);
++    let current = await reads.readExecution(world.fixture.ctx, claim.runRef);
+@@ -712,0 +716,27 @@
++    if (options.finalizeCompletedBeforeRequeue === true
++      && current.value.run.status === 'ended' && current.value.run.outcome === 'completed') {
++      const platform = await hostPlatform();
++      platform.registerCheckConfiguration({ configuration: {
++        configurationRevision: 'k3-35-requeue-checks@1',
++        workspace: world.fixture.base.workspaceRef,
++        executor: world.fixture.operatorActor,
++        permissionRevision: K3_35_HOST_REVISION,
++        sourceAccess: 'verification_workspace',
++        processAccess: 'all_except_denied',
++        deniedPrefixes: ['.git'],
++        checks: [],
++      } });
++      const opened = await platform.evidence.openVerification(world.fixture.ctx, {
++        input: { subjectRunRef: claim.runRef, subject: claim.task, planRef: claim.planRef },
++        meta: { requestId: `k3-35-open:${claim.runRef.runId}`, expected: [] },
++      });
++      if (opened.status !== 'committed') throw new Error(JSON.stringify(opened));
++      const finalized = await platform.evidence.finalizeChecks(world.fixture.ctx, {
++        input: { roundRef: opened.value.ref },
++        meta: { requestId: `k3-35-final:${claim.runRef.runId}`,
++          expected: [{ ref: opened.value.ref, revision: opened.value.revision }] },
++      });
++      if (finalized.status !== 'committed') throw new Error(JSON.stringify(finalized));
++      current = await reads.readExecution(world.fixture.ctx, claim.runRef);
++      if (current.status !== 'ready') throw new Error(JSON.stringify(current));
++    }
+--- a/tests/helpers/PC-platform-fixture.ts
++++ b/tests/helpers/PC-platform-fixture.ts
+@@ -572 +572 @@
+-      harness = await openRealRunHarness(world);
++      harness = await openRealRunHarness(world, { finalizeCompletedBeforeRequeue: true });

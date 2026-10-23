@@ -1,0 +1,14 @@
+PC-2-R3 full suite: /home/han001/dsh-work/slices/s9pc1b-full at 2efd8f8 PC-2 R3: A3-01, A3-02, A3-03, A3-04, A3-05; bubblewrap, 5 workers, scope 7G; started 03:42 available 14133 MB
+tracked under resources/skills: 0; directory present in the clone: no
+build 0
+typecheck 0
+check:architecture 0
+build-kernel-patch --check 0
+build-platform-prompts --check 0
+vitest exit 0
+ Test Files  829 passed (829)
+      Tests  10082 passed | 3 skipped (10085)
+   Duration  1554.56s (transform 22.01s, setup 0ms, import 455.18s, tests 7243.24s, environment 55ms)
+failing files:
+clone clean after the run: 1 changed
+ended 04:07

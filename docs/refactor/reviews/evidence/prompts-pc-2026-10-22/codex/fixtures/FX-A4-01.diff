@@ -1,0 +1,41 @@
+--- a/tests/runtime/PC2-joint-k3-history.test.ts
++++ b/tests/runtime/PC2-joint-k3-history.test.ts
+@@ -13 +13,2 @@
+-import { loadPreparedManifest } from '../../src/core/agent-runtime/execution-preparation.js';
++import type { PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
++import * as k3RuntimeFixture from '../helpers/K3-35-runtime.js';
+@@ -87,5 +88,15 @@
+-    const fixture = await openPCK3ReviewFixture({
+-      sourceHistory: 'completed_turn',
+-      model: scriptedModel([{ text: 'PC review answer' }]),
+-    });
+-    try {
++    const capture = vi.spyOn(k3RuntimeFixture, 'createK3_35Runtime');
++    let opened: Awaited<ReturnType<typeof openPCK3ReviewFixture>> | undefined;
++    try {
++      const fixture = await openPCK3ReviewFixture({
++        sourceHistory: 'completed_turn',
++        model: scriptedModel([{ text: 'PC review answer' }]),
++      });
++      opened = fixture;
++      const wired = capture.mock.results.find(result =>
++        result.type === 'return' && result.value.runtime.port === fixture.runtime);
++      if (wired === undefined || wired.type !== 'return') {
++        throw new Error('J-06 the review Runtime wiring was not captured');
++      }
++      const materials = wired.value.deps.materials;
++      capture.mockRestore();
+@@ -101,3 +112,6 @@
+-      const loaded = await loadPreparedManifest(fixture.world.fixture.bodies, prepared);
+-      if (loaded.status !== 'ready') throw new Error(JSON.stringify(loaded));
+-      const manifest = loaded.value.manifest;
++      const loaded = await materials.openArtifact(fixture.world.fixture.ctx, {
++        ref: prepared.envelope.bundleRef,
++        usage: 'historical_explanation',
++      });
++      if (loaded.status !== 'ready') throw new Error(JSON.stringify(loaded));
++      const manifest = JSON.parse(loaded.value.body) as PreparedTaskManifestV1;
+@@ -138 +152,2 @@
+-      await fixture.close();
++      capture.mockRestore();
++      await opened?.close();

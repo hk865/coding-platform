@@ -1,0 +1,90 @@
+diff --git a/tests/helpers/PC-platform-fixture.ts b/tests/helpers/PC-platform-fixture.ts
+--- a/tests/helpers/PC-platform-fixture.ts
++++ b/tests/helpers/PC-platform-fixture.ts
+@@ -39,12 +39,13 @@
+ import { readPromptTexts } from '../../src/core/agent-runtime/prompt-set-texts.js';
+ import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
+ import { ScriptedProvider, type ScriptedStep } from './PC-kernel-fixture.js';
+-import { B2_AT } from './B2-runtime-fixture.js';
++import { B2_AT, createScriptedModel } from './B2-runtime-fixture.js';
+ import { createWP2Platform, claimSuccessorRun } from './WP2-platform-support.js';
+ import { createRLQueryFixture, rlQueryHostCtx } from './RL-query-fixture.js';
+ import { openK3ReviewCardWorld, createK3PendingReview, k3RequestId } from './K3-proposal-round.js';
+ import { openRealRunHarness } from './K3-35-continuation-fixture.js';
+ import { createK3_35Runtime } from './K3-35-runtime.js';
++import { shellSeam } from './K3-tool-seams.js';
+ import { GOAL_B, PLAN_B2 } from './S5-decision-fixture.js';
+ 
+ export type PCReply = ScriptedStep;
+@@ -551,23 +552,66 @@
+  * The pending review is produced by RUN-20/RUN-22 over a real blocked Kernel
+  * call; the new review round is claimed publicly and prepared separately.
+  */
+-export async function openPCK3ReviewFixture(options: PCOptions = {}) {
++export async function openPCK3ReviewFixture(
++  options: PCOptions & { sourceHistory?: 'empty' | 'completed_turn' } = {},
++) {
+   const p = await parts(options);
+   const world = await openK3ReviewCardWorld('memory', { realKernelCommandFacts: true })
+     .catch(async error => { await p.skill.close(); throw error; });
+   let harness: Awaited<ReturnType<typeof openRealRunHarness>> | undefined;
+   let live: ReturnType<typeof runtimeModule.createAgentRuntime> | undefined;
+   try {
+-    const review = await createK3PendingReview(world, {
+-      label: 'pc-pending-review', command: 'printf PC', callId: 'pc-pending-call',
+-    });
++    let review: Awaited<ReturnType<typeof createK3PendingReview>>;
++    if (options.sourceHistory === 'completed_turn') {
++      harness = await openRealRunHarness(world);
++      const sourceSession = await world.fixture.createRealS5Session('pc-history-source');
++      const taskId = world.tasks[0]!;
++      const first = await harness.claimRun({
++        sessionRef: sourceSession, planRef: PLAN_B2, taskId,
++        requestId: k3RequestId(world, 'pc-history-claim'),
++      });
++      const completed = await harness.prepareAndStart(first, {
++        model: createScriptedModel([{ kind: 'text', text: 'PC completed source history.' }]),
++        tools: ['read'], writeScope: [], blockOnShell: false,
++      });
++      const ended = ready(await completed.started);
++      if (ended.run.status !== 'ended' || ended.run.outcome !== 'completed') {
++        throw new Error('PC: the source history turn did not complete');
++      }
++      const requeue = await harness.requeue(first, 'Create the PC blocked source Run');
++      const blocked = await harness.claimRun({
++        sessionRef: sourceSession, planRef: PLAN_B2, taskId, requeueRef: requeue.ref,
++        requestId: k3RequestId(world, 'pc-pending-claim'),
++      });
++      let running: Awaited<ReturnType<typeof harness.prepareAndStart>> | undefined;
++      try {
++        running = await harness.prepareAndStart(blocked, {
++          model: createScriptedModel([{ kind: 'calls', calls: [{
++            callId: 'pc-pending-call', name: 'shell', args: { command: 'printf PC' },
++          }] }]),
++          tools: ['read', 'shell'], writeScope: ['.'], blockOnShell: true,
++        });
++        await harness.createRecord(blocked);
++      } finally {
++        shellSeam.release();
++        await running?.started.catch(() => undefined);
++      }
++      review = ready(await world.reviews.readReview(world.fixture.ctx, { runRef: blocked.runRef }));
++      if (review.status !== 'pending_review' || review.items.length !== 1) {
++        throw new Error('PC: the blocked Run did not leave one pending review item');
++      }
++    } else {
++      review = await createK3PendingReview(world, {
++        label: 'pc-pending-review', command: 'printf PC', callId: 'pc-pending-call',
++      });
++    }
+     const sessionRef = await world.fixture.createRealS5Session('pc-review-session');
+     const claim = await world.fixture.claimRun({
+       requestId: k3RequestId(world, 'pc-review-claim'),
+       goalRef: GOAL_B, planRef: PLAN_B2, taskId: review.task.taskId, sessionRef,
+       review: { reviewRef: review.ref, expectedRevision: review.revision, phase: 'review' },
+     });
+-    harness = await openRealRunHarness(world);
++    harness ??= await openRealRunHarness(world);
+     let deps!: RuntimeExecutionDependencies;
+     const opened = await injected(async () => createK3_35Runtime(world, {
+       model: p.model, tools: ['read', 'run_readonly_command'], writeScope: [],

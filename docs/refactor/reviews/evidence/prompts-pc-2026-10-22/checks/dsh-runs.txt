@@ -1,0 +1,25 @@
+DSH runs of PC-1 and PC-2 (run.json; run id, how it stopped, peak context, wall seconds, total tokens; local times, UTC+8)
+
+PC-1
+pc1-pre-1022    normal end        195,315    263 s  11,228,573   (06:32 10-22, pre-read of the PC-1 book)
+pc1a0-1022      normal end         24,426     35 s     301,673   (08:26 10-22, k1: restore the selection-policy source from the frozen map)
+pc1a1-1022      normal end        100,658    242 s   3,539,659   (08:27 10-22, c1: platform pack v2 manifest)
+pc1a-am-1022    normal end         72,654    654 s   1,908,441   (08:35-08:46 10-22, PC-1a: K and C groups)
+pc1a-r1-1022    normal end        210,775  1,225 s  17,410,819   (12:00-12:20 10-22, PC-1a rework 1: A1, A2, A3)
+pc1b-1022       normal end        245,999  3,499 s  25,080,412   (12:28-13:26 10-22, PC-1b: P, S, R, joint)
+pc1b-r1-1022    normal end        212,551  4,494 s  10,345,313   (18:00-19:15 10-22, PC-1b rework 1)
+pc1b-r2-1022    normal end        222,291  1,058 s  12,440,778   (20:39-20:56 10-22, PC-1b rework 2)
+PC-1 total                                11,470 s  82,255,668
+
+PC-2
+pc2-pre-1022    normal end        144,741    196 s   7,161,626   (06:32 10-22, pre-read of the PC-2 book)
+pc2w-1022       normal end        121,265    401 s   5,525,543   (08:35 10-22, W: the ten tool factories take texts)
+pc2-b2-1022     normal end        263,968    487 s  16,842,835   (12:00 10-22, book v2 edits after Codex's check 1)
+pc2-b3-1022     normal end        207,356    391 s  13,758,403   (12:31 10-22, book v3 edits after Codex's check 2)
+pc2-1022        handoff:context   361,187  4,914 s  65,463,981   (22:56 10-22 - 00:18 10-23, PC-2: A, H, T, G, Q, W rework, joint)
+pc2-r1-1023     normal end        325,250  3,487 s  32,040,551   (00:51-01:49 10-23, rework 1: F1-F3 and the audit-1 rows)
+pc2-r2-1023     normal end        271,315  2,443 s  25,303,731   (02:16-02:57 10-23, rework 2: the audit-2 rows, F4, the deferred J rows)
+pc2-r3-1023     normal end        200,594  1,112 s  14,377,141   (03:23-03:41 10-23, rework 3, the last: A3-01..A3-05)
+PC-2 total                                13,431 s 180,473,811
+
+Tokens are run.json's totals; most are cache reads (PC-2: 1,345,214 uncached input, 624,533 output).
