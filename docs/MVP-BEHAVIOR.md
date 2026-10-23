@@ -2,16 +2,16 @@
 
 更新：2026-10-13。状态：当前产品目标的行为细化，依据 [HANDOFF 决定 1–58](refactor/HANDOFF.md)；**不是实现完成报告**。本仓库根就是施工工程，旧路径按[根 AGENTS](../AGENTS.md)第 2 条读取。
 
-本文把 [PRODUCT](PRODUCT.md) 的承诺组织成可执行、可观察、可验收的用户路径。接口与状态字段仍归[模块文档](refactor/modules/README.md)、[共同契约](refactor/skeleton/CONTRACTS.md)及具体批次；本文不新建协议、调度器或业务状态库。当前状态、缺口和下一步看 [STATUS](refactor/STATUS.md)，源码和证据入口看[能力索引](refactor/IMPLEMENTED-CAPABILITIES.md)；[实施计划](refactor/IMPLEMENTATION-PLAN.md)是历史，不能从行为设计或旧计划推断已交付。
+本文把 [PRODUCT](PRODUCT.md) 的承诺组织成可执行、可观察、可验收的用户路径。接口与状态字段以 `src/contracts/` 的类型为准，[模块文档](refactor/modules/README.md)和具体批次说明实现归属；本文不新建协议、调度器或业务状态库。当前状态、缺口和下一步看 [STATUS](refactor/STATUS.md)，源码和证据入口看[能力索引](refactor/IMPLEMENTED-CAPABILITIES.md)；实施计划（已归档：`docs/refactor/IMPLEMENTATION-PLAN.md`）是历史，不能从行为设计或旧计划推断已交付。
 
 ## 1. 依据与范围裁决
 
 | 依据 | 本文采用的行为 |
 | --- | --- |
-| [历史 PRODUCT §8](history/before-2026-09-22/PRODUCT.md#8-mvp-必须证明)、[当前 PRODUCT §9–10](PRODUCT.md#9-当前范围与后续方向) | 单用户单机、多项目作用域、连续推进、真实完成、控制恢复、换手和统一界面；历史有效承诺不因归档或本次拆批撤销 |
-| [原话 DLG-029/037/044](refactor/intent/ORIGINAL-DIALOGUE.md#dlg-037-用户) | 当前/历史文件与 Session 相互关联；两图提供定位和操作；工具结果反向维护相关结构 |
-| [编号原话 01、02、09、12、13、14](agent-platform-user-replies-numbered.md) | 工作由 Session 承载；角色可复用；Kernel 管执行与历史；无 baseline 可以开始调查和形成草案；知识库不是当前交付门槛 |
-| [并行与白板纠偏](refactor/intent/2026-09-23-PARALLEL-AND-PRODUCT.md)、[未来意图与校验边界](refactor/intent/INTENT-AND-DECISIONS.md#2026-09-26-补充未来意图节点与校验边界) | 同工作区并行；任务关系不一律阻塞；未来节点可缺验收和分配，但不能从未完成说明中消失 |
+| 历史 PRODUCT §8（已归档：`docs/history/before-2026-09-22/PRODUCT.md`）、[当前 PRODUCT §9–10](PRODUCT.md#9-当前范围与后续方向) | 单用户单机、多项目作用域、连续推进、真实完成、控制恢复、换手和统一界面；历史有效承诺不因归档或本次拆批撤销 |
+| 原话 DLG-029/037/044（已归档：`docs/refactor/intent/ORIGINAL-DIALOGUE.md`） | 当前/历史文件与 Session 相互关联；两图提供定位和操作；工具结果反向维护相关结构 |
+| 编号原话 01、02、09、12、13、14（已归档：`docs/agent-platform-user-replies-numbered.md`） | 工作由 Session 承载；角色可复用；Kernel 管执行与历史；无 baseline 可以开始调查和形成草案；知识库不是当前交付门槛 |
+| 并行与白板纠偏（已归档：`docs/refactor/intent/2026-09-23-PARALLEL-AND-PRODUCT.md`）、[未来意图与校验边界](refactor/intent/INTENT-AND-DECISIONS.md#2026-09-26-补充未来意图节点与校验边界) | 同工作区并行；任务关系不一律阻塞；未来节点可缺验收和分配，但不能从未完成说明中消失 |
 | [本次引用讨论](chatgpt-conversation://6ab750c3-53d4-83ec-a03b-38f50a73ccd1) | 以纵向用户路径组织文档；骨架测试须区分失败来源和未执行断言。讨论中的完成百分比、四个断点和串行示意是助手判断，不是源码证据或缩减产品范围的决定 |
 | [HANDOFF 决定 10、13、15、17、18、21–23、25、30、33、35、37–39、42、43、45、49](refactor/HANDOFF.md)、[编排设计书](refactor/design/orchestration-2026-10/DESIGN.md) §1–5、§8.2 | B11–B20 补齐决定闭环、自治级别、目标顺序和冲突提示、工作线活动状态、独立审阅、持久等待和超时转交、A.2 后的真实模型重跑、归档前处置责任、agent 派工与建成员、直接干预；B07 补图工具，B09 保留记忆核心；压缩不算 MVP 门槛 |
 
@@ -39,7 +39,7 @@
 | 查看最终结果 | 产物位置、修改摘要、当前有效验收证据、未完成/排除事项；能追到原始结果和来源版本 |
 | 关闭后重开 | 找回原目标、计划、执行与控制状态；不要求重述项目，不凭 UI 缓存重建正式状态 |
 
-“已受理”“已进入执行”“执行结束”“检查通过”“Task satisfied”“Goal COMPLETED”分别表达。下文中文阶段是用户语义，不新增全局状态枚举；具体映射遵守[状态机](refactor/ORCHESTRATION-STATE-MACHINES.md)。
+“已受理”“已进入执行”“执行结束”“检查通过”“Task satisfied”“Goal COMPLETED”分别表达。下文中文阶段是用户语义，不新增全局状态枚举；具体映射遵守[状态机规格](refactor/STATE-MACHINES-SPEC.md)。
 
 ## 3. 主路径与模块责任
 
@@ -103,7 +103,7 @@ Host 提供真实目录映射、存储与 Kernel 配置；经正式 Project/Work
 
 已有授权覆盖的细化可直接正式采用；缺治理或来源过期时说明具体对象并修复。实质改变目标、验收或越权时才展示可审阅差异和待决选项。用户确认绑定具体候选版本；过期确认不批准新版本。模型来源不能伪装 Host 来源绕过采用。
 
-**结果/失败**：采用通过原 Plan writer 切换版本和关系；拒绝不部分修改活动计划。回答超时或结果未知先查询原 Query，不通过另建一次规划掩盖不确定状态。详细生产链见 [R5b](refactor/tasks/R5b-query-planning-skeleton.md)。
+**结果/失败**：采用通过原 Plan writer 切换版本和关系；拒绝不部分修改活动计划。回答超时或结果未知先查询原 Query，不通过另建一次规划掩盖不确定状态。详细生产链见 R5b（已归档：`docs/refactor/tasks/R5b-query-planning-skeleton.md`）。
 
 ### B03：从白板选择行动并保留长程方向
 
@@ -149,7 +149,7 @@ Workflow/Agent 根据规范、架构和白板分工；允许同一目录中多�
 - WorkGraph 完成归约核对当前义务、覆盖、来源和局部版本，正式提交 Task satisfied；gate 只归约证据，不派发伪 Work Run。
 - Goal 单独归约：无活动计划、空完成要求、required 尚未解决、相关未知执行均不能 COMPLETED。optional、延期、取消和被替代事项明确列出；required 取消不能自动算完成。明确接受部分结果记录 ACCEPTED_PARTIAL 与取舍依据。
 
-**结果**：用户可从 Goal 完成进入每项义务、适用证据、原检查和文件版本。Run 成功、exit=0、模型说“完成”、消息回复或 ready 为空都不能替代此链。实现边界见 [R3e](refactor/tasks/R3e-completion-skeleton.md)。
+**结果**：用户可从 Goal 完成进入每项义务、适用证据、原检查和文件版本。Run 成功、exit=0、模型说“完成”、消息回复或 ready 为空都不能替代此链。实现边界见 R3e（已归档：`docs/refactor/tasks/R3e-completion-skeleton.md`）。
 
 ### B07：查询、解释与统一导航
 
@@ -304,7 +304,7 @@ UI 用提交回执和读取水位刷新相关视图。投影延迟保留带版�
 
 以下是待实施的行为标准，当前不标 PASS。单个场景可以覆盖多个行为；复用已有底层测试，不为每一层复制同一事务矩阵。
 
-[09-27 真实模型接入](refactor/reviews/evidence/standalone-2026-09-27/e01-live-deepseek/result.json)和 [09-29 正常 UI 冷启动](refactor/reviews/evidence/goal-cold-start-2026-09-29/README.md)已有隔离小项目的限定证据，覆盖调查/规划、两个 Work 复用同一 Session、真实文件修改、正式检查与 Goal 完成，以及各自报告中的浏览器核对；它们早于 A.2 和编排各片，不代表整个 MVP 通过（[HANDOFF 历史](refactor/HANDOFF.md)；[STATUS](refactor/STATUS.md)“缺口”）。
+09-27 真实模型接入（已归档：`docs/refactor/reviews/evidence/standalone-2026-09-27/e01-live-deepseek/result.json`）和 09-29 正常 UI 冷启动（已归档：`docs/refactor/reviews/evidence/goal-cold-start-2026-09-29/README.md`）已有隔离小项目的限定证据，覆盖调查/规划、两个 Work 复用同一 Session、真实文件修改、正式检查与 Goal 完成，以及各自报告中的浏览器核对；它们早于 A.2 和编排各片，不代表整个 MVP 通过（[HANDOFF 历史](refactor/HANDOFF.md)；[STATUS](refactor/STATUS.md)“缺口”）。
 
 | 编号 / 层次 | 起点与动作 | 必须观察到的证据 / 反例 |
 | --- | --- | --- |
@@ -352,8 +352,8 @@ E01–E04 通过只报告“首条 E2E 已贯通”。产品 MVP 还须覆盖 E0
 
 ## 8. 历史文档同步记录（2026-09-26）
 
-- [状态机 T2/T4/T9 与 A2/A3](refactor/ORCHESTRATION-STATE-MACHINES.md)：原表格仍用“前置任务满足、资源范围整体重核、后继不可领取”等早期措辞，与该页纠偏及用户白板意图冲突；本次改为具体输入条件、当前领取事实和实际操作约束。
-- [Workflow §7](refactor/modules/business/workflow.md)：补无 ready 时的未来意图处理，去除把 `assessParallelism` 和预测范围理解为每次领取前置的歧义；不把目标接口当已有能力。
+- 状态机 T2/T4/T9（对照见 [STATE-MACHINES-SPEC §15.3](refactor/STATE-MACHINES-SPEC.md#153-行号对照汇总)）与 A2/A3（已归档：`docs/refactor/ORCHESTRATION-STATE-MACHINES.md`）：原表格仍用“前置任务满足、资源范围整体重核、后继不可领取”等早期措辞，与该页纠偏及用户白板意图冲突；本次改为具体输入条件、当前领取事实和实际操作约束。
+- Workflow §7（已归档：`docs/refactor/modules/business/workflow.md`）：补无 ready 时的未来意图处理，去除把 `assessParallelism` 和预测范围理解为每次领取前置的歧义；不把目标接口当已有能力。
 - [模块 DAG](refactor/module-dag.md)：仅澄清边标签中的可选范围分析，五模块八边不变。
 - PRODUCT、文档索引及既有端到端骨架增加本页入口。原始对话和历史原稿保持原文；旧验收结果不因本页重写。
 
@@ -366,11 +366,11 @@ E01–E04 通过只报告“首条 E2E 已贯通”。产品 MVP 还须覆盖 E0
 | 用户路径 | 直接复用 | 仍需贯通 / 原任务归属 |
 | --- | --- | --- |
 | B01 项目初始化 | R5a Project/Workspace/CompletionPolicy、Goal、初始架构、Role writer | Host 真实目录/配置/UI；模型采用所需 CoordinationPolicy 正式治理缺口 |
-| B02 无 Plan 规划 | 原 Session、Kernel 循环、材料/source、Plan proposal/apply | [R5b](refactor/tasks/R5b-query-planning-skeleton.md)：正式 Query 受理→权限/执行→回答→来源绑定候选与采用；只完成 submit 不关闭规划 |
+| B02 无 Plan 规划 | 原 Session、Kernel 循环、材料/source、Plan proposal/apply | R5b（已归档：`docs/refactor/tasks/R5b-query-planning-skeleton.md`）：正式 Query 受理→权限/执行→回答→来源绑定候选与采用；只完成 submit 不关闭规划 |
 | B03–B05 自动推进/并行 | W2/C2 白板工具、B2 Runtime、C1 消息、关联与 claim | R5 Workflow/角色业务消费者、事件唤醒、实际分工/冲突处理；不重建上述服务 |
-| B06 完成 | 义务/来源/材料/Run 终态与既有纯规则 | [R3e](refactor/tasks/R3e-completion-skeleton.md) 检查 producer、证据、Task/Gate/Goal 归约及 Workflow 返工消费者 |
-| B07 用户入口 | 已有图/Session/文件/消息/有界历史端口 | R6 与 [Host/UI 骨架](refactor/skeleton/END-TO-END.md)；薄浏览工作台通过不等于 Goal 自主执行已通 |
-| B08/B10 控制恢复 | B2 执行身份和观察、R4.2 Kernel 安全点 | [R4 控制恢复](refactor/tasks/R4-control-recovery-skeleton.md) 意图、投递/ack、取消历史消费、预算/恢复与 UI；不只交 R4.1 |
+| B06 完成 | 义务/来源/材料/Run 终态与既有纯规则 | R3e（已归档：`docs/refactor/tasks/R3e-completion-skeleton.md`） 检查 producer、证据、Task/Gate/Goal 归约及 Workflow 返工消费者 |
+| B07 用户入口 | 已有图/Session/文件/消息/有界历史端口 | R6 与 Host/UI 骨架（已归档：`docs/refactor/skeleton/END-TO-END.md`）；薄浏览工作台通过不等于 Goal 自主执行已通 |
+| B08/B10 控制恢复 | B2 执行身份和观察、R4.2 Kernel 安全点 | R4 控制恢复（已归档：`docs/refactor/tasks/R4-control-recovery-skeleton.md`） 意图、投递/ack、取消历史消费、预算/恢复与 UI；不只交 R4.1 |
 | B09 演进与换手 | 初始架构、observed 图、Session/WorkLink、W1/W2 未来修订 | R3d 正式架构演进、完整授权计划变更、R4 维护/交接及 R6 解释入口 |
 | 版本与产物追溯 | 当前来源捕获/比较、材料来源与原历史 | Git 固定版本等 R2 尾项按真实消费者接入；不要求全部语言 provider 完成才开始首个支持语言样例 |
 

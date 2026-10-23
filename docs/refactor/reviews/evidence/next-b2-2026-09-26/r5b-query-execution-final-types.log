@@ -1,4 +1,0 @@
-Independent check after DSH STOP
-command: harness.py exec r5b-query-execution-implementation-20260926 python3 tools/dsh-refactor/check.py next-types
-stdout: empty
-exitCode: 0

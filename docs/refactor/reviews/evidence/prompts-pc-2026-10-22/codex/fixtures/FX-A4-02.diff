@@ -1,8 +1,0 @@
---- a/tests/runtime/PC2-joint-budget.test.ts
-+++ b/tests/runtime/PC2-joint-budget.test.ts
-@@ -12 +12 @@
-- * production, the generated pack, the manifest or a captured request. The two
-+ * production, the generated pack, the manifest or a captured request. The three
-@@ -138 +138 @@
--/** The whole current input, hand-written. The two tokens come from public reads. */
-+/** The whole current input, hand-written. The three tokens come from public reads. */

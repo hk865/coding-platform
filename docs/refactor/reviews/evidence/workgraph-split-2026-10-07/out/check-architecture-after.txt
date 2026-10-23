@@ -1,9 +1,0 @@
-Workflow: directory=true, sourceFiles=5
-WorkGraph: directory=true, sourceFiles=100
-AgentRuntime: directory=true, sourceFiles=34
-WorkspaceTools: directory=true, sourceFiles=23
-RecordStore: directory=true, sourceFiles=13
-observed module edges: 7/8 allowed (AgentRuntime -> RecordStore, AgentRuntime -> WorkGraph, AgentRuntime -> WorkspaceTools, WorkGraph -> RecordStore, WorkGraph -> WorkspaceTools, Workflow -> AgentRuntime, Workflow -> WorkGraph)
-pure directories: src/core/work-graph/state/
-next source boundaries: OK
-check:architecture exit=0

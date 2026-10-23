@@ -6,7 +6,7 @@
 
 ## 每项的字段
 
-位置（行号按 ddce07be，见 [SCENARIOS.md](SCENARIOS.md) 开头的说明）、未明、选项、阻挡（最早挡住哪一片）、谁定、以后干活的模型最可能怎么理解错、触及 §9.1（DESIGN §9.1 的提议编号）、来源（[SCENARIOS.md](SCENARIOS.md) 的条目和读者块）、与 Codex 原条目的关系（沿用 / 改写 / 已由正文定 / 新增）。
+位置（行号按 ddce07be，见 SCENARIOS.md（已归档：`docs/refactor/design/orchestration-2026-10/model/SCENARIOS.md`） 开头的说明）、未明、选项、阻挡（最早挡住哪一片）、谁定、以后干活的模型最可能怎么理解错、触及 §9.1（DESIGN §9.1 的提议编号）、来源（SCENARIOS.md（已归档：`docs/refactor/design/orchestration-2026-10/model/SCENARIOS.md`） 的条目和读者块）、与 Codex 原条目的关系（沿用 / 改写 / 已由正文定 / 新增）。
 
 ## 数字
 
@@ -35,7 +35,7 @@
 
 下面每项里的“谁定”是 Codex 合并时的分法：用户 67、lead 7（AMB-12、17、21、37、39、69、74）。它用的是 lead 给的规则：“只要有一个选项会改变用户看到或做的事，就归用户”。这个规则太宽：像 AMB-1（旧 Session 没有来历）、AMB-3（归档中途失败）这样的技术问题，选项也会改一点显示，于是都归了用户。所以**这里的“谁定”不能直接拿去问用户**。
 
-lead 把第 1、3、5 片的 23 项重分了一遍：用户 17、lead 6。请用户定的 17 项合成 11 条，写在 [REVIEW-SLICES-1-3-5.md](REVIEW-SLICES-1-3-5.md)；lead 定的 6 项也列在那一页末尾，带 lead 的做法。其余片的 51 项（含正文已定的 2 项），在那几片冻结之前再这样重分。
+lead 把第 1、3、5 片的 23 项重分了一遍：用户 17、lead 6。请用户定的 17 项合成 11 条，写在 REVIEW-SLICES-1-3-5.md（已归档：`docs/refactor/design/orchestration-2026-10/model/REVIEW-SLICES-1-3-5.md`）；lead 定的 6 项也列在那一页末尾，带 lead 的做法。其余片的 51 项（含正文已定的 2 项），在那几片冻结之前再这样重分。
 
 | 编号 | 说的是什么 | 片 | Codex 分 | lead 重分 | 审阅页 |
 | --- | --- | --- | --- | --- | --- |

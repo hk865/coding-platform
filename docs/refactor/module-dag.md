@@ -1,8 +1,8 @@
 # 模块依赖图：业务策略与核心操作
 
-当前独立仓库的实际装配、静态依赖与代码规模见 [2026-09-27 当前模块关系图](reviews/current-module-map-2026-09-27.md)。下文目标图与历史迁移记录保留原义，不代表当前全部实现状态。
+当前独立仓库的实际装配、静态依赖与代码规模见 2026-09-27 当前模块关系图（已归档：`docs/refactor/reviews/current-module-map-2026-09-27.md`）。下文目标图与历史迁移记录保留原义，不代表当前全部实现状态。
 
-状态：2026-09-24。目标 5 模块/8 条允许边，在独立工程 `coding-platform/next` 按[目标源码门禁](../../scripts/check-boundaries.mjs)检查；实际功能尚为子集，见[干净迁移记录](reviews/next-completed-migration-2026-09-24.md)。原[源码 map](../../coding-platform/scripts/module-map.mjs)描述旧参考工程，不能混计为 next 的模块数。依据：[架构](ARCHITECTURE.md)。
+状态：2026-09-24。目标 5 模块/8 条允许边，在独立工程 `coding-platform/next` 按[目标源码门禁](../../scripts/check-boundaries.mjs)检查；实际功能尚为子集，见干净迁移记录（已归档：`docs/refactor/reviews/next-completed-migration-2026-09-24.md`）。原[源码 map](../../coding-platform/scripts/module-map.mjs)描述旧参考工程，不能混计为 next 的模块数。依据：[架构](ARCHITECTURE.md)。
 
 ## 1. 目标 DAG
 
@@ -38,8 +38,8 @@ flowchart TD
 | 图 | 箭头含义 | 是否允许反馈环 / 并行解释 |
 | --- | --- | --- |
 | 本页源码 DAG | 调用者依赖提供者 | 保持无环；一个 Runtime 模块可以驱动多个 Agent 实例，不因图只有一个框而串行 |
-| [运行时协作图](PARALLEL-COLLABORATION.md#3-运行时协作图工具检查agent-修正独立执行) | 图/资源检查→Agent决策与修正→领取→执行→结果 | 允许反馈；同工作区不冲突范围并行，真实冲突交回策略处理 |
-| [开发任务依赖图](PARALLEL-COLLABORATION.md#6-开发协作图冻结契约后并行内部实现) | 契约及可验收交付的前置 | 公开契约冻结后内部实现并行，生产集成等待真正所需能力，不按层数全局串行 |
+| 运行时协作图（已归档：`docs/refactor/PARALLEL-COLLABORATION.md`） | 图/资源检查→Agent决策与修正→领取→执行→结果 | 允许反馈；同工作区不冲突范围并行，真实冲突交回策略处理 |
+| 开发任务依赖图（已归档：`docs/refactor/PARALLEL-COLLABORATION.md`） | 契约及可验收交付的前置 | 公开契约冻结后内部实现并行，生产集成等待真正所需能力，不按层数全局串行 |
 
 注释：架构模块不是排他锁，AST依赖不是一律加锁；核心数据工具解析实际范围与共享资源，由Agent/Workflow修正分工。Session自身对话占用与工作区文件资源分别管理。旧源码的单writer只列为待迁实现，不再成为目标限制。
 
@@ -66,7 +66,7 @@ flowchart TD
 
 目标 JSON 的路径相对 `coding-platform/next`，新工程目录及真实 import 由 `next/scripts/check-boundaries.mjs` 检查；原 map 留作旧工程事实。每批在 next 接通真实调用链和测试，不默认接回旧服务。N0 窄骨架必须返回 unsupported，不能为了边数凑出虚假功能；旧入口在最终产品切换后退役。
 
-文档检查验证ID／目录唯一、依赖存在、无环、所有旧模块都有去向及模块页存在；源码检查验证当前实现。关键文件/Port/内部调用在[详细骨架](skeleton/README.md)，外层Host及Kernel边界在[贯通流程](skeleton/END-TO-END.md)。开发批次见[实施方案](IMPLEMENTATION-PLAN.md)，与本图分别维护。
+文档检查验证ID／目录唯一、依赖存在、无环、所有旧模块都有去向及模块页存在；源码检查验证当前实现。关键文件/Port/内部调用在详细骨架（已归档：`docs/refactor/skeleton/README.md`），外层Host及Kernel边界在贯通流程（已归档：`docs/refactor/skeleton/END-TO-END.md`）。开发批次见实施方案（已归档：`docs/refactor/IMPLEMENTATION-PLAN.md`），与本图分别维护。
 
 ### 旧参考工程 R3b 的注入关系（2026-09-24 历史）
 
@@ -115,7 +115,7 @@ Contracts、Composition、Host（`src/app`）和 UI（`src/ui`）是外层，规
 
 ## 6. WorkGraph 的子模块（2026-10-07，决定 40）
 
-任务 D（0cd45508）把 WorkGraph 的文件搬进了子模块目录。验收后，子模块规则写进了 [module-target.json](module-target.json) 里 WorkGraph 的 `submodules`，内容就是方案 [workgraph-split-2026-10-07](reviews/evidence/workgraph-split-2026-10-07/README.md) 的 `target.json` 里的 `submodules`：13 个子模块，41 条允许的依赖。`check:architecture` 从这时起按它检查。
+任务 D（0cd45508）把 WorkGraph 的文件搬进了子模块目录。验收后，子模块规则写进了 [module-target.json](module-target.json) 里 WorkGraph 的 `submodules`，内容就是方案 workgraph-split-2026-10-07（已归档：`docs/refactor/reviews/evidence/workgraph-split-2026-10-07/README.md`） 的 `target.json` 里的 `submodules`：13 个子模块，41 条允许的依赖。`check:architecture` 从这时起按它检查。
 
 **方向规则。** 上层可以依赖下层，反过来不行；层号是 [DESIGN §7.2](design/orchestration-2026-10/DESIGN.md#72-workgraph-分层) 的。检查器不读层号，只认每个子模块的 `dependencies`：子模块之间的 import（包括只引用类型的）必须沿声明的方向，子模块依赖图必须无环，解析不到任何子模块的 import 也算违规（§5）。违规报 `src` 内的文件和行，例如 `core/work-graph/tasks/plan-service.ts:30: forbidden submodule edge WorkGraph/tasks -> WorkGraph/evidence`。
 

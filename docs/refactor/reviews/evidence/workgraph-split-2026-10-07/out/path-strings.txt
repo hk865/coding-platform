@@ -1,2 +1,0 @@
-## string literals naming a moved file that are not module specifiers or comments (src/, tests/, scripts/; the two data files excluded)
-none

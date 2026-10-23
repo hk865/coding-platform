@@ -1,6 +1,6 @@
 # 接线包 2 规格：I-2、I-4、I-5、I-6
 
-**后注（决定 86-6，lead 2026-10-21）：** M07（`tests/work-graph/WP2-undelivered-notices`）和 F07 的尾页任务卡（100 个候选）与 5,000／5,001 两例（`WP2-context-extensions`）在规模批里核：原规模的用例原样挪进同名的 `.scale.test.ts`（两种后端、原数量、原断言、原超时，不注入页宽，所以也核了生产的默认页宽），`npm run test:scale` 每片合入前和全量一起跑；日常套件（`npm test`，CI 也只跑它）的同名文件里是同一组断言的小版本：测试经 owner 的依赖传入小页宽，每层读取至少跨两页，决定那一条在最后一页，每层的顺序和分页手算写在注释里。正文原样保留，只加此注。拆分经过见 [证据](../../../reviews/evidence/scale-split-sc-2026-10-21/README.md)。
+**后注（决定 86-6，lead 2026-10-21）：** M07（`tests/work-graph/WP2-undelivered-notices`）和 F07 的尾页任务卡（100 个候选）与 5,000／5,001 两例（`WP2-context-extensions`）在规模批里核：原规模的用例原样挪进同名的 `.scale.test.ts`（两种后端、原数量、原断言、原超时，不注入页宽，所以也核了生产的默认页宽），`npm run test:scale` 每片合入前和全量一起跑；日常套件（`npm test`，CI 也只跑它）的同名文件里是同一组断言的小版本：测试经 owner 的依赖传入小页宽，每层读取至少跨两页，决定那一条在最后一页，每层的顺序和分页手算写在注释里。正文原样保留，只加此注。拆分经过见 证据（已归档：`docs/refactor/reviews/evidence/scale-split-sc-2026-10-21/README.md`）。
 
 **后注（决定 49 第 29 项、决定 50）：** 约 18、44、444 行「整份规格/清单和夹具待冻结」已不成立：本规格已冻结并合入 bb924854。正文原样保留，只加此注。
 
@@ -103,7 +103,7 @@ G 的实际摘要是 `contracts/graph-context.ts:goalContextContentV1` 的 `{con
 | 接线包 1 | `views/context-extensions.ts:anchorRow/createContextExtensionsReader`；`composition/create-platform.ts` 已装 anomalies；`composition/session-duty.ts:createSessionDutyResolver` 已承担 I-1 | 原 anomalies 文本、排序、25 页上限及 I-1/E15/G 全保留 |
 | 第 5 片返工 | `views/decision-read-model.ts:queryDecisionQueue/readDecisionQueueWindow` 最多四个稳定窗口尝试；`views/goal-conflicts.ts:lookupAll` 正好 5,000 不算截断；`notice-position.ts:compareNoticePositions` 是唯一 notice 游标比较点 | 用例含精确边界，不能恢复“截断后假报完整” |
 
-上表 WorkGraph 路径省略 `src/core/work-graph/`，Runtime 路径省略 `src/core/agent-runtime/`。施工事实按最新日期读取：[片 1](../../../reviews/evidence/orchestration-slice-1-2026-10-08/README.md)的原 E15 缺口已由[接线包 1](../../../reviews/evidence/orchestration-wiring-1-2026-10-09/README.md)补上；[片 3](../../../reviews/evidence/orchestration-slice-3-2026-10-08/README.md)的合入修正保留；[片 5](../../../reviews/evidence/orchestration-slice-5-2026-10-08/README.md)以“2026-10-09 夜：决定 48”验收为准，不采用上午“没有接受”的旧状态。历史全量是 279 文件/5,974 项及 verify:isolated 通过，不是本次起草重跑的结果。
+上表 WorkGraph 路径省略 `src/core/work-graph/`，Runtime 路径省略 `src/core/agent-runtime/`。施工事实按最新日期读取：片 1（已归档：`docs/refactor/reviews/evidence/orchestration-slice-1-2026-10-08/README.md`）的原 E15 缺口已由接线包 1（已归档：`docs/refactor/reviews/evidence/orchestration-wiring-1-2026-10-09/README.md`）补上；片 3（已归档：`docs/refactor/reviews/evidence/orchestration-slice-3-2026-10-08/README.md`）的合入修正保留；片 5（已归档：`docs/refactor/reviews/evidence/orchestration-slice-5-2026-10-08/README.md`）以“2026-10-09 夜：决定 48”验收为准，不采用上午“没有接受”的旧状态。历史全量是 279 文件/5,974 项及 verify:isolated 通过，不是本次起草重跑的结果。
 
 ### 0.5 数量和冻结条件
 

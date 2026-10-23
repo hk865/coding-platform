@@ -1,6 +1,0 @@
-
-> build
-> tsc -p tsconfig.build.json && node scripts/build-workbench.mjs
-
-workbench build: published /home/han001/dsh-work/slices/s5n/dist/app/public/workbench
-EXIT build 0

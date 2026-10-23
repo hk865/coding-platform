@@ -1,1 +1,0 @@
-tests/app/orchestration-mechanism.test.ts(471,58): error TS2339: Property 'kernelSessionId' does not exist on type 'AG2bSession'.

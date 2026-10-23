@@ -1,1 +1,0 @@
-Step 0 done and wave 1 (G1∥G2) launched; all 25 frozen hashes verified. I'll wait for the wave to settle, then integrate and start wave 2.

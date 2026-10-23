@@ -1,9 +1,0 @@
-DSH runs of the structure round (run.json; run id, how it stopped, peak context, wall seconds, total tokens; local times)
-s85-S1-1021   normal end  131,484  1,434 s   4,749,966   (21:58-22:22 10-21, D2)
-s85-S2-1021   normal end  119,820  1,556 s   4,025,972   (21:59-22:25 10-21, C2 C1 A6 B1)
-s85-S3-1021   normal end  188,285  2,615 s   9,513,980   (21:57-22:41 10-21, D3a)
-s85-R1-1021   normal end  158,044    913 s  12,731,331   (23:05-23:20 10-21, rework 1: P1-01, P3-01, P3-03, P4-01, C2 probe)
-s85-S4-1021   normal end  262,290  1,969 s  19,044,646   (23:30-00:03 10-21/22, D3b)
-s85-R2-1022   normal end  305,702  1,371 s  32,436,576   (00:25-00:48 10-22, S4 rework: Q1-01, Q1-02, Q1-04, Q2-01, Q2-02, Q3-01, Q3-02, Q3-03, Q4-01)
-total                               9,858 s  82,502,471
-S1, S2 and S3 ran in parallel (wall 21:57-22:41, 44 min); the round's DSH wall time is 44 + 15 + 33 + 23 = 115 min.

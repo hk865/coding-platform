@@ -1,2 +1,0 @@
-c38b46cb13629bc46e75b52d66c2a004a3b042b2f32c93d73cade1df3df72f0e  s2c-code-6.patch
-6ac615431a9f391b4eca95fb189a468c6991fd9475544fbb395cf39411d32400  s2c-merge-final.patch (as merged, 88 entries: s2c-code-6.patch, the lead union merges of 4 shared files, and the test fixes of 2026-10-16 in A8-host-restart-paused and S2C-K-archive-tags-checks)

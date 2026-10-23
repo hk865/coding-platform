@@ -1,7 +1,0 @@
-PC-1b-R2 scale batch: /home/han001/dsh-work/slices/s9pc1b-full at 68dfb10 PC-1b R2: X-01, P2, S2, R2, J2; started 21:21 available 13936 MB
-test:scale exit 0
- Test Files  12 passed (12)
-      Tests  38 passed (38)
-   Duration  3286.61s (transform 3.07s, setup 0ms, import 9.99s, tests 3275.73s, environment 1ms)
-failing files:
-ended 22:16

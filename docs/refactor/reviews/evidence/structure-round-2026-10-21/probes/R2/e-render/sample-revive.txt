@@ -1,3 +1,0 @@
-{"line":1,"hasK":false,"kIsUndefined":true,"kIsNull":false,"keys":["a"]}
-{"line":2,"hasK":true,"kIsUndefined":true,"kIsNull":false,"keys":["k","a","arr"],"arrayLength":2,"zeroInArray":true,"oneInArray":true,"zeroIsUndefined":true,"oneIsNull":true}
-{"line":3,"hasK":true,"kIsUndefined":false,"kIsNull":true,"keys":["k","a"]}

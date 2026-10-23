@@ -18,14 +18,14 @@
 | --- | --- | --- |
 | [MODEL.md](MODEL.md) | 54 个对象（O01–O54）、59 条行为规则（R01–R59）、20 条跨对象不变量、装配器的段落表 | Codex 第 1 步；lead 改了 8 处，标“〔lead 改〕” |
 | [DIAGRAMS.md](DIAGRAMS.md) | Mermaid 图：2 张对象关系和写入边界、9 张状态图、12 个组合时序 | Codex 第 1 步；lead 改了 1 处 |
-| [SCENARIOS.md](SCENARIOS.md) | 合并后的 400 条场景，每条有状态、原文引用、来源块和挂的模糊点；文末附 Codex 合并时的核对记录 | Codex 合并；lead 改了 8 条引文，加了开头的说明 |
+| SCENARIOS.md（已归档：`docs/refactor/design/orchestration-2026-10/model/SCENARIOS.md`） | 合并后的 400 条场景，每条有状态、原文引用、来源块和挂的模糊点；文末附 Codex 合并时的核对记录 | Codex 合并；lead 改了 8 条引文，加了开头的说明 |
 | [AMBIGUITIES.md](AMBIGUITIES.md) | 合并后的 74 项模糊点（AMB-1–74），每项有选项、挡住哪一片、以后的模型会怎么读错 | Codex 合并；开头的说明和“谁定”重分表是 lead 的 |
-| [REVIEW-SLICES-1-3-5.md](REVIEW-SLICES-1-3-5.md) | 第 1、3、5 片的 11 条问题和 7 个技术问题；决定 42 已答复 | lead |
+| REVIEW-SLICES-1-3-5.md（已归档：`docs/refactor/design/orchestration-2026-10/model/REVIEW-SLICES-1-3-5.md`） | 第 1、3、5 片的 11 条问题和 7 个技术问题；决定 42 已答复 | lead |
 | [REVIEW-SLICES-2-4-6-7.md](REVIEW-SLICES-2-4-6-7.md) | 第 2、4、6、7、K、K2 片的 29 条问题；决定 49 已答复 | lead |
 | [USER-REPLIES](REVIEW-SLICES-2-4-6-7-USER-REPLIES.md) | 用户逐条回复，原话保留；选定内容已记为决定 49 | 用户 |
 | [LEAD-ANSWERS](REVIEW-SLICES-2-4-6-7-LEAD-ANSWERS.md) | 对回复的解释和写进规格的规则；按决定 49 选定范围采用 | lead |
-| [OPINIONS](REVIEW-SLICES-2-4-6-7-OPINIONS.md) | 决定前的意见合并稿，已被决定 49 取代 | lead 合并 |
-| [readers/](readers/) | 六个读者的原始输出，作证据，原样保留 | DSH |
+| OPINIONS（已归档：`docs/refactor/design/orchestration-2026-10/model/REVIEW-SLICES-2-4-6-7-OPINIONS.md`） | 决定前的意见合并稿，已被决定 49 取代 | lead 合并 |
+| readers/（已归档：`docs/refactor/design/orchestration-2026-10/model/readers`） | 六个读者的原始输出，作证据，原样保留 | DSH |
 
 `readers/` 里每个读者一个目录：`R<n>.md` 是场景块；R1、R2、R4、R5 有覆盖文件（`-coverage.md`），R2–R5 有矩阵（`-matrix.md`），R1 另有动作表（`R1-actions.md`）。块的格式见 SCENARIOS.md 开头的说明。
 

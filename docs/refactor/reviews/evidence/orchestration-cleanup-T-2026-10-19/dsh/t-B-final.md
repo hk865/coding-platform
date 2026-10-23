@@ -1,1 +1,0 @@
-报告已写入 `./t-B.md`：29 条（过时 2、重复 12、琐碎 2、手写事实 5、只为篡改 0、辅助 8），估计改动 2,161 行；117 个文件全部覆盖（全文 51、浏览 66）。未逐行读的段落：`S2C-K-legacy-provenance` 120-400、`S3-query-graph` 71-353、`S5-two-request-decisions` 90-182 及多数 support 夹具正文。三条待裁：A8 closing-unsupported 回退、2C-26 整文件、`kernelStores.legacyEntries`。

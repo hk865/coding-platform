@@ -1,3 +1,0 @@
-records compared 2036, records with a difference 12, records on one side only 0
-11	assembler:task.args[].configuration.skills.resourceRoot	(first: tests/runtime/S3-context-assembler.test.ts | CA03 two unbound preparations of the same facts share bytes and ArtifactRefs | #0)
-1	assembler:query.args[].configuration.skills.resourceRoot	(first: tests/scenarios/S3-query-graph.test.ts | SC02: the old main-conversation Query answers through the read-only graph tools and the Answer is saved | #0)

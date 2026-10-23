@@ -1,1 +1,0 @@
-S4 probes installed in /home/han001/dsh-work/s85-scratch/S4-rerun/result-a

@@ -63,7 +63,7 @@ lead 另定的 4 项：
 - 文件 82 个：新建 41、修改 41。其中源码 62（新建 23、修改 39；新建里含共用文件 `src/contracts/platform-duty.ts`，§6 F89），新测试文件 16 和测试支持文件 2，改动的已有测试文件和检查 2（`tests/architecture/state-writes.test.ts`、`tests/architecture/production-reach-allowlist.json`）。逐个文件见 §6（去掉 F77、F79–F85，加 F89、F90 之后的 82 行）。【审查改】加了 F90 `tests/business/S5-decision-workflow.test.ts`。
 - 用例 153 个：单元 63（GS 15、PO 16、MD 14、PC 10、NS 8）、服务 71（SS 16、UM 13、RC 11、DQ 9、AP 14、NR 8）、路由 8、Runtime 7、Workflow 2（WF01、WF02）、场景 2。服务用例在 memory 和 SQLite 各跑一次，共 224 次。【审查改】加了 SS15、SS16、UM13、AP14–AP16、WF01、WF02（审查发现的测试缺口）。
 - 估计行数（不是验收数字）：生产代码约 4,700–6,700 行，测试约 1,800–2,600 行。
-- 任务书：[slice-5-book-part1.md](slice-5-book-part1.md)（骨架和测试，然后停）、[slice-5-book-part2.md](slice-5-book-part2.md)（实现）。
+- 任务书：slice-5-book-part1.md（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-5-book-part1.md`）（骨架和测试，然后停）、slice-5-book-part2.md（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-5-book-part2.md`）（实现）。
 
 ---
 

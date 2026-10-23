@@ -1,5 +1,0 @@
-K3 r10 full suite (K3 copy k3-g4b3-r10, bubblewrap, 4 workers, scope 5G)
- Test Files  716 passed (716)
-      Tests  9559 passed | 5 skipped (9564)
-   Duration  2834.25s (transform 23.21s, setup 0ms, import 405.89s, tests 10861.44s, environment 55ms)
-memory peak bytes / time: 4945887232 20:43:50

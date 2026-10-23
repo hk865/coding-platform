@@ -1,4 +1,0 @@
-?? .dsh-scratch/architecture.log
-?? .dsh-scratch/typecheck.log
-?? .dsh-scratch/vitest.log
-?? tests/app/S0-attention-edge-label.test.ts

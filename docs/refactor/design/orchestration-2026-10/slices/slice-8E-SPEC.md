@@ -46,7 +46,7 @@
 | F22 ✓ | 读时的核对在 `createNoteCheck`，读法经 `withCheck` 调它。文件锚点的文件摘要变了才重新解析符号：按名字找，同名多个时用存下的行挑；一次调用最多重解析 `NOTE_SYMBOL_RECHECK_MAX = 20` 个，每个开一个捕获，超了记 `unchecked`；另加最多 `NOTE_LINK_RECHECK_MAX` 条联系的重核，每条最多开一个捕获。一次调用最多读 `NOTE_READ_FILES_MAX = 256` 个文件 | `work-graph/views/note-views.ts:214`、`:321–392`、`:709–727`；`note-read-model.ts:389`；`note-contracts.ts:37`、`:39` |
 | F23 ✓ | L8 的自动抓在 Host 里：工作区登记、目录采用或修订、检查 PASS 之后各触发一次；全 Host 一个串行队列，同一工作区的等待合并；没有租约的 Host 不写任何东西 | `app/auto-capture-driver.ts:54–64`、`:81`、`:141`；`app/host.ts:546`；[第 8 片规格](slice-8-SPEC.md) §13 |
 | F24 ✓ | 文件按扩展名分语言：`typescript`（含 `.js` 等）、`cpp`、`python`、`rust`、`go`、`other` | `workspace/architecture-language-provider.ts:84–101` |
-| F25 ✓ | 运行时拼名字的地方静态找不到：8D 实测 Django 的 `django/` 里 importlib 43 处、`import_string` 41 处，名字都不是字面量；ros2/demos 上 117 对按名字通信的文件里，114 对在依赖图上毫无关系 | [8D 实测报告](../../../reviews/evidence/orchestration-slice-8D-2026-10-18/checks/measure-runtime/report.md)第 26、88、101 行 |
+| F25 ✓ | 运行时拼名字的地方静态找不到：8D 实测 Django 的 `django/` 里 importlib 43 处、`import_string` 41 处，名字都不是字面量；ros2/demos 上 117 对按名字通信的文件里，114 对在依赖图上毫无关系 | 8D 实测报告（已归档：`docs/refactor/reviews/evidence/orchestration-slice-8D-2026-10-18/checks/measure-runtime/report.md`）第 26、88、101 行 |
 
 ### 0.3 lead 定的技术选择
 

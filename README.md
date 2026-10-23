@@ -10,7 +10,7 @@
 - 编排、记忆和生命周期：[设计目录](docs/refactor/design/orchestration-2026-10/README.md)、[分片规格与任务书](docs/refactor/design/orchestration-2026-10/slices/README.md)。
 - 界面基线：[冻结原型](docs/ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](docs/UI-WORKBENCH.md#ui-decisions-2026-10)；新增界面随 E3 交付。
 - 产品与源码入口：[PRODUCT](docs/PRODUCT.md)、[MVP 行为](docs/MVP-BEHAVIOR.md)、[能力索引](docs/refactor/IMPLEMENTED-CAPABILITIES.md)、[架构](docs/refactor/ARCHITECTURE.md)。
-- 仓库工作规则：[AGENTS](AGENTS.md)；文档导航：[docs/README](docs/README.md)。
+- 仓库工作规则：[AGENTS](AGENTS.md)；文档导航：[docs/README](docs/README.md)；历史文档去向与取回：[ARCHIVE-INDEX](docs/ARCHIVE-INDEX.md)。
 
 ## 安装与验证
 
@@ -48,7 +48,7 @@ npm ci --prefix vendor/coding-agent --omit=dev --ignore-scripts
 node --run typecheck && node --run check:architecture && node --run build && node --run test
 ```
 
-没有 root 权限时，可以把 bubblewrap 解包到用户目录，并用 `CODING_AGENT_BWRAP_PATH=/abs/path/to/bwrap` 指定。缺少 `/usr/bin/node` 时，依赖沙箱内检查的 3 项集成测试会失败（检查 FAIL）。基线和失败归类见 [cc-baseline-2026-10-02](docs/refactor/reviews/evidence/cc-baseline-2026-10-02/README.md)。仓库最好放在 WSL 自己的文件系统里（例如 `~/agent-next-main`），比 `/mnt/d/...` 快得多。
+没有 root 权限时，可以把 bubblewrap 解包到用户目录，并用 `CODING_AGENT_BWRAP_PATH=/abs/path/to/bwrap` 指定。缺少 `/usr/bin/node` 时，依赖沙箱内检查的 3 项集成测试会失败（检查 FAIL）。基线和失败归类见 cc-baseline-2026-10-02（已归档：`docs/refactor/reviews/evidence/cc-baseline-2026-10-02/README.md`）。仓库最好放在 WSL 自己的文件系统里（例如 `~/agent-next-main`），比 `/mnt/d/...` 快得多。
 
 构建后，使用本机自行保存的配置启动：
 
@@ -91,7 +91,7 @@ node dist/app/main.js /absolute/path/to/workbench-config.json
 
 ## 路径与历史
 
-原 `W/coding-platform/next/` 对应本仓库根；原 `W/docs/` 对应 `docs/`。证据、原话与历史任务书保留当时路径、哈希和状态，不批量改写成当前事实。根 [AGENTS.md](AGENTS.md) 对旧路径说明优先。旧工程、临时数据库与 DSH lane 留在原机器，未复制或退役；[原施工工具快照](docs/refactor/archive/2026-09-27-workspace-tooling/README.md)只作继续时适配依据。
+原 `W/coding-platform/next/` 对应本仓库根；原 `W/docs/` 对应 `docs/`。证据、原话与历史任务书保留当时路径、哈希和状态，不批量改写成当前事实；它们已移出 `docs/`，位置和取回方法见 [ARCHIVE-INDEX](docs/ARCHIVE-INDEX.md)。根 [AGENTS.md](AGENTS.md) 对旧路径说明优先。旧工程、临时数据库与 DSH lane 留在原机器，未复制或退役；原施工工具快照（已归档：`docs/refactor/archive/2026-09-27-workspace-tooling/README.md`）只作继续时适配依据。
 
 ## 历史
 

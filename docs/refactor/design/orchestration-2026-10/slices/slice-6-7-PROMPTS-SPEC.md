@@ -1,8 +1,8 @@
 # 第 6、7 片补充规格：提示词和上下文（决定 83）
 
-**状态：已冻结（lead，2026-10-21）。** 经 Codex 两轮完整审查（第一轮 23 条、第二轮复核加 9 条新问题）和一次快速核对（7 条），都已照改，处理见 [证据](../../../reviews/evidence/prompts-context-d83-2026-10-21/handling.md)；你 10-21 定了五件事（§0.1），并确认了测试入口（§3.1）。施工顺序：结构一轮（含 D3）→ PC-1、PC-2 → 6A（§5）。
+**状态：已冻结（lead，2026-10-21）。** 经 Codex 两轮完整审查（第一轮 23 条、第二轮复核加 9 条新问题）和一次快速核对（7 条），都已照改，处理见 证据（已归档：`docs/refactor/reviews/evidence/prompts-context-d83-2026-10-21/handling.md`）；你 10-21 定了五件事（§0.1），并确认了测试入口（§3.1）。施工顺序：结构一轮（含 D3）→ PC-1、PC-2 → 6A（§5）。
 
-**后注（决定 85-1，lead 2026-10-22）：** D3 已在 6A 之前的结构一轮里做完（`55541fee`、`eee7503f`），发出的字节不变。PC-1、PC-2 在这个结构上写：包的格式、槽位表和渲染器在 `src/contracts/prompts/`（`prompt-pack.ts`、`slot-tables.ts`、`render-template.ts`），平台包第 1 版在 `resources/prompts/platform/`（`pack.json`、`strings.json`、`templates/`、`tools/`），由 `scripts/build-platform-prompts.mjs` 生成静态模块 `src/contracts/prompts/platform-pack.generated.ts`（构建前核对，运行时不读盘）；上下文装配拆在 `src/core/agent-runtime/context-*`（`context-work-recipe.ts`、`context-query-recipe.ts`、`context-continuation-recipe.ts`、`context-review-recipe.ts`、`context-rendering.ts`、`context-fact-text.ts` 等），`context-assembler.ts` 只留出口和工厂。正文原样保留，只加此注。经过见 [证据](../../../reviews/evidence/structure-round-2026-10-21/README.md)。
+**后注（决定 85-1，lead 2026-10-22）：** D3 已在 6A 之前的结构一轮里做完（`55541fee`、`eee7503f`），发出的字节不变。PC-1、PC-2 在这个结构上写：包的格式、槽位表和渲染器在 `src/contracts/prompts/`（`prompt-pack.ts`、`slot-tables.ts`、`render-template.ts`），平台包第 1 版在 `resources/prompts/platform/`（`pack.json`、`strings.json`、`templates/`、`tools/`），由 `scripts/build-platform-prompts.mjs` 生成静态模块 `src/contracts/prompts/platform-pack.generated.ts`（构建前核对，运行时不读盘）；上下文装配拆在 `src/core/agent-runtime/context-*`（`context-work-recipe.ts`、`context-query-recipe.ts`、`context-continuation-recipe.ts`、`context-review-recipe.ts`、`context-rendering.ts`、`context-fact-text.ts` 等），`context-assembler.ts` 只留出口和工厂。正文原样保留，只加此注。经过见 证据（已归档：`docs/refactor/reviews/evidence/structure-round-2026-10-21/README.md`）。
 
 **后注（决定 83-5，用户 2026-10-22 定）：** 你的包也能改平台工具的说明（`tools/<工具名>.json`），由 PC-2 做；正文原样保留，以下几处按这条读：
 - §2 `PromptSetV1` 加 `tools: { name: string; packId: string; digest: string; ref: ArtifactRef }[]`：这次执行最终交给 Kernel 的工具里有包文字的那些。开始和恢复时工具从这里取文字。
@@ -17,7 +17,7 @@
 - `promptSelectionOf` 收结构类型的参数（契约层不能引用 Core），每个 `BoundModel` 都满足；Kernel 输入的 `skills` 是 `readonly SkillContext[]`。
 - 足迹段在生产里仍然为空（以后的段）。
 
-经过见 [证据](../../../reviews/evidence/prompts-pc-2026-10-22/README.md)。
+经过见 证据（已归档：`docs/refactor/reviews/evidence/prompts-pc-2026-10-22/README.md`）。
 
 第 6、7 片已冻结（决定 64），这一节是冻结后的补充，不改它们已定的行为。它定这几件事：
 - 提示词放在哪、谁能改、按什么选；
@@ -25,7 +25,7 @@
 - 任务输入怎么排；
 - 怎么记下实际发出的提示词。
 
-依据是 Codex 10-18 的只读调研（原文在[证据](../../../reviews/evidence/prompts-context-d83-2026-10-21/codex/context-layout.out.md)）；§0.2 每一条，lead 或 Codex 都对着 `4d874f0b` 的代码核过。
+依据是 Codex 10-18 的只读调研（原文在证据（已归档：`docs/refactor/reviews/evidence/prompts-context-d83-2026-10-21/codex/context-layout.out.md`））；§0.2 每一条，lead 或 Codex 都对着 `4d874f0b` 的代码核过。
 
 和别的轮的关系：
 - **D3（6A 之前的结构一轮，决定 85-1）**：拆上下文装配器时按本节 §2 的模板包和渲染器做，把今天写死的文字**原样**搬进平台包第 1 版，发出的字节不变。
@@ -549,4 +549,4 @@ D3 阶段这些测试一律不改（搬文字不改字节）；下面都是 PC �
 
 ## 7. 审查和证据
 
-两轮完整审查、最后一次快速核对，以及 10-18 的只读调研，原文和逐条处理在 [证据 prompts-context-d83-2026-10-21](../../../reviews/evidence/prompts-context-d83-2026-10-21/README.md)。
+两轮完整审查、最后一次快速核对，以及 10-18 的只读调研，原文和逐条处理在 证据 prompts-context-d83-2026-10-21（已归档：`docs/refactor/reviews/evidence/prompts-context-d83-2026-10-21/README.md`）。

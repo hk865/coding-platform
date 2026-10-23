@@ -1,4 +1,0 @@
-{
-  "writableFiles": ["tests/composition/B2-runtime-platform.test.ts"],
-  "dshStateDirectories": ["profiles", "sessions", "storages", "cache", "llm-deepseek", "attachments"]
-}

@@ -1,6 +1,0 @@
-src/core/agent-runtime/source-capture-access.ts	581	(anonymous_37)
-src/core/work-graph/evidence/evidence-service.ts	142	incomplete
-src/core/work-graph/tasks/run-reconcile-service.ts	136	runRefusal
-src/core/work-graph/views/goal-conflicts.ts	413	(anonymous_30)
-src/core/work-graph/views/track-read-model.ts	157	constructor
-src/ui/state/display-preference.ts	65	(anonymous_0)

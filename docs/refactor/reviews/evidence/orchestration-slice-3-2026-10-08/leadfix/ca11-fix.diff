@@ -1,6 +1,0 @@
-754c754,756
-<     expect(input).not.toContain('未接入');
----
->     // Lead fix after the freeze: the fixture's extensions are not_implemented, so spec §4.3
->     // (the not-connected wording) and CA14 require the 未接入 reminders here too; the CA11 row
->     // asks only for the missing declaration and tA's facts.

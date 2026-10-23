@@ -1,8 +1,0 @@
-{
-  "base": "edge-base.jsonl",
-  "result": "edge-result.jsonl",
-  "cases": 158,
-  "differences": 0,
-  "errors": 0,
-  "details": []
-}

@@ -1,4 +1,0 @@
- FAIL  tests/composition/S2B-be1s-shell.test.ts > 2B-09 a cancelled command that wrote a file is one step and one edit
- Test Files  1 failed | 431 passed (432)
-      Tests  1 failed | 7124 passed (7125)
-   Duration  3377.79s (transform 13.21s, setup 0ms, import 190.59s, tests 13281.24s, environment 31ms)

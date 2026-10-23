@@ -7,25 +7,25 @@ basis: 用户要求先确定数据结构与行为，再设计编排状态机，�
 implementation: 在 coding-platform/next 独立目标工程分批实现；原 src 作为只读参考
 ```
 
-本稿是本轮重构的当前目标架构。共同产品依据为[当前PRODUCT](../PRODUCT.md)，修改时同时核对[原始对话](intent/ORIGINAL-DIALOGUE.md)、[2026-09-24 独立目标工程纠偏](intent/2026-09-24-TARGET-PROJECT.md)与相关模块。本仓库根就是施工工程，五模块目录已存在；Workspace、Goal 和材料/存储是已迁入子集，AgentRuntime 已补迁模型工具循环与 Work/Review/Query 来源绑定；编排各片、接线包 1/2 和 K 片 A/B 已合入，任务 E 的前端拆分/SSE 已做；旧目录说明（原 `coding-platform/next`）按[根 AGENTS](../../AGENTS.md)第 2 条映射（决定 1、43）。最新独立验收见[干净迁移记录](reviews/next-completed-migration-2026-09-24.md)。
+本稿是本轮重构的当前目标架构。共同产品依据为[当前PRODUCT](../PRODUCT.md)，修改时同时核对原始对话（已归档：`docs/refactor/intent/ORIGINAL-DIALOGUE.md`）、2026-09-24 独立目标工程纠偏（已归档：`docs/refactor/intent/2026-09-24-TARGET-PROJECT.md`）与相关模块。本仓库根就是施工工程，五模块目录已存在；Workspace、Goal 和材料/存储是已迁入子集，AgentRuntime 已补迁模型工具循环与 Work/Review/Query 来源绑定；编排各片、接线包 1/2 和 K 片 A/B 已合入，任务 E 的前端拆分/SSE 已做；旧目录说明（原 `coding-platform/next`）按[根 AGENTS](../../AGENTS.md)第 2 条映射（决定 1、43）。最新独立验收见干净迁移记录（已归档：`docs/refactor/reviews/next-completed-migration-2026-09-24.md`）。
 
-原 `coding-platform/src` 的 R3a/R3b 与 Kernel R4a 验收保留为旧工程历史与可复用证据，不代表新平台已支持连续 Session、范围并行或完整业务。旧源码归属仍由原 `scripts/module-map.mjs` 描述；新工程由 `next/scripts/check-boundaries.mjs` 检查。目标五模块八条允许依赖保持不变，不能把目录或边界检查通过当成功能完成。此前 13 Module／38 边[原稿已保留](archive/2026-09-23-before-core-design/ARCHITECTURE.md)。
+原 `coding-platform/src` 的 R3a/R3b 与 Kernel R4a 验收保留为旧工程历史与可复用证据，不代表新平台已支持连续 Session、范围并行或完整业务。旧源码归属仍由原 `scripts/module-map.mjs` 描述；新工程由 `next/scripts/check-boundaries.mjs` 检查。目标五模块八条允许依赖保持不变，不能把目录或边界检查通过当成功能完成。此前 13 Module／38 边原稿已保留（已归档：`docs/refactor/archive/2026-09-23-before-core-design/ARCHITECTURE.md`）。
 
-无对话记忆的接手者先读[HANDOFF](HANDOFF.md)。用户原话、草图与工程解释分开保存在[意图层](intent/INTENT-AND-DECISIONS.md)；关键文件、完整主要接口与内部逻辑见[详细骨架](skeleton/README.md)，Host/UI贯通见[END-TO-END](skeleton/END-TO-END.md)。本稿负责总体边界，不能替代模块文件级施工说明。当前已实装原子能力、源码符号、装配状态和复用前提统一查 [IMPLEMENTED-CAPABILITIES](IMPLEMENTED-CAPABILITIES.md)；后续先核已有实现，再冻结真实缺口，不能把尚未接线误称架构空白。
+无对话记忆的接手者先读[HANDOFF](HANDOFF.md)。用户原话、草图与工程解释分开保存在[意图层](intent/INTENT-AND-DECISIONS.md)；关键文件、完整主要接口与内部逻辑见详细骨架（已归档：`docs/refactor/skeleton/README.md`），Host/UI贯通见END-TO-END（已归档：`docs/refactor/skeleton/END-TO-END.md`）。本稿负责总体边界，不能替代模块文件级施工说明。当前已实装原子能力、源码符号、装配状态和复用前提统一查 [IMPLEMENTED-CAPABILITIES](IMPLEMENTED-CAPABILITIES.md)；后续先核已有实现，再冻结真实缺口，不能把尚未接线误称架构空白。
 
-**静态技术图解：** [核心数据结构、原子操作与编排状态机](CORE-STRUCTURES-AND-ORCHESTRATION.md)。从记录表、事件、幂等、唯一占用、正反邻接和查询索引展开，逐项说明原子操作的读写范围，并画出业务、Task、Session、Run/控制、恢复和检查返工的状态机；适合先审阅底层数据管理设计。
+**静态技术图解：** 核心数据结构、原子操作与编排状态机（已归档：`docs/refactor/CORE-STRUCTURES-AND-ORCHESTRATION.md`）。从记录表、事件、幂等、唯一占用、正反邻接和查询索引展开，逐项说明原子操作的读写范围，并画出业务、Task、Session、Run/控制、恢复和检查返工的状态机；适合先审阅底层数据管理设计。
 
 ## 1. 设计顺序与文档责任
 
 | 顺序 | 正文 | 负责什么 |
 | --- | --- | --- |
 | 1 | [核心数据与原子操作](CORE-DATA-OPERATIONS.md) | 对象、结构、字段、读写／比较／生成操作、约束、失败与增量同步 |
-| 2 | [编排状态机](ORCHESTRATION-STATE-MACHINES.md) | 意图、状态、转移、执行副作用、结果、重试与恢复 |
+| 2 | [编排状态机规则](STATE-MACHINES-SPEC.md) | 意图、状态、转移、执行副作用、结果、重试与恢复 |
 | 3 | 本稿与[模块文档](modules/README.md) | 根据职责与变化边界组织实现，不按旧目录反推业务 |
-| 4 | [模块 DAG](module-dag.md)与[实施方案](IMPLEMENTATION-PLAN.md) | 旧实现复用、迁移、重写、删除、消费者切换与验收 |
-| 5 | [共同契约](skeleton/CONTRACTS.md)、五篇模块骨架、[贯通流程](skeleton/END-TO-END.md) | 精确身份/输入/结果、内部文件、算法、事务、恢复、真实装配与UI接线 |
+| 4 | [模块 DAG](module-dag.md)与实施方案（已归档：`docs/refactor/IMPLEMENTATION-PLAN.md`） | 旧实现复用、迁移、重写、删除、消费者切换与验收 |
+| 5 | 共同契约（已归档：`docs/refactor/skeleton/CONTRACTS.md`）、五篇模块骨架、贯通流程（已归档：`docs/refactor/skeleton/END-TO-END.md`） | 精确身份/输入/结果、内部文件、算法、事务、恢复、真实装配与UI接线 |
 
-当前产品意图与已采用结论见 [INTENT-AND-DECISIONS](intent/INTENT-AND-DECISIONS.md)及本轮明确指令；[历史 PRODUCT 原稿](../history/before-2026-09-22/PRODUCT.md)和[2026-09-21 历史澄清](../history/before-2026-09-22/agent-platform-open-decisions-recommendations.md)用于追溯，不能把旧模块方案重新作为当前决定。共同质量要求见 [CODE-QUALITY-GUIDELINES](CODE-QUALITY-GUIDELINES.md)。数据基础、环、共享与工具职责已经在上述两份设计里确定，不推给实施者再次猜测。
+当前产品意图与已采用结论见 [INTENT-AND-DECISIONS](intent/INTENT-AND-DECISIONS.md)及本轮明确指令；历史 PRODUCT 原稿（已归档：`docs/history/before-2026-09-22/PRODUCT.md`）和2026-09-21 历史澄清（已归档：`docs/history/before-2026-09-22/agent-platform-open-decisions-recommendations.md`）用于追溯，不能把旧模块方案重新作为当前决定。共同质量要求见 [CODE-QUALITY-GUIDELINES](CODE-QUALITY-GUIDELINES.md)。数据基础、环、共享与工具职责已经在上述两份设计里确定，不推给实施者再次猜测。
 
 ## 2. 数据结构及其操作是核心
 
@@ -58,7 +58,7 @@ implementation: 在 coding-platform/next 独立目标工程分批实现；原 sr
 
 策略可以由规则、Skill、Agent 或人提供，不要求每次操作都经过常驻主模型。秘书、参谋、书记是业务角色，不固定成三个常驻 Session，也不充当所有成员通信的中转站。普通消息、文件读取与查询不触发完整生命周期和全量上下文编译。
 
-**2026-09-28 编排施工边界：** 发现、咨询、复用、派生、并行、交接、归档和恢复是共同运行机制组合产生的产品行为。生产代码接受工作意图、处理真实事件、执行状态转移与副作用；Agent/Skill/明确配置负责语义选择；测试项目设置场景并观察结果。AG1–AG5只作为行为验收分组，不各建专用workflow/manager，不将测试角色、任务数量、问答次数或项目名称写成生产分支。用户已认可[共同机制图](ORCHESTRATION-STATE-MACHINES.md#shared-mechanism-review)，新补充的[项目判断与决定回流](ORCHESTRATION-STATE-MACHINES.md#project-guidance-loop)及[状态表](ORCHESTRATION-STATE-MACHINES.md#agent-state-transitions)统一说明目标与实现差异。机制已有而场景缺证时验证；缺失则在原owner/Runtime/Host及必要Kernel适配中补齐，不能用更多demo掩盖共同机制缺失。行为范围与历史证据见[行为计划 §4](AGENT-BEHAVIOR-PLAN.md#4-共同机制与行为场景验收)。
+**2026-09-28 编排施工边界：** 发现、咨询、复用、派生、并行、交接、归档和恢复是共同运行机制组合产生的产品行为。生产代码接受工作意图、处理真实事件、执行状态转移与副作用；Agent/Skill/明确配置负责语义选择；测试项目设置场景并观察结果。AG1–AG5只作为行为验收分组，不各建专用workflow/manager，不将测试角色、任务数量、问答次数或项目名称写成生产分支。用户已认可共同机制图（已归档：`docs/refactor/ORCHESTRATION-STATE-MACHINES.md`），新补充的项目判断与决定回流（已归档：`docs/refactor/ORCHESTRATION-STATE-MACHINES.md`）及状态表（已归档：`docs/refactor/ORCHESTRATION-STATE-MACHINES.md`）统一说明目标与实现差异。机制已有而场景缺证时验证；缺失则在原owner/Runtime/Host及必要Kernel适配中补齐，不能用更多demo掩盖共同机制缺失。行为范围与历史证据见行为计划 §4（已归档：`docs/refactor/AGENT-BEHAVIOR-PLAN.md`）。
 
 生命周期组织图、历史、角色、Skill 和记忆的使用；这些能力仍可独立查询。完整长期领域专家与知识积累保留扩展位置，本轮不把接口预留写成已有功能。
 
@@ -73,7 +73,7 @@ implementation: 在 coding-platform/next 独立目标工程分批实现；原 sr
 - Agent 通信可以往返；通信关系、任务依赖、模块依赖和事件因果分别表达。
 - 架构图有当前与历史；任务图有计划、当前与历史。时间增加不自动证明业务有进展。
 
-采用 Goal／Plan、Task、Run、Session、检查轮次和邮箱的组合状态，不建设全局大状态机。状态更新、Kernel 副作用及失败恢复的顺序由[状态机文档](ORCHESTRATION-STATE-MACHINES.md)给出。
+采用 Goal／Plan、Task、Run、Session、检查轮次和邮箱的组合状态，不建设全局大状态机。状态更新、Kernel 副作用及失败恢复的顺序由[状态机规格](STATE-MACHINES-SPEC.md)给出。
 
 ## 5. 从职责推导的目标模块
 
@@ -111,13 +111,13 @@ flowchart TD
 
 多 Agent 必须支持同一工作区并行。Workflow/编排 Agent 根据规范、架构与任务白板选择并行和顺序；WorkGraph 保存意图、责任、关系及结果，并提供定向查询。领取维护 Task/Session 身份及持久状态的一致性，不认证未来执行无冲突，也不以预测全部文件范围为前置。WorkspaceTools 提供实际路径/来源/差异；AgentRuntime 在具体工具操作处落实已有权限和适用的文件版本/资源约束；RecordStore 负责条件事务及必要索引。实际结果回流后由 Agent 核对和整合，局部冲突保留独立成果。
 
-注释：架构模块是职责与影响线索，不是全模块锁；同一工作区不是单 writer 锁。此前详细方案将完整 ScopeProposal / ResourceReservation 设为每次 Task/Query 领取必需，现撤销这一普遍前置；不能仅把单独预检查改成可选，却在 claim 内重复同一全量证明。资源机制只按实际工具需要采用，不先为此建设通用资源调度系统。已知共享改动由 Agent 协调，冲突的步骤才等待，其余独立范围继续。旧参考源码仍有全根租约及 `writeScope='*'` 限制，必须沿真实调用链替换，不能靠修改图宣称完成。详细资源结构、接口缺口、协作反馈图与并行开发图统一见 [PARALLEL-COLLABORATION](PARALLEL-COLLABORATION.md)。
+注释：架构模块是职责与影响线索，不是全模块锁；同一工作区不是单 writer 锁。此前详细方案将完整 ScopeProposal / ResourceReservation 设为每次 Task/Query 领取必需，现撤销这一普遍前置；不能仅把单独预检查改成可选，却在 claim 内重复同一全量证明。资源机制只按实际工具需要采用，不先为此建设通用资源调度系统。已知共享改动由 Agent 协调，冲突的步骤才等待，其余独立范围继续。旧参考源码仍有全根租约及 `writeScope='*'` 限制，必须沿真实调用链替换，不能靠修改图宣称完成。详细资源结构、接口缺口、协作反馈图与并行开发图统一见 PARALLEL-COLLABORATION（已归档：`docs/refactor/PARALLEL-COLLABORATION.md`）。
 
 ## 7. 贯通路径
 
 ### 7.1 双图中的工作实体与生命周期（2026-09-25 对齐）
 
-共同审阅[双图与生命周期对齐记录](../AGENT-GRAPH-LIFECYCLE-ALIGNMENT-2026-09-25.md)和[用户编号原话](../agent-platform-user-replies-numbered.md)第01、03、09、12、14段。工作实体沿用 `SessionRecord + RoleConfigurationRef + SessionWorkLink`；不因图上显示 Agent 就增加永久 Agent 目录。Role 配置可复用，独立并行工作使用不同 Session。
+共同审阅双图与生命周期对齐记录（已归档：`docs/AGENT-GRAPH-LIFECYCLE-ALIGNMENT-2026-09-25.md`）和用户编号原话（已归档：`docs/agent-platform-user-replies-numbered.md`）第01、03、09、12、14段。工作实体沿用 `SessionRecord + RoleConfigurationRef + SessionWorkLink`；不因图上显示 Agent 就增加永久 Agent 目录。Role 配置可复用，独立并行工作使用不同 Session。
 
 架构图的关联回答“现在谁在此工作或仍可咨询”，任务图的关联回答“谁承担过这项工作、结果和原历史在哪里”。当前发现包括 active/idle 与 active/busy，默认排除 archived；归档不删除模块、任务、Kernel 历史或关联记录。idle 由无 occupancy 且实际 health 可用派生，不额外持久化一份 standby 状态。可发现不等于已授权调用、能够立刻恢复或回答一定正确。
 
@@ -136,7 +136,7 @@ flowchart LR
 
 这是使用路径，不是新增源码依赖。WorkGraph 拥有正式记录与确定性维护，Runtime 产生实际执行结果，Workflow/Skill 选择组织动作；不增加夹在图和生命周期之间的管理模块。图变更给出受影响关联，不静默销毁 Agent；结束 Run 不直接推出 Task 完成或 Session 归档。
 
-交付须同时登记：A 关联/发现/生命周期，B 能力装配与真实执行，C 通信及角色编排，D 控制/连续性/完成与人用入口。底层图算法通过测试不等于以上路径完成；状态、责任与验收矩阵统一见[实施方案](IMPLEMENTATION-PLAN.md)。正式模块挂靠需要真实 catalog，但无挂靠的探索和 Session 创建不以 baseline 为前提。
+交付须同时登记：A 关联/发现/生命周期，B 能力装配与真实执行，C 通信及角色编排，D 控制/连续性/完成与人用入口。底层图算法通过测试不等于以上路径完成；状态、责任与验收矩阵统一见实施方案（已归档：`docs/refactor/IMPLEMENTATION-PLAN.md`）。正式模块挂靠需要真实 catalog，但无挂靠的探索和 Session 创建不以 baseline 为前提。
 
 ### 7.2 既有原子能力组成的路径
 
@@ -144,11 +144,11 @@ flowchart LR
 
 **连续执行：** Workflow 选择延续／新建 → WorkGraph 按版本与占用受理 → AgentRuntime 消费意图调用 Kernel → 结果交 WorkGraph 更新平台状态及关联。延续默认增量追加；容量或目标变化才按条件压缩／重组。
 
-这里的连续执行是目标行为。冻结 Kernel R4a 的默认模式仍为 current_turn，显式历史模式和恢复接口已验收；平台 Session 装配尚未实现，不能把同 Session ID 等同上下文延续。`resumeCodingAgent`恢复原未结束 Run。按 Run 分配 Kernel 数据库的是旧参考平台行为。目标采用稳定的workspace存储映射和最小Kernel公开扩展，由Kernel内部选择历史、核算预算并持久恢复依据；平台不再复制一套历史选择器。原生compact没有实际实现，必须保持unsupported。具体前置与验收写在[AgentRuntime骨架](modules/core/agent-runtime.md)，不能仅用ID相同证明能力已具备。
+这里的连续执行是目标行为。冻结 Kernel R4a 的默认模式仍为 current_turn，显式历史模式和恢复接口已验收；平台 Session 装配尚未实现，不能把同 Session ID 等同上下文延续。`resumeCodingAgent`恢复原未结束 Run。按 Run 分配 Kernel 数据库的是旧参考平台行为。目标采用稳定的workspace存储映射和最小Kernel公开扩展，由Kernel内部选择历史、核算预算并持久恢复依据；平台不再复制一套历史选择器。原生compact没有实际实现，必须保持unsupported。具体前置与验收写在AgentRuntime骨架（已归档：`docs/refactor/modules/core/agent-runtime.md`），不能仅用ID相同证明能力已具备。
 
 **产物与完成：** 工具结果与对应文件版本记录 → 更新受影响结构或标明待刷新 → 检查引用同版本 → WorkGraph 按采用条件汇合并提交状态 → Workflow 必要时选择返工。声明完成、执行结束和正式完成分别表达。
 
-执行前后的机械分析复用同一 Workspace 文件比较和 WorkGraph observed 图差分、邻域及反向影响，不另造冲突图。执行前返回已有事实提示，执行后以真实来源/变更核对；结构影响不冒充文本冲突或语义判决。现有能力与尚缺的符号差分、跨隔离根对齐/合并见[WorkGraph复用矩阵](modules/core/work-graph.md#40-执行前后静态分析的实现复用2026-09-24)。
+执行前后的机械分析复用同一 Workspace 文件比较和 WorkGraph observed 图差分、邻域及反向影响，不另造冲突图。执行前返回已有事实提示，执行后以真实来源/变更核对；结构影响不冒充文本冲突或语义判决。现有能力与尚缺的符号差分、跨隔离根对齐/合并见WorkGraph复用矩阵（已归档：`docs/refactor/modules/core/work-graph.md`）。
 
 工具结果反向维护图与状态是用户原始设计；这里只落实增量操作，不把闭环当作用户方案缺项。
 
@@ -173,7 +173,7 @@ flowchart LR
 
 ## 8. 兼容与旧前提的处置
 
-2026-09-28 异步感知/冷启动补充见 [Agent 行为计划 §6–8](AGENT-BEHAVIOR-PLAN.md#6-对齐注意力与异步感知)。双图定位相关参与者与变化范围；Workflow/Host 消费实际变化选择展示、等待、显式处理或控制，WorkGraph 继续只保存正式事实，不反向调用 Runtime。通知关系不是任务依赖或授权；已投递、已处理、控制已生效沿原消息/Query/Run/control记录表达。机制统计文件增删行量、双图结构/状态变化并由心跳补查，按配置条件通知；语义影响由相关执行者主动反馈或参谋收到线索后调查，不把“识别关键变化”变成常驻语义服务。无变化不调用模型，不新增每工具校验；具体阈值与自动消费者尚需接线。首次有界探索不以完整双图为前提，原 Session 待命唤醒与进程重启也不重做全项目初始化。
+2026-09-28 异步感知/冷启动补充见 Agent 行为计划 §6–8（已归档：`docs/refactor/AGENT-BEHAVIOR-PLAN.md`）。双图定位相关参与者与变化范围；Workflow/Host 消费实际变化选择展示、等待、显式处理或控制，WorkGraph 继续只保存正式事实，不反向调用 Runtime。通知关系不是任务依赖或授权；已投递、已处理、控制已生效沿原消息/Query/Run/control记录表达。机制统计文件增删行量、双图结构/状态变化并由心跳补查，按配置条件通知；语义影响由相关执行者主动反馈或参谋收到线索后调查，不把“识别关键变化”变成常驻语义服务。无变化不调用模型，不新增每工具校验；具体阈值与自动消费者尚需接线。首次有界探索不以完整双图为前提，原 Session 待命唤醒与进程重启也不重做全项目初始化。
 
 独立仓库的当前命令和配置以 [README](../../README.md) 与 `src/app/main.ts` 为准：Node24、npm 锁文件、`node dist/app/main.js <配置文件>`，Host 输出实际 loopback 地址。旧工程的 pnpm/start、4317/PORT、PLATFORM_GUI_DATA 只属于历史接入约定，不能当作独立仓库冷启动命令。Kernel 边界、历史引用及必要权限／版本／幂等／失败／恢复语义继续保留。
 
@@ -183,6 +183,6 @@ flowchart LR
 
 ## 9. 实施与验收
 
-先迁职责与消费者，再删旧实现；事务、解析、差分及 Kernel 适配尽量复用。兼容入口必须列消费者和退出条件。批次、旧路径和实际进度见[实施方案](IMPLEMENTATION-PLAN.md)。
+先迁职责与消费者，再删旧实现；事务、解析、差分及 Kernel 适配尽量复用。兼容入口必须列消费者和退出条件。批次、旧路径和实际进度见实施方案（已归档：`docs/refactor/IMPLEMENTATION-PLAN.md`）。
 
 比较主路径可读性、重复逻辑、代码量和 UI 行为；性能声明核实同输入下的实际捕获、解析、读写与模型调用次数。源码目录、完整生命周期与 UI 联动全部完成前，不宣布整体重构完成。

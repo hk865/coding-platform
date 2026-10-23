@@ -1,8 +1,0 @@
-# D1 assertion ledger w1r3..HEAD (tests)
-
-## DELETED test files: 0
-
-# lines to justify (excluding MOVED): 0, plus 0 deleted files
-
-# D3 pure-file guard: 25 *-pure.test.ts files
-# D3 hits: 0

@@ -76,7 +76,7 @@ lead 另定的 6 项（草稿没列，或和设计不一致）：
 - 文件 87 个：新建 38、修改 49。其中源码 60（新建 15、修改 45；新建里含共用文件 `src/contracts/platform-duty.ts`，§6 F88），新测试文件 23，改动的已有测试文件和测试工具 4（`tests/architecture/state-writes.test.ts`、`tests/state/invariants.ts`、`tests/state/session-availability.test.ts`、`tests/state/message-machine.test.ts`）。逐个文件见 §6。
 - 用例 151 个：单元 56（UT01–UT56）、服务 61（SV01–SV61）、集成和场景 34（IT01–IT34）。服务用例在 memory 和 SQLite 各跑一次，共 212 次。已有状态测试的穷尽矩阵扩展不计入这 151 个（§5.2 末段）。【审查改】加了 IT34（§0.1 冻结的 U1 跳过，原来没有用例锁住）。
 - 估计行数（不是验收数字）：生产代码新增约 2,600–4,100 行，测试约 2,100–3,200 行。
-- 任务书：[slice-1-book-part1.md](slice-1-book-part1.md)（骨架和测试，然后停）、[slice-1-book-part2.md](slice-1-book-part2.md)（实现）。
+- 任务书：slice-1-book-part1.md（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-1-book-part1.md`）（骨架和测试，然后停）、slice-1-book-part2.md（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-1-book-part2.md`）（实现）。
 
 ---
 

@@ -2,7 +2,7 @@
 
 > **状态：已确认（2026-10-03）。** 用户已确认附录 A 的 U-1..U-15，其中 U-3、U-9..U-13、U-15 按用户决定 C1..C8 改变（§0.4）。本文已按这些决定修订（任务 A.1b，要点见 §0.7），A.2 按本文实施。分支 `feat/reliability-and-structure`。
 >
-> 本文把 [ORCHESTRATION-STATE-MACHINES](ORCHESTRATION-STATE-MACHINES.md) 的 §2、§3.1、§4–§9、§11 转写成可以直接编码、逐条测试的表格。不重新设计，也不重命名存量状态（该文 §1 第 3 条）。设计依据、协作主图和用户已认可的范围以原文为准。本文的每一行都标明原文编号，以及今天的代码是否已经这样做：`已有`、`改造` 或 `新增`。按用户决定新增的行，原文编号一栏写 `新增（Cn）`，例如 `新增（C5）`。
+> 本文把 ORCHESTRATION-STATE-MACHINES（已归档：`docs/refactor/ORCHESTRATION-STATE-MACHINES.md`） 的 §2、§3.1、§4–§9、§11 转写成可以直接编码、逐条测试的表格。不重新设计，也不重命名存量状态（该文 §1 第 3 条）。设计依据、协作主图和用户已认可的范围以原文为准。本文的每一行都标明原文编号，以及今天的代码是否已经这样做：`已有`、`改造` 或 `新增`。按用户决定新增的行，原文编号一栏写 `新增（Cn）`，例如 `新增（C5）`。
 
 （2026-10-21 补注：本文引用的 `src/ui` 各行是已删除的代码（决定 86-2）。契约和状态规则不变。）
 
@@ -5264,9 +5264,9 @@ D-17 原列表六项为 GAP-03…08；lead 决定 L-7 把 GAP-41 补入这一列
 编排第 1、3 片（DESIGN §8.2）合入以后，状态机多了下面这些行。行的完整写法（from、event、guard、to、effects、幂等、原文编号）以各片的冻结规格为准，这里不重抄：第 1 片 19 行在 [slice-1-SPEC §3.2](design/orchestration-2026-10/slices/slice-1-SPEC.md#32-迁移表)（另有补充拒绝表），第 3 片 3 行在 [slice-3-SPEC §3.2](design/orchestration-2026-10/slices/slice-3-SPEC.md#32-state-machines-spec-表格)。新行号用各片自己的前缀，已有的 `SES-*`、`TASK-*`、`MSG-*`、`RUN-*` 不重编号。表格约定同 §1.4，缩写同 §15.3；测试一列写测试文件和规格里的用例号，每个用例号都是一个 `it`（work-graph 下的 SV 用例在 memory 和 SQLite 各跑一次）。
 
 - 第 0 片没有状态行（只改注意力边的字符串）。
-- 第 5 片的 23 行（S5-*）在 [slice-5-SPEC](design/orchestration-2026-10/slices/slice-5-SPEC.md) 里冻结了，但第 5 片没有验收、没有合入（见[第 5 片证据](reviews/evidence/orchestration-slice-5-2026-10-08/README.md)），等合入时再补进本节。（2026-10-09 补注：决定 47 又做了一轮，仍没有合入；决定 48 再给一轮。行仍只在规格里。）（2026-10-09 夜补注：决定 48 那一轮做完，第 5 片合入（a7cafccc），23 行见 §17.4。）
+- 第 5 片的 23 行（S5-*）在 [slice-5-SPEC](design/orchestration-2026-10/slices/slice-5-SPEC.md) 里冻结了，但第 5 片没有验收、没有合入（见第 5 片证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-5-2026-10-08/README.md`）），等合入时再补进本节。（2026-10-09 补注：决定 47 又做了一轮，仍没有合入；决定 48 再给一轮。行仍只在规格里。）（2026-10-09 夜补注：决定 48 那一轮做完，第 5 片合入（a7cafccc），23 行见 §17.4。）
 - 提交：第 1 片 327ec020，第 3 片 ccecc016 和合入修正 e48218a5。证据在 `reviews/evidence/orchestration-slice-<n>-2026-10-08/`。
-- 2026-10-09 补：接线包 1（决定 47）的 9 行（W1-*）在 §17.3，规格 [wiring-1-SPEC §3](design/orchestration-2026-10/slices/wiring-1-SPEC.md#3-状态行)，提交 6180adfc，证据 [orchestration-wiring-1-2026-10-09](reviews/evidence/orchestration-wiring-1-2026-10-09/README.md)。
+- 2026-10-09 补：接线包 1（决定 47）的 9 行（W1-*）在 §17.3，规格 [wiring-1-SPEC §3](design/orchestration-2026-10/slices/wiring-1-SPEC.md#3-状态行)，提交 6180adfc，证据 orchestration-wiring-1-2026-10-09（已归档：`docs/refactor/reviews/evidence/orchestration-wiring-1-2026-10-09/README.md`）。
 - 2026-10-15 补：第 2C 片的 1 行（S2C-PIN-01）和 §8 的两处改动（新行 SES-19a、SES-02 复用时开负责关系）在 §17.5。第 2A、2B 片没有新的状态行。
 
 ### 17.1 第 1 片：Session 事实、纠错与归档（S1-*）
@@ -5341,7 +5341,7 @@ D-17 原列表六项为 GAP-03…08；lead 决定 L-7 把 GAP-41 补入这一列
 
 ### 17.4 第 5 片：目标设置与决定（S5-*，2026-10-09 夜）
 
-第 5 片合入在 a7cafccc（决定 36、43、46、47、48；[证据](reviews/evidence/orchestration-slice-5-2026-10-08/README.md)）。23 行的完整写法见 [slice-5-SPEC §3.1](design/orchestration-2026-10/slices/slice-5-SPEC.md#31-纯状态机和固定迁移表)，其中 S5-MSG-01、S5-PLAN-03、S5-PLAN-05 改造已有的 MSG-02、计划采用和 `derivePlanProposalStatus`，其余是新行。§0 的 L1 和决定 48 定了：“初始化采用”的补记不在这一片（第 6 片）。用例号的出处：GS、PO、MD、PC、NS、SS、UM、RC、DQ、AP、NR、RT、WF、TU、SC 见 slice-5-SPEC §5；R2A–R2D 是决定 48 补的 37 行，见 [slice-5-round2-TESTS](design/orchestration-2026-10/slices/slice-5-round2-TESTS.md)。测试文件都在 `tests/` 下：`state/S5-*.test.ts` 是单元；`work-graph/S5-*.test.ts` 的服务用例在 memory 和 SQLite 各跑一次；R2 的文件是 `work-graph/S5R2-queue-history`、`business/S5R2-automation-cards`、`business/S5R2-settings-replay`、`runtime/S5R2-agent-application`、`app/S5R2-driver-safe-point`。测试一列是 lead 按用例的给定和期望归到行上的主要用例，不是每个碰到这一行的用例都列。
+第 5 片合入在 a7cafccc（决定 36、43、46、47、48；证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-5-2026-10-08/README.md`））。23 行的完整写法见 [slice-5-SPEC §3.1](design/orchestration-2026-10/slices/slice-5-SPEC.md#31-纯状态机和固定迁移表)，其中 S5-MSG-01、S5-PLAN-03、S5-PLAN-05 改造已有的 MSG-02、计划采用和 `derivePlanProposalStatus`，其余是新行。§0 的 L1 和决定 48 定了：“初始化采用”的补记不在这一片（第 6 片）。用例号的出处：GS、PO、MD、PC、NS、SS、UM、RC、DQ、AP、NR、RT、WF、TU、SC 见 slice-5-SPEC §5；R2A–R2D 是决定 48 补的 37 行，见 [slice-5-round2-TESTS](design/orchestration-2026-10/slices/slice-5-round2-TESTS.md)。测试文件都在 `tests/` 下：`state/S5-*.test.ts` 是单元；`work-graph/S5-*.test.ts` 的服务用例在 memory 和 SQLite 各跑一次；R2 的文件是 `work-graph/S5R2-queue-history`、`business/S5R2-automation-cards`、`business/S5R2-settings-replay`、`runtime/S5R2-agent-application`、`app/S5R2-driver-safe-point`。测试一列是 lead 按用例的给定和期望归到行上的主要用例，不是每个碰到这一行的用例都列。
 
 | 行号 | 摘要 | state 文件 | 服务文件 | 测试（用例） |
 | --- | --- | --- | --- | --- |
@@ -5380,7 +5380,7 @@ D-17 原列表六项为 GAP-03…08；lead 决定 L-7 把 GAP-41 补入这一列
 
 ### 17.5 第 2C 片：线的置顶，和 Session 的两处改动（2026-10-15）
 
-第 2C 片（状态词、工作线左栏、置顶、悬停卡和节点详情）的规格见 [slice-2C-SPEC](design/orchestration-2026-10/slices/slice-2C-SPEC.md)，施工和验收中的限定在它的 §16；证据 [orchestration-slice-2C-2026-10-15](reviews/evidence/orchestration-slice-2C-2026-10-15/README.md)。线的状态词是读时算的（`state/line-status.ts`，纯函数，不存），不是状态行。
+第 2C 片（状态词、工作线左栏、置顶、悬停卡和节点详情）的规格见 [slice-2C-SPEC](design/orchestration-2026-10/slices/slice-2C-SPEC.md)，施工和验收中的限定在它的 §16；证据 orchestration-slice-2C-2026-10-15（已归档：`docs/refactor/reviews/evidence/orchestration-slice-2C-2026-10-15/README.md`）。线的状态词是读时算的（`state/line-status.ts`，纯函数，不存），不是状态行。
 
 | 行号 | 摘要 | state 文件 | 服务文件 | 测试（用例） |
 | --- | --- | --- | --- | --- |

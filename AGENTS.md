@@ -27,7 +27,7 @@
 
 ## 通用仓库约束
 
-1. 必要上下文：先读 [README](README.md) → [STATUS](docs/refactor/STATUS.md)（当前状态）→ [HANDOFF 顶部](docs/refactor/HANDOFF.md)（决定 1–87）→ [编排设计目录](docs/refactor/design/orchestration-2026-10/README.md)。施工时读相关分片规格、[MVP 行为](docs/MVP-BEHAVIOR.md)和[能力索引](docs/refactor/IMPLEMENTED-CAPABILITIES.md)，沿代码与证据核对；界面工作读[冻结原型](docs/ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](docs/UI-WORKBENCH.md#ui-decisions-2026-10)。
+1. 必要上下文：先读 [README](README.md) → [STATUS](docs/refactor/STATUS.md)（当前状态）→ [HANDOFF 顶部](docs/refactor/HANDOFF.md)（决定 1–87，现行读法见[决定表](docs/refactor/DECISIONS.md)）→ [编排设计目录](docs/refactor/design/orchestration-2026-10/README.md)。历史文档已移出 `docs/`，清单和取回方法见 [ARCHIVE-INDEX](docs/ARCHIVE-INDEX.md)。施工时读相关分片规格、[MVP 行为](docs/MVP-BEHAVIOR.md)和[能力索引](docs/refactor/IMPLEMENTED-CAPABILITIES.md)，沿代码与证据核对；界面工作读[冻结原型](docs/ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](docs/UI-WORKBENCH.md#ui-decisions-2026-10)。
 2. 原 W/coding-platform/next 相当于本根；原 W/docs 相当于本根/docs。历史 C/src、C/tests 不是本仓库 src/tests；不得把本仓库源码当旧目录删除。历史绝对路径、scope、harness 命令都要先重新映射。当前文件优先于被复制文档里的旧目录说明。
 3. 2026-09-27 的有界 MVP completion audit 已完成，不因接手而重跑。按 STATUS 的下一步和已确认的分片范围推进；不新增需求、不补非阻塞测试、不做顺手重构，也不得自动把既定必需项移出 MVP。不把原语、受控模型 E2E 或某一子链等同完整产品验收。规格、规则和整套文档由 lead 负责并逐行审阅（决定 36、43、46；2026-10-13 做法）；用户做产品决定，并挑交互和行为验看。
 4. 五模块职责与已确认产品边界继续有效。Task Graph 保留无验收条件的未来意图；Run结束不等于Task/Goal完成；事实与当前动作授权分开；没有运行中 Role 热切换生命周期，不恢复篡改数据库才能触发的防御校验/测试。原历史默认折叠并能按需查看实际保存记录。

@@ -73,4 +73,4 @@ for (const edge of plan.executionDag.dependsOn) edges.push('depends:' + edge.dep
 
 ## 8. 大小与检查
 
-生产代码 1 行；测试约 60–90 行。检查：`npm run typecheck`、`npm run check:architecture`、`npx vitest run tests/app/S0-attention-edge-label.test.ts tests/app/orchestration-mechanism.test.ts`。任务书是 [第一段](slice-0-book-part1.md)（写 3 个用例，看它们失败，停下）和 [第二段](slice-0-book-part2.md)（改那一行）。【审查改】原来写的是“一段完成，太小，不分两段”；决定 43 要第 0 片也走两段（DSH 写测试后停下 → lead 审、冻结 → DSH 实现）。第一段的失败来自现有代码本身，不是桩。
+生产代码 1 行；测试约 60–90 行。检查：`npm run typecheck`、`npm run check:architecture`、`npx vitest run tests/app/S0-attention-edge-label.test.ts tests/app/orchestration-mechanism.test.ts`。任务书是 第一段（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-0-book-part1.md`）（写 3 个用例，看它们失败，停下）和 第二段（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-0-book-part2.md`）（改那一行）。【审查改】原来写的是“一段完成，太小，不分两段”；决定 43 要第 0 片也走两段（DSH 写测试后停下 → lead 审、冻结 → DSH 实现）。第一段的失败来自现有代码本身，不是桩。

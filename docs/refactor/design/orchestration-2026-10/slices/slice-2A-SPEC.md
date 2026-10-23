@@ -1,12 +1,12 @@
 # 2A 片规格：决定队列只读相关的条目，不再拒绝，完整分页
 
-**后注（决定 86-6，lead 2026-10-21）：** QA-04、QA-05、QA-06（`tests/work-graph/S2A-queue-bounds`）、QA-07 和 QA-09（一）（`S2A-queue-derived-cards`）、QA-09（二）（`S2A-queue-request-candidates`）、QA-10（二）（`S2A-notices-overbound`）、QA-14（一）（`tests/app/S2A-decision-routes`）和 L11 的 201 次自动返工（`S2A-notices-attempt`）在规模批里核：原规模的用例原样挪进同名的 `.scale.test.ts`（两种后端、原数量、原断言、原超时，不注入页宽，所以也核了生产的默认页宽），`npm run test:scale` 每片合入前和全量一起跑；日常套件（`npm test`，CI 也只跑它）的同名文件里是同一组断言的小版本：测试经 owner 的依赖传入小页宽，每层读取至少跨两页，决定那一条在最后一页，每层的顺序和分页手算写在注释里。正文原样保留，只加此注。拆分经过见 [证据](../../../reviews/evidence/scale-split-sc-2026-10-21/README.md)。QA-14（二）是读失败，不需要规模，只在日常文件里；QA-17 没拆（不做接缝 H）。
+**后注（决定 86-6，lead 2026-10-21）：** QA-04、QA-05、QA-06（`tests/work-graph/S2A-queue-bounds`）、QA-07 和 QA-09（一）（`S2A-queue-derived-cards`）、QA-09（二）（`S2A-queue-request-candidates`）、QA-10（二）（`S2A-notices-overbound`）、QA-14（一）（`tests/app/S2A-decision-routes`）和 L11 的 201 次自动返工（`S2A-notices-attempt`）在规模批里核：原规模的用例原样挪进同名的 `.scale.test.ts`（两种后端、原数量、原断言、原超时，不注入页宽，所以也核了生产的默认页宽），`npm run test:scale` 每片合入前和全量一起跑；日常套件（`npm test`，CI 也只跑它）的同名文件里是同一组断言的小版本：测试经 owner 的依赖传入小页宽，每层读取至少跨两页，决定那一条在最后一页，每层的顺序和分页手算写在注释里。正文原样保留，只加此注。拆分经过见 证据（已归档：`docs/refactor/reviews/evidence/scale-split-sc-2026-10-21/README.md`）。QA-14（二）是读失败，不需要规模，只在日常文件里；QA-17 没拆（不做接缝 H）。
 
 **后注（决定 60、62）：** 后来的决定改写了本规格的这几处：
 - L6（约 140 行）、L8（约 148 行）：决定 60-8/62-2 的项目级卡源（上限 `role_capacity`、角色线变动 `role_line_change`、结构修订提议）和决定 62 的规则记录，要沿本规格已接管的单卡/队列完整读取（分页、计数、历史、水位）接入，不另起一套读取；由第 7 片 7D 改。
 - 正文原样保留，只加此注。
 
-> **已合入（2026-10-15）。** 施工四轮，经过和验收见[证据目录](../../../reviews/evidence/orchestration-slice-2A-2026-10-14/README.md)；施工和验收中定下的读法见 §10，和正文同等有效，有冲突时以 §10 为准。下面的状态说明保留作记录。
+> **已合入（2026-10-15）。** 施工四轮，经过和验收见证据目录（已归档：`docs/refactor/reviews/evidence/orchestration-slice-2A-2026-10-14/README.md`）；施工和验收中定下的读法见 §10，和正文同等有效，有冲突时以 §10 为准。下面的状态说明保留作记录。
 
 > **状态：lead 起草，2026-10-13；按 Codex 审查（`D:/cc-lead-notes/codex2/s2arev.out.md`，结论“不能冻结”，15 条）重写一轮。测试入口用户已同意（决定 51）。2026-10-14 lead 把按顺序查找挪到单独的端口（L1、§2），合入顺序改成接线包 2 → K 片 B → K 片 A → 2A。2026-10-14 按 Codex 第二轮审查（`D:/cc-lead-notes/codex2/s2a-spec2.out.md`，7 条）改了一轮，同日按 2C 的审查加了整数排序（D8）；怎么处理的见 §9。lead 2026-10-14 逐行审过；Codex 第三次复核（改完后冻结）的四条和附注已照改（§9）。2026-10-14 冻结。**
 > - 代码基线：ee9e7a33 的工作树，第 5 片已合入。第二轮审查对的是 5893c271，代码相同。

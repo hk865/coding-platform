@@ -1,9 +1,0 @@
-60d59
-< import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
-291d289
-<       ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
-304d301
-<       ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
-318,319d314
-<       ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []),
-<       ...(TASK_CLAIM_RECORD_SCHEMAS.lookups ?? []),

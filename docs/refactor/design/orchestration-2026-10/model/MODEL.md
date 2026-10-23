@@ -3,7 +3,7 @@
 > **lead 的说明（2026-10-08，放进仓库时加）。** 这是 Codex 第 1 步的产出，除下面 8 处外原样保留（怎么来的见 [README](README.md)）。
 > - 行号：`L…` 和 `DESIGN:…` 都指 ddce07be 上的 DESIGN.md（1481 行）。之后在 DESIGN §8.2 表前加了 1 行指针，所以在今天的文件里，第 1080 行起的行号要加 1。
 > - 歧义编号：这里写到 AMB-40。合并以后是 74 项，编号和内容以 [AMBIGUITIES.md](AMBIGUITIES.md) 为准（AMB-1–40 改写过 27 项）。
-> - `S01`–`S80`：Codex 第 1 步的场景。原文件没进仓库；每个场景的给定和动作，在 [readers/R6/R6.md](readers/R6/R6.md) 对应的块里重写了一遍，合并后在 [SCENARIOS.md](SCENARIOS.md) 里按“来源：Snn/R6-nn”找。
+> - `S01`–`S80`：Codex 第 1 步的场景。原文件没进仓库；每个场景的给定和动作，在 readers/R6/R6.md（已归档：`docs/refactor/design/orchestration-2026-10/model/readers/R6/R6.md`） 对应的块里重写了一遍，合并后在 SCENARIOS.md（已归档：`docs/refactor/design/orchestration-2026-10/model/SCENARIOS.md`） 里按“来源：Snn/R6-nn”找。
 > - 文中提到的“任务书”，是给 DSH 写可执行模型的任务书。决定 41 修订以后不写可执行模型，那份任务书也没进仓库。
 > - lead 改的 8 处，都标了“〔lead 改〕”：R05、R08、R16 是 lead 抽查时发现的；R19、R21、R58、R59 是 Codex 合并时指出的；“行为总约定”里一句话指向没进仓库的任务书。
 

@@ -1,8 +1,0 @@
-145d144
-< src/core/work-graph/persistence/evidence-record-codecs.ts	../persistence/rework-codecs.js	./rework-codecs.js
-160d158
-< src/core/work-graph/sessions/message-record-codecs.ts	../sessions/session-record-codecs.js	./session-record-codecs.js
-180d177
-< src/core/work-graph/tasks/evidence-coverage.ts	../tasks/plan-task-basis.js	./plan-task-basis.js
-196d192
-< src/core/work-graph/tasks/model-request-codecs.ts	../tasks/model-call-contracts.js	./model-call-contracts.js

@@ -65,7 +65,7 @@ lead 另定的 5 项：
 - 用例 116 个：ST 15、IN 19、GR 19、CA 15、AD 8、RP 6、GT 14、AT 12、RT 6、SC 2。IN、GR、AD、RP 四个文件（52 个用例）在 memory 和 SQLite 各跑一次，共 168 次。
 - 必须保持通过、断言不改的已有测试文件 50 个（§5.13 第二条命令；其中 `tests/state/invariants.test.ts`、`tests/state/invariants-fuzz.test.ts` 在 DSH 沙箱里因为没有 `/usr/bin/bwrap` 有已知的环境失败，按副本里 `DSH-BASELINE.md` 的数字比对）。
 - 估计行数（不是验收数字）：生产代码新增或实质修改约 1,600–2,400 行，测试约 1,400–1,900 行。
-- 任务书：[slice-3-book-part1.md](slice-3-book-part1.md)（骨架和测试，然后停）、[slice-3-book-part2.md](slice-3-book-part2.md)（实现）。
+- 任务书：slice-3-book-part1.md（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-3-book-part1.md`）（骨架和测试，然后停）、slice-3-book-part2.md（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-3-book-part2.md`）（实现）。
 
 ---
 

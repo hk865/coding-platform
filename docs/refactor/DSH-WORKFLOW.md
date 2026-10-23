@@ -1,10 +1,10 @@
 # 本地 dsh 的分批实施与验收
 
-> **2026-10-07 现行入口：** 本地入口见下文 §1，实测上限与任务书写法见 §6（[分级测试证据](reviews/evidence/dsh-ladder-2026-10-07/README.md)，HANDOFF 决定 32）。下面两段是 2026-09 的历史说法：两阶段的意思仍然有效，其中的 `coding-platform/next`、Astra、“DSH 4.1F”、原 `coding-platform/src` 等名称和路径已过时。
+> **2026-10-07 现行入口：** 本地入口见下文 §1，实测上限与任务书写法见 §6（分级测试证据（已归档：`docs/refactor/reviews/evidence/dsh-ladder-2026-10-07/README.md`），HANDOFF 决定 32）。下面两段是 2026-09 的历史说法：两阶段的意思仍然有效，其中的 `coding-platform/next`、Astra、“DSH 4.1F”、原 `coding-platform/src` 等名称和路径已过时。
 
-> **2026-09-25 当前执行方式：** 在已建立的 `coding-platform/next` 内采用 Astra 架构与接口 → DSH 4.1F 骨架与测试 → Astra 审核并冻结 → DSH 4.1F 实现 → Astra 审阅 → 物理隔离测试。中间审核是独立阶段，不得在同一次不间断调用中先写测试再直接实现。原 `coding-platform/src` 只读参考。最新 [A1 验收](reviews/next-a1-graph-session-2026-09-25.md)为 75 文件 / 719 项，已增加正式目录、Module/Task 关联、定向发现和显式生命周期；前序图历史、Source、Session/Claim、Role 等原语继续复用。先读[完整路径计划](IMPLEMENTATION-PLAN.md)与[能力索引](IMPLEMENTED-CAPABILITIES.md)，不要以局部实现范围代替双图、装配、咨询、编排与控制的产品目标。运行入口 [next/package.json](../../package.json)；环境和精确写范围见 [DSH-EXECUTION-HARNESS](DSH-EXECUTION-HARNESS.md)。
+> **2026-09-25 当前执行方式：** 在已建立的 `coding-platform/next` 内采用 Astra 架构与接口 → DSH 4.1F 骨架与测试 → Astra 审核并冻结 → DSH 4.1F 实现 → Astra 审阅 → 物理隔离测试。中间审核是独立阶段，不得在同一次不间断调用中先写测试再直接实现。原 `coding-platform/src` 只读参考。最新 A1 验收（已归档：`docs/refactor/reviews/next-a1-graph-session-2026-09-25.md`）为 75 文件 / 719 项，已增加正式目录、Module/Task 关联、定向发现和显式生命周期；前序图历史、Source、Session/Claim、Role 等原语继续复用。先读完整路径计划（已归档：`docs/refactor/IMPLEMENTATION-PLAN.md`）与[能力索引](IMPLEMENTED-CAPABILITIES.md)，不要以局部实现范围代替双图、装配、咨询、编排与控制的产品目标。运行入口 [next/package.json](../../package.json)；环境和精确写范围见 DSH-EXECUTION-HARNESS（已归档：`docs/refactor/DSH-EXECUTION-HARNESS.md`）。
 
-**原工程实施历史（2026-09-23–24，不是 next 的验收）：** 用户已授权主 Agent 负责架构、骨架和测试，dsh 按真实依赖分批并行实现代码。已经实际调用并完成 R2a、R2b、R2c、R2d.1 独立验收，R2d.2 也已独立验收，R2d.3也已沿同一会话完成并独立验收；R2e.1已通过[独立验收](reviews/R2e-1-sol-dsh-acceptance.md)。用户提交的 R3a / R4a 首轮实现曾未通过[9 月 23 日验收](reviews/R3a-R4a-independent-acceptance.md)；9 月 24 日已完成 Sol 骨架 / 测试与 dsh 受限返修并验收通过。R3b正文与规则已按两个受限Session并行实现，真实接线通过[功能验收](reviews/R3b-sol-dsh-acceptance.md)，临时reader依赖明确保留。原工程结果见[逐批验收](reviews/implementation-batches.md)，next 后续状态以新工程报告为准；不能仅凭 dsh 的完成报告认定通过；平台连续Session与范围并行尚未交付。
+**原工程实施历史（2026-09-23–24，不是 next 的验收）：** 用户已授权主 Agent 负责架构、骨架和测试，dsh 按真实依赖分批并行实现代码。已经实际调用并完成 R2a、R2b、R2c、R2d.1 独立验收，R2d.2 也已独立验收，R2d.3也已沿同一会话完成并独立验收；R2e.1已通过独立验收（已归档：`docs/refactor/reviews/R2e-1-sol-dsh-acceptance.md`）。用户提交的 R3a / R4a 首轮实现曾未通过9 月 23 日验收（已归档：`docs/refactor/reviews/R3a-R4a-independent-acceptance.md`）；9 月 24 日已完成 Sol 骨架 / 测试与 dsh 受限返修并验收通过。R3b正文与规则已按两个受限Session并行实现，真实接线通过功能验收（已归档：`docs/refactor/reviews/R3b-sol-dsh-acceptance.md`），临时reader依赖明确保留。原工程结果见逐批验收（已归档：`docs/refactor/reviews/implementation-batches.md`），next 后续状态以新工程报告为准；不能仅凭 dsh 的完成报告认定通过；平台连续Session与范围并行尚未交付。
 
 ## 1. 本地入口（2026-10-07 核对）
 
@@ -72,7 +72,7 @@ node ~/dsh-work/ladder/_common/run-dsh.mjs run <副本> <任务书> <运行名> 
 
 ## 2. 派发与接收规则
 
-1. 先读[独立目标工程迁移与验收](reviews/next-completed-migration-2026-09-24.md)和 next 当前实现，再用已有 Prompt 5 [调查](../history/before-2026-09-22/refactor/source-analysis.md)定位必要旧行为；不重做全仓调查。主 Agent 细化[执行计划](archive/2026-10-13-old-entry/refactor-plan.md)中 next 的一批。
+1. 先读独立目标工程迁移与验收（已归档：`docs/refactor/reviews/next-completed-migration-2026-09-24.md`）和 next 当前实现，再用已有 Prompt 5 调查（已归档：`docs/history/before-2026-09-22/refactor/source-analysis.md`）定位必要旧行为；不重做全仓调查。主 Agent 细化执行计划（已归档：`docs/refactor/archive/2026-10-13-old-entry/refactor-plan.md`）中 next 的一批。
 2. 主 Agent 写任务书：只读旧行为对照、next 目标入口、固定接口/版本、允许修改文件、共享文件负责人、真实前置、保持行为及独立验收。默认不授权修改原 C/src，不要求把新实现重新接回旧系统。
 3. 新行为由 Astra 冻结架构、接口和行为标准；DSH 4.1F 第一阶段只写骨架与测试，交付后停止。Astra 审查调用链、断言、正反例和红测原因，再冻结文件及测试 hash，才能派发第二阶段实现。测试由实现模型编写，不能因此称为独立验收；Astra须补查遗漏，必要时增加独立反例。已写好的Sol骨架和测试可复用，不为换分工而重写。独立批次的骨架 / 测试可并行准备，但不把缺少契约测试的范围交给 dsh 自行定义验收。目录移动仍使用逐字节比对、归属和相关既有测试，不重复造实现镜像测试。
 4. 第二阶段的 dsh 只实现该批，能读/运行验收测试，不能放宽断言或自行修改设计。类型/边界失败由它修；涉及核心身份、权限、数据权威或范围的差异报主 Agent 判断。 若冻结测试与产品/接口语义冲突，给出具体断言和最小反例，由主审修正测试；不得为了数组长度、默认值或局部绿灯改变整体业务含义。主审也审查测试本身，测试不是免于审阅的真理。
@@ -126,9 +126,9 @@ Astra 的当批 prompt 指明相关能力编号/路径和用途；DSH 在第一�
 
 ## 4. 继续入口
 
-先读 [HANDOFF](HANDOFF.md) 与[独立目标工程迁移与验收](reviews/next-completed-migration-2026-09-24.md)，确认 reader/index 实际验收状态，再读 [refactor-plan](archive/2026-10-13-old-entry/refactor-plan.md) 中 next 当前子批及任务书。原工程[批次证据](reviews/implementation-batches.md)只作历史对照。R2c 必须在 R2b 验收后实施；R3–R6 有细化清单，但不应把全部大任务一次交给 dsh 自由推演。没有新的产品取舍时继续执行已有授权，无需再次向用户询问是否开工。
+先读 [HANDOFF](HANDOFF.md) 与独立目标工程迁移与验收（已归档：`docs/refactor/reviews/next-completed-migration-2026-09-24.md`），确认 reader/index 实际验收状态，再读 refactor-plan（已归档：`docs/refactor/archive/2026-10-13-old-entry/refactor-plan.md`） 中 next 当前子批及任务书。原工程批次证据（已归档：`docs/refactor/reviews/implementation-batches.md`）只作历史对照。R2c 必须在 R2b 验收后实施；R3–R6 有细化清单，但不应把全部大任务一次交给 dsh 自由推演。没有新的产品取舍时继续执行已有授权，无需再次向用户询问是否开工。
 
-原工程[并行任务](tasks/DSH-PARALLEL-IMPLEMENTATION.md)及后续 Sol / dsh 返修已完成，Store/WG Goal 与 Kernel 公开扩展通过[独立验收](reviews/R3a-R4a-sol-dsh-acceptance.md)。后续按 refactor-plan 的真实依赖准备骨架与契约测试，再派发 dsh；不重做已完成任务，也不把 Kernel 子集通过当作平台 Session 已接通。
+原工程并行任务（已归档：`docs/refactor/tasks/DSH-PARALLEL-IMPLEMENTATION.md`）及后续 Sol / dsh 返修已完成，Store/WG Goal 与 Kernel 公开扩展通过独立验收（已归档：`docs/refactor/reviews/R3a-R4a-sol-dsh-acceptance.md`）。后续按 refactor-plan 的真实依赖准备骨架与契约测试，再派发 dsh；不重做已完成任务，也不把 Kernel 子集通过当作平台 Session 已接通。
 
 ## 5. dsh 自行组队的必要条件
 
@@ -273,7 +273,7 @@ DSH 的报告只是输入。每次都要做：
 
 ### 6.8 证据
 
-分级测试的证据在 [reviews/evidence/dsh-ladder-2026-10-07](reviews/evidence/dsh-ladder-2026-10-07/README.md)：
+分级测试的证据在 reviews/evidence/dsh-ladder-2026-10-07（已归档：`docs/refactor/reviews/evidence/dsh-ladder-2026-10-07/README.md`）：
 - 总表：`SCORECARD.md`。
 - 写法和依据：`GUIDE.md`。
 - 任务 D 的做法：`TASK-D-PLAN.md`；搬移表草稿：`L3-MOVE-TABLE.md`（按 bfb6075 计数，任务 D 前要在删减后的代码上重算，决定 34）。
@@ -282,14 +282,14 @@ DSH 的报告只是输入。每次都要做：
 
 ### 6.9 第一次真做：任务 D（2026-10-07 实测）
 
-任务 D（WorkGraph 搬 18 个文件，改 158 个文件里 380 处 import 路径和 12 处路径字符串，提交 0cd45508）按 [TASK-D-PLAN](reviews/evidence/dsh-ladder-2026-10-07/TASK-D-PLAN.md) 交给 DSH，用的是 §6.3 的写法：精确计数、分情况的规则加仓库里的例子、点名禁止的 git 命令、给旧名的列举方法。分两段：第一段只列出每一处要改的地方后停下，lead 几秒钟对照，392/392 行一致；第二段在同一 Session 里照做。没用到带指导的返工轮。结果和参考脚本逐字节一致，带回本分支后全量测试 216 个文件、5245 项通过。
+任务 D（WorkGraph 搬 18 个文件，改 158 个文件里 380 处 import 路径和 12 处路径字符串，提交 0cd45508）按 TASK-D-PLAN（已归档：`docs/refactor/reviews/evidence/dsh-ladder-2026-10-07/TASK-D-PLAN.md`） 交给 DSH，用的是 §6.3 的写法：精确计数、分情况的规则加仓库里的例子、点名禁止的 git 命令、给旧名的列举方法。分两段：第一段只列出每一处要改的地方后停下，lead 几秒钟对照，392/392 行一致；第二段在同一 Session 里照做。没用到带指导的返工轮。结果和参考脚本逐字节一致，带回本分支后全量测试 216 个文件、5245 项通过。
 
 - **DSH 用量：** 第一段 183 秒、100 万 token、26 次工具调用；第二段实际约 205 秒（墙钟 292 秒，其间主机睡眠 87 秒）、117 万 token、14 次；共约 6.5 分钟、217 万 token、40 次。在计划估计（6–10 分钟、200–380 万 token）之内，比 L3 一次跑完（352 秒、188 万 token）多约 30 万 token。停止点守住了：第一段除了草稿目录没改任何文件。
 - **lead 用量：** DSH 阶段约 56 次工具调用、47 分钟，其中约 37 分钟在等（检查器约 30 分钟，其中 22 分钟是主机睡眠），读和查约 10–15 分钟；带回本分支约 47 次、25 分钟，其中全量测试约 17 分钟。准备阶段（重算计数、基线、参考搬移的对照、写任务书）的调用次数没记，机器时间主要是五次全量测试。lead 的 token 数没记。
 - **报告：** 数字全对，旧名清单 38/38，否定说法全对；只有一处把字符偏移写成了行号，不影响结果。
 - **要注意：** 仓库里方案的证据目录带着参考脚本和答案清单，建副本时要删掉（这次由准备阶段的金丝雀检查发现）。主机睡眠会拉长墙钟，算用量时按系统日志扣掉。
 
-证据在 [reviews/evidence/workgraph-move-2026-10-07](reviews/evidence/workgraph-move-2026-10-07/README.md)。
+证据在 reviews/evidence/workgraph-move-2026-10-07（已归档：`docs/refactor/reviews/evidence/workgraph-move-2026-10-07/README.md`）。
 
 ### 6.10 大片怎么交给 DSH（决定 46）
 
@@ -345,7 +345,7 @@ DSH 的报告只是输入。每次都要做：
 - **Codex 写夹具。** 第 1 片 4 个 Codex 并行（66 分钟墙钟，输入 5,350 万 token），第 5 片 12 个（三波，约 105 分钟，输入 6,754 万）加 2 次审查它们的结果。两片都冻结成了，冻结时没有一次搭建失败；之前 DSH 自己写的夹具，返工一轮后搭建虽然都过了，仍有一批用例永远过不了（断言不存在的字段、同一个夹具上期望相反、给定条件搭不出来）。但 Codex 也写错：第 1 片 lead 补了十几处小尾巴（类型错、两处搭建失败、编出来的拒绝原因、把用例跑了双份、用例太慢）；第 5 片一次只读审查找到 11 条必改，又改了一轮。冻结以后仍漏了几处，到第二段才暴露（第 1 片 3 处、第 5 片 1 处）。第 3 片的测试是 DSH 写的（冻结在决定 46 之前），合入时也有 1 处夹具要补注册。做法上：每个 Codex 只给一小组互不相交的文件和这组的规格行、核实过的问题；共享夹具先单独写，导入后再并行写依赖它的组；写完用一次只读的 Codex 审查。
 - **lead 花了多少（决定 43）。** lead 的 token 约是同一片 DSH 的 1/5–1/9（第 1 片 1.53 亿、第 3 片 0.94 亿、第 5 片 1.37 亿，按会话记录累计）；lead 的墙钟大部分在等 DSH、Codex 和测试（第 1 片 639 分钟里约 470 分钟）。
 
-**第二轮实测（2026-10-09 下午，决定 47：第 5 片按区域拆、接线包 1 全套照决定 46 做）。** 明细在[第 5 片证据](reviews/evidence/orchestration-slice-5-2026-10-08/README.md#2026-10-09决定-47-的一轮仍没有合入)和[接线包 1 证据](reviews/evidence/orchestration-wiring-1-2026-10-09/README.md)。
+**第二轮实测（2026-10-09 下午，决定 47：第 5 片按区域拆、接线包 1 全套照决定 46 做）。** 明细在第 5 片证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-5-2026-10-08/README.md`）和接线包 1 证据（已归档：`docs/refactor/reviews/evidence/orchestration-wiring-1-2026-10-09/README.md`）。
 
 | 运行 | 说明书 | 墙钟 | 上下文峰值 | 子任务 | 结果 |
 | --- | --- | --- | --- | --- | --- |
@@ -373,7 +373,7 @@ DSH 的报告只是输入。每次都要做：
 - **两条轨道同时做，测试锁是瓶颈。** 测试一次只跑一个；第 5 片那边的全量用 `--maxWorkers=1`，一次 26–31 分钟，接线包这边为等测试锁花了约 76 分钟。
 - **用量。** 接线包：DSH 4 次共 66 分钟、约 0.82 亿 token；Codex 9 次约 88 分钟；lead 约 341 分钟，其中约 260 分钟在等。第 5 片这一轮：DSH 5 次共 192 分钟（三个并行，实际 13:34–15:10）、约 1.94 亿 token；Codex 7 次约 67 分钟；lead 约 322 分钟。lead 的 token 这一轮没记。
 
-**第三轮实测（2026-10-09 晚，决定 48：先补测试，再按区域修）。** 明细在[第 5 片证据](reviews/evidence/orchestration-slice-5-2026-10-08/README.md#2026-10-09-夜决定-48-的一轮先补测试验收合入)。lead 先写用例表（37 行，每行写明现在应当失败还是通过），4 个 Codex 并行写测试和夹具（可写自己的克隆，xhigh，9–18 分钟），lead 冻结；冻结时全量正好 20 项失败，就是还开着的问题。然后四份区域说明书各交一个新的 DSH 会话（18:00 以后，运行器带 `--max-context 360000 --max-minutes 120`）：
+**第三轮实测（2026-10-09 晚，决定 48：先补测试，再按区域修）。** 明细在第 5 片证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-5-2026-10-08/README.md`）。lead 先写用例表（37 行，每行写明现在应当失败还是通过），4 个 Codex 并行写测试和夹具（可写自己的克隆，xhigh，9–18 分钟），lead 冻结；冻结时全量正好 20 项失败，就是还开着的问题。然后四份区域说明书各交一个新的 DSH 会话（18:00 以后，运行器带 `--max-context 360000 --max-minutes 120`）：
 
 | 运行 | 说明书 | 墙钟 | 上下文峰值 | 子任务 | 结果 |
 | --- | --- | --- | --- | --- | --- |
@@ -416,11 +416,11 @@ DSH 的报告只是输入。每次都要做：
 
 - 主 Session 的 token 少了 3–5 倍，峰值低了 9–12 万；墙钟更长，是因为子任务排着做。
 - 交接在试跑里触发过（5 万触发，62 秒做完）；之后真实运行也触发过：K3 第 1 组（360,000），T 轮的 TQ、wave 1 返工 1 和返工 2（见下一条）。
-- **T 轮学到的（2026-10-19/20）。** （a）类型检查的锁要放在副本里（`./.typecheck.lock`）：wave 1 书里写的机器级锁在 DSH 的沙箱外，建不了（Permission denied）；TP 自己改用副本里的锁，TQ 没加锁，TQ2 照 lead 的裁定直接跑 `npm run typecheck`；从 wave 1 返工 1 起各书都写副本里的锁。副本里的锁只让一个运行内部排队：wave 2 的 T1–T3 同时跑，各用各的锁，彼此不排队。（b）DSH 的沙箱里没有 bubblewrap，平台自己的进程沙箱测试在那里跑不了：书里列出这些测试，DSH 报环境失败，lead 用 `CODING_AGENT_BWRAP_PATH` 跑（R-10）；wave 1 返工 3 因此没跑到 `S3-context-inputs` 的 IN05，lead 的全量里它在两个后端都失败（2 项）。（c）大的书越过 360K 的交接线（`--handoff-at 360000`，运行器记 `handoff:context`）：wave 1 施工的 TQ 峰值 360,740，wave 1 返工 1 的分段 1 是 360,573，返工 2 是 367,721。续做的书让协调者保持精简：不读审查回答和条目文件，子 agent 最多回报 40 行；返工 1 的分段 2 峰值 233,193，返工 2 带同样的规则仍到 367,721，但那时已全部提交（`1c31c27`）。书在 [T 证据](reviews/evidence/orchestration-cleanup-T-2026-10-19/README.md)的 `books/t-run-W1R1b.md`、`books/t-run-W1R2.md`。
+- **T 轮学到的（2026-10-19/20）。** （a）类型检查的锁要放在副本里（`./.typecheck.lock`）：wave 1 书里写的机器级锁在 DSH 的沙箱外，建不了（Permission denied）；TP 自己改用副本里的锁，TQ 没加锁，TQ2 照 lead 的裁定直接跑 `npm run typecheck`；从 wave 1 返工 1 起各书都写副本里的锁。副本里的锁只让一个运行内部排队：wave 2 的 T1–T3 同时跑，各用各的锁，彼此不排队。（b）DSH 的沙箱里没有 bubblewrap，平台自己的进程沙箱测试在那里跑不了：书里列出这些测试，DSH 报环境失败，lead 用 `CODING_AGENT_BWRAP_PATH` 跑（R-10）；wave 1 返工 3 因此没跑到 `S3-context-inputs` 的 IN05，lead 的全量里它在两个后端都失败（2 项）。（c）大的书越过 360K 的交接线（`--handoff-at 360000`，运行器记 `handoff:context`）：wave 1 施工的 TQ 峰值 360,740，wave 1 返工 1 的分段 1 是 360,573，返工 2 是 367,721。续做的书让协调者保持精简：不读审查回答和条目文件，子 agent 最多回报 40 行；返工 1 的分段 2 峰值 233,193，返工 2 带同样的规则仍到 367,721，但那时已全部提交（`1c31c27`）。书在 T 证据（已归档：`docs/refactor/reviews/evidence/orchestration-cleanup-T-2026-10-19/README.md`）的 `books/t-run-W1R1b.md`、`books/t-run-W1R2.md`。
 
 ## 7. 换一个模型来审查：Codex（2026-10-07 试验）
 
-用户问：能不能在 DSH 实现之后，换一个模型来审查，再让 DSH 返工？试验在 [reviews/evidence/codex-review-trial-2026-10-07](reviews/evidence/codex-review-trial-2026-10-07/README.md)。拿本批 3 个结果已知的提交让 Codex 审：唯一的真问题它找到了（A，xhigh，6.5 分钟），没有一条误报；另外两个只漏了一个小问题和一件它看不到的计划内容。
+用户问：能不能在 DSH 实现之后，换一个模型来审查，再让 DSH 返工？试验在 reviews/evidence/codex-review-trial-2026-10-07（已归档：`docs/refactor/reviews/evidence/codex-review-trial-2026-10-07/README.md`）。拿本批 3 个结果已知的提交让 Codex 审：唯一的真问题它找到了（A，xhigh，6.5 分钟），没有一条误报；另外两个只漏了一个小问题和一件它看不到的计划内容。
 
 **放进决定 36 的循环里：**
 1. DSH 按任务书实现；
@@ -440,7 +440,7 @@ DSH 的报告只是输入。每次都要做：
 
 ### 7.1 Codex 审查流程（决定 80）
 
-K3 第 4 组 B3 返工了 8 轮。原因不在 Codex 查得不准，而在用法：返工后的核对只看改动、限字数，它只能举例；任务书照抄例子；标准中途改了 5 次；DSH 自己判“允许”、碰壁时改弱测试，没有机器检查。2026-10-18 起一个分片按下面的步骤用 Codex（[HANDOFF 决定 80](HANDOFF.md)）。设计依据、测试规则第 1 版的英文原文、提示词模板和脚本在[证据](reviews/evidence/codex-review-protocol-2026-10-18/README.md)。
+K3 第 4 组 B3 返工了 8 轮。原因不在 Codex 查得不准，而在用法：返工后的核对只看改动、限字数，它只能举例；任务书照抄例子；标准中途改了 5 次；DSH 自己判“允许”、碰壁时改弱测试，没有机器检查。2026-10-18 起一个分片按下面的步骤用 Codex（[HANDOFF 决定 80](HANDOFF.md)）。设计依据、测试规则第 1 版的英文原文、提示词模板和脚本在证据（已归档：`docs/refactor/reviews/evidence/codex-review-protocol-2026-10-18/README.md`）。
 
 **步骤**
 
@@ -469,7 +469,7 @@ K3 第 4 组 B3 返工了 8 轮。原因不在 Codex 查得不准，而在用法
 - 被拒的输入：owner 拒收的构造值，放在 `describe('rejects: …')` 里，前提全走公开步骤；一行只放一个错误，删掉被测的检查它就挂。
 - lead 点名的 helper：最多 10 个，各写明位置和理由；第 1 版为空。
 
-**之后的版本（2026-10-20 补注）。** 第 1 版之后分出两份，都从第 1 版改起：K3、L8 用的 v2、v3（[K3 证据](reviews/evidence/orchestration-slice-K3-2026-10-18/README.md)的 `checks/test-rule-sheet-v3.md`：路由的请求正文算公开输入；Host 自己的输入；A7 第一条是透传的进程沙箱；崩溃夹具的写法）；T 轮用的 v2（[T 证据](reviews/evidence/orchestration-cleanup-T-2026-10-19/README.md)的 `books/test-rule-sheet-v2.md`，2026-10-19 22:55 冻结：公开路由或工具从外面收到的值算公开输入，平台发出的值只能用公开步骤返回的原值；记录存储自己的测试以它的端口为公开步骤；A7 点名三个 helper），再加 T 问题表 §0 的裁定 R-1–R-24。下一片之前 lead 把两份合成一份。
+**之后的版本（2026-10-20 补注）。** 第 1 版之后分出两份，都从第 1 版改起：K3、L8 用的 v2、v3（K3 证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-K3-2026-10-18/README.md`）的 `checks/test-rule-sheet-v3.md`：路由的请求正文算公开输入；Host 自己的输入；A7 第一条是透传的进程沙箱；崩溃夹具的写法）；T 轮用的 v2（T 证据（已归档：`docs/refactor/reviews/evidence/orchestration-cleanup-T-2026-10-19/README.md`）的 `books/test-rule-sheet-v2.md`，2026-10-19 22:55 冻结：公开路由或工具从外面收到的值算公开输入，平台发出的值只能用公开步骤返回的原值；记录存储自己的测试以它的端口为公开步骤；A7 点名三个 helper），再加 T 问题表 §0 的裁定 R-1–R-24。下一片之前 lead 把两份合成一份。
 
 常见的禁止写法：owner 接受构造的值后接着往下测；改写读出来的结果或 Session 字段；测试替 Runtime 或 Host 写入、直接写存储；桩端口返回构造的值；没有真实原因又发一次触发；手写失败记录；读存储来断言；期望值取自源码常量或程序输出；靠时间凑并发；在内层计数而规格限的是公开操作；一行里放两个错误；删改或放松断言（除非问题表点名）。每行测试还要对应规格里的一条行为；服务层的行在内存和 SQLite 上都跑（需要重启的写明只跑 SQLite）；删掉它守的生产检查，它必须挂。
 

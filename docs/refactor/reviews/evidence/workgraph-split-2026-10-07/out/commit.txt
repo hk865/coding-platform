@@ -1,2 +1,0 @@
-measured commit: 4404f4dc (4404f4d docs: record decision 39 (a cancelled goal stays terminal and 重新入队 copies it into a new goal; compaction is not an MVP gate; Codex reviews the revised design book; task D starts with the recomputed split))
-node v24.18.0, typescript 6.0.3

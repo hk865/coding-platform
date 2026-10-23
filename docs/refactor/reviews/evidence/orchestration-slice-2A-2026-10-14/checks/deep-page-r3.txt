@@ -1,3 +1,0 @@
-Round-3 code (row-value continuation only), 100,000 rows in one prefix, lead plan check "deep":
-s2a-requeue-by-project asc: first 0.10 ms (201 rows), deep after 10.64 ms (201), deep bound+after 10.12 ms (201)
--> FAIL: the continuation does not seek (deep page ~100x the first page).

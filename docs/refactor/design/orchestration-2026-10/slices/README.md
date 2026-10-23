@@ -16,34 +16,34 @@
 
 ## 接下来做什么
 
-**已合入（2026-10-15）：** 2A（决定队列只读要用的、不因数量多拒绝、能翻到底；RecordStore 加按顺序查找）。施工四轮，验收和限定见 [2A 证据](../../../reviews/evidence/orchestration-slice-2A-2026-10-14/README.md)和 [2A 规格 §10](slice-2A-SPEC.md#10-施工和验收中的限定lead2026-10-15)。 2B（执行计数、补算、活动日历、按时间读任务状态）同日合入，施工三轮，验收和限定见 [2B 证据](../../../reviews/evidence/orchestration-slice-2B-2026-10-15/README.md)和 [2B 规格 §11](slice-2B-SPEC.md#11-施工和验收中的限定lead2026-10-15)。
+**已合入（2026-10-15）：** 2A（决定队列只读要用的、不因数量多拒绝、能翻到底；RecordStore 加按顺序查找）。施工四轮，验收和限定见 2A 证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-2A-2026-10-14/README.md`）和 [2A 规格 §10](slice-2A-SPEC.md#10-施工和验收中的限定lead2026-10-15)。 2B（执行计数、补算、活动日历、按时间读任务状态）同日合入，施工三轮，验收和限定见 2B 证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-2B-2026-10-15/README.md`）和 [2B 规格 §11](slice-2B-SPEC.md#11-施工和验收中的限定lead2026-10-15)。
 
-**已合入（2026-10-14）：** 接线包 2（I-2、I-4、I-5、I-6）bb924854；K 片 B（只读命令 `run_readonly_command`）9881a2ae；K 片 A（关闭悬空 Turn、留在原 Session）cfe35550。验收和限定见[接线包 2 证据](../../../reviews/evidence/orchestration-wiring-2-2026-10-13/README.md)、[K 片 B 验收](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partB/lead-acceptance.md)、[K 片 A 验收](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partA/lead-acceptance.md)。
+**已合入（2026-10-14）：** 接线包 2（I-2、I-4、I-5、I-6）bb924854；K 片 B（只读命令 `run_readonly_command`）9881a2ae；K 片 A（关闭悬空 Turn、留在原 Session）cfe35550。验收和限定见接线包 2 证据（已归档：`docs/refactor/reviews/evidence/orchestration-wiring-2-2026-10-13/README.md`）、K 片 B 验收（已归档：`docs/refactor/reviews/evidence/orchestration-slice-K-2026-10-13/partB/lead-acceptance.md`）、K 片 A 验收（已归档：`docs/refactor/reviews/evidence/orchestration-slice-K-2026-10-13/partA/lead-acceptance.md`）。
 
-1. **2C、4A、4B 已合入（2026-10-16），4C-1 已合入（2026-10-17），4C-2 A、B 两段也已合入（2026-10-17，B 段 f4171d51）。** 施工和验收中的限定在 2C 规格 §16、第 4 片规格 §9、§10、§12（对 4C-2 同样有效）、§13（4C-2 A 段，对 B 段同样有效）、§14（4C-2 B 段施工和验收中的限定）。注记查找提速两轮（决定 66）也已合入，见[第一轮](../../../reviews/evidence/orchestration-note-speed-1-2026-10-16/README.md)和[第二轮](../../../reviews/evidence/orchestration-note-speed-2-2026-10-16/README.md)的证据。
+1. **2C、4A、4B 已合入（2026-10-16），4C-1 已合入（2026-10-17），4C-2 A、B 两段也已合入（2026-10-17，B 段 f4171d51）。** 施工和验收中的限定在 2C 规格 §16、第 4 片规格 §9、§10、§12（对 4C-2 同样有效）、§13（4C-2 A 段，对 B 段同样有效）、§14（4C-2 B 段施工和验收中的限定）。注记查找提速两轮（决定 66）也已合入，见第一轮（已归档：`docs/refactor/reviews/evidence/orchestration-note-speed-1-2026-10-16/README.md`）和第二轮（已归档：`docs/refactor/reviews/evidence/orchestration-note-speed-2-2026-10-16/README.md`）的证据。
 2. **资源上限片已合入（2026-10-16）。** 施工和验收中的限定在 RL 规格 §9。实现追上之前不开新规格。
-3. **K3 已合入（2026-10-18，`d3146d69`；补做 `5e83681b`）。** [K3 规格](slice-K3-SPEC.md)第八稿 2026-10-16 冻结（决定 57、68：拦下的原命令用确定的解析认出常见改写，认不出的由 agent 注明，允许只放行卡上那一种写法；lead 的 K8-1–K8-7，Codex 一次只看改动的核对）；四组施工，B3 先返工 8 轮，按决定 80 一次全审、冻结 F-001–F-102 的表，按决定 81 最多三轮返工（9a+9b 是第 1 轮，第 10 轮是第 2 轮），N-01 交 Codex 测试补丁；形式行进 T。读法见 [K3 规格 §10](slice-K3-SPEC.md#10-k3-施工和验收中的限定lead2026-10-18)，经过见[证据](../../../reviews/evidence/orchestration-slice-K3-2026-10-18/README.md)。8D 和 §10 段已合入（2026-10-18，规则在第 8 片规格 §11、§12，决定 77、78、79）；L8 已合入（2026-10-18，施工一轮、返工四轮，返工 2 前按决定 80 补全审，规则在第 8 片规格 §13）。最后全量：C1 合入时771 个测试文件全过，10,082 项过、5 项跳过（K3 合入时也是这个数）。
+3. **K3 已合入（2026-10-18，`d3146d69`；补做 `5e83681b`）。** [K3 规格](slice-K3-SPEC.md)第八稿 2026-10-16 冻结（决定 57、68：拦下的原命令用确定的解析认出常见改写，认不出的由 agent 注明，允许只放行卡上那一种写法；lead 的 K8-1–K8-7，Codex 一次只看改动的核对）；四组施工，B3 先返工 8 轮，按决定 80 一次全审、冻结 F-001–F-102 的表，按决定 81 最多三轮返工（9a+9b 是第 1 轮，第 10 轮是第 2 轮），N-01 交 Codex 测试补丁；形式行进 T。读法见 [K3 规格 §10](slice-K3-SPEC.md#10-k3-施工和验收中的限定lead2026-10-18)，经过见证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-K3-2026-10-18/README.md`）。8D 和 §10 段已合入（2026-10-18，规则在第 8 片规格 §11、§12，决定 77、78、79）；L8 已合入（2026-10-18，施工一轮、返工四轮，返工 2 前按决定 80 补全审，规则在第 8 片规格 §13）。最后全量：C1 合入时771 个测试文件全过，10,082 项过、5 项跳过（K3 合入时也是这个数）。
 4. **第 4、6、7、8 片已冻结（2026-10-15 晚，决定 64）。** 施工顺序 4A → 4B → 4C → 6A → 6B → 7A → 7B → 7C → 7D1 → 8A → 8B → 8C → 8D → 7D2 → 6C；**决定 74 改为：** 4C-1 合入后 8A（不含 L8）→ 8D 另走一条线，和 4C-2、清理、6A 并行，其余照旧；2C、4A、4B、4C-1、8A、4C-2 A、B 两段、8D 和 §10 段、L8、K3 已合入（8A 的施工和验收中的限定在第 8 片规格 §9，8D 和 §10 段的在 §12，L8 的在 §13）；K3-07 和 K3-49 已补做；C1 已合入（2026-10-19，`35b5f5b1`）；T 轮已合入（2026-10-20，`0e381ce4`，决定 79-4；决定 84 的结构审查已做完，见决定 85）；接着由用户定 T 留下的事，然后第 6、7 片的“提示词和上下文”一节（决定 83），冻结后先做 6A 之前的结构一轮（决定 85-1），再开 6A。
 
 ## 这里有什么
 
 | 片 | 规格 | 任务书 | 要用户定（OPEN） |
 | --- | --- | --- | --- |
-| 0 | [slice-0-SPEC.md](slice-0-SPEC.md) | [第一段](slice-0-book-part1.md)、[第二段](slice-0-book-part2.md) | 无 |
-| 1 | [slice-1-SPEC.md](slice-1-SPEC.md) | [第一段](slice-1-book-part1.md)、[第二段](slice-1-book-part2.md) | 无（U1 已由决定 45 定为甲） |
-| 3 | [slice-3-SPEC.md](slice-3-SPEC.md) | [第一段](slice-3-book-part1.md)、[第二段](slice-3-book-part2.md) | 无 |
-| 5 | [slice-5-SPEC.md](slice-5-SPEC.md) | [第一段](slice-5-book-part1.md)、[第二段](slice-5-book-part2.md) | 无 |
-| 接线包 1（2026-10-09 补） | [wiring-1-SPEC.md](wiring-1-SPEC.md) | 发给 DSH 的说明书在[证据](../../../reviews/evidence/orchestration-wiring-1-2026-10-09/README.md)的 `books/` | 无（L13 由决定 48 确认） |
-| 接线包 2（2026-10-14 合入 bb924854） | [wiring-2-SPEC.md](wiring-2-SPEC.md) | 验收和限定见[证据](../../../reviews/evidence/orchestration-wiring-2-2026-10-13/README.md) | 无（U1 已由决定 49 第 29 项定为甲） |
-| 2A（2026-10-15 合入） | [slice-2A-SPEC.md](slice-2A-SPEC.md)（§10 是施工和验收中的限定） | 说明书和验收见[证据](../../../reviews/evidence/orchestration-slice-2A-2026-10-14/README.md) | 无 |
-| 2B（2026-10-15 合入） | [slice-2B-SPEC.md](slice-2B-SPEC.md)（§10 冻结时的限定和实测，§11 施工和验收中的限定） | 说明书和验收见[证据](../../../reviews/evidence/orchestration-slice-2B-2026-10-15/README.md) | 无 |
-| 2C（2026-10-14 夜冻结，2026-10-16 合入） | [slice-2C-SPEC.md](slice-2C-SPEC.md)（§15 是冻结时的限定，§16 是施工和验收中的限定） | [证据](../../../reviews/evidence/orchestration-slice-2C-2026-10-15/README.md)的 `books/` | 无 |
-| 资源上限（RL，2026-10-15 夜冻结，2026-10-16 合入） | [slice-RL-SPEC.md](slice-RL-SPEC.md)（L16 是冻结时 lead 定的读法，§9 是施工和验收中的限定） | [证据](../../../reviews/evidence/orchestration-slice-RL-2026-10-16/README.md)的 `books/` | 无（Q1 已由决定 55 定） |
-| 4（2026-10-15 晚冻结；4A、4B、4C；4A、4B 2026-10-16 合入，4C-1、4C-2 A、B 两段 2026-10-17 合入） | [slice-4-SPEC.md](slice-4-SPEC.md)（§9、§10、§12、§13 是 4A、4B、4C-1、4C-2 A 段施工和验收中的限定；§14 是 4C-2 B 段施工和验收中的限定） | 4A：[证据](../../../reviews/evidence/orchestration-slice-4A-2026-10-16/README.md)的 `books/`；4B：[证据](../../../reviews/evidence/orchestration-slice-4B-2026-10-16/README.md)的 `books/`；4C-1：[证据](../../../reviews/evidence/orchestration-slice-4C1-2026-10-17/README.md)的 `books/`；4C-2 A 段：[证据](../../../reviews/evidence/orchestration-slice-4C2A-2026-10-17/README.md)的 `books/`；4C-2 B 段：[证据](../../../reviews/evidence/orchestration-slice-4C2B-2026-10-17/README.md)的 `books/` | 无（§0.1 用户已定；2C 合入后 lead 重核过 §0.2、§6） |
+| 0 | [slice-0-SPEC.md](slice-0-SPEC.md) | 第一段（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-0-book-part1.md`）、第二段（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-0-book-part2.md`） | 无 |
+| 1 | [slice-1-SPEC.md](slice-1-SPEC.md) | 第一段（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-1-book-part1.md`）、第二段（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-1-book-part2.md`） | 无（U1 已由决定 45 定为甲） |
+| 3 | [slice-3-SPEC.md](slice-3-SPEC.md) | 第一段（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-3-book-part1.md`）、第二段（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-3-book-part2.md`） | 无 |
+| 5 | [slice-5-SPEC.md](slice-5-SPEC.md) | 第一段（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-5-book-part1.md`）、第二段（已归档：`docs/refactor/design/orchestration-2026-10/slices/slice-5-book-part2.md`） | 无 |
+| 接线包 1（2026-10-09 补） | [wiring-1-SPEC.md](wiring-1-SPEC.md) | 发给 DSH 的说明书在证据（已归档：`docs/refactor/reviews/evidence/orchestration-wiring-1-2026-10-09/README.md`）的 `books/` | 无（L13 由决定 48 确认） |
+| 接线包 2（2026-10-14 合入 bb924854） | [wiring-2-SPEC.md](wiring-2-SPEC.md) | 验收和限定见证据（已归档：`docs/refactor/reviews/evidence/orchestration-wiring-2-2026-10-13/README.md`） | 无（U1 已由决定 49 第 29 项定为甲） |
+| 2A（2026-10-15 合入） | [slice-2A-SPEC.md](slice-2A-SPEC.md)（§10 是施工和验收中的限定） | 说明书和验收见证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-2A-2026-10-14/README.md`） | 无 |
+| 2B（2026-10-15 合入） | [slice-2B-SPEC.md](slice-2B-SPEC.md)（§10 冻结时的限定和实测，§11 施工和验收中的限定） | 说明书和验收见证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-2B-2026-10-15/README.md`） | 无 |
+| 2C（2026-10-14 夜冻结，2026-10-16 合入） | [slice-2C-SPEC.md](slice-2C-SPEC.md)（§15 是冻结时的限定，§16 是施工和验收中的限定） | 证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-2C-2026-10-15/README.md`）的 `books/` | 无 |
+| 资源上限（RL，2026-10-15 夜冻结，2026-10-16 合入） | [slice-RL-SPEC.md](slice-RL-SPEC.md)（L16 是冻结时 lead 定的读法，§9 是施工和验收中的限定） | 证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-RL-2026-10-16/README.md`）的 `books/` | 无（Q1 已由决定 55 定） |
+| 4（2026-10-15 晚冻结；4A、4B、4C；4A、4B 2026-10-16 合入，4C-1、4C-2 A、B 两段 2026-10-17 合入） | [slice-4-SPEC.md](slice-4-SPEC.md)（§9、§10、§12、§13 是 4A、4B、4C-1、4C-2 A 段施工和验收中的限定；§14 是 4C-2 B 段施工和验收中的限定） | 4A：证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-4A-2026-10-16/README.md`）的 `books/`；4B：证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-4B-2026-10-16/README.md`）的 `books/`；4C-1：证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-4C1-2026-10-17/README.md`）的 `books/`；4C-2 A 段：证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-4C2A-2026-10-17/README.md`）的 `books/`；4C-2 B 段：证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-4C2B-2026-10-17/README.md`）的 `books/` | 无（§0.1 用户已定；2C 合入后 lead 重核过 §0.2、§6） |
 | 6（2026-10-15 晚冻结；6A、6B、6C） | [slice-6-SPEC.md](slice-6-SPEC.md) | 施工时写 | 无（§0.1 用户已定，决定 64） |
 | 7（2026-10-15 晚冻结；7A、7B、7C、7D1、7D2） | [slice-7-SPEC.md](slice-7-SPEC.md) | 施工时写 | 无（§0.1 用户已定，决定 64） |
 | 6、7 补充：提示词和上下文（决定 83，2026-10-21 冻结；D3 已在结构一轮里做完（10-22），PC-1、PC-2 已合入（10-22、10-23）） | [slice-6-7-PROMPTS-SPEC.md](slice-6-7-PROMPTS-SPEC.md) | 施工时写 | 无（§0.1 用户 10-21 已定，测试入口 PE1–PE10 已确认） |
-| 8（2026-10-15 晚冻结；8A、8B、8C、8D、L8；8A 2026-10-17 合入，8D 和 §10 段、L8 2026-10-18 合入） | [slice-8-SPEC.md](slice-8-SPEC.md)（§9 是 8A 施工和验收中的限定，§10 是观测规模的修正，§11 是轻型扫描，§12 是 8D 和 §10 段的限定，§13 是 L8 的限定） | 8A：[证据](../../../reviews/evidence/orchestration-slice-8A-2026-10-17/README.md)的 `books/`；8D 和 §10 段：[证据](../../../reviews/evidence/orchestration-slice-8D-2026-10-18/README.md)的 `books/`；L8：[证据](../../../reviews/evidence/orchestration-slice-8-L8-2026-10-18/README.md)的 `books/` | 无（§0.1 用户已定，决定 64） |
+| 8（2026-10-15 晚冻结；8A、8B、8C、8D、L8；8A 2026-10-17 合入，8D 和 §10 段、L8 2026-10-18 合入） | [slice-8-SPEC.md](slice-8-SPEC.md)（§9 是 8A 施工和验收中的限定，§10 是观测规模的修正，§11 是轻型扫描，§12 是 8D 和 §10 段的限定，§13 是 L8 的限定） | 8A：证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-8A-2026-10-17/README.md`）的 `books/`；8D 和 §10 段：证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-8D-2026-10-18/README.md`）的 `books/`；L8：证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-8-L8-2026-10-18/README.md`）的 `books/` | 无（§0.1 用户已定，决定 64） |
 | 8E 语义联系（决定 87，2026-10-22 冻结；接在 8C 之后，分两段） | [slice-8E-SPEC.md](slice-8E-SPEC.md) | 施工时写 | 无（§0.1 用户 10-22 已定，测试入口已确认） |
 
 ## 历史：第 0、1、3、5 片的冻结与施工（2026-10-08 至 10-09）
@@ -145,10 +145,10 @@ STATE-MACHINES-SPEC（新行和 §15 的行→文件→用例对照）、`module
 
 | 片 | 结果 | 提交 | 证据 |
 | --- | --- | --- | --- |
-| 0 | 做完，合入 | 21a99915（B0 是 48c8d473） | [orchestration-slice-0-2026-10-08](../../../reviews/evidence/orchestration-slice-0-2026-10-08/README.md) |
-| 1 | 做完，合入 | 327ec020 | [orchestration-slice-1-2026-10-08](../../../reviews/evidence/orchestration-slice-1-2026-10-08/README.md) |
-| 3 | 做完，合入；合入时 lead 修了两处第 3 片的回归 | ccecc016、e48218a5 | [orchestration-slice-3-2026-10-08](../../../reviews/evidence/orchestration-slice-3-2026-10-08/README.md)（含第 1、3 片的合入） |
-| 5 | 实现完、冻结测试全过，但唯一一轮返工之后审查仍有大的必改问题，**没有接受，没有合入**；结果留在副本里，下一步要用户或 lead 定 | 无 | [orchestration-slice-5-2026-10-08](../../../reviews/evidence/orchestration-slice-5-2026-10-08/README.md) |
+| 0 | 做完，合入 | 21a99915（B0 是 48c8d473） | orchestration-slice-0-2026-10-08（已归档：`docs/refactor/reviews/evidence/orchestration-slice-0-2026-10-08/README.md`） |
+| 1 | 做完，合入 | 327ec020 | orchestration-slice-1-2026-10-08（已归档：`docs/refactor/reviews/evidence/orchestration-slice-1-2026-10-08/README.md`） |
+| 3 | 做完，合入；合入时 lead 修了两处第 3 片的回归 | ccecc016、e48218a5 | orchestration-slice-3-2026-10-08（已归档：`docs/refactor/reviews/evidence/orchestration-slice-3-2026-10-08/README.md`）（含第 1、3 片的合入） |
+| 5 | 实现完、冻结测试全过，但唯一一轮返工之后审查仍有大的必改问题，**没有接受，没有合入**；结果留在副本里，下一步要用户或 lead 定 | 无 | orchestration-slice-5-2026-10-08（已归档：`docs/refactor/reviews/evidence/orchestration-slice-5-2026-10-08/README.md`） |
 
 合入第 1、3 片后（e48218a5），类型检查、模块边界检查、构建通过，全量测试 250 个测试文件、5626 项全部通过，`verify:isolated` 通过。和 9b94fc55 的 215 个文件、5234 项比，只多了第 0 片 1 个文件 3 项、第 1 片 23 个文件 212 项（另有它改过的已有状态测试多 9 项）、第 3 片 11 个文件 168 项；原有的一个不少，没有新失败。没有调用真实模型。
 
@@ -171,8 +171,8 @@ STATE-MACHINES-SPEC（新行和 §15 的行→文件→用例对照）、`module
 
 | 项 | 结果 | 提交 | 证据 |
 | --- | --- | --- | --- |
-| 接线包 1：I-1、I-3、改目标说明的检查、普通接续的交接（决定 47 第 2–4 条） | 做完，合入 | 规格 67dfee7a，实现 6180adfc | [orchestration-wiring-1-2026-10-09](../../../reviews/evidence/orchestration-wiring-1-2026-10-09/README.md) |
-| 第 5 片，决定 47 破例多给的一轮 | 四个区域都做完、全量全过，但仍有 6 处用户看得到的问题，**没有接受，没有合入**；决定 48 再给一轮，先补测试 | 无 | [第 5 片证据](../../../reviews/evidence/orchestration-slice-5-2026-10-08/README.md#2026-10-09决定-47-的一轮仍没有合入) |
+| 接线包 1：I-1、I-3、改目标说明的检查、普通接续的交接（决定 47 第 2–4 条） | 做完，合入 | 规格 67dfee7a，实现 6180adfc | orchestration-wiring-1-2026-10-09（已归档：`docs/refactor/reviews/evidence/orchestration-wiring-1-2026-10-09/README.md`） |
+| 第 5 片，决定 47 破例多给的一轮 | 四个区域都做完、全量全过，但仍有 6 处用户看得到的问题，**没有接受，没有合入**；决定 48 再给一轮，先补测试 | 无 | 第 5 片证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-5-2026-10-08/README.md`） |
 
 合入接线包 1 后（6180adfc），类型检查、模块边界检查、构建通过，全量测试 258 个测试文件、5,689 项全部通过，`verify:isolated` 通过。和 e48218a5 的 250 个文件、5,626 项比，逐文件只多接线包的 8 个文件 63 项。没有调用真实模型。
 
@@ -191,7 +191,7 @@ STATE-MACHINES-SPEC（新行和 §15 的行→文件→用例对照）、`module
 
 | 项 | 结果 | 提交 | 证据 |
 | --- | --- | --- | --- |
-| 第 5 片，决定 48 再破例的一轮（先补测试） | 做完，验收，**合入** | a7cafccc（用例表 [slice-5-round2-TESTS](slice-5-round2-TESTS.md) 在同一个提交里） | [第 5 片证据](../../../reviews/evidence/orchestration-slice-5-2026-10-08/README.md#2026-10-09-夜决定-48-的一轮先补测试验收合入) |
+| 第 5 片，决定 48 再破例的一轮（先补测试） | 做完，验收，**合入** | a7cafccc（用例表 [slice-5-round2-TESTS](slice-5-round2-TESTS.md) 在同一个提交里） | 第 5 片证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-5-2026-10-08/README.md`） |
 
 合入第 5 片后（a7cafccc），类型检查、模块边界检查（WorkGraph 135 个源码文件，子模块边 49 条）、构建通过，全量测试 279 个测试文件、5,974 项全部通过，`verify:isolated` 通过。和 6180adfc 的 258 个文件、5,689 项比，逐文件只多第 5 片的 21 个文件 285 项（规格里的 16 个文件 224 项，加补测的 5 个文件 61 项）。没有调用真实模型。
 

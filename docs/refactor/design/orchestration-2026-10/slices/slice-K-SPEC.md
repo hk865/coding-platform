@@ -611,4 +611,4 @@ A、B 施工中定下、规格原文没写到的读法和限定；证据文件�
 - **D-ONECHECK（B）：** 一次执行只判断一次 `.git` 和受保护路径，挂载和 IPC 扫描都用这一个快照；类型对不上的绑定都会失败，所以是失败即关闭。
 - **Codex 第四次审查第 1 条（B，lead 判定不返工）：** 快照时 `.git` 是目录、挂载前被别的写者换成普通文件时，bwrap 照路径把这个文件绑上；能读到的只是那个写者自己写进 `.git` 位置的内容，没有 Host 禁读的路径露出。
 
-两部分的验收结论、写进 STATUS“缺口”的已知限制见 [partA/lead-acceptance.md](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partA/lead-acceptance.md) 和 [partB/lead-acceptance.md](../../../reviews/evidence/orchestration-slice-K-2026-10-13/partB/lead-acceptance.md)。
+两部分的验收结论、写进 STATUS“缺口”的已知限制见 partA/lead-acceptance.md（已归档：`docs/refactor/reviews/evidence/orchestration-slice-K-2026-10-13/partA/lead-acceptance.md`） 和 partB/lead-acceptance.md（已归档：`docs/refactor/reviews/evidence/orchestration-slice-K-2026-10-13/partB/lead-acceptance.md`）。

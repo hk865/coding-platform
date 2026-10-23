@@ -1,6 +1,0 @@
-DSH runs for SC (run id, how it stopped, peak context, wall seconds, total tokens)
-tb-SC-1021    normal end  234,333  3,196 s  11,814,816   (18:04-18:57, SC1 + SC2)
-tb-SCr1-1021  normal end  170,508  1,757 s   4,691,336   (20:09-20:38, rework 1, 26 rows)
-tb-SCr2-1021  normal end   73,294    180 s   2,197,042   (20:51-20:54, rework 2, R2-01)
-total                               5,133 s  18,703,194
-Codex (read-only, gpt-6-astra, xhigh): audit P1-P5 18:59-19:23 (P2 waited once at capacity); rework audit R1-R2 20:41-20:50.

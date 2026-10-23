@@ -1,4 +1,0 @@
-8f94ede SC rework 2
- Test Files  5 passed (5)
-      Tests  61 passed (61)
-   Duration  48.44s (transform 2.55s, setup 0ms, import 3.77s, tests 75.69s, environment 0ms)

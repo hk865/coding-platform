@@ -9,9 +9,9 @@ implementation: 分项标记现有实现、需重组和新增；接口表是目�
 
 本文落实用户已经给出的设计：核心由专用数据结构、算法和工具组成；业务选择目标及动作；工具隐藏查询、索引维护、来源定位、更新和同步的复杂度。执行结果反向维护图与状态是原方案的一部分。本文不新建永久 Agent 人格，不建立第二套 Kernel Session 日志，不要求所有关系是 DAG，也不要求一张图或一个数据库容纳所有数据。
 
-本设计与 [编排状态机](ORCHESTRATION-STATE-MACHINES.md) 配套。本文定义操作及记录，状态机定义允许的转换、触发和重入；业务策略决定调用哪个操作。对旧模块的迁移由总体重构方案定义。首批保持现有 Task、Run、Plan、Artifact 的公开身份与版本语义，避免为重组目录同时改写全部历史记录。
+本设计与[状态机规格](STATE-MACHINES-SPEC.md)配套。本文定义操作及记录，状态机定义允许的转换、触发和重入；业务策略决定调用哪个操作。对旧模块的迁移由总体重构方案定义。首批保持现有 Task、Run、Plan、Artifact 的公开身份与版本语义，避免为重组目录同时改写全部历史记录。
 
-详细文件与完整关键接口见[骨架总览](skeleton/README.md)及五篇模块页；共同字段见[CONTRACTS](skeleton/CONTRACTS.md)。本文保留数据/操作层说明，不能单凭下列语义表认定完整源码骨架或真实实现已完成。本轮细化明确了Run/QueryRun/维护共用Session占用，以及临时捕获与持久来源分离。
+详细文件与完整关键接口见骨架总览（已归档：`docs/refactor/skeleton/README.md`）及五篇模块页；共同字段见CONTRACTS（已归档：`docs/refactor/skeleton/CONTRACTS.md`）。本文保留数据/操作层说明，不能单凭下列语义表认定完整源码骨架或真实实现已完成。本轮细化明确了Run/QueryRun/维护共用Session占用，以及临时捕获与持久来源分离。
 
 ## 1. 数据分类与身份
 
@@ -38,7 +38,7 @@ implementation: 分项标记现有实现、需重组和新增；接口表是目�
 
 ## 2. 共同调用契约
 
-调用者的读取身份与协作参与身份分别表达：普通工作源/材料读取使用真实 RunRef 与角色授予，不强制先有 WorkParticipation；通信及正式 Agent 写命令仍按原精确参与身份和逐操作资格受理。详见[共同契约 §3](skeleton/CONTRACTS.md)。
+调用者的读取身份与协作参与身份分别表达：普通工作源/材料读取使用真实 RunRef 与角色授予，不强制先有 WorkParticipation；通信及正式 Agent 写命令仍按原精确参与身份和逐操作资格受理。详见共同契约 §3（已归档：`docs/refactor/skeleton/CONTRACTS.md`）。
 
 以下名称是目标能力名，可以先由旧入口适配；不要求把现有所有方法一次迁名。工具 Adapter 从宿主获得调用身份，模型参数不允许伪造 actor、Run、能力授予或存储版本。
 
@@ -267,7 +267,7 @@ type PlatformMaterialOrigin = {
 
 ### 6.1 最小内容
 
-**2026-09-24 纠偏，2026-09-26 源码核对：** 本结构服务协作、监测及 Session/证据查找，不替代 Agent 编排。预期依赖、影响提示与明确采用的输入消费条件分别表达；只有后者适用于实际消费条件检查，不能将前驱未整体 satisfied 当通用启动禁令。`next` 已有 v2 提示关系、精确输入及 W1 未来修订；W2 已接通显式 `plan_only/request_execution`，允许无完整验收或分配的未来意图先进入已采用计划，并可后续补全。`plan_only` 不可领取，节点存在不等于可执行或可完成；资格查询不按前驱整体 phase 阻塞。领取不要求预证明全部未来范围，详见[并行设计](PARALLEL-COLLABORATION.md)。
+**2026-09-24 纠偏，2026-09-26 源码核对：** 本结构服务协作、监测及 Session/证据查找，不替代 Agent 编排。预期依赖、影响提示与明确采用的输入消费条件分别表达；只有后者适用于实际消费条件检查，不能将前驱未整体 satisfied 当通用启动禁令。`next` 已有 v2 提示关系、精确输入及 W1 未来修订；W2 已接通显式 `plan_only/request_execution`，允许无完整验收或分配的未来意图先进入已采用计划，并可后续补全。`plan_only` 不可领取，节点存在不等于可执行或可完成；资格查询不按前驱整体 phase 阻塞。领取不要求预证明全部未来范围，详见并行设计（已归档：`docs/refactor/PARALLEL-COLLABORATION.md`）。
 
 （2026-10-07 补注：上段说的“精确输入”现在只保存和显示，没有执行路径读取。按精确输入读材料的路径已删除（决定 34，lead 决定 LA-11），“消费时检查精确输入”由编排设计第 3 片重建，仍是未完成的 MVP 项（决定 11）。）
 
@@ -364,7 +364,7 @@ availability `idle/busy/recoverable/unavailable` 由 occupancy 和 health 解释
 
 当前差距明确存在：[RuntimeRecord](../../coding-platform/src/execution/worker-runtime/coding-agent-runtime.ts) 每次新 Run 产生随机 sessionId；完整平台 Session 目录与复用桥接不能当作现成实现。可复用 Kernel 的 [SessionStorePort](../../coding-platform/vendor/coding-agent/src/core/ports/session_store/session-store-port.ts) 与现有 [WorkContext](../../coding-platform/src/contracts/context-continuity.ts)，而不是重新实现它们的日志格式。
 
-详细核对还发现：平台目前按Run使用独立Kernel数据库，Kernel同sessionId新调用也不自动继承已完成轮次的模型上下文。目标由稳定存储定位与[AgentRuntime骨架](modules/core/agent-runtime.md)规定的最小Kernel公开接口扩展接通；原生compact当前未实现，必须保留unsupported。能力配置或Session ID相同不能代替实际历史输入验证。
+详细核对还发现：平台目前按Run使用独立Kernel数据库，Kernel同sessionId新调用也不自动继承已完成轮次的模型上下文。目标由稳定存储定位与AgentRuntime骨架（已归档：`docs/refactor/modules/core/agent-runtime.md`）规定的最小Kernel公开接口扩展接通；原生compact当前未实现，必须保留unsupported。能力配置或Session ID相同不能代替实际历史输入验证。
 
 ## 8. D5：执行、控制与占用
 
@@ -382,7 +382,7 @@ Run 保持现有 `status = starting/running/ended`，outcome 独立为 completed
 
 核心负责：记录任务/Session 承担关系与适用独占，核对既有授权，准确归因，处理终态和重复事件及旧 generation。对具体工具确有需要的资源协调按该操作采用，不对每个 Task 预占全部预测资源。业务负责：选择任务/Session、并行分工、冲突修正、暂停原因及是否换方案。按用户最新决定，同一工作区必须支持实际范围允许的多 Agent 并行；撤销旧“每工作区单写者”目标，当前源码限制列入迁移。
 
-注释：架构模块不等于锁范围。之前新增 ScopeProposal、ResolvedFootprint、ResourceReservation 并要求所有 claim 先占实际范围的方案已撤回为普遍前置。范围比较、文件版本校验、必要隔离与局部资源协调属于具体工具能力，只有真实消费者需要时才落码，不先实施通用资源锁层。图和工具返回已有事实与未知，Agent 决定并行并根据真实结果修正；不因未来范围尚不完整而拒绝开始。当前行为图见[并行协作 §1.2、§3](PARALLEL-COLLABORATION.md)。权限边界不随图标签自动扩大。
+注释：架构模块不等于锁范围。之前新增 ScopeProposal、ResolvedFootprint、ResourceReservation 并要求所有 claim 先占实际范围的方案已撤回为普遍前置。范围比较、文件版本校验、必要隔离与局部资源协调属于具体工具能力，只有真实消费者需要时才落码，不先实施通用资源锁层。图和工具返回已有事实与未知，Agent 决定并行并根据真实结果修正；不因未来范围尚不完整而拒绝开始。当前行为图见并行协作 §1.2、§3（已归档：`docs/refactor/PARALLEL-COLLABORATION.md`）。权限边界不随图标签自动扩大。
 
 Run 结束不等于 Task 完成；暂停请求不等于暂停成功；一次工具调用失败不自动意味着整个 Run 结束。unknown 保留不确定性，并阻止不安全地重复同一副作用。
 
