@@ -32,6 +32,7 @@
 - `record-codecs.ts` — Goal 家族记录/事件 codec、`canonicalRefKey`、Goal/Workspace 设置校验。
 - `rework-codecs.ts` — 返工/引用/notice origin 等纯形状校验（actor、Run、Session、Task 等 ref）。
 - `run-activity-codecs.ts` — `RunActivity`/`ActivityRecording` 记录与事件 codec；`ActivityRecording` 的当前格式带 `querySince`（null = 还没有 Query epoch），facts/span/ref 校验器导出供 Query codec 复用；两种记录的 SessionRef 都用 `rework-codecs.ts` 的正本 `sessionRefProblem`。
+- `run-record-codecs.ts` — `RunSnapshot@1`/`QueryRunSnapshot@1` 的纯校验唯一实现：两个 schema id、Run/QueryRun 形状检查、`decodeRun` 与 `Decoded`；`materials/record-readers.ts` 只保留注册和同名委托，`materials/run-snapshot-decoder.ts` 只保留 `decodeRun` 再导出。
 
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
@@ -78,6 +79,13 @@
 | `eventBodyProblem` | `src/core/work-graph/persistence/event-validation.ts:57` | 校验事件 body 的通用字段与 actor | 事件 body 校验 |
 | `isRunExecutionHistoryV1` | `src/core/work-graph/persistence/execution-history-codecs.ts:73` | 纯 `RunExecutionHistoryV1` 形状/范围校验 | Run 记录与写入规则共用时 |
 | `compareProposalChainPositions` | `src/core/work-graph/persistence/plan-record-codecs.ts:120` | 比较 proposal 链位置 | 需要 proposal 顺序时 |
+| `RUN_SNAPSHOT_SCHEMA_ID` | `src/core/work-graph/persistence/run-record-codecs.ts:26` | `RunSnapshot@1` 的 schema id；materials 注册读取它 | 注册或核对 Run 记录 schema 时 |
+| `QUERY_RUN_SNAPSHOT_SCHEMA_ID` | `src/core/work-graph/persistence/run-record-codecs.ts:27` | `QueryRunSnapshot@1` 的 schema id；materials 注册读取它 | 注册或核对 QueryRun 记录 schema 时 |
+| `validateRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:163` | 唯一的 `RunSnapshot@1` 编码校验；不判断业务准入 | Run 记录读取/解码；不要再写一份 |
+| `executionRequestProfileProblem` | `src/core/work-graph/persistence/run-record-codecs.ts:261` | 执行状态必填的 `requestProfile`：null 或完整 profile（profileId、runtimeBudget、budget、consumerId） | QueryRun 记录与执行事件共用的唯一校验 |
+| `executionPreparedProblem` | `src/core/work-graph/persistence/run-record-codecs.ts:292` | 执行状态必填的 `prepared`：null 或带必填 `requestEffectiveGoalId`（null 或非空）的绑定 | QueryRun 记录与执行事件共用的唯一校验 |
+| `validateQueryRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:303` | 唯一的 `QueryRunSnapshot@1` 编码校验；queries 复用它 | 解码/校验 QueryRun 记录 |
+| `decodeRun` | `src/core/work-graph/persistence/run-record-codecs.ts:371` | 唯一的 schema-checked `RunSnapshot` 解码及其 `Decoded` 类型；Session/邮箱/Task 读共用 | 需要解码 Run 快照时；不要另写宽松解析 |
 
 ## 内部用
 
