@@ -13,6 +13,7 @@ import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
+import { isRequestRound, queryExecutionBindingOf } from '../../contracts/query-job.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { SourceRefV1 } from '../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
@@ -187,6 +188,10 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       }
       if (facts.status !== 'ready') return mapRead(facts);
       const { record, goal, workspace, focusPlan } = facts.value;
+      const requestRound = isRequestRound(record.job);
+      // A no-goal request round prepares from the secretary facts; every other
+      // Query still requires its Goal, so a null goal is refused before any use.
+      if (goal === null && !requestRound) return rejected('invalid', 'no goal');
       const executionState = record.run.run.executionState;
       if (executionState === undefined) return rejected('incomplete', 'the QueryRun has no persisted execution state');
       if (executionState.phase !== 'claimed' && executionState.phase !== 'prepared') {
@@ -200,6 +205,9 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         return { status: 'ready', value: { queryRunRef, bundleRef: structuredClone(executionState.prepared.bundleRef), inputDigest: executionState.prepared.inputDigest } };
       }
       if (signal.aborted) return rejected('cancelled', 'the Query preparation was cancelled after the facts read');
+      // A request round's binding and budget come from its own attempt; a
+      // claimed request round without one is an invariant break in the contract.
+      const binding = queryExecutionBindingOf(record.job, record.run);
 
       if (deps.host.resolveQueryConfiguration === undefined) {
         return rejected('unsupported', 'prepareQuery requires the trusted Query Host configuration binding');
@@ -230,7 +238,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       const tracked = trackPromptTexts(pack);
       const projected = projectQueryConfiguration({
         host: configured.value,
-        requested: execution.runtimeBudget,
+        requested: binding.runtimeBudget,
         roleResolution: executionState.roleResolution,
       });
       const hostTemplate = executionState.roleResolution.status === 'resolved' ? null : projected.hostTemplate;
@@ -243,7 +251,6 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         }
       }
 
-      const goalRevision = goal.revision;
       const workspaceRevision = workspace.revision;
       const sourceRefs: SourceRefV1[] = [
         { kind: 'workspace', refId: workspace.ref.workspaceId, revision: String(workspaceRevision) },
@@ -300,8 +307,10 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       // Query: render it now with the frozen final tool list so its tool blocks
       // expand like every other template, then append it to the question. A
       // semantic Query never reads it, so an unused declaration stays unused.
+      // A secretary round renders its own answer format in the input, so the
+      // guide is never appended a second time there.
       let question = record.job.job.intent.question;
-      if (execution.kind === 'initial_coordination') {
+      if (!requestRound && execution.kind === 'initial_coordination') {
         if (tracked.texts.templates['initial-planning-answer'] === undefined) {
           return rejected('invalid', 'the resolved prompt pack has no initial-planning-answer template');
         }
@@ -331,16 +340,19 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       // Slice 3 C7 (§4.2/§4.3): the ONE assembler owns the Query text and its
       // binding. A non-ready assembler result is propagated unchanged; its
       // rejection (in particular a failing `graphContext` read) is passed back as-is.
+      // A secretary round's recipe reads its facts and returns them here, so the
+      // manifest is frozen from the SAME value the input rendered from.
+      const assemblyInput = {
+        facts: facts.value,
+        role: executionState.roleResolution,
+        configuration: configured.value,
+        permissions: projected.permissions,
+        question,
+        texts: tracked.texts, toolNames, history,
+      };
       let assembled;
       try {
-        assembled = await assembler.assembleQuery(owned, {
-          facts: facts.value,
-          role: executionState.roleResolution,
-          configuration: configured.value,
-          permissions: projected.permissions,
-          question,
-          texts: tracked.texts, toolNames, history,
-        });
+        assembled = await assembler.assembleQuery(owned, assemblyInput);
       } catch (error) {
         const renderProblem = promptRenderProblem(error, pack.manifest.packId);
         if (renderProblem !== null) return renderProblem;
@@ -348,6 +360,10 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       }
       if (assembled.status !== 'ready') return assembled;
       const input = assembled.value.input;
+      const secretaryFacts = assembled.value.secretaryFacts ?? null;
+      if (requestRound && secretaryFacts === null) {
+        return rejected('unavailable', 'the secretary assembly returned no preparation facts');
+      }
       const contextAssembly = assembled.value.binding;
       const inputDigest = sha256Hex(input);
       const takesSessionHistory = assembled.value.takesSessionHistory;
@@ -398,17 +414,25 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         queryRunRef,
         sessionRef: executionState.sessionRef,
         sessionGeneration: executionState.sessionGeneration,
-        roleBinding: executionState.roleBinding,
+        roleBinding: binding.roleBinding,
         sessionRole: executionState.role,
         role: executionState.roleResolution,
         hostTemplate,
         hostConfigurationRevision: projected.configurationRevision,
-        goal: { ref: goal.ref, revision: goalRevision },
+        goal: goal === null ? null : { ref: goal.ref, revision: goal.revision },
+        request: secretaryFacts === null ? null : {
+          requestRoot: secretaryFacts.request.requestRoot,
+          round: secretaryFacts.request.round,
+          batch: secretaryFacts.request.batch,
+          preparationCursor: secretaryFacts.request.preparationCursor,
+          effectiveGoalId: secretaryFacts.request.effectiveGoalId,
+          executionKind: secretaryFacts.executionKind,
+        },
         workspace: { ref: workspace.ref, revision: workspaceRevision },
         focusPlan: focusPlan === null ? null : { ref: focusPlan.ref, revision: focusPlan.planRevision },
         permissions: projected.permissions,
         runtimeBudget: projected.budget,
-        budget: { tokenBudget: record.job.job.intent.budget.maxTokens, deadline: record.job.job.intent.budget.deadline },
+        budget: { tokenBudget: binding.budget.maxTokens, deadline: binding.budget.deadline },
         sourceRefs,
         ...(sessionBasis === undefined ? {} : { sessionBasis }),
         contextAssembly,

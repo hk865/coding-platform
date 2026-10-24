@@ -51,8 +51,8 @@ import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type {
-  ContextReadRequestV1, GraphContextFactsV1, GraphContextReadPort, GraphFindRequestV1,
-  GraphLookRequestV1, GraphReadPageV1, GraphTaskCardV1, NodeCardV1,
+  ContextExtensionsReaderV1, ContextExtensionsRequestV1, ContextReadRequestV1, GraphContextFactsV1, GraphContextReadPort,
+  GraphFindRequestV1, GraphLookRequestV1, GraphReadPageV1, GraphTaskCardV1, NodeCardV1,
 } from '../model/graph-context-contracts.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import {
@@ -76,7 +76,7 @@ export type GraphContextReaderDependencies = {
   executions: ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>>;
   inputs: TaskContextInputPort;
   hostActor: Extract<ActorRef, { kind: 'human' | 'system' }>;
-  extensions?: (ctx: CoreCallContext, request: ContextReadRequestV1) => Promise<ReadResult<ContextExtensionsV1>>;
+  extensions?: ContextExtensionsReaderV1;
 };
 
 // -------------------------------------------------------------------------- //
@@ -277,26 +277,27 @@ function nodeShapeProblem(node: unknown): string | null {
     default: return 'target.node.kind is not recognized';
   }
 }
-/** `null` means in scope; a non-null reason is a `forbidden` refusal. */
-function nodeScopeProblem(node: GraphNodeRefV1, projectId: string, workspaceId: string | undefined, goal: GoalRef): string | null {
+/** `null` means in scope; a non-null reason is a `forbidden` refusal.
+ * A null goal is the project branch: only project-owned nodes are in scope. */
+function nodeScopeProblem(node: GraphNodeRefV1, projectId: string, workspaceId: string | undefined, goal: GoalRef | null): string | null {
   switch (node.kind) {
     case 'goal':
-      return node.ref.projectId === projectId && node.ref.goalId === goal.goalId
+      return node.ref.projectId === projectId && (goal === null || node.ref.goalId === goal.goalId)
         ? null : 'the Goal node is outside the requested goal';
     case 'stage':
       return node.planRef.projectId === projectId ? null : 'the Stage node is outside the requested project';
     case 'task':
-      return node.ref.projectId === projectId && node.ref.goalId === goal.goalId
+      return node.ref.projectId === projectId && (goal === null || node.ref.goalId === goal.goalId)
         ? null : 'the Task node is outside the requested goal';
     case 'module':
       return node.ref.projectId === projectId ? null : 'the Module node is outside the requested project';
     case 'session':
       return node.ref.projectId === projectId ? null : 'the Session node is outside the requested project';
     case 'run':
-      return node.ref.projectId === projectId && node.ref.goalId === goal.goalId
+      return node.ref.projectId === projectId && (goal === null || node.ref.goalId === goal.goalId)
         ? null : 'the Run node is outside the requested goal';
     case 'round':
-      return node.ref.projectId === projectId && node.ref.goalId === goal.goalId
+      return node.ref.projectId === projectId && (goal === null || node.ref.goalId === goal.goalId)
         && (workspaceId === undefined || node.ref.workspaceId === workspaceId)
         ? null : 'the Round node is outside the requested scope';
   }
@@ -372,11 +373,11 @@ function originalPrincipalIdentity(ctx: CoreCallContext): JsonValue {
   if (principal.kind === 'work_run') return { kind: 'work_run', runRef: principal.runRef };
   return { kind: 'query_run', queryRunRef: principal.queryRunRef };
 }
-function scopeKeyOf(ctx: CoreCallContext, goal: GoalRef): string {
+function scopeKeyOf(ctx: CoreCallContext, goal: GoalRef | null): string {
   return sha256Hex(canonicalJson({
     projectId: ctx.projectId,
     workspaceId: ctx.workspaceId ?? null,
-    goalId: goal.goalId,
+    ...(goal === null ? {} : { goalId: goal.goalId }),
     principal: originalPrincipalIdentity(ctx),
   } as unknown as JsonValue));
 }
@@ -434,7 +435,7 @@ function internalHostContext(ctx: CoreCallContext, actor: Extract<ActorRef, { ki
 async function readIndexes(
   extensions: GraphContextReaderDependencies['extensions'],
   ctx: CoreCallContext,
-  request: ContextReadRequestV1,
+  request: ContextExtensionsRequestV1,
 ): Promise<ReadResult<ContextExtensionsV1>> {
   if (extensions === undefined) return { status: 'ready', value: emptyExtensions() };
   try {
@@ -451,7 +452,8 @@ async function readIndexes(
 // -------------------------------------------------------------------------- //
 
 type Universe = {
-  goal: GoalSnapshot;
+  /** `null` is the project branch: no Goal, Plan, Run or Round belongs to it. */
+  goal: GoalSnapshot | null;
   workspace: VersionedRef | null;
   plan: PlanRevisionSnapshot | null;
   graph: TaskGraph | null;
@@ -463,6 +465,8 @@ type Universe = {
   runCache: Map<string, RunSnapshot | null>;
   roundCache: Map<string, RoundSnapshot>;
 };
+/** The Goal branch always has its Goal; the project branch has none. */
+type GoalUniverse = Universe & { goal: GoalSnapshot };
 
 type ReadContexts = { sessionCtx: CoreCallContext; executionCtx: CoreCallContext };
 
@@ -495,7 +499,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
   // Query / Work -> internal Host bridges                                   //
   // ---------------------------------------------------------------------- //
 
-  async function resolveGraphSessionReadContext(ctx: CoreCallContext, goal: GoalRef): Promise<ReadResult<CoreCallContext>> {
+  async function resolveGraphSessionReadContext(ctx: CoreCallContext, goal: GoalRef | null): Promise<ReadResult<CoreCallContext>> {
     if (ctx.signal.aborted) return rejected('cancelled', 'the graph read was cancelled');
     const principal = ctx.principal;
     if (principal.kind === 'host' || principal.kind === 'work_run') {
@@ -540,7 +544,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     if (job.job.runRef === null || canonicalJson(job.job.runRef as unknown as JsonValue) !== runKey) {
       return rejected('forbidden', 'the QueryJob does not bind the requested QueryRun');
     }
-    if (job.job.goalId !== goal.goalId) {
+    if (job.job.goalId !== (goal === null ? null : goal.goalId)) {
       return rejected('forbidden', 'the QueryJob does not belong to the requested Goal');
     }
     const state = run.run.executionState;
@@ -552,8 +556,8 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       return rejected('forbidden', 'the QueryRun Session binding is outside the QueryRun project');
     }
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(sessionRef));
-    const goalKey = canonicalRefKey(goal);
-    const scopeRead = await readBatch([sessionKey, goalKey]);
+    const goalKey = goal === null ? null : canonicalRefKey(goal);
+    const scopeRead = await readBatch(goalKey === null ? [sessionKey] : [sessionKey, goalKey]);
     if (scopeRead.status !== 'ready') return propagate(scopeRead);
     if (scopeRead.value.missing.has(sessionKey) || !scopeRead.value.present.has(sessionKey)) {
       return rejected('incomplete', 'the bound Session record is missing');
@@ -566,15 +570,20 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       || sessionDecoded.value.workspaceId !== queryRunRef.workspaceId) {
       return rejected('forbidden', 'the bound Session is outside the QueryRun scope');
     }
-    if (scopeRead.value.missing.has(goalKey) || !scopeRead.value.present.has(goalKey)) {
-      return { status: 'not_found' };
-    }
-    const goalDecoded = decodeGoalSnapshot(scopeRead.value.present.get(goalKey) as EncodedRecord);
-    if (goalDecoded.status !== 'decoded') {
-      return rejected('unavailable', `the Goal is not decodable: ${goalDecoded.reason}`);
-    }
-    if (goalDecoded.value.workspaceRef.workspaceId !== queryRunRef.workspaceId) {
-      return rejected('forbidden', 'the Goal is outside the QueryRun workspace');
+    // A no-goal QueryRun has no Goal record to verify; every other check (Job,
+    // Run, Session, scope, submission identity and initiator) still applies.
+    if (goal !== null) {
+      const currentGoalKey = canonicalRefKey(goal);
+      if (scopeRead.value.missing.has(currentGoalKey) || !scopeRead.value.present.has(currentGoalKey)) {
+        return { status: 'not_found' };
+      }
+      const goalDecoded = decodeGoalSnapshot(scopeRead.value.present.get(currentGoalKey) as EncodedRecord);
+      if (goalDecoded.status !== 'decoded') {
+        return rejected('unavailable', `the Goal is not decodable: ${goalDecoded.reason}`);
+      }
+      if (goalDecoded.value.workspaceRef.workspaceId !== queryRunRef.workspaceId) {
+        return rejected('forbidden', 'the Goal is outside the QueryRun workspace');
+      }
     }
     const submission = job.submission;
     let found;
@@ -763,7 +772,54 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     return { status: 'ready', value: cache };
   }
 
-  async function loadUniverse(ctx: CoreCallContext, goalRef: GoalRef, options: UniverseOptions): Promise<ReadResult<Universe>> {
+  type CurrentArchitecture = {
+    architecture: AdoptedArchitecture | null;
+    baseline: ArchitectureBaselineRevisionRef | null;
+    baselineRevision: number | null;
+    baselineDigest: string | null;
+  };
+
+  /** The current architecture exactly as `readAttentionFacts` reads it: `not_found` is no architecture. */
+  async function readCurrentArchitecture(ctx: CoreCallContext): Promise<ReadResult<CurrentArchitecture>> {
+    const archRead = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
+    if (archRead.status === 'ready') {
+      return { status: 'ready', value: {
+        architecture: archRead.value.catalog.catalog,
+        baseline: archRead.value.baseline.ref,
+        baselineRevision: archRead.value.baseline.revision,
+        baselineDigest: archRead.value.baseline.contentDigest,
+      } };
+    }
+    if (archRead.status !== 'not_found') return propagate(archRead);
+    return { status: 'ready', value: { architecture: null, baseline: null, baselineRevision: null, baselineDigest: null } };
+  }
+
+  /** Every Session of the call's project, read through the already-verified
+   * Session context under the one in-call page budget. The Goal and project
+   * branches share this loop; a failed page is its own refusal. */
+  async function collectSessions(sessionCtx: CoreCallContext): Promise<ReadResult<SessionCard[]>> {
+    const collected: SessionCard[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    while (true) {
+      const sessionsRead = await deps.sessions.findSessions(sessionCtx, {
+        workspace: { projectId: sessionCtx.projectId, workspaceId: sessionCtx.workspaceId ?? '' },
+        includeArchived: true,
+        page: { limit: SESSION_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }) },
+      });
+      if (sessionsRead.status !== 'ready') return propagate(sessionsRead);
+      collected.push(...sessionsRead.value.items);
+      if (sessionsRead.value.nextCursor === null) break;
+      pages += 1;
+      if (pages >= GRAPH_PAGE_BUDGET) {
+        return rejected('incomplete', 'the Session listing exceeds the read budget');
+      }
+      cursor = sessionsRead.value.nextCursor;
+    }
+    return { status: 'ready', value: collected };
+  }
+
+  async function loadUniverse(ctx: CoreCallContext, goalRef: GoalRef, options: UniverseOptions): Promise<ReadResult<GoalUniverse>> {
     const goalRead = await deps.goals.queryGoal(ctx, goalRef);
     if (goalRead.status !== 'ready') return propagate(goalRead);
     const goal = goalRead.value.goal;
@@ -786,42 +842,16 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
         return propagate(graphRead);
       }
     }
-    const archRead = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
-    let architecture: AdoptedArchitecture | null = null;
-    let baseline: ArchitectureBaselineRevisionRef | null = null;
-    let baselineRevision: number | null = null;
-    let baselineDigest: string | null = null;
-    if (archRead.status === 'ready') {
-      architecture = archRead.value.catalog.catalog;
-      baseline = archRead.value.baseline.ref;
-      baselineRevision = archRead.value.baseline.revision;
-      baselineDigest = archRead.value.baseline.contentDigest;
-    } else if (archRead.status !== 'not_found') {
-      return propagate(archRead);
-    }
+    const currentArchitecture = await readCurrentArchitecture(ctx);
+    if (currentArchitecture.status !== 'ready') return propagate(currentArchitecture);
+    const { architecture, baseline, baselineRevision, baselineDigest } = currentArchitecture.value;
     const contexts = await resolveReadContexts(ctx, goalRef);
     if (contexts.status !== 'ready') return propagate(contexts);
     let sessionCards: SessionCard[] = [];
     if (options.sessions) {
-      const collected: SessionCard[] = [];
-      let cursor: string | undefined;
-      let pages = 0;
-      while (true) {
-        const sessionsRead = await deps.sessions.findSessions(contexts.value.sessionCtx, {
-          workspace: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' },
-          includeArchived: true,
-          page: { limit: SESSION_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }) },
-        });
-        if (sessionsRead.status !== 'ready') return propagate(sessionsRead);
-        collected.push(...sessionsRead.value.items);
-        if (sessionsRead.value.nextCursor === null) break;
-        pages += 1;
-        if (pages >= GRAPH_PAGE_BUDGET) {
-          return rejected('incomplete', 'the Session listing exceeds the read budget');
-        }
-        cursor = sessionsRead.value.nextCursor;
-      }
-      sessionCards = collected;
+      const collected = await collectSessions(contexts.value.sessionCtx);
+      if (collected.status !== 'ready') return propagate(collected);
+      sessionCards = collected.value;
     }
     const runRefs: RunRef[] = [];
     for (const row of graph?.tasks ?? []) if (row.execution !== null) runRefs.push(row.execution);
@@ -838,17 +868,58 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     };
   }
 
+  /**
+   * The project branch: the current architecture, the project's Sessions, its
+   * memory material and no Goal, Plan, Run or Round.
+   */
+  async function loadProjectUniverse(ctx: CoreCallContext, options: { sessions: boolean }): Promise<ReadResult<Universe>> {
+    let workspace: VersionedRef | null = null;
+    if (ctx.workspaceId !== undefined) {
+      const workspaceRef = { aggregateType: 'Workspace' as const, projectId: ctx.projectId, workspaceId: ctx.workspaceId };
+      const workspaceKey = canonicalJson(workspaceRef as unknown as JsonValue);
+      const workspaceRead = await readBatch([workspaceKey]);
+      if (workspaceRead.status !== 'ready') return propagate(workspaceRead);
+      const workspaceRecord = workspaceRead.value.present.get(workspaceKey);
+      workspace = workspaceRecord === undefined ? null : { ref: workspaceRef, revision: workspaceRecord.revision };
+    }
+    const currentArchitecture = await readCurrentArchitecture(ctx);
+    if (currentArchitecture.status !== 'ready') return propagate(currentArchitecture);
+    const { architecture, baseline, baselineRevision, baselineDigest } = currentArchitecture.value;
+    let sessionCards: SessionCard[] = [];
+    if (options.sessions) {
+      // A Query principal reads Sessions through the same trusted bridge as the
+      // Goal branch; with no goal the bridge skips only the Goal record check.
+      const sessionCtx = await resolveGraphSessionReadContext(ctx, null);
+      if (sessionCtx.status !== 'ready') return propagate(sessionCtx);
+      const collected = await collectSessions(sessionCtx.value);
+      if (collected.status !== 'ready') return propagate(collected);
+      sessionCards = collected.value;
+    }
+    return { status: 'ready', value: {
+      goal: null, workspace, plan: null, graph: null, architecture, baseline, baselineRevision, baselineDigest,
+      sessionCards, runCache: new Map(), roundCache: new Map(),
+    } };
+  }
+
   function basisKeyOf(universe: Universe): string {
+    const workspace = universe.workspace === null ? null : { ref: universe.workspace.ref, revision: universe.workspace.revision };
+    const architecture = universe.baseline === null
+      ? null
+      : { ref: universe.baseline, revision: universe.baselineRevision, digest: universe.baselineDigest };
+    const sessions = universe.sessionCards
+      .map(card => ({ ref: card.record.ref, revision: card.record.revision }))
+      .sort(compareRefKeys);
+    // The project branch has no Goal, Plan, Run or Round: its basis is the
+    // Workspace pin, the architecture baseline and the Session set only.
+    if (universe.goal === null) {
+      return sha256Hex(canonicalJson({ workspace, architecture, sessions } as unknown as JsonValue));
+    }
     const basis = {
       goal: { ref: universe.goal.ref, revision: universe.goal.revision, activePlanRevision: universe.goal.activePlanRevision },
-      workspace: universe.workspace === null ? null : { ref: universe.workspace.ref, revision: universe.workspace.revision },
+      workspace,
       plan: universe.plan === null ? null : { ref: universe.plan.ref, revision: universe.plan.revision },
-      architecture: universe.baseline === null
-        ? null
-        : { ref: universe.baseline, revision: universe.baselineRevision, digest: universe.baselineDigest },
-      sessions: universe.sessionCards
-        .map(card => ({ ref: card.record.ref, revision: card.record.revision }))
-        .sort(compareRefKeys),
+      architecture,
+      sessions,
       runs: [...universe.runCache.values()]
         .filter((run): run is RunSnapshot => run !== null)
         .map(run => ({ ref: run.ref, revision: run.revision }))
@@ -862,11 +933,12 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
 
   /** A cursor whose basis moved is `revision_conflict`; `current` names
    * the Goal's CURRENT active Plan (not the pinned `planHint`) and the current
-   * Workspace pin, so the caller can retarget exactly. */
-  async function revisionConflict(universe: Universe, ctx: CoreCallContext, goalRef: GoalRef): Promise<CoreRejection> {
+   * Workspace pin, so the caller can retarget exactly. The project branch has
+   * no Plan pin. */
+  async function revisionConflict(universe: Universe, ctx: CoreCallContext, goalRef: GoalRef | null): Promise<CoreRejection> {
     const current: VersionPin[] = [];
-    const activePlan = universe.goal.activePlanRevision;
-    if (activePlan !== null) {
+    const activePlan = universe.goal?.activePlanRevision ?? null;
+    if (activePlan !== null && goalRef !== null) {
       const planKeyOf = (ref: PlanRevisionRef): string => canonicalJson(ref as unknown as JsonValue);
       if (universe.plan !== null && planKeyOf(universe.plan.ref) === planKeyOf(activePlan)) {
         current.push({ ref: activePlan, revision: universe.plan.revision });
@@ -963,7 +1035,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
   function presentationOf(node: GraphNodeRefV1, universe: Universe): { name: string; paths: string[]; summary: string } {
     switch (node.kind) {
       case 'goal':
-        return { name: universe.goal.objective, paths: [], summary: universe.goal.objective };
+        return { name: universe.goal?.objective ?? '', paths: [], summary: universe.goal?.objective ?? '' };
       case 'stage': {
         const stage = universe.plan?.stages.find(candidate => candidate.stageId === node.stageId);
         return { name: stage?.title ?? node.stageId, paths: [], summary: stage?.title ?? '' };
@@ -1010,9 +1082,10 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
    * then compare it. Runs/Rounds/Sessions of other Tasks are not this context's sources
    * (they would make a Work binding depend on, and its entry guard on, sibling Tasks). */
   function baseSources(universe: Universe, executions: readonly TaskExecutionRecord[]): ContextSourceV1[] {
-    const sources: ContextSourceV1[] = [
-      { kind: 'record', ref: universe.goal.ref, revision: universe.goal.revision, digest: null },
-    ];
+    const sources: ContextSourceV1[] = [];
+    if (universe.goal !== null) {
+      sources.push({ kind: 'record', ref: universe.goal.ref, revision: universe.goal.revision, digest: null });
+    }
     if (universe.workspace !== null) {
       sources.push({
         kind: 'record', ref: universe.workspace.ref, revision: universe.workspace.revision, digest: null,
@@ -1037,9 +1110,10 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
    * The same records are hashed into the page `basisKey`; the card lists only
    * its own so one executions page does not repeat the whole Run set. */
   function cardSources(universe: Universe, node: GraphNodeRefV1): ContextSourceV1[] {
-    const sources: ContextSourceV1[] = [
-      { kind: 'record', ref: universe.goal.ref, revision: universe.goal.revision, digest: null },
-    ];
+    const sources: ContextSourceV1[] = [];
+    if (universe.goal !== null) {
+      sources.push({ kind: 'record', ref: universe.goal.ref, revision: universe.goal.revision, digest: null });
+    }
     if (universe.plan !== null) {
       sources.push({ kind: 'record', ref: universe.plan.ref, revision: universe.plan.revision, digest: null });
     }
@@ -1088,7 +1162,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     switch (node.kind) {
       case 'goal': {
         const out: GraphNodeRefV1[] = [];
-        if (universe.plan !== null) {
+        if (universe.goal !== null && universe.plan !== null) {
           for (const stage of universe.plan.stages) out.push({ kind: 'stage', planRef: universe.plan.ref, stageId: stage.stageId });
           for (const task of universe.plan.tasks) {
             if (task.stageId === undefined) out.push(taskNodeOf(universe.plan, task.taskId));
@@ -1202,7 +1276,8 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
             }
             if (target.kind === 'module') out.push({ kind: 'module', ref: target.ref });
           }
-          if (card.record.lastExecutionRef !== null && card.record.lastExecutionRef.aggregateType === 'Run') {
+          if (universe.goal !== null && card.record.lastExecutionRef !== null
+            && card.record.lastExecutionRef.aggregateType === 'Run') {
             out.push({ kind: 'run', ref: card.record.lastExecutionRef });
           }
         }
@@ -1238,7 +1313,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
   function nodeExists(node: GraphNodeRefV1, universe: Universe): boolean {
     switch (node.kind) {
       case 'goal':
-        return true;
+        return universe.goal !== null;
       case 'stage':
         return universe.plan?.stages.some(stage => stage.stageId === node.stageId) ?? false;
       case 'task':
@@ -1308,7 +1383,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
 
   async function executionsForTask(
     node: Extract<GraphNodeRefV1, { kind: 'task' }>,
-    universe: Universe,
+    universe: GoalUniverse,
     executionCtx: CoreCallContext,
   ): Promise<ReadResult<RunRef[]>> {
     const refs: RunRef[] = [];
@@ -1415,10 +1490,46 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     return node.kind === 'stage' || node.kind === 'task' ? node.planRef : undefined;
   }
 
+  /** One find page: sort/dedupe the matches, slide the cursor offset and card them. */
+  function pageOfMatches(universe: Universe, matched: readonly GraphNodeRefV1[], indexes: ContextExtensionsV1,
+    scopeKey: string, queryKey: string, afterOffset: number, limit: number, basisKey: string):
+  ReadResult<GraphReadPageV1<NodeCardV1>> {
+    const sorted = dedupeSort(matched);
+    const pageItems = sorted.slice(afterOffset, afterOffset + limit);
+    const nextOffset = afterOffset + pageItems.length;
+    const nextCursor = nextOffset < sorted.length
+      ? encodeCursor({ v: 1, scopeKey, queryKey, basisKey, offset: nextOffset })
+      : null;
+    return {
+      status: 'ready',
+      value: {
+        items: pageItems.map(node => buildCard(node, universe, indexes)),
+        nextCursor,
+        readThrough: universe.graph?.sourceCursor ?? null,
+      },
+    };
+  }
+
   function modulesMatchingPath(universe: Universe, path: string): GraphNodeRefV1[] {
     const modules = universe.architecture?.modules ?? [];
     if (path === '.') return modules.map(module => ({ kind: 'module', ref: module.ref }));
     return modules.filter(module => module.paths.includes(path)).map(module => ({ kind: 'module', ref: module.ref }));
+  }
+
+  /** The ONE find matcher: a node matches on its normalized name, a path it
+   * owns or its normalized summary; `.` is the root directory and owns every
+   * module. Both branches search their own candidate set through this rule. */
+  function matchedNodes(universe: Universe, candidates: readonly GraphNodeRefV1[],
+    needle: string): GraphNodeRefV1[] {
+    const ownership = longestPathOwner(universe.architecture?.modules ?? [], needle);
+    const matched: GraphNodeRefV1[] = needle === '.' ? modulesMatchingPath(universe, '.') : [];
+    for (const node of dedupeSort(candidates)) {
+      const presentation = presentationOf(node, universe);
+      if (normalizeSearchText(presentation.name).includes(needle)) { matched.push(node); continue; }
+      if (presentation.paths.some(path => pathMatches(path, needle, ownership))) { matched.push(node); continue; }
+      if (normalizeSearchText(presentation.summary).includes(needle)) matched.push(node);
+    }
+    return matched;
   }
 
   async function lookGraph(inputCtx: CoreCallContext, inputRequest: GraphLookRequestV1): Promise<ReadResult<GraphReadPageV1<NodeCardV1>>> {
@@ -1426,7 +1537,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     const request = structuredClone(inputRequest);
     if (ctx.signal.aborted) return rejected('cancelled', 'lookGraph was cancelled');
     if (request === null || typeof request !== 'object') return rejected('invalid', 'lookGraph requires a request object');
-    const goalProblem = goalRefProblem(request.goalRef);
+    const goalProblem = request.goalRef === null ? null : goalRefProblem(request.goalRef);
     if (goalProblem !== null) return rejected('invalid', `lookGraph: ${goalProblem}`);
     if (!GRAPH_RELATIONS.includes(request.relation)) return rejected('invalid', 'lookGraph relation is not recognized');
     const page = parsePage(request.page);
@@ -1445,7 +1556,31 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       const scopeReason = nodeScopeProblem(target.node, ctx.projectId, ctx.workspaceId, request.goalRef);
       if (scopeReason !== null) return rejected('forbidden', scopeReason);
     }
-    const goalRef = request.goalRef;
+    // A request that names no goal is the project branch. A Goal target may
+    // still name one goal of the workspace, read-only; a Goal-owned node or
+    // relation has nothing to read and refuses instead of borrowing another
+    // goal's universe.
+    let goalRef = request.goalRef;
+    let namedGoal = false;
+    if (goalRef === null) {
+      if (target.kind === 'node') {
+        if (request.relation === 'executions' || request.relation === 'checks') {
+          return rejected('invalid', 'this request has no goal');
+        }
+        if (target.node.kind !== 'goal' && target.node.kind !== 'module' && target.node.kind !== 'session') {
+          return rejected('invalid', 'this request has no goal');
+        }
+        if (target.node.kind === 'goal') {
+          const goalRead = await deps.goals.queryGoal(ctx, target.node.ref);
+          if (goalRead.status !== 'ready') return propagate(goalRead);
+          if (goalRead.value.goal.workspaceRef.workspaceId !== ctx.workspaceId) {
+            return rejected('forbidden', 'the Goal is outside the requested workspace');
+          }
+          goalRef = goalRead.value.goal.ref;
+          namedGoal = true;
+        }
+      }
+    }
     const scopeKey = scopeKeyOf(ctx, goalRef);
     const queryKey = lookQueryKey(request);
     let afterOffset = 0;
@@ -1460,23 +1595,94 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       cursorBasis = decoded.basisKey;
     }
     const planHint = planHintOfTarget(target);
-    const loaded = await loadUniverse(ctx, goalRef, { sessions: true, ...(planHint === undefined ? {} : { planHint }) });
+    if (goalRef !== null) {
+      // A request with no goal that names a Goal first validates the ORIGINAL
+      // Query against its own (null) goal; the named Goal's universe is then
+      // read on that verified internal context. Cursor identity stays the
+      // original caller context (the scope key above).
+      let readCtx = ctx;
+      if (namedGoal) {
+        const verified = await resolveGraphSessionReadContext(ctx, null);
+        if (verified.status !== 'ready') return propagate(verified);
+        readCtx = verified.value;
+      }
+      const loaded = await loadUniverse(readCtx, goalRef,
+        { sessions: true, ...(planHint === undefined ? {} : { planHint }) });
+      if (loaded.status !== 'ready') return propagate(loaded);
+      const universe = loaded.value;
+      const contexts = await resolveReadContexts(readCtx, goalRef);
+      if (contexts.status !== 'ready') return propagate(contexts);
+      const executionCtx = contexts.value.executionCtx;
+
+      let relationNodes: GraphNodeRefV1[];
+      if (target.kind === 'path') {
+        relationNodes = modulesMatchingPath(universe, target.path);
+        if (relationNodes.length === 0) return { status: 'not_found' };
+      } else {
+        const node = target.node;
+        if (node.kind === 'run') {
+          const resolved = await ensureRuns(universe, [node.ref], ctx, goalRef);
+          if (resolved.status !== 'ready') return propagate(resolved);
+        }
+        if (!nodeExists(node, universe)) return { status: 'not_found' };
+        switch (request.relation) {
+          case 'card':
+            relationNodes = [node];
+            break;
+          case 'children':
+            relationNodes = childrenOf(node, universe);
+            break;
+          case 'neighbours':
+            relationNodes = neighboursOf(node, universe);
+            break;
+          case 'executions': {
+            if (node.kind !== 'task') return { status: 'ready', value: { items: [], nextCursor: null, readThrough: universe.graph?.sourceCursor ?? null } };
+            const runs = await executionsForTask(node, universe, executionCtx);
+            if (runs.status !== 'ready') return propagate(runs);
+            const resolved = await ensureRuns(universe, runs.value, ctx, goalRef);
+            if (resolved.status !== 'ready') return propagate(resolved);
+            relationNodes = runs.value.map(ref => ({ kind: 'run', ref }));
+            break;
+          }
+          case 'checks': {
+            if (node.kind !== 'task') return { status: 'ready', value: { items: [], nextCursor: null, readThrough: universe.graph?.sourceCursor ?? null } };
+            relationNodes = [...universe.roundCache.values()]
+              .filter(round => round.subject.taskId === node.ref.taskId)
+              .map(round => ({ kind: 'round', ref: round.ref }));
+            break;
+          }
+          default:
+            return rejected('invalid', 'lookGraph relation is not recognized');
+        }
+      }
+      const listedRuns = relationNodes
+        .filter((candidate): candidate is Extract<GraphNodeRefV1, { kind: 'run' }> => candidate.kind === 'run')
+        .map(candidate => candidate.ref);
+      const resolvedListed = await ensureRuns(universe, listedRuns, ctx, goalRef);
+      if (resolvedListed.status !== 'ready') return propagate(resolvedListed);
+      // A named Goal is read through the same extensions read as a request
+      // that carries the goal itself; `includeInputs: false` is what asks the
+      // note reader for the understanding and norms (a Query's material).
+      const indexes = namedGoal
+        ? await readIndexes(deps.extensions, readCtx, { goalRef, focusTaskIds: [], includeInputs: false })
+        : await readIndexes(deps.extensions, readCtx, {
+          goalRef, focusTaskIds: [], ...(planHint === undefined ? {} : { planRef: planHint }),
+        });
+      if (indexes.status !== 'ready') return propagate(indexes);
+      const basisKey = basisKeyOf(universe);
+      if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, goalRef);
+      return pageOfMatches(universe, relationNodes, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey);
+    }
+
+    const loaded = await loadProjectUniverse(ctx, { sessions: true });
     if (loaded.status !== 'ready') return propagate(loaded);
     const universe = loaded.value;
-    const contexts = await resolveReadContexts(ctx, goalRef);
-    if (contexts.status !== 'ready') return propagate(contexts);
-    const executionCtx = contexts.value.executionCtx;
-
     let relationNodes: GraphNodeRefV1[];
     if (target.kind === 'path') {
       relationNodes = modulesMatchingPath(universe, target.path);
       if (relationNodes.length === 0) return { status: 'not_found' };
     } else {
       const node = target.node;
-      if (node.kind === 'run') {
-        const resolved = await ensureRuns(universe, [node.ref], ctx, goalRef);
-        if (resolved.status !== 'ready') return propagate(resolved);
-      }
       if (!nodeExists(node, universe)) return { status: 'not_found' };
       switch (request.relation) {
         case 'card':
@@ -1488,51 +1694,18 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
         case 'neighbours':
           relationNodes = neighboursOf(node, universe);
           break;
-        case 'executions': {
-          if (node.kind !== 'task') return { status: 'ready', value: { items: [], nextCursor: null, readThrough: universe.graph?.sourceCursor ?? null } };
-          const runs = await executionsForTask(node, universe, executionCtx);
-          if (runs.status !== 'ready') return propagate(runs);
-          const resolved = await ensureRuns(universe, runs.value, ctx, goalRef);
-          if (resolved.status !== 'ready') return propagate(resolved);
-          relationNodes = runs.value.map(ref => ({ kind: 'run', ref }));
-          break;
-        }
-        case 'checks': {
-          if (node.kind !== 'task') return { status: 'ready', value: { items: [], nextCursor: null, readThrough: universe.graph?.sourceCursor ?? null } };
-          relationNodes = [...universe.roundCache.values()]
-            .filter(round => round.subject.taskId === node.ref.taskId)
-            .map(round => ({ kind: 'round', ref: round.ref }));
-          break;
-        }
         default:
           return rejected('invalid', 'lookGraph relation is not recognized');
       }
     }
-    const listedRuns = relationNodes
-      .filter((candidate): candidate is Extract<GraphNodeRefV1, { kind: 'run' }> => candidate.kind === 'run')
-      .map(candidate => candidate.ref);
-    const resolvedListed = await ensureRuns(universe, listedRuns, ctx, goalRef);
-    if (resolvedListed.status !== 'ready') return propagate(resolvedListed);
-    const indexes = await readIndexes(deps.extensions, ctx, {
-      goalRef, focusTaskIds: [], ...(planHint === undefined ? {} : { planRef: planHint }),
-    });
+    // The project branch reads the project material (understanding and norms)
+    // through the same extensions provider; the Goal-owned extensions are left
+    // out by the nullable-goal request.
+    const indexes = await readIndexes(deps.extensions, ctx, { goalRef: null, focusTaskIds: [] });
     if (indexes.status !== 'ready') return propagate(indexes);
     const basisKey = basisKeyOf(universe);
-    if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, goalRef);
-    const sorted = dedupeSort(relationNodes);
-    const pageItems = sorted.slice(afterOffset, afterOffset + page.limit);
-    const nextOffset = afterOffset + pageItems.length;
-    const nextCursor = nextOffset < sorted.length
-      ? encodeCursor({ v: 1, scopeKey, queryKey, basisKey, offset: nextOffset })
-      : null;
-    return {
-      status: 'ready',
-      value: {
-        items: pageItems.map(node => buildCard(node, universe, indexes.value)),
-        nextCursor,
-        readThrough: universe.graph?.sourceCursor ?? null,
-      },
-    };
+    if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, null);
+    return pageOfMatches(universe, relationNodes, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey);
   }
 
   // ---------------------------------------------------------------------- //
@@ -1544,7 +1717,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     const request = structuredClone(inputRequest);
     if (ctx.signal.aborted) return rejected('cancelled', 'findGraph was cancelled');
     if (request === null || typeof request !== 'object') return rejected('invalid', 'findGraph requires a request object');
-    const goalProblem = goalRefProblem(request.goalRef);
+    const goalProblem = request.goalRef === null ? null : goalRefProblem(request.goalRef);
     if (goalProblem !== null) return rejected('invalid', `findGraph: ${goalProblem}`);
     const page = parsePage(request.page);
     if (typeof page === 'string') return rejected('invalid', `findGraph: ${page}`);
@@ -1565,52 +1738,48 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       afterOffset = decoded.offset;
       cursorBasis = decoded.basisKey;
     }
-    const loaded = await loadUniverse(ctx, goalRef, { sessions: true });
+    const needle = normalizeSearchText(request.needle);
+    if (goalRef !== null) {
+      const loaded = await loadUniverse(ctx, goalRef, { sessions: true });
+      if (loaded.status !== 'ready') return propagate(loaded);
+      const universe = loaded.value;
+      const candidates: GraphNodeRefV1[] = [{ kind: 'goal', ref: universe.goal.ref }];
+      if (universe.plan !== null) {
+        for (const stage of universe.plan.stages) {
+          candidates.push({ kind: 'stage', planRef: universe.plan.ref, stageId: stage.stageId });
+        }
+        for (const task of universe.plan.tasks) candidates.push(taskNodeOf(universe.plan, task.taskId));
+      }
+      for (const module of universe.architecture?.modules ?? []) candidates.push({ kind: 'module', ref: module.ref });
+      for (const card of universe.sessionCards) {
+        candidates.push({ kind: 'session', ref: { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId } });
+      }
+      for (const run of universe.runCache.values()) if (run !== null) candidates.push({ kind: 'run', ref: run.ref });
+      for (const round of universe.roundCache.values()) candidates.push({ kind: 'round', ref: round.ref });
+      const indexes = await readIndexes(deps.extensions, ctx, { goalRef, focusTaskIds: [] });
+      if (indexes.status !== 'ready') return propagate(indexes);
+      const basisKey = basisKeyOf(universe);
+      if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, goalRef);
+      const matched = matchedNodes(universe, candidates, needle);
+      return pageOfMatches(universe, matched, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey);
+    }
+
+    const loaded = await loadProjectUniverse(ctx, { sessions: true });
     if (loaded.status !== 'ready') return propagate(loaded);
     const universe = loaded.value;
-    const candidates: GraphNodeRefV1[] = [{ kind: 'goal', ref: universe.goal.ref }];
-    if (universe.plan !== null) {
-      for (const stage of universe.plan.stages) {
-        candidates.push({ kind: 'stage', planRef: universe.plan.ref, stageId: stage.stageId });
-      }
-      for (const task of universe.plan.tasks) candidates.push(taskNodeOf(universe.plan, task.taskId));
-    }
+    // The project branch searches the project's own nodes: modules and
+    // Sessions. There is no Goal, Plan, Run or Round to match.
+    const candidates: GraphNodeRefV1[] = [];
     for (const module of universe.architecture?.modules ?? []) candidates.push({ kind: 'module', ref: module.ref });
     for (const card of universe.sessionCards) {
       candidates.push({ kind: 'session', ref: { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId } });
     }
-    for (const run of universe.runCache.values()) if (run !== null) candidates.push({ kind: 'run', ref: run.ref });
-    for (const round of universe.roundCache.values()) candidates.push({ kind: 'round', ref: round.ref });
-    const indexes = await readIndexes(deps.extensions, ctx, { goalRef, focusTaskIds: [] });
+    const indexes = await readIndexes(deps.extensions, ctx, { goalRef: null, focusTaskIds: [] });
     if (indexes.status !== 'ready') return propagate(indexes);
     const basisKey = basisKeyOf(universe);
-    if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, goalRef);
-    const needle = normalizeSearchText(request.needle);
-    const ownership = longestPathOwner(universe.architecture?.modules ?? [], needle);
-    // A `.` query is the root directory: it owns every module by the same
-    // all-modules semantics as `lookGraph`'s path target (`modulesMatchingPath`).
-    // The loop below still applies the usual name/path/summary matching.
-    const matched: GraphNodeRefV1[] = needle === '.' ? modulesMatchingPath(universe, '.') : [];
-    for (const node of dedupeSort(candidates)) {
-      const presentation = presentationOf(node, universe);
-      if (normalizeSearchText(presentation.name).includes(needle)) { matched.push(node); continue; }
-      if (presentation.paths.some(path => pathMatches(path, needle, ownership))) { matched.push(node); continue; }
-      if (normalizeSearchText(presentation.summary).includes(needle)) { matched.push(node); }
-    }
-    const sorted = dedupeSort(matched);
-    const pageItems = sorted.slice(afterOffset, afterOffset + page.limit);
-    const nextOffset = afterOffset + pageItems.length;
-    const nextCursor = nextOffset < sorted.length
-      ? encodeCursor({ v: 1, scopeKey, queryKey, basisKey, offset: nextOffset })
-      : null;
-    return {
-      status: 'ready',
-      value: {
-        items: pageItems.map(node => buildCard(node, universe, indexes.value)),
-        nextCursor,
-        readThrough: universe.graph?.sourceCursor ?? null,
-      },
-    };
+    if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, null);
+    const matched = matchedNodes(universe, candidates, needle);
+    return pageOfMatches(universe, matched, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey);
   }
 
   // ---------------------------------------------------------------------- //

@@ -24,6 +24,7 @@
  * QueryJobSubmitted event and a persisted Session binding.
  */
 import { afterEach, describe, expect, it } from 'vitest';
+import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
 import { join } from 'node:path';
 import type { AdoptedArchitecture, ModuleDefinition } from '../../src/contracts/architecture-catalog.js';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
@@ -663,7 +664,7 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   let queryEventSeq = 0;
   const queryEventId = (): string => `gr-query-event-${++queryEventSeq}`;
   const queryExecution = createQueryExecution({
-    records: rawRecords, roles: roleFacts, bodies: bodiesForReader,
+    records: withBackendOrderedLookup(rawRecords, rawRecords), roles: roleFacts, bodies: bodiesForReader,
     authorizeConfiguration: async () => ({
       status: 'ready',
       value: {

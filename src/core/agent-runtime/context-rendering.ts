@@ -13,7 +13,7 @@ import type {
 } from '../../contracts/graph-context.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { PromptSetV1, PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
-import { parseTemplateV1, renderTemplate } from '../../contracts/prompts/render-template.js';
+import { contextSectionOfSlot, parseTemplateV1, renderTemplate } from '../../contracts/prompts/render-template.js';
 import { byKey, utf8Bytes } from './context-support.js';
 import type {
   ContextRenderMaterialV1, ContextRerenderV1, ContextSectionPlanV1, ContextTemplateId,
@@ -24,7 +24,7 @@ import type {
 const DEFAULT_TEXTS: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1;
 
 /** One fixed string of the resolved pack; a missing key is a pack bug. */
-function packString(texts: PromptTextsV1, key: string): string {
+export function packString(texts: PromptTextsV1, key: string): string {
   const value = texts.strings[key];
   if (value === undefined) throw new Error(`the resolved prompt pack has no string "${key}"`);
   return value;
@@ -60,6 +60,7 @@ export const CONTEXT_SECTION_ORDER: readonly ContextSectionNameV1[] = [
   'role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'unknown_call_review', 'reminders',
 ];
 
+/** The section names the binding format knows, so a pack cannot smuggle in another. */
 const SECTION_NAMES: ReadonlySet<string> = new Set(CONTEXT_SECTION_ORDER);
 
 /** The call-kind half of ruling 9 (the table of state/context-input.ts, for the kinds a preparation produces). */
@@ -68,6 +69,8 @@ const CALL_KIND_SECTIONS: Readonly<Partial<Record<ContextCallKindV1, readonly Co
   continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
   planning: ['role', 'goal', 'task', 'footprint'],
   copy: ['role', 'goal', 'task'],
+  // The secretary's three task slots project onto the one `task` section.
+  secretary: ['role', 'goal', 'task', 'notes', 'reminders'],
 };
 
 /**
@@ -81,7 +84,11 @@ export function templateSectionOrder(texts: PromptTextsV1, templateId: ContextTe
   if (parsed.status === 'invalid') throw new Error(parsed.error.message);
   const order: ContextSectionNameV1[] = [];
   for (const node of parsed.nodes) {
-    if (node.kind === 'slot' && SECTION_NAMES.has(node.name)) order.push(node.name as ContextSectionNameV1);
+    if (node.kind !== 'slot') continue;
+    const section = contextSectionOfSlot(node.name);
+    if (section === null || !SECTION_NAMES.has(section)) continue;
+    // The three task slots are one section and appear once in the order.
+    if (!order.includes(section as ContextSectionNameV1)) order.push(section as ContextSectionNameV1);
   }
   return order;
 }
@@ -91,7 +98,7 @@ export function templateSectionOrder(texts: PromptTextsV1, templateId: ContextTe
  * sections. A person's pack that declares another legal order is followed.
  */
 export function sectionOrderFor(
-  callKind: 'work' | 'continuation' | 'planning' | 'copy',
+  callKind: 'work' | 'continuation' | 'planning' | 'copy' | 'secretary',
   templateId: ContextTemplateId,
   texts: PromptTextsV1 = DEFAULT_TEXTS,
 ): ContextSectionNameV1[] {
@@ -108,7 +115,8 @@ export function workPreparedSectionOrder(texts: PromptTextsV1 = DEFAULT_TEXTS): 
 /**
  * Every call kind a Query preparation can produce. PC-1 records only the call
  * kinds the pack covers, so a pack that declares one Query template records one
- * kind; the platform pack declares both.
+ * kind; the platform pack declares all three. A secretary round is a Query
+ * whose call kind has its own template and order.
  */
 export function queryPreparedSectionOrder(texts: PromptTextsV1 = DEFAULT_TEXTS): PromptSetV1['sectionOrder'] {
   const order: PromptSetV1['sectionOrder'] = {};
@@ -116,6 +124,8 @@ export function queryPreparedSectionOrder(texts: PromptTextsV1 = DEFAULT_TEXTS):
     order.planning = sectionOrderFor('planning', 'query-planning-input', texts);
   if (texts.templates['query-copy-input'] !== undefined)
     order.copy = sectionOrderFor('copy', 'query-copy-input', texts);
+  if (texts.templates['secretary-round'] !== undefined)
+    order.secretary = sectionOrderFor('secretary', 'secretary-round', texts);
   return order;
 }
 
@@ -151,6 +161,9 @@ const TEMPLATE_OPTIONAL_SECTIONS: Readonly<Record<ContextTemplateId, readonly Op
   'work-input': OPTIONAL_SECTIONS,
   'query-planning-input': ['footprint'],
   'query-copy-input': [],
+  // The secretary's task block is part of the required task section; only the
+  // note index is a section-level optional slot.
+  'secretary-round': ['notes'],
 };
 
 /** A pack slot that is empty renders nothing, so the `\n\n` must be inside the value. */
@@ -163,6 +176,13 @@ type RenderInput = {
   sectionOrder: readonly ContextSectionNameV1[];
   prelude: string;
   required: { role: string; goal: string | null; task: string | null };
+  /**
+   * The secretary's one task section written as three adjacent slots. Each
+   * value is that slot's body without its leading separator; the shared
+   * renderer writes the `## Accepted task` header before `round` and keeps the
+   * three slots adjacent. `required.task` is null when this is present.
+   */
+  taskSlots?: { round: string; batched: string | null; earlier: string | null };
   optional: Partial<Record<OptionalSectionName, OptionalRow[]>>;
   continuationSuffix: string | null;
   reviewSuffix: string | null;
@@ -229,8 +249,14 @@ function renderWithTemplate(input: RenderInput): RenderResult {
     prelude: input.prelude,
     role: headers.role + '\n' + role,
     goal: goal === null ? undefined : '\n\n' + headers.goal + '\n' + goal,
-    task: task === null ? undefined : '\n\n' + headers.task + '\n' + task,
   };
+  if (input.taskSlots === undefined) {
+    slots.task = task === null ? undefined : '\n\n' + headers.task + '\n' + task;
+  } else {
+    slots.task_round = '\n\n' + headers.task + '\n' + input.taskSlots.round;
+    slots.task_batched = input.taskSlots.batched === null ? undefined : '\n\n' + input.taskSlots.batched;
+    slots.task_earlier = input.taskSlots.earlier === null ? undefined : '\n\n' + input.taskSlots.earlier;
+  }
   // Pass exactly the slots each frozen template's table declares; an absent
   // section is an undefined value, not a missing key.
   if (input.templateId === 'work-input') {
@@ -279,7 +305,13 @@ function renderWithTemplate(input: RenderInput): RenderResult {
       // section when neither exists). The block is part of that slot's value, so the
       // section's interval, derived from the slot's range, covers those lines and
       // they are not outside every interval.
-      if (task !== null) slots.task = (slots.task ?? '') + block;
+      if (input.taskSlots !== undefined) {
+        // The block belongs after the LAST non-empty task slot, so it stays at
+        // the end of the whole task segment, not in the middle of it.
+        const last = input.taskSlots.earlier !== null ? 'task_earlier'
+          : input.taskSlots.batched !== null ? 'task_batched' : 'task_round';
+        slots[last] = (slots[last] ?? '') + block;
+      } else if (task !== null) slots.task = (slots.task ?? '') + block;
       else if (goal !== null) slots.goal = (slots.goal ?? '') + block;
       else slots.role = (slots.role ?? '') + block;
     }
@@ -316,7 +348,21 @@ function renderWithTemplate(input: RenderInput): RenderResult {
       continue;
     }
     if (name === 'goal' && goal === null) continue;
-    if (name === 'task' && task === null) continue;
+    if (name === 'task') {
+      if (input.taskSlots !== undefined) {
+        // The three slots are one section: it starts at `task_round` and ends
+        // at the last adjacent slot this round rendered.
+        const first = rangeOf('task_round');
+        let endByte = first.endByte;
+        for (const slot of ['task_batched', 'task_earlier']) {
+          const range = rendered.sectionRanges[slot];
+          if (range !== undefined) endByte = range.endByte;
+        }
+        sections.push({ name: 'task', startByte: first.startByte + 2, endByte, omitted: 0 });
+        continue;
+      }
+      if (task === null) continue;
+    }
     if (name === 'continuation' && input.continuationSuffix === null) continue;
     if (name === 'unknown_call_review' && input.reviewSuffix === null) continue;
     const range = rangeOf(name);
@@ -382,10 +428,12 @@ export function renderContext(input: {
 }
 
 export function renderQueryContext(input: {
-  templateId: 'query-planning-input' | 'query-copy-input';
+  templateId: 'query-planning-input' | 'query-copy-input' | 'secretary-round';
   prelude: string;
   required: { role: string; goal: string | null; task: string | null };
-  optional: Partial<Record<'footprint', OptionalRow[]>>;
+  /** The secretary's three task slots; present only for `secretary-round`. */
+  taskSlots?: { round: string; batched: string | null; earlier: string | null };
+  optional: Partial<Record<'footprint' | 'notes', OptionalRow[]>>;
   residentBudgetBytes: number;
   /** Ruling 10: the frozen tool list; absent renders every tool block (direct call). */
   toolNames?: readonly string[];
@@ -397,12 +445,14 @@ export function renderQueryContext(input: {
   texts?: PromptTextsV1;
 }): RenderResult {
   const texts = input.texts ?? DEFAULT_TEXTS;
+  const callKind = input.templateId === 'query-planning-input' ? 'planning'
+    : input.templateId === 'query-copy-input' ? 'copy' : 'secretary';
   return renderWithTemplate({
     templateId: input.templateId,
-    sectionOrder: input.sectionOrder ?? sectionOrderFor(
-      input.templateId === 'query-planning-input' ? 'planning' : 'copy', input.templateId, texts),
+    sectionOrder: input.sectionOrder ?? sectionOrderFor(callKind, input.templateId, texts),
     prelude: input.prelude,
     required: input.required,
+    ...(input.taskSlots === undefined ? {} : { taskSlots: input.taskSlots }),
     optional: input.optional,
     continuationSuffix: null,
     reviewSuffix: null,

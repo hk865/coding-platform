@@ -13,11 +13,11 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "9ae59b610765acf3490652948da331792a157a8602be6d24782e5c541033e528"
+    "sha256": "6f82f76caf8e7f927f95e034d244009beee06ebb9ddddd4ab2a38c25a2b8dc07"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "4b50399bbd0dca5d04d9817d5abec65873989764fc5ff3b402651c4a5c19bee0"
+    "sha256": "a6a48b5e8c0fb473a62c5f6fd58ce63d34c4a191d3aca48e8b224423253f95ee"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
@@ -62,6 +62,14 @@
   {
     "path": "resources/prompts/platform/templates/query-copy-input.txt",
     "sha256": "89ee28b2dc868787a7e41a063edadf9765e474e93b3bb477b038f93909808e20"
+  },
+  {
+    "path": "resources/prompts/platform/templates/secretary-round.txt",
+    "sha256": "1fbe219c936568074193d9f4f57dd5a15e963f6487be2838a78d040429b3cc7c"
+  },
+  {
+    "path": "resources/prompts/platform/templates/secretary-answer.txt",
+    "sha256": "56d38906f282a01b6f627e0d1ffe023445e753daa5fc2c4049c7287e513ba30c"
   },
   {
     "path": "resources/prompts/platform/templates/base.txt",

@@ -1,16 +1,181 @@
-# AgentRuntime 当前实现
+# src/core/agent-runtime：把已受理的 Work/Query 执行事实接到 Kernel 模型循环，并把原始历史还原成可提交的观察
 
-2026-09-25。`runtime.ts`/`ports.ts` 的 prepareExecution/startRun 仍是 unsupported 骨架；组合根已经接通 createSession/readSessionHistory/readExecutionHistory 及真实配置下的 capabilities 查询。已有底层组件不等于正式 Run 编排完成，具体复用前提见[能力索引](../../../../../docs/refactor/IMPLEMENTED-CAPABILITIES.md#6-agentruntime-与冻结-kernel)。
+## 负责什么，不负责什么
+- 负责：Work/Query 的准备（有界 manifest、冻结提示词与工具声明、工作区基线）、fresh 启动、运行观察/归约、控制投递、预算计量、Run 启动对账、Session 创建与原历史读取、工具适配与工具组装配、上下文装配与渲染。
+- 只做适配：可信绑定与平台配置由 Host/组合根提供；记录、业务规则、授权判定和状态迁移都在 WorkGraph，本层不持有第二份事实。
+- 依赖只允许 WorkGraph、WorkspaceTools、RecordStore 和 `src/contracts`；不得 import `src/business`、`src/app`、`src/composition`。Kernel 只经 `vendor/coding-agent/dist/public-api.js`。
+- 状态写入：本层不直接造状态记录，状态迁移只经 `src/core/work-graph/state/` 的构造器（AGENTS 第 9 条）；本层只提交观察与事实。
+- 提示词：包格式、选包和模板渲染的正本在 `src/contracts/prompts`，本层只消费。
 
-- `session-operations.ts` / `kernel-store-locator.ts`：已有真实 Session 创建、固定 Store 映射、原历史分页和创建失败恢复；组合根可调用。
-- `observed-model-run.ts`：真实 Kernel 模型与工具循环、预算、调用前守卫和资源清理；已透传 sessionContext/executionIdentity，历史由 Kernel 装配，正式 Task/Query 驱动尚未接通。
-- `project-source-tool.ts`、`exploration-tools.ts`：模型源码工具与有限精确读取；frozen 模式失败不回落 live。
-- `source-capture-access.ts`：复制准备绑定，按当前已受理事实重核 Work/Reviewer/Query 身份与资格，维护一次循环独占的捕获注册表。
-- `source-binding-types.ts`：仅保留绑定真正消费的准备字段；`source-tool-ports.ts` 是可信装配提供的工具能力。
-- `../work-graph/source-authority-ports.ts`：只读事实接口；生产 provider 尚未实现。单元测试中的事实夹具不是运行派发器。
+## 文件
 
-下一阶段接线必须由 WorkGraph/RecordStore 解码真实记录和事件、由平台运行入口提供已受理身份；不得接回旧 StateLedger 或以固定 system actor 代替。Query 历史扫描保留原成本，不能把迁移报告当作索引已实现。
+### Runtime 与执行驱动
+做 Runtime 装配、执行端口和 Work/Query 驱动接线的去这组。
+- `index.ts` — 包入口，只导出 `createAgentRuntime` 与 capability 类型。
+- `contracts.ts` — capability 词汇（`RuntimeCapabilities`）。
+- `ports.ts` — `RuntimeExecutionPort`/`AgentRuntimePort`/`AgentRuntimeService`：整个执行面的正式端口。
+- `runtime.ts` — `createAgentRuntime`：装配并发布端口；无依赖时只给显式 unsupported/unavailable，不伪造能力。
+- `execution-contracts.ts` — 执行与 Query 的 prepare/start/observe 请求、结果和 `RuntimeExecutionDependencies` 依赖束。
+- `execution-history-contracts.ts` — 原历史分页与图执行历史的请求/端口类型。
+- `execution-control.ts` — 内部安全点控制协调器：pause/cancel 的 live handle 与退出证明。
+- `execution-driver.ts` — Work fresh 执行驱动与 shell blocked/allowance hook。
 
-验收与未闭合消费者见 [补迁对账](../../../../../docs/refactor/reviews/next-completed-migration-2026-09-24.md)。
+### 执行准备与输入
+做 Work 准备、输入通道、模型预算、注册检查和 Role profile 的去这组。
+- `execution-preparation.ts` — Work 准备：读已受理事实与 Role/Host 配置，存有界 manifest、冻结提示词和工作区基线。
+- `execution-inputs.ts` — 统一输入通道：邮件、答复、steer 和 attention 的候选与 accepted 排除。
+- `check-execution.ts` — 可信 Host 注册检查执行器。
+- `model-budget.ts` — 模型预算、token 计量与超限错误。
+- `model-call-access.ts` — 一次性模型调用许可：绑定校验、durable permit。
+- `run-limits.ts` — 平台预算映射为 Kernel `RunLimits`。
+- `role-profiles.ts` — 平台 Role duty profile 表。
 
-`observation-recovery.ts` 当前仅组合既有历史 owner 提供精确 runId/turnId 原始证据读取，不归约执行状态或完成历史边界；空页不证明未进入，Kernel物理读取成本仍见能力索引 RT7。
+### Kernel 适配与模型调用
+做 Kernel 模型/工具循环、Turn 解码、Session 存储映射和原历史分页的去这组。
+- `observed-model-run.ts` — 唯一的 Kernel 模型/工具循环。
+- `kernel-turn-facts.ts` — Kernel SessionRecord 解码与单个 Turn 归约。
+- `kernel-store-locator.ts` — Session 到 Kernel store 的固定映射注册表。
+- `session-operations.ts` — Session 创建、原历史分页、cursor owner 与 Kernel DB 状态。
+
+### 上下文与提示词渲染
+做上下文装配、各调用配方、事实文本、渲染和提示词冻结的去这组。
+- `context-assembler.ts` — 上下文装配入口与依赖接线。
+- `context-types.ts` — 装配器类型、模板 id（含 `secretary-round`）、节序与历史判定词汇；`ContextAssemblerDependencies.secretaryFacts?` 是同一准备端口的注入点。
+- `context-work-recipe.ts` — Work 上下文装配配方。
+- `context-query-recipe.ts` — Query 上下文装配配方；请求轮先按 `isRequestRound` 转到秘书配方。
+- `context-secretary-recipe.ts` — 秘书轮上下文装配：经声明的 `secretaryFacts`/`memoryMaterial` 依赖读一次事实，由共享渲染器写 `secretary-round` 的三个 task 槽与 notes 预算。
+- `context-review-recipe.ts` — review 轮上下文装配。
+- `context-continuation-recipe.ts` — continuation 段的 blocked commands 与 brief 事实。
+- `context-history-facts.ts` — Session 历史模式/基线判定与 Kernel 命令事实。
+- `context-fact-text.ts` — 各段 payload/文本构造（Role、Goal、Task、Query、notes 等）；`withNoteVersion` 与 `understandingLine` 是共用的注记行规则。
+- `context-rendering.ts` — 纯渲染：节序、字节预算、模板渲染、attention；`packString` 是固定字符串读取（`context-fact-text.ts`、`context-work-recipe.ts` 里各有一份更早的私有副本）；`templateSectionOrder` 把 `secretary-round` 的三个 `task_*` 槽投影成一个 `task` 段，`sectionOrderFor`/`queryPreparedSectionOrder` 也覆盖 `secretary`，`renderQueryContext` 同时渲染秘书轮。
+- `context-review-input.ts` — unknown-call review 输入构造与命令字节上限。
+- `context-workspace-facts.ts` — brief/review 用的工作区事实与 diff。
+- `context-support.ts` — 本层小工具（字节数、排序、拒绝结果、`messageOf` 旧副本）。
+- `architecture-reminders.ts` — 纯架构提醒行构造（消费 findings，不重比图）。
+- `prompt-set-texts.ts` — 提示词文本存取、pack 解析与 Skill 选择。
+- `platform-skill-root.ts` — 仓库 `resources/skills` 根常量。
+
+### 工具注册与工具实现
+做工具组装配和每个 Kernel 工具实现的去这组。
+- `tool-group-assembly.ts` — 工具组装配、工具名清单与顺序。`createQueryGraphToolGroup` 接受可空 `goalRef` 与可选 notes 读端口（只有秘书轮绑定）；`createGraphHistoryProxy` 在无可信目标时以 `invalid` 拒绝。
+- `exploration-tools.ts` — 源码探索工具组。
+- `graph-tools.ts` — `look_graph`/`find_graph` 只读图工具；`goalRef` 可为 `null`（请求无目标时的项目读分支）。`history` 模式没有可信目标时以 `invalid`“this request has no goal”拒绝，不拿别的目标的历史。
+- `note-tool.ts` — `record_note` 工具。
+- `whiteboard-tools.ts` — 白板/未来计划工具。
+- `communication-tools.ts` — SessionMailbox 与用户决策工具。
+- `session-discovery-tools.ts` — Session 发现工具（已弃用，保留旧 Run 行为）。
+- `unknown-call-review-tools.ts` — review 轮的记录与更安全方案工具。
+- `command-rerun-tools.ts` — `request_command_rerun` 工具。
+- `readonly-command-tool.ts` — `run_readonly_command` 沙箱工具、注册与选项。
+
+### 观察与恢复
+做原历史观察、活动计数、continuation brief 和启动对账的去这组。
+- `execution-observation.ts` — Work 观察：沿 locator 读原历史、归约 Turn、提交唯一终态。
+- `query-observation.ts` — Query 原历史观察与终态提交；request round 的最终文本按 manifest 冻结的执行种类做秘书回答检查（`parseSecretaryAnswer`），空、超 16 KiB 或格式不符时终态 `failed`、不写回答、带 `answerCheck`；普通 Query 照旧记 `gap`。
+- `observation-recovery.ts` — 按 Kernel run/turn 过滤的精确原历史读取。
+- `graph-execution-history.ts` — WorkGraph locator 到 RT7 原历史的适配。
+- `continuation-brief-assembly.ts` — continuation brief 的事实读取与纯装配。
+- `run-reconcile.ts` — 启动与进程内 Run/Query 对账分类器。
+- `session-anomaly-facts.ts` — 归档异常锚点旁的变更文件快照。
+- `unknown-call-draft.ts` — unknown-call review 草稿读取与工作区捕获。
+- `run-activity-reader.ts` — 有界活动窗口读取。
+- `run-activity-tally.ts` — 纯 Turn 活动计数。
+
+### 查询与来源绑定
+做 Query 驱动和源码捕获/来源绑定的去这组。
+- `query-preparation.ts` — Query 有界输入准备与 manifest 绑定。
+- `query-execution.ts` — 一次 fresh QueryRun 的驱动。角色绑定与预算一律经 `queryExecutionBindingOf`；`callKind: 'secretary'` 的轮次把清单冻结的 `request.effectiveGoalId` 写进 `query_run` 主体的 `goalId` 并作为图工具目标（无目标时为 `null`，图工具读项目），其余 Query 的主体形状不变。
+- `project-source-tool.ts` — `project_source` 查询/捕获工具。
+- `source-capture-access.ts` — 源码捕获访问与 Work/Query 工厂；Query 的主体/权限身份里的角色取 `queryExecutionBindingOf`，`intent.execution` 只留作执行身份校验。
+- `source-tool-ports.ts` — 源码工具端口与 `BoundModel` 类型。
+- `source-binding-types.ts` — 源码绑定读取的准备字段 `SourceRunSpec`。
+
+## 可以复用的能力
+| 名字 | 位置 | 做什么 | 什么时候用 |
+| --- | --- | --- | --- |
+| `createAgentRuntime` | `src/core/agent-runtime/runtime.ts:558` | 装配并发布整套执行端口；无依赖时只给显式 unsupported/unavailable，不伪造能力 | 组合根构造 Runtime 的唯一入口 |
+| `createContextAssembler` | `src/core/agent-runtime/context-assembler.ts:27` | 按调用种类装配一次上下文 | prepare 需要正式上下文时，别自己拼 |
+| `assembleSecretaryContext` | `src/core/agent-runtime/context-secretary-recipe.ts:85` | 按冻结的秘书准备事实渲染 `secretary-round` 并生成合法绑定 | 秘书请求轮装配；经 `assembleQuery` 自动进入 |
+| `createExecutionPreparation` | `src/core/agent-runtime/execution-preparation.ts:315` | Work 有界准备与 manifest/提示词冻结 | 启动 Work Run 之前 |
+| `createExecutionDriver` | `src/core/agent-runtime/execution-driver.ts:323` | Work fresh 启动、进入与模型循环 | 正式 Work Run 启动 |
+| `createExecutionObservation` | `src/core/agent-runtime/execution-observation.ts:249` | 沿 locator 归约原历史并提交终态 | observe/reconcile Work Run |
+| `createQueryPreparation` | `src/core/agent-runtime/query-preparation.ts:156` | Query 有界输入准备 | Query claim 之后 |
+| `createQueryExecutionDriver` | `src/core/agent-runtime/query-execution.ts:188` | 一次 fresh QueryRun 驱动 | 正式 Query 启动 |
+| `createQueryObservation` | `src/core/agent-runtime/query-observation.ts:277` | Query 原历史观察与终态提交；request round 的回答检查结果放在终态观察的 `answerCheck` | observe QueryRun |
+| `createRuntimeControlCoordinator` | `src/core/agent-runtime/execution-control.ts:126` | 安全点 pause/cancel 协调与退出证明 | 投递控制意图 |
+| `createRuntimeModelCallAccess` | `src/core/agent-runtime/model-call-access.ts:41` | 一次性 durable 模型调用许可 | 每次 provider 调用前 |
+| `runObservedModel` | `src/core/agent-runtime/observed-model-run.ts:207` | 唯一的 Kernel 模型/工具循环 | 需要跑模型时；不要写第二个循环 |
+| `createSessionOperations` | `src/core/agent-runtime/session-operations.ts:533` | Session 创建、原历史分页与创建恢复 | 组合根创建/读 Session |
+| `createSessionHistoryCursorOwner` | `src/core/agent-runtime/session-operations.ts:894` | 完成轮边界、cursor 与 turn bounds 读取 | 需要 completed boundary |
+| `createKernelStoreRegistry` | `src/core/agent-runtime/kernel-store-locator.ts:46` | Session 到 Kernel store 的固定映射 | 组合根构造 Kernel reader |
+| `createRegisteredCheckRunner` | `src/core/agent-runtime/check-execution.ts:78` | 执行注册检查并记录真实观察 | verification 检查 |
+| `createGraphExecutionHistoryReader` | `src/core/agent-runtime/graph-execution-history.ts:176` | 图 locator 到原始历史的分页读取 | 读某 Run 的 Kernel 历史 |
+| `createExecutionHistoryReader` | `src/core/agent-runtime/observation-recovery.ts:242` | 按 run/turn 过滤原历史页 | 精确原历史读取 |
+| `createArchiveChangedFilesReader` | `src/core/agent-runtime/session-anomaly-facts.ts:111` | 归档锚点旁的变更文件快照 | `readArchiveChangedFiles` |
+| `decodeKernelEntry` | `src/core/agent-runtime/kernel-turn-facts.ts:28` | 解码一条 Kernel SessionRecord | 所有 Kernel 历史读取 |
+| `reduceTurnFromStart` | `src/core/agent-runtime/kernel-turn-facts.ts:53` | 从 turn 起点归约 `RunState` | 观察、对账、brief |
+| `applyTurnEvents` | `src/core/agent-runtime/kernel-turn-facts.ts:62` | 在已归约状态上应用增量 | 增量观察 |
+| `unresolvedToolCallIds` | `src/core/agent-runtime/kernel-turn-facts.ts:81` | 列未闭合工具调用 | 判断 Turn 能否完成 |
+| `readRunActivityFacts` | `src/core/agent-runtime/run-activity-reader.ts:53` | 显式窗口内的有界活动事实 | 结束 Run 的活动计数 |
+| `tallyTurnActivity` | `src/core/agent-runtime/run-activity-tally.ts:104` | 纯 Turn 活动计数 | 已有解码 Turn 时 |
+| `readPreviousTurn` | `src/core/agent-runtime/continuation-brief-assembly.ts:537` | 读上一 Turn 的真实证据 | requeue brief |
+| `assembleContinuationBrief` | `src/core/agent-runtime/continuation-brief-assembly.ts:798` | 纯函数装配 continuation brief | requeue Run 准备 |
+| `reconcileRunAtStartup` | `src/core/agent-runtime/run-reconcile.ts:219` | 启动时分类一个 Run 并提交一次对账 | 启动恢复 |
+| `reconcileQueryRunAtStartup` | `src/core/agent-runtime/run-reconcile.ts:572` | QueryRun 启动对账 | Query 恢复 |
+| `reconcileRunControlsAtStartup` | `src/core/agent-runtime/run-reconcile.ts:523` | 启动时结清排队控制与已接受的 steer | 控制意图恢复 |
+| `readAttestationFacts` | `src/core/agent-runtime/run-reconcile.ts:654` | 读 attestation 的 Kernel 与输入确认事实 | RUN-25 判定 |
+| `readReviewDraftAtEntry` | `src/core/agent-runtime/run-reconcile.ts:732` | 入口一次读 Kernel 事实与未截断 review 草稿 | review 轮入口 |
+| `readUnknownCallReviewDraft` | `src/core/agent-runtime/unknown-call-draft.ts:174` | 读完整 review 草稿 | review 候选与 attestation |
+| `renderContext` | `src/core/agent-runtime/context-rendering.ts:396` | 按冻结模板渲染 Work 输入并记录节区间 | prepare Work |
+| `renderQueryContext` | `src/core/agent-runtime/context-rendering.ts:430` | 渲染 Query 输入 | prepare Query |
+| `rerenderContextV1` | `src/core/agent-runtime/context-rendering.ts:472` | 只替换 review 槽重渲染 | 准备 review 指令 |
+| `renderAttentionChanges` | `src/core/agent-runtime/context-rendering.ts:514` | 渲染 attention 段 | attention 扫描 |
+| `storePromptTexts` | `src/core/agent-runtime/prompt-set-texts.ts:173` | 每种文本只存一次，返回冻结 `PromptSetV1` | prepare 冻结提示词 |
+| `readPromptTexts` | `src/core/agent-runtime/prompt-set-texts.ts:249` | 按 ref 读文本并校验内容 | 读冻结提示词 |
+| `resolvePromptPack` | `src/core/agent-runtime/prompt-set-texts.ts:140` | 经 `PromptPackSourcePort` 解析指定 pack | prepare 选包 |
+| `selectPromptSkills` | `src/core/agent-runtime/prompt-set-texts.ts:339` | 按选择取 Skill 内容 | prepare 冻结 Skill |
+| `ModelBudget` | `src/core/agent-runtime/model-budget.ts:44` | 一次执行的预算与用量账 | 模型请求记账 |
+| `kernelRunLimits` | `src/core/agent-runtime/run-limits.ts:40` | 平台预算映射为 Kernel limits | 启动 Kernel run |
+| `selectWorkToolGroup` | `src/core/agent-runtime/tool-group-assembly.ts:220` | 按 grant/配置选 Work 工具组 | 驱动装配 |
+| `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:519` | 最终工具名与固定顺序 | 提交工具声明 |
+| `createGraphHistoryProxy` | `src/core/agent-runtime/tool-group-assembly.ts:121` | 图历史读端口的工具代理 | 工具需要图历史 |
+| `createProjectSourceTool` | `src/core/agent-runtime/project-source-tool.ts:235` | `project_source` 冻结模式工具 | 源码工具组 |
+| `createExplorationTools` | `src/core/agent-runtime/exploration-tools.ts:105` | 源码探索工具组与生命周期 | 模型循环探索 |
+| `kernelEnabledToolNames` | `src/core/agent-runtime/tool-group-assembly.ts:466` | Kernel 回调的启用工具名与顺序 | 构造 Kernel 回调 |
+| `platformRoleProfile` | `src/core/agent-runtime/role-profiles.ts:70` | 平台 Role duty profile | 选择/配置 duty |
+| `PLATFORM_SKILL_RESOURCE_ROOT` | `src/core/agent-runtime/platform-skill-root.ts:12` | 仓库 `resources/skills` 根 | 配置 Skill 根 |
+| `READONLY_COMMAND_TOOL_NAME` | `src/core/agent-runtime/readonly-command-tool.ts:26` | 只读命令工具名 | Host 授权与配置过滤 |
+| `projectQueryConfiguration` | `src/core/agent-runtime/query-preparation.ts:113` | 解析并校验 Query 的 Host 配置 | 组合根构造 Query 配置 |
+| `readKernelCommandFacts` | `src/core/agent-runtime/context-history-facts.ts:221` | 读原 Run 的完整 command/cwd 事实 | review/blocked command |
+| `rejected` | `src/contracts/core/rejections.ts:5` | **正本**：带 code/reason 的拒绝结果形状 | 拒绝输入或读失败时；本层 `context-support.ts` 的副本是旧副本 |
+
+### 同名多份（正本已定，旧副本待清理）
+- `messageOf`：正本为 `src/contracts` 新增（M1-38，尚未落地）；现有 `src/core/agent-runtime/context-support.ts:11`、`src/core/record-store/record-codec.ts:77`、`src/core/work-graph/queries/query-job-service.ts:91`，以及本层另外 13 个文件里的私有副本都是旧副本，新代码一律用正本。
+- `rejected`：正本 `src/contracts/core/rejections.ts:5`，本层副本 `src/core/agent-runtime/context-support.ts:17`；本层另有 14 份私有副本（M1-29）。
+- `isRecord`：正本 `src/contracts/validation/common.ts:10`，本层 `src/core/agent-runtime/context-support.ts:14`；本层另有 12 份私有副本。
+- `nonEmpty`：正本 `src/contracts/validation/common.ts:13`；本层另有 7 份私有副本。
+- `utf8Bytes`：正本 `src/contracts/validation/common.ts:32`，本层 `src/core/agent-runtime/context-support.ts:5`。
+- 通用文本限制：`queryTextProblem`（`src/core/work-graph/queries/query-job-service.ts:85`）是 Query 文本的正本；本层的字节/条数上限是各协议固定值，不要另造通用校验器。
+
+## 内部用
+- 上下文事实与 payload：`assembleWorkContext`、`assembleQueryContext`、`assembleReviewForContext`、`assembleBriefForContext`、`readTaskBlockedCommands`、`takesSessionHistoryOf`、`sessionHistoryDecision`、`sessionBasisForContext`、`reviewSessionBasis`、`archiveOriginSkipsHistorySeed`、`runEnteredKernel`、`effectiveDuty`、`rolePayload`、`goalPayload`、`declarationsForTask`、`taskPayload`、`missingInputReminder`、`optionalRowsFromExtensions`、`annotations`、`queryFocusLines`、`queryPlanSummary`、`topLevelModuleCards`、`notImplementedExtensions`、`noteSourcesOf`、`briefWorkspaceFactsFor`、`readReviewCaptureChanges`、`unknownCallReviewFilesFor`。
+- 上下文渲染与输入校验：`contextSectionHeaders`、`workContextPrelude`、`queryContextPrelude`、`CONTEXT_FORMAT_VERSION`、`CONTEXT_SECTION_ORDER`、`templateSectionOrder`、`sectionOrderFor`、`workPreparedSectionOrder`、`queryPreparedSectionOrder`、`renderSkillTextV1`、`ATTENTION_HEADER`、`ATTENTION_MAX_BYTES`、`REVIEW_COMMAND_MAX_BYTES`、`buildUnknownCallReviewInputV1`、`trimUnknownCallReviewInput`、`byKey`、`mapRead`、`requirementIdOf`、`emptyNotes`、`indexRowText`、`canonical`、`sortedSources`。
+- 架构提醒与 continuation：`ARCHITECTURE_REMINDER_UNAVAILABLE_KEY`、`architectureReminderRowEntries`、`ANOMALY_ANCHOR_LIMIT`、`assembleAnomalySection`、`assembleUnknownCallReviewSection`、`acceptedMessagesOf`、`selfChangedFactsOf`。
+- 执行、输入与预算：`createShellBlockedHook`、`SHELL_BLOCKED_UNCONFIRMED_TEXT`、`SHELL_ALLOWANCE_UNCONFIRMED_TEXT`、`turnIsComplete`、`terminalEventOf`、`transcriptHasOutcomeUnknown`、`deriveInputId`、`formatDecisionResponseInput`、`createMailboxInputSupply`、`createControlOnlyInputSupply`、`confirmMailboxInputs`、`PREPARED_MANIFEST_CONTENT_TYPE`、`MAX_PREPARED_MANIFEST_BYTES`、`WORKSPACE_BASELINE_CONTENT_TYPE`、`REVIEW_INSTRUCTION_MAX_BYTES`、`fitUnknownCallReviewForManifest`、`rehydratePreparedExecution`、`snapshotRuntimeConfiguration`、`loadPreparedManifest`、`briefWorkspaceFacts`、`MAX_QUERY_MANIFEST_BYTES`、`BudgetExceeded`、`ContextCapacityExceeded`、`taskBudgetDeadlineRemaining`、`remainingTaskDeadlineMs`、`RuntimeModelCallRejected`。
+- 历史、活动与对账：`unknownFacts`、`bookLateEvidenceInProcess`、`stopPausedRunInProcess`、`kernelDatabaseState`、`RUNTIME_HISTORY_PRINCIPAL_ACTOR`。
+- 工具适配：`createGraphTools`、`GRAPH_TOOL_NAMES`、`metadataSample`、`toModelCoverage`、`toModelCapture`、`projectSourceInputSchema`、`createNoteTools`、`NOTE_TOOL_NAMES`、`createWhiteboardTools`、`WHITEBOARD_TOOL_NAMES`、`createSessionMailboxTools`、`SESSION_MAILBOX_TOOL_NAMES`、`USER_DECISION_TOOL_NAMES`、`SESSION_MESSAGE_SEND_TIMEOUT_MS`、`createSessionDiscoveryTools`、`SESSION_DISCOVERY_TOOL_NAMES`、`createUnknownCallReviewTools`、`RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME`、`PROPOSE_SAFER_METHOD_TOOL_NAME`、`RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES`、`PROPOSE_SAFER_METHOD_TOOL_NAMES`、`UNKNOWN_CALL_REVIEW_EVIDENCE_MAX_CHARS`、`UNKNOWN_CALL_REVIEW_CRASH_EVIDENCE_MAX_CHARS`、`UNKNOWN_CALL_PROPOSAL_RATIONALE_MAX_CHARS`、`createCommandRerunTools`、`REQUEST_COMMAND_RERUN_TOOL_NAME`、`REQUEST_COMMAND_RERUN_TOOL_NAMES`。
+- 工具组装配与源码捕获：`createQueryGraphToolGroup`、`createReviewToolGroup`、`createRerunToolGroup`、`assembleObservedExtensions`、`EXPLORATION_TOOL_NAMES`、`BUILTIN_TOOL_NAMES`、`RESERVED_TOOL_NAMES`、`RUNTIME_TOOL_NAMES`、`createSourceCaptureAccess`、`createRuntimeSourceCaptureFactory`、`createQuerySourceCaptureFactory`、`unknownCallInventoryProblem`、`captureUnknownCallWorkspace`、`createReadonlyCommandTool`、`registerReadonlyCommandTool`、`readonlyCommandSandboxOptions`、`READONLY_OUTPUT_STREAM_LIMIT_BYTES`、`READONLY_OUTPUT_LIMIT_BYTES`、`READONLY_DEFAULT_TIMEOUT_MS`、`READONLY_MIN_TIMEOUT_MS`、`READONLY_MAX_TIMEOUT_MS`、`READONLY_DISPATCHER_TIMEOUT_MS`、`READONLY_MAX_EXTERNAL_PATHS`。
+- 提示词：`trackPromptTexts`、`promptRenderProblem`、`promptDeclarationProblem`、`DEFAULT_SKILL_SELECTION`。
+
+## 不要做
+- 不 import `src/business`、`src/app`、`src/composition`；不绕过 Kernel 的 `public-api` 取私有实现，也不把平台默认配置当业务事实。
+- 不直接写 WorkGraph 记录或状态字段；状态迁移只用 `src/core/work-graph/state/` 的构造器，本层只提交观察/事实（AGENTS 第 9 条）。
+- 不另写提示词渲染器或选包规则：格式、选包、渲染在 `src/contracts/prompts`；本层只组合 `parseTemplateV1`/`renderTemplate`。
+- 不新建第二份 transcript、store、plan engine 或 budget：观察只沿 locator 读原始历史，工具是薄适配，业务判断留给 WorkGraph owner（M1-37/M1-19）。
+- `messageOf` 另有旧副本：`src/core/agent-runtime/context-support.ts:11`、`src/core/record-store/record-codec.ts:77`、`src/core/work-graph/queries/query-job-service.ts:91`，以及本层另外 13 个文件里的私有副本，新代码一律用 `src/contracts` 新增的正本（M1-38，尚未落地），旧副本由清理轮删除。
+- `rejected` 另有旧副本：`src/core/agent-runtime/context-support.ts:17`，以及本层另外 14 份私有副本，新代码一律用 `src/contracts/core/rejections.ts:5` 的正本，旧副本由清理轮删除。
+- `isRecord` 另有旧副本：`src/core/agent-runtime/context-support.ts:14`，以及本层另外 12 份私有副本，新代码一律用 `src/contracts/validation/common.ts:10` 的正本，旧副本由清理轮删除。
+- `nonEmpty` 另有旧副本：本层 7 份私有副本，新代码一律用 `src/contracts/validation/common.ts:13` 的正本，旧副本由清理轮删除。
+- `utf8Bytes` 另有旧副本：`src/core/agent-runtime/context-support.ts:5`，新代码一律用 `src/contracts/validation/common.ts:32` 的正本，旧副本由清理轮删除。
+- 不把失败读成空事实或成功：`mapRead` 保留原 code，`not_found`/`not_ready` 不当 ready（FP-05/M1-12/MH-06）。

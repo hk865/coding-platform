@@ -1,6 +1,7 @@
 /** WP2 F-N: real S1 owners and backends; constructor hooks only add schemas and
  * the backend's own beforeWrite fault point. No histories or cursor values are seeded. */
 import { expect, vi } from 'vitest';
+import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
 import { DatabaseSync } from 'node:sqlite';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
@@ -175,7 +176,7 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
       maxRequests: 4, maxToolCalls: 8, timeoutMs: null, perResponseTokens: 512 };
     const host = { configurationRevision: 'wp2-query-host', permissions: { tools: ['read'], writeScope: [] as [] },
       hostTemplate: B2_HOST.hostTemplate, budget };
-    const owner = createQueryExecution({ records, roles, bodies: b2.bodies, now: f.now, eventId: f.id,
+    const owner = createQueryExecution({ records: withBackendOrderedLookup(records, b2.base.records), roles, bodies: b2.bodies, now: f.now, eventId: f.id,
       hostInstance: { hostInstanceId: 'wp2-host', lease: 'owned' }, authorizeConfiguration: async () => ({ status: 'ready', value: host }) });
     const jobs = createQueryJobService({ records, execution: owner, consultations: f.mailbox, now: f.now, eventId: f.id });
     const ids = message ? consultationQueryRefs(message.ref) : (() => { const id = f.id(); return {
@@ -213,7 +214,7 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
       const answer: QueryJobAnswerV1 = { schemaVersion: 1, answerId: f.id(), queryJobRef, runRef: queryRunRef,
         roundIndex: 0, answer: text, sources: [], followsAnswerRef: null, stale: false, staleReason: null, answeredAt: f.now(), bodyRef: stored.ref, ideas: [], goalCardDrafts: [] };
       const result = committed(await owner.recordQueryObservation(ctx, { input: { entry, history: { ...history, observedThroughPosition: 3, endPosition: 3 },
-        source: { position: 3, cursor: 'wp2-query-answer' }, observation: { kind: 'terminal', occurredAt: f.now(), outcome: 'answered', answer, reason: null } },
+        source: { position: 3, cursor: 'wp2-query-answer' }, observation: { kind: 'terminal', occurredAt: f.now(), outcome: 'answered', answer, reason: null, answerCheck: null } },
         meta: { requestId: f.id(), expected: [await f.pin(queryRunRef)] } }));
       if (!result.value.answer || !message) throw new Error('answer association requires real consultation');
       const write = { input: { messageRef: message.ref, answerRef: result.value.answer.ref }, meta: { requestId: f.id(), expected: [await f.pin(message.ref)] } };

@@ -31,6 +31,7 @@ function settledState(): QueryExecutionStateV1 {
     entry: null,
     history: null,
     requests: [],
+    requestProfile: null,
   };
 }
 

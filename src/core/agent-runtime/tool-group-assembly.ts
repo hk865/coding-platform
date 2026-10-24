@@ -30,6 +30,7 @@ import { kernelToolNameOf } from '../work-graph/state/unknown-call-kinds.js';
 import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
+import type { NoteMemoryReadPort } from '../work-graph/model/note-contracts.js';
 import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
 import type {
   ExecutionHistoryPage, GraphExecutionHistoryReadPort, TaskExecutionHistoryRequest,
@@ -98,7 +99,8 @@ export const RUNTIME_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
 export type GraphHistoryProxyInput = {
   graph: GraphContextReadPort;
   history: GraphExecutionHistoryReadPort;
-  goalRef: GoalRef;
+  /** The trusted current Goal; `null` refuses every Run history read. */
+  goalRef: GoalRef | null;
   hostContext: CoreCallContext;
 };
 
@@ -117,8 +119,12 @@ export type GraphHistoryProxyInput = {
  * context) and the QueryJob's canonical Goal.
  */
 export function createGraphHistoryProxy(input: GraphHistoryProxyInput): GraphExecutionHistoryReadPort {
+  const goalRef = input.goalRef;
   return {
     async readTaskExecutionHistory(toolCtx, request: TaskExecutionHistoryRequest): Promise<ReadResult<ExecutionHistoryPage>> {
+      // The Run card is validated in one Goal's universe. With no trusted Goal
+      // no Run can be checked, so refuse before either owner is reached.
+      if (goalRef === null) return rejected('invalid', 'this request has no goal');
       // The Run card is validated under the ORIGINAL tool identity (its own
       // principal and its own signal) against the tool config's trusted Goal:
       // the tool can never widen its own scope to another Goal. The trusted Host
@@ -126,7 +132,7 @@ export function createGraphHistoryProxy(input: GraphHistoryProxyInput): GraphExe
       let looked;
       try {
         looked = await input.graph.lookGraph(toolCtx, {
-          goalRef: input.goalRef,
+          goalRef,
           target: { kind: 'node', node: { kind: 'run', ref: request.runRef } },
           relation: 'card',
           page: { afterCursor: null, limit: 1 },
@@ -139,7 +145,7 @@ export function createGraphHistoryProxy(input: GraphHistoryProxyInput): GraphExe
       if (looked.status !== 'ready') return looked;
       const card = looked.value.items[0];
       if (card === undefined) return rejected('not_found', 'the graph did not return the requested Run card');
-      if (request.runRef.projectId !== input.goalRef.projectId || request.runRef.goalId !== input.goalRef.goalId) {
+      if (request.runRef.projectId !== goalRef.projectId || request.runRef.goalId !== goalRef.goalId) {
         return rejected('forbidden', 'the requested Run is not in the bound Goal');
       }
       const node = card.node;
@@ -331,11 +337,15 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
 export function createQueryGraphToolGroup(input: {
   names: readonly string[];
   context: CoreCallContext;
-  goalRef: GoalRef;
+  /** The trusted current Goal, or `null` for a request with no goal (project reads). */
+  goalRef: GoalRef | null;
   graph: GraphContextReadPort;
   inputs: TaskContextInputPort;
   history: GraphExecutionHistoryReadPort;
   hostContext: CoreCallContext;
+  /** The notes read port bound only for a secretary round; absent keeps the
+   * memory branch's explicit refusal. */
+  notes?: NoteMemoryReadPort;
   /** The frozen tool texts the graph factory reads. */
   texts?: Readonly<Record<string, ToolTextV1>>;
 }): ToolGroup {
@@ -354,6 +364,7 @@ export function createQueryGraphToolGroup(input: {
       goalRef: input.goalRef,
       hostContext: input.hostContext,
     }),
+    ...(input.notes === undefined ? {} : { notes: input.notes }),
     ...(input.texts === undefined ? {} : { texts: input.texts }),
   });
   return {

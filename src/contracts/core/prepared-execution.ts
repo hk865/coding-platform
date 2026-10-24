@@ -20,7 +20,7 @@ import type { MaterialAccessGrantRef, MaterialBasisV1 } from '../material-access
 import type { RoleSpecResolutionV1 } from '../role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../task-envelope.js';
 import type { RoleConfigurationRef, SessionRef } from './identity.js';
-import type { QueryRunRef } from '../query-job.js';
+import type { QueryRunRef, SecretaryRequestManifestV1 } from '../query-job.js';
 import type { GoalSnapshot, WorkspaceSnapshot } from '../ledger.js';
 import type { PlanRevisionSnapshot } from '../plan.js';
 import type { RuntimeBudget } from '../runtime-budget.js';
@@ -292,7 +292,10 @@ export type PreparedQueryManifestV1 = {
   role: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>;
   hostTemplate: { templateId: string; revision: string; digest: string } | null;
   hostConfigurationRevision: string;
-  goal: { ref: GoalSnapshot['ref']; revision: number };
+  /** Null only with `contextAssembly.callKind: 'secretary'` (a request without a goal). */
+  goal: { ref: GoalSnapshot['ref']; revision: number } | null;
+  /** The frozen request facts; null for every non-request Query. */
+  request: SecretaryRequestManifestV1 | null;
   workspace: { ref: WorkspaceSnapshot['ref']; revision: number };
   focusPlan: { ref: PlanRevisionSnapshot['ref']; revision: number } | null;
   permissions: { tools: string[]; writeScope: [] };

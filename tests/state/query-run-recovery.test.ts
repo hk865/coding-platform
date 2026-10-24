@@ -69,7 +69,7 @@ function answer(overrides: Partial<QueryJobAnswerV1> = {}): QueryJobAnswerV1 {
 }
 
 function terminal(overrides: Partial<QueryTerminalFact> = {}): QueryTerminalFact {
-  return { outcome: 'failed', answer: null, reason: 'model failed', history: history(), source: { position: 7, cursor: 'cursor-7' }, ...overrides };
+  return { outcome: 'failed', answer: null, reason: 'model failed', answerCheck: null, history: history(), source: { position: 7, cursor: 'cursor-7' }, ...overrides };
 }
 
 function stateAt(phase: QueryRecoveryPhase): QueryRecoveryState {
@@ -134,7 +134,7 @@ const RELEASE = {
   historyCursor: { kind: 'advance', cursor: 'cursor-7' }, kernelTurnOpen: false,
 } as const;
 const SETTLED_FAILED: QueryRecoveryState = { phase: 'settled', runStatus: 'closed', jobStatus: 'closed', outcome: 'failed', ended: true };
-const SETTLE_FAILED = { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: 'model failed' }, history: { kind: 'set', history: history() } };
+const SETTLE_FAILED = { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: 'model failed', answerCheck: null }, history: { kind: 'set', history: history() } };
 const FAILED_EFFECTS = [SETTLE_FAILED, RELEASE];
 
 type Expected =
@@ -159,7 +159,7 @@ const MARKED_UNKNOWN = (phase: 'entering' | 'entered'): Expected => ({ legal: tr
     cause: { kind: 'unresolved_tools', toolCallIds: ['call-1'] } }] });
 /** QRR-06: closed `failed` with the operator's reason; the Turn is not open here, so the Session stays available. */
 const ATTESTED: Expected = { legal: true, next: SETTLED('failed'), effects: [
-  { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: 'checked by hand' }, history: { kind: 'unchanged' } },
+  { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: 'checked by hand', answerCheck: null }, history: { kind: 'unchanged' } },
   KEEP_CURSOR(false)] };
 
 /**
@@ -239,7 +239,7 @@ describe('transitionQueryRunRecovery: every (phase, event) pair', () => {
         { kind: 'query_reconcile_interrupted_clean', hostInstanceId: 'host-1', kernelStatus, history: history(null) }, clean);
       const closeMessage = kernelStatus === 'paused' || kernelStatus === 'yielded' ? `kernel_status:${kernelStatus}` : 'host_interrupted';
       expect(result).toEqual({ ok: true, next: SETTLED('failed'), effects: [
-        { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage }, history: { kind: 'set', history: history(null) } },
+        { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage, answerCheck: null }, history: { kind: 'set', history: history(null) } },
         KEEP_CURSOR(kernelStatus !== 'yielded')] });
     }
     const interrupted = eventOf('query_reconcile_interrupted_clean');
@@ -269,7 +269,7 @@ describe('transitionQueryRunRecovery: every (phase, event) pair', () => {
     expectRejected(transitionQueryRunRecovery(stateAt('unknown'), attest, { ...entry, hostLease: 'held_by_other' }), 'guard_failed', 'busy');
     expect(transitionQueryRunRecovery(stateAt('unknown'), attest, { ...entry, kernelTurnOpen: true }))
       .toEqual({ ok: true, next: SETTLED('failed'), effects: [
-        { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: 'checked by hand' }, history: { kind: 'unchanged' } },
+        { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: 'checked by hand', answerCheck: null }, history: { kind: 'unchanged' } },
         KEEP_CURSOR(true)] });
   });
 });
@@ -300,7 +300,7 @@ describe('QRR-03 from the in-process observer (query_terminal_observed)', () => 
           ok: true,
           next: { phase: 'settled', runStatus: 'closed', jobStatus: 'closed', outcome, ended: true },
           effects: [
-            { kind: 'settle_query', settlement: { outcome, closeMessage: reason ?? outcome }, history: { kind: 'set', history: history() } },
+            { kind: 'settle_query', settlement: { outcome, closeMessage: reason ?? outcome, ...(outcome === 'failed' ? { answerCheck: null } : {}) }, history: { kind: 'set', history: history() } },
             RELEASE,
           ],
         });
@@ -453,7 +453,7 @@ const ENTRY: NonNullable<QueryExecutionStateV1['entry']> = {
   kernel: { ...KERNEL },
 };
 const STEPS: { readonly [P in QueryExecutionStep['phase']]: QueryExecutionStep } = {
-  claimed: { phase: 'claimed', claim: { sessionRef: SESSION_REF, sessionGeneration: 5, role: ROLE, roleBinding: ROLE_BINDING, roleResolution: ROLE_RESOLUTION, priorHistoryCursor: 'cursor-2' } },
+  claimed: { phase: 'claimed', claim: { sessionRef: SESSION_REF, sessionGeneration: 5, role: ROLE, roleBinding: ROLE_BINDING, roleResolution: ROLE_RESOLUTION, priorHistoryCursor: 'cursor-2', requestProfile: null } },
   prepared: { phase: 'prepared', prepared: { bundleRef: BUNDLE_REF, inputDigest: 'i'.repeat(64) } },
   entering: { phase: 'entering', entry: ENTRY, request: { runRef: RUN_REF, bundleRef: BUNDLE_REF, question: 'why?', budget: { maxTokens: null } }, occurredAt: '2026-10-04T00:00:03.000Z' },
   entered: { phase: 'entered', history: history(null) },
@@ -511,6 +511,7 @@ describe('advanceQueryExecutionRecord', () => {
     expect(after.run.run.executionState).toEqual({
       schemaVersion: 1, phase: 'claimed', sessionRef: SESSION_REF, sessionGeneration: 5, role: ROLE, roleBinding: ROLE_BINDING,
       roleResolution: ROLE_RESOLUTION, priorHistoryCursor: 'cursor-2', prepared: null, entry: null, history: null, requests: [],
+      requestProfile: null,
     });
     expect(stateOf(after)).toEqual({ phase: 'claimed', runStatus: 'pending', jobStatus: 'pending', outcome: null, ended: false });
   });
@@ -644,13 +645,13 @@ describe('settleQueryRunRecord', () => {
   it('settles a known outcome from entering/entered/unknown only (QRR-03/04/06), keeping the stored history on request', () => {
     for (const phase of ['entering', 'entered', 'unknown'] as const) {
       const after = settleQueryRunRecord(withPhase(advancedTo('entered'), phase),
-        { settlement: { outcome: 'failed', closeMessage: 'host_interrupted' }, history: { kind: 'unchanged' }, occurredAt: at });
+        { settlement: { outcome: 'failed', closeMessage: 'host_interrupted', answerCheck: null }, history: { kind: 'unchanged' }, occurredAt: at });
       expect(after.run.run).toMatchObject({ status: 'closed', outcome: 'failed', endedAt: at });
       expect(after.run.run.executionState?.history).toEqual(history(null));
     }
     const settlements = [
       { outcome: 'answered', answerRef: ANSWER_REF },
-      { outcome: 'failed', closeMessage: 'x' },
+      { outcome: 'failed', closeMessage: 'x', answerCheck: null },
       { outcome: 'cancelled', closeMessage: 'x' },
     ] as const;
     for (const phase of ['claimed', 'prepared'] as const) {
@@ -665,14 +666,14 @@ describe('settleQueryRunRecord', () => {
     const records = advancedTo('entered');
     for (const status of ['answered', 'closed'] as const) {
       const job: QueryJobSnapshot = { ...records.job, job: { ...records.job.job, status } };
-      expect(() => settleQueryRunRecord({ job, run: records.run }, { settlement: { outcome: 'failed', closeMessage: 'x' }, history: { kind: 'unchanged' }, occurredAt: at }))
+      expect(() => settleQueryRunRecord({ job, run: records.run }, { settlement: { outcome: 'failed', closeMessage: 'x', answerCheck: null }, history: { kind: 'unchanged' }, occurredAt: at }))
         .toThrow(new RegExp(`QueryJob is already ${status}`));
     }
   });
 
   it('does not alias the caller-owned history', () => {
     const input = history();
-    const after = settleQueryRunRecord(advancedTo('entered'), { settlement: { outcome: 'failed', closeMessage: 'x' }, history: { kind: 'set', history: input }, occurredAt: at });
+    const after = settleQueryRunRecord(advancedTo('entered'), { settlement: { outcome: 'failed', closeMessage: 'x', answerCheck: null }, history: { kind: 'set', history: input }, occurredAt: at });
     input.startPosition = 99;
     expect(after.run.run.executionState?.history).toEqual(history());
   });
@@ -691,10 +692,10 @@ describe('settleQueryRunRecord', () => {
   });
 
   it('refuses a QueryRun that is already settled or has no execution state', () => {
-    const settled = settleQueryRunRecord(advancedTo('entered'), { settlement: { outcome: 'failed', closeMessage: 'x' }, history: { kind: 'unchanged' }, occurredAt: at });
-    expect(() => settleQueryRunRecord(settled, { settlement: { outcome: 'failed', closeMessage: 'y' }, history: { kind: 'unchanged' }, occurredAt: at })).toThrow(/not settled$/);
+    const settled = settleQueryRunRecord(advancedTo('entered'), { settlement: { outcome: 'failed', closeMessage: 'x', answerCheck: null }, history: { kind: 'unchanged' }, occurredAt: at });
+    expect(() => settleQueryRunRecord(settled, { settlement: { outcome: 'failed', closeMessage: 'y', answerCheck: null }, history: { kind: 'unchanged' }, occurredAt: at })).toThrow(/not settled$/);
     expect(() => settleQueryRunRecord(settled, { settlement: { outcome: 'not_entered', closeMessage: 'y' }, history: { kind: 'unchanged' }, occurredAt: at })).toThrow(/not settled$/);
-    expect(() => settleQueryRunRecord(pending(), { settlement: { outcome: 'failed', closeMessage: 'y' }, history: { kind: 'unchanged' }, occurredAt: at })).toThrow(/not absent$/);
+    expect(() => settleQueryRunRecord(pending(), { settlement: { outcome: 'failed', closeMessage: 'y', answerCheck: null }, history: { kind: 'unchanged' }, occurredAt: at })).toThrow(/not absent$/);
   });
 });
 

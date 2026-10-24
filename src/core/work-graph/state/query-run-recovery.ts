@@ -14,6 +14,12 @@
  * (`query-execution.ts`). Step 5.6 adds the start-up reconcile closes
  * QRR-01/02/04, `unknown` (QRR-05) and the operator's attestation (QRR-06);
  * the phase-level entries of the §8.4 QRR table answer first.
+ *
+ * A request round (`ctx.request` non-null) never closes on its own before
+ * entry: QRR-01/02 end it when a drop covers it and otherwise leave its Job
+ * for a new attempt. QRR-03/04 and QRR-05 with tool calls but no result prove
+ * the Kernel took the round, so they also record the round's entry; an
+ * unreadable Kernel and the attestation prove nothing.
  */
 import type { CoreError } from '../../../contracts/core/results.js';
 import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-history.js';
@@ -22,6 +28,7 @@ import type {
   PendingQueryJobSnapshot,
   QueryExecutionBindingV1,
   QueryExecutionStateV1,
+  QueryCloseDetailV1,
   QueryJobAnswerRef,
   QueryJobAnswerV1,
   QueryJobIntentV1,
@@ -108,15 +115,32 @@ export type QueryRecoveryGuardContext = {
    * unreadable (read by the Host entry before the attestation, as RUN-22).
    */
   kernelTurnOpen?: boolean;
+  /**
+   * A request round (`isRequestRound`); null or absent for every other Query.
+   * `coveredByDrop` is read from the request's facts for QRR-01/02 only and is
+   * null for every other row.
+   */
+  request?: { coveredByDrop: boolean | null } | null;
 };
 
 export type QueryTerminalOutcome = 'answered' | 'timeout' | 'gap' | 'failed' | 'cancelled';
+
+/** Why a request round's answer failed its protocol, as the Runtime observed it. */
+export type QueryAnswerCheck = { detail: Extract<QueryCloseDetailV1, 'too_long' | 'empty' | 'protocol'>; reason: string };
+
+/**
+ * QRR-06, like RUN-22: the attestation reason becomes the close message,
+ * bounded. An answer check's reason is cut to the same bound.
+ */
+export const MAX_ATTESTATION_REASON_CHARS = 2000;
 
 /** The Kernel terminal fact both QRR-03 sources carry (`QueryHistoryObservation`, terminal kind). */
 export type QueryTerminalFact = {
   outcome: QueryTerminalOutcome;
   answer: QueryJobAnswerV1 | null;
   reason: string | null;
+  /** A request round's failed answer check; only with a failed outcome and no answer, null otherwise. */
+  answerCheck: QueryAnswerCheck | null;
   history: RunExecutionHistoryV1;
   /** This round's original record position and cursor, from the Session owner. */
   source: { position: number; cursor: string };
@@ -147,10 +171,15 @@ export type QueryRecoveryEventKind = QueryRecoveryEvent['kind'];
 
 export type QuerySettledOutcome = NonNullable<QueryRunV1['outcome']>;
 
-/** How a settle ends: an Answer, or a close whose code is the outcome itself. */
+/**
+ * How a settle ends: an Answer, or a close whose code is the outcome itself. A
+ * failed settle with an answer check closes `invalid_answer` instead; the Run
+ * outcome stays `failed`.
+ */
 export type QuerySettlement =
   | { outcome: 'answered'; answerRef: QueryJobAnswerRef }
-  | { outcome: Exclude<QuerySettledOutcome, 'answered'>; closeMessage: string };
+  | { outcome: 'failed'; closeMessage: string; answerCheck: QueryAnswerCheck | null }
+  | { outcome: Exclude<QuerySettledOutcome, 'answered' | 'failed'>; closeMessage: string };
 
 /** `unchanged` keeps the stored history (it may be null); it never writes null over it. */
 export type QueryHistoryUpdate = { kind: 'set'; history: RunExecutionHistoryV1 } | { kind: 'unchanged' };
@@ -170,7 +199,13 @@ export type QueryRecoveryEffect =
   /** QRR-05: the cause is persisted on the QueryRun (`executionState.unknown`) for the attestation (QRR-06). */
   | { kind: 'mark_query_unknown'; history: QueryHistoryUpdate; cause: QueryUnknownCause }
   | { kind: 'record_answer'; ref: QueryJobAnswerRef; answer: QueryJobAnswerV1 }
-  | ({ kind: 'release_session' } & SessionRelease);
+  | ({ kind: 'release_session' } & SessionRelease)
+  /** QRR-01/02 on a request round a drop covers: it ends unstarted, `cancelled`/`dropped` (`endUnstartedRound`). */
+  | { kind: 'end_dropped_round' }
+  /** QRR-01/02 on a request round no drop covers: the old Run closes and the Job waits for a new attempt (`newAttempt`). */
+  | { kind: 'new_attempt' }
+  /** A request round with entry evidence: the Job's `enteredSession` becomes the claimed Session if null (`recordEntered`). */
+  | { kind: 'record_entered' };
 
 export type QueryRecoveryTransition = Transition<QueryRecoveryState, QueryRecoveryEvent, QueryRecoveryEffect>;
 
@@ -221,6 +256,17 @@ function reconcileNotEntered(state: QueryRecoveryState, ctx: QueryRecoveryGuardC
   if (state.phase === 'entering' && (ctx.probe !== 'ready' || ctx.kernel === null || ctx.kernel.turn !== 'absent')) {
     return reject('guard_failed', 'unavailable', 'an entering QueryRun is proven not entered only by a readable Kernel without its Turn (SD-3)');
   }
+  const request = ctx.request ?? null;
+  if (request !== null) {
+    // A drop that covers the round ends it; otherwise the person's words stay
+    // queued on the same Job for a new attempt.
+    if (request.coveredByDrop === null) {
+      return reject('guard_failed', 'unavailable', "a request round's not-entered close needs whether a drop covers it");
+    }
+    return request.coveredByDrop
+      ? accept(settledState('not_entered'), [{ kind: 'end_dropped_round' }, ...releaseKeepingCursor(ctx, false)])
+      : accept({ ...settledState('not_entered'), jobStatus: 'pending' }, [{ kind: 'new_attempt' }, ...releaseKeepingCursor(ctx, false)]);
+  }
   return accept(settledState('not_entered'), [
     { kind: 'settle_query', settlement: { outcome: 'not_entered', closeMessage: 'host_restart_before_entry' }, history: { kind: 'unchanged' } },
     ...releaseKeepingCursor(ctx, false),
@@ -253,7 +299,8 @@ function reconcileInterrupted(
   const status = event.kernelStatus;
   const closeMessage = status === 'paused' || status === 'yielded' ? `kernel_status:${status}` : 'host_interrupted';
   return accept(settledState('failed'), [
-    { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage }, history: { kind: 'set', history: event.history } },
+    { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage, answerCheck: null }, history: { kind: 'set', history: event.history } },
+    ...entryRecorded(ctx),
     ...releaseKeepingCursor(ctx, status !== 'yielded'),
   ]);
 }
@@ -282,7 +329,9 @@ function reconcileUnknown(
     default: return unreachable(cause, 'Query unknown cause');
   }
   const history: QueryHistoryUpdate = event.history === null ? { kind: 'unchanged' } : { kind: 'set', history: event.history };
-  return accept({ ...state, phase: 'unknown' }, [{ kind: 'mark_query_unknown', history, cause }]);
+  // A tool call without a result proves the Kernel took the round; an unreadable Kernel proves nothing.
+  return accept({ ...state, phase: 'unknown' }, [{ kind: 'mark_query_unknown', history, cause },
+    ...(cause.kind === 'unresolved_tools' ? entryRecorded(ctx) : [])]);
 }
 
 /**
@@ -303,7 +352,7 @@ function unknownAttested(state: QueryRecoveryState, ctx: QueryRecoveryGuardConte
   if (ctx.hostLease !== 'owned') return reject('guard_failed', 'busy', 'this Host does not hold the Host instance lease (L-1)');
   if (ctx.inputsConfirmed === false) return reject('guard_failed', 'unavailable', 'the Query input acceptance is not confirmed against its source');
   return accept(settledState('failed'), [
-    { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: reason }, history: { kind: 'unchanged' } },
+    { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: reason, answerCheck: null }, history: { kind: 'unchanged' } },
     ...releaseKeepingCursor(ctx, ctx.kernelTurnOpen === true),
   ]);
 }
@@ -373,6 +422,10 @@ function settleFromTerminal(terminal: QueryTerminalFact, ctx: QueryRecoveryGuard
   } else if (terminal.outcome === 'answered') {
     return reject('guard_failed', 'invalid', 'an answered terminal requires an answer');
   }
+  // An answer that failed its check is a failed terminal without an answer.
+  if (terminal.answerCheck !== null && terminal.outcome !== 'failed') {
+    return reject('guard_failed', 'invalid', 'an answer check comes only with a failed terminal');
+  }
   // The observed history ends exactly at this observation's source position.
   if (terminal.history.endPosition === null || terminal.history.endPosition !== terminal.source.position) {
     return reject('guard_failed', 'invalid', 'the terminal observation has no complete end boundary');
@@ -393,13 +446,24 @@ function settleFromTerminal(terminal: QueryTerminalFact, ctx: QueryRecoveryGuard
     return accept(settledState('answered'), [
       { kind: 'settle_query', settlement: { outcome: 'answered', answerRef: ref }, history },
       { kind: 'record_answer', ref, answer },
+      ...entryRecorded(ctx),
       ...release,
     ]);
   }
+  const closeMessage = terminal.reason ?? terminal.outcome;
+  const settlement: QuerySettlement = terminal.outcome === 'failed'
+    ? { outcome: 'failed', closeMessage, answerCheck: terminal.answerCheck === null ? null : { ...terminal.answerCheck } }
+    : { outcome: terminal.outcome, closeMessage };
   return accept(settledState(terminal.outcome), [
-    { kind: 'settle_query', settlement: { outcome: terminal.outcome, closeMessage: terminal.reason ?? terminal.outcome }, history },
+    { kind: 'settle_query', settlement, history },
+    ...entryRecorded(ctx),
     ...release,
   ]);
+}
+
+/** A request round's entry, proven by a Kernel Turn: the owner records it on the Job. */
+function entryRecorded(ctx: QueryRecoveryGuardContext): QueryRecoveryEffect[] {
+  return (ctx.request ?? null) === null ? [] : [{ kind: 'record_entered' }];
 }
 
 function settledState(outcome: QuerySettledOutcome): QueryRecoveryState {
@@ -520,10 +584,14 @@ export function newPendingQueryRecords(input: {
 
 /** The in-process steps; each writes the QueryRun at revision+1 (entering also the QueryJob). */
 export type QueryExecutionStep =
-  /** `query-execution.ts:847`: requires the pending pair. */
+  /**
+   * `query-execution.ts:847`: requires the pending pair. `requestProfile` is
+   * the profile a request round is claimed with, null for every other Query.
+   */
   | {
       phase: 'claimed';
-      claim: Pick<QueryExecutionStateV1, 'sessionRef' | 'sessionGeneration' | 'role' | 'roleBinding' | 'roleResolution' | 'priorHistoryCursor'>;
+      claim: Pick<QueryExecutionStateV1, 'sessionRef' | 'sessionGeneration' | 'role' | 'roleBinding' | 'roleResolution'
+        | 'priorHistoryCursor' | 'requestProfile'>;
     }
   /** `:959`: requires `claimed`. */
   | { phase: 'prepared'; prepared: NonNullable<QueryExecutionStateV1['prepared']> }
@@ -558,6 +626,7 @@ export function advanceQueryExecutionRecord(records: QueryLifecycleRecords, step
         entry: null,
         history: null,
         requests: [],
+        requestProfile: structuredClone(step.claim.requestProfile),
       };
       return { job, run: { ...run, revision: run.revision + 1, run: { ...run.run, executionState } } };
     }
@@ -643,7 +712,9 @@ export function settleQueryRunRecord(
   const status = settlement.outcome === 'answered' ? 'answered' : 'closed';
   const closeReason: QueryJobV1['closeReason'] = settlement.outcome === 'answered'
     ? null
-    : { code: settlement.outcome, message: settlement.closeMessage, detail: null };
+    : settlement.outcome === 'failed' && settlement.answerCheck !== null
+      ? { code: 'invalid_answer', message: boundedCloseMessage(settlement.answerCheck.reason), detail: settlement.answerCheck.detail }
+      : { code: settlement.outcome, message: settlement.closeMessage, detail: null };
   const nextJob: QueryJobSnapshot = {
     ...job,
     revision: job.revision + 1,
@@ -662,6 +733,17 @@ export function settleQueryRunRecord(
     run: { ...run.run, status, outcome: settlement.outcome, endedAt: input.occurredAt, executionState },
   };
   return { job: nextJob, run: nextRun };
+}
+
+/**
+ * At most `MAX_ATTESTATION_REASON_CHARS` UTF-16 units; a cut never leaves half
+ * of a surrogate pair at the end.
+ */
+function boundedCloseMessage(text: string): string {
+  if (text.length <= MAX_ATTESTATION_REASON_CHARS) return text;
+  const last = text.charCodeAt(MAX_ATTESTATION_REASON_CHARS - 1);
+  const end = last >= 0xd800 && last <= 0xdbff ? MAX_ATTESTATION_REASON_CHARS - 1 : MAX_ATTESTATION_REASON_CHARS;
+  return text.slice(0, end);
 }
 
 function requirePhase(

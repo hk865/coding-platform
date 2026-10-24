@@ -20,6 +20,10 @@
  * - `extraHostOptions`: Host options 6A adds (`secretaryOpenCap`) do not exist yet; they are spread, untyped,
  *   into the real Host options on open and on every reopen (a reopen may pass a new value). An extra key that
  *   would replace a fixture option is refused.
+ * - The request driver (the Host's wake loop that claims and runs request rounds on its own) is OFF in every
+ *   world unless `extraHostOptions` names `requestDriver: 'on'`: the rows of the request owners' rules hold a
+ *   submitted round where the command left it and drive the Query steps through their routes themselves. The
+ *   rows of the driver turn it on. A reopen that passes new extra options passes `requestDriver` again.
  * - The clock is the process `Date`, faked alone (never the timers), because the Session directory and the
  *   archive stamp `new Date()`; the Host's `now` reads the same value. Worlds open at once share it.
  * - The seed, through the HTTP routes: `projects/create`, `workspaces/register`, `goals/create` twice (goal 1 is
@@ -494,7 +498,8 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
       if (key in base) throw new Error(`S6A: the extra Host option ${key} would replace a fixture option`);
     }
     // The 6A options are not in today's Host type; they pass through untyped until 6A-1 group H adds them.
-    const started = await startCapturingPlatform({ ...extraHostOptions, ...base } as LocalWorkbenchHostOptions);
+    const started = await startCapturingPlatform(
+      { requestDriver: 'off', ...extraHostOptions, ...base } as LocalWorkbenchHostOptions);
     try {
       const address = await started.host.listen();
       const token = await readPageToken(address.url);

@@ -50,7 +50,8 @@ const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMP
 export const GRAPH_TOOL_NAMES = ['look_graph', 'find_graph'] as const;
 
 export type GraphToolsConfig = {
-  context: CoreCallContext; goalRef: GoalRef;
+  /** The trusted current Goal; `null` is a request without one (the project read branch). */
+  context: CoreCallContext; goalRef: GoalRef | null;
   graph: GraphContextReadPort; inputs: TaskContextInputPort;
   history: GraphExecutionHistoryReadPort;
   /** Slice 4C L13: `platform.notes`' six reads for the `{ memory: ... }` branch.
@@ -346,7 +347,7 @@ export function createGraphTools(config: GraphToolsConfig): {
   const fixedWorkspaceId = config.context.workspaceId;
   const fixedPrincipal = structuredClone(config.context.principal);
   const fixedMaterialReader = structuredClone(config.context.materialReader);
-  const fixedGoalRef: GoalRef = {
+  const fixedGoalRef: GoalRef | null = config.goalRef === null ? null : {
     aggregateType: 'Goal', projectId: config.goalRef.projectId, goalId: config.goalRef.goalId,
   };
 
@@ -363,6 +364,9 @@ export function createGraphTools(config: GraphToolsConfig): {
 
   async function dispatchLook(callId: string, args: LookArgs, context: CoreCallContext): Promise<ToolResult> {
     if (args.mode === 'history') {
+      // A Run history is read against one Goal: its card is validated in that
+      // Goal's universe first. With no trusted Goal there is nothing to check
+      // the Run against, so refuse instead of serving another Goal's history.
       const result = await config.history.readTaskExecutionHistory(context, {
         runRef: args.runRef,
         afterCursor: args.afterCursor ?? null,
@@ -371,6 +375,13 @@ export function createGraphTools(config: GraphToolsConfig): {
       return mapRead(callId, result, 'the original execution history could not be read');
     }
     if (args.mode === 'input') {
+      // A task input page belongs to one Task of one Goal. With no trusted Goal
+      // there is no Task to check the request against, so refuse here instead
+      // of reaching the input owner with an unowned consumer.
+      if (fixedGoalRef === null) {
+        return rejectedResult(callId, { status: 'rejected', code: 'invalid', reason: 'this request has no goal' },
+          'the exact task input page could not be read');
+      }
       const request: TaskInputPageRequestV1 = {
         consumer: args.consumer,
         planRef: args.planRef,

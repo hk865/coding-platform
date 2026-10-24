@@ -13,6 +13,7 @@
  * is the same trusted test double the frozen B2 fixture uses.
  */
 import { rename, rm, writeFile } from 'node:fs/promises';
+import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -816,7 +817,8 @@ export async function createQueryAdmissionFixture(kind: ClaimFixtureKind): Promi
   const roles = createRoleConfigurationService({ records: base.records, now, eventId });
   const authorizeConfiguration: AuthorizeQueryConfiguration = async () => ({ status: 'ready', value: {
     configurationRevision: 'ad07-host@1', permissions: { tools: hostCeiling, writeScope: [] }, hostTemplate, budget: runtimeBudget } });
-  const execution = createQueryExecution({ records: base.records, roles, bodies, authorizeConfiguration, now, eventId });
+  const execution = createQueryExecution({ records: withBackendOrderedLookup(base.records, base.records), roles, bodies,
+    authorizeConfiguration, now, eventId });
   const queryJobs = createQueryJobService({ records: base.records, now, eventId,
     execution: { claimQuery: execution.claimQuery, readQueryAnswer: execution.readQueryAnswer } });
 

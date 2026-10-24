@@ -48,8 +48,15 @@ const WORK_AND_CONTINUATION: readonly ContextSectionNameV1[] = [...WORK_SECTIONS
 /** R1: the review instruction is a Work section; continuation/handoff never carry it. */
 const WORK_AND_REVIEW: readonly ContextSectionNameV1[] = [...WORK_SECTIONS, 'unknown_call_review'];
 
-/** Call kinds whose task card also carries the Goal and Accepted task sections (§4.3). */
-const REQUIRES_GOAL_AND_TASK: ReadonlySet<ContextCallKindV1> = new Set(['work', 'continuation', 'handoff']);
+/**
+ * Call kinds whose task card also carries the Goal and Accepted task sections
+ * (§4.3). A secretary request has a goal section even when the project has no
+ * goal: the workspace, the goal list and `secretary.noGoal` are always there,
+ * so both sections are required.
+ */
+const REQUIRES_GOAL_AND_TASK: ReadonlySet<ContextCallKindV1> = new Set([
+  'work', 'continuation', 'handoff', 'secretary',
+]);
 
 /** The one accepted omission marker line (§4.3 T2). */
 const OMISSION_MARKER = /^另有 (\d+) 条，用‘看’读$/;
@@ -304,10 +311,10 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
     if (orderPositions.has(name)) return invalid(`section ${name} appears twice in sectionOrder`);
     orderPositions.set(name, orderPositions.size);
   }
-  if (REQUIRES_GOAL_AND_TASK.has(binding.callKind)) {
-    if (!orderPositions.has('goal')) return invalid(`a ${binding.callKind} call requires a goal section in sectionOrder`);
-    if (!orderPositions.has('task')) return invalid(`a ${binding.callKind} call requires a task section in sectionOrder`);
-  }
+  if (REQUIRES_GOAL_AND_TASK.has(binding.callKind) && !orderPositions.has('goal'))
+    return invalid(`a ${binding.callKind} call requires a goal section in sectionOrder`);
+  if (REQUIRES_GOAL_AND_TASK.has(binding.callKind) && !orderPositions.has('task'))
+    return invalid(`a ${binding.callKind} call requires a task section in sectionOrder`);
 
   const seen = new Set<ContextSectionNameV1>();
   const budgetSections: BudgetSection[] = [];
@@ -346,10 +353,10 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
   // G-CTX: the required sections of the call kind are present with a real interval
   // (only a budgeted optional section may be null, checked above).
   if (!seen.has('role')) return invalid('the context assembly requires a role section');
-  if (REQUIRES_GOAL_AND_TASK.has(binding.callKind)) {
-    if (!seen.has('goal')) return invalid(`a ${binding.callKind} call requires a goal section`);
-    if (!seen.has('task')) return invalid(`a ${binding.callKind} call requires a task section`);
-  }
+  if (REQUIRES_GOAL_AND_TASK.has(binding.callKind) && !seen.has('goal'))
+    return invalid(`a ${binding.callKind} call requires a goal section`);
+  if (REQUIRES_GOAL_AND_TASK.has(binding.callKind) && !seen.has('task'))
+    return invalid(`a ${binding.callKind} call requires a task section`);
 
   // G-CTX: each budget section's omitted count and its marker agree with the text.
   for (const section of budgetSections) {

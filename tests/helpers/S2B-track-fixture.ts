@@ -24,6 +24,7 @@
  * W1-15 is BLOCKED. No model, no network.
  */
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
 import type { SessionRef, VersionPin, RoleConfigurationRef } from '../../src/contracts/core/identity.js';
 import type { ControlObservationV1, ControlIntentRef } from '../../src/contracts/control-intent.js';
 import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
@@ -555,7 +556,7 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
     const host = { configurationRevision: 's2b-track-query-host',
       permissions: { tools: ['read'], writeScope: [] as [] }, hostTemplate: B2_HOST.hostTemplate, budget: queryBudget };
     const queryRoles = createRoleConfigurationService({ records: baseRecords, now, eventId });
-    const owner = createQueryExecution({ records: baseRecords, roles: queryRoles, bodies: b2.bodies,
+    const owner = createQueryExecution({ records: withBackendOrderedLookup(baseRecords, baseRecords), roles: queryRoles, bodies: b2.bodies,
       authorizeConfiguration: async () => ({ status: 'ready' as const, value: host }), now, eventId });
     const jobs = createQueryJobService({ records: baseRecords, execution: owner, now, eventId });
     const goalRef: GoalRef = { aggregateType: 'Goal', projectId: b2.base.scope.projectId, goalId };
@@ -621,7 +622,7 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
       history: { schemaVersion: 1, sessionRef: entry.sessionRef, kernel: entry.kernel,
         startPosition: 1, observedThroughPosition: 3, endPosition: 3 },
       source: { position: 3, cursor: `s2b-track-${suffix}-answered` },
-      observation: { kind: 'terminal', occurredAt: clock, outcome: 'answered', answer, reason: null } },
+      observation: { kind: 'terminal', occurredAt: clock, outcome: 'answered', answer, reason: null, answerCheck: null } },
       meta: { requestId: requestId('query-answered'),
         expected: [{ ref: runRef, revision: entered.value.run.revision }] } });
     if (done.status !== 'committed') throw new Error(`S2B query answer failed: ${JSON.stringify(done)}`);

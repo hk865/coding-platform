@@ -15,6 +15,7 @@
  * No record is written directly and no model is called.
  */
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
+import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
 import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-execution.js';
@@ -269,7 +270,7 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
       ? { schemaVersion: 1 as const, bindingId: `s2c-l-role-${suffix}`, templateId: sessionRole.templateId,
         templateRevision: sessionRole.templateRevision, bindingVersion: 1, policyRevision: 'legacy-template' }
       : base.roleBinding;
-    const execution = createQueryExecution({ records, roles, bodies,
+    const execution = createQueryExecution({ records: withBackendOrderedLookup(records, base.records), roles, bodies,
       authorizeConfiguration: async () => ({ status: 'rejected', code: 'forbidden', reason: 'S2C-L does not prepare a Query' }),
       now, eventId, sessionFacts: createSessionFactsService({ records }) });
     const jobs = createQueryJobService({ records, execution, now, eventId });
@@ -334,7 +335,7 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
     const { queryJobRef, queryRunRef } = consultationQueryRefs(messageRef);
     const runtimeBudget = { contextWindowTokens: 128000, inputTokens: null, outputTokens: null,
       maxRequests: 1, maxToolCalls: null, timeoutMs: null, perResponseTokens: 4096 };
-    const execution = createQueryExecution({ records, roles, bodies, now, eventId,
+    const execution = createQueryExecution({ records: withBackendOrderedLookup(records, base.records), roles, bodies, now, eventId,
       sessionFacts: createSessionFactsService({ records }),
       authorizeConfiguration: async () => ({ status: 'rejected', code: 'forbidden', reason: 'S2C-L does not prepare a Query' }) });
     const jobs = createQueryJobService({ records, now, eventId,
@@ -368,7 +369,7 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
     const runtimeBudget = { contextWindowTokens: 128000, inputTokens: null, outputTokens: null,
       maxRequests: 1, maxToolCalls: null, timeoutMs: null, perResponseTokens: 4096 };
     const permissions = { tools: ['read'], writeScope: [] as [] };
-    const execution = createQueryExecution({ records, roles, bodies, now: clock, eventId,
+    const execution = createQueryExecution({ records: withBackendOrderedLookup(records, base.records), roles, bodies, now: clock, eventId,
       sessionFacts: createSessionFactsService({ records }),
       authorizeConfiguration: async () => ({ status: 'ready', value: {
         configurationRevision: 's2c-l-query-host@1', permissions, hostTemplate: L_HOST.hostTemplate, budget: runtimeBudget } }) });
@@ -426,7 +427,7 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
     const terminal = await execution.recordQueryObservation(base.ctx, { input: { entry,
       history: { ...history, observedThroughPosition: 3, endPosition: 3 },
       source: { position: 3, cursor: `s2c-l-qend-${suffix}` },
-      observation: { kind: 'terminal', occurredAt: now(), outcome: 'answered', answer, reason: null } },
+      observation: { kind: 'terminal', occurredAt: now(), outcome: 'answered', answer, reason: null, answerCheck: null } },
       meta: { requestId: `s2c-l-qterminal-${suffix}-${++seq}`, expected: [await queryPin()] } });
     if (terminal.status !== 'committed') throw new Error(`S2C-L query terminal failed: ${JSON.stringify(terminal)}`);
   }

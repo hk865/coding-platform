@@ -466,7 +466,7 @@ export type NoteMemoryMaterialV1 = {
   general: NoteIndexRowV1[];
   reminders: { anchorKey: string; updateDue: boolean | null; latestTriggerCursor: string | null }[];
 };
-/** U8: one memory-material read per assembly; the caller picks the parts. A null goal -> `unsupported`, reason "6A". */
+/** U8: one memory-material read per assembly; the caller picks the parts. A null goal reads the project material. */
 export interface NoteMemoryMaterialPort {
   readMemoryMaterial(ctx: CoreCallContext, input: NoteMemoryMaterialInputV1): Promise<ReadResult<NoteMemoryMaterialV1>>;
 }

@@ -8,6 +8,7 @@
  * facts are the send layer's input (the exact facts `beforeCall` computes).
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { PreparedQueryExecution } from '../../src/contracts/core/prepared-execution.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
@@ -201,7 +202,7 @@ beforeAll(async () => {
   const newId = (): string => `pc-qr-id-${++sequence}`;
   const configuration = hostConfiguration();
   const execution = createQueryExecution({
-    records,
+    records: withBackendOrderedLookup(records, records),
     roles: createRoleConfigurationService({ records, now, eventId }),
     bodies,
     authorizeConfiguration: async () => ({ status: 'ready', value: {

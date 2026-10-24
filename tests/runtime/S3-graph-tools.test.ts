@@ -356,7 +356,7 @@ describe('S3 graph tools', () => {
     const handle = createGraphTools(config);
     context.projectId = 'mutated-project';
     context.workspaceId = 'mutated-workspace';
-    config.goalRef.goalId = 'mutated-goal';
+    config.goalRef!.goalId = 'mutated-goal';
     const definitions = handle.create(null as unknown as WorkspaceSandbox);
     const look = definitions.find(definition => definition.name === 'look_graph')!;
     const result = await look.handler.execute(
@@ -367,7 +367,7 @@ describe('S3 graph tools', () => {
     expect(calls(ports).look[0]?.ctx.projectId).toBe(P);
     expect(calls(ports).look[0]?.ctx.workspaceId).toBe(W);
     expect(calls(ports).look[0]?.ctx.signal).toBe(original.signal);
-    expect(calls(ports).look[0]?.request.goalRef.goalId).toBe(G);
+    expect(calls(ports).look[0]?.request.goalRef?.goalId).toBe(G);
   });
 
   it('GT04 defaults node/path/find pages to limit 20, afterCursor null and relation card', async () => {

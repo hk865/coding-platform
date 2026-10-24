@@ -153,10 +153,20 @@ describe('S4C2 PU-03 memory material (spec §11.4/L20)', () => {
     });
   });
 
-  it('PU-03e (M-12g): a null goal is unsupported 6A and never builds material', async () => {
+  it('PU-03e (M-12g): a null goal reads the project understanding and norms only', async () => {
     await withMaterial('memory', async (f, material) => {
+      const normId = await write(f, norm('n1'), null);
+      const understandingId = await write(f, understanding(), null);
       const read = await material.readMemoryMaterial(f.ctx(), { goalId: null });
-      expect(read).toEqual({ status: 'rejected', code: 'unsupported', reason: '6A' });
+      expect(read.status).toBe('ready');
+      if (read.status !== 'ready') return;
+      expect(read.value.projectUnderstanding?.status.pointer.noteId).toBe(understandingId);
+      expect(read.value.projectUnderstanding?.conclusion).toBe('the project now');
+      expect(read.value.norms.map(row => row.noteId)).toEqual([normId]);
+      expect(read.value.normsOmitted).toBe(0);
+      expect(read.value.localUnderstanding).toEqual([]);
+      expect(read.value.general).toEqual([]);
+      expect(read.value.reminders).toEqual([]);
     });
   });
 

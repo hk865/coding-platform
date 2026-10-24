@@ -54,8 +54,9 @@ import type { ExecutionHistoryWritePort } from '../work-graph/model/execution-hi
 import type { ExecutionEntryPort } from '../work-graph/model/execution-entry-contracts.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
+import type { SecretaryPreparationFactsPort } from '../work-graph/model/secretary-contracts.js';
 import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
-import type { NoteCheckPort, NoteMemoryReadPort, NoteWritePort } from '../work-graph/model/note-contracts.js';
+import type { NoteCheckPort, NoteMemoryMaterialPort, NoteMemoryReadPort, NoteWritePort } from '../work-graph/model/note-contracts.js';
 import type { ModelRequestPort, ModelRequestReadPort } from '../work-graph/tasks/model-call-contracts.js';
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
@@ -246,6 +247,10 @@ export type RuntimeExecutionDependencies = {
    * composition keeps the old tool result shape.
    */
   applicationReceipt?: (ctx: CoreCallContext, cursor: CommitCursor) => Promise<DecisionApplicationReceiptV1 | null>;
+  /** The secretary facts read; absent fails a secretary round `unsupported` before the model. */
+  secretaryFacts?: SecretaryPreparationFactsPort;
+  /** The note memory-material read the notes already share; absent fails a secretary round closed. */
+  memoryMaterial?: NoteMemoryMaterialPort;
   sessions: SessionDirectoryPort;
   materials: MaterialPort;
   bodies: Pick<RawArtifactStorePort, 'put' | 'read'>;

@@ -36,6 +36,7 @@ import {
 import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
 import { runControlStateProblem } from '../persistence/control-record-codecs.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { validateRuntimeBudget } from '../../../contracts/runtime-budget.js';
 import { invalid } from '../../../contracts/validation/common.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
@@ -276,6 +277,35 @@ function validateRunSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord>
   return { status: 'decoded', value: record };
 }
 
+/**
+ * The required execution-state `requestProfile`: null for a plain Query, a
+ * complete profile for a request round. A missing field is a problem, never a
+ * default; the claim is the only writer that may set a non-null value.
+ */
+export function executionRequestProfileProblem(value: unknown): string | null {
+  if (value === null) return null;
+  if (!isJsonObject(value)) return 'requestProfile must be null or an object';
+  if (!isNonEmptyString(value['profileId'])) return 'requestProfile.profileId must be a non-empty string';
+  if (!isNonEmptyString(value['consumerId'])) return 'requestProfile.consumerId must be a non-empty string';
+  try {
+    if (canonicalJson(validateRuntimeBudget(value['runtimeBudget'])) !== canonicalJson(value['runtimeBudget'] as JsonValue)) {
+      return 'requestProfile.runtimeBudget is not a complete RuntimeBudget';
+    }
+  } catch {
+    return 'requestProfile.runtimeBudget is not a complete RuntimeBudget';
+  }
+  const budget = value['budget'];
+  if (!isJsonObject(budget)) return 'requestProfile.budget must be an object';
+  if (!(budget['maxTokens'] === null
+    || (Number.isSafeInteger(budget['maxTokens']) && (budget['maxTokens'] as number) > 0))) {
+    return 'requestProfile.budget.maxTokens must be null or a positive integer';
+  }
+  if (!(budget['deadline'] === null || typeof budget['deadline'] === 'string')) {
+    return 'requestProfile.budget.deadline must be null or a string';
+  }
+  return null;
+}
+
 /** Narrow export: the ONE QueryRunSnapshot@1 validator stays owned here; query codecs reuse it. */
 export function validateQueryRunSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord> {
   if (record.schemaId !== QUERY_RUN_SNAPSHOT_SCHEMA_ID) {
@@ -328,6 +358,10 @@ export function validateQueryRunSnapshot(record: EncodedRecord): DecodeResult<En
     }
     if (!isJsonObject(executionState['sessionRef'])) {
       return invalid('QueryRun executionState.sessionRef must be an object');
+    }
+    const requestProfileProblem = executionRequestProfileProblem(executionState['requestProfile']);
+    if (requestProfileProblem !== null) {
+      return invalid(`QueryRun executionState.${requestProfileProblem}`);
     }
   }
   return { status: 'decoded', value: record };

@@ -28,6 +28,20 @@ export type ContextReadRequestV1 = {
   focusTaskIds: string[];
   includeInputs?: boolean;
 };
+/** The extensions read of a request with no Goal: the project understanding
+ * and norms only. The Goal-owned extensions are skipped, and the full context
+ * read keeps its required Goal. */
+export type ProjectContextExtensionsRequestV1 = {
+  goalRef: null;
+  focusTaskIds: readonly [];
+};
+export type ContextExtensionsRequestV1 = ContextReadRequestV1 | ProjectContextExtensionsRequestV1;
+/** The one extensions provider. A project request carries no Goal; the method
+ * signature is bivariant so a provider that answers only the Goal request
+ * stays assignable to the published dependency. */
+export type ContextExtensionsReaderV1 = {
+  read(ctx: CoreCallContext, request: ContextExtensionsRequestV1): Promise<ReadResult<ContextExtensionsV1>>;
+}['read'];
 export type GraphContextFactsV1 = {
   goal: GoalSnapshot;
   graph: TaskGraph | null;
@@ -59,13 +73,15 @@ export type NodeCardV1 = {
   sources: ContextSourceV1[];
 };
 export type GraphLookRequestV1 = {
-  goalRef: GoalRef;
+  /** `null` is the project branch (no goal); Goal-owned targets and relations then refuse. */
+  goalRef: GoalRef | null;
   target: { kind: 'node'; node: GraphNodeRefV1 } | { kind: 'path'; path: string };
   relation: 'card' | 'children' | 'neighbours' | 'executions' | 'checks';
   page: { afterCursor: string | null; limit: number };
 };
 export type GraphFindRequestV1 = {
-  goalRef: GoalRef;
+  /** `null` is the project branch (no goal); find has no Goal-owned argument. */
+  goalRef: GoalRef | null;
   needle: string;
   page: { afterCursor: string | null; limit: number };
 };

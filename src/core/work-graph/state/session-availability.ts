@@ -23,7 +23,8 @@ import type { SessionHealthConclusion, SessionProvenanceV1, SessionRecord, Sessi
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
-import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/query-job.js';
+import type { CoreError } from '../../../contracts/core/results.js';
+import type { QueryExecutionStateV1, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 import { sameRef } from './ref-equality.js';
 
@@ -390,6 +391,33 @@ export function releaseSessionRecord(record: SessionRecord, release: SessionRele
   // Spec §2.3 P01: this is the first available→unavailable entry, so mark the
   // pending position; an already-unavailable Session keeps its existing value.
   return record.health === 'available' ? { ...entered, unavailableSince: null } : entered;
+}
+
+/**
+ * SES-08 for a Query attempt that ends before it entered the Kernel (a drop,
+ * `end_unbound`, a new attempt of a request round): the release a Query
+ * terminal writes (`occupancy_released`, `query_terminal_observed`) of this
+ * Run at its claim generation, from its current phase, no Turn left open, the
+ * history cursor kept. `released` is null when the Run no longer holds the
+ * Session. The caller reads the Session, guards it at the revision read and
+ * maps a refusal to its own answer.
+ */
+export function releaseUnenteredQuerySession(session: SessionRecord, run: QueryRunSnapshot):
+{ ok: true; released: SessionRecord | null } | { ok: false; code: CoreError; detail: string } {
+  const state = run.run.executionState;
+  if (state === undefined || !ownsQuery(session, run.ref, state)) return { ok: true, released: null };
+  const decided = transitionSession(sessionMachineStateOf(session),
+    { kind: 'occupancy_released', cause: 'query_terminal_observed' }, {
+      caller: 'service', hostLease: null, pin: null,
+      holder: { ref: run.ref, claimGeneration: state.sessionGeneration, before: `query_${state.phase}`, after: 'query_settled',
+        kernelTurnSeen: true, inputsConfirmed: true, historyBoundaryCursor: null, kernelTurnOpen: false },
+      probe: null, kernelHeader: null, openResponsibleLink: null, creation: null, link: null,
+    });
+  if (!decided.ok) return { ok: false, code: decided.code, detail: decided.detail };
+  for (const effect of decided.effects) {
+    if (effect.kind === 'release_session') return { ok: true, released: releaseSessionRecord(session, effect) };
+  }
+  throw new Error('the admitted Session release writes no Session record');
 }
 
 /** SES-11: lifecycle only; health, history and links are untouched. */

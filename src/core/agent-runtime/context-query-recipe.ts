@@ -6,6 +6,7 @@ import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.g
 import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
+import { isRequestRound } from '../../contracts/query-job.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
 import type { GraphContextFactsV1 } from '../work-graph/model/graph-context-contracts.js';
 import {
@@ -13,21 +14,15 @@ import {
   queryFocusLines, queryPlanSummary, rolePayload, topLevelModuleCards,
 } from './context-fact-text.js';
 import {
-  CONTEXT_FORMAT_VERSION, queryContextPrelude, renderQueryContext, sectionOrderFor,
+  CONTEXT_FORMAT_VERSION, packString, queryContextPrelude, renderQueryContext, sectionOrderFor,
 } from './context-rendering.js';
 import { takesSessionHistoryOf } from './context-history-facts.js';
+import { assembleSecretaryContext } from './context-secretary-recipe.js';
 import { messageOf, rejected, sortedSources } from './context-support.js';
 import type {
   AssembledContextV1, ContextAssemblerDependencies, ContextQueryHistoryInputV1,
 } from './context-types.js';
 import type { ResolvedRuntimeConfiguration } from './execution-contracts.js';
-
-/** One fixed string of the resolved pack; a missing key is a pack bug. */
-function packString(texts: PromptTextsV1, key: string): string {
-  const value = texts.strings[key];
-  if (value === undefined) throw new Error(`the resolved prompt pack has no string "${key}"`);
-  return value;
-}
 
 export async function assembleQueryContext(
   deps: ContextAssemblerDependencies, ctx: CoreCallContext,
@@ -46,6 +41,12 @@ export async function assembleQueryContext(
   },
 ): Promise<ReadResult<AssembledContextV1>> {
   const texts = input.texts ?? PLATFORM_PROMPT_PACK_V1;
+  const job = input.facts.record?.job;
+  if (job !== undefined && isRequestRound(job)) {
+    // The secretary recipe reads its own declared facts port and returns the
+    // value for preparation to freeze; nothing travels beside the frozen input.
+    return assembleSecretaryContext(deps, ctx, input);
+  }
   const S = (key: string): string => packString(texts, key);
   const residentBudgetBytes = typeof input.configuration?.contextResidentBytes === 'number'
     && Number.isSafeInteger(input.configuration.contextResidentBytes) && input.configuration.contextResidentBytes >= 0
@@ -60,6 +61,9 @@ export async function assembleQueryContext(
   const roleSection = rolePayload(input.role, permissions, duty, residentBudgetBytes, texts);
   const goal = input.facts.goal;
   const workspace = input.facts.workspace;
+  // The plain Query recipe reads the graph context of its Goal. A request round
+  // without a goal takes the secretary recipe before this point.
+  if (goal === null) return rejected('invalid', 'no goal');
 
   // §4.2/G5.1: a Query reads the same graph context when the port is wired; a
   // graph rejection passes through unchanged and is never a legacy fallback.

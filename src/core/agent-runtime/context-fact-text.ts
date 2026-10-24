@@ -115,7 +115,7 @@ function stageIdOfAnchor(anchorKey: string): string {
 }
 
 /** Ruling 3: every rendered note line carries `（<noteId> v<version>）`. */
-function withNoteVersion(label: string, noteId: string, version: number, texts: PromptTextsV1): string {
+export function withNoteVersion(label: string, noteId: string, version: number, texts: PromptTextsV1): string {
   const S = (key: string): string => packString(texts, key);
   return label + S('context.understanding.versionOpen') + noteId + S('context.understanding.versionSeparator') + String(version) + S('context.understanding.versionClose');
 }
@@ -140,7 +140,7 @@ function understandingSourceLabel(row: NotesUnderstandingRowV1, texts: PromptTex
  * exactly ONE warning line with the existing general warning wording and no
  * body. Every rendered note line carries the note id and version.
  */
-function understandingLine(row: NotesUnderstandingRowV1, texts: PromptTextsV1): string {
+export function understandingLine(row: NotesUnderstandingRowV1, texts: PromptTextsV1): string {
   const S = (key: string): string => packString(texts, key);
   const noteId = row.status.pointer.noteId;
   const version = row.version;

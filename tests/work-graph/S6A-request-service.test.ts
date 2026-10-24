@@ -21,7 +21,7 @@ import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import { sameJson } from '../../src/contracts/fingerprint.js';
 import {
-  openS6ARequestWorld, S6A_GOAL_1, S6A_SCOPE, type S6ARequestWorld, type S6ASession,
+  openS6ARequestWorld, S6A_GOAL_1, S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, type S6ARequestWorld, type S6ASession,
 } from '../helpers/S6A-request-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
@@ -226,7 +226,8 @@ for (const backend of BACKENDS) {
       return found.job.intakeSession;
     }
 
-    /** Claim the request's oldest round on its secretary through the real Query owner. */
+    /** Claim the request's oldest round on its secretary through the real Query owner, with the published
+     * secretary profile (a request-round claim carries one; the bootstrap's `id` is its `profileId`). */
     async function claimRound(root: QueryJobRef) {
       const facts = await factsOf(root);
       const round = facts.rounds.find((candidate) => sameJson(candidate.ref, root)) ?? facts.rounds[0]!;
@@ -235,8 +236,12 @@ for (const backend of BACKENDS) {
       const run = facts.runs.find((candidate) => sameJson(candidate.ref, round.job.runRef));
       if (run === undefined) throw new Error('the round has no QueryRun');
       const card = await world.readSession(assigned);
+      const published = (await world.readProfiles()).find(candidate => candidate.id === S6A_SECRETARY_PROFILE_ID);
+      if (published === undefined) throw new Error('the secretary profile is not published');
+      const profile = { profileId: published.id, sessionRole: published.sessionRole, roleBinding: published.roleBinding,
+        runtimeBudget: published.runtimeBudget, budget: published.budget, consumerId: published.consumerId };
       const claimed = await world.platform.queries.claimQuery(ctx(), {
-        input: { queryRunRef: round.job.runRef, sessionRef: assigned },
+        input: { queryRunRef: round.job.runRef, sessionRef: assigned, profile },
         meta: { requestId: `claim-${round.ref.queryJobId}`, expected: [
           { ref: round.ref, revision: round.revision },
           { ref: round.job.runRef, revision: run.revision },

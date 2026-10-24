@@ -41,8 +41,24 @@ const SECTION_NAMES: ReadonlySet<string> = new Set([
     'role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation', 'unknown_call_review',
 ]);
 
+/**
+ * The secretary's one task section is written as three adjacent slots. They
+ * stay in this internal order and move as one block when a pack orders the
+ * sections differently.
+ */
+const SECRETARY_TASK_SLOTS = ['task_round', 'task_batched', 'task_earlier'] as const;
+const SECRETARY_TASK_SLOT_SET: ReadonlySet<string> = new Set(SECRETARY_TASK_SLOTS);
+
+/** The section a template slot belongs to, or `null` for a non-section slot. */
+export function contextSectionOfSlot(name: string): string | null {
+    if (SECRETARY_TASK_SLOT_SET.has(name)) return 'task';
+    return SECTION_NAMES.has(name) ? name : null;
+}
+
 /** The input templates whose text also fixes the section order (ruling 9). */
-const INPUT_TEMPLATES: ReadonlySet<string> = new Set(['work-input', 'query-planning-input', 'query-copy-input']);
+const INPUT_TEMPLATES: ReadonlySet<string> = new Set([
+    'work-input', 'query-planning-input', 'query-copy-input', 'secretary-round',
+]);
 
 type RenderState = {
     readonly parts: string[];
@@ -180,19 +196,54 @@ function parseSequence(
     return { nodes, next: index };
 }
 
-type SectionUse = { readonly name: string; readonly topLevel: boolean; readonly block: boolean };
+type SectionUse = {
+    readonly name: string; readonly slot: string; readonly topLevel: boolean; readonly block: boolean;
+};
 
 function collectSectionUses(nodes: readonly TemplateNodeV1[], nested: boolean, out: SectionUse[]): void {
     for (const node of nodes) {
         if (node.kind === 'slot') {
-            if (SECTION_NAMES.has(node.name)) out.push({ name: node.name, topLevel: !nested, block: false });
+            const name = contextSectionOfSlot(node.name);
+            if (name !== null) out.push({ name, slot: node.name, topLevel: !nested, block: false });
         } else if (node.kind === 'block') {
-            if (SECTION_NAMES.has(node.name)) out.push({ name: node.name, topLevel: !nested, block: true });
+            const name = contextSectionOfSlot(node.name);
+            if (name !== null) out.push({ name, slot: node.name, topLevel: !nested, block: true });
             collectSectionUses(node.children, true, out);
         } else if (node.kind === 'tool') {
             collectSectionUses(node.children, true, out);
         }
     }
+}
+
+/** The top-level slots in document order; a block or tool is not a slot. */
+function topLevelSlotNames(nodes: readonly TemplateNodeV1[]): string[] {
+    return nodes.flatMap(node => node.kind === 'slot' ? [node.name] : []);
+}
+
+/**
+ * The secretary task block is three top-level slots that must stay adjacent in
+ * their internal order. A separated, reordered or wrapped block is a pack
+ * problem; one structural problem is reported, not one per consequence.
+ */
+function secretaryTaskBlockProblem(
+    templateId: string,
+    nodes: readonly TemplateNodeV1[],
+    uses: readonly SectionUse[],
+    counts: ReadonlyMap<string, number>,
+): PromptRenderError | null {
+    const taskUses = uses.filter(use => use.name === 'task');
+    const structural = taskUses.some(use => !use.topLevel || use.block);
+    if (structural) return null;
+    // A missing or duplicated slot already has its own problem; do not report
+    // the block order on top of it.
+    if (SECRETARY_TASK_SLOTS.some(name => (counts.get(name) ?? 0) !== 1)) return null;
+    const order = topLevelSlotNames(nodes);
+    const [first, second, third] = SECRETARY_TASK_SLOTS;
+    const start = order.indexOf(first);
+    if (order[start + 1] !== second || order[start + 2] !== third)
+        return new PromptRenderError('illegal_section_order', templateId, first,
+            `template "${templateId}" must keep ${SECRETARY_TASK_SLOTS.join(', ')} adjacent in that order`);
+    return null;
 }
 
 function templateInvalid(
@@ -218,11 +269,12 @@ export type TemplateParseV1 =
  * Parses one template and checks what is decidable from its text alone: the
  * three template constructs (`{{slot}}`, `{{#slot}}…{{/slot}}` and
  * `{{#tool:name}}…{{/tool:name}}`), the code-owned slots, required slots
- * appearing exactly once, and (for the three input templates) the ruling 9
- * section order. Slot problems accumulate, so later markers and required slots
- * stay decidable; only a structural error that prevents further parsing ends it.
- * Never throws, so the resolver can collect the problems as data; the renderer
- * throws the first one.
+ * appearing exactly once, the secretary task slots appearing at all (their
+ * values are optional, the slots are not), and (for the three input templates)
+ * the ruling 9 section order. Slot problems accumulate, so later markers and
+ * required slots stay decidable; only a structural error that prevents further
+ * parsing ends it. Never throws, so the resolver can collect the problems as
+ * data; the renderer throws the first one.
  */
 export function parseTemplateV1(templateId: string, source: string): TemplateParseV1 {
     const table = Object.hasOwn(TEMPLATE_SLOTS, templateId) ? TEMPLATE_SLOTS[templateId] : undefined;
@@ -242,18 +294,31 @@ export function parseTemplateV1(templateId: string, source: string): TemplatePar
     }
     const invalid = (): TemplateParseV1 => ({ status: 'invalid', error: errors[0]!, errors });
     for (const [name, spec] of Object.entries(table)) {
-        if (spec.required && (counts.get(name) ?? 0) === 0)
-            errors.push(new PromptRenderError('template_invalid', templateId, name,
-                `template "${templateId}" is missing required slot "${name}"`));
+        // A pack may leave a secretary task slot's value empty, but it may not
+        // drop the slot: the three slots together are the one task section, and
+        // a missing one makes that part of the round material disappear from
+        // every rendered request. Their table entries stay optional for the
+        // values they carry.
+        const needsMarker = spec.required
+            || (templateId === 'secretary-round' && SECRETARY_TASK_SLOT_SET.has(name));
+        if (!needsMarker || (counts.get(name) ?? 0) > 0) continue;
+        errors.push(new PromptRenderError('template_invalid', templateId, name,
+            spec.required ? `template "${templateId}" is missing required slot "${name}"`
+                : `template "${templateId}" must keep slot "${name}" of its task section`));
     }
     if (!INPUT_TEMPLATES.has(templateId)) return errors.length === 0 ? { status: 'parsed', nodes } : invalid();
     const uses: SectionUse[] = [];
     collectSectionUses(nodes, false, uses);
-    const expected = new Set(Object.keys(table).filter(name => SECTION_NAMES.has(name)));
+    // `secretary-round` has no plain `task` slot: its three task slots project
+    // onto the one `task` section, so the expected names come from the layout
+    // rather than from the table's keys.
+    const expected = new Set(templateId === 'secretary-round'
+        ? ['role', 'goal', 'notes', 'task']
+        : Object.keys(table).filter(name => SECTION_NAMES.has(name)));
     const seen = new Set<string>();
     for (const use of uses) {
         if (!use.topLevel || use.block)
-            errors.push(new PromptRenderError('template_invalid', templateId, use.name,
+            errors.push(new PromptRenderError('template_invalid', templateId, use.slot,
                 `section "${use.name}" must be a top-level slot in template "${templateId}"`));
         seen.add(use.name);
     }
@@ -261,6 +326,10 @@ export function parseTemplateV1(templateId: string, source: string): TemplatePar
         if (!seen.has(name))
             errors.push(new PromptRenderError('template_invalid', templateId, name,
                 `template "${templateId}" is missing section "${name}"`));
+    }
+    if (templateId === 'secretary-round') {
+        const blockProblem = secretaryTaskBlockProblem(templateId, nodes, uses, counts);
+        if (blockProblem !== null) errors.push(blockProblem);
     }
     if (uses[0]?.name !== 'role')
         errors.push(new PromptRenderError('illegal_section_order', templateId, 'role',

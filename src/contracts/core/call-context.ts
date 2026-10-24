@@ -22,6 +22,8 @@ export type CorePrincipal = {
 } | {
     kind: 'query_run';
     queryRunRef: QueryRunRef;
+    /** The frozen request goal of a secretary round; never a model argument. */
+    goalId?: string | null;
     initiator: Extract<ActorRef, {
         kind: 'human' | 'system';
     }>;

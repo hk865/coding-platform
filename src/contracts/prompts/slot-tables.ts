@@ -8,10 +8,11 @@ import type { TemplateSlotTableV1 } from './prompt-pack.js';
  * may therefore receive text whose business source was empty, as long as the
  * formatting supplies a heading or separator.
  *
- * The three main input templates (`work-input`, `query-planning-input`,
- * `query-copy-input`) are rendered by the context assembler; their own slot
- * order is the section order, so their tables are frozen here with the format
- * and renderer.
+ * The input templates (`work-input`, `query-planning-input`, `query-copy-input`
+ * and `secretary-round`) are rendered by a context recipe; their own slot order
+ * is the section order, so their tables are frozen here with the format and
+ * renderer. In `secretary-round` the three `task_*` slots are one `task`
+ * section and stay adjacent in their declared order.
  */
 export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
     'work-input': {
@@ -39,6 +40,18 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         goal: { required: false },
         task: { required: false },
     },
+    // The secretary's task section is one section made of three adjacent slots
+    // in this internal order; `task_round` is the required one.
+    'secretary-round': {
+        prelude: { required: false },
+        role: { required: true },
+        goal: { required: false },
+        notes: { required: false },
+        task_round: { required: true },
+        task_batched: { required: false },
+        task_earlier: { required: false },
+    },
+    'secretary-answer': {},
     'initial-planning-answer': {},
     'continuation-brief': {
         marker: { required: true },

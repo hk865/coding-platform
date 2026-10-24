@@ -36,7 +36,7 @@ import { createTargetPlatform, type TargetPlatformOptions } from '../composition
 import type { RecordCommitNotice, RecordCommitObserver } from '../composition/commit-observer.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
-import type { SessionRef } from '../contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { NoteScribeTodoPort } from '../core/work-graph/model/note-contracts.js';
 import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
@@ -53,6 +53,11 @@ import { createCollaborationDriver } from './collaboration-driver.js';
 import { createGoalFanOutDriver } from './goal-fan-out-driver.js';
 import { AUTO_CAPTURE_ACTOR, createAutoCaptureDriver } from './auto-capture-driver.js';
 import { createWorkbenchTools } from './workbench-tools.js';
+import { createWakeLoop, type WakeLoop } from './wake-loop.js';
+import {
+  createRequestRoundQueues, REQUEST_ROUNDS_QUEUE, REQUEST_UNASSIGNED_QUEUE,
+} from '../business/workflow/request-round-queue.js';
+import { createQueryStageDriver } from '../business/workflow/query-stage-driver.js';
 import {
   attentionSignalToJson, createAttentionObserver, createAttentionScanner, type AttentionScopeV1, type AttentionSignal,
 } from './attention-observer.js';
@@ -157,6 +162,17 @@ export type LocalWorkbenchHostOptions = {
    * profile list and cap are what that open uses).
    */
   secretaryOpenCap?: number;
+  /**
+   * The request driver switch. Absent means `'on'`: under the instance lease
+   * the Host runs a wake loop and two request queues per workspace, so a
+   * submitted round advances without any Query route call. `'off'` builds no
+   * loop and no queue at all, so a round waits where the command left it, for
+   * the Query routes (`queries/claim|prepare|start`) or a later Host with the
+   * driver on. Like `secretaryOpenCap` it is a start option — a change is a
+   * Host restart — with no settings field and no screen: a caller that drives
+   * a round by hand must not race a Host that claims and runs it on its own.
+   */
+  requestDriver?: 'on' | 'off';
   /** Host-internal controlled-provider seam for the normal-chain acceptance.
    * It is never a CLI or HTTP field and never changes the product default. */
   runtimeProvider?: WorkbenchRuntimeProviderDependencies;
@@ -386,6 +402,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     && (!Number.isSafeInteger(options.secretaryOpenCap) || options.secretaryOpenCap < 1)) {
     throw new Error('secretaryOpenCap must be a positive integer when present');
   }
+  // The request driver is a two-valued start switch; an unreadable value fails
+  // the start instead of silently driving rounds or silently dropping them.
+  if (options.requestDriver !== undefined && options.requestDriver !== 'on' && options.requestDriver !== 'off') {
+    throw new Error("requestDriver must be 'on' or 'off' when present");
+  }
   // The live profile projection the request commands
   // read. It is declared before the platform so the profile port's getter can
   // see the settings rebuild that splices it in place.
@@ -542,6 +563,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // re-drives the waiting Goal resume (GOAL-14). Neither observer can affect a
   // commit or the other observer.
   let goalFanOutCommitted: ((notice: RecordCommitNotice) => void) | undefined;
+  // The request driver's wake loop is built over the platform's published
+  // owners, so it exists only after the platform. Both bindings below are set
+  // right after it: until then a wake or a notice starts nothing, and the
+  // rounds stay on record for the start-up rebuild.
+  let requestDriverCommitted: ((notice: RecordCommitNotice) => void) | undefined;
+  let requestWakeSink: ((scope: WorkspaceScope, source: 'request_command') => void) | undefined;
   // L8 (book ruling 1): the mutable trigger sink handed to the platform BEFORE
   // the driver exists; each formal adoption/revision/PASS calls it after its
   // non-replayed commit, and the driver is installed right after the platform.
@@ -552,6 +579,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     committed(notice) {
       try { changes.committed(notice); } catch { /* the change feed keeps its own state */ }
       try { goalFanOutCommitted?.(notice); } catch { /* the driver never affects a commit */ }
+      try { requestDriverCommitted?.(notice); } catch { /* the loop never affects a commit */ }
     },
   };
   // A.2 step 5.6 (§12.1 step 0, §12.8): the Host instance lease is taken BEFORE the platform. Without it
@@ -592,6 +620,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ...(promptsRoot === undefined ? {} : { promptPacks: createDiskPromptPackSource(promptsRoot) }),
       // L8: the sink exists before the driver; its calls are ignored until then.
       onArchitectureCaptureTrigger: event => { architectureCaptureTrigger?.(event); },
+      // A request command's commit reaches the wake loop of the workspace it
+      // landed in; the sink is bound once the loop exists, and the platform
+      // never drives a round by itself.
+      requestWake: (scope, source) => { requestWakeSink?.(scope, source); },
     });
   } catch (error) {
     await instanceLease.release().catch(() => undefined);
@@ -663,6 +695,51 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // L-10: only the Host holding the instance lease reaches the Runs.
     driving: () => leaseOwned });
   goalFanOutCommitted = notice => goalFanOut.committed(notice);
+
+  // The request driver: ONE wake loop and the two request queues, over the
+  // platform's published request owners. It exists only under the instance
+  // lease (a Host without it writes nothing) and only while the start option
+  // leaves it on; with it off no loop and no queue exist, so a submitted round
+  // waits where the command left it.
+  let wakeLoop: WakeLoop | undefined;
+  let requestQueues: ReturnType<typeof createRequestRoundQueues> | undefined;
+  if (leaseOwned && options.requestDriver !== 'off') {
+    const loop = createWakeLoop({ driving: () => leaseOwned });
+    const queues = createRequestRoundQueues({
+      rounds: platform.requestRounds,
+      facts: platform.requestFacts,
+      sessions: platform.sessionFacts,
+      profiles: platform.secretaryProfiles,
+      drain: platform.requestIntake.drainUnassigned,
+      driver: createQueryStageDriver({
+        queries: platform.queries, runtime: platform.runtime, facts: platform.requestFacts,
+      }),
+      // Every pass runs as the Host's own system actor; the loop's abort signal
+      // goes into the context, so closing stops a pass at its next request. A
+      // pass starts only at `start`, `addWorkspace` or a wake, all of which come
+      // after the Host's context builder below exists.
+      context: (scope: WorkspaceScope, signal: AbortSignal) =>
+        ({ ...hostScopeContext(scope, HOST_RECONCILE_ACTOR), signal }),
+      // An advance settling can make the next round of that workspace runnable
+      // at once; a `blocked` advance leaves it for the next commit notice, the
+      // next request command or a line registration.
+      wake: (scope: WorkspaceScope) => { loop.wake(scope, REQUEST_ROUNDS_QUEUE, 'advance_settled'); },
+    });
+    // Both queues are registered once per loop: a handler takes the scope, so
+    // every workspace the loop covers runs the same two. The loop covers the
+    // start-up workspaces in `start` and a later one in `addWorkspace`.
+    loop.register(REQUEST_ROUNDS_QUEUE, queues.rounds);
+    loop.register(REQUEST_UNASSIGNED_QUEUE, queues.unassigned);
+    // A request command's commit wakes both queues: the round it appended needs
+    // a claim or a drain, and a waiting request needs the unassigned pass.
+    requestWakeSink = (scope, source) => {
+      loop.wake(scope, REQUEST_ROUNDS_QUEUE, source);
+      loop.wake(scope, REQUEST_UNASSIGNED_QUEUE, source);
+    };
+    requestDriverCommitted = notice => loop.committed(notice);
+    wakeLoop = loop;
+    requestQueues = queues;
+  }
 
   // Live projections the Host rebuilds for every bootstrap read / settings open.
   // `runtimeProfiles` itself is declared before the platform (the request
@@ -953,6 +1030,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     });
     workflowScopes.push({ projectId: config.scope.projectId, workspaceId: config.scope.workspaceId });
     if (reconcileAddedScope !== null) await reconcileAddedScope(config.scope);
+    // A workspace opened later joins the request driver only after its
+    // reconcile, in the same order the start takes, so the reconcile's own
+    // commits wake nothing; its rounds then stand where the records leave them.
+    if (wakeLoop !== undefined) {
+      await wakeLoop.addWorkspace({ projectId: config.scope.projectId, workspaceId: config.scope.workspaceId });
+    }
   }
 
   async function openWorkspaceImpl(request: OpenSettingsWorkspace & { workspaceId?: string }): Promise<SettingsResponse<HostSettingsOpenedHost>> {
@@ -1200,6 +1283,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
   };
   if (reconcileReport !== null) await startRedrive(reconcileReport.redriveGoals);
+  // The request driver starts only now, after the start-up reconcile and its
+  // re-drive: their commits must not wake a pass, and both queues rebuild
+  // read-only from the records. With `resumeOnStartup` off each workspace's
+  // queues stay unarmed until the first request command wakes them, so nothing
+  // starts on its own after a restart.
+  if (wakeLoop !== undefined) {
+    await wakeLoop.start(workspaces.map(workspace => ({
+      projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
+    })), { resumeOnStartup: platform.automationPolicy().resumeOnStartup });
+  }
   // Slice 2B L8/B2: after the start-up reconcile, the leased Host backfills the
   // last 14 days in the background, one batch at a time, until done, a
   // `retry_later` or close. The cursor is memory-only: the records are the
@@ -1725,6 +1818,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         await backfillDone;
         await attentionDone.catch(() => { /* the loop records its own state */ });
         await Promise.all([...inputJobs.values()]);
+        // The request driver goes before the other drivers and the platform: a
+        // pass would otherwise start a round on a platform that is draining.
+        // The loop stops scheduling, aborts the signal every drain and every
+        // in-flight advance got, and waits for them; the queues then settle
+        // what they launched, so no advance is left running into `close`.
+        if (wakeLoop !== undefined) await wakeLoop.close();
+        if (requestQueues !== undefined) await requestQueues.settle();
         await collaborationDriver.close();
         await goalFanOut.close();
         await workbenchToolsClosed;

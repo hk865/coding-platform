@@ -458,6 +458,21 @@ export function createRequestIntake(deps: RequestIntakeDependencies): RequestInt
     let progressed = 0;
     let blocked = 0;
     for (const root of read.value.requests) {
+      // A drained request is one commit, so a stop requested while the page is
+      // being worked returns what was already committed and leaves the rest of
+      // the page to the next pass. Continuing would start work nobody waits for.
+      if (ctx.signal.aborted) {
+        return {
+          status: 'ready',
+          value: {
+            progressed,
+            more: read.value.continuation !== null,
+            continuation: read.value.continuation,
+            wrapped: read.value.wrapped,
+            blocked,
+          },
+        };
+      }
       // A failed or thrown facts read is `unavailable` at once, never
       // `blocked`; every round committed before it stays committed.
       let factsRead: ReadResult<RequestRoundsFactsV1>;

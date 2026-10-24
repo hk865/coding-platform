@@ -199,11 +199,17 @@ function latestAnswerRefs(rounds: readonly QueryJobSnapshot[]): QueryJobAnswerRe
   return refs;
 }
 
-async function readAnswers(
-  deps: RequestFactsDependencies, rounds: readonly QueryJobSnapshot[],
-): Promise<{ status: 'ready'; value: QueryJobAnswerSnapshot[] } | { status: 'rejected'; code: 'unavailable'; reason: string }> {
+/**
+ * The latest answer of each held round, in one batch. The one reader the request
+ * view and the secretary preparation share; it never re-reads the rounds' Job,
+ * Run or Session.
+ */
+export async function readAnswers(
+  deps: { records: Pick<GoalRecordTransactionPort, 'readMany'> }, rounds: readonly QueryJobSnapshot[],
+): Promise<{ status: 'ready'; value: QueryJobAnswerSnapshot[]; guards: RecordGuard[] }
+  | { status: 'rejected'; code: 'unavailable'; reason: string }> {
   const refs = latestAnswerRefs(rounds);
-  if (refs.length === 0) return { status: 'ready', value: [] };
+  if (refs.length === 0) return { status: 'ready', value: [], guards: [] };
   let read;
   try {
     read = await deps.records.readMany(refs.map((ref) => keyOf(ref)));
@@ -213,12 +219,14 @@ async function readAnswers(
   if (read.status !== 'ready') return unavailable(`the round answers read failed: ${read.code}: ${read.reason}`);
   if (read.value.missing.length > 0) return unavailable(`the round answers are missing: ${read.value.missing.join(', ')}`);
   const answers: QueryJobAnswerSnapshot[] = [];
+  const guards: RecordGuard[] = [];
   for (const record of read.value.records) {
     const decoded = decodeQueryJobAnswerSnapshot(record);
     if (decoded.status !== 'decoded') return unavailable(`a round answer is damaged: ${decoded.reason}`);
     answers.push(decoded.value);
+    guards.push({ refKey: record.refKey, expectedRevision: record.revision });
   }
-  return { status: 'ready', value: answers };
+  return { status: 'ready', value: answers, guards };
 }
 
 async function readCandidate(

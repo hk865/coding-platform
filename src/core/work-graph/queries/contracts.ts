@@ -37,9 +37,10 @@ import type {
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
 import type { QueryRequestPromptFactsV1 } from '../../../contracts/prompts/prompt-set.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from '../model/configuration-contracts.js';
+import type { SecretaryProfileV1 } from '../model/request-contracts.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
 import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
@@ -82,7 +83,8 @@ export type QueryEntryIdentity = {
 /** The exact formal facts a bounded Query preparation consumes. */
 export type QueryPreparationFacts = {
   record: QueryExecutionRecord;
-  goal: GoalSnapshot;
+  /** Null only for a no-goal request round; every other Query still rejects null. */
+  goal: GoalSnapshot | null;
   workspace: WorkspaceSnapshot;
   focusPlan: PlanRevisionSnapshot | null;
   initiator: Extract<ActorRef, { kind: 'human' | 'system' }>;
@@ -109,6 +111,8 @@ export type QueryHistoryObservation = {
         outcome: 'answered' | 'timeout' | 'gap' | 'failed' | 'cancelled';
         answer: QueryJobAnswerV1 | null;
         reason: string | null;
+        /** Why a request round's answer failed the protocol; null on every other terminal. */
+        answerCheck: { detail: 'too_long' | 'empty' | 'protocol'; reason: string } | null;
       };
 };
 
@@ -143,6 +147,8 @@ export interface QueryExecutionPort {
   claimQuery(ctx: CoreCallContext, request: GraphWrite<{
     queryRunRef: QueryRunRef;
     sessionRef: SessionRef;
+    /** The attempt's profile; required for a request round, omitted or null otherwise. */
+    profile?: SecretaryProfileV1 | null;
   }>): Promise<WriteResult<QueryExecutionRecord>>;
   bindPreparedQuery(ctx: CoreCallContext, request: GraphWrite<{
     prepared: PreparedQueryExecution;
@@ -205,12 +211,14 @@ export type ResolveUnknownQueryRunInput = {
 
 /**
  * Trusted deps. `records` is the same physical WorkGraph backend the Goal/Plan
- * writers use; `roles` is the real Role facts reader; `bodies` is the same raw
- * body store; `authorizeConfiguration` projects the trusted Query Host
- * configuration. `now`/`eventId` are materialized only for a fresh request.
+ * writers use; its ordered lookup reads a request round's facts at its start
+ * and its recovery (`readRequestRounds`), so it is required. `roles` is the
+ * real Role facts reader; `bodies` is the same raw body store;
+ * `authorizeConfiguration` projects the trusted Query Host configuration.
+ * `now`/`eventId` are materialized only for a fresh request.
  */
 export type QueryExecutionDependencies = {
-  records: GoalRecordTransactionPort & RecordLookupPort;
+  records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   roles: RoleBindingFactsPort;
   bodies: Pick<RawArtifactStorePort, 'read'>;
   authorizeConfiguration: AuthorizeQueryConfiguration;
@@ -246,9 +254,10 @@ export interface QueryJobPort {
     ctx: CoreCallContext,
     ref: QueryJobRef,
   ): Promise<ReadResult<QueryJobRecord>>;
+  /** The execution port's request, forwarded whole (a request round's claim carries its profile). */
   claimQuery(
     ctx: CoreCallContext,
-    request: GraphWrite<{ queryRunRef: QueryRunRef; sessionRef: SessionRef }>,
+    request: Parameters<QueryExecutionPort['claimQuery']>[1],
   ): Promise<WriteResult<QueryExecutionRecord>>;
   readQueryAnswer(
     ctx: CoreCallContext,

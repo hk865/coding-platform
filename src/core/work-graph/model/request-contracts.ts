@@ -10,6 +10,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { RoleBindingRefV1 } from '../../../contracts/dispatch.js';
+import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
   GoalCardDraftV1, QueryCloseDetailV1, QueryJobIntentV1, QueryJobRef, QueryRoundKind,
 } from '../../../contracts/query-job.js';
@@ -28,6 +29,8 @@ export const SECRETARY_PICK_RETRIES = 3;
 /** request-tail 归属重试上限. */
 export const SECRETARY_TAIL_RETRIES = 3;
 export const IDEA_DETAIL_MAX_CODEPOINTS = 600;
+/** A stored idea title is one line of at most this many code points. */
+export const IDEA_TITLE_MAX_CODEPOINTS = 120;
 /** How many finished rounds one preparation sees. */
 export const SECRETARY_HISTORY_ROUNDS = 10;
 /** Each history answer's byte cap. */
@@ -52,6 +55,26 @@ export const QUERY_BY_REQUEST_INDEX = 's6-query-by-request';
 export const QUERY_OPEN_BY_WORKSPACE_INDEX = 's6-query-open-by-workspace';
 export const REQUEST_ROOTS_BY_GOAL_INDEX = 's6-request-roots-by-goal';
 export const QUERY_RAN_BY_SESSION_GOAL_INDEX = 's6-query-ran-by-session-goal';
+
+// ------------------------------------------------------------------------ //
+// The one physical claim slots                                              //
+// ------------------------------------------------------------------------ //
+
+/** The one per-request tail slot: owner = the request's last round key. */
+export const REQUEST_TAIL_PREFIX = 'request-tail:';
+/** The one per-secretary intake slot: owner = the pending holder round key. */
+export const SECRETARY_INTAKE_PREFIX = 'secretary-intake:';
+
+export function requestTailKey(requestRoot: QueryJobRef): string {
+  return REQUEST_TAIL_PREFIX + canonicalJson(requestRoot as unknown as JsonValue);
+}
+
+/** The Session aggregate key of the intake slot; the Session is the physical owner. */
+export function secretaryIntakeKey(session: SessionRef): string {
+  return SECRETARY_INTAKE_PREFIX + canonicalJson({
+    aggregateType: 'Session', projectId: session.projectId, sessionId: session.sessionId,
+  } as unknown as JsonValue);
+}
 
 // ------------------------------------------------------------------------ //
 // Read projections (§3.12)                                                  //
@@ -132,3 +155,10 @@ export interface SecretaryScopePort {
   scopeOf(ctx: CoreCallContext, input: { session: SessionRef }):
     Promise<ReadResult<{ kind: 'project' } | { kind: 'goal'; goalId: string }>>;
 }
+
+/**
+ * The attempt phases that make a round live: a claim up to the Kernel entry.
+ * `unknown` is deliberately absent: it keeps its occupancy for the operator,
+ * but no queue advances it. The queue and the secretary pick read this one set.
+ */
+export const LIVE_ATTEMPT_PHASES: ReadonlySet<string> = new Set(['claimed', 'prepared', 'entering', 'entered']);

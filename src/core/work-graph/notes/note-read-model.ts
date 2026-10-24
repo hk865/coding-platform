@@ -525,7 +525,9 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   }
 
   function currentGoalIdOf(ctx: CoreCallContext): string | null {
-    return ctx.principal.kind === 'work_run' ? ctx.principal.runRef.goalId : null;
+    const principal = ctx.principal;
+    if (principal.kind === 'query_run') return principal.goalId ?? null;
+    return principal.kind === 'work_run' ? principal.runRef.goalId : null;
   }
 
   /**
@@ -1320,6 +1322,29 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     return { rows, items, omitted: eligibleTotal - rows.length };
   }
 
+  /**
+   * The project material both memory-material branches return: the pointer's
+   * understanding row and the eligible norms, from the one header selection
+   * and the one check already made.
+   */
+  function projectMaterialOf(selected: HeaderSelection, itemByKey: ReadonlyMap<string, NoteItemV1>):
+  { projectUnderstanding: NotesUnderstandingRowV1 | null; norms: NoteIndexRowV1[]; normsOmitted: number } {
+    let projectUnderstanding: NotesUnderstandingRowV1 | null = null;
+    if (selected.understanding !== null) {
+      const head = selected.understanding.head;
+      const currentEligible = itemByKey.get(`${head.noteId}@${String(head.version)}`)?.currentEligible ?? false;
+      projectUnderstanding = { scope: 'project',
+        status: { anchorKey: 'project',
+          pointer: { noteId: head.noteId, revision: selected.understanding.pointerRevision },
+          updateDue: null, latestTriggerCursor: null },
+        version: head.version, currentEligible, conclusion: head.conclusion,
+        body: currentEligible
+          ? (head.sections === undefined ? head.body : renderUnderstandingBody(head.sections)) : null };
+    }
+    const normsResult = eligibleNorms(selected.norms, itemByKey, selected.eligibleTotal);
+    return { projectUnderstanding, norms: normsResult.rows, normsOmitted: normsResult.omitted };
+  }
+
   type BuiltFindPage = { items: NoteItemV1[]; header: MemoryProjectHeaderV1 | null;
     understandingItem: NoteItemV1 | null; normItems: NoteItemV1[];
     /** RW-10: every checked header norm (up to `PROJECT_NORMS_CHECK_MAX`), shown or not. */
@@ -1859,14 +1884,34 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
    * read, `readHeadsForKeys` and ONE `checkedPage` call, so project header,
    * local understandings, general rows and reminders come from the same check
    * caches. The project anchor set is read once per call and shared with the
-   * check; an includeInputs Query's general keys never hold
-   * `project`, so that one header read is the only project-key scan. A null
-   * goal is 6A's branch (`unsupported`, reason `6A`); any read failure is
-   * `unavailable`.
+   * check; an includeInputs Query's general keys never hold `project`, so that
+   * one header read is the only project-key scan. A null goal returns the
+   * project material only — the project understanding and norms — with the
+   * goal-scoped rows empty. Any read failure is `unavailable`.
    */
   async function readMemoryMaterial(ctx: CoreCallContext, input: NoteMemoryMaterialInputV1):
   Promise<ReadResult<NoteMemoryMaterialV1>> {
-    if (input.goalId === null) return rejected('unsupported', '6A');
+    if (input.goalId === null) {
+      const preRead = await pointersAndHeadsOf(ctx.projectId, ['project']);
+      if (!preRead.ok) return rejected(preRead.code, preRead.reason);
+      const pointer = preRead.value.pointers.get('project') ?? { noteId: null, revision: null };
+      const head = pointer.noteId === null ? null : preRead.value.heads.get(pointer.noteId) ?? null;
+      const seed: UnderstandingPointerSeed = new Map([[`${ctx.projectId}\u0000project`, { pointer, head }]]);
+      const anchorSets = new Map<string, NoteHeadSnapshot[]>();
+      const selected = await selectProjectHeader(ctx, ctx.projectId, anchorSets, { pointer, head });
+      if (!selected.ok) return rejected(selected.code, selected.reason);
+      const combined = new Map<string, NoteHeadSnapshot>();
+      const addHead = (value: NoteHeadSnapshot): void => { if (!combined.has(value.noteId)) combined.set(value.noteId, value); };
+      if (selected.value.understanding !== null) addHead(selected.value.understanding.head);
+      for (const norm of selected.value.norms) addHead(norm);
+      const pageBuilt = await checkedPage(ctx, [...combined.values()], null, anchorSets, undefined, undefined,
+        undefined, seed);
+      if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
+      const itemByKey = new Map<string, NoteItemV1>();
+      for (const item of pageBuilt.value.items) itemByKey.set(`${item.noteId}@${String(item.version)}`, item);
+      const project = projectMaterialOf(selected.value, itemByKey);
+      return { status: 'ready', value: { ...project, localUnderstanding: [], general: [], reminders: [] } };
+    }
     const goalId = input.goalId;
 
     const goalRef: GoalRef = { aggregateType: 'Goal', projectId: ctx.projectId, goalId };
@@ -1963,22 +2008,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
 
     // Items 2/4: the project row carries the real note version and the check's
     // `currentEligible`; an ineligible row renders no body.
-    let projectUnderstanding: NotesUnderstandingRowV1 | null = null;
-    if (selected.value.understanding !== null) {
-      const head = selected.value.understanding.head;
-      const currentEligible = itemOfHead(head)?.currentEligible ?? false;
-      projectUnderstanding = { scope: 'project',
-        status: { anchorKey: 'project',
-          pointer: { noteId: head.noteId, revision: selected.value.understanding.pointerRevision },
-          updateDue: null, latestTriggerCursor: null },
-        version: head.version, currentEligible, conclusion: head.conclusion,
-        body: currentEligible
-          ? (head.sections === undefined ? head.body : renderUnderstandingBody(head.sections)) : null };
-    }
-
-    const normsResult = eligibleNorms(selected.value.norms, itemByKey, selected.value.eligibleTotal);
-    const norms = normsResult.rows;
-    const normsOmitted = normsResult.omitted;
+    const { projectUnderstanding, norms, normsOmitted } = projectMaterialOf(selected.value, itemByKey);
 
     // The goal row is ALWAYS present and the stage row whenever the
     // task's stage is in the plan; each carries its real status even without a

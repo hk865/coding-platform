@@ -1,0 +1,277 @@
+/**
+ * The two secretary templates: their platform text, slot tables, rendering and
+ * section order. Expected texts are the specification's literals; expected
+ * digests are `sha256sum` of the committed files, as the PC pack tests do.
+ *
+ * The task section is one section made of three adjacent slots
+ * (`task_round`, `task_batched`, `task_earlier`) in that internal order. A
+ * person's pack may move the block but never split or reorder it.
+ */
+import { describe, expect, it } from 'vitest';
+import type { ContextAssemblyBindingV1 } from '../../src/contracts/graph-context.js';
+import { sha256Hex } from '../../src/contracts/fingerprint.js';
+import type { ResolvedPromptPackV1 } from '../../src/contracts/prompts/prompt-pack.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../src/contracts/prompts/platform-pack.generated.js';
+import type { PromptTextsV1 } from '../../src/contracts/prompts/prompt-set.js';
+import { parseTemplateV1, renderTemplate } from '../../src/contracts/prompts/render-template.js';
+import { TEMPLATE_SLOTS } from '../../src/contracts/prompts/slot-tables.js';
+import {
+    queryPreparedSectionOrder, sectionOrderFor, templateSectionOrder, workPreparedSectionOrder,
+} from '../../src/core/agent-runtime/context-rendering.js';
+import { contextAssemblyProblem } from '../../src/core/work-graph/state/context-input.js';
+
+const PACK: ResolvedPromptPackV1 = PLATFORM_PROMPT_PACK_V1;
+
+/** The committed platform files, hand-checked with `sha256sum`. */
+const EXISTING_DIGESTS = {
+    'work-input': 'f3ebad58e28d7f5a2d8bc8831b7974b03057c0590982d23fc325be933f5aed7a',
+    'query-planning-input': 'ac29545b215361ea2ce479007f2c3ffcc3daa87a2bbacaf89957b49aa4022a77',
+    'query-copy-input': '89ee28b2dc868787a7e41a063edadf9765e474e93b3bb477b038f93909808e20',
+    'initial-planning-answer': '0ce75daec4258062d451703fb6efb22879a7e2e8359767a17d0f2666bfe8bd3d',
+    base: '5a9fa326d215e82d8329a0ddce8ff2da29463430550dd8320695b760ef7f03b5',
+    'skill-platform-work': 'e258bef4180c56177bcd6a083e5927e3e374cf1dcd50636cf74171bfd8abf053',
+    'skill-platform-secretary': '3842e7592faceea16b868ae8e364f261d93cfd859f00c00be8fc1809af8c4f84',
+    'skill-platform-adviser': '99e51b8b684661c215258afe57e07d4bf40a44163a5d2e97208699465715c977',
+    'skill-platform-scribe': 'dc0671546449950d91ab03fdfa7a8fa3858473a9cda84779e4c4eb3f5564f59f',
+    'skill-platform-reviewer': 'a7e4ab9987ab8703399f3f9c7815e85b1b4bb7ced24ad9437d196c169ee63d6f',
+} as const;
+
+const secretaryAnswerText = [
+    'Return exactly one JSON object as your entire final answer: no preface, no trailing note, no commentary and no markdown or code fences. The platform parses that one object strictly and never extracts or repairs JSON out of surrounding text.',
+    'The object has exactly these fields:',
+    '- schemaVersion: 1.',
+    "- body: your answer to the person, in the person's language. It must not be empty.",
+    '- ideas: [] or 2 to 3 options, each {"title", "detail"}. title is one line of at most 120 characters; detail is at most 600 characters. Give options only when the person has a real choice between different approaches. Never give exactly one option and never more than three.',
+    '- goalCardDrafts: [] unless this request has no goal and the person asks for new work. Each draft is {"objective", "completion", "autonomy"}: objective is one sentence; completion is a non-empty array of checkable completion criteria; autonomy is "every_step" or "after_plan_confirmation". A draft is a proposal only; no goal exists until the person confirms it.',
+].join('\n');
+
+/** The platform `secretary-round` layout, written out: one blank line after the prelude. */
+const secretaryRoundBody =
+    '{{prelude}}\n\n{{role}}{{goal}}{{notes}}{{task_round}}{{task_batched}}{{task_earlier}}';
+
+const TASK_BLOCK = '{{role}}{{goal}}{{task_round}}{{task_batched}}{{task_earlier}}{{notes}}';
+
+function textsOf(secretaryRound: string): PromptTextsV1 {
+    return { templates: { 'secretary-round': secretaryRound }, strings: {} };
+}
+
+describe('the platform secretary templates', () => {
+    it('declares both at version 1, with their code-owned slots and committed digests', () => {
+        for (const id of ['secretary-round', 'secretary-answer'] as const) {
+            expect(PACK.manifest.templates[id], `manifest entry ${id}`).toEqual({
+                file: `templates/${id}.txt`, version: 1, mentionsTools: [],
+            });
+            expect(PACK.origins[id], `origin ${id}`).toEqual({
+                packId: 'platform', version: 1, mentionsTools: [],
+            });
+        }
+        expect(TEMPLATE_SLOTS['secretary-round']).toEqual({
+            prelude: { required: false },
+            role: { required: true },
+            goal: { required: false },
+            notes: { required: false },
+            task_round: { required: true },
+            task_batched: { required: false },
+            task_earlier: { required: false },
+        });
+        expect(TEMPLATE_SLOTS['secretary-answer']).toEqual({});
+        expect(PACK.templates['secretary-round']).toBe(secretaryRoundBody);
+        expect(PACK.templates['secretary-answer']).toBe(secretaryAnswerText);
+        expect(parseTemplateV1('secretary-round', PACK.templates['secretary-round']!).status).toBe('parsed');
+        expect(parseTemplateV1('secretary-answer', PACK.templates['secretary-answer']!).status).toBe('parsed');
+        expect(sha256Hex(PACK.templates['secretary-round']!))
+            .toBe('1fbe219c936568074193d9f4f57dd5a15e963f6487be2838a78d040429b3cc7c');
+        expect(sha256Hex(PACK.templates['secretary-answer']!))
+            .toBe('56d38906f282a01b6f627e0d1ffe023445e753daa5fc2c4049c7287e513ba30c');
+    });
+
+    it('renders the three task slots as one adjacent block in the platform order', () => {
+        const rendered = renderTemplate(PACK, 'secretary-round', {
+            prelude: 'PRELUDE', role: 'ROLE', goal: 'GOAL', notes: 'NOTES',
+            task_round: 'ROUND', task_batched: 'BATCHED', task_earlier: 'EARLIER',
+        }, []);
+        expect(rendered.text).toBe('PRELUDE\n\nROLEGOALNOTESROUNDBATCHEDEARLIER');
+        expect(Object.keys(rendered.sectionRanges)).toEqual(
+            ['prelude', 'role', 'goal', 'notes', 'task_round', 'task_batched', 'task_earlier']);
+    });
+
+    it('carries the secretary strings of the specification verbatim', () => {
+        expect({
+            workspaceHeading: PACK.strings['secretary.workspaceHeading'],
+            goalsHeading: PACK.strings['secretary.goalsHeading'],
+            noGoal: PACK.strings['secretary.noGoal'],
+            roundHeading: PACK.strings['secretary.roundHeading'],
+            selectedIdea: PACK.strings['secretary.selectedIdea'],
+            batchedHeading: PACK.strings['secretary.batchedHeading'],
+            earlierHeading: PACK.strings['secretary.earlierHeading'],
+            answerOmitted: PACK.strings['secretary.answerOmitted'],
+            noAnswer: PACK.strings['secretary.noAnswer'],
+            notEnded: PACK.strings['secretary.notEnded'],
+            initialDrafts: PACK.strings['secretary.initialDrafts'],
+        }).toEqual({
+            workspaceHeading: '## Workspace',
+            goalsHeading: '## Goals',
+            noGoal: 'This request has no goal yet.',
+            roundHeading: '## This round',
+            selectedIdea: 'Selected idea:',
+            batchedHeading: '## Also queued in this request',
+            earlierHeading: '## Earlier rounds of this request on other secretaries',
+            answerOmitted: '(answer cut at 2 KiB)',
+            noAnswer: '(no answer)',
+            notEnded: '(still running or result unknown)',
+            initialDrafts: 'You MAY add a top-level "goalCardDrafts" array to the JSON object: each '
+                + '{"objective", "completion", "autonomy"}, objective one sentence, completion a non-empty array '
+                + 'of checkable criteria, autonomy "every_step" or "after_plan_confirmation". A draft is a '
+                + 'proposal only.',
+        });
+    });
+
+    it('renders the answer format as the one whole text, with no slots', () => {
+        expect(renderTemplate(PACK, 'secretary-answer', {}, []).text).toBe(secretaryAnswerText);
+    });
+
+    it('records the platform order as role, goal, notes, task', () => {
+        expect(templateSectionOrder(PACK, 'secretary-round')).toEqual(['role', 'goal', 'notes', 'task']);
+        expect(sectionOrderFor('secretary', 'secretary-round')).toEqual(['role', 'goal', 'notes', 'task']);
+        expect(queryPreparedSectionOrder()).toEqual({
+            planning: ['role', 'goal', 'task', 'footprint'],
+            copy: ['role', 'goal', 'task'],
+            secretary: ['role', 'goal', 'notes', 'task'],
+        });
+    });
+
+    it("follows a person's pack that moves the task block to another legal section order", () => {
+        const texts = textsOf('{{prelude}}\n\n' + TASK_BLOCK);
+        expect(parseTemplateV1('secretary-round', TASK_BLOCK).status).toBe('parsed');
+        expect(templateSectionOrder(texts, 'secretary-round')).toEqual(['role', 'goal', 'task', 'notes']);
+        expect(sectionOrderFor('secretary', 'secretary-round', texts)).toEqual(['role', 'goal', 'task', 'notes']);
+    });
+});
+
+describe('rejects: a pack that does not keep the task slots as one block', () => {
+    it('separates the block by another section', () => {
+        const parsed = parseTemplateV1('secretary-round',
+            '{{prelude}}\n\n{{role}}{{goal}}{{task_round}}{{notes}}{{task_batched}}{{task_earlier}}');
+        expect(parsed.status).toBe('invalid');
+        if (parsed.status !== 'invalid') return;
+        expect(parsed.errors).toHaveLength(1);
+        expect(parsed.error.code).toBe('illegal_section_order');
+        expect(parsed.error.slot).toBe('task_round');
+    });
+
+    it('reorders the three task slots', () => {
+        const parsed = parseTemplateV1('secretary-round',
+            '{{prelude}}\n\n{{role}}{{goal}}{{notes}}{{task_round}}{{task_earlier}}{{task_batched}}');
+        expect(parsed.status).toBe('invalid');
+        if (parsed.status !== 'invalid') return;
+        expect(parsed.errors).toHaveLength(1);
+        expect(parsed.error.code).toBe('illegal_section_order');
+        expect(parsed.error.slot).toBe('task_round');
+    });
+
+    it('puts a section before the role section', () => {
+        const parsed = parseTemplateV1('secretary-round',
+            '{{prelude}}\n\n{{goal}}{{role}}{{notes}}{{task_round}}{{task_batched}}{{task_earlier}}');
+        expect(parsed.status).toBe('invalid');
+        if (parsed.status !== 'invalid') return;
+        expect(parsed.errors).toHaveLength(1);
+        expect(parsed.error.code).toBe('illegal_section_order');
+        expect(parsed.error.slot).toBe('role');
+    });
+
+    it('puts a task slot inside a block instead of a top-level slot', () => {
+        const parsed = parseTemplateV1('secretary-round',
+            '{{prelude}}\n\n{{role}}{{goal}}{{notes}}{{task_round}}{{#task_batched}}{{/task_batched}}{{task_earlier}}');
+        expect(parsed.status).toBe('invalid');
+        if (parsed.status !== 'invalid') return;
+        expect(parsed.errors).toHaveLength(1);
+        expect(parsed.error.code).toBe('template_invalid');
+        expect(parsed.error.slot).toBe('task_batched');
+    });
+});
+
+describe('rejects: an empty required task slot', () => {
+    it('reports an empty task_round as a code bug instead of rendering it', () => {
+        // A required task slot may not be empty: the renderer reports the code bug.
+        expect(() => renderTemplate(PACK, 'secretary-round', {
+            prelude: 'PRELUDE', role: 'ROLE', task_round: '',
+        }, [])).toThrow(/required slot "task_round" is empty/);
+    });
+});
+
+describe('the existing input templates stay byte-identical and keep their orders', () => {
+    it('keeps the Work and Query texts and their frozen section orders', () => {
+        for (const [id, digest] of Object.entries(EXISTING_DIGESTS)) {
+            expect(sha256Hex(PACK.templates[id]!), `sha256 ${id}`).toBe(digest);
+        }
+        expect(PACK.templates['work-input']).toBe(
+            '{{prelude}}\n\n{{role}}{{goal}}{{task}}{{footprint}}{{notes}}{{inputs}}'
+            + '{{continuation}}{{unknown_call_review}}{{reminders}}');
+        expect(workPreparedSectionOrder()).toEqual({
+            work: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'unknown_call_review', 'reminders'],
+            continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
+        });
+        expect(queryPreparedSectionOrder().planning).toEqual(['role', 'goal', 'task', 'footprint']);
+        expect(queryPreparedSectionOrder().copy).toEqual(['role', 'goal', 'task']);
+    });
+});
+
+
+/** A minimal secretary binding whose text is exactly its four sections. */
+function secretaryBinding(text: string, sections: ContextAssemblyBindingV1['sections'],
+    sectionOrder: ContextAssemblyBindingV1['sectionOrder']): ContextAssemblyBindingV1 {
+    const totalBytes = Buffer.byteLength(text, 'utf8');
+    return {
+        schemaVersion: 1, formatVersion: 's3-context-v1', callKind: 'secretary', sectionOrder, duty: 'secretary',
+        residentBudgetBytes: totalBytes, residentBytes: 0, totalBytes, sections,
+        sources: [], inputSelections: [],
+        extensions: {
+            notes: 'not_implemented', anomalies: 'not_implemented', footprint: 'not_implemented',
+            goalSettings: 'not_implemented', decisions: 'not_implemented',
+        },
+    };
+}
+
+describe('the state guard requires the secretary goal and task sections', () => {
+    it('accepts role, goal, notes and task in the binding order', () => {
+        const text = 'ROLE\n\nGOAL\n\nNOTES\n\nTASK';
+        const binding = secretaryBinding(text, [
+            { name: 'role', startByte: 0, endByte: 4, omitted: 0 },
+            { name: 'goal', startByte: 6, endByte: 10, omitted: 0 },
+            { name: 'notes', startByte: 12, endByte: 17, omitted: 0 },
+            { name: 'task', startByte: 19, endByte: 23, omitted: 0 },
+        ], ['role', 'goal', 'notes', 'task']);
+        expect(contextAssemblyProblem({
+            binding, text, selectedTaskInputs: [], continuationSuffix: null,
+        })).toBeNull();
+    });
+
+    it('rejects a secretary binding without a goal section', () => {
+        const text = 'ROLE\n\nTASK';
+        const binding = secretaryBinding(text, [
+            { name: 'role', startByte: 0, endByte: 4, omitted: 0 },
+            { name: 'task', startByte: 6, endByte: 10, omitted: 0 },
+        ], ['role', 'task']);
+        const problem = contextAssemblyProblem({
+            binding, text, selectedTaskInputs: [], continuationSuffix: null,
+        });
+        expect(problem).toMatchObject({ status: 'rejected', code: 'invalid' });
+        if (problem === null || problem.status !== 'rejected') return;
+        expect(problem.reason).toContain('goal section');
+    });
+
+    it('rejects a secretary binding without a task section', () => {
+        const text = 'ROLE\n\nGOAL\n\nNOTES';
+        const binding = secretaryBinding(text, [
+            { name: 'role', startByte: 0, endByte: 4, omitted: 0 },
+            { name: 'goal', startByte: 6, endByte: 10, omitted: 0 },
+            { name: 'notes', startByte: 12, endByte: 17, omitted: 0 },
+        ], ['role', 'goal', 'notes']);
+        const problem = contextAssemblyProblem({
+            binding, text, selectedTaskInputs: [], continuationSuffix: null,
+        });
+        expect(problem).toMatchObject({ status: 'rejected', code: 'invalid' });
+        if (problem === null || problem.status !== 'rejected') return;
+        expect(problem.reason).toContain('task section');
+    });
+});

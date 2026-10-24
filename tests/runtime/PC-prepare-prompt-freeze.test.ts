@@ -38,6 +38,8 @@ const WORK_ORDER = {
 const QUERY_ORDER = {
   planning: ['role', 'goal', 'task', 'footprint'],
   copy: ['role', 'goal', 'task'],
+  // The platform pack also declares the secretary round, a Query call kind with its own template.
+  secretary: ['role', 'goal', 'notes', 'task'],
 };
 
 /** A source that publishes where it pauses and how many times it was asked to resolve. */

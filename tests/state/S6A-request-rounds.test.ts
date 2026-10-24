@@ -171,6 +171,7 @@ const QRR_CLAIM: Extract<QueryExecutionStep, { phase: 'claimed' }> = {
     roleBinding: { schemaVersion: 1, bindingId: 'b1', templateId: 'tpl', templateRevision: 'r1', bindingVersion: 1, policyRevision: 'pol-1' },
     roleResolution: { status: 'absent', roleId: 'role-1', reason: 'no role spec' },
     priorHistoryCursor: null,
+    requestProfile: null,
   },
 };
 const QRR_PREPARED: Extract<QueryExecutionStep, { phase: 'prepared' }> = {

@@ -26,7 +26,7 @@ import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { ContextCallKindV1, PlatformDutyV1 } from '../../../contracts/graph-context.js';
-import { consultationQueryRefs } from '../../../contracts/query-job.js';
+import { consultationQueryRefs, isRequestRound, queryExecutionBindingOf } from '../../../contracts/query-job.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type { GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
@@ -39,7 +39,7 @@ import type {
 } from '../../../contracts/query-job.js';
 import type { RawArtifactRecord } from '../../record-store/body-ports.js';
 import type {
-  EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreCommitReceipt,
+  EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreCommitReceipt, UniqueClaimChange,
 } from '../../record-store/ports.js';
 import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
@@ -47,10 +47,18 @@ import {
   decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey, SESSION_RECORD_SCHEMA_ID,
 } from '../sessions/session-record-codecs.js';
 import {
-  advanceQueryExecutionRecord, markQueryRunUnknownRecord, queryRecoveryStateOf, settleQueryRunRecord,
-  transitionQueryRunRecovery, type QueryRecoveryEffect, type QueryRecoveryEvent, type QueryRecoveryGuardContext,
-  type QueryRecoveryPhase,
+  MAX_ATTESTATION_REASON_CHARS, advanceQueryExecutionRecord, markQueryRunUnknownRecord, queryRecoveryStateOf,
+  settleQueryRunRecord, transitionQueryRunRecovery, type QueryAnswerCheck, type QueryRecoveryEffect, type QueryRecoveryEvent,
+  type QueryRecoveryGuardContext, type QueryRecoveryPhase,
 } from '../state/query-run-recovery.js';
+import { recordEntered } from '../state/request-rounds.js';
+import { mergeGuards } from '../persistence/record-guards.js';
+import { SECRETARY_TAIL_RETRIES, type SecretaryProfileV1 } from '../model/request-contracts.js';
+import { readRequestRounds, type RequestRoundsFactsV1 } from './request-rounds-read.js';
+import {
+  coveredByDrop, requestAbandon, requestDroppedEnd, requestRetry, requestStartCheck, requestStartPass,
+  type RequestStartPlan,
+} from './request-round-claims.js';
 import { contextAssemblyProblem, frozenSectionOrderProblem } from '../state/context-input.js';
 import {
   bindSessionUnavailableCursor, occupySessionRecord, ownsQuery, releaseSessionRecord, sessionDispatchAdmissionProblem, sessionMachineStateOf,
@@ -60,7 +68,7 @@ import {
   decodeQueryExecutionRecordedEvent, decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot,
   decodeQueryJobSubmittedEvent, decodeQueryRunSnapshotRecord, encodeQueryExecutionRecordedEvent,
   encodeQueryJobAnsweredEvent, encodeQueryJobAnswerSnapshot, encodeQueryJobSnapshot,
-  encodeQueryRunSnapshotRecord, queryPromptFactsIssues, type QueryExecutionOperation, type QueryExecutionRecordedEventV1,
+  encodeQueryRunSnapshotRecord, queryManifestProblem, queryPromptFactsIssues, type QueryExecutionOperation, type QueryExecutionRecordedEventV1,
 } from './query-record-codecs.js';
 import type {
   QueryEntryIdentity, QueryEntryTicket, QueryExecutionDependencies, QueryExecutionPort,
@@ -107,17 +115,17 @@ function expectedQueryDuty(manifest: PreparedQueryManifestV1): PlatformDutyV1 | 
   return roleDuty ?? legacyTemplateDutyOf(manifest.sessionRole);
 }
 /**
- * §4.3/G-CTX: an initial coordination assembles as `planning` when the graph
- * context port is wired and as `copy` when it is not (context-assembler.ts:
+ * §4.3/G-CTX: a request round assembles as `secretary`. Otherwise an initial
+ * coordination assembles as `planning` when the graph context port is wired
+ * and as `copy` when it is not (context-assembler.ts:
  * `planning = facts !== null && kind === 'initial_coordination'`), so both are
  * legal for that kind; a semantic Query (and every other Query kind) is a
  * `copy` assembly. Every other callKind remains forbidden.
  */
 function expectedQueryCallKinds(job: QueryJobSnapshot): readonly ContextCallKindV1[] {
+  if (isRequestRound(job)) return ['secretary'];
   return job.job.intent.execution.kind === 'initial_coordination' ? ['planning', 'copy'] : ['copy'];
 }
-/** QRR-06, like RUN-22: the attestation reason becomes the close message, bounded. */
-const MAX_ATTESTATION_REASON_CHARS = 2000;
 /**
  * The QueryRun pin of a reconcile or an attestation (A.2 step 5.6): exactly one
  * pin, naming that QueryRun; its revision, or null for anything else.
@@ -129,6 +137,30 @@ function queryRunPinOf(expected: readonly { ref: unknown; revision: number }[], 
 }
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+/**
+ * A claim profile is an object with its Session role, so a malformed profile
+ * is `invalid`, not a role mismatch. Its role binding is resolved as every
+ * claim's is, and the part the attempt keeps is the persisted
+ * `requestProfile`, which the record codec refuses at commit when incomplete.
+ */
+function claimProfileProblem(value: unknown): string | null {
+  if (!isRecord(value) || !isRecord(value['sessionRole'])) return 'the claim profile must carry its Session role';
+  return null;
+}
+/** The answer check a terminal observation carries: null, or a known detail with a reason. */
+function answerCheckProblem(value: unknown): string | null {
+  if (value === null) return null;
+  if (!isRecord(value) || !['too_long', 'empty', 'protocol'].includes(value['detail'] as string) || !nonEmpty(value['reason'])) {
+    return 'a terminal observation carries null or an answer check with its detail and reason';
+  }
+  return null;
+}
+/** A request round's entry: the Session its attempt claimed, as `{ projectId, sessionId }`. */
+function enteredJob(job: QueryJobSnapshot, run: QueryRunSnapshot): QueryJobSnapshot {
+  const state = run.run.executionState;
+  if (state === undefined) throw new Error('an entered QueryRun always carries its execution state');
+  return recordEntered(job, { projectId: state.sessionRef.projectId, sessionId: state.sessionRef.sessionId });
 }
 function mapRead(result: ReadResult<unknown>): CoreRejection {
   if (result.status === 'ready') return rejectedWithNonEmptyCurrent('unavailable', 'a must-fail read unexpectedly returned a value');
@@ -174,6 +206,10 @@ function mapCommitFailure(receipt: Extract<StoreCommitReceipt, { status: 'reject
   switch (receipt.code) {
     case 'revision_conflict':
       return rejectedWithNonEmptyCurrent('revision_conflict', receipt.reason, pinsFromCurrent(receipt.current));
+    case 'unique_conflict':
+      // A request round's commit holds the request tail or an intake still; a
+      // request command that moved it first is a conflict like a moved record.
+      return rejectedWithNonEmptyCurrent('revision_conflict', `${receipt.code}: ${receipt.reason}`);
     case 'idempotency_conflict':
       return rejectedWithNonEmptyCurrent('idempotency_conflict', receipt.reason);
     case 'invalid':
@@ -371,7 +407,39 @@ async function readPreparationFacts(deps: QueryExecutionDependencies, queryRunRe
   const state = record.value.run.run.executionState;
   if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state');
   const goalId = record.value.job.job.goalId;
-  if (goalId === null) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryJob has no Goal');
+  if (goalId === null) {
+    // A no-goal request round is a secretary round: its workspace comes from
+    // the call scope, never from a Goal. Every other Query still requires its
+    // Goal, so a plain Query with no Goal is refused before any use.
+    if (!isRequestRound(record.value.job)) return rejectedWithNonEmptyCurrent('invalid', 'no goal');
+    const workspaceKey = canonicalRefKey({
+      aggregateType: 'Workspace', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId,
+    });
+    let workspaceRead;
+    try {
+      workspaceRead = await deps.records.readMany([workspaceKey]);
+    } catch (error) {
+      return rejectedWithNonEmptyCurrent('unavailable', `the Query Workspace read failed: ${messageOf(error)}`);
+    }
+    if (workspaceRead.status !== 'ready') {
+      return workspaceRead.code === 'not_found' ? { status: 'not_found' }
+        : rejectedWithNonEmptyCurrent('unavailable', `${workspaceRead.code}: ${workspaceRead.reason}`);
+    }
+    const workspaceRecord = workspaceRead.value.records.find((candidate) => candidate.refKey === workspaceKey);
+    if (workspaceRecord === undefined) {
+      return workspaceRead.value.missing.includes(workspaceKey) ? { status: 'not_found' }
+        : rejectedWithNonEmptyCurrent('unavailable', 'the Workspace read was not reported');
+    }
+    const decodedWorkspace = decodeWorkspaceSnapshot(workspaceRecord);
+    if (decodedWorkspace.status !== 'decoded') {
+      return rejectedWithNonEmptyCurrent('unavailable', `the Workspace snapshot is not decodable: ${decodedWorkspace.reason}`);
+    }
+    const initiator = await readInitiator(deps, record.value.job);
+    if (initiator.status !== 'ready') return initiator;
+    return { status: 'ready', value: {
+      record: record.value, goal: null, workspace: decodedWorkspace.value, focusPlan: null, initiator: initiator.value,
+    } };
+  }
   const goalKey = canonicalRefKey({ aggregateType: 'Goal', projectId: queryRunRef.projectId, goalId });
   let read;
   try {
@@ -466,6 +534,8 @@ function loadQueryManifest(
       || !isRecord(parsed['queryRunRef']) || typeof parsed['input'] !== 'string' || !nonEmpty(parsed['inputDigest'])) {
       return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest is not a complete query-execution manifest');
     }
+    const manifestProblem = queryManifestProblem(parsed);
+    if (manifestProblem !== null) return rejectedWithNonEmptyCurrent('invalid', manifestProblem);
     const manifest = parsed as unknown as PreparedQueryManifestV1;
     if (!sameRef(manifest.queryRunRef, prepared.queryRunRef)) return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest disagrees with the requested QueryRun');
     // Ruling 13/27: every manifest loader decodes the frozen set; a missing or
@@ -512,9 +582,15 @@ export function buildRecordedEvent(input: {
   run: QueryRunSnapshot;
   /** True only when a pending round ends before any attempt; every other write carries the execution state. */
   endsUnstarted?: true;
+  /** True only for a new attempt's Run, written pending at revision 1 with no execution state. */
+  createsPending?: true;
 }): QueryExecutionRecordedEventV1 {
   const executionState = input.run.run.executionState ?? null;
-  if (executionState === null && input.endsUnstarted !== true) {
+  if (input.createsPending === true) {
+    if (input.endsUnstarted === true || executionState !== null || input.run.run.status !== 'pending' || input.run.revision !== 1) {
+      throw new Error('only a new pending Run, at revision 1 with no execution state, is recorded as created');
+    }
+  } else if (executionState === null && input.endsUnstarted !== true) {
     throw new Error('a Query execution write always carries the execution state');
   }
   return {
@@ -537,19 +613,26 @@ export function buildRecordedEvent(input: {
       queryRunRef: { ...input.queryRunRef },
       operation: input.operation,
       result: input.result,
-      phase: executionState === null ? 'settled' : executionState.phase,
+      phase: input.createsPending === true ? 'pending' : executionState === null ? 'settled' : executionState.phase,
       executionState: executionState === null ? null : structuredClone(executionState),
     },
   };
 }
 
-async function loadRecordedResult<T extends QueryEventResult>(
+/**
+ * The primary event a committed receipt points at, when it is this operation
+ * identity's own (same identity and fingerprint); null otherwise. A receipt's
+ * cursor names its commit's last event, so every commit here writes the event
+ * that carries the operation's result last: a commit that writes other events
+ * too (a start's absorbed rounds, a new attempt's pending Run, a terminal's
+ * Answer) records them first.
+ */
+async function loadRecordedEvent(
   deps: QueryExecutionDependencies,
   receipt: Extract<StoreCommitReceipt, { status: 'committed' }>,
   identityKey: string,
   fingerprint: string,
-  operation: QueryExecutionOperation,
-): Promise<WriteResult<T> | null> {
+): Promise<QueryExecutionRecordedEventV1 | null> {
   let located;
   try {
     located = await deps.records.eventAt(receipt.cursor);
@@ -562,10 +645,73 @@ async function loadRecordedResult<T extends QueryEventResult>(
   if (decoded.status !== 'decoded') return null;
   const event = decoded.value;
   if (event.identityKey !== identityKey || event.fingerprint !== fingerprint) return null;
-  if (event.eventId !== receipt.eventIds[0]) return null;
-  if (event.payload.operation !== operation) return null;
+  if (event.eventId !== receipt.eventIds.at(-1)) return null;
+  return event;
+}
+
+async function loadRecordedResult<T extends QueryEventResult>(
+  deps: QueryExecutionDependencies,
+  receipt: Extract<StoreCommitReceipt, { status: 'committed' }>,
+  identityKey: string,
+  fingerprint: string,
+  operation: QueryExecutionOperation,
+): Promise<WriteResult<T> | null> {
+  const event = await loadRecordedEvent(deps, receipt, identityKey, fingerprint);
+  if (event === null || event.payload.operation !== operation) return null;
   return { status: 'committed', value: bindResultSession(event.payload.result as T, receipt.cursor),
     replayed: true, cursor: receipt.cursor };
+}
+
+/** The answer of a start that found another owner: the round waits for a new attempt. */
+function abandonedStartAnswer(committed: WriteResult<QueryExecutionRecord>): WriteResult<QueryEntryTicket> {
+  if (committed.status !== 'committed') return committed;
+  return rejectedWithNonEmptyCurrent('busy', 'the request has another owner; this attempt was abandoned and the round waits for a new attempt');
+}
+
+/**
+ * What a repeated begin answers, from the event its first call committed under
+ * the begin identity: an entry (`entering`) restores its ticket; a request
+ * round's start that found another owner (`observed`, the abandoned attempt's
+ * records) answers through the same mapping as its first call. Any other
+ * record is not this identity's answer.
+ */
+export function beginReplayAnswer(event: QueryExecutionRecordedEventV1, cursor: CommitCursor): WriteResult<QueryEntryTicket> | null {
+  if (event.payload.operation === 'entering') {
+    return { status: 'committed', value: event.payload.result as QueryEntryTicket, replayed: true, cursor };
+  }
+  if (event.payload.operation === 'observed') {
+    return abandonedStartAnswer({ status: 'committed', value: event.payload.result as QueryExecutionRecord, replayed: true, cursor });
+  }
+  return null;
+}
+
+/**
+ * The events of a commit that starts a new attempt on a request round, one per
+ * QueryRun it writes: the new pending Run's first, recorded as created with no
+ * execution state, then the old Run's (closed `not_entered` with its execution
+ * state), which carries the commit's result and so is the last event a replay
+ * reads.
+ */
+function newAttemptEvents(input: {
+  eventIds: readonly [string, string];
+  identityKey: string;
+  fingerprint: string;
+  actor: HostActor;
+  occurredAt: string;
+  requestId: string;
+  correlationId: string;
+  result: QueryExecutionRecord;
+  oldRun: QueryRunSnapshot;
+  newRun: QueryRunSnapshot;
+}): import('../../record-store/ports.js').EncodedDomainEvent[] {
+  const common = { identityKey: input.identityKey, fingerprint: input.fingerprint, actor: input.actor, occurredAt: input.occurredAt,
+    requestId: input.requestId, correlationId: input.correlationId, operation: 'observed' as const };
+  return [
+    encodeQueryExecutionRecordedEvent(buildRecordedEvent({ ...common, eventId: input.eventIds[0], queryRunRef: input.newRun.ref,
+      result: input.newRun, run: input.newRun, createsPending: true })),
+    encodeQueryExecutionRecordedEvent(buildRecordedEvent({ ...common, eventId: input.eventIds[1], queryRunRef: input.oldRun.ref,
+      result: input.result, run: input.oldRun })),
+  ];
 }
 
 /**
@@ -600,23 +746,36 @@ function bindResultSession<T extends QueryEventResult>(value: T, cursor: CommitC
   return { ...(value as object), session: bindSessionUnavailableCursor(session, cursor) } as T;
 }
 
-async function commitOperation<T extends QueryEventResult>(input: {
+type CommitInput = {
   deps: QueryExecutionDependencies;
   identityKey: string;
   fingerprint: string;
   guards: readonly RecordGuard[];
   records: readonly EncodedRecord[];
   events: readonly import('../../record-store/ports.js').EncodedDomainEvent[];
-  value: T;
   operation: QueryExecutionOperation;
-}): Promise<WriteResult<T>> {
+  /** The request-round claims this commit moves (`request-tail`, `secretary-intake`); none for a plain Query. */
+  claims?: readonly UniqueClaimChange[];
+};
+
+/**
+ * One Query commit and what became of it: `fresh` at its cursor; `found` when
+ * its identity had already committed (the store replays that receipt, or a
+ * lookup confirms it after a thrown commit), with the refusal to answer when
+ * the receipt cannot be restored; otherwise `refused`.
+ */
+async function commitQueryWrite(input: CommitInput): Promise<
+  | { kind: 'fresh'; cursor: CommitCursor }
+  | { kind: 'found'; receipt: Extract<StoreCommitReceipt, { status: 'committed' }>; unreadable: string }
+  | { kind: 'refused'; rejection: CoreRejection }
+> {
   const bindings = sessionCursorBindings(input.records);
   const prepared: PreparedCommit = {
     identityKey: input.identityKey,
     fingerprint: input.fingerprint,
     guards: input.guards,
     records: input.records,
-    claims: [],
+    claims: input.claims ?? [],
     indexGuards: [],
     indexChanges: [],
     events: input.events,
@@ -626,20 +785,55 @@ async function commitOperation<T extends QueryEventResult>(input: {
   try {
     receipt = await input.deps.records.commit(prepared);
   } catch (error) {
+    const unconfirmed = `the Query ${input.operation} commit failed and its receipt could not be confirmed: ${messageOf(error)}`;
     const recovered = await input.deps.records.lookupCommit({ identityKey: input.identityKey, fingerprint: input.fingerprint });
-    if (recovered.status === 'ready') {
-      const replayed = await loadRecordedResult<T>(input.deps, recovered.value, input.identityKey, input.fingerprint, input.operation);
-      if (replayed !== null) return replayed;
-    }
-    return rejectedWithNonEmptyCurrent('unavailable', `the Query ${input.operation} commit failed and its receipt could not be confirmed: ${messageOf(error)}`);
+    if (recovered.status === 'ready') return { kind: 'found', receipt: recovered.value, unreadable: unconfirmed };
+    return { kind: 'refused', rejection: rejectedWithNonEmptyCurrent('unavailable', unconfirmed) };
   }
-  if (receipt.status !== 'committed') return mapCommitFailure(receipt);
-  if (receipt.replayed) {
-    const replayed = await loadRecordedResult<T>(input.deps, receipt, input.identityKey, input.fingerprint, input.operation);
-    if (replayed === null) return rejectedWithNonEmptyCurrent('unavailable', `the replayed Query ${input.operation} receipt is not readable`);
-    return replayed;
+  if (receipt.status !== 'committed') return { kind: 'refused', rejection: mapCommitFailure(receipt) };
+  if (receipt.replayed) return { kind: 'found', receipt, unreadable: `the replayed Query ${input.operation} receipt is not readable` };
+  return { kind: 'fresh', cursor: receipt.cursor };
+}
+
+/** A Query commit's answer: its value when fresh; when found, the result its identity's event recorded for this operation. */
+async function commitOperation<T extends QueryEventResult>(input: CommitInput & { value: T }): Promise<WriteResult<T>> {
+  const outcome = await commitQueryWrite(input);
+  if (outcome.kind === 'refused') return outcome.rejection;
+  if (outcome.kind === 'found') {
+    return await loadRecordedResult<T>(input.deps, outcome.receipt, input.identityKey, input.fingerprint, input.operation)
+      ?? rejectedWithNonEmptyCurrent('unavailable', outcome.unreadable);
   }
-  return { status: 'committed', value: bindResultSession(input.value, receipt.cursor), replayed: false, cursor: receipt.cursor };
+  return { status: 'committed', value: bindResultSession(input.value, outcome.cursor), replayed: false, cursor: outcome.cursor };
+}
+
+/**
+ * A begin's commit. The begin identity has one answer whichever plan this call
+ * made: a receipt found for it (a start of the same request that reached the
+ * store first) answers the outcome that commit recorded, an entry or an
+ * abandoned start (`restoreBegin`); a fresh commit answers through `fresh`.
+ */
+async function commitBegin(
+  input: CommitInput,
+  fresh: (cursor: CommitCursor) => WriteResult<QueryEntryTicket>,
+): Promise<WriteResult<QueryEntryTicket>> {
+  const outcome = await commitQueryWrite(input);
+  if (outcome.kind === 'refused') return outcome.rejection;
+  if (outcome.kind === 'found') {
+    return await restoreBegin(input.deps, outcome.receipt, input.identityKey, input.fingerprint)
+      ?? rejectedWithNonEmptyCurrent('unavailable', outcome.unreadable);
+  }
+  return fresh(outcome.cursor);
+}
+
+/** What a receipt of a begin identity answers (`beginReplayAnswer`); null when it is not this identity's. */
+async function restoreBegin(
+  deps: QueryExecutionDependencies,
+  receipt: Extract<StoreCommitReceipt, { status: 'committed' }>,
+  identityKey: string,
+  fingerprint: string,
+): Promise<WriteResult<QueryEntryTicket> | null> {
+  const recorded = await loadRecordedEvent(deps, receipt, identityKey, fingerprint);
+  return recorded === null ? null : beginReplayAnswer(recorded, receipt.cursor);
 }
 
 // --------------------------------------------------------------------------
@@ -681,13 +875,15 @@ type SettledRecords = { job: QueryJobSnapshot; run: QueryRunSnapshot; answer: Qu
 
 /**
  * QRR-03's effects as the records of its one commit: `settle_query` through
- * `settleQueryRunRecord`, `record_answer` as Answer@1, and `release_session`
- * through SES-08 (emitted only while this claim generation still holds the Session).
+ * `settleQueryRunRecord`, `record_answer` as Answer@1, `record_entered` as a
+ * request round's `enteredSession`, and `release_session` through SES-08
+ * (emitted only while this claim generation still holds the Session).
  */
 function settledRecords(core: Core, before: QueryRecoveryPhase, effects: readonly QueryRecoveryEffect[], occurredAt: string): SettledRecords | CoreRejection {
   let settled: Pick<SettledRecords, 'job' | 'run'> | null = null;
   let answer: QueryJobAnswerSnapshot | null = null;
   let session: SessionRecord | null = null;
+  let entered = false;
   for (const effect of effects) {
     switch (effect.kind) {
       case 'settle_query':
@@ -702,12 +898,15 @@ function settledRecords(core: Core, before: QueryRecoveryPhase, effects: readonl
         session = released;
         break;
       }
+      case 'record_entered':
+        entered = true;
+        break;
       default:
         throw new Error(`a Query terminal has no ${effect.kind} effect`);
     }
   }
   if (settled === null) throw new Error('a Query terminal always settles the QueryRun');
-  return { ...settled, answer, session };
+  return { ...settled, job: entered ? enteredJob(settled.job, core.run) : settled.job, answer, session };
 }
 
 // --------------------------------------------------------------------------
@@ -814,13 +1013,25 @@ async function replayOriginal<T extends QueryEventResult>(
   fingerprint: string,
   operation: QueryExecutionOperation,
 ): Promise<WriteResult<T> | null> {
+  return replayOriginalThrough(deps, identityKey, fingerprint, operation,
+    receipt => loadRecordedResult<T>(deps, receipt, identityKey, fingerprint, operation));
+}
+
+/** `replayOriginal` with the caller's own restore of a found receipt. */
+async function replayOriginalThrough<T>(
+  deps: QueryExecutionDependencies,
+  identityKey: string,
+  fingerprint: string,
+  operation: QueryExecutionOperation,
+  restore: (receipt: Extract<StoreCommitReceipt, { status: 'committed' }>) => Promise<WriteResult<T> | null>,
+): Promise<WriteResult<T> | null> {
   let found;
   try {
     found = await deps.records.lookupCommit({ identityKey, fingerprint });
   } catch (error) {
     return rejectedWithNonEmptyCurrent('unavailable', `the Query ${operation} idempotency lookup failed: ${messageOf(error)}`);
   }
-  if (found.status === 'ready') return loadRecordedResult<T>(deps, found.value, identityKey, fingerprint, operation);
+  if (found.status === 'ready') return restore(found.value);
   if (found.code === 'not_found') return null;
   if (found.code === 'idempotency_conflict') return rejectedWithNonEmptyCurrent('idempotency_conflict', found.reason);
   if (found.code === 'invalid') return rejectedWithNonEmptyCurrent('invalid', found.reason);
@@ -851,7 +1062,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
 
   async function claim(
     ctx: CoreCallContext,
-    request: GraphWrite<{ queryRunRef: QueryRunRef; sessionRef: SessionRef }>,
+    request: GraphWrite<{ queryRunRef: QueryRunRef; sessionRef: SessionRef; profile?: SecretaryProfileV1 | null }>,
   ): Promise<WriteResult<QueryExecutionRecord>> {
     const owned = ownContext(ctx);
     if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
@@ -859,13 +1070,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (actor === null) return rejectedWithNonEmptyCurrent('forbidden', 'claimQuery requires a trusted Host call context');
     const signal = owned.signal;
     if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query claim was cancelled before the records read');
-    let ownedRequest: GraphWrite<{ queryRunRef: QueryRunRef; sessionRef: SessionRef }>;
+    let ownedRequest: GraphWrite<{ queryRunRef: QueryRunRef; sessionRef: SessionRef; profile?: SecretaryProfileV1 | null }>;
     try { ownedRequest = structuredClone(request); } catch { return rejectedWithNonEmptyCurrent('invalid', 'the claim request cannot be isolated from the caller'); }
     const input = ownedRequest?.input;
     const meta = ownedRequest?.meta;
     if (!isRecord(input) || !isRecord(input.queryRunRef) || !isRecord(input.sessionRef) || !isRecord(meta) || !nonEmpty(meta.requestId)) {
       return rejectedWithNonEmptyCurrent('invalid', 'claimQuery requires a complete QueryRunRef, SessionRef and requestId');
     }
+    const rawProfile: unknown = input.profile;
+    const profileProblem = rawProfile === undefined || rawProfile === null ? null : claimProfileProblem(rawProfile);
+    if (profileProblem !== null) return rejectedWithNonEmptyCurrent('invalid', profileProblem);
+    const profile = rawProfile === undefined || rawProfile === null ? null : rawProfile as SecretaryProfileV1;
     const rawRun = input.queryRunRef;
     const rawSession = input.sessionRef;
     if (rawRun['aggregateType'] !== 'QueryRun' || !nonEmpty(rawRun['projectId']) || !nonEmpty(rawRun['workspaceId'])
@@ -909,12 +1124,25 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         { refKey: sessionKeyOf(session.ref), revision: session.revision },
       ]);
     }
-    if (job.job.status !== 'pending' || run.run.status !== 'pending') {
+    // A claimed or prepared attempt keeps its Job and Run `pending`; its execution
+    // state says it is claimed, so a second claim never moves it to another Session.
+    if (job.job.status !== 'pending' || run.run.status !== 'pending' || run.run.executionState !== undefined) {
       return rejectedWithNonEmptyCurrent('busy', 'the QueryRun is not awaiting a first claim');
     }
     if (job.job.runRef === null || !sameRef(job.job.runRef, queryRunRef)) return rejectedWithNonEmptyCurrent('invalid', 'the QueryJob is not bound to this QueryRun');
     if (session.ref.projectId !== queryRunRef.projectId || session.workspaceId !== queryRunRef.workspaceId) {
       return rejectedWithNonEmptyCurrent('forbidden', 'the target Session belongs to another scope');
+    }
+    // A request round runs with the profile of the Session that claims it: its
+    // role binding and its budgets, never the Job intent's. Every other Query
+    // keeps its Job's binding and takes no profile.
+    if (isRequestRound(job)) {
+      if (profile === null) return rejectedWithNonEmptyCurrent('invalid', 'a request round is claimed only with its secretary profile');
+      if (!sameRef(profile.sessionRole, session.role)) {
+        return rejectedWithNonEmptyCurrent('forbidden', 'the secretary profile belongs to another Session role');
+      }
+    } else if (profile !== null) {
+      return rejectedWithNonEmptyCurrent('invalid', 'only a request round is claimed with a secretary profile');
     }
     // SES-03: lifecycle, health, occupancy and the generation `revision + 1`, which the occupied record carries as its revision.
     const nextSession = sessionStep(session, { kind: 'occupy', holder: queryRunRef });
@@ -956,10 +1184,11 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     }
     if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query claim was cancelled before Role resolution');
 
+    const roleBinding = profile === null ? execution.roleBinding : profile.roleBinding;
     let roleFacts;
     try {
       roleFacts = await deps.roles.resolveRoleBindingFacts(owned, {
-        roleBinding: execution.roleBinding, declaredPermissions: { tools: [], writeScope: [] },
+        roleBinding, declaredPermissions: { tools: [], writeScope: [] },
       });
     } catch (error) {
       return rejectedWithNonEmptyCurrent('unavailable', `Role resolution failed: ${messageOf(error)}`);
@@ -978,8 +1207,8 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       // First selection, not a runtime Role hot-swap: the Job's legacy binding
       // template must exactly name the Session's legacy template.
       if (session.role.kind !== 'legacy_template'
-        || session.role.templateId !== execution.roleBinding.templateId
-        || session.role.templateRevision !== execution.roleBinding.templateRevision) {
+        || session.role.templateId !== roleBinding.templateId
+        || session.role.templateRevision !== roleBinding.templateRevision) {
         return rejectedWithNonEmptyCurrent('forbidden', 'the legacy Session role does not match the Job execution role binding');
       }
     }
@@ -989,8 +1218,10 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const eventId = deps.eventId();
     if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejectedWithNonEmptyCurrent('unsupported', 'the injected clock/id source produced an empty value');
     const nextRun = advanceQueryExecutionRecord({ job, run }, { phase: 'claimed', claim: {
-      sessionRef, sessionGeneration: nextSession.revision, role: session.role, roleBinding: execution.roleBinding, roleResolution,
+      sessionRef, sessionGeneration: nextSession.revision, role: session.role, roleBinding, roleResolution,
       priorHistoryCursor: session.historyCursor,
+      requestProfile: profile === null ? null
+        : { profileId: profile.profileId, runtimeBudget: profile.runtimeBudget, budget: profile.budget, consumerId: profile.consumerId },
     } }).run;
     const nextRecord: QueryExecutionRecord = { job, run: nextRun, session: nextSession, answer: null };
     const event = buildRecordedEvent({
@@ -1070,7 +1301,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest does not name this QueryRun/Session');
     }
     if (manifest.sessionGeneration !== state.sessionGeneration) return rejectedWithNonEmptyCurrent('invalid', 'the Query manifest Session generation disagrees');
-    if (!sameRef(manifest.roleBinding, state.roleBinding) || !sameRef(manifest.sessionRole, state.role)) {
+    if (!sameRef(manifest.roleBinding, queryExecutionBindingOf(job, run).roleBinding) || !sameRef(manifest.sessionRole, state.role)) {
       return rejectedWithNonEmptyCurrent('forbidden', 'the Query manifest Role disagrees with the claimed Role');
     }
     // CTX-03 G-CTX: a saved Query context binding must be a legal s3-context-v1
@@ -1109,8 +1340,21 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     }
     const facts = await readPreparationFacts(deps, queryRunRef);
     if (facts.status !== 'ready') return toRejection(facts);
-    if (manifest.goal.revision !== facts.value.goal.revision
-      || !sameRef(manifest.goal.ref, facts.value.goal.ref)
+    const manifestGoal = manifest.goal;
+    const factsGoal = facts.value.goal;
+    // A request round may have no Goal yet; its manifest then carries no goal
+    // and only the Workspace is compared. Every other Query still requires the
+    // Goal, and a mismatched nullness is an inconsistent manifest.
+    if (manifestGoal === null || factsGoal === null) {
+      if (!isRequestRound(job) || manifestGoal !== factsGoal) {
+        return rejectedWithNonEmptyCurrent('invalid', 'no goal');
+      }
+      if (manifest.workspace.revision !== facts.value.workspace.revision
+        || !sameRef(manifest.workspace.ref, facts.value.workspace.ref)) {
+        return rejectedWithNonEmptyCurrent('source_stale', 'the Workspace moved since the Query manifest was prepared');
+      }
+    } else if (manifestGoal.revision !== factsGoal.revision
+      || !sameRef(manifestGoal.ref, factsGoal.ref)
       || manifest.workspace.revision !== facts.value.workspace.revision
       || !sameRef(manifest.workspace.ref, facts.value.workspace.ref)) {
       return rejectedWithNonEmptyCurrent('source_stale', 'the Goal/Workspace moved since the Query manifest was prepared');
@@ -1147,9 +1391,14 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     });
   }
 
+  /**
+   * `raced` counts the re-reads of a request round's start whose commit lost a
+   * race with a request command (`lostStartRace`).
+   */
   async function beginEntry(
     ctx: CoreCallContext,
     request: GraphWrite<{ prepared: PreparedQueryExecution; consumerId: string; kernel: QueryEntryIdentity['kernel'] }>,
+    raced = 0,
   ): Promise<WriteResult<QueryEntryTicket>> {
     const owned = ownContext(ctx);
     if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
@@ -1191,7 +1440,8 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const identityKey = operationIdentity('entering', actor, queryRunRef, requestId);
     const fingerprint = requestFingerprint('entering', requestId, expected, input);
     if (fingerprint === null) return rejectedWithNonEmptyCurrent('invalid', 'the begin request is not serializable');
-    const replay = await replayOriginal<QueryEntryTicket>(deps, identityKey, fingerprint, 'entering');
+    const replay = await replayOriginalThrough<QueryEntryTicket>(deps, identityKey, fingerprint, 'entering',
+      receipt => restoreBegin(deps, receipt, identityKey, fingerprint));
     if (replay !== null) return replay;
 
     const read = await readCore(deps, queryRunRef, null);
@@ -1221,6 +1471,44 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       return rejectedWithNonEmptyCurrent('busy', 'the target Session is no longer occupied by this QueryRun generation');
     }
     if (job.job.status !== 'pending' && job.job.status !== 'running') return rejectedWithNonEmptyCurrent('busy', 'the QueryJob is not awaiting a fresh entry');
+    const pins: RecordGuard[] = [
+      { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: expected.job! },
+      { refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! },
+      { refKey: sessionKeyOf(session.ref), expectedRevision: expected.session! },
+    ];
+    // A request round starts only on its request's owner. The facts are read
+    // here and every one of them is guarded by the start commit itself.
+    let requestFacts: RequestRoundsFactsV1 | null = null;
+    if (isRequestRound(job)) {
+      const factsRead = await readRoundFacts(owned, job);
+      if (factsRead.status !== 'ready') return toRejection(factsRead);
+      requestFacts = factsRead.value;
+      const check = requestStartCheck(requestFacts, state.sessionRef);
+      if (check.kind === 'abandon') {
+        if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query entry was cancelled before commit');
+        const occurredAt = deps.now();
+        const eventId = deps.eventId();
+        const newRunEventId = deps.eventId();
+        if (!nonEmpty(occurredAt) || !nonEmpty(eventId) || !nonEmpty(newRunEventId)) {
+          return rejectedWithNonEmptyCurrent('unsupported', 'the injected clock/id source produced an empty value');
+        }
+        const plan = requestAbandon({ records: { job, run }, facts: requestFacts, trigger: check.trigger, session, occurredAt });
+        if ('status' in plan) return plan;
+        const guards = mergeGuards([...pins, ...plan.guards]);
+        if (!guards.ok) return guards.rejection;
+        const abandoned: QueryExecutionRecord = { job: plan.job, run: plan.oldRun, session: plan.session ?? session, answer: null };
+        const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(plan.oldRun), encodeQueryRunSnapshotRecord(plan.newRun),
+          encodeQueryJobSnapshot(plan.job)];
+        if (plan.session !== null) records.push(encodeSessionRecord(plan.session));
+        const committed = await commitBegin({
+          deps, identityKey, fingerprint, guards: guards.guards, records, claims: plan.claims,
+          events: newAttemptEvents({ eventIds: [newRunEventId, eventId], identityKey, fingerprint, actor, occurredAt, requestId,
+            correlationId: job.job.intent.correlationId, result: abandoned, oldRun: plan.oldRun, newRun: plan.newRun }),
+          operation: 'observed',
+        }, cursor => abandonedStartAnswer({ status: 'committed', value: abandoned, replayed: false, cursor }));
+        return lostStartRace(committed, raced) ? beginEntry(ctx, request, raced + 1) : committed;
+      }
+    }
     const loaded = await loadQueryManifest(deps.bodies, prepared as unknown as PreparedQueryExecution);
     if (loaded.status !== 'ready') return toRejection(loaded);
     const manifest = loaded.value.manifest;
@@ -1246,8 +1534,18 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       entry: { generation: 1, consumerId, hostConfigurationRevision: manifest.hostConfigurationRevision,
         permissions: manifest.permissions, budget: manifest.runtimeBudget, kernel: { ...kernelBinding } },
       request: { runRef: { ...queryRunRef }, bundleRef: loaded.value.bundleRef, question: job.job.intent.question,
-        budget: { maxTokens: job.job.intent.budget.maxTokens } },
+        budget: { maxTokens: queryExecutionBindingOf(job, run).budget.maxTokens } },
     });
+    // A passing start absorbs the batch its manifest froze and releases the
+    // intakes those rounds hold, in this same commit.
+    let startPlan: RequestStartPlan | null = null;
+    if (requestFacts !== null) {
+      if (manifest.request === null) return rejectedWithNonEmptyCurrent('invalid', "a request round's manifest carries no request");
+      const planned = requestStartPass({ entering: { job: nextJob, run: nextRun }, facts: requestFacts,
+        batch: manifest.request.batch, occurredAt });
+      if ('status' in planned) return planned;
+      startPlan = planned;
+    }
     const ticket: QueryEntryTicket = {
       queryRunRef,
       sessionRef: state.sessionRef,
@@ -1262,17 +1560,60 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       eventId, identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
       correlationId: job.job.intent.correlationId, operation: 'entering', result: ticket, run: nextRun,
     });
-    return commitOperation({
-      deps, identityKey, fingerprint,
-      guards: [
-        { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: expected.job! },
-        { refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! },
-        { refKey: sessionKeyOf(session.ref), expectedRevision: expected.session! },
-      ],
-      records: [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob)],
-      events: [encodeQueryExecutionRecordedEvent(event)],
-      value: ticket, operation: 'entering',
-    });
+    const entered = (cursor: CommitCursor): WriteResult<QueryEntryTicket> => ({ status: 'committed', value: ticket, replayed: false, cursor });
+    if (startPlan === null) {
+      return commitBegin({
+        deps, identityKey, fingerprint, guards: pins,
+        records: [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob)],
+        events: [encodeQueryExecutionRecordedEvent(event)],
+        operation: 'entering',
+      }, entered);
+    }
+    const guards = mergeGuards([...pins, ...startPlan.guards]);
+    if (!guards.ok) return guards.rejection;
+    const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(startPlan.job)];
+    // One event per QueryRun the commit writes: each absorbed pending Run, which
+    // ends before any attempt, then the executing Run, whose event carries the
+    // ticket a replay restores.
+    const events: ReturnType<typeof encodeQueryExecutionRecordedEvent>[] = [];
+    for (const absorbed of startPlan.absorbed) {
+      const absorbedEventId = deps.eventId();
+      if (!nonEmpty(absorbedEventId)) return rejectedWithNonEmptyCurrent('unsupported', 'the injected clock/id source produced an empty value');
+      records.push(encodeQueryJobSnapshot(absorbed.job), encodeQueryRunSnapshotRecord(absorbed.run));
+      events.push(encodeQueryExecutionRecordedEvent(buildRecordedEvent({
+        eventId: absorbedEventId, identityKey, fingerprint, actor, occurredAt, queryRunRef: absorbed.run.ref, requestId,
+        correlationId: absorbed.job.job.intent.correlationId, operation: 'observed', result: absorbed.run, run: absorbed.run,
+        endsUnstarted: true,
+      })));
+    }
+    events.push(encodeQueryExecutionRecordedEvent(event));
+    const committed = await commitBegin({
+      deps, identityKey, fingerprint, guards: guards.guards, records, events, claims: startPlan.claims, operation: 'entering',
+    }, entered);
+    return lostStartRace(committed, raced) ? beginEntry(ctx, request, raced + 1) : committed;
+  }
+
+  /**
+   * A request round's start commit holds the request tail still and guards
+   * every record its facts read, so a request command that commits first (an
+   * append, a route, a drop, an intake move) fails it with a conflict. That is
+   * an ordinary retry: the start re-reads and decides again (the caller's pins
+   * still decide whether this attempt may start at all), as the request owner
+   * retries its own tail conflicts, up to `SECRETARY_TAIL_RETRIES` times.
+   */
+  function lostStartRace(committed: WriteResult<unknown>, raced: number): boolean {
+    return committed.status === 'rejected' && committed.code === 'revision_conflict' && raced < SECRETARY_TAIL_RETRIES;
+  }
+
+  /** A request round's facts (`readRequestRounds`), read at its start and at its not-entered recovery. */
+  async function readRoundFacts(ctx: CoreCallContext, job: QueryJobSnapshot): Promise<ReadResult<RequestRoundsFactsV1>> {
+    const requestRoot = job.job.requestRoot;
+    if (requestRoot === null) return rejectedWithNonEmptyCurrent('invalid', 'a request round names no request root');
+    try {
+      return await readRequestRounds(deps.records, ctx, { requestRoot });
+    } catch (error) {
+      return rejectedWithNonEmptyCurrent('unavailable', `the request facts read failed: ${messageOf(error)}`);
+    }
   }
 
   function entryIdentity(state: QueryExecutionStateV1, queryRunRef: QueryRunRef): QueryEntryIdentity | null {
@@ -1534,14 +1875,18 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       if (observation.history.startPosition > observation.source.position) return rejectedWithNonEmptyCurrent('invalid', 'the entered observation source precedes its start');
       const occurredAt = deps.now();
       const nextRun = advanceQueryExecutionRecord({ job, run }, { phase: 'entered', history: observation.history }).run;
-      const nextRecord: QueryExecutionRecord = { job, run: nextRun, session, answer: null };
+      // A request round's Job records the Session its entry was proven on.
+      const nextJob = isRequestRound(job) ? enteredJob(job, run) : job;
+      const jobWritten = nextJob.revision !== job.revision;
+      const nextRecord: QueryExecutionRecord = { job: nextJob, run: nextRun, session, answer: null };
       const event = buildRecordedEvent({
         eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
         correlationId: job.job.intent.correlationId, operation: 'entered', result: nextRecord, run: nextRun,
       });
       return commitOperation({
-        deps, identityKey, fingerprint, guards,
-        records: [encodeQueryRunSnapshotRecord(nextRun)],
+        deps, identityKey, fingerprint,
+        guards: jobWritten ? [...guards, { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision }] : guards,
+        records: jobWritten ? [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob)] : [encodeQueryRunSnapshotRecord(nextRun)],
         events: [encodeQueryExecutionRecordedEvent(event)],
         value: nextRecord, operation: 'entered',
       });
@@ -1565,14 +1910,19 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         value: nextRecord, operation: 'observed',
       });
     }
+    const answerProblem = answerCheckProblem(fact.answerCheck);
+    if (answerProblem !== null) return rejectedWithNonEmptyCurrent('invalid', answerProblem);
+    const answerCheck = fact.answerCheck === null ? null : { detail: fact.answerCheck.detail, reason: fact.answerCheck.reason } as QueryAnswerCheck;
     // QRR-03 (K source): the settled, Answer and end-boundary refusals; SES-08 releases the Session only
     // while this claim generation still holds it. The Runtime confirms the accepted inputs before it books a terminal.
     const settled = transitionQueryRunRecovery(queryRecoveryStateOf(job.job, run.run)!, {
       kind: 'query_terminal_observed',
-      terminal: { outcome: fact.outcome, answer: fact.answer, reason: fact.reason, history: observation.history, source: observation.source },
+      terminal: { outcome: fact.outcome, answer: fact.answer, reason: fact.reason, answerCheck, history: observation.history,
+        source: observation.source },
     }, {
       caller: 'service', hostLease: null, probe: null, kernel: null, inputsConfirmed: true, actor: actor.kind, reason: null,
       sessionOwned: ownsQuery(session, queryRunRef, state), sessionGeneration: state.sessionGeneration, queryRunRef, entryMatches: true,
+      request: isRequestRound(job) ? { coveredByDrop: null } : null,
     });
     if (!settled.ok) return rejectedWithNonEmptyCurrent(settled.code, settled.detail);
     const occurredAt = deps.now();
@@ -1586,7 +1936,8 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(next.run), encodeQueryJobSnapshot(next.job)];
     if (next.answer !== null) records.push(encodeQueryJobAnswerSnapshot(next.answer));
     if (next.session !== null) records.push(encodeSessionRecord(next.session));
-    const events = [encodeQueryExecutionRecordedEvent(event)];
+    // The Answer's event first, then the settled Run's, which carries the result a replay restores.
+    const events: import('../../record-store/ports.js').EncodedDomainEvent[] = [];
     if (next.answer !== null) {
       events.push(encodeQueryJobAnsweredEvent({
         eventId: deps.eventId(), eventType: 'QueryJobAnswered', schemaVersion: 1,
@@ -1596,6 +1947,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         actor: { ...actor }, occurredAt, payload: { answer: structuredClone(next.answer) },
       }));
     }
+    events.push(encodeQueryExecutionRecordedEvent(event));
     const terminalGuards: RecordGuard[] = [
       ...guards,
       { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision },
@@ -1650,13 +2002,30 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (state === undefined || recovery === null) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state');
     if (expectedRun !== run.revision) return revisionConflict([{ refKey: queryRunRefKey(queryRunRef), revision: run.revision }]);
     const { event, guard, cause, turnSeen } = eventOf(state);
+    // A request round's not-entered close reads whether a drop covers it.
+    let requestFacts: RequestRoundsFactsV1 | null = null;
+    if (isRequestRound(job) && event.kind === 'query_reconcile_not_entered') {
+      const factsRead = await readRoundFacts(ctx, job);
+      if (factsRead.status !== 'ready') return toRejection(factsRead);
+      requestFacts = factsRead.value;
+    }
+    const request = !isRequestRound(job) ? null
+      : { coveredByDrop: requestFacts === null ? null : coveredByDrop(requestFacts, job.ref) };
     const decided = transitionQueryRunRecovery(recovery, event, { ...guard, sessionOwned: ownsQuery(session, queryRunRef, state),
-      sessionGeneration: state.sessionGeneration, queryRunRef, entryMatches: entryIdentity(state, queryRunRef) !== null });
+      sessionGeneration: state.sessionGeneration, queryRunRef, entryMatches: entryIdentity(state, queryRunRef) !== null, request });
     if (!decided.ok) return rejectedWithNonEmptyCurrent(decided.code, decided.detail);
     const occurredAt = deps.now();
     let nextRun: QueryRunSnapshot = run;
     let nextJob: QueryJobSnapshot = job;
     let nextSession: SessionRecord | null = null;
+    let newRun: QueryRunSnapshot | null = null;
+    let entered = false;
+    const claims: UniqueClaimChange[] = [];
+    const requestGuards: RecordGuard[] = [];
+    const requireRequestFacts = (): RequestRoundsFactsV1 => {
+      if (requestFacts === null) throw new Error("a request round's not-entered close always reads its facts first");
+      return requestFacts;
+    };
     for (const effect of decided.effects) {
       switch (effect.kind) {
         case 'settle_query': {
@@ -1682,22 +2051,54 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
           }
           break;
         }
+        case 'end_dropped_round': {
+          const plan = requestDroppedEnd({ records: { job, run }, facts: requireRequestFacts(), occurredAt });
+          if ('status' in plan) return plan;
+          nextJob = plan.job;
+          nextRun = plan.run;
+          claims.push(...plan.claims);
+          requestGuards.push(...plan.guards);
+          break;
+        }
+        case 'new_attempt': {
+          const plan = requestRetry({ records: { job, run }, facts: requireRequestFacts(), occurredAt });
+          if ('status' in plan) return plan;
+          nextJob = plan.job;
+          nextRun = plan.oldRun;
+          newRun = plan.newRun;
+          claims.push(...plan.claims);
+          requestGuards.push(...plan.guards);
+          break;
+        }
+        case 'record_entered':
+          entered = true;
+          break;
         case 'record_answer':
           throw new Error('a reconcile close records no Answer');
         default: throw new Error('an unknown Query recovery effect');
       }
     }
+    if (entered) nextJob = enteredJob(nextJob, run);
     const nextRecord: QueryExecutionRecord = { job: nextJob, run: nextRun, session: nextSession ?? session, answer: null };
-    const recorded = buildRecordedEvent({ eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
-      correlationId: job.job.intent.correlationId, operation: 'observed', result: nextRecord, run: nextRun });
+    // One event per QueryRun the commit writes: a new attempt's pending Run first, then this one.
+    const events = newRun === null
+      ? [encodeQueryExecutionRecordedEvent(buildRecordedEvent({ eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt,
+        queryRunRef, requestId, correlationId: job.job.intent.correlationId, operation: 'observed', result: nextRecord, run: nextRun }))]
+      : newAttemptEvents({ eventIds: [deps.eventId(), deps.eventId()], identityKey, fingerprint, actor, occurredAt, requestId,
+        correlationId: job.job.intent.correlationId, result: nextRecord, oldRun: nextRun, newRun });
     const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(nextRun)];
-    if (nextJob !== job) records.push(encodeQueryJobSnapshot(nextJob));
+    if (newRun !== null) records.push(encodeQueryRunSnapshotRecord(newRun));
+    if (nextJob.revision !== job.revision) records.push(encodeQueryJobSnapshot(nextJob));
     if (nextSession !== null) records.push(encodeSessionRecord(nextSession));
-    return commitOperation({ deps, identityKey, fingerprint, guards: [
+    const guards = mergeGuards([
       { refKey: queryRunRefKey(queryRunRef), expectedRevision: run.revision },
       { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision },
       { refKey: sessionKeyOf(session.ref), expectedRevision: session.revision },
-    ], records, events: [encodeQueryExecutionRecordedEvent(recorded)], value: nextRecord, operation: 'observed' });
+      ...requestGuards,
+    ]);
+    if (!guards.ok) return guards.rejection;
+    return commitOperation({ deps, identityKey, fingerprint, guards: guards.guards, records, claims,
+      events, value: nextRecord, operation: 'observed' });
   }
 
   async function reconcileQuery(ctx: CoreCallContext, request: GraphWrite<QueryReconcileInput>): Promise<WriteResult<QueryExecutionRecord>> {

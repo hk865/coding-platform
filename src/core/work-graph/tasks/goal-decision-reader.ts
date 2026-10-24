@@ -34,6 +34,7 @@ import type { PlanTaskPort, TaskRow } from '../model/plan-contracts.js';
 import { automationConfirmationCause, gateFixInProgress, pausedAutomationAction } from '../state/decision-policy.js';
 import type { GoalDisplayCauseV1 } from '../state/goal-machine.js';
 import { reverifyExemptionOfFacts, successorAutoCount } from '../state/verification-machine.js';
+import { readInitializationPointers } from './initialization-pointers.js';
 
 /** The read-only Store subset this reader needs: canonical reads, eventAt and lookup. */
 export type GoalDecisionCauseReaderRecords =
@@ -399,25 +400,19 @@ export function createGoalDecisionCauseReader(
 
   /** The project's formal active pointers; their absence is the §4.2/rule-14 source. */
   async function missingGovernanceCauses(goal: GoalSnapshot): Promise<CauseReadResult> {
-    const projectId = goal.ref.projectId;
-    const policyKey = canonicalJson({ aggregateType: 'ProjectCompletionPolicyActive', projectId } as unknown as JsonValue);
-    const architectureKey = canonicalJson({ aggregateType: 'ProjectArchitectureBaselineActive', projectId } as unknown as JsonValue);
-    let read: Awaited<ReturnType<GoalDecisionCauseReaderRecords['readMany']>>;
-    try {
-      read = await records.readMany([policyKey, architectureKey]);
-    } catch (error) {
-      return { ok: false, rejection: unavailable(`the governance pointers could not be read: ${messageOf(error)}`) };
+    const pointers = await readInitializationPointers(records, goal.ref.projectId);
+    if (pointers.status !== 'ready') {
+      const reason = pointers.status === 'rejected'
+        ? pointers.reason
+        : `the governance pointers are unavailable: ${pointers.status}`;
+      return { ok: false, rejection: unavailable(reason) };
     }
-    if (read.status !== 'ready') {
-      return { ok: false, rejection: unavailable(`the governance pointers are unavailable: ${read.code}`) };
-    }
-    const present = new Set(read.value.records.map((record) => record.refKey));
     const causes: GoalDecisionCauseReadV1[] = [];
-    if (!present.has(architectureKey)) {
+    if (pointers.value.architecture === null) {
       causes.push(cause({ goal, code: 'missing_initial_architecture', action: 'adopt_first_plan',
         affected: [], taskRef: null, runRef: null }));
     }
-    if (!present.has(policyKey)) {
+    if (pointers.value.completionPolicy === null) {
       causes.push(cause({ goal, code: 'missing_initial_completion_policy', action: 'adopt_first_plan',
         affected: [], taskRef: null, runRef: null }));
     }

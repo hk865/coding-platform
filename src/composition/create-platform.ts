@@ -5,6 +5,7 @@ import { totalmem } from 'node:os';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import type { ResourceCapSource } from '../../vendor/coding-agent/dist/public-api.js';
 import { MIB, defaultResourceCapSettings } from '../contracts/resource-caps.js';
+import { rejected } from '../contracts/core/rejections.js';
 import { createInMemoryRecordBackend } from '../core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../core/record-store/sqlite-record-store.js';
 import { RawArtifactBodyStore } from '../core/record-store/body-store.js';
@@ -45,6 +46,7 @@ import {
   createNoteReviewCardSource, createPlanningQuestionCardSource, createUnknownCallReviewCardSource,
 } from '../core/work-graph/views/decision-read-model.js';
 import { createGoalConflictAssembler } from '../core/work-graph/views/goal-conflicts.js';
+import { createSecretaryPreparationFacts } from '../core/work-graph/views/secretary-preparation-facts.js';
 import { createAutomaticReworkNoticeSource } from '../core/work-graph/views/automatic-rework-notices.js';
 import { createNoteReviewNoticeSource } from '../core/work-graph/views/note-review-notices.js';
 import { createNoticePositionComparator } from '../core/work-graph/views/notice-position.js';
@@ -91,7 +93,7 @@ import { createNoteMemoryMaterial } from '../core/work-graph/notes/note-memory-m
 import { createNoteScribeTodos } from '../core/work-graph/notes/note-scribe-todos.js';
 import { createNoteDecisionSource } from '../core/work-graph/notes/note-decision-source.js';
 import type { ContextExtensionsDependencies } from '../core/work-graph/views/context-extensions.js';
-import type { NoteCheckPort, NoteHeadCheckPort, NoteMemoryReadPort, NoteReadPort,
+import type { NoteCheckPort, NoteHeadCheckPort, NoteMemoryMaterialPort, NoteMemoryReadPort, NoteReadPort,
   NoteScopeReadPort, NoteScribeTodoPort, NoteWritePort } from '../core/work-graph/model/note-contracts.js';
 import type { SourceProvider } from '../core/workspace/ports.js';
 import { decodeRun } from '../core/work-graph/materials/run-snapshot-decoder.js';
@@ -154,7 +156,7 @@ import { createSessionHistoryCursorOwner, createSessionOperations } from '../cor
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { CommitCursor } from '../contracts/command-event.js';
 import type { DecisionApplicationReceiptV1 } from '../contracts/core/session-message.js';
-import type { SessionRef } from '../contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { VersionPin } from '../contracts/core/identity.js';
 import type { GoalRef } from '../contracts/ledger.js';
@@ -209,6 +211,7 @@ import type { TaskExecutionRecord } from '../core/work-graph/model/execution-rea
 import type { QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
 import type { RunRef, RunSnapshot, SourceRefV1 } from '../contracts/dispatch.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
+import { queryExecutionBindingOf } from '../contracts/query-job.js';
 import type { WriteResult } from '../contracts/core/results.js';
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, type TaskAutomationPolicyV1,
@@ -327,6 +330,14 @@ export type TargetPlatformOptions = {
    * duty `secretary`) and refuses a new line at the cap.
    */
   secretaryOpenCap?: number;
+  /**
+   * The Host's request wake sink. `createRequestIntake` calls it after a
+   * request command's commit RETURNS (never on a replay), so the Host's wake
+   * loop can run the round it appended; the platform itself never drives a
+   * round, and without a sink the wake is dropped and the round stays on record
+   * for the Query routes or a later Host.
+   */
+  requestWake?: (scope: WorkspaceScope, source: 'request_command') => void;
   /**
    * Slice 5 §3.2/§2.6: the exact configured operator of this Host. It is the
    * Host's real start actor (a human or system actor, never a platform
@@ -615,7 +626,6 @@ function createAuthorizeQueryConfiguration(host: RuntimeHostBindings): Authorize
     if (executionState === undefined) {
       return { status: 'rejected', code: 'incomplete', reason: 'the QueryRun has no persisted execution state to authorize' };
     }
-    const execution = input.job.job.intent.execution;
     const configured = await host.resolveQueryConfiguration(ctx, {
       queryRunRef: input.run.ref,
       sessionRef: executionState.sessionRef,
@@ -625,9 +635,12 @@ function createAuthorizeQueryConfiguration(host: RuntimeHostBindings): Authorize
     if (configured.status !== 'ready') return configured;
     // The Query ceiling is the intersection of the real Host grant, the stable
     // Role ceiling and the read-only Query ceiling. It never echoes a manifest
-    // declaration and never widens the Host grant.
+    // declaration and never widens the Host grant. The budget it narrows is the
+    // one `queryExecutionBindingOf` reports: a request round's own attempt
+    // profile (what preparation froze), a plain Query's Job intent.
     return { status: 'ready', value: projectQueryConfiguration({
-      host: configured.value, requested: execution.runtimeBudget, roleResolution: input.roleResolution,
+      host: configured.value, requested: queryExecutionBindingOf(input.job, input.run).runtimeBudget,
+      roleResolution: input.roleResolution,
     }) };
   };
 }
@@ -921,6 +934,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       consultations: { readMessage: mailbox.readMessage.bind(mailbox), readMessageBody: mailbox.readMessageBody.bind(mailbox) },
     });
     const catalog = createArchitectureCatalogService({ records: backend.records });
+    // L8: the secretary facts port the Runtime prepares a request round from.
+    // It reads the ONE record store and the ONE catalog; without a trusted
+    // Runtime Host binding there is no Query preparation to serve, so it is not
+    // built.
+    const secretaryFacts = queryExecution === undefined ? undefined : createSecretaryPreparationFacts({
+      records: backend.records, architecture: catalog,
+    });
     // L8 (book ruling 6): the SAME catalog instance resolves an omitted capture
     // `mappings`, so the automatic/manual capture and the reminder read share
     // one active-catalog decision.
@@ -1241,6 +1261,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readTaskInputPage: (...args) => trackedCall(() => taskInputsOwner.readTaskInputPage(...args), unavailable),
     };
     let resultWriter: Pick<ExecutionEntryPort, 'recordRunResult'> | undefined;
+    // The note read model is built after the Runtime dependencies object, so the
+    // secretary recipe receives this stable holder and reads the ONE material
+    // port the notes read uses at call time.
+    let noteMemoryMaterialPort: NoteMemoryMaterialPort | undefined;
+    const memoryMaterial: NoteMemoryMaterialPort = {
+      readMemoryMaterial: (ctx, input) => noteMemoryMaterialPort === undefined
+        ? Promise.resolve(rejected('unsupported', 'the note memory material read is not ready'))
+        : noteMemoryMaterialPort.readMemoryMaterial(ctx, input),
+    };
     // Slice 4C: the notes are built AFTER the runtime dependencies object, so
     // the Runtime receives this stable holder and the note tools read its
     // fields at Run start time. No notes block is moved.
@@ -1285,6 +1314,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         ...(options.sourcePolicyFor === undefined ? {} : { sourcePolicyFor: options.sourcePolicyFor }),
         ...(options.sourceAnalyzers === undefined ? {} : { sourceAnalyzers: options.sourceAnalyzers }),
         ...(queryExecution === undefined ? {} : { queryExecution }),
+        ...(secretaryFacts === undefined ? {} : { secretaryFacts }),
+        memoryMaterial,
         // C3: the continuation brief's checkpoint uses the SAME workspace reader as the evidence owner.
         workspaceSource: continuationWorkspaceSource,
         // A.2 step 5.6: the in-process ends without a Kernel terminal (RUN-16, RUN-23).
@@ -1752,6 +1783,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // still picks the parts. §11.5: the narrow update-due and scribe to-do
     // ports read over the SAME record store and the SAME check.
     const noteMemoryMaterial = createNoteMemoryMaterial(noteReads);
+    noteMemoryMaterialPort = noteMemoryMaterial;
     contextExtensionsDeps.memoryMaterial = noteMemoryMaterial;
     const noteScribeTodos = createNoteScribeTodos({ records: backend.records,
       userReasonFacts: noteWrite.userReasonFacts });
@@ -2297,8 +2329,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const rawRequestIntake = createRequestIntake({
       rounds: rawRequestRounds, facts: rawRequestFacts, selection: requestSelection,
       lineCreation: requestLineCreation, profiles: rawSecretaryProfiles, sessionFacts,
-      // No Host driver consumes the request wake yet; the platform drops it.
-      wake: () => undefined,
+      // The wake is the Host's: it arrives after the command's commit returned.
+      // Without a Host sink nothing consumes it and the round waits on record.
+      ...(options.requestWake === undefined ? {} : { wake: options.requestWake }),
     });
     // The published request owners drain through the same `trackedCall` set as
     // every other owner: `close()` waits for an in-flight request.
@@ -2321,6 +2354,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       precheck: (ctx, command) => trackedCall(() => rawRequestRounds.precheck(ctx, command), requestClosed),
       append: (ctx, input) => trackedCall(() => rawRequestRounds.append(ctx, input), requestClosed),
       unassigned: (ctx, scope, input) => trackedCall(() => rawRequestRounds.unassigned(ctx, scope, input), requestClosed),
+      // The open-rounds read the Host's request queue traverses; it reads one
+      // partition page per call and writes nothing.
+      open: (ctx, scope, input) => trackedCall(() => rawRequestRounds.open(ctx, scope, input), requestClosed),
     };
     const requestIntake: RequestIntakePort = {
       submitRequest: (ctx, input) => trackedCall(() => rawRequestIntake.submitRequest(ctx, input), requestClosed),

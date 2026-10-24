@@ -4,6 +4,7 @@
  */
 
 import { join } from 'node:path';
+import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
 import { type CoreCallContext } from '../../src/contracts/core/call-context.js';
 import { type RoleConfigurationRef, type SessionRef, type VersionPin, type WorkspaceScope } from '../../src/contracts/core/identity.js';
 import { type TaskLeaseSnapshot } from '../../src/contracts/dispatch.js';
@@ -437,7 +438,8 @@ export async function beginConsultation(b2: B2ExecutionFixture, requestId: strin
     const queryPermissions: { tools: string[]; writeScope: [] } = { tools: ['read'], writeScope: [] };
     const queryHostTemplate = B2_HOST.hostTemplate;
     const queryExecution = createQueryExecution({
-      records, roles: createRoleConfigurationService({ records, now, eventId }), bodies: b2.bodies, now, eventId,
+      records: withBackendOrderedLookup(records, records), roles: createRoleConfigurationService({ records, now, eventId }),
+      bodies: b2.bodies, now, eventId,
       sessionFacts: createSessionFactsService({ records }),
       authorizeConfiguration: async () => ({ status: 'ready', value: {
         configurationRevision: queryHostRevision, permissions: queryPermissions,
@@ -529,7 +531,7 @@ export async function beginConsultation(b2: B2ExecutionFixture, requestId: strin
     };
     const settled = await queryExecution.recordQueryObservation(base.ctx, {
       input: { entry, source: { position: 3, cursor: `fx3-query-terminal-${requestId}` }, history: { ...baseHistory, observedThroughPosition: 3, endPosition: 3 },
-        observation: { kind: 'terminal', occurredAt: now(), outcome: 'answered', answer, reason: null } },
+        observation: { kind: 'terminal', occurredAt: now(), outcome: 'answered', answer, reason: null, answerCheck: null } },
       meta: { requestId: `s1-maintenance-query-answered-${requestId}`, expected: [await pinOf(queryRunRef)] },
     });
     if (settled.status !== 'committed') throw new Error(`maintenance copy query answer failed: ${JSON.stringify(settled)}`);

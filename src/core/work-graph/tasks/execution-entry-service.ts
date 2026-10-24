@@ -118,9 +118,13 @@ import { planRunActivityForCommit } from './run-activity-service.js';
 import { readGoal, readGoalPhase, readGoalScope, sameCursor } from './plan-readers.js';
 import { goalStartPolicy } from '../state/goal-settings-machine.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
+import { mergeGuards } from '../persistence/record-guards.js';
 import { executionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { contextAssemblyProblem, contextAssemblyStructureProblem, contextGoalContentProblem, declaredInputProblem, effectivePlatformDuty, frozenSectionOrderProblem, renderedSectionProblem } from '../state/context-input.js';
 import { isolatedWriteOf, trustedContextOf } from './trusted-context.js';
+
+/** Re-exported for this module's existing task-side callers; the ONE implementation is the persistence module. */
+export { mergeGuards };
 
 // --------------------------------------------------------------------------
 // Small pure helpers
@@ -2182,26 +2186,6 @@ function observedHistoryProblem(history: unknown): boolean {
   if (!isPositiveSafeInteger(history['startPosition']) || !isPositiveSafeInteger(history['observedThroughPosition'])) return false;
   if (!(history['endPosition'] === null || isPositiveSafeInteger(history['endPosition']))) return false;
   return true;
-}
-
-/**
- * The ONE guard merge used by every entry/model commit. Duplicate guards for the
- * same key must agree; a conflict is a real `revision_conflict` and is NEVER
- * silently reduced to the larger/first/last version. Callers rebuild the whole
- * read window instead of inventing a winner.
- */
-export function mergeGuards(guards: readonly RecordGuard[]):
-  { ok: true; guards: RecordGuard[] } | { ok: false; rejection: CoreRejection } {
-  const byKey = new Map<string, number | null>();
-  for (const guard of guards) {
-    if (guard.refKey === '') return { ok: false, rejection: invalid('a record guard has an empty refKey') };
-    const existing = byKey.get(guard.refKey);
-    if (existing === undefined) { byKey.set(guard.refKey, guard.expectedRevision); continue; }
-    if (existing !== guard.expectedRevision) {
-      return { ok: false, rejection: reject('revision_conflict', `conflicting guards for ${guard.refKey}`) };
-    }
-  }
-  return { ok: true, guards: [...byKey].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision })) };
 }
 
 function mapReaderRejection(rejection: import('./plan-readers.js').Rejected): CoreRejection {

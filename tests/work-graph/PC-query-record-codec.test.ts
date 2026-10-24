@@ -80,6 +80,7 @@ function event(): QueryExecutionRecordedEventV1 {
         sessionRef: { projectId: 'P', sessionId: 'PC-QR-CODEC-session' },
         sessionGeneration: 1,
         requests: [requestRow()],
+        requestProfile: null,
       },
     },
   } as unknown as QueryExecutionRecordedEventV1;

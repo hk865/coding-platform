@@ -23,6 +23,7 @@ import type { PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js
 import type { SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { ConsultationInput, ConsultationResult } from './contracts.js';
+import { createQueryStageDriver, queryRunEndedWithoutAnswer } from './query-stage-driver.js';
 import type { ConsultationConsumerDependencies } from './ports.js';
 import type { InternalSessionArchivePort, SessionArchivePort } from './session-archive.js';
 import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
@@ -135,8 +136,6 @@ export function createConsultationConsumer(deps: {
   const ended = (message: SessionMessage, query: QueryJobRecord | null,
     answer: QueryJobAnswerSnapshot | null, reason: string): ConsultationResult =>
     ({ status: 'ready', value: { state: 'ended', message, query, answer, reason } });
-  const terminalWithoutAnswer = (record: QueryJobRecord): boolean =>
-    record.run.run.status === 'closed' || record.run.run.executionState?.phase === 'settled';
 
   /** Attach the already-saved official answer; never calls a model. */
   async function attach(owned: Owned, message: SessionMessage, query: QueryJobRecord | null,
@@ -203,36 +202,39 @@ export function createConsultationConsumer(deps: {
   }
 
   /**
-   * Drive ONE accepted, unanswered Query to its settled Answer. Explicit phase
-   * dispatch, no loop: observe an already-begun execution, otherwise prepare and
-   * start the claimed/prepared one exactly once.
+   * Drive ONE accepted, unanswered Query through the shared stage chain, then
+   * attach the formal Answer it produced. The chain is built for this drive
+   * because it carries this consumer's Host consumer id, which the plain-Query
+   * start records; its stage identities stay the `consultation-*` names. A
+   * request round is not a consultation, so the request facts read refuses
+   * here instead of deriving the owner rule twice.
    */
-  async function driveAccepted(owned: Owned, messageRef: SessionMessageRef, message: SessionMessage,
+  async function driveAccepted(owned: Owned, message: SessionMessage,
     consumerId: string, record: QueryJobRecord): Promise<ConsultationResult> {
-    const refs = consultationQueryRefs(messageRef, record.job.job.intent.execution.consultation?.part);
-    const phase = record.run.run.executionState?.phase;
-    if (phase === 'entering' || phase === 'entered' || phase === 'unknown' || phase === 'settled') {
-      if (deps.runtime.observeQuery === undefined) return waiting(message, record, null, 'the Runtime has no Query observation binding');
-      const observed = await deps.runtime.observeQuery(owned.ctx, { queryRunRef: refs.queryRunRef });
-      if (observed.status !== 'ready') return waiting(message, record, null, `observing the consultation Query failed: ${rejectionReason(observed)}`);
-      const next: QueryJobRecord = { job: observed.value.job, run: observed.value.run };
-      if (observed.value.answer !== null) return attach(owned, message, next, observed.value.answer);
-      if (terminalWithoutAnswer(next)) return ended(message, next, null, 'the consultation Query ended without a formal answer');
-      return waiting(message, next, null, 'the consultation Query is still waiting for a formal answer');
-    }
-    if (deps.runtime.prepareQuery === undefined || deps.runtime.startQuery === undefined) {
-      return waiting(message, record, null, 'the Runtime has no Query prepare/start binding');
-    }
-    const prepared = await deps.runtime.prepareQuery(owned.ctx,
-      { queryRunRef: refs.queryRunRef, requestId: `consultation-prepare:${refs.queryRunRef.runId}` });
-    if (prepared.status !== 'ready') return waiting(message, record, null, `preparing the consultation Query failed: ${rejectionReason(prepared)}`);
-    const started = await deps.runtime.startQuery(owned.ctx, {
-      prepared: prepared.value, consumerId, requestId: `consultation-start:${refs.queryRunRef.runId}`,
+    const stageDriver = createQueryStageDriver({
+      queries: deps.consultations.queries,
+      runtime: deps.runtime,
+      facts: { readFacts: async () => reject('unavailable', 'the consultation consumer does not drive request rounds') },
+      consumerId,
     });
-    if (started.status !== 'ready') return waiting(message, record, null, `starting the consultation Query failed: ${rejectionReason(started)}`);
-    const next: QueryJobRecord = { job: started.value.job, run: started.value.run };
-    if (started.value.answer !== null) return attach(owned, message, next, started.value.answer);
-    if (terminalWithoutAnswer(next)) return ended(message, next, null, 'the consultation Query ended without a formal answer');
+    const advanced = await stageDriver.advance(owned.ctx, {
+      queryJobRef: record.job.ref, expectedRunRef: record.run.ref, profile: null,
+    });
+    if (advanced.status === 'blocked') return waiting(message, record, null, advanced.reason);
+    const current = await deps.consultations.queries.readQueryJob(owned.ctx, record.job.ref);
+    if (current.status !== 'ready') {
+      return waiting(message, record, null, `reading the consultation Query failed: ${rejectionReason(current)}`);
+    }
+    const next: QueryJobRecord = current.value;
+    const answerRef = next.job.job.answerRefs.at(-1);
+    if (answerRef !== undefined) {
+      const answerRead = await deps.consultations.queries.readQueryAnswer(owned.ctx, answerRef);
+      if (answerRead.status !== 'ready') {
+        return waiting(message, next, null, `the saved consultation answer is not readable: ${rejectionReason(answerRead)}`);
+      }
+      return attach(owned, message, next, answerRead.value);
+    }
+    if (queryRunEndedWithoutAnswer(next)) return ended(message, next, null, 'the consultation Query ended without a formal answer');
     return waiting(message, next, null, 'the consultation Query is still waiting for a formal answer');
   }
 
@@ -275,7 +277,7 @@ export function createConsultationConsumer(deps: {
     }
     // A real closed/settled Query with no Answer is an `ended` projection that
     // keeps the accepted message/Query facts; it is never re-run.
-    if (terminalWithoutAnswer(record)) {
+    if (queryRunEndedWithoutAnswer(record)) {
       return ended(message, record, null, 'the existing consultation Query ended without a formal answer');
     }
     const configMatches = job.job.intent.goalId === input.goalRef.goalId
@@ -290,7 +292,7 @@ export function createConsultationConsumer(deps: {
     if (phase !== undefined) {
       // claimed / prepared / entering / entered / unknown: continue the SAME
       // execution, never a new Query.
-      return driveAccepted(owned, message.ref, message, input.consumerId, record);
+      return driveAccepted(owned, message, input.consumerId, record);
     }
     // Pending and never claimed: claim the FORMAL derived target (the child A′)
     // when the Query carries a derivation; only a legacy Query without one claims
@@ -308,7 +310,7 @@ export function createConsultationConsumer(deps: {
     }
     const claimed = await claim(owned, message.ref, run.ref, card.record.ref, card.record.revision, input.part);
     if (claimed.kind === 'fail') return waiting(message, record, null, claimed.reason);
-    return driveAccepted(owned, message.ref, message, input.consumerId, claimed.record);
+    return driveAccepted(owned, message, input.consumerId, claimed.record);
   }
 
   const consume = async (ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult> => {
@@ -483,7 +485,7 @@ export function createConsultationConsumer(deps: {
     const record: QueryJobRecord = { job: submitted.value.job, run: submitted.value.run };
     const claimed = await claim(owned, messageRef, refs.queryRunRef, childCard.record.ref, childCard.record.revision, value.part);
     if (claimed.kind === 'fail') return waiting(message, record, null, claimed.reason);
-    return driveAccepted(owned, messageRef, message, value.consumerId, claimed.record);
+    return driveAccepted(owned, message, value.consumerId, claimed.record);
   };
 
   /**

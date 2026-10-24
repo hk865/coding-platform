@@ -10,7 +10,7 @@ import type { SourceRunSpec } from './source-binding-types.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { QueryExecutionRequest } from '../../contracts/query-execution-context.js';
 import type { QueryJobIntentV1, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../contracts/query-job.js';
-import { queryJobRefFor, validQueryExecution } from '../../contracts/query-job.js';
+import { queryExecutionBindingOf, queryJobRefFor, validQueryExecution } from '../../contracts/query-job.js';
 import type { ReviewerProfileV1 } from '../../contracts/reviewer-context.js';
 import type { ReviewInputBinding, ReviewWorkBinding, ReviewWorkRef, ReviewWorkSnapshot } from '../../contracts/reviewer-work.js';
 import { createWorkspaceAccessFactory, type WorkspaceAccessFactory } from '../workspace/access.js';
@@ -125,6 +125,8 @@ type QuerySourceBinding = {
   request: QueryExecutionRequest;
   actor: Extract<ActorRef, { kind: 'human' | 'system' }>;
   execution: NonNullable<QueryJobIntentV1['execution']>;
+  /** The role the ONE binding reader resolves for this QueryRun. */
+  roleBinding: RoleBindingRefV1;
 };
 
 /**
@@ -286,6 +288,7 @@ export function createQuerySourceCaptureFactory(
         workspace: { aggregateType: 'Workspace', projectId: copied.runRef.projectId, workspaceId: copied.runRef.workspaceId },
         queryRunRef: structuredClone(copied.runRef), jobRef: structuredClone(resolved.jobRef), request: copied,
         actor: structuredClone(resolved.actor), execution: structuredClone(resolved.execution),
+        roleBinding: structuredClone(resolved.roleBinding),
       };
       const access = createSourceCaptureAccess({ authority: deps.authority, sourcePolicyFor, signal: hostSignal, runtime: binding });
       return await openOwnedSourceAccess({ access, workspace: binding.workspace, runSignal, now: deps.now,
@@ -546,7 +549,10 @@ async function authorizeSubject(ledger: SourceSnapshotReads, ctx: CoreCallContex
 type QueryOrigin = {
   jobRef: QueryJobRef;
   actor: Extract<ActorRef, { kind: 'human' | 'system' }>;
+  /** The accepted execution request; its identity/kind checks stay the intent's. */
   execution: NonNullable<QueryJobIntentV1['execution']>;
+  /** The role the ONE binding reader resolves; never a second reading of the intent. */
+  roleBinding: RoleBindingRefV1;
 };
 
 
@@ -557,6 +563,7 @@ type CurrentQueryState = {
   run: QueryRunSnapshot;
   job: QueryJobSnapshot;
   execution: NonNullable<QueryJobIntentV1['execution']>;
+  roleBinding: RoleBindingRefV1;
 };
 
 /**
@@ -604,7 +611,11 @@ async function loadCurrentQueryState(
   const execution = intent.execution;
   if (!execution || !validQueryExecution(execution))
     return denied('the recorded query execution is missing or invalid');
-  return { status: 'ready', value: { jobRef, run, job, execution } };
+  // The role binding comes from the ONE binding reader (the attempt's own for a
+  // request round); the intent's execution above stays only for the execution
+  // identity checks.
+  const roleBinding = queryExecutionBindingOf(job, run).roleBinding;
+  return { status: 'ready', value: { jobRef, run, job, execution, roleBinding } };
 }
 
 /**
@@ -621,7 +632,7 @@ async function resolveQueryOrigin(
   // initialization with the original error semantics.
   const current = await loadCurrentQueryState(ledger, request);
   if (current.status !== 'ready') throw Error('query source capture: ' + current.reason);
-  const { jobRef, job, execution } = current.value;
+  const { jobRef, job, execution, roleBinding } = current.value;
   const submissionRead = await ledger.readQuerySubmission(jobRef);
   if (submissionRead.status !== 'ready') {
     const detail = submissionRead.status === 'rejected'
@@ -640,7 +651,8 @@ async function resolveQueryOrigin(
     && submitted.status === 'pending' && submitted.answerRefs.length === 0 && submitted.closeReason === null;
   if (!initial) throw Error('query source capture: the recorded submission is not the initial QueryJob');
   if (submittedEvent.actor.kind === 'agent') throw Error('query source capture: the original initiator kind is unsupported');
-  return { jobRef: structuredClone(jobRef), actor: { kind: submittedEvent.actor.kind, id: submittedEvent.actor.id }, execution: structuredClone(execution) };
+  return { jobRef: structuredClone(jobRef), actor: { kind: submittedEvent.actor.kind, id: submittedEvent.actor.id },
+    execution: structuredClone(execution), roleBinding: structuredClone(roleBinding) };
 }
 
 /**
@@ -661,12 +673,12 @@ async function authorizeQuerySubject(
     return denied('the recorded query execution changed since the source binding');
   return { status: 'ready', value: {
     // Complete QueryRunRef, original actor, complete request and complete role.
-    subjectKey: 'query_run:' + sha256Hex(canonicalJson([run.ref, binding.actor, binding.request, binding.execution.roleBinding])),
+    subjectKey: 'query_run:' + sha256Hex(canonicalJson([run.ref, binding.actor, binding.request, binding.roleBinding])),
     // Real role, execution kind, a stable read-only policy version and the Host mount policy.
     // Never a source digest or an ordinary business revision.
     permissionRevision: sha256Hex(canonicalJson({
       policy: 'query-source-live-v1',
-      role: binding.execution.roleBinding,
+      role: binding.roleBinding,
       kind: binding.execution.kind,
       mount: policy.permissionRevision,
     })),

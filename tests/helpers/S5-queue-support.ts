@@ -243,7 +243,7 @@ export async function answeredPlanningQuestion(f: S5DecisionFixture) {
   record = committed(await execution.recordQueryObservation(f.ctx, { input: { entry,
     history: { schemaVersion: 1, sessionRef: ticket.sessionRef, kernel: ticket.kernel, startPosition: 1, observedThroughPosition: 3, endPosition: 3 },
     source: { position: 3, cursor: 's5-planning-answered' },
-    observation: { kind: 'terminal', occurredAt: T, outcome: 'answered', answer, reason: null } },
+    observation: { kind: 'terminal', occurredAt: T, outcome: 'answered', answer, reason: null, answerCheck: null } },
     meta: { requestId: 's5-planning-answered', expected: [{ ref: runRef, revision: record.run.revision }] } }));
   expect(record.job.job.status).toBe('answered');
   expect(record.session.occupancy).toBeNull();

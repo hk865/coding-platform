@@ -38,13 +38,15 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import {
-  QUERY_OPEN_BY_WORKSPACE_INDEX, REQUEST_PAGE_SIZE, SECRETARY_TAIL_RETRIES,
+  QUERY_OPEN_BY_WORKSPACE_INDEX, REQUEST_PAGE_SIZE, REQUEST_TAIL_PREFIX, SECRETARY_INTAKE_PREFIX,
+  SECRETARY_TAIL_RETRIES, requestTailKey, secretaryIntakeKey,
   type RequestCoreViewV1, type RequestOwnerStateV1, type SecretaryProfilePort, type SecretaryProfileV1,
 } from '../model/request-contracts.js';
 import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import type { RequestFactsPort } from './request-facts.js';
 import { oldestPendingRound, type RequestRoundsFactsV1 } from '../queries/request-rounds-read.js';
+import { keyOf, noopTailClaim, rootOfFacts } from '../queries/request-round-claims.js';
 import {
   decodeQueryJobSnapshot, decodeQueryJobSubmittedEvent, encodeQueryExecutionRecordedEvent, encodeQueryJobSnapshot,
   encodeQueryJobSubmittedEvent, encodeQueryRunSnapshotRecord, type QueryJobSubmittedEventV1,
@@ -57,14 +59,13 @@ import {
 import {
   endUnstartedRound, newRequestRound, newRoutingRound, setIntake,
 } from '../state/request-rounds.js';
-import {
-  ownsQuery, releaseSessionRecord, sessionMachineStateOf, transitionSession,
-} from '../state/session-availability.js';
+import { releaseUnenteredQuerySession } from '../state/session-availability.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
 import { sessionRefProblem } from '../persistence/rework-codecs.js';
 import { readOwnerRecord } from './owner-record-read.js';
-import { mergeGuards as mergeGuardsChecked } from './execution-entry-service.js';
+import { validIdeaCount } from '../model/request-ideas.js';
+import { mergeGuards as mergeGuardsChecked } from '../persistence/record-guards.js';
 import { ownerWriteStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { replayCommittedReceipt, type ReceiptReplayFailure } from './receipt-replay.js';
 import { admitRequestSecretary } from './secretary-selection.js';
@@ -113,6 +114,14 @@ export interface RequestRoundPort {
     Promise<RequestAppendResultV1>;
   unassigned(ctx: CoreCallContext, scope: WorkspaceScope, input: { limit: number; continuation: string | null }):
     Promise<ReadResult<{ requests: QueryJobRef[]; continuation: string | null; wrapped: boolean }>>;
+  /**
+   * One page of the request roots with an open round in one status partition
+   * of the workspace, each root once. The queue handler reads the roots it must
+   * advance from here; it is a named read like `unassigned`, not an index name.
+   */
+  open(ctx: CoreCallContext, scope: WorkspaceScope,
+    input: { status: 'pending' | 'running'; limit: number; continuation: string | null }):
+    Promise<ReadResult<{ requests: QueryJobRef[]; continuation: string | null; wrapped: boolean }>>;
 }
 
 // ------------------------------------------------------------------------ //
@@ -147,22 +156,8 @@ export type RequestRoundDependencies = {
 // Claim keys and small helpers                                              //
 // ------------------------------------------------------------------------ //
 
-/** The one per-request tail slot: owner = the request's last round key. */
-export const REQUEST_TAIL_PREFIX = 'request-tail:';
-/** The one per-secretary intake slot: owner = the pending holder round key. */
-export const SECRETARY_INTAKE_PREFIX = 'secretary-intake:';
-
-export function requestTailKey(requestRoot: QueryJobRef): string {
-  return REQUEST_TAIL_PREFIX + canonicalJson(requestRoot as unknown as JsonValue);
-}
-
-export function secretaryIntakeKey(session: SessionRef): string {
-  return SECRETARY_INTAKE_PREFIX + sessionAggregateRefKey(plainSessionRefToAggregate(session));
-}
-
-function keyOf(value: unknown): string {
-  return canonicalJson(value as JsonValue);
-}
+/** The slot prefixes stay importable here for the existing callers; the keys live in `model/request-contracts`. */
+export { REQUEST_TAIL_PREFIX, SECRETARY_INTAKE_PREFIX };
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -652,21 +647,9 @@ function intakeChanges(input: IntakeInput): IntakeChanges {
   return { claims, records, guards };
 }
 
-/** A no-op tail CAS: `end_unbound` adds no round but still excludes a concurrent append. */
-function noopTailClaim(facts: RequestRoundsFactsV1): UniqueClaimChange {
-  const tailKey = keyOf(facts.tail.ref);
-  return { claimKey: requestTailKey(rootOfFacts(facts)), expectedOwner: tailKey, nextOwner: tailKey };
-}
-
 function moveTailClaim(facts: RequestRoundsFactsV1 | null, requestRoot: QueryJobRef, next: QueryJobRef): UniqueClaimChange {
   const expected = facts === null ? null : keyOf(facts.tail.ref);
   return { claimKey: requestTailKey(requestRoot), expectedOwner: expected, nextOwner: keyOf(next) };
-}
-
-function rootOfFacts(facts: RequestRoundsFactsV1): QueryJobRef {
-  const root = facts.rounds.find((round) => round.job.roundKind === 'request');
-  if (root === undefined) throw new Error('request-service: the facts name no request root');
-  return { ...root.ref };
 }
 
 /** The pending round that currently holds an intake, if any (the invariant allows at most one). */
@@ -754,7 +737,8 @@ function selectIdeaProblemOf(view: RequestCoreViewV1, round: QueryJobRef, index:
   const target = view.rounds.find((candidate) => sameJson(candidate.ref, round));
   if (target === undefined) return rejected('not_found', 'the round does not belong to its request');
   if (target.answer === null) return rejected('invalid', 'the round has no answer yet');
-  if (target.ideas.length < 2 || target.ideas.length > 3) {
+  // An answer with no idea leaves nothing to select; any other count outside the idea rule is refused too.
+  if (target.ideas.length === 0 || !validIdeaCount(target.ideas.length)) {
     return rejected('invalid', 'the answer does not carry 2-3 ideas');
   }
   if (index >= target.ideas.length) return rejected('invalid', 'index is outside the answer ideas');
@@ -807,21 +791,81 @@ async function readClaimedSession(
   const read = await readOne(deps.records, plainSessionRefToAggregate(state.sessionRef), decodeSessionRecord);
   if (read.status === 'not_found') return unavailable('the claimed Session does not exist');
   if (read.status === 'rejected') return unavailable(`the claimed Session could not be read: ${read.reason}`);
-  if (!ownsQuery(read.value, run.ref, state)) return { status: 'ready', claimed: { guard: read.guard, released: null } };
-  const released = transitionSession(sessionMachineStateOf(read.value),
-    { kind: 'occupancy_released', cause: 'query_terminal_observed' }, {
-      caller: 'service', hostLease: null, pin: null,
-      holder: { ref: run.ref, claimGeneration: state.sessionGeneration, before: `query_${state.phase}`, after: 'query_settled',
-        kernelTurnSeen: true, inputsConfirmed: true, historyBoundaryCursor: null, kernelTurnOpen: false },
-      probe: null, kernelHeader: null, openResponsibleLink: null, creation: null, link: null,
-    });
+  const released = releaseUnenteredQuerySession(read.value, run);
   if (!released.ok) return unavailable(`the claimed Session occupancy could not be released: ${released.detail}`);
-  for (const effect of released.effects) {
-    if (effect.kind === 'release_session') {
-      return { status: 'ready', claimed: { guard: read.guard, released: releaseSessionRecord(read.value, effect) } };
+  return { status: 'ready', claimed: { guard: read.guard, released: released.released } };
+}
+
+// ------------------------------------------------------------------------ //
+// One page of the open-rounds index                                         //
+// ------------------------------------------------------------------------ //
+
+/** One cursor position of the open-rounds index: the ordered value and the record key after it. */
+type OpenIndexCursor = { order: string | number; refKey: string };
+
+/** One decoded page of the open-rounds index: the rows, the cursor it resumed after, and the store's next. */
+type OpenIndexPage = {
+  rows: { snapshot: QueryJobSnapshot; refKey: string }[];
+  after: OpenIndexCursor | null;
+  next: OpenIndexCursor | null;
+};
+
+/**
+ * One bounded page of `s6-query-open-by-workspace` and the continuation around
+ * it, shared by the two named reads (`unassigned`, `open`): both walk the same
+ * index of the same workspace and differ only in the status partition and in
+ * what they project from each round.
+ *
+ * The continuation is the cursor the previous call resumed after; an unreadable
+ * one is `invalid`. One call reads exactly one index page (`REQUEST_PAGE_SIZE`):
+ * the page budget belongs to the caller, so a read never fills `limit` across
+ * pages. A damaged candidate is the whole read's failure, never a skipped row.
+ */
+async function readOpenIndexPage(
+  deps: RequestRoundDependencies, scope: WorkspaceScope, status: 'pending' | 'running',
+  continuation: string | null, labels: { read: string; damaged: string },
+): Promise<ReadResult<OpenIndexPage>> {
+  let after: OpenIndexCursor | undefined;
+  if (continuation !== null) {
+    try {
+      const parsed = JSON.parse(continuation) as { order?: unknown; refKey?: unknown };
+      if (typeof parsed.order !== 'string' || typeof parsed.refKey !== 'string') throw new Error('shape');
+      after = { order: parsed.order, refKey: parsed.refKey };
+    } catch {
+      return { status: 'rejected', code: 'invalid', reason: 'continuation is not a readable cursor' };
     }
   }
-  throw new Error('the admitted Session release writes no Session record');
+  let page: Awaited<ReturnType<RequestServiceStore['lookupOrdered']>>;
+  try {
+    page = await deps.records.lookupOrdered({
+      index: QUERY_OPEN_BY_WORKSPACE_INDEX,
+      values: [scope.projectId, scope.workspaceId, 'request', status],
+      direction: 'asc',
+      ...(after === undefined ? {} : { after }),
+      limit: REQUEST_PAGE_SIZE,
+    });
+  } catch (error) {
+    return { status: 'rejected', code: 'unavailable', reason: `the ${labels.read} read failed: ${messageOf(error)}` };
+  }
+  if (page.status !== 'ready') {
+    return { status: 'rejected', code: 'unavailable',
+      reason: `the ${labels.read} read failed: ${page.code}: ${page.reason}` };
+  }
+  const rows: OpenIndexPage['rows'] = [];
+  for (const record of page.value.records) {
+    let decoded;
+    try {
+      decoded = decodeQueryJobSnapshot(record);
+    } catch (error) {
+      return { status: 'rejected', code: 'unavailable',
+        reason: `${labels.damaged} is damaged: ${messageOf(error)}` };
+    }
+    if (decoded.status !== 'decoded') {
+      return { status: 'rejected', code: 'unavailable', reason: `${labels.damaged} is damaged: ${decoded.reason}` };
+    }
+    rows.push({ snapshot: decoded.value, refKey: record.refKey });
+  }
+  return { status: 'ready', value: { rows, after: after ?? null, next: page.value.next } };
 }
 
 // ------------------------------------------------------------------------ //
@@ -1525,45 +1569,18 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     if (!Number.isSafeInteger(input.limit) || input.limit < 1) {
       return { status: 'rejected', code: 'invalid', reason: 'limit must be a positive integer' };
     }
-    let after: { order: string | number; refKey: string } | undefined;
-    if (input.continuation !== null) {
-      try {
-        const parsed = JSON.parse(input.continuation) as { order?: unknown; refKey?: unknown };
-        if (typeof parsed.order !== 'string' || typeof parsed.refKey !== 'string') throw new Error('shape');
-        after = { order: parsed.order, refKey: parsed.refKey };
-      } catch {
-        return { status: 'rejected', code: 'invalid', reason: 'continuation is not a readable cursor' };
-      }
-    }
     // One 200-row index page per call (a bounded traversal): the drain
     // owns the page budget, so this read never fills `limit` across pages.
-    let page;
-    try {
-      page = await deps.records.lookupOrdered({
-        index: QUERY_OPEN_BY_WORKSPACE_INDEX,
-        values: [scope.projectId, scope.workspaceId, 'request', 'pending'],
-        direction: 'asc',
-        ...(after === undefined ? {} : { after }),
-        limit: REQUEST_PAGE_SIZE,
-      });
-    } catch (error) {
-      return unavailable(`the unassigned read failed: ${messageOf(error)}`);
-    }
-    if (page.status !== 'ready') return unavailable(`the unassigned read failed: ${page.code}: ${page.reason}`);
+    const read = await readOpenIndexPage(deps, scope, 'pending', input.continuation,
+      { read: 'unassigned', damaged: 'an unassigned candidate' });
+    if (read.status !== 'ready') return read;
 
     const requests: QueryJobRef[] = [];
-    let resume: { order: string | number; refKey: string } | null = after ?? null;
+    let resume: OpenIndexCursor | null = read.value.after;
     let stoppedAtLimit = false;
-    for (const record of page.value.records) {
-      let decoded;
-      try {
-        decoded = decodeQueryJobSnapshot(record);
-      } catch (error) {
-        return unavailable(`an unassigned candidate is damaged: ${messageOf(error)}`);
-      }
-      if (decoded.status !== 'decoded') return unavailable(`an unassigned candidate is damaged: ${decoded.reason}`);
-      resume = { order: String(decoded.value.since), refKey: record.refKey };
-      const root = decoded.value.job.requestRoot;
+    for (const row of read.value.rows) {
+      resume = { order: String(row.snapshot.since), refKey: row.refKey };
+      const root = row.snapshot.job.requestRoot;
       if (root === null) continue;
       // A failed read is the whole read's failure: the queue backs off and keeps
       // the dirty rows; only a successfully read, non-waiting owner is skipped.
@@ -1575,16 +1592,67 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       // Output a request only for its oldest pending round; every other round
       // only advances the cursor, so one request never appears twice.
       const oldest = oldestPendingRound(facts.facts);
-      if (oldest === null || !sameJson(oldest.ref, decoded.value.ref)) continue;
+      if (oldest === null || !sameJson(oldest.ref, row.snapshot.ref)) continue;
       requests.push({ ...root });
       if (requests.length >= input.limit) { stoppedAtLimit = true; break; }
     }
     const exhaustedPage = !stoppedAtLimit;
-    const wrapped = exhaustedPage && page.value.next === null;
+    const wrapped = exhaustedPage && read.value.next === null;
     const continuation = wrapped ? null
-      : stoppedAtLimit ? JSON.stringify(resume) : JSON.stringify(page.value.next);
+      : stoppedAtLimit ? JSON.stringify(resume) : JSON.stringify(read.value.next);
     return { status: 'ready', value: { requests, continuation, wrapped } };
   }
 
-  return { precheck, append, unassigned };
+  // ---------------------------------------------------------------------- //
+  // The named read `open`: the request roots with an open round              //
+  // ---------------------------------------------------------------------- //
+
+  /**
+   * One page of the request roots that have an open round in one status
+   * partition of the workspace. A request root can have several open rounds, so
+   * a page names each root once; the rows of its later rounds only move the
+   * cursor. The queue handler uses this to find the rounds it may advance: it
+   * does not need the order inside a page, only that every open root is reached
+   * exactly once per traversal.
+   */
+  async function open(ctx: CoreCallContext, scope: WorkspaceScope,
+    input: { status: 'pending' | 'running'; limit: number; continuation: string | null },
+  ): Promise<ReadResult<{ requests: QueryJobRef[]; continuation: string | null; wrapped: boolean }>> {
+    if (input.status !== 'pending' && input.status !== 'running') {
+      return { status: 'rejected', code: 'invalid', reason: "status must be 'pending' or 'running'" };
+    }
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1) {
+      return { status: 'rejected', code: 'invalid', reason: 'limit must be a positive integer' };
+    }
+    const read = await readOpenIndexPage(deps, scope, input.status, input.continuation,
+      { read: 'open request round', damaged: 'an open request round' });
+    if (read.status !== 'ready') return read;
+
+    const requests: QueryJobRef[] = [];
+    const seen = new Set<string>();
+    let resume: OpenIndexCursor | null = read.value.after;
+    let stoppedAtLimit = false;
+    for (const row of read.value.rows) {
+      resume = { order: String(row.snapshot.since), refKey: row.refKey };
+      const root = row.snapshot.job.requestRoot;
+      // The index's `request` slot derives from the stored Job, so a row without
+      // a root is not an open request round of this workspace.
+      if (root === null) {
+        return { status: 'rejected', code: 'unavailable',
+          reason: 'the open request index names a non-request QueryJob' };
+      }
+      const key = keyOf(root);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      requests.push({ ...root });
+      if (requests.length >= input.limit) { stoppedAtLimit = true; break; }
+    }
+    const exhaustedPage = !stoppedAtLimit;
+    const wrapped = exhaustedPage && read.value.next === null;
+    const continuation = wrapped ? null
+      : stoppedAtLimit ? JSON.stringify(resume) : JSON.stringify(read.value.next);
+    return { status: 'ready', value: { requests, continuation, wrapped } };
+  }
+
+  return { precheck, append, unassigned, open };
 }

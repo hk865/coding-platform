@@ -15,6 +15,8 @@ import type { SessionAnomalyAnchorRef } from '../../contracts/session-anomaly.js
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
 import type { CommandRerunRequestReadPort } from '../work-graph/model/command-rerun-request-contracts.js';
+import type { SecretaryPreparationFactsPort, SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
+import type { NoteMemoryMaterialPort } from '../work-graph/model/note-contracts.js';
 import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
@@ -38,13 +40,17 @@ export type ContextAssemblerDependencies = Pick<RuntimeExecutionDependencies,
     graphContext?: GraphContextReadPort; taskInputs?: TaskContextInputPort;
     architectureReminders?: ArchitectureReminderReadPort;
     /** K3 B3 item 7: the Task's requests for the blocked section; optional for old test doubles. */
-    commandRerunRequests?: CommandRerunRequestReadPort };
+    commandRerunRequests?: CommandRerunRequestReadPort;
+    /** The secretary facts read; absent makes a secretary round `unsupported` before the model. */
+    secretaryFacts?: SecretaryPreparationFactsPort;
+    /** The note memory-material read the notes already share; absent fails a secretary round closed. */
+    memoryMaterial?: NoteMemoryMaterialPort };
 
 /**
  * The one template id vocabulary. The material carries it so a re-render never
  * guesses which input template produced the text.
  */
-export type ContextTemplateId = 'work-input' | 'query-planning-input' | 'query-copy-input';
+export type ContextTemplateId = 'work-input' | 'query-planning-input' | 'query-copy-input' | 'secretary-round';
 
 /** One section's frozen omission state; `wholeOmitted` means the range is null. */
 export type ContextSectionPlanV1 = {
@@ -127,6 +133,11 @@ export type AssembledContextV1 = {
   takesSessionHistory: boolean;
   /** What the review shrink re-renders from. */
   renderMaterial: ContextRenderMaterialV1;
+  /**
+   * The one secretary facts value the recipe read; preparation freezes the
+   * manifest from this value and reads the port nowhere else.
+   */
+  secretaryFacts?: SecretaryPreparationFactsV1;
 };
 
 export interface ContextAssembler {

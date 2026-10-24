@@ -13,6 +13,31 @@ export type QueryRunRef = {
     queryJobId: string;
     runId: string;
 };
+/**
+ * One request round as the secretary's preparation sees it: the Job/Run
+ * revisions and the frozen input, never a re-read. The selected idea carries
+ * the title and detail from the stored answer, so it survives a transfer to
+ * another secretary; `relatedCards` is empty until cards are read.
+ */
+export type SecretaryRoundMaterialV1 = {
+    ref: QueryJobRef;
+    revision: number;
+    runRef: QueryRunRef;
+    runRevision: number;
+    since: CommitCursor;
+    text: string;
+    selectedIdea: { round: QueryJobRef; index: number; title: string; detail: string } | null;
+    relatedCards: { ref: VersionedRef; current: number | null }[];
+};
+/** The request facts frozen into a request round's prepared manifest. */
+export type SecretaryRequestManifestV1 = {
+    requestRoot: QueryJobRef;
+    round: SecretaryRoundMaterialV1;
+    batch: SecretaryRoundMaterialV1[];
+    preparationCursor: CommitCursor;
+    effectiveGoalId: string | null;
+    executionKind: 'semantic_query' | 'initial_coordination';
+};
 export type QueryJobAnswerRef = {
     aggregateType: "QueryJobAnswer";
     projectId: string;
@@ -386,6 +411,38 @@ export type QueryJobSnapshot = {
 /** The pre-bind form every creator builds; the creating commit fills `since`. */
 export type PendingQueryJobSnapshot = Omit<QueryJobSnapshot, 'since'> & { since: CommitCursor | null };
 
+/** A request round is the one QueryJob kind whose binding and budget come from its own attempt. */
+export function isRequestRound(job: QueryJobSnapshot): boolean {
+    return job.job.roundKind !== null;
+}
+
+/**
+ * The ONE reader of a Query's role binding and budget; every place that reads
+ * them calls it. A plain Query reads exactly its Job intent. A request round
+ * reads the attempt's own execution state, because preparation narrows its
+ * budget; a request round without the claimed profile is an invariant break
+ * and throws instead of falling back to the intent.
+ */
+export function queryExecutionBindingOf(job: QueryJobSnapshot, run: QueryRunSnapshot): {
+    roleBinding: RoleBindingRefV1;
+    runtimeBudget: RuntimeBudget;
+    budget: QueryJobIntentV1['budget'];
+} {
+    if (!isRequestRound(job)) {
+        const execution = job.job.intent.execution;
+        return { roleBinding: execution.roleBinding, runtimeBudget: execution.runtimeBudget, budget: job.job.intent.budget };
+    }
+    const state = run.run.executionState;
+    if (state === undefined || state.requestProfile === null) {
+        throw new Error('a request round QueryRun has no requestProfile');
+    }
+    return {
+        roleBinding: state.roleBinding,
+        runtimeBudget: state.requestProfile.runtimeBudget,
+        budget: state.requestProfile.budget,
+    };
+}
+
 // ------------------------------------------------------------------------ //
 // R5b.2 execution/claim + answer value types                                 //
 // ------------------------------------------------------------------------ //
@@ -434,6 +491,19 @@ export type QueryExecutionStateV1 = {
     } | null;
     history: RunExecutionHistoryV1 | null;
     requests: QueryModelRequestV1[];
+    /**
+     * The profile the request round was claimed with: the secretary profile
+     * of the Session that claimed it, whose binding and budgets the attempt
+     * runs with. Required, and null for every non-request Query. A request
+     * round without it violates the claim invariant and is never read as the
+     * Job intent.
+     */
+    requestProfile: {
+        profileId: string;
+        runtimeBudget: RuntimeBudget;
+        budget: QueryJobIntentV1['budget'];
+        consumerId: string;
+    } | null;
     /**
      * Why the start-up reconcile made the QueryRun `unknown` (A.2 step 5.6,
      * QRR-05): the calls still without a result, or the probe verdict of an

@@ -465,7 +465,7 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
         runId: queryRunRef.runId, status: 'pending', startedAt: null, endedAt: null, outcome: null,
         executionState: { schemaVersion: 1, phase: 'claimed', sessionRef: { projectId: 'p', sessionId: 'sq' },
           sessionGeneration: 2, role: execution.session.role, roleBinding: execution.run.roleBinding, roleResolution: role,
-          priorHistoryCursor: null, prepared: null, entry: null, history: null, requests: [] } } },
+          priorHistoryCursor: null, prepared: null, entry: null, history: null, requests: [], requestProfile: null } } },
       session: { ...execution.session, ref: { aggregateType: 'Session', projectId: 'p', sessionId: 'sq' }, revision: 2,
         kernel: { adapterId: 'cu-kernel', kernelSessionId: 'cu-kernel-sq' }, lastExecutionRef: queryRunRef,
         occupancy: { kind: 'execution', executionRef: queryRunRef, generation: 2 } },

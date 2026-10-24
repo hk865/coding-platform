@@ -13,7 +13,8 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { ModelCallAccess } from '../../contracts/dispatch.js';
-import type { QueryModelUsageV1, QueryRunRef } from '../../contracts/query-job.js';
+import { queryExecutionBindingOf, type QueryModelUsageV1, type QueryRunRef } from '../../contracts/query-job.js';
+import type { GoalRef } from '../../contracts/ledger.js';
 import type { HookPort } from '../../../vendor/coding-agent/dist/public-api.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import {
@@ -42,6 +43,7 @@ import type {
 import type {
   QueryEntryIdentity, QueryExecutionRecord,
 } from '../work-graph/queries/contracts.js';
+import { queryManifestProblem } from '../work-graph/queries/query-record-codecs.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { RawArtifactRecord } from '../record-store/body-ports.js';
 
@@ -133,6 +135,8 @@ async function loadManifest(
     || !sameRef(parsed['queryRunRef'], prepared.queryRunRef) || typeof parsed['input'] !== 'string' || !nonEmpty(parsed['inputDigest'])) {
     return rejected('invalid', 'the Query manifest is not a complete query-execution manifest');
   }
+  const manifestProblem = queryManifestProblem(parsed);
+  if (manifestProblem !== null) return rejected('invalid', manifestProblem);
   const manifest = parsed as unknown as PreparedQueryManifestV1;
   if (sha256Hex(manifest.input) !== manifest.inputDigest) return rejected('invalid', 'the Query manifest input digest is not the digest of its input');
   if (manifest.inputDigest !== prepared.inputDigest) return rejected('invalid', 'the Query manifest input digest disagrees with the Prepared value');
@@ -242,7 +246,10 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         reasoningReplay: manifest.promptSet.reasoningReplay,
       };
       const toolTexts = promptTexts.value.tools;
-      const execution = record.job.job.intent.execution;
+      // The ONE reader of a Query's role binding and budget: a plain Query
+      // reads its Job intent, a request round reads its own claimed attempt.
+      const binding = queryExecutionBindingOf(record.job, record.run);
+      const intentExecution = record.job.job.intent.execution;
       if (signal.aborted) return rejected('cancelled', 'the Query start was cancelled before the Host configuration read');
 
       if (deps.host.resolveQueryConfiguration === undefined) {
@@ -257,7 +264,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         return rejected('unavailable', `Host Query configuration resolution failed: ${messageOf(error)}`);
       }
       if (configured.status !== 'ready') return mapRead(configured);
-      const projected = projectQueryConfiguration({ host: configured.value, requested: execution.runtimeBudget, roleResolution: state.roleResolution });
+      const projected = projectQueryConfiguration({ host: configured.value, requested: binding.runtimeBudget, roleResolution: state.roleResolution });
       if (projected.configurationRevision !== manifest.hostConfigurationRevision
         || !sameRef(projected.permissions, manifest.permissions)
         || !sameRef(projected.budget, manifest.runtimeBudget)
@@ -331,11 +338,29 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         // uses the ORIGINAL initiator's same-scope Host context for RT8 only.
         const facts = await queryExecution.readPreparationFacts(owned, queryRunRef);
         if (facts.status !== 'ready') return mapRead(facts);
+        // A secretary round may have no goal yet: its tools then read the
+        // project, and its current goal is the one frozen in the manifest's
+        // request (never a model argument). Every other Query keeps today's
+        // goal requirement and its principal shape.
+        const secretary = manifest.contextAssembly.callKind === 'secretary';
+        const frozenGoalId = manifest.request === null ? null : manifest.request.effectiveGoalId;
+        let goalRef: GoalRef | null;
+        if (secretary) {
+          goalRef = frozenGoalId === null
+            ? null
+            : { aggregateType: 'Goal', projectId: queryRunRef.projectId, goalId: frozenGoalId };
+        } else {
+          if (facts.value.goal === null) return rejected('invalid', 'no goal');
+          goalRef = facts.value.goal.ref;
+        }
         const initiator = structuredClone(facts.value.initiator);
         const toolContext: CoreCallContext = {
           projectId: queryRunRef.projectId,
           workspaceId: queryRunRef.workspaceId,
-          principal: { kind: 'query_run', queryRunRef: structuredClone(queryRunRef), initiator: structuredClone(initiator) },
+          principal: {
+            kind: 'query_run', queryRunRef: structuredClone(queryRunRef), initiator: structuredClone(initiator),
+            ...(secretary ? { goalId: frozenGoalId } : {}),
+          },
           materialReader: { kind: 'run', requester: structuredClone(queryRunRef) },
           signal,
         };
@@ -349,11 +374,14 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         coordinationTools = createQueryGraphToolGroup({
           names: grantedGraphNames,
           context: toolContext,
-          goalRef: facts.value.goal.ref,
+          goalRef,
           graph: deps.graphContext,
           inputs: deps.taskInputs,
           history: deps.graphHistory,
           hostContext: trustedHostContext,
+          // The notes read port is bound only for a secretary round; a plain
+          // Query keeps the memory branch's explicit refusal.
+          ...(secretary && deps.notes?.memory !== undefined ? { notes: deps.notes.memory } : {}),
           texts: toolTexts,
         });
       }
@@ -430,7 +458,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           runRef: { ...queryRunRef },
           bundleRef: structuredClone(prepared.bundleRef),
           question: record.job.job.intent.question,
-          budget: { maxTokens: record.job.job.intent.budget.maxTokens },
+          budget: { maxTokens: binding.budget.maxTokens },
         };
         sourceFactory = createQuerySourceCaptureFactory(
           {
@@ -460,7 +488,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         texts: toolTexts,
       });
 
-      const taskBudget: ModelTokenBudget = { tokenBudget: record.job.job.intent.budget.maxTokens, deadline: record.job.job.intent.budget.deadline };
+      const taskBudget: ModelTokenBudget = { tokenBudget: binding.budget.maxTokens, deadline: binding.budget.deadline };
       // Ruling 24/27: the send layer fills this map by requestId before the meter
       // reserves; the usage projection below reads the same entry.
       const promptFacts = new Map<string, PromptFacts>();
@@ -611,7 +639,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           databasePath: location.databasePath,
           sessionId: record.session.kernel.kernelSessionId,
           input: manifest.input,
-          ...(deps.messages === undefined || execution.kind !== 'semantic_query' || execution.consultation?.derivation !== undefined ? {} : {
+          ...(deps.messages === undefined || intentExecution.kind !== 'semantic_query' || intentExecution.consultation?.derivation !== undefined ? {} : {
             inputSupply: createMailboxInputSupply({ messages: deps.messages, context: () => owned,
               sessionRef: state.sessionRef, runRef: queryRunRef }),
           }),

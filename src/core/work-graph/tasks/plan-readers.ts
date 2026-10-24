@@ -785,13 +785,13 @@ export type GovernanceRead =
       readThrough: CommitCursor | null }
   | Rejected;
 
-function policyRefFromBody(value: unknown, projectId: string): CompletionPolicyRevisionRef | null {
+export function policyRefFromBody(value: unknown, projectId: string): CompletionPolicyRevisionRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'CompletionPolicyRevision' || value['projectId'] !== projectId || !nonEmpty(value['policyId'])) return null;
   if (typeof value['revision'] !== 'number' || !Number.isSafeInteger(value['revision']) || value['revision'] < 1) return null;
   return { aggregateType: 'CompletionPolicyRevision', projectId, policyId: value['policyId'], revision: value['revision'] };
 }
-function architectureRefFromBody(value: unknown, projectId: string): ArchitectureBaselineRevisionRef | null {
+export function architectureRefFromBody(value: unknown, projectId: string): ArchitectureBaselineRevisionRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'ArchitectureBaselineRevision' || value['projectId'] !== projectId || !nonEmpty(value['baselineId'])) return null;
   if (typeof value['revision'] !== 'number' || !Number.isSafeInteger(value['revision']) || value['revision'] < 1) return null;

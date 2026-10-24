@@ -435,5 +435,16 @@
   "k3.review.batchLead": "；同批调用：",
   "k3.review.batchSeparator": "、#",
   "k3.unknown": "（未知）",
-  "k3.review.noFullText": "  这条命令没有全文，两个结论（做没做完、会不会是崩溃的原因）一律按判断不了处理；你看到的痕迹照样写进依据。"
+  "k3.review.noFullText": "  这条命令没有全文，两个结论（做没做完、会不会是崩溃的原因）一律按判断不了处理；你看到的痕迹照样写进依据。",
+  "secretary.workspaceHeading": "## Workspace",
+  "secretary.goalsHeading": "## Goals",
+  "secretary.noGoal": "This request has no goal yet.",
+  "secretary.roundHeading": "## This round",
+  "secretary.selectedIdea": "Selected idea:",
+  "secretary.batchedHeading": "## Also queued in this request",
+  "secretary.earlierHeading": "## Earlier rounds of this request on other secretaries",
+  "secretary.answerOmitted": "(answer cut at 2 KiB)",
+  "secretary.noAnswer": "(no answer)",
+  "secretary.notEnded": "(still running or result unknown)",
+  "secretary.initialDrafts": "You MAY add a top-level \"goalCardDrafts\" array to the JSON object: each {\"objective\", \"completion\", \"autonomy\"}, objective one sentence, completion a non-empty array of checkable criteria, autonomy \"every_step\" or \"after_plan_confirmation\". A draft is a proposal only."
 }

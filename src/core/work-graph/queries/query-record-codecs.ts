@@ -56,7 +56,7 @@ import type {
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
-import { QUERY_RUN_RECORD_SCHEMA, validateQueryRunSnapshot } from '../materials/record-readers.js';
+import { QUERY_RUN_RECORD_SCHEMA, executionRequestProfileProblem, validateQueryRunSnapshot } from '../materials/record-readers.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { isPlatformCursor } from '../sessions/session-record-codecs.js';
 import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
@@ -66,6 +66,7 @@ import {
   QUERY_BY_REQUEST_INDEX, QUERY_OPEN_BY_WORKSPACE_INDEX, QUERY_RAN_BY_SESSION_GOAL_INDEX,
   REQUEST_ROOTS_BY_GOAL_INDEX,
 } from '../model/request-contracts.js';
+import { ideasIssues } from '../model/request-ideas.js';
 
 export const QUERY_JOB_SUBMITTED_EVENT = 'QueryJobSubmitted';
 export const QUERY_JOB_EVENT_SCHEMA_VERSION = 1;
@@ -119,7 +120,12 @@ export type QueryExecutionRecordedEventV1 = {
     operation: QueryExecutionOperation;
     /** Immutable original receipt value, never rebuilt from newer snapshots. */
     result: QueryExecutionRecord | QueryEntryTicket | QueryRunSnapshot;
-    phase: QueryExecutionStateV1['phase'];
+    /**
+     * The written Run's phase; `settled` with a null state for a pending round
+     * ended before any attempt, and `pending` with a null state only for a new
+     * attempt's Run, created with no execution state.
+     */
+    phase: QueryExecutionStateV1['phase'] | 'pending';
     executionState: QueryExecutionStateV1 | null;
   };
 };
@@ -340,17 +346,6 @@ function receiptIssues(value: unknown): string[] {
   return ['job.receipt.kind is not a legal receipt kind'];
 }
 
-function ideasIssues(value: unknown, path: string): string[] {
-  if (!Array.isArray(value)) return [`${path} must be an array`];
-  const issues: string[] = [];
-  value.forEach((idea, index) => {
-    if (!isRecord(idea) || typeof idea['title'] !== 'string' || typeof idea['detail'] !== 'string') {
-      issues.push(`${path}[${index}] must carry string title and detail`);
-    }
-  });
-  return issues;
-}
-
 function goalCardDraftIssues(value: unknown, path: string): string[] {
   const issues: string[] = [];
   if (!isRecord(value)) return [`${path} must be an object`];
@@ -455,6 +450,7 @@ function answerIssues(value: unknown, expectedRef: QueryJobAnswerRef | null): st
     issues.push('answer.bodyRef is not a complete ArtifactRef');
   }
   // §3.1.7: both arrays are required in the current format (decision 79).
+  // Persistence re-checks the stored ideas with the one idea rule the answer check also used.
   issues.push(...ideasIssues(value['ideas'], 'answer.ideas'));
   const drafts = value['goalCardDrafts'];
   if (!Array.isArray(drafts)) issues.push('answer.goalCardDrafts must be an array');
@@ -566,6 +562,8 @@ function executionStateIssues(value: unknown): string[] {
   else value['requests'].forEach((request, index) => {
     issues.push(...queryModelRequestIssues(request, `executionState.requests[${index}]`));
   });
+  const requestProfileProblem = executionRequestProfileProblem(value['requestProfile']);
+  if (requestProfileProblem !== null) issues.push(`executionState.${requestProfileProblem}`);
   // QRR-05 (A.2 step 5.6): the optional cause of phase `unknown`.
   const unknown = value['unknown'];
   if (unknown !== undefined) {
@@ -575,6 +573,103 @@ function executionStateIssues(value: unknown): string[] {
     if (!valid) issues.push('executionState.unknown must name the unresolved tool calls or the unreadable Kernel verdict');
   }
   return issues;
+}
+
+/**
+ * The persisted Query manifest's goal and request facts. A plain Query pins a
+ * goal and carries no request facts; a secretary round pins the request facts,
+ * and only a no-goal request round has a null goal. The rules are checked here
+ * because both manifest loaders decode the same stored body.
+ */
+export function queryManifestProblem(value: unknown): string | null {
+  if (!isRecord(value)) return 'the Query manifest must be an object';
+  const assembly = value['contextAssembly'];
+  const callKind = isRecord(assembly) ? assembly['callKind'] : undefined;
+  const goal = value['goal'];
+  if (goal !== null) {
+    if (!isRecord(goal) || !isRecord(goal['ref'])
+      || goal['ref']['aggregateType'] !== 'Goal'
+      || !nonEmpty(goal['ref']['projectId']) || !nonEmpty(goal['ref']['goalId'])
+      || !isPos(goal['revision'])) {
+      return 'the Query manifest goal is not a Goal pin';
+    }
+  }
+  const request = value['request'];
+  if (request !== null && !isRecord(request)) return 'the Query manifest request is not an object';
+  if (goal === null && callKind !== 'secretary') {
+    return 'a Query manifest without a goal must be a secretary round';
+  }
+  if (request === null) {
+    if (callKind === 'secretary') return 'a secretary round manifest has no request facts';
+    return null;
+  }
+  if (callKind !== 'secretary') return 'only a secretary round may carry request facts';
+  const requestProblem = secretaryRequestManifestProblem(request);
+  if (requestProblem !== null) return requestProblem;
+  const effectiveGoalId = request['effectiveGoalId'];
+  if (goal === null) {
+    if (effectiveGoalId !== null) return 'a no-goal request manifest must not freeze an effective goal';
+  } else if (effectiveGoalId !== (goal['ref'] as Record<string, unknown>)['goalId']) {
+    return 'the request facts and the manifest goal name different goals';
+  }
+  return null;
+}
+
+function secretaryRequestManifestProblem(value: UnknownRecord): string | null {
+  if (queryJobRefFromValue(value['requestRoot']) === null) return 'the request facts have no complete request root';
+  if (!isPlatformCursor(value['preparationCursor'])) return 'the request facts have no preparation cursor';
+  if (!(value['effectiveGoalId'] === null || nonEmpty(value['effectiveGoalId']))) {
+    return 'the request facts effectiveGoalId must be null or a non-empty string';
+  }
+  if (!['semantic_query', 'initial_coordination'].includes(value['executionKind'] as string)) {
+    return 'the request facts executionKind is not legal';
+  }
+  const roundProblem = secretaryRoundMaterialProblem(value['round'], 'request.round');
+  if (roundProblem !== null) return roundProblem;
+  const batch = value['batch'];
+  if (!Array.isArray(batch)) return 'request.batch must be an array';
+  for (let index = 0; index < batch.length; index += 1) {
+    const problem = secretaryRoundMaterialProblem(batch[index], `request.batch[${index}]`);
+    if (problem !== null) return problem;
+  }
+  return null;
+}
+
+function secretaryRoundMaterialProblem(value: unknown, path: string): string | null {
+  if (!isRecord(value)) return `${path} must be an object`;
+  const ref = queryJobRefFromValue(value['ref']);
+  if (ref === null) return `${path}.ref is not a complete QueryJobRef`;
+  if (!isPos(value['revision'])) return `${path}.revision must be a positive integer`;
+  const runRef = queryRunRefFromValue(value['runRef']);
+  if (runRef === null) return `${path}.runRef is not a complete QueryRunRef`;
+  if (runRef.projectId !== ref.projectId || runRef.workspaceId !== ref.workspaceId
+    || runRef.queryJobId !== ref.queryJobId) {
+    return `${path}.runRef does not belong to ${path}.ref`;
+  }
+  if (!isPos(value['runRevision'])) return `${path}.runRevision must be a positive integer`;
+  if (!isPlatformCursor(value['since'])) return `${path}.since is not a commit cursor`;
+  if (typeof value['text'] !== 'string') return `${path}.text must be a string`;
+  const idea = value['selectedIdea'];
+  if (idea !== null) {
+    if (!isRecord(idea)) return `${path}.selectedIdea must be null or an object`;
+    if (queryJobRefFromValue(idea['round']) === null) return `${path}.selectedIdea.round is not a complete QueryJobRef`;
+    if (!isNonNeg(idea['index'])) return `${path}.selectedIdea.index must be a non-negative integer`;
+    if (typeof idea['title'] !== 'string' || typeof idea['detail'] !== 'string') {
+      return `${path}.selectedIdea must carry string title and detail`;
+    }
+  }
+  const cards = value['relatedCards'];
+  if (!Array.isArray(cards)) return `${path}.relatedCards must be an array`;
+  for (let index = 0; index < cards.length; index += 1) {
+    const card = cards[index];
+    if (!isRecord(card)) return `${path}.relatedCards[${index}] must be an object`;
+    const refProblem = versionedRefIssue(card['ref']);
+    if (refProblem !== null) return `${path}.relatedCards[${index}].ref ${refProblem}`;
+    if (!(card['current'] === null || isPos(card['current']))) {
+      return `${path}.relatedCards[${index}].current must be null or a positive integer`;
+    }
+  }
+  return null;
 }
 
 function envelopeIssues(parsed: UnknownRecord, event: EncodedDomainEvent, label: string): string[] {

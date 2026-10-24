@@ -1,5 +1,6 @@
 /** Shared, production-entry fixtures for the fx2 service rows. No model is invoked. */
 import { expect, vi } from 'vitest';
+import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
 import { DatabaseSync } from 'node:sqlite';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef, VersionPin, WorkspaceScope, WorkLinkTarget, WorkLinkRelation } from '../../src/contracts/core/identity.js';
@@ -328,7 +329,7 @@ export async function pendingQuery(b2: B2ExecutionFixture, id: string, injectFac
       await pin(base.records, base.workspaceRef), await pin(base.records, goalRef),
       { ref: queryJobRef, revision: 0 }, { ref: queryRunRef, revision: 0 }] } }));
   const calls = { configuration: 0 };
-  const execution = createQueryExecution({ records: base.records, bodies: b2.bodies,
+  const execution = createQueryExecution({ records: withBackendOrderedLookup(base.records, base.records), bodies: b2.bodies,
     roles: createRoleConfigurationService({ records: base.records, now, eventId }),
     authorizeConfiguration: async () => { calls.configuration += 1;
       return { status: 'rejected', code: 'forbidden', reason: 'this fixture does not prepare a Query' }; },

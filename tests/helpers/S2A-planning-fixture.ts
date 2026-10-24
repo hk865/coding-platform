@@ -97,7 +97,7 @@ export async function buildPlanningQuestions(
     record = mustWrite(await execution.recordQueryObservation(f.ctx, { input: { entry,
       history: { schemaVersion: 1, sessionRef: ticket.sessionRef, kernel: ticket.kernel, startPosition: 1, observedThroughPosition: 3, endPosition: 3 },
       source: { position: 3, cursor: `S2A-PQ-answered-${suffix}` },
-      observation: { kind: 'terminal', occurredAt: T, outcome: 'answered', answer, reason: null } },
+      observation: { kind: 'terminal', occurredAt: T, outcome: 'answered', answer, reason: null, answerCheck: null } },
       meta: { requestId: `S2A-PQ-answered-${suffix}`, expected: [{ ref: runRef, revision: record.run.revision }] } }));
     if (record.answer === null) throw new Error('missing formal planning answer');
     answerRefs.push(record.answer.ref);

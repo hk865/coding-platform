@@ -34,7 +34,7 @@ import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/
 import type { SessionFactsPort, SessionWorkWaitV1 } from '../model/session-facts-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import {
-  QUERY_OPEN_BY_WORKSPACE_INDEX, QUERY_RAN_BY_SESSION_GOAL_INDEX, REQUEST_PAGE_SIZE,
+  LIVE_ATTEMPT_PHASES, QUERY_OPEN_BY_WORKSPACE_INDEX, QUERY_RAN_BY_SESSION_GOAL_INDEX, REQUEST_PAGE_SIZE,
   SECRETARY_HANDOFF_INPUT_TOKENS,
   type SecretaryProfilePort, type SecretaryProfileV1, type SecretaryScopePort,
 } from '../model/request-contracts.js';
@@ -122,9 +122,6 @@ function sessionKey(session: SessionRef): string {
 function guardAppend(guards: RecordGuard[], guard: RecordGuard): void {
   if (!guards.some((existing) => existing.refKey === guard.refKey)) guards.push({ ...guard });
 }
-
-/** The attempt phases that count as a live attempt: a claim up to the Kernel entry. */
-const LIVE_ATTEMPT_PHASES: ReadonlySet<string> = new Set(['claimed', 'prepared', 'entering', 'entered']);
 
 /**
  * Filter, then order: project scope always, a goal scope only when

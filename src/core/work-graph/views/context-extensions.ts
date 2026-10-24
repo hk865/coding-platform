@@ -17,7 +17,9 @@ import type {
   ContextExtensionsV1, ContextIndexRowV1, ContextSourceV1, NotesUnderstandingRowV1,
 } from '../../../contracts/graph-context.js';
 import type { SessionAnomalyAnchorV1, SessionAnomalyViewV1 } from '../../../contracts/session-anomaly.js';
-import type { ContextReadRequestV1 } from '../model/graph-context-contracts.js';
+import type {
+  ContextExtensionsReaderV1, ContextReadRequestV1,
+} from '../model/graph-context-contracts.js';
 import type {
   DecisionCardV1,
   DecisionQueueReadV1,
@@ -26,7 +28,7 @@ import type {
 } from '../model/decision-contracts.js';
 import type { SessionAnomalyPort } from '../tasks/session-anomaly-service.js';
 import { sessionAnomalyRefKey } from '../tasks/session-anomaly-codecs.js';
-import type { NoteMemoryMaterialPort, NoteMemoryMaterialV1 } from '../model/note-contracts.js';
+import type { NoteMemoryMaterialInputV1, NoteMemoryMaterialPort, NoteMemoryMaterialV1 } from '../model/note-contracts.js';
 
 export type ContextExtensionsDependencies = {
   anomalies: Pick<SessionAnomalyPort, 'listSessionAnomalies'>;
@@ -170,6 +172,71 @@ function rejection(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
 }
 
+/** A `not_implemented` Goal-settings extension (no Goal, or no port). */
+function notImplementedGoalSettings(): ContextExtensionsV1['goalSettings'] {
+  return { availability: 'not_implemented', autonomy: null };
+}
+
+/**
+ * §11.4/U8: the one memory-material read of an extensions read and its notes
+ * projection: the project understanding and the local rows, the norms with
+ * their omitted count, and the general part. A throw is the provider's
+ * `unavailable`, an `unsupported` answer of the port is `unavailable` with the
+ * port's reason, and any other failure is the port's own result, never a
+ * fabricated empty row.
+ */
+async function readMemoryNotes(
+  material: NoteMemoryMaterialPort,
+  hostCtx: CoreCallContext,
+  input: NoteMemoryMaterialInputV1,
+): Promise<ReadResult<ContextExtensionsV1['notes']>> {
+  let materialRead: ReadResult<NoteMemoryMaterialV1>;
+  try {
+    materialRead = await material.readMemoryMaterial(hostCtx, input);
+  } catch (error) {
+    return rejection('unavailable', `memory_material_read_failed: ${messageOf(error)}`);
+  }
+  if (materialRead.status !== 'ready') {
+    return materialRead.status === 'rejected' && materialRead.code === 'unsupported'
+      ? rejection('unavailable', materialRead.reason)
+      : materialRead;
+  }
+  const value = materialRead.value;
+  const rows = [value.projectUnderstanding, ...value.localUnderstanding]
+    .filter((row): row is NotesUnderstandingRowV1 => row !== null);
+  return { status: 'ready', value: {
+    availability: 'available',
+    understanding: { rows, norms: value.norms, normsOmitted: value.normsOmitted },
+    general: value.general,
+  } };
+}
+
+/**
+ * The project branch of the extensions read: the project understanding and
+ * norms through the same material read and projection as a Goal's, and no
+ * Goal-owned extension. A missing port stays `not_implemented` (CA14).
+ */
+async function projectExtensions(
+  deps: ContextExtensionsDependencies,
+  hostCtx: CoreCallContext,
+): Promise<ReadResult<ContextExtensionsV1>> {
+  let notes = emptyNotes();
+  if (deps.memoryMaterial !== undefined) {
+    const read = await readMemoryNotes(deps.memoryMaterial, hostCtx, {
+      goalId: null, taskId: null, includeInputs: false,
+    });
+    if (read.status !== 'ready') return read;
+    notes = read.value;
+  }
+  return { status: 'ready', value: {
+    notes,
+    anomalies: notImplemented(),
+    footprint: notImplemented(),
+    goalSettings: notImplementedGoalSettings(),
+    decisions: notImplemented(),
+  } };
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -192,8 +259,7 @@ function anchorRow(item: SessionAnomalyViewV1): ContextIndexRowV1 {
   };
 }
 
-export function createContextExtensionsReader(deps: ContextExtensionsDependencies):
-  (ctx: CoreCallContext, request: ContextReadRequestV1) => Promise<ReadResult<ContextExtensionsV1>> {
+export function createContextExtensionsReader(deps: ContextExtensionsDependencies): ContextExtensionsReaderV1 {
   return async (ctx, request) => {
     const decisionPageLimit = deps.decisionPageLimit ?? DECISION_PAGE_LIMIT;
     // Step 1: the provider needs a bound project/workspace context with a
@@ -206,7 +272,7 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
       || typeof workspaceId !== 'string' || workspaceId.length === 0 || signal === undefined) {
       return rejection('forbidden', 'the context extensions need a bound project/workspace context');
     }
-    if (request.goalRef.projectId !== projectId) {
+    if (request.goalRef !== null && request.goalRef.projectId !== projectId) {
       return rejection('forbidden', 'the context extensions need a bound project/workspace context');
     }
     if (signal.aborted) return rejection('cancelled', 'the context extensions read was cancelled');
@@ -221,6 +287,9 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
       materialReader: { kind: 'host', projectId, workspaceId, actor: deps.hostActor },
       signal,
     };
+    // A request with no Goal reads the project material only; every Goal-owned
+    // extension below needs a Goal and is left out.
+    if (request.goalRef === null) return await projectExtensions(deps, hostCtx);
 
     // Step 3: page the Goal's anchors under the owner's own 25-page budget. A
     // rejection is returned unchanged; a throw is the provider's `unavailable`.
@@ -254,36 +323,18 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
     // never pay for the material (§11.7). A missing port or a look/find request
     // stays `not_implemented` (CA14); a real failure is the port's own
     // rejection, never a fabricated empty row.
-    let notes: ContextExtensionsV1['notes'];
-    if (deps.memoryMaterial === undefined || request.includeInputs === undefined) {
-      notes = emptyNotes();
-    } else {
-      let materialRead: ReadResult<NoteMemoryMaterialV1>;
-      try {
-        materialRead = await deps.memoryMaterial.readMemoryMaterial(hostCtx, {
-          goalId: request.goalRef.goalId,
-          taskId: request.focusTaskIds[0] ?? null,
-          // Ruling 9 (verifier "missed 3"): a Query (`includeInputs === false`)
-          // wants understanding + norms only. The read model then skips the
-          // related scope and the general part entirely.
-          includeInputs: request.includeInputs === true,
-        });
-      } catch (error) {
-        return rejection('unavailable', `memory_material_read_failed: ${messageOf(error)}`);
-      }
-      if (materialRead.status !== 'ready') {
-        return materialRead.status === 'rejected' && materialRead.code === 'unsupported'
-          ? rejection('unavailable', materialRead.reason)
-          : materialRead;
-      }
-      const material = materialRead.value;
-      const rows = [material.projectUnderstanding, ...material.localUnderstanding]
-        .filter((row): row is NotesUnderstandingRowV1 => row !== null);
-      notes = {
-        availability: 'available',
-        understanding: { rows, norms: material.norms, normsOmitted: material.normsOmitted },
-        general: material.general,
-      };
+    let notes = emptyNotes();
+    if (deps.memoryMaterial !== undefined && request.includeInputs !== undefined) {
+      const read = await readMemoryNotes(deps.memoryMaterial, hostCtx, {
+        goalId: request.goalRef.goalId,
+        taskId: request.focusTaskIds[0] ?? null,
+        // Ruling 9 (verifier "missed 3"): a Query (`includeInputs === false`)
+        // wants understanding + norms only. The read model then skips the
+        // related scope and the general part entirely.
+        includeInputs: request.includeInputs === true,
+      });
+      if (read.status !== 'ready') return read;
+      notes = read.value;
     }
 
     // Step 4: only anchors nobody has picked up become a row; rows are ordered

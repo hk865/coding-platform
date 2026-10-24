@@ -36,7 +36,7 @@ import { decodeSessionRecord, plainSessionRefToAggregate } from '../sessions/ses
 import type { RequestOwnerStateV1 } from '../model/request-contracts.js';
 
 /** How often a complete read is retried while the request window keeps moving. */
-const COMPLETE_READ_ATTEMPTS = 4;
+export const COMPLETE_READ_ATTEMPTS = 4;
 
 /**
  * The store surface the read needs. The initiator comes from the
@@ -79,7 +79,7 @@ function keyOfRef(ref: unknown): string {
 }
 
 /** The store's cursor sequence when both are ledger cursors; textual order otherwise. */
-function compareCursors(left: CommitCursor, right: CommitCursor): number {
+export function compareCursors(left: CommitCursor, right: CommitCursor): number {
   try {
     return Math.sign(seqOfCommitCursor(left) - seqOfCommitCursor(right));
   } catch {
@@ -98,8 +98,14 @@ function laterCursor(left: CommitCursor | null, right: CommitCursor | null): Com
   return compareCursors(left, right) >= 0 ? left : right;
 }
 
-/** One round order: `since`, ties by the canonical record key. */
-export function compareRequestRounds(left: QueryJobSnapshot, right: QueryJobSnapshot): number {
+/**
+ * One round order: `since`, ties by the canonical record key. It reads only a
+ * round's ref and `since`, so a caller that keeps just those two (a queue's
+ * carried candidate) orders by the same rule.
+ */
+export function compareRequestRounds(
+  left: Pick<QueryJobSnapshot, 'ref' | 'since'>, right: Pick<QueryJobSnapshot, 'ref' | 'since'>,
+): number {
   const bySince = compareCursors(left.since, right.since);
   if (bySince !== 0) return bySince;
   return keyOfRef(left.ref).localeCompare(keyOfRef(right.ref));

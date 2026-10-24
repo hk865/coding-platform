@@ -13,7 +13,9 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { SourceRefV1 } from '../../contracts/dispatch.js';
-import type { QueryJobAnswerV1, QueryRunRef } from '../../contracts/query-job.js';
+import {
+  isRequestRound, type QueryJobAnswerV1, type QueryRunRef, type SecretaryRequestManifestV1,
+} from '../../contracts/query-job.js';
 import type { PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
@@ -26,8 +28,9 @@ import { createSessionHistoryCursorOwner, type SessionHistoryEntry } from './ses
 import { confirmMailboxInputs } from './execution-inputs.js';
 import type { RuntimeExecutionDependencies } from './execution-contracts.js';
 import type {
-  QueryEntryIdentity, QueryExecutionRecord,
+  QueryEntryIdentity, QueryExecutionRecord, QueryHistoryObservation,
 } from '../work-graph/queries/contracts.js';
+import { parseSecretaryAnswer } from '../work-graph/queries/secretary-answer.js';
 
 export type QueryObservationPort = {
   observe(ctx: CoreCallContext, request: { queryRunRef: QueryRunRef }): Promise<ReadResult<QueryExecutionRecord>>;
@@ -144,17 +147,51 @@ function entryIdentity(state: NonNullable<QueryExecutionRecord['run']['run']['ex
   };
 }
 
+/** An answered turn's final text, or why it has none within the formal 16 KiB answer bound. */
+type FinalText = { kind: 'text'; text: string } | { kind: 'empty' } | { kind: 'too_long' };
+
 /** The last non-empty assistant text, capped at the formal 16 KiB answer bound. */
-function extractAnswer(state: RunState): string | null {
+function extractAnswer(state: RunState): FinalText {
   let final: string | null = null;
   for (const entry of state.transcript) {
     if (entry.kind !== 'assistant_message') continue;
     if (entry.message.content.trim().length === 0) continue;
     final = entry.message.content;
   }
-  if (final === null) return null;
-  if (Buffer.byteLength(final, 'utf8') > MAX_ANSWER_BYTES) return null;
-  return final;
+  if (final === null) return { kind: 'empty' };
+  if (Buffer.byteLength(final, 'utf8') > MAX_ANSWER_BYTES) return { kind: 'too_long' };
+  return { kind: 'text', text: final };
+}
+
+type AnswerCheck = NonNullable<Extract<QueryHistoryObservation['observation'], { kind: 'terminal' }>['answerCheck']>;
+/** The answer format a request round's manifest froze. */
+type RequestAnswerFormat = { executionKind: SecretaryRequestManifestV1['executionKind']; hasGoal: boolean };
+type FormalAnswer =
+  | { kind: 'answer'; text: string; ideas: QueryJobAnswerV1['ideas']; goalCardDrafts: QueryJobAnswerV1['goalCardDrafts'] }
+  | { kind: 'gap' }
+  | { kind: 'invalid'; check: AnswerCheck };
+
+/**
+ * What an answered turn's final text becomes. A plain Query keeps a bounded
+ * text verbatim and books no text or an over-long one as `gap`. A request round
+ * must answer in the secretary format of the execution kind its manifest froze
+ * (slice-6 spec L7): no text, an over-long text or a broken format fails the
+ * round with that reason and no answer, and the formal answer text is the
+ * parsed body with its ideas and drafts.
+ */
+function formalAnswerOf(final: FinalText, request: RequestAnswerFormat | null): FormalAnswer {
+  if (request === null) {
+    return final.kind === 'text' ? { kind: 'answer', text: final.text, ideas: [], goalCardDrafts: [] } : { kind: 'gap' };
+  }
+  if (final.kind === 'empty') {
+    return { kind: 'invalid', check: { detail: 'empty', reason: 'the secretary turn ended without answer text' } };
+  }
+  if (final.kind === 'too_long') {
+    return { kind: 'invalid', check: { detail: 'too_long', reason: 'the secretary answer is over the 16 KiB answer bound' } };
+  }
+  const parsed = parseSecretaryAnswer(final.text, { kind: request.executionKind, hasGoal: request.hasGoal });
+  if (!parsed.ok) return { kind: 'invalid', check: { detail: parsed.detail, reason: parsed.reason } };
+  return { kind: 'answer', text: parsed.body, ideas: parsed.ideas, goalCardDrafts: parsed.goalCardDrafts };
 }
 
 /** Real successful `project_source` tool results only; model-reported sources never count. */
@@ -192,7 +229,7 @@ function projectSourceWitnesses(state: RunState): QueryJobAnswerV1['sources'] {
 function answerSources(pins: PreparedQueryManifestV1, state: RunState): QueryJobAnswerV1['sources'] {
   const combined: QueryJobAnswerV1['sources'] = [
     ...projectSourceWitnesses(state),
-    { kind: 'goal', refKey: pins.goal.ref.goalId, version: String(pins.goal.revision), label: null },
+    ...(pins.goal === null ? [] : [{ kind: 'goal', refKey: pins.goal.ref.goalId, version: String(pins.goal.revision), label: null }]),
     { kind: 'workspace', refKey: pins.workspace.ref.workspaceId, version: String(pins.workspace.revision), label: null },
   ];
   if (pins.focusPlan !== null) {
@@ -371,7 +408,7 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     }
     const record = await deps.queryExecution.readQueryExecution(owned, queryRunRef);
     if (record.status !== 'ready') return record;
-    const { run, session } = record.value;
+    const { job, run, session } = record.value;
     const state = run.run.executionState;
     if (state === undefined || state.entry === null) return { status: 'ready', value: record.value };
     if (state.phase === 'settled' || run.run.status === 'answered' || run.run.status === 'closed') {
@@ -429,11 +466,22 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     const occurredAt = runState.endedAt ?? deps.now();
     let outcome: 'answered' | 'failed' | 'cancelled' | 'timeout' | 'gap' = terminalStatus;
     let answer: QueryJobAnswerV1 | null = null;
+    let answerCheck: AnswerCheck | null = null;
     if (outcome === 'answered') {
-      const text = extractAnswer(runState);
-      if (text === null) {
+      let request: RequestAnswerFormat | null = null;
+      if (isRequestRound(job)) {
+        // Preparation freezes a request round's facts into its manifest; without them the format is unknown.
+        if (manifest.request === null) return rejected('invalid', 'the request round manifest carries no request facts');
+        request = { executionKind: manifest.request.executionKind, hasGoal: manifest.goal !== null };
+      }
+      const formal = formalAnswerOf(extractAnswer(runState), request);
+      if (formal.kind === 'gap') {
         outcome = 'gap';
+      } else if (formal.kind === 'invalid') {
+        outcome = 'failed';
+        answerCheck = formal.check;
       } else {
+        const text = formal.text;
         const materialCtx: CoreCallContext = {
           projectId: queryRunRef.projectId,
           workspaceId: manifest.workspace.ref.workspaceId,
@@ -454,7 +502,9 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
         if (stored.status !== 'stored') return rejected(stored.code === 'size_exceeded' ? 'capacity' : 'unavailable', stored.reason);
         // The original pins decide the source list; a current move only marks the
         // recorded answer stale and never erases the already-occurred result.
-        const stale = currentFacts.value.goal.revision !== manifest.goal.revision
+        const goalMoved = currentFacts.value.goal !== null && manifest.goal !== null
+          && currentFacts.value.goal.revision !== manifest.goal.revision;
+        const stale = goalMoved
           || currentFacts.value.workspace.revision !== manifest.workspace.revision
           || (manifest.focusPlan !== null
             && (currentFacts.value.focusPlan === null || currentFacts.value.focusPlan.planRevision !== manifest.focusPlan.revision));
@@ -472,9 +522,9 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
           staleReason: stale ? 'the recorded Goal/Workspace/Plan moved after this answer was observed' : null,
           answeredAt: occurredAt,
           bodyRef: stored.ref,
-          // §3.1.7: both arrays are required; a plain Query answer carries none.
-          ideas: [],
-          goalCardDrafts: [],
+          // Both arrays are required: a plain Query answer carries none, a request round's answer what it parsed to.
+          ideas: formal.ideas,
+          goalCardDrafts: formal.goalCardDrafts,
         };
       }
     }
@@ -497,7 +547,9 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
           source: { position: collected.value.lastPosition, cursor: collected.value.lastCursor },
           observation: {
             kind: 'terminal', occurredAt, outcome, answer,
-            reason: outcome === 'gap' ? 'the Query turn produced no bounded answer text' : null,
+            reason: outcome === 'gap' ? 'the Query turn produced no bounded answer text'
+              : answerCheck === null ? null : answerCheck.reason,
+            answerCheck,
           },
         },
         meta: { requestId, expected: [{ ref: queryRunRef, revision: latest.value.run.revision }] },

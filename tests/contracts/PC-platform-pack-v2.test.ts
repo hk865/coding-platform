@@ -81,6 +81,10 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
         expect(renderTemplate(PACK, 'query-copy-input', {
             prelude: 'PRELUDE', role: 'ROLE', goal: 'GOAL', task: 'TASK',
         }, []).text).toBe('PRELUDE\n\nROLEGOALTASK');
+        expect(renderTemplate(PACK, 'secretary-round', {
+            prelude: 'PRELUDE', role: 'ROLE', goal: 'GOAL', notes: 'NOTES',
+            task_round: 'ROUND', task_batched: 'BATCHED', task_earlier: 'EARLIER',
+        }, []).text).toBe('PRELUDE\n\nROLEGOALNOTESROUNDBATCHEDEARLIER');
         expect(renderTemplate(PACK, 'stale-files-reminder', {}, []).text)
             .toBe('- 文件可能已经变化，编辑前先重新读取。');
         expect(renderTemplate(PACK, 'continuation-brief', {
@@ -105,6 +109,8 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'work-input': { packId: 'platform', version: 2, mentionsTools: [] },
             'query-planning-input': { packId: 'platform', version: 2, mentionsTools: [] },
             'query-copy-input': { packId: 'platform', version: 2, mentionsTools: [] },
+            'secretary-round': { packId: 'platform', version: 1, mentionsTools: [] },
+            'secretary-answer': { packId: 'platform', version: 1, mentionsTools: [] },
             base: { packId: 'platform', version: 2, mentionsTools: [] },
             'skill-platform-work': { packId: 'platform', version: 2, mentionsTools: [] },
             'skill-platform-secretary': { packId: 'platform', version: 2, mentionsTools: [] },

@@ -60,6 +60,16 @@
       "version": 2,
       "mentionsTools": []
     },
+    "secretary-round": {
+      "file": "templates/secretary-round.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "secretary-answer": {
+      "file": "templates/secretary-answer.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
     "base": {
       "file": "templates/base.txt",
       "version": 2,
