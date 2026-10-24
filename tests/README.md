@@ -17,7 +17,7 @@
 - `tests/helpers/` — 共享测试夹具，共 130 个文件；本清单主体在下一节。
 - `tests/kernel/` — 冻结 Kernel 公共入口的集成（23 个 `*.test.ts`），另有 `README.md` 记录 R4a 迁移。
 - `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（14 个），例如 `SP-lookup-index-migration.test.ts`。
-- `tests/runtime/` — 真实 Runtime/Kernel 执行链（144 个），是行为面最大的文件夹。
+- `tests/runtime/` — 真实 Runtime/Kernel 执行链（145 个），是行为面最大的文件夹；`D89-skill-render.test.ts` 按授权组合渲染决定 89 的 Skill 段落，并在 memory 上用真实的 Work 和 Query 调用核对最终工具和渲染出的段落。
 - `tests/scenarios/` — 跨片端到端场景：Host 重启、崩溃恢复、审批、白板（117 个，其中 S6A-secretary-flow-*、S6A-secretary-context-*、S6A-activity-*、S6A-main-read-joint 与 S6A-request-drop-settle 是秘书轮、查询活动和主读的整轮场景）。
 - `tests/state/` — 状态机、编解码、查询和恢复不变量（52 个），例如 `K3-14-conclusion-pure.test.ts`。
 - `tests/work-graph/` — WorkGraph 域服务和读模型（345 个），是夹具使用最密集的文件夹。

@@ -77,27 +77,27 @@
     },
     "skill-platform-work": {
       "file": "templates/skill-platform-work.txt",
-      "version": 2,
+      "version": 3,
       "mentionsTools": []
     },
     "skill-platform-secretary": {
       "file": "templates/skill-platform-secretary.txt",
-      "version": 2,
+      "version": 3,
       "mentionsTools": []
     },
     "skill-platform-adviser": {
       "file": "templates/skill-platform-adviser.txt",
-      "version": 2,
+      "version": 3,
       "mentionsTools": []
     },
     "skill-platform-scribe": {
       "file": "templates/skill-platform-scribe.txt",
-      "version": 2,
+      "version": 3,
       "mentionsTools": []
     },
     "skill-platform-reviewer": {
       "file": "templates/skill-platform-reviewer.txt",
-      "version": 2,
+      "version": 3,
       "mentionsTools": []
     }
   },

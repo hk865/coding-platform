@@ -22,18 +22,18 @@ import { contextAssemblyProblem } from '../../src/core/work-graph/state/context-
 
 const PACK: ResolvedPromptPackV1 = PLATFORM_PROMPT_PACK_V1;
 
-/** The committed platform files, hand-checked with `sha256sum`. */
+/** The committed platform files, hand-checked with `sha256sum`; decision 89 appends the skill paragraphs. */
 const EXISTING_DIGESTS = {
     'work-input': 'f3ebad58e28d7f5a2d8bc8831b7974b03057c0590982d23fc325be933f5aed7a',
     'query-planning-input': 'ac29545b215361ea2ce479007f2c3ffcc3daa87a2bbacaf89957b49aa4022a77',
     'query-copy-input': '89ee28b2dc868787a7e41a063edadf9765e474e93b3bb477b038f93909808e20',
     'initial-planning-answer': '0ce75daec4258062d451703fb6efb22879a7e2e8359767a17d0f2666bfe8bd3d',
     base: '5a9fa326d215e82d8329a0ddce8ff2da29463430550dd8320695b760ef7f03b5',
-    'skill-platform-work': 'e258bef4180c56177bcd6a083e5927e3e374cf1dcd50636cf74171bfd8abf053',
-    'skill-platform-secretary': '3842e7592faceea16b868ae8e364f261d93cfd859f00c00be8fc1809af8c4f84',
-    'skill-platform-adviser': '99e51b8b684661c215258afe57e07d4bf40a44163a5d2e97208699465715c977',
-    'skill-platform-scribe': 'dc0671546449950d91ab03fdfa7a8fa3858473a9cda84779e4c4eb3f5564f59f',
-    'skill-platform-reviewer': 'a7e4ab9987ab8703399f3f9c7815e85b1b4bb7ced24ad9437d196c169ee63d6f',
+    'skill-platform-work': 'eb4bb377bcc4f98259878c47260d5c68ad01c2ce18fbe3b67e97c495a29719f1',
+    'skill-platform-secretary': 'fd4e0c37fc97bdc4e710b5c67a07b7374fa308db75e16eb24bd37939b80216e0',
+    'skill-platform-adviser': 'bbe5790ab24c8cad95572e3059290b91deb1f43dda9d9d776b2eac0e93d57c71',
+    'skill-platform-scribe': 'fd7b2ac9359d991e3181d8c2dd73d23334683601b5b6e459f161519ba76b103d',
+    'skill-platform-reviewer': '275be65bdac92bc2e1cf1b11dede3e3f049f6e356eb897b4fa6b2a737b575983',
 } as const;
 
 const secretaryAnswerText = [

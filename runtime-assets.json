@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "6f82f76caf8e7f927f95e034d244009beee06ebb9ddddd4ab2a38c25a2b8dc07"
+    "sha256": "cd1b65ab8ed1416e35ff77ec939bb57418e377eac933988dd94da62334811935"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -77,23 +77,23 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-work.txt",
-    "sha256": "e258bef4180c56177bcd6a083e5927e3e374cf1dcd50636cf74171bfd8abf053"
+    "sha256": "eb4bb377bcc4f98259878c47260d5c68ad01c2ce18fbe3b67e97c495a29719f1"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-secretary.txt",
-    "sha256": "3842e7592faceea16b868ae8e364f261d93cfd859f00c00be8fc1809af8c4f84"
+    "sha256": "fd4e0c37fc97bdc4e710b5c67a07b7374fa308db75e16eb24bd37939b80216e0"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "99e51b8b684661c215258afe57e07d4bf40a44163a5d2e97208699465715c977"
+    "sha256": "bbe5790ab24c8cad95572e3059290b91deb1f43dda9d9d776b2eac0e93d57c71"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",
-    "sha256": "dc0671546449950d91ab03fdfa7a8fa3858473a9cda84779e4c4eb3f5564f59f"
+    "sha256": "fd7b2ac9359d991e3181d8c2dd73d23334683601b5b6e459f161519ba76b103d"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-reviewer.txt",
-    "sha256": "a7e4ab9987ab8703399f3f9c7815e85b1b4bb7ced24ad9437d196c169ee63d6f"
+    "sha256": "275be65bdac92bc2e1cf1b11dede3e3f049f6e356eb897b4fa6b2a737b575983"
   },
   {
     "path": "resources/prompts/platform/tools/query_task_graph.json",
