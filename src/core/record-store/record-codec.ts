@@ -75,8 +75,6 @@ export function isRevision(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-export { messageOf } from "../../contracts/error-message.js";
-
 function canonicalOf(value: unknown): DecodeResult<string> {
   try {
     return { status: "decoded", value: canonicalJson(value as JsonValue) };

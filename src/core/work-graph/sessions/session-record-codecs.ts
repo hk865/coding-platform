@@ -146,6 +146,7 @@ export function checkOperationRef(value: unknown): Problem {
   return null;
 }
 
+/** The planned-input adapter: it reports the two fixed `plannedSessionRef must be …` texts, so `sessionRefProblem` cannot stand in. */
 export function checkPlainSessionRef(value: unknown): Problem {
   if (!isRecord(value) || !hasOnlyKeys(value, ['projectId', 'sessionId'])) {
     return 'plannedSessionRef must be a plain SessionRef without aggregateType';
@@ -454,12 +455,7 @@ export function checkSessionCreationIntent(value: unknown): Problem {
     return 'creation scope must be {kind:project}';
   }
   if (!nonEmpty(value['reason'])) return 'creation requires a non-empty reason';
-  return checkCreationActor(value['creator']);
-}
-
-/** `ActorRef` shape (human/system, or agent with its RunRef): the shared actor check. */
-function checkCreationActor(value: unknown): Problem {
-  return actorRefProblem(value, 'creation creator');
+  return actorRefProblem(value['creator'], 'creation creator');
 }
 
 function checkArchiveTaskChoice(value: unknown, ownProjectId: string): Problem {
@@ -1003,6 +999,10 @@ export function sessionWorkLinkRefKey(ref: SessionWorkLinkRef): string {
 }
 export function plainSessionRefToAggregate(ref: SessionRef): SessionAggregateRef {
   return { aggregateType: 'Session', projectId: ref.projectId, sessionId: ref.sessionId };
+}
+/** The canonical-JSON key of a plain Session input: the Session record refKey, extra input fields dropped. */
+export function plainSessionRefKey(ref: SessionRef): string {
+  return sessionAggregateRefKey(plainSessionRefToAggregate(ref));
 }
 
 export function encodeSessionOperationRecord(record: SessionOperationRecord): EncodedRecord {

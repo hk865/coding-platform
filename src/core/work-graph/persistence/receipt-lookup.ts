@@ -1,4 +1,4 @@
-import { messageOf } from '../../record-store/record-codec.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import type { GoalRecordTransactionPort, StoreCommitReceipt } from '../../record-store/ports.js';
 
 export type CommittedReceipt = Extract<StoreCommitReceipt, { status: 'committed' }>;

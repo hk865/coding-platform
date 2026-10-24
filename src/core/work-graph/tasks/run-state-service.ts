@@ -63,8 +63,7 @@ import { decodeUnknownCallReview, unknownCallReviewRefKey } from './unknown-call
 import { deriveSessionAnomalyView } from '../state/session-anomaly.js';
 import {
   decodeSessionRecord,
-  plainSessionRefToAggregate,
-  sessionAggregateRefKey,
+  plainSessionRefKey,
 } from '../sessions/session-record-codecs.js';
 import {
   decodeTaskRequeueSnapshot,
@@ -148,9 +147,6 @@ function outboxKeyOf(task: TaskTriple, attemptId: string): string {
 function leaseKeyOf(task: TaskTriple): string {
   return canonicalJson({ aggregateType: 'TaskLease', projectId: task.projectId,
     goalId: task.goalId, taskId: task.taskId } as unknown as JsonValue);
-}
-function sessionKeyOf(ref: { projectId: string; sessionId: string }): string {
-  return sessionAggregateRefKey(plainSessionRefToAggregate(ref));
 }
 function isRunRef(value: unknown): value is RunRef {
   return isRecord(value) && value['aggregateType'] === 'Run'
@@ -472,7 +468,7 @@ ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> {
         let sessionKey: string | undefined;
         if (outboxPresence === 'present') {
           const linked = parseBody((outboxRead.batch.present.get(outboxKey) as EncodedRecord).json) as unknown as TaskClaimOutbox;
-          sessionKey = sessionKeyOf(linked.claim.sessionRef);
+          sessionKey = plainSessionRefKey(linked.claim.sessionRef);
         }
 
         // ---- window 3: the single authoritative re-read ------------------
@@ -513,7 +509,7 @@ ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> {
         // reference change; an outbox that newly appears or names another
         // Session IS a reference change and is retried.
         if (finalOutbox === undefined) return incomplete('the claim-linked dispatch outbox is missing');
-        const finalSessionKey = sessionKeyOf(finalOutbox.claim.sessionRef);
+        const finalSessionKey = plainSessionRefKey(finalOutbox.claim.sessionRef);
         if (sessionKey === undefined || finalSessionKey !== sessionKey) continue;
 
         // A self-consistent Host outside the claim workspace is out of scope.

@@ -49,7 +49,7 @@
 | `atLeastCursorResult` | `src/core/work-graph/persistence/read-result-failures.ts:22` | 比较观察到的 watermark 与要求的 `atLeastCursor`，不足则给真实 `not_ready` | 索引读承诺新鲜度时 |
 | `lookupAll` | `src/core/work-graph/persistence/lookup-all.ts:32` | 把一个等值索引读到结尾，窗口变化最多重试 4 次，返回 watermark 且 `truncated` 恒为 false | 契约要求完整等值事实集时 |
 | `readAllOrdered` | `src/core/work-graph/persistence/lookup-ordered-all.ts:17` | 按共享页大小把有序索引读到结尾，返回记录与最后 watermark；store 失败原样抛出 | 契约要求完整有序事实集时 |
-| `canonicalRefKey` | `src/core/work-graph/persistence/record-codecs.ts:79` | Project/Workspace/Goal ref 的规范 key；**正本** | 读、guard、claim、比较需要完整 key 时；旧副本见“不要做” |
+| `canonicalRefKey` | `src/core/work-graph/persistence/record-codecs.ts:79` | Project/Workspace/Goal ref 的规范 key；委托 `src/contracts/fingerprint.ts:59` 的 `canonicalKey` | 读、guard、claim、比较需要完整 key 时；不要另写编码 |
 | `cloneActorRef` | `src/core/work-graph/persistence/record-codecs.ts:90` | 深拷贝 `ActorRef` | 编码前隔离调用方对象时 |
 | `goalSnapshotValueProblem` | `src/core/work-graph/persistence/record-codecs.ts:534` | Goal 快照值形状/范围校验 | 解码或提交 Goal 快照时 |
 | `workspaceSnapshotValueProblem` | `src/core/work-graph/persistence/record-codecs.ts:547` | Workspace 快照值形状校验 | 解码或提交 Workspace 时 |
@@ -99,9 +99,9 @@
 
 ## 不要做
 - `storeFailureToRejection` 只有正本这一份：`src/core/work-graph/persistence/read-result-failures.ts:42`；`src/core/work-graph/tasks/request-service.ts` 的本地 store 失败映射已删，现改调 `ownerWriteStoreFailureToRejection`，不要恢复手写映射（M1-30、M1-10）。
-- `actorRefProblem` 另有旧副本：`src/core/work-graph/persistence/rework-codecs.ts:98` 的 `validateActor`、`src/contracts/validation/identity.ts:4` 的 `checkCreationActor`（现委托正本），新代码一律用正本，旧副本由清理轮删除（FP-17）。
-- `canonicalRefKey` 另有旧副本：`src/core/work-graph/configuration/role-record-codecs.ts:130`，新代码一律用正本，旧副本由清理轮删除。
-- `sessionRefProblem` 另有旧副本：`src/core/work-graph/sessions/session-record-codecs.ts:149` 的 `checkPlainSessionRef`、`src/core/work-graph/sessions/session-record-codecs.ts:149` 的 `isSessionRef`，新代码一律用正本，旧副本由清理轮删除（CS-11、M1-31）。
+- `actorRefProblem` 是 actor 字段形状的正本；`src/contracts/validation/identity.ts:5` 的 `validateActor` 是另一条规则（`void` 并追加 `ValidationIssue`，契约层也不能 import WorkGraph），二者不能互换；sessions 的 `checkCreationActor` 包装已删除（S05、FP-17）。
+- `canonicalRefKey` 委托 `src/contracts/fingerprint.ts:59` 的 `canonicalKey`；`configuration/role-record-codecs.ts` 的旧副本已删除，不要恢复。
+- `sessionRefProblem` 是普通 SessionRef 的正本；`src/core/work-graph/sessions/session-record-codecs.ts:150` 的 `checkPlainSessionRef` 是 planned 输入的报错适配器（S06，两种固定文字），不能换成它；`isSessionRef` 的副本已删/已改名，不要恢复（CS-11、M1-31）。
 - 不要复制 Store 失败 switch；按 owner 语义选现有映射，request 尾/收件冲突先单独处理（M1-30、M1-10）。
 - 不要把 `lookupAll`/`readAllOrdered` 当成有界队列步；完整集与遍历预算是两个契约（M1-13）。
 - 不要重建事件 codec 管线、改校验顺序或把持久化 JSON 换成 canonical-key 序列化（M1-37）。

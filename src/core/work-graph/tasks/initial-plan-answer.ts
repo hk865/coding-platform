@@ -5,8 +5,10 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
   QueryJobAnswerRef,
@@ -30,7 +32,7 @@ import {
   parseInitialPlanningResponseV2,
   type InitialPlanAnswerFacts,
 } from './initial-plan.js';
-import { asWriteRejection, mapStoreReadFailure, messageOf, rejected, type Owned, type Rejection } from './plan-result-helpers.js';
+import { asWriteRejection, mapStoreReadFailure, type Owned, type Rejection } from './plan-result-helpers.js';
 
 type InitialPlanAnswerDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort;

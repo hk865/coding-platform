@@ -153,7 +153,7 @@
 
 ### 同名能力
 - `messageOf` 正本在 `src/contracts/error-message.ts`；本层 `runtime.ts:66`、`:67` 的 `messageOf`/`rejected` 只是这两个正本的本地常量别名（签名不变，因为生产可达性白名单记着这两个节点），新代码直接 import 正本。`isRecord`/`nonEmpty`/`utf8Bytes` 用 `src/contracts/validation/common.ts`，`rejected` 用 `src/contracts/core/rejections.ts`。
-- 通用文本限制：`queryTextProblem`（`src/core/work-graph/queries/query-job-service.ts:85`）是 Query 文本的正本；本层的字节/条数上限是各协议固定值，不要另造通用校验器。
+- 通用文本限制：`queryTextProblem`（`src/core/work-graph/queries/query-job-service.ts:87`）是 Query 文本的正本；本层的字节/条数上限是各协议固定值，不要另造通用校验器。
 
 ## 内部用
 - 上下文事实与 payload：`assembleWorkContext`、`assembleQueryContext`、`assembleReviewForContext`、`assembleBriefForContext`、`readTaskBlockedCommands`、`takesSessionHistoryOf`、`sessionHistoryDecision`、`sessionBasisForContext`、`reviewSessionBasis`、`archiveOriginSkipsHistorySeed`、`runEnteredKernel`、`effectiveDuty`、`rolePayload`、`goalPayload`、`declarationsForTask`、`taskPayload`、`missingInputReminder`、`optionalRowsFromExtensions`、`annotations`、`queryFocusLines`、`queryPlanSummary`、`topLevelModuleCards`、`notImplementedExtensions`、`noteSourcesOf`、`briefWorkspaceFactsFor`、`readReviewCaptureChanges`、`unknownCallReviewFilesFor`。

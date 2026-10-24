@@ -17,7 +17,9 @@ export type QueryRunRef = {
  * One request round as the secretary's preparation sees it: the Job/Run
  * revisions and the frozen input, never a re-read. The selected idea carries
  * the title and detail from the stored answer, so it survives a transfer to
- * another secretary; `relatedCards` is empty until cards are read.
+ * another secretary; `relatedCards` pins each of the round's `relatedCardRefs`
+ * with the card's current revision (`null` when the card is gone), read in the
+ * same preparation.
  */
 export type SecretaryRoundMaterialV1 = {
     ref: QueryJobRef;

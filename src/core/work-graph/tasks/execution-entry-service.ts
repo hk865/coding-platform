@@ -141,7 +141,6 @@ function busy(reason: string): CoreRejection { return reject('busy', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
 function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
 function notFound(reason: string): CoreRejection { return reject('not_found', reason); }
-export { sameJson as sameRef } from '../../../contracts/fingerprint.js';
 function refKeyOf(value: object): string | null {
   return canonicalOf(value);
 }

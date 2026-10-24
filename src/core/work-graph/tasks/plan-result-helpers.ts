@@ -2,18 +2,11 @@
  * Shared result shapes for the plan service: the owned-input wrapper, the service
  * rejection shape, and the translations from read/store failures to that shape.
  */
-import { rejected as sharedRejected } from '../../../contracts/core/rejections.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, ReadResult } from '../../../contracts/core/results.js';
 
 export type Owned<T> = { status: 'owned'; value: T } | { status: 'invalid'; reason: string };
 export type Rejection = { status: 'rejected'; code: CoreError; reason: string };
-
-export function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-export function rejected(code: CoreError, reason: string): Rejection {
-  return sharedRejected(code, reason);
-}
 
 export function mapStoreReadFailure<T>(failure: { status: 'rejected'; code: string; reason: string }, fallback: string): Rejection {
   if (failure.code === 'not_found') return rejected('not_found', failure.reason);

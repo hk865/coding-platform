@@ -69,10 +69,12 @@
 
 ### 记录与通用编码
 做命令/指纹/游标、注记、角色规格、资源上限和品牌/编码原语的去这组。
+- `actor-equality.ts` — actor 身份比较：`sameActorIdentity`（两个 unknown，只比 `kind`/`id`，不算 `runRef`）与 `sameActorKindAndId`（typed actor，只比 `kind`/`id`）。
 - `command-event.ts` — 命令/事件基线：`CommitCursor`、`CommandFingerprint`、`ActorRef`、`CommandIdentity`、`normalizeObjective`、`commandFingerprint`、`commandIdentityKey`。
 - `data-format.ts` — 字段表格式：字段只写一次的运行时描述（`f` 的封闭字段种类、`defineShape`/`defineRecord`/`defineEvent`），TS 类型由它推导（`InferShape`、`InferRecord`、`InferPending`、`InferEvent`）；描述在构造时校验，坏描述抛 `<what> description is invalid: <detail>`。值检查在 `validation/data-format.ts`，RecordStore 适配在 `src/core/work-graph/persistence/field-table-codec.ts`。
 - `data-format-refs.ts` — 字段表格式可复用的 ref 描述（16 种，每种与手写 ref 类型一致）：带 `aggregateType` 的聚合 ref 与不带标签的 `SessionRef`/`ModuleRef`/`TaskTriple` 各自一份。
-- `fingerprint.ts` — JCS/SHA-256 原语：`canonicalJson`、`sameJson`、`canonicalOf`、`sha256Hex`、`CanonicalJsonError`。
+- `error-message.ts` — `messageOf`：取 `Error.message`，否则 `String(error)`；转换本身抛错时不吞。
+- `fingerprint.ts` — JCS/SHA-256 原语：`canonicalJson`、`sameJson`、`canonicalKey`、`canonicalOf`、`sha256Hex`、`CanonicalJsonError`。
 - `goal-decisions.ts` — Goal/工作区决策设置、对象/选项/来源与 `decisionSourceKey`、默认设置常量。
 - `governance.ts` — 完成策略/架构基线的 revision、pin 与 `completionPolicyContentDigest`。
 - `graph-context.ts` — 上下文装配/图读模型/注意力/任务输入页 DTO，以及 `goalContextContentV1`、`goalContextDigestV1`。
@@ -92,22 +94,25 @@
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `canonicalJson` | `src/contracts/fingerprint.ts:24` | RFC 8785/JCS 规范 JSON：键排序、拒绝非 JSON 值。 | 需要稳定字节、摘要或跨进程比较时；身份/指纹只用这一份序列化。 |
-| `sameJson` **正本** | `src/contracts/fingerprint.ts:50` | 无视键顺序的 JSON 内容相等；不可编码即不相等。**正本**只此一份，别处同名的私有副本由清理轮删除。 | 比较两个已解析值是否表示同一内容。 |
-| `sha256Hex` | `src/contracts/fingerprint.ts:68` | UTF-8 文本的 SHA-256 小写十六进制。 | 所有内容寻址与摘要的哈希原语。 |
+| `sameJson` **正本** | `src/contracts/fingerprint.ts:50` | 无视键顺序的 JSON 内容相等；不可编码即不相等。**正本**只此一份，别处同名的私有副本已删除，不要再写。 | 比较两个已解析值是否表示同一内容。 |
+| `canonicalKey` **正本** | `src/contracts/fingerprint.ts:59` | 任意值的规范 JSON；不可编码时抛错（与 `canonicalOf` 的 null 相对）。 | 聚合 key 与记录 refKey 的唯一编码，不要另写一份。 |
+| `sha256Hex` | `src/contracts/fingerprint.ts:72` | UTF-8 文本的 SHA-256 小写十六进制。 | 所有内容寻址与摘要的哈希原语。 |
 | `f` | `src/contracts/data-format.ts:129` | 字段表的封闭字段种类：字符串（字节/码点上限）、sha256、整数、有限数、revision、字面量（字符串、安全整数或布尔）、枚举、布尔、ref、游标、可绑定游标、ISO 时间、optional/nullable、数组、精确对象、判别联合。 | 新记录、事件或嵌套形状写字段表时；不在此列的是具名规则（`rules`）或留手写。 |
 | `defineShape`、`defineRecord`、`defineEvent` | `src/contracts/data-format.ts:244`、`src/contracts/data-format.ts:308`、`src/contracts/data-format.ts:340` | 构造并校验嵌套形状、存储记录（`ref` 是本 `aggregateType` 的完整带标签 ref，`revision` 是 `f.revision` 或 `f.literal(1)`，可带 lookup）和事件（字段不含四个信封键）。 | 新格式只写这一份字段表；类型用 `InferRecord`/`InferPending`/`InferEvent` 推导，不再手写一份。 |
 | `ProjectRefShape` 等 16 个 ref 描述 | `src/contracts/data-format-refs.ts:12` | `ProjectRefShape`、`WorkspaceRefShape`、`GoalRefShape`、`SessionRefShape`、`SessionAggregateRefShape`、`ModuleRefShape`、`QueryJobRefShape`、`QueryRunRefShape`、`QueryJobAnswerRefShape`、`SessionMessageRefShape`、`TaskTripleShape`、`RunRefShape`、`OperationRefShape`、`PlanProposalRefShape`、`TaskRequeueRefShape`、`VerificationRoundRefShape`。 | 字段表里的 `f.ref(...)`；不要另写只查 `aggregateType`/`projectId` 的通用 ref 检查。 |
 | `CanonicalJsonError` | `src/contracts/fingerprint.ts:18` | 规范 JSON 编码失败的错误类型。 | 需要捕获并区分不可编码值时。 |
-| `messageOf` | 正本位置（待新增，M1-38）：`src/contracts/` 新文件 | 把 unknown 错误转成可读文本；现存同名私有函数都是旧副本，尚未合并。 | 统一错误文本时；新代码等正本落地，不要再另写一份。 |
+| `messageOf` **正本** | `src/contracts/error-message.ts:2` | 把 unknown 错误转成可读文本：`Error.message`，否则 `String(error)`；转换抛错不吞。 | 统一错误文本；不要再另写一份副本。 |
+| `sameActorIdentity` | `src/contracts/actor-equality.ts:4` | 两个 unknown 的 actor 身份：只比 `kind`/`id`，`runRef` 不参与。 | 宽容读入的历史 actor 比较。 |
+| `sameActorKindAndId` | `src/contracts/actor-equality.ts:9` | 两个 typed actor 只比 `kind`/`id`，不另做形状检查。 | 已校验形状的 actor 比较。 |
 | `commandIdentityKey` | `src/contracts/command-event.ts:98` | 命令幂等身份键：projectId、actor、idempotencyKey、agentPrincipal。 | 命令幂等/replay 查重；不要退回只比 idempotencyKey。 |
 | `commandFingerprint` | `src/contracts/command-event.ts:80` | `CreateGoalCommand` 的内容指纹（JCS + SHA-256）。 | Goal 创建命令的幂等/replay；其他命令用自己的配方。 |
 | `normalizeObjective` | `src/contracts/command-event.ts:76` | Unicode NFC + 首尾空白裁剪。 | 指纹与存储 Goal 目标之前。 |
-| `queryJobRefFor` | `src/contracts/query-job.ts:154` | 由三个身份分量构造 `QueryJobRef`。 | 生产 Query 引用；不要手拼 aggregate 对象。 |
-| `consultationQueryRefs` | `src/contracts/query-job.ts:55` | 由 `SessionMessageRef` 派生咨询 QueryJob/QueryRun 引用。 | 消息驱动的咨询 Query；外层重试因此落在同一对记录上。 |
-| `validQueryExecution` | `src/contracts/query-job.ts:285` | 校验 Query 意图的 execution 绑定。 | 接受 Query 意图前做纯输入校验。 |
-| `isRequestRound` | `src/contracts/query-job.ts:415` | 唯一判别：`job.roundKind !== null`。 | 所有 request round 分支；不要另写判别。 |
+| `queryJobRefFor` | `src/contracts/query-job.ts:156` | 由三个身份分量构造 `QueryJobRef`。 | 生产 Query 引用；不要手拼 aggregate 对象。 |
+| `consultationQueryRefs` | `src/contracts/query-job.ts:57` | 由 `SessionMessageRef` 派生咨询 QueryJob/QueryRun 引用。 | 消息驱动的咨询 Query；外层重试因此落在同一对记录上。 |
+| `validQueryExecution` | `src/contracts/query-job.ts:287` | 校验 Query 意图的 execution 绑定。 | 接受 Query 意图前做纯输入校验。 |
+| `isRequestRound` | `src/contracts/query-job.ts:417` | 唯一判别：`job.roundKind !== null`。 | 所有 request round 分支；不要另写判别。 |
 | `parseInitialPlanningResponseV2` | `src/contracts/initial-planning-parse.ts:18` | 初始规划 v2 回答的外层协议：一个 JSON 对象、`schemaVersion` 2、`plan` 或 `needs_decision` 的外形；不修补模型的计划，计划内容由 Plan 校验器判断。 | 读初始规划回答或秘书 `initial_coordination` 回答；不要另写 v2 JSON 解析。 |
-| `queryExecutionBindingOf` | `src/contracts/query-job.ts:426` | 普通 Query 读 intent；request round 读该 attempt 的 `executionState.roleBinding/requestProfile`，缺 profile 抛错。 | 所有读 Query 绑定或预算的地方。 |
+| `queryExecutionBindingOf` | `src/contracts/query-job.ts:428` | 普通 Query 读 intent；request round 读该 attempt 的 `executionState.roleBinding/requestProfile`，缺 profile 抛错。 | 所有读 Query 绑定或预算的地方。 |
 | `decisionSourceKey` | `src/contracts/goal-decisions.ts:179` | 决策来源身份键。 | 决策来源去重/幂等。 |
 | `requirementKeyOf` | `src/contracts/evidence.ts:130` | 由 obligationId 与 requirementId 生成键。 | 证据覆盖与需求查找。 |
 | `edgeDeclarationId` | `src/contracts/input-declaration-id.ts:5` | 内容派生的执行 DAG 边 `edge:` 声明 id。 | 计划输入声明。 |
@@ -140,10 +145,10 @@
 | `continuationBriefDigest` | `src/contracts/continuation-brief.ts:302` | 简报摘要 `sha256Hex(canonicalJson(brief))`。 | 固定 `inputBinding.continuationBriefDigest`。 |
 | `continuationBriefMarker` | `src/contracts/continuation-brief.ts:306` | 简报第二行的标记文本。 | 重渲染后逐字比对。 |
 | `compareSourceCheckpoints` | `src/contracts/continuation-brief.ts:316` | 比较两个持久化来源戳，无法判定即 `unknown`。 | 判断工作区是否变化。 |
-| `renderContinuationBriefZh` | `src/contracts/continuation-brief.ts:535` | 渲染中文续接简报；强制段放不下时抛容量错误。 | 准备 requeue Run 的输入段。 |
-| `approvedMethodLinesZh` | `src/contracts/continuation-brief.ts:1044` | 渲染已批准方法的固定行。 | 简报审查段的必选块。 |
-| `continuationBriefShapeProblem` | `src/contracts/continuation-brief.ts:1306` | 校验简报结构，返回首个问题或 null。 | 读回/接受简报时。 |
-| `ContinuationBriefCapacityError` | `src/contracts/continuation-brief.ts:1125` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
+| `renderContinuationBriefZh` | `src/contracts/continuation-brief.ts:530` | 渲染中文续接简报；强制段放不下时抛容量错误。 | 准备 requeue Run 的输入段。 |
+| `approvedMethodLinesZh` | `src/contracts/continuation-brief.ts:1039` | 渲染已批准方法的固定行。 | 简报审查段的必选块。 |
+| `continuationBriefShapeProblem` | `src/contracts/continuation-brief.ts:1298` | 校验简报结构，返回首个问题或 null。 | 读回/接受简报时。 |
+| `ContinuationBriefCapacityError` | `src/contracts/continuation-brief.ts:1120` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
 | `renderNoteHeader` | `src/contracts/note.ts:110` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
 | `planValidationError` | `src/contracts/plan.ts:303` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
 | `revisionAssignments` | `src/contracts/plan.ts:309` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
@@ -182,8 +187,8 @@
 
 - 不要在本层 import `src/core`、`src/app`、`src/business`、`src/composition` 的实现，或加入 I/O、时钟、状态机；状态迁移只经过 `src/core/work-graph/state/`。
 - 不要另写 `rejection`/结果包装；用 `rejected*` 与 `ReadResult`/`WriteResult` 原语（**M1-29**）。
-- 不要另写 JSON 相等比较；`sameJson` 的唯一正本在本表（`fingerprint.ts`），别处同名的私有副本由清理轮删除。
-- 不要在 `app`/`agent-runtime`/`queries` 另写 `messageOf`；契约层正本待新增（M1-38），现存副本（如 `src/composition/create-platform.ts:1428`、`src/composition/create-platform.ts:1428`）由清理轮替换。
+- 不要另写 JSON 相等比较；`sameJson` 的唯一正本在本表（`fingerprint.ts`），别处同名的私有副本已删除。
+- 不要在 `app`/`agent-runtime`/`queries` 另写 `messageOf`；正本是 `src/contracts/error-message.ts:2`（M1-38），旧副本已删除。
 - 不要在公共命令身份/指纹里塞入会变的选中事实、当前 revision 或重试数据（**M1-25, MH-03**）。
 - 不要另写规范 JSON、相等或哈希；也不要另造聚合 key（**M1-32**）。
 - 不要用裸局部 ID 作记录键，或只校验一半的引用形状（**M1-31, CS-04**）。

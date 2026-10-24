@@ -58,7 +58,7 @@ import {
 import { aggregateRefProblem } from '../../core/work-graph/persistence/decision-record-codecs.js';
 import { sessionRefProblem } from '../../core/work-graph/persistence/rework-codecs.js';
 import {
-  isPlatformCursor, plainSessionRefToAggregate, sessionAggregateRefKey,
+  isPlatformCursor, plainSessionRefKey,
 } from '../../core/work-graph/sessions/session-record-codecs.js';
 import type { RequestFactsReader, RequestRoundPort } from '../../core/work-graph/tasks/request-service.js';
 import type { QueryStageDriver } from './query-stage-driver.js';
@@ -223,11 +223,6 @@ function workspaceKey(scope: WorkspaceScope): string {
   return `${scope.projectId}/${scope.workspaceId}`;
 }
 
-/** The one key of a Session: the same aggregate key the claim and the intake use. */
-function sessionKeyOf(session: SessionRef): string {
-  return sessionAggregateRefKey(plainSessionRefToAggregate(session));
-}
-
 /** The stable identity of the `end_unbound` append for one round. */
 function endUnboundOperationId(round: QueryJobRef): string {
   return `request-queue-end-unbound:${sha256Hex(canonicalJson(round as unknown as JsonValue))}`;
@@ -290,8 +285,8 @@ function workOf(requestRoot: QueryJobRef, facts: RequestRoundsFactsV1): RequestW
 function keepOldest(traversal: RoundTraversalV1, fresh: Candidate): void {
   const rootKey = keyOf(fresh.requestRoot);
   const others = traversal.candidates.filter((known) => keyOf(known.requestRoot) !== rootKey);
-  const sessionKey = sessionKeyOf(fresh.session);
-  const rival = others.find((known) => sessionKeyOf(known.session) === sessionKey);
+  const sessionKey = plainSessionRefKey(fresh.session);
+  const rival = others.find((known) => plainSessionRefKey(known.session) === sessionKey);
   if (rival !== undefined && compareCandidates(rival, fresh) <= 0) {
     traversal.candidates = others;
     return;
@@ -330,7 +325,7 @@ export function createRequestRoundQueues(deps: {
 
   /** A Session with an advance in flight or a back-off running takes nothing new; its own wake returns it. */
   function busy(state: QueueState, session: SessionRef): boolean {
-    const key = sessionKeyOf(session);
+    const key = plainSessionRefKey(session);
     return state.inFlight.has(key) || state.backoffs.has(key);
   }
 
@@ -345,7 +340,7 @@ export function createRequestRoundQueues(deps: {
    * starts a new one.
    */
   function backOff(state: QueueState, scope: WorkspaceScope, session: SessionRef, signal: AbortSignal): void {
-    const key = sessionKeyOf(session);
+    const key = plainSessionRefKey(session);
     const failures = (state.failures.get(key) ?? 0) + 1;
     state.failures.set(key, failures);
     if (closed || signal.aborted) return;
@@ -373,7 +368,7 @@ export function createRequestRoundQueues(deps: {
     state: QueueState, scope: WorkspaceScope, ctx: CoreCallContext, session: SessionRef,
     round: QueryJobRef, runRef: QueryRunRef, profile: SecretaryProfileV1 | null,
   ): void {
-    const sessionKey = sessionKeyOf(session);
+    const sessionKey = plainSessionRefKey(session);
     let settled: () => void = () => undefined;
     const done = new Promise<void>((resolve) => { settled = resolve; });
     state.inFlight.set(sessionKey, done);
@@ -600,17 +595,17 @@ export function createRequestRoundQueues(deps: {
         const work = await workFor(found.requestRoot);
         const fresh = work.fresh;
         if (fresh !== null && sameJson(fresh.round, found.round) && sameJson(fresh.run, found.run)
-          && sessionKeyOf(fresh.session) === sessionKeyOf(found.session)) {
+          && plainSessionRefKey(fresh.session) === plainSessionRefKey(found.session)) {
           holding.push(fresh);
           continue;
         }
         if (work.blocked) blocked += 1;
-        staleSessions.add(sessionKeyOf(found.session));
-        if (fresh !== null) staleSessions.add(sessionKeyOf(fresh.session));
+        staleSessions.add(plainSessionRefKey(found.session));
+        if (fresh !== null) staleSessions.add(plainSessionRefKey(fresh.session));
       }
       stale = staleSessions.size > 0;
       for (const fresh of holding) {
-        if (staleSessions.has(sessionKeyOf(fresh.session))) continue;
+        if (staleSessions.has(plainSessionRefKey(fresh.session))) continue;
         if (mustWait()) { waitingRounds.push(fresh); continue; }
         if (busy(state, fresh.session)) { blocked += 1; continue; }
         const target = await ownerTarget(scope, ctx, fresh.session);

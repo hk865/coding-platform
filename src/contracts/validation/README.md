@@ -33,7 +33,7 @@
 | `isIsoZulu` | `src/contracts/validation/time.ts:7` | 以 `Z` 结尾且 `Date.parse` 可读的 UTC 时间。 | ISO 时间字段；`f.isoTime()` 用同一份。 |
 | `checkShape` | `src/contracts/validation/data-format.ts:24` | 按字段表格式检查一个值，返回第一个问题或 `null`；`pending` 允许记录的可绑定游标仍是 `null`。 | 字段表格式的检查只用这一个；RecordStore 编解码经 `src/core/work-graph/persistence/field-table-codec.ts`。 |
 | `validateCreateGoalCommand` | `src/contracts/validation/goal.ts:6` | 校验 CreateGoal 命令的完整形状，含 NFC+trim 后非空 objective。 | WorkGraph 受理 CreateGoal 前的纯输入检查。 |
-| `validateActor` | `src/contracts/validation/identity.ts:4` | 校验 human/system/agent actor；agent 必须带完整 runRef。 | 所有 actor 字段；本层只需要 `ValidationIssue[]` 时用这个入口。 |
+| `validateActor` | `src/contracts/validation/identity.ts:5` | 校验 human/system/agent actor；agent 必须带完整 runRef。 | 所有 actor 字段；本层只需要 `ValidationIssue[]` 时用这个入口。 |
 | `validateCommandIdentity` | `src/contracts/validation/identity.ts:24` | 校验 projectId、actor、idempotencyKey。 | 所有命令的 identity 字段。 |
 | `validateRoleSpecContent` | `src/contracts/validation/role.ts:18` | 校验角色规格正文：职责、材料、权限/工具、必产出、预算与退出条件。 | 安装角色规格与角色记录 codec 的安装期判据。 |
 | `validateCoordinationRoleMatrix` | `src/contracts/validation/role.ts:132` | 校验 catalog 的每个 RoleSpecRevision pin，以及 coordinator 必须指向 catalog 内角色。 | 协调策略正文安装/解码时。 |
@@ -41,7 +41,7 @@
 | `validateInstallRoleSpecRevisionCommand` | `src/contracts/validation/role.ts:199` | 校验安装角色规格命令体，并复用正文校验。 | 安装命令的纯输入检查。 |
 | `validateActivateRoleSpecRevisionCommand` | `src/contracts/validation/role.ts:219` | 校验激活角色规格命令体（Project CAS + target pin）。 | 激活命令的纯输入检查。 |
 
-同一能力的现有副本：actor 形状判据按层各有一份。本文件的 `validateActor`（`src/contracts/validation/identity.ts:4`）供 `ValidationIssue[]` 调用；`src/core/work-graph/persistence/rework-codecs.ts:98` 的 `actorRefProblem` 是 WorkGraph codec 的共用判据（RD1 建议的正本）；`src/core/work-graph/sessions/session-record-codecs.ts:461` 的 `checkCreationActor` 只是它的私有包装，不要再复制。
+同一能力的两种判据：actor 形状只有两份，且不能互换。本文件的 `validateActor`（`src/contracts/validation/identity.ts:5`）是 `void` 加追加 `ValidationIssue` 的契约层检查（因此本层不能 import WorkGraph）；`src/core/work-graph/persistence/rework-codecs.ts:98` 的 `actorRefProblem` 是 WorkGraph codec 的共用判据，返回首个 `string | null`。不要再复制第三份。
 
 ## 内部用
 无。本目录导出的原语和 `validate*` 都是给 WorkGraph 解码器、服务入口和测试共用的。

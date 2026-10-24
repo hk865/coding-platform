@@ -32,8 +32,10 @@ import type {
 } from '../../../contracts/goal-decisions.js';
 import { DEFAULT_GOAL_SETTINGS_V1 } from '../../../contracts/goal-decisions.js';
 import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js';
@@ -144,7 +146,7 @@ import {
   type CanonicalTaskState,
   type DispositionChangeTaskFacts,
 } from './plan-readers.js';
-import { asWriteRejection, mapStoreReadFailure, messageOf, rejected, type Owned, type Rejection } from './plan-result-helpers.js';
+import { asWriteRejection, mapStoreReadFailure, type Owned, type Rejection } from './plan-result-helpers.js';
 import {
   deriveFuturePlanDelta,
   planPhaseGuardReasons,
@@ -160,7 +162,7 @@ import {
   type PlanDelegatedWriteDependencies,
   type PlanWriteOperation,
 } from './plan-write-admission.js';
-import { mergeGuards, sameRef } from './execution-entry-service.js';
+import { mergeGuards } from './execution-entry-service.js';
 import {
   GOAL_FAN_OUT_ACTOR, findGoalResumeContinuations, goalFanOutRequestId, goalStateOf, reduceGoalDisplay, transitionGoal,
   type GoalDisplayTaskFactsV1, type GoalRunControlCapabilityV1, type GoalRunStopInputV1,
@@ -851,7 +853,7 @@ function workFailureInput(definition: RuntimeTask, state: CanonicalTaskState, fa
   rework: TaskRowRework, goalId: string): WorkFailureInputV1 {
   const runs = facts.runsByTaskId.get(definition.taskId) ?? [];
   const execution = state.execution;
-  const selectedRun = execution === null ? null : runs.find((run) => sameRef(run.ref, execution)) ?? null;
+  const selectedRun = execution === null ? null : runs.find((run) => sameJson(run.ref, execution)) ?? null;
   const chain = facts.chainsByTaskId.get(definition.taskId) ?? { kind: 'none' };
   return {
     subjectKind: 'work',
@@ -890,7 +892,7 @@ function gateFailureInput(plan: PlanRevisionSnapshot, definition: RuntimeTask, s
   const chain = facts.chainsByTaskId.get(definition.taskId) ?? { kind: 'none' };
   const head = chain.kind === 'head' ? chain.head : null;
   const anchorRun = head === null ? null
-    : [...facts.runsByTaskId.values()].flat().find((run) => sameRef(run.ref, head.subjectRunRef)) ?? null;
+    : [...facts.runsByTaskId.values()].flat().find((run) => sameJson(run.ref, head.subjectRunRef)) ?? null;
   // GV-5 from the ONE shared `gateFixInProgress` (coverage + covered Tasks'
   // requirement/disposition/effective phase); the §4.2 reader uses the same.
   const fixInProgress = gateFixInProgress(plan.tasks, definition,
@@ -922,7 +924,7 @@ async function taskRowReworkOf(records: GoalRecordTransactionPort, facts: Canoni
   const selected = [...facts.byTaskId.values()].flatMap((state) => {
     const execution = state.execution;
     if (execution === null) return [];
-    const run = (facts.runsByTaskId.get(state.taskId) ?? []).find((candidate) => sameRef(candidate.ref, execution));
+    const run = (facts.runsByTaskId.get(state.taskId) ?? []).find((candidate) => sameJson(candidate.ref, execution));
     return run === undefined ? [] : [run];
   });
   const pointers = await readPointerIntents(records, selected);
@@ -944,7 +946,7 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
   const failure = taskFailureRead(plan, definition, state, facts, rework, goalId);
   const coveringRequeueRef = state.requeueRef;
   const requeueBudget = coveringRequeueRef === null ? null
-    : (facts.requeuesByTaskId.get(taskId) ?? []).find((requeue) => sameRef(requeue.ref, coveringRequeueRef))?.budget ?? null;
+    : (facts.requeuesByTaskId.get(taskId) ?? []).find((requeue) => sameJson(requeue.ref, coveringRequeueRef))?.budget ?? null;
   // C7 (TD-4): the latest disposition change as the read Plan records it; no history walk.
   const dispositionChange = plan.dispositionRecord?.entries.find((entry) => entry.taskId === taskId);
   return {
@@ -2011,7 +2013,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const state = facts.value.byTaskId.get(task.taskId);
       const runs = facts.value.runsByTaskId.get(task.taskId) ?? [];
       const run = state?.execution === null || state === undefined ? null
-        : runs.find((candidate) => sameRef(candidate.ref, state.execution)) ?? null;
+        : runs.find((candidate) => sameJson(candidate.ref, state.execution)) ?? null;
       return [{ task, state, run }];
     });
     const intents = await readPointerIntents(records, selected.flatMap((entry) => entry.run === null ? [] : [entry.run]));
@@ -2023,7 +2025,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         pointerIntent: run === null ? null : intents.intents.get(run.ref.runId) ?? null, covered: state?.requeueRef != null })),
     });
     return { status: 'ready', value: { goal, continuations: continuations.map((continuation) => ({ ...continuation,
-      afterRunRevision: selected.find((entry) => entry.run !== null && sameRef(entry.run.ref, continuation.afterRunRef))?.run?.revision ?? 0 })) } };
+      afterRunRevision: selected.find((entry) => entry.run !== null && sameJson(entry.run.ref, continuation.afterRunRef))?.run?.revision ?? 0 })) } };
   }
 
   /**
@@ -2962,7 +2964,7 @@ async function proposePlanAsAgent(
   const identified = await identifyPlanWriter(delegated, ctx, scope);
   if (identified.status !== 'ready') return asWriteRejection(identified, 'the Agent plan writer could not be identified');
   const writer = identified.value;
-  if (!sameRef(writer.goalRef, input.goalRef)) return forbidden('the Agent Run is not scoped to this goal');
+  if (!sameJson(writer.goalRef, input.goalRef)) return forbidden('the Agent Run is not scoped to this goal');
   if (writer.workspaceId !== input.workspaceId) return forbidden('the Agent Run is not scoped to this workspace');
   const requestFactsReader = createCandidateRequestFactsReader({ records });
 

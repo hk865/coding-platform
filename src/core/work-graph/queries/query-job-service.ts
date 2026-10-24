@@ -29,6 +29,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -87,10 +88,6 @@ export function queryTextProblem(text: unknown): string | null {
   if (typeof text !== 'string' || text.length === 0) return 'must be non-empty';
   if (Buffer.byteLength(text, 'utf8') > MAX_QUESTION_BYTES) return 'must be at most 16 KiB of UTF-8';
   return null;
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** Ownership of a caller-supplied request: one clone before any await. */

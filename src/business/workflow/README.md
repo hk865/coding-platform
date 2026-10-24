@@ -35,7 +35,7 @@
 | `createRequestIntake` | `src/business/workflow/request-intake.ts:188` | request 的 submit/route/selectIdea/ask 与未分配 drain；重试 submit 先用 `findLine` 查回旧线；drain 在每条请求前看调用 signal，已停止就带着已提交的计数返回 | 请求命令与启动/唤醒 drain |
 | `createQueryStageDriver`、`QueryStageDriver` | `src/business/workflow/query-stage-driver.ts:123`、`src/business/workflow/query-stage-driver.ts:48` | 唯一的 Query 阶段链：请求轮在当刻 owner Session 上用给定 profile 认领（`request-claim`/`request-prepare`/`request-start`），普通 Query 用构建 driver 时绑定的 Host consumer id 准备并启动（`consultation-*`），已开始或 `unknown` 的只观察，无变化的观察只报 `blocked`；每个 owner 的结果在一张表里映射成 `progressed`/`terminal`/`blocked`（`capacity` 等固定上限归 `on_change`） | 请求队列的 `driver` 注入与咨询；不要另写 phase 分派、认领或阶段链 |
 | `queryRunEndedWithoutAnswer` | `src/business/workflow/query-stage-driver.ts:71` | 已正式关闭或 `settled`、不会再有 Answer 的 QueryRun 判定 | 咨询与阶段链共用；不要另写终态判断 |
-| `createRequestRoundQueues` | `src/business/workflow/request-round-queue.ts:306` | 两条队列处理器：`rounds` 分页读开放轮，分区游标、遍历中已找到的每 Session 最老新轮（各带请求根）以及满 50 次上限后没发出的活尝试和新轮，都随冻结的 continuation 跨 pass 续接（读失败不推进游标；整轮遍历完才用 `compareRequestRounds` 选每 Session 最老轮；全部发出后才报 `wrapped`）；发出前重读该请求的 facts，按此刻的活尝试、owner、可派轮及其 Run 派发，profile 取此刻 owner 的；选定的新轮重读后可派轮、Run 或 owner 已变（drop、改派、claim），它涉及的新旧两个 Session 都不发，整轮遍历从头重读（返回 `more`、不 `wrapped`），所选全部成立的遍历才能 `wrapped`；continuation 里的引用和游标严格解码（完整的 QueryJob/QueryRun/Session 引用和提交游标），否则整个 continuation 读不了；请求已有活尝试就不再给它第二轮；无 profile 就 `end_unbound`，先飞不等待、按 Session 退避（随 advance 的 signal 中止）并在结束时 `settle()`；`unassigned` 每 pass 调一次注入的 drain | Host 的 wake loop 注册两个队列 |
+| `createRequestRoundQueues` | `src/business/workflow/request-round-queue.ts:297` | 两条队列处理器：`rounds` 分页读开放轮，分区游标、遍历中已找到的每 Session 最老新轮（各带请求根）以及满 50 次上限后没发出的活尝试和新轮，都随冻结的 continuation 跨 pass 续接（读失败不推进游标；整轮遍历完才用 `compareRequestRounds` 选每 Session 最老轮；全部发出后才报 `wrapped`）；发出前重读该请求的 facts，按此刻的活尝试、owner、可派轮及其 Run 派发，profile 取此刻 owner 的；选定的新轮重读后可派轮、Run 或 owner 已变（drop、改派、claim），它涉及的新旧两个 Session 都不发，整轮遍历从头重读（返回 `more`、不 `wrapped`），所选全部成立的遍历才能 `wrapped`；continuation 里的引用和游标严格解码（完整的 QueryJob/QueryRun/Session 引用和提交游标），否则整个 continuation 读不了；请求已有活尝试就不再给它第二轮；无 profile 就 `end_unbound`，先飞不等待、按 Session 退避（随 advance 的 signal 中止）并在结束时 `settle()`；`unassigned` 每 pass 调一次注入的 drain | Host 的 wake loop 注册两个队列 |
 | `REQUEST_ROUNDS_QUEUE`、`REQUEST_UNASSIGNED_QUEUE` | `src/business/workflow/request-round-queue.ts:67`、`src/business/workflow/request-round-queue.ts:69` | 两个队列在 wake loop 里的注册键 | 组合根注册与唤醒；不要另写字面量 |
 | `createSessionArchiveService` | `src/business/workflow/session-archive.ts:145` | 登记不可变归档请求后逐步 stop、anchor、responsibility、reply_handler/wait_cancel、requeue、archive，各一个 sub-commit，已提交步骤不撤销 | Host 归档、维护、咨询回执归档 |
 | `createSessionMaintenanceService` | `src/business/workflow/session-maintenance.ts:151` | 每次最多一页的有界维护；按到期与真实关闭时间归档 | 启动或推进时跑一页维护 |
@@ -47,9 +47,9 @@
 | `DEFAULT_SESSION_ARCHIVE_POLICY` | `src/business/workflow/ports.ts:73` | 冻结默认归档策略：一天、每页 100 | 组合根未显式配置时 |
 | `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:157` | 由同一稳定 `commandId` 派生 Session 创建身份 | 建线与崩溃重试；不要另写身份配方（MH-03、FP-13） |
 | `compareRequestRounds` | `src/core/work-graph/queries/request-rounds-read.ts:102` | request round 的稳定先后比较，只取 `ref` 与 `since` 两项 | drain、最老 pending 选择与请求队列候选的排序；不要另写排序 |
-| `orderCandidates`、`createSecretarySelection` | `src/core/work-graph/tasks/secretary-selection.ts:125`、`src/core/work-graph/tasks/secretary-selection.ts:502` | 秘书候选的准入子集、busy 分类与稳定排序 | 请求分配；不要另算候选或另写排序 |
-| `plainSessionRefToAggregate`、`sessionAggregateRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:1004`、`src/core/work-graph/sessions/session-record-codecs.ts:998` | 普通 SessionRef 转聚合引用，并生成规范键 | guard、claim 与引用比较；不要内联序列化 Session 聚合 |
-| `oldestPendingRound` | `src/core/work-graph/queries/request-rounds-read.ts:473` | 选最老的 pending 非 routing round；**正本**（只此一份） | intake 转移、未分配遍历、Workflow 计划；不要另写排序（M1-16、M1-18、MH-24） |
+| `orderCandidates`、`createSecretarySelection` | `src/core/work-graph/tasks/secretary-selection.ts:121`、`src/core/work-graph/tasks/secretary-selection.ts:498` | 秘书候选的准入子集、busy 分类与稳定排序 | 请求分配；不要另算候选或另写排序 |
+| `plainSessionRefToAggregate`、`sessionAggregateRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:1000`、`src/core/work-graph/sessions/session-record-codecs.ts:994` | 普通 SessionRef 转聚合引用，并生成规范键 | guard、claim 与引用比较；不要内联序列化 Session 聚合 |
+| `oldestPendingRound` | `src/core/work-graph/queries/request-rounds-read.ts:471` | 选最老的 pending 非 routing round；**正本**（只此一份） | intake 转移、未分配遍历、Workflow 计划；不要另写排序（M1-16、M1-18、MH-24） |
 | `oldestPending`（私有） | `src/business/workflow/request-intake.ts:164` | 把正本结果投影成 `QueryJobRef` 的私有包装 | 本层 intake/drain 使用；不要在这里重写选轮规则 |
 | `sameJson` | `src/contracts/fingerprint.ts:50` | 按规范 JSON 判等（不可编码即不相等）；**正本** | 引用/输入判等；不要另写比较 |
 | `rejected`、`rejectedWithCurrent` | `src/contracts/core/rejections.ts:5`、`src/contracts/core/rejections.ts:13` | 领域 rejection 构造器，区分是否保留 `current` | 返回失败；本层 `reject` 只保留 owner 专属文案，不重建结果机器（M1-29） |
@@ -62,7 +62,7 @@
 
 - 不要直接 import `RecordStore`、`src/app`、`src/composition`，也不要另写存储、索引、状态机或读取器；本层只选意图，执行与结果交给核心 owner。
 - 不要绕过 `src/core/work-graph/state/` 改受保护字段；Session/Goal/Task/Run 的生命周期写入各有 owner（AGENTS 第 9 条）。
-- 不要另写 oldest-pending 或容量规则：`oldestPendingRound` 已合成一份正本（`src/core/work-graph/queries/request-rounds-read.ts:473`），本层 `oldestPending` 只是私有包装；`createAlwaysAdmitCapacity` 只是默认，真实 Host 用真实上限（M1-16、M1-18、MH-24、FP-12、MH-12）。
+- 不要另写 oldest-pending 或容量规则：`oldestPendingRound` 已合成一份正本（`src/core/work-graph/queries/request-rounds-read.ts:471`），本层 `oldestPending` 只是私有包装；`createAlwaysAdmitCapacity` 只是默认，真实 Host 用真实上限（M1-16、M1-18、MH-24、FP-12、MH-12）。
 - 不要跳过 `findLine` 直接新建线，也不要假设新建 Session 的 revision 仍是 1；重试先按 `commandId` 查回原行并读当前 revision（MH-03、FP-13）。
 - 不要另写 rejection 构造：用 `src/contracts/core/rejections.ts` 的 `rejected`/`rejectedWithCurrent`，本层只保留 owner 专属文案（M1-29）。
 - 不要把 `advanceWork` 改成有状态循环、调度器或第二内核：每次只调一个 owner 并保留其完整 receipt；`waiting`/`completed` 必须 `next: null`。

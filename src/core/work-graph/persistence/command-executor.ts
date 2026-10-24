@@ -15,10 +15,10 @@ import { rejected, rejectedWithNonEmptyCurrent } from '../../../contracts/core/r
 import type { CoreError, CoreRejection } from '../../../contracts/core/results.js';
 import { canonicalJson, sha256Hex } from '../../../contracts/fingerprint.js';
 import type { JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import type {
   DecodeResult, EncodedDomainEvent, GoalRecordTransactionPort, PreparedCommit, StoreCommitReceipt, StoreFailure,
 } from '../../record-store/ports.js';
-import { messageOf } from '../../record-store/record-codec.js';
 import { lookupCommittedReceipt } from './receipt-lookup.js';
 import type { CommittedReceipt } from './receipt-lookup.js';
 import { mergeGuards } from './record-guards.js';

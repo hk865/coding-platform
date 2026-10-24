@@ -28,12 +28,13 @@
 | `readSession` | `src/core/work-graph/sessions/session-directory.ts:1212` | 读一个公开 Session 卡，含可用性与当前 revision | 需要按 `SessionRef` 读卡片时 |
 | `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:157` | 由 actor/project/request 推出稳定的 operationRef 与 plannedSessionRef | 创建前查重、重试或容量预检 |
 | `kernelSessionClaimKey` | `src/core/work-graph/sessions/session-directory.ts:170` | Kernel Session 独占映射槽 key | 绑定/检查 Kernel 映射 claim 时 |
-| `checkSessionProvenance` | `src/core/work-graph/sessions/session-record-codecs.ts:382` | 校验 new/task 续接/secretary handoff/readonly-copy provenance | 跟随 successor 或排除副本时 |
-| `checkPlainSessionRef` | `src/core/work-graph/sessions/session-record-codecs.ts:149` | 校验不带 `aggregateType`、只允许 projectId/sessionId 的普通 SessionRef | 普通 SessionRef 字段；`sessionRefProblem` 正本在 `src/core/work-graph/sessions/session-record-codecs.ts:149`，本函数与 queries 的 `isSessionRef`（`src/core/work-graph/queries/query-record-codecs.ts:290`）都是待收敛的旧校验（CS-11、M1-31） |
-| `operationRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:995` | CoreOperation 的规范 key | 读写创建操作记录时 |
-| `sessionAggregateRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:998` | 完整 `SessionAggregateRef` 的规范 key；**正本**（同文件的 `sessionWorkLinkRefKey:1001`、`plainSessionRefToAggregate:1004` 一起用） | 读、guard、claim、比较 Session 时 |
-| `plainSessionRefToAggregate` | `src/core/work-graph/sessions/session-record-codecs.ts:1004` | 普通 SessionRef → 带 `aggregateType` 的聚合 ref | 目录/记录 key 需要聚合形式时 |
-| `sessionWorkLinkRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:1001` | SessionWorkLink 的规范 key | 链接记录的读、guard、claim |
+| `checkSessionProvenance` | `src/core/work-graph/sessions/session-record-codecs.ts:383` | 校验 new/task 续接/secretary handoff/readonly-copy provenance | 跟随 successor 或排除副本时 |
+| `checkPlainSessionRef` | `src/core/work-graph/sessions/session-record-codecs.ts:150` | planned SessionRef 输入的报错适配器：只允许 projectId/sessionId，报两条固定文字 | planned SessionRef 字段；不能换成 `sessionRefProblem`（正本 `src/core/work-graph/persistence/rework-codecs.ts:154`，CS-11、M1-31） |
+| `operationRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:991` | CoreOperation 的规范 key | 读写创建操作记录时 |
+| `sessionAggregateRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:994` | 完整 `SessionAggregateRef` 的规范 key；**正本**（同文件的 `sessionWorkLinkRefKey:997`、`plainSessionRefToAggregate:1000` 一起用） | 读、guard、claim、比较 Session 时 |
+| `plainSessionRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:1004` | 普通 `{projectId, sessionId}` 输入的规范 Session 键（记录 refKey），丢掉额外字段 | 请求队列、执行读取与秘书选择的内存 Map 键；不要内联序列化 |
+| `plainSessionRefToAggregate` | `src/core/work-graph/sessions/session-record-codecs.ts:1000` | 普通 SessionRef → 带 `aggregateType` 的聚合 ref | 目录/记录 key 需要聚合形式时 |
+| `sessionWorkLinkRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:997` | SessionWorkLink 的规范 key | 链接记录的读、guard、claim |
 | `trustedContext` | `src/core/work-graph/sessions/trusted-context.ts:33` | 校验 Host principal、scope 与 AbortSignal，未绑定即拒绝 | 每个 Session 写入口的第一道边界 |
 | `ownRequest` | `src/core/work-graph/sessions/trusted-context.ts:59` | 在首个 await 前同步克隆 GraphWrite，并取出 requestId/expected | 需要隔离调用方可变输入时 |
 | `identityKeyOf` | `src/core/work-graph/sessions/trusted-context.ts:81` | 拼 Session 操作的 identity key（含 actor/scope/requestId） | 构造 Session 命令身份时 |
@@ -60,9 +61,9 @@
 
 ## 不要做
 - 不要 import 上层模块；本层只允许 `model, state, persistence, materials, architecture`。
-- 不要复制 actor 校验：私有 `checkCreationActor`（`src/core/work-graph/sessions/session-record-codecs.ts:461`）只是正本 `src/core/work-graph/persistence/rework-codecs.ts:98` 的 `actorRefProblem` 包装，`contracts/validation` 的 `validateActor` 是旧入口（FP-17）；新代码用正本。
-- `sessionRefProblem` 另有旧副本：`src/core/work-graph/sessions/session-record-codecs.ts:149` 的 `checkPlainSessionRef`、`src/core/work-graph/sessions/session-record-codecs.ts:149` 的 `isSessionRef`，新代码一律用正本 `src/core/work-graph/persistence/rework-codecs.ts:154`，旧副本由清理轮删除（CS-11、M1-31）。
-- `sessionAggregateRefKey` 另有旧副本：`src/core/work-graph/model/request-contracts.ts:73` 的 `secretaryIntakeKey`（现已改为给正本 key 加固定前缀的包装，不再内联序列化），新代码一律用正本 `src/core/work-graph/sessions/session-record-codecs.ts:998`，旧副本由清理轮删除（M1-32）。
+- 不要复制 actor 校验：正本是 `src/core/work-graph/persistence/rework-codecs.ts:98` 的 `actorRefProblem`；`src/contracts/validation/identity.ts:5` 的 `validateActor` 是另一条规则（`void` 并追加 `ValidationIssue`，契约层也不能 import WorkGraph），二者不能互换（FP-17）。
+- `sessionRefProblem` 正本在 `src/core/work-graph/persistence/rework-codecs.ts:154`；`src/core/work-graph/sessions/session-record-codecs.ts:150` 的 `checkPlainSessionRef` 是 planned 输入的报错适配器（S06，两种固定文字），不是它的副本，也不能换成它（CS-11、M1-31）。
+- `sessionAggregateRefKey` 只有 `src/core/work-graph/sessions/session-record-codecs.ts:994` 这一份；`secretaryIntakeKey`（`src/core/work-graph/model/request-contracts.ts:73`）仍内联序列化、带 `secretary-intake:` 前缀，是认领槽键（S10），不是它的副本，不要改写成它（M1-32）。
 - 不要绕过 `state/` 写生命周期、占用或健康；所有受保护状态写入只经状态构造器（M1-01、M1-36）。
 - 不要用裸 local id 拼 key 或另写聚合 key；用 `sessionAggregateRefKey` 等完整 key（M1-32）。
 - 不要把失败读当空卡、把截断当完整列表、或把 intake claim 释放当 Session 释放（FP-05、M1-13、M1-36）。

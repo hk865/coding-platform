@@ -53,7 +53,7 @@ import {
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { laterCursor } from './plan-readers.js';
 import {
-  SESSION_BY_WORKSPACE_LOOKUP, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
+  SESSION_BY_WORKSPACE_LOOKUP, decodeSessionRecord, plainSessionRefKey, sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
 import {
   sessionAvailabilityAdmissionProblem, sessionDispatchAdmissionProblem,
@@ -108,10 +108,6 @@ function unavailable(reason: string): { status: 'rejected'; code: 'unavailable';
   return { status: 'rejected', code: 'unavailable', reason };
 }
 
-function sessionKey(session: SessionRef): string {
-  return keyOf(plainSessionRefToAggregate(session));
-}
-
 /** First-wins append for read windows: it must keep the copy behaviour and is not the mergeGuards submit-time merger. */
 function appendGuardCopyFirstWins(guards: RecordGuard[], guard: RecordGuard): void {
   if (!guards.some((existing) => existing.refKey === guard.refKey)) guards.push({ ...guard });
@@ -143,7 +139,7 @@ function compareCandidates(left: SecretaryCandidateFactsV1, right: SecretaryCand
   // (3) later activity first.
   if (left.lastActivityAt !== right.lastActivityAt) return left.lastActivityAt > right.lastActivityAt ? -1 : 1;
   // (4) canonical Session key ascending.
-  return sessionKey(left.session).localeCompare(sessionKey(right.session));
+  return plainSessionRefKey(left.session).localeCompare(plainSessionRefKey(right.session));
 }
 
 // ------------------------------------------------------------------------ //
@@ -353,12 +349,12 @@ async function readOpenRequestFacts(
     const covered = new Set(facts.value.coveredByDrop.map((ref) => keyOf(ref)));
     const hasPendingRound = facts.value.rounds.some((round) =>
       round.job.status === 'pending' && !covered.has(keyOf(round.ref)));
-    if (hasPendingRound && facts.value.owner !== null) pendingOwners.add(sessionKey(facts.value.owner));
+    if (hasPendingRound && facts.value.owner !== null) pendingOwners.add(plainSessionRefKey(facts.value.owner));
     for (const run of facts.value.runs) {
       const phase = run.run.executionState?.phase;
       const attempt = run.run.executionState?.sessionRef;
       if (phase !== undefined && attempt !== undefined && LIVE_ATTEMPT_PHASES.has(phase)) {
-        liveAttempts.add(sessionKey(attempt));
+        liveAttempts.add(plainSessionRefKey(attempt));
       }
     }
   }
@@ -420,7 +416,7 @@ async function readRanGoal(
     const job = decoded.value.job;
     if (job.requestRoot === null || job.enteredSession === null) continue;
     if (job.requestGoalId !== goalId) continue;
-    if (sessionKey(job.enteredSession) !== sessionKey(session)) continue;
+    if (plainSessionRefKey(job.enteredSession) !== plainSessionRefKey(session)) continue;
     return { status: 'ready', value: true, watermark: read.value.readThrough };
   }
   return { status: 'ready', value: false, watermark: read.value.readThrough };
@@ -512,7 +508,7 @@ export function createSecretarySelection(deps: SecretarySelectionDependencies): 
     if (sessionRead.status !== 'ready') return sessionRead;
     let watermark: CommitCursor | null = sessionRead.value.watermark;
 
-    const excluded = new Set((input.exclude ?? []).map(sessionKey));
+    const excluded = new Set((input.exclude ?? []).map(plainSessionRefKey));
     const guards: RecordGuard[] = [];
     type Admitted = { ref: SessionRef; session: SessionRecord; profile: SecretaryProfileV1 };
     const admitted: Admitted[] = [];
@@ -520,7 +516,7 @@ export function createSecretarySelection(deps: SecretarySelectionDependencies): 
     for (const record of sessionRead.value.sessions) {
       if (record.workspaceId !== scope.workspaceId) continue;
       const ref: SessionRef = { projectId: record.ref.projectId, sessionId: record.ref.sessionId };
-      if (excluded.has(sessionKey(ref))) continue;
+      if (excluded.has(plainSessionRefKey(ref))) continue;
       // The page is only a candidate list: the one admission check decides on the
       // canonical record. A rule refusal is not a candidate; a failed read is
       // `unavailable`, never skipped.
@@ -549,7 +545,7 @@ export function createSecretarySelection(deps: SecretarySelectionDependencies): 
 
     const candidates: SecretaryCandidateFactsV1[] = [];
     for (const entry of admitted) {
-      const sessionKeyOfEntry = sessionKey(entry.ref);
+      const sessionKeyOfEntry = plainSessionRefKey(entry.ref);
       const session = entry.session;
       const scopeRead = await deps.scope.scopeOf(ctx, { session: entry.ref });
       if (scopeRead.status !== 'ready') {
