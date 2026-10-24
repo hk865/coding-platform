@@ -1,8 +1,8 @@
 # 文档工作入口
 
-更新：2026-10-23。本文件只约束 `docs/` 的阅读和维护，不改变产品或源码架构。仓库根就是施工工程；旧证据里的绝对路径和 scope 按[根 AGENTS](../AGENTS.md)第 2 条映射。（2026-10-21 补注：T 后小修已合入（`aab1a8fd`…`4a8a1400`，决定 86），规模测试拆分也已合入（SC，`66582273`，决定 86-6）。决定 83 那一节 10-21 已冻结（83-4）。2026-10-22 补注：6A 之前的结构一轮已合入（`563f14d7`…`eee7503f`，决定 85-1）。2026-10-23 补注：提示词和上下文 PC-1（`20f20ae2`）、PC-2（`fd4be391`）已合入；下一步是 6A。）
+更新：2026-10-24。本文件只约束 `docs/` 的阅读和维护，不改变产品或源码架构。仓库根就是施工工程；旧证据里的绝对路径和 scope 按[根 AGENTS](../AGENTS.md)第 2 条映射。（2026-10-21 补注：T 后小修已合入（`aab1a8fd`…`4a8a1400`，决定 86），规模测试拆分也已合入（SC，`66582273`，决定 86-6）。决定 83 那一节 10-21 已冻结（83-4）。2026-10-22 补注：6A 之前的结构一轮已合入（`563f14d7`…`eee7503f`，决定 85-1）。2026-10-23 补注：提示词和上下文 PC-1（`20f20ae2`）、PC-2（`fd4be391`）已合入。2026-10-24 补注：6A-1 已合入（`f32a9eeb`，决定 88）；6A-2 的各组已建完、合到合并分支，正跑合入前的检查，之后 6A-3。）
 
-先读 [README](README.md) → [STATUS](refactor/STATUS.md)（当前状态）→ [HANDOFF 顶部](refactor/HANDOFF.md)（决定 1–87）→ [编排设计目录](refactor/design/orchestration-2026-10/README.md)。历史文档已移出 `docs/`，清单和取回方法见 [ARCHIVE-INDEX](ARCHIVE-INDEX.md)。按任务读对应分片，界面工作读[冻结原型](ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](UI-WORKBENCH.md#ui-decisions-2026-10)。
+先读 [README](README.md) → [STATUS](refactor/STATUS.md)（当前状态）→ [HANDOFF 顶部](refactor/HANDOFF.md)（决定 1–88）→ [编排设计目录](refactor/design/orchestration-2026-10/README.md)。历史文档已移出 `docs/`，清单和取回方法见 [ARCHIVE-INDEX](ARCHIVE-INDEX.md)。按任务读对应分片，界面工作读[冻结原型](ui-reference/workbench-2026-10/README.md)和 [UI-WORKBENCH §0](UI-WORKBENCH.md#ui-decisions-2026-10)。
 
 - 整套文档由 lead 长期负责并逐行审阅；规格第一稿由 lead 起草，之后照决定改稿、起草文档交给便宜模型（DSH）的子任务，Codex 负责审查、写测试夹具并提修改意见，lead 逐行审（决定 56）。每批验收后，lead 更新 STATUS、受影响的能力条目、规格和证据；HANDOFF 的决定和历史保留原义，不为更新进度改写历史。
 - 用户后续明确决定优先；助手旧建议不是用户决定，旧实现限制不能覆盖产品目标。按任务共同核对 PRODUCT、MVP-BEHAVIOR、编排设计、架构、对应模块和相关用户原话。发现矛盾列出具体出处，已有决定能解决的按决定同步，新的产品取舍交用户定。

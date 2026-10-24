@@ -1,5 +1,23 @@
 # 第 6 片规格：主对话上的秘书（服务端）
 
+**后注（6A-1 合入，lead 2026-10-24）：** 6A-1 合入 lead 分支（`f32a9eeb`，10-24）。正文原样保留；施工中定下的读法按 HANDOFF 决定 88 和 6A 任务书 §3 读，会影响本规格读法的几处：
+- **索引：** 不建 `s6-query-queued-by-session`；`s6-query-unassigned` 是 `s6-query-open-by-workspace` 的 `pending` 分区上的具名读取（每条再用请求事实复核），不是一张索引；新增 `s6-query-open-by-workspace`、`s6-query-ran-by-session-goal`。§0.3 L2 的 `s6-query-by-request` 照建；6A-3 的主对话分页用 `s6-request-roots-by-goal`。
+- **索引槽：** 槽位由编解码从快照推出，解码时再核，不由状态构造器写（L6）；6A 任务书 §3.2 的“槽位由状态构造器写”按此读。
+- **请求事实：** `waitReason` 加 `owner_archived`；`assignment` 只有 `owned` 是 `assigned`；归属取最后一个承载归属的轮（6A 的 `routing` 轮都承载归属）。已归档秘书的接任者是来历为 `handoff`、仍在的 Session（FP-01）；没有则 `owner_archived`，排空按新请求重挑。
+- **秘书配置：** `forSession` 取这个工作区的第一个 `sessionRole` 等于该 Session 职责的查询配置，不做职责判断（L1）；“是不是秘书”由职责解析器在一次准入检查里判（L7）。新线的角色取 `forNewLine`（第一个职责是秘书的配置）；没有 → `submit` 回 `unavailable`、原因 `no_secretary_binding`、不建线。
+- **计划：** `RequestPlanV1` 加 `capacityBlocked`；一个纯函数 `requestAssignmentRow` 判“跟随归属 / 等待 / 挑 / @ 收件人”（L2）。计划说“不挑”而事实要挑 → `revision_conflict`（原因 the request changed since the plan），Workflow 在挑秘书的重试里重新计划；被名额挡住的挑让轮等待。
+- **冲突：** 新挑时 intake 或 Session 版本冲突 → `revision_conflict`（Workflow 换人重挑）；`@` 收件人遇到同样的冲突 → `busy`；请求尾或事实冲突重读重试到 `SECRETARY_TAIL_RETRIES`，再不行 `busy`（L3）。对显式收件人，复核时发现不可接收，回那次拒绝（`unavailable` 带原因；重试也不会成功）；`busy` 只给“变了但仍可接收”的显式收件人（10-24 的 P2-01）。
+- **读失败：** `unassigned` 和排空里的读失败（事实、挑人、配置、线）一律 `unavailable`，不当 `blocked`；只有 `no_secretary_binding`、`line_pending`、被名额挡住的挑、`assigned` 落盘的冲突算 `blocked`（L4）。
+- **结束：** 放下或 `end_unbound` 结束所有没进入 Kernel 的轮（含已领取、已准备），同一次提交释放那个 Run 仍占的占用；`QueryExecutionRecorded` 事件带写下的 Run，只有 pending 结束是 null（L9）。
+- **最老排队轮：** `oldestPendingRound` 在 `request-rounds-read.ts`；`RequestRoundsFactsV1` 加 `lastOwner`（L10、L11）。
+- **排空和 `ask`：** `drainUnassigned` 是 Workflow 注入端口上的方法，`maxRequests` 必需（L12）；6A-1 不在端口上开公开的 `ask`，6A-3 和公开输入一起加（L13）。
+- **选思路：** `selectIdea.index` 从 0 起；P-01 的“第二个 … index: 2”读作 index 1。
+- **放下（用户 10-23，选项 (a)）：** 放下结束这个请求所有没进入 Kernel 的轮（排队、已领取、已准备）；已进入的跑完并保留回答；QRR-01/02 在放下覆盖的轮上把它关掉；之后的新轮是一次新挑，只处理新的话。S6-Q-02 的“排着的轮不动”只对转交成立。
+- **启动扫描和 intake（R-09）：** 不做启动时的 intake 扫描，也没有 held-intake 索引；“启动扫描释放已终态轮的认领”读作不变量：没有终态轮还持有 intake。
+- **两处行为变化：** 排空挑中的秘书在复核前被归档，回 `blocked`（下次排空重挑），不是 `unavailable`；配置或线的读取不是 `ready` 时一律 `unavailable`（intake 和服务里等配置的那处都是）。
+
+经过见证据（已归档：`D:\1.project\Software\agent-next-archive\docs\refactor\reviews\slice6a1-2026-10-24\`）。
+
 **后注（决定 86-2，lead 2026-10-21）：** 旧浏览器工作台 `src/ui` 已删（代码在标签 `old-ui-last`）。本规格里点名它的地方说的是删除之前的代码：
 - F6 的浏览器查询流程（已在表里补注）。
 - “人工采用入口”（§0 的初始化分支、§3 的 L8、§4 第 13 条、§5 的 R-14）指旧界面 `ui/views/execution/planning.ts:274` 的 `adoptInitialPlanSetup`。它不是一条路由，而是浏览器把一串后端路由串起来：`workspaces/registration`、`architecture/read`、`architecture/adopt-initial`、`completion-policies/read`、`completion-policies/install`、`completion-policies/activate`、`checks/approve`、`workflow/goal-input`。这些路由都还在，串它们的代码随旧界面删了。“采用仍是你的动作”不变；由谁来串（新界面，还是服务端一个组合动作），lead 在 6A 冻结前和决定 83 那一节一起定（决定 86-5：有能力，也要有入口）。

@@ -95,3 +95,11 @@
 | 路径 | 是什么 |
 | --- | --- |
 | `docs/ui-reference/agent-workbench.source.html` | 旧工作台原型的可编辑源文件；渲染后的页面仍在 `docs/ui-reference/agent-workbench.html`。 |
+
+## 移走之后新加的证据
+
+移走（`ef4f8de1`）之后新产生的证据直接写进同一个存档，不在仓库里另建一套。
+
+| 路径 | 是什么 |
+| --- | --- |
+| `docs/refactor/reviews/slice6a1-2026-10-24/` | 6A-1 的任务书、findings 表、Codex 审查和复核、DSH 回复、检查日志（全量、规模批、合并检查）。lead 2026-10-24 复制进存档，不在上面 4,543 个文件的清单里。 |
