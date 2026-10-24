@@ -6,21 +6,21 @@
 
 ## tests/ 下的直接子文件夹
 
-- `tests/app/` — Host/HTTP 路由、Host 装配与运行入口（72 个 `*.test.ts`），例如 `S5-decision-routes.test.ts`、`PC2-H-tool-routes.test.ts`。
+- `tests/app/` — Host/HTTP 路由、Host 装配与运行入口（85 个 `*.test.ts`），例如 `S5-decision-routes.test.ts`、`PC2-H-tool-routes.test.ts`。
 - `tests/architecture/` — 依赖方向、生产代码可达性和状态写入边界（4 个），入口 `boundaries.test.ts`；`production-reach.ts` 是它自己的扫描器。
-- `tests/business/` — 业务流程：Workflow、决定/审批、归档、交接（25 个），例如 `R5c-workflow.test.ts`、`WP1-continuation-handover.test.ts`。
+- `tests/business/` — 业务流程：Workflow、决定/审批、归档、交接（29 个），例如 `R5c-workflow.test.ts`、`WP1-continuation-handover.test.ts`。
 - `tests/composition/` — `createTargetPlatform` 组合根和真实 Host 接线（45 个），例如 `AG1-session-discovery.test.ts`。
 - `tests/context/` — 上下文装配，只有 `verification-workspace-reader.test.ts` 一个。
-- `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（14 个），例如 `PC-prompt-set-v1.test.ts`。
+- `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（17 个），例如 `PC-prompt-set-v1.test.ts`。
 - `tests/core/` — 只有 `work-graph/MVP-execution-list.test.ts`，核对与 `src/core` 对齐的清单。
 - `tests/data/` — 记录存储、材料、工作区文件、git 操作和编码边界（52 个），例如 `R2e-git-operations.test.ts`。
-- `tests/helpers/` — 共享测试夹具，共 129 个文件；本清单主体在下一节。
+- `tests/helpers/` — 共享测试夹具，共 130 个文件；本清单主体在下一节。
 - `tests/kernel/` — 冻结 Kernel 公共入口的集成（23 个 `*.test.ts`），另有 `README.md` 记录 R4a 迁移。
-- `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（13 个），例如 `SP-lookup-index-migration.test.ts`。
-- `tests/runtime/` — 真实 Runtime/Kernel 执行链（139 个），是行为面最大的文件夹。
+- `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（14 个），例如 `SP-lookup-index-migration.test.ts`。
+- `tests/runtime/` — 真实 Runtime/Kernel 执行链（144 个），是行为面最大的文件夹。
 - `tests/scenarios/` — 跨片端到端场景：Host 重启、崩溃恢复、审批、白板（117 个，其中 S6A-secretary-flow-*、S6A-secretary-context-*、S6A-activity-*、S6A-main-read-joint 与 S6A-request-drop-settle 是秘书轮、查询活动和主读的整轮场景）。
-- `tests/state/` — 状态机、编解码、查询和恢复不变量（51 个），例如 `K3-14-conclusion-pure.test.ts`。
-- `tests/work-graph/` — WorkGraph 域服务和读模型（317 个），是夹具使用最密集的文件夹。
+- `tests/state/` — 状态机、编解码、查询和恢复不变量（52 个），例如 `K3-14-conclusion-pure.test.ts`。
+- `tests/work-graph/` — WorkGraph 域服务和读模型（345 个），是夹具使用最密集的文件夹。
 
 ## tests/helpers/ 的夹具
 

@@ -1,5 +1,13 @@
 # 第 6 片规格：主对话上的秘书（服务端）
 
+**后注（6B-0 合入，lead 2026-10-24）：** 6B-0 合入 lead 分支（`7b9787ef`，10-24；CL-1 `6627fca9` 紧随其后）。正文原样保留；施工中定下的读法按 HANDOFF 决定 90-11 读，后面的片按这几条：
+- **R1 的字段表和查找：** 以后新建的存储记录用 R1 的字段表（字段写一次，类型、检查、编解码和登记都从它来）。查找路径穿过联合类型是定义期错误，文字 `lookup path crosses a union`；后面哪片要联合路径，由那片的书加。
+- **`f.literal`：** 只收字符串、安全整数和布尔（`<const V extends string | number | boolean>`）；非安全整数的数在定义期拒绝，对象字面量不支持。
+- **R2 的身份和失败表：** 执行器的身份是 `${operation}:` 加 schema version、operation、project、workspace、principal、commandId 的规范 JSON 的 sha256。提交抛出是未知提交（`cause: { unknownCommit: true }`）；版本冲突只在每个 guard 都可重试（或空 current 且 owner 选了那个 horizon）时重试；唯一冲突除非每个 claim 都可重试，否则映射成 `busy`；最多重试 3 次，然后 `busy` 带最后一个原因；被拒绝时重查回执。
+- **还没有生产调用：** R1、R2 的调用者是 6B-1（6B 的书 §3.15），allowlist 里标 `kept-for`；C3、A1 的入口不变。
+
+经过见证据（已归档：`D:\1.project\Software\agent-next-archive\docs\refactor\reviews\slice6b0-2026-10-24\`）。
+
 **后注（6A-3 合入，lead 2026-10-24）：** 6A-3 合入 lead 分支（`b4aef8f6`，10-24；6A 的服务端到此做完，界面在 E3）。正文原样保留；施工中定下的读法按 HANDOFF 决定 90-5 和 6A 任务书 §3、§4.3 读，会影响本规格读法的几处：
 - **Goal 的创建游标：** Goal 记录加必需的 `since`（创建顺序），编解码拒绝缺游标和零游标；创建和重放的回执带回游标，后续写入原样带。读用新顺序查找 `s6-goal-by-workspace-created`（§3.2 第 1 条的“按创建顺序读”按它读，游标翻页）。
 - **`QueryActivity` 和 epoch：** 查询的活动记录有自己的类型、编解码、纯写入计划和索引。正常终态和 QRR-03/04/06 的关闭在同一次提交里写活动；QRR-01/02 不写；QRR-05 不写，也绝不按 0 算。`countQueryActivity` 数它们。
