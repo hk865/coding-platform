@@ -2,6 +2,17 @@
 
 **状态：已冻结（lead，2026-10-21）。** 经 Codex 两轮完整审查（第一轮 23 条、第二轮复核加 9 条新问题）和一次快速核对（7 条），都已照改，处理见 证据（已归档：`docs/refactor/reviews/evidence/prompts-context-d83-2026-10-21/handling.md`）；你 10-21 定了五件事（§0.1），并确认了测试入口（§3.1）。施工顺序：结构一轮（含 D3）→ PC-1、PC-2 → 6A（§5）。
 
+**后注（6A-2 合入，lead 2026-10-24）：** 6A-2 合入 lead 分支（`b95e018c`，10-24）。正文原样保留；和本节有关的读法：
+- **两份秘书模板：** `secretary-round` 和 `secretary-answer` 各 version 1，在平台包里（`mentionsTools: []`），用 §2 的包和渲染器装；准备时冻结选中的包和两份文字。
+- **段序：** 秘书的段序是 role、goal、notes、task（模板默认）；三个 task 槽相邻成一个 `task` 段，你的包可以换段序，不能拆开或重排这三个槽（解析器拒绝）。
+- **S10：** `secretary.initialDrafts` 只在无目标请求、`executionKind: 'initial_coordination'` 时渲染，位置在 v2 回答格式文字后一行；规划提示词和它们的说明不变。
+- **S15：** 每段带今天渲染器给的标题；`workspace: <workspaceId>@<revision>` 没有空格；目标行取目标的第一行，最多 160 码点、超出加 `…`；没有回答的旧轮写 `secretary.noAnswer`、空格、关闭码；旧轮之间空一行；无目标请求的 `notes` 是项目理解和规范；前奏是今天的 Query 前奏；`secretary.initialDrafts` 跟 v2 回答格式后一行。
+- **S9：** `secretary` 进 `sectionOrderFor` 和 `queryPreparedSectionOrder`；Work、规划和 copy 的段序字节不变。
+- **S5、S21：** 坏回答按平台文字写 `invalid_answer`，只冻结 `{code, detail}` 和非空 message。
+- **PE10 的测试入口** 有 6A-2 的场景行：整段秘书输入、包覆盖、段序、工具清单、模板 id 和版本。
+
+经过见证据（已归档：`D:\1.project\Software\agent-next-archive\docs\refactor\reviews\slice6a2-2026-10-24\`）。
+
 **后注（决定 85-1，lead 2026-10-22）：** D3 已在 6A 之前的结构一轮里做完（`55541fee`、`eee7503f`），发出的字节不变。PC-1、PC-2 在这个结构上写：包的格式、槽位表和渲染器在 `src/contracts/prompts/`（`prompt-pack.ts`、`slot-tables.ts`、`render-template.ts`），平台包第 1 版在 `resources/prompts/platform/`（`pack.json`、`strings.json`、`templates/`、`tools/`），由 `scripts/build-platform-prompts.mjs` 生成静态模块 `src/contracts/prompts/platform-pack.generated.ts`（构建前核对，运行时不读盘）；上下文装配拆在 `src/core/agent-runtime/context-*`（`context-work-recipe.ts`、`context-query-recipe.ts`、`context-continuation-recipe.ts`、`context-review-recipe.ts`、`context-rendering.ts`、`context-fact-text.ts` 等），`context-assembler.ts` 只留出口和工厂。正文原样保留，只加此注。经过见 证据（已归档：`docs/refactor/reviews/evidence/structure-round-2026-10-21/README.md`）。
 
 **后注（决定 83-5，用户 2026-10-22 定）：** 你的包也能改平台工具的说明（`tools/<工具名>.json`），由 PC-2 做；正文原样保留，以下几处按这条读：

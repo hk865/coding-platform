@@ -800,7 +800,7 @@
       - 这只证明指定的引用和文字在指定的范围里共现，不证明接线（规格 L3e）。
       - 用户 10-22 定：联系写下就生效，不等正式检查。
 
-88. **6A 的分工、夹具和 DSH 的路由，以及 6A-1 合入（10-23 夜、10-24）。** 这一条改决定 80-4、81 在 6A 里的读法；80-4、81 在别的片照旧。
+88. **6A 的分工、夹具和 DSH 的路由，以及 6A-1、6A-2 合入（10-23 夜、10-24）。** 这一条改决定 80-4、81 在 6A 里的读法；80-4、81 在别的片照旧。
     - **88-1 6A 的分工（10-23 夜，用户：“1和2可以，3也可以”）。** DSH 返工 1 之后不再交 DSH 返工 2：剩下的由 lead 直接改，大的交 Opus 子 agent；一个部分里最密的核心交 Opus 子 agent；6A-2 里有一组由 Opus 建，和 DSH 比。比三样：墙钟时间、token、Codex 审查每 1,000 行的问题数（会出错、违规、不整洁分开记）。6A-2 的 T 组（DSH）和 A 组（Opus）10-24 凌晨就是这个比法：T 1,471 秒、3,020 万 token、680 行，Codex 会出错 2、违规 2、不整洁 0（约 5.9/千行）；A 24 分钟、37 万 token、645 行，会出错 1、违规 2、不整洁 2（约 7.8/千行）；两边墙钟都约 24 分钟。
       - 6A-1 照这条只让 DSH 返工一轮，之后剩下的交三个 Opus 子 agent（副本 s9r2p、s9r2t1、s9r2t2），lead 合并且跑检查。
       - 决定 80-4 的“返工 2、3”和决定 81 的“返工 2 后全列”在 6A 不再走；那之后的常规分派（测试交 Codex、业务交 Opus、约 10 行以内 lead 改）不变。别的片仍按 80、81。
@@ -817,6 +817,40 @@
       - **留下的。** M1-04、M1R-13（秘书的 Work 等待准入）和 M1-07（更新的回答应回 `revision_conflict`）→ 6A-2（要真实的脚本回答和执行）；M1R-05（放下/`end_unbound` 写下 `QueryExecutionRecorded` 事件的服务级检查）→ 6A-3（活动读取）；M1R-15（收窄受权上下文的类型）→ T。
       - **检查（10-24）。** 最终树 `a06392d`（克隆 s9s6af3，bubblewrap，5 个并行，scope 7G，01:27–01:57，旁边有 DSH 的 N、T 返工 1、Opus 的 E 和 A 在跑）：构建、类型检查、模块边界、Kernel 补丁检查都是 0；848 个测试文件全过，10,468 项过、3 项跳过，1,812 秒；克隆干净。规模批：`af2a0f3` 12 个文件 38 项全过，5,038 秒；`a06392d` 加一个文件，6A-1 起是 13 个文件。
       - 证据在 `D:\1.project\Software\agent-next-archive\docs\refactor\reviews\slice6a1-2026-10-24\`（lead 复制）。
+    - **88-5 6A-2 合入记录（10-24，`b95e018c`）。**
+      - **合入什么。** 6A-2 是 6A 的第二批（任务书 §4.2 的 G、T、X、N、A、E、D 组和 J2）：阶段驱动、唤醒循环和 Host 的请求驱动、领取和开始检查、尝试和占用、秘书的准备（两份模板、段序、P6 历史、记忆和工具）、回答和思路、`initial_coordination`、无目标的图读取和记忆，以及请求驱动开关。补丁 148 个文件，加 18,970、删 890，只有 `src/`、`tests/`、`resources/prompts/platform` 和 `runtime-assets.json`；它第一次把 24 个源码目录的 README、`src/README.md`、`src/AGENTS.md`、`tests/README.md`、`tests/RULES.md` 带上 lead 分支。合到 lead 分支 `b8a8f40f`，提交 `b95e018c`。
+      - **怎么做的（每组一行）。**
+        - **G（DSH）。** 契约和纯函数：请求字段、`requestProfile`、`SecretaryRequestManifestV1`、`SecretaryRoundMaterialV1`、`answerCheck`、`isRequestRound`、`queryExecutionBindingOf`、`query_run.goalId`、`'secretary-round'`。
+        - **夹具（lead 的 Opus 子 agent 写，Codex 审，lead 冻结）。** `S6A-host`、`S6A-history`、`S6A-memory`、`S6A-prompt-samples` 四个；M 审 2 条必改、1 条可选，H 审 2 条必改、1 条可选（修补 `a80dfc5`），冻结在 `3109923`；S16 后追加 `46cc0e3`（标签 `s6a2-fx2`）。
+        - **T（DSH）。** 两份模板、`pack.json`、`strings.json`、槽位表、渲染器、段序、生成的包和 `runtime-assets.json`。建 1,471 秒、3,020 万 token，Codex 会出错 2、违规 2、不整洁 0（约 5.9/千行）；返工 1（`5b35f4b`、`bc7a1f5`，加 183、删 174），复核 0/2/0；剩下的 T-03 由 lead 修（`6cf93ec`），`PC-prepare-prompt-freeze` 一起改（S18）。
+        - **A（Opus）。** `secretary-answer.ts`、v2 解析器搬进 `contracts/initial-planning-parse.ts`、`query-observation.ts`、思路规则。建 24 分钟、37 万 token，Codex 会出错 1、违规 2、不整洁 2（约 7.8/千行）；修 5 条（`de91fce`、`abd81b0`、`231b6c6`），复核 0/0/1，`ArcR-01` 裁定不改。
+        - **E 第一部分（Opus）。** `claimQuery` 带配置、读者、开始检查、事件、新尝试、QRR、结算。Codex 1/5/2；返工 1（同一个 Opus agent），复核 0/2/0；`ErcR-01` 用存档的规格和日志判为满足，`ErcR-02` 由 lead 修（`d082017`）。
+        - **E 第二部分（Opus）。** 开始各行走 `queries/prepare`、`queries/start`，吸收、释放 intake、`owner_archived`、放下盖住进入中的轮、`invalid_answer`；10 行，加 71 行 `src`、480 行测试，81 个文件 1,137 项全过。Codex 0/1/1；返工 1（`dfc91ea`、`7914b44`、`7a38180`），复核 0/0/0；另修两处基线重放缺陷（E2-03 结果事件写在最后、E2-04 开始回执按已提交事件解码）。
+        - **N（DSH）。** 无目标的 `look`/`find`、`currentGoalIdOf`、秘书工具、无目标记忆、S7 的调用点；17 个文件加 1,329、删 202，另有一个只动类型的白名单外文件。Codex 3/4/1；返工 1（`053987c`、`7c2d419`），复核 0/2/1；剩下的由 lead 的 Opus 子 agent 修（`e84c936`、`7d243c2`、`9bc77bd`）。
+        - **X（DSH）。** 秘书准备事实端口、`context-secretary-recipe`、初始化指针、渲染、记忆注入；16 个文件加 1,465、删 121。Codex 5/10/2；返工 1（`e784778`、`b6e0fde`，22 个文件加 742、删 700），复核 0/1/0；`XrcR-01` 由 lead 修（`7cd51c4`）。
+        - **D（DSH）。** 阶段驱动、两个队列、唤醒循环、Host 启动和恢复、组合根；20 个文件加 3,281、删 172。Codex 5/11/2（4 条大）；返工 1（`3ce6916`，13 个文件加 972、删 406），复核 2/3/1；剩下的由 lead 的 Opus 子 agent 修（`d4afd01`、`f2d2eef`、`2aa741c`），Codex 快速核对 1/1/1，再修 `e41716d`、`8837310`。
+        - **J2a（DSH，S20 的一半）。** 请求流的场景；3 个新文件加 722，23 项全过。Codex 1/4/0；返工 1（`7d129ac`），复核没有返工自身的问题；`J2arcR-01`、`J2arcR-02` 由 lead 修（`5617880`）。
+        - **J2b（DSH，S20 的另一半）。** 准备、记忆、输入和历史的场景，SQLite；4 个新文件加 1,446，21 项全过。Codex 0/6/2（1 条大）；返工 1（`2459f37`，加 101、删 73），复核 0/0/1；`J2brcR-01` 由 lead 修（`1290d5d`）。
+      - **裁定 S1–S23（只列改了行为或冻结接口的）。**
+        - S1、S4：键和守卫搬到 `W/model/request-contracts.ts` 与 `W/persistence/record-guards.ts`；`records` 加 `RecordOrderedLookupPort`；没有第三份。
+        - S2、S3：开始提交给每个写下的 Run 一条 `QueryExecutionRecorded`；被吸收的轮以 pending 结束 `not_entered`；新尝试在同一次提交释放旧尝试的 Session 占用，按 Session 版本守卫。
+        - S5、S13：`QuerySettlement` 的失败分支加 `answerCheck`；非空时 `closeReason invalid_answer`，message 用平台文字、裁到既有上限。
+        - S6、S8：请求轮的判据只有 `roundKind !== null`（`isRequestRound`）；调用种类回 `['secretary']`。
+        - S7：请求轮的绑定和预算只从尝试的 `requestProfile` 取，没有就抛，不回退到 intent。
+        - S9、S10、S15：`'secretary-round'` 和 `secretary` 段序；`secretary.initialDrafts` 只在无目标 `initial_coordination` 的 v2 回答格式后一行；渲染细节按 S15（`workspace: …@…` 无空格、目标首行 160 码点、`noAnswer` 等）。
+        - S11：v2 解析器原样搬到 `contracts/initial-planning-parse.ts`，`initial-plan.ts` 转出。
+        - S12、S17：排空持唤醒信号，每次最多 20 个请求，signal 中止后不再调用；`RequestRoundPort.open` 给队列一页开着的轮，和 `unassigned` 共用游标和页读。
+        - S16：Host 起步选项 `requestDriver`，默认 `'on'`；`'off'` 不建唤醒循环，命令和提交通知都不启动东西；没有设置路由和界面，产品默认不变。
+        - S19：等 Work 的秘书被 `@` 或手动转交时回 `unavailable`，原因 `archive_wait_disposal_required: the Session is waiting for a continuation reply`。
+        - S21：`invalid_answer` 行只断言 `{ code, detail }` 和非空 message；message 文字不冻结。
+        - S22：`selectIdea` 的三个拒绝理由冻结为平台文字：`index is outside the answer ideas`、`the answer does not carry 2-3 ideas`、`the round is no longer the request latest answered round`。
+        - S23：`assignedSession` 是创建时的分配，routing 不改；owner 取最后一个承载归属的轮；`session` 是尝试的 Session（QRR-02 后是进入的那次）。
+        - S14、S18：旧测试只改 §5.3 的清单，另加 `PC-prepare-prompt-freeze`。S20：J2 分 J2a、J2b 两个并行运行。
+      - **行为变化（四处）。** 提交的请求轮默认自己跑（S16），要手工按步走只能建 Host 时传 `requestDriver: 'off'`；无目标的普通 Query 的答案绑定从 `incomplete`「the QueryJob has no Goal」改为 `invalid`「no goal」（X 组，importers 已查）；领取槽位的冲突写成 `revision_conflict`（原打算写 `unique_conflict`），开始输了竞态后重读，重试用 `SECRETARY_TAIL_RETRIES`（E 组超出说明书的两处）；`QueryStageDriver.advance` 加可选 `ids`、`consumerId`，任务书冻结的三个字段不动（D-06）。
+      - **留下的。** 6A-1 留下的 M1-04、M1R-13、M1-07 按书进了 J2 的行；M1R-05（放下/`end_unbound` 的服务级事件检查）和 M1R-15（收窄受权上下文的类型）→ 6A-3（T 已合入，这两项没做）。later 清单（清理一轮）：J2a/J2b 的私有场景 helper 合成一个不冻结的 helper（带请求 `prepare`/`ready` 包装）；`S6A-request-claim.test.ts:56` 的 `roundStatus` 副本；`buildUnknownOnA` 与崩溃规则；`packString`、`keyOf`、`sessionKeyOf` 的旧副本；`query-execution.ts:1034` 的基线回执路径；常量翻页下多趟遍历会重启；约 50 个开始时 `readRequestRounds` 的有界重试（Codex 判为有意）；E2 报告计数 29 对 28、6 对 9 REMOVED；几处文档同步。
+      - **88-1 的比法。** 6A-2 的 T（DSH）和 A（Opus）就是那一组：T 1,471 秒、3,020 万 token、680 行，Codex 2/2/0（约 5.9/千行）；A 24 分钟、37 万 token、645 行，1/2/2（约 7.8/千行）；两边墙钟都约 24 分钟。E 是最密的核心，由 Opus 建；D、J2 由 DSH 建。
+      - **检查（10-24）。** 最终树 `7f80fba`（bubblewrap，5 个并行；J2b 的四个文件不在里面）：875 个测试文件全过，10,774 项过、3 项跳过，2,242 秒；J2b 的四个文件在 `4c41f2c` 上带 bwrap 21/21；合入的 `src`/`tests` 和 `4c41f2c` 相同（`fbc3290a` 只改 `tests/RULES.md`）；类型检查 0、模块边界 OK。规模批在 `4c41f2c` 上 13 个文件、40 项全过（单进程 3,922 秒）。
+      - 证据在 `D:\1.project\Software\agent-next-archive\docs\refactor\reviews\slice6a2-2026-10-24\`（lead 复制）。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 

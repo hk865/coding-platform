@@ -1,5 +1,24 @@
 # 第 6 片规格：主对话上的秘书（服务端）
 
+**后注（6A-2 合入，lead 2026-10-24）：** 6A-2 合入 lead 分支（`b95e018c`，10-24）。正文原样保留；施工中定下的读法按 HANDOFF 决定 88-5 和 6A 任务书 §3 读，会影响本规格读法的几处：
+- **驱动和唤醒（S16）：** Host 起步选项 `requestDriver: 'on' | 'off'`，默认 `'on'`；`'off'` 不建唤醒循环，请求命令的唤醒和提交通知都不启动，轮停在命令留下的地方，等 `queries/claim`、`queries/prepare`、`queries/start` 或后一个开着驱动的 Host。没有设置路由和界面；产品默认不变。
+- **一次活尝试（L5）：** 驱动只派每个请求最老的 pending 轮；已领取、已准备、进入中、已进入的尝试按它的 Session 推进，`unknown` 只观察。每趟 5 页 × 200、50 个推进、20 个排空。
+- **开始检查（S2、S3）：** 开始提交查归属、请求尾空 CAS、批次守卫；通过时释放 intake、吸收批次的未进入轮；另一个归属或 `owner_archived` 走新尝试，并在同一次提交释放旧尝试的占用。每个写下的 Run 各一条 `QueryExecutionRecorded`。
+- **绑定（S7）：** 请求轮的绑定和预算只从尝试的 `requestProfile` 取；没有就抛，不回退到 intent。普通 Query 不变。
+- **调用种类和段序（S6、S8、S9）：** 请求轮的判据是 `roundKind !== null`；`expectedQueryCallKinds` 回 `['secretary']`；`ContextTemplateId` 加 `'secretary-round'`，段序加 `secretary`。
+- **准备（L8）：** `callKind: 'secretary'`；执行种类在缺架构基线或缺完成政策时是 `initial_coordination`，否则 `semantic_query`，准备时冻结。`goal` 只在秘书轮可以是 null，`request` 必需；`task_earlier` 是最近 10 个在别的 Session 上跑过的轮。
+- **两份模板（S15）：** `secretary-round` 和 `secretary-answer` 各 version 1；段序 role、goal、notes、task，三个 task 槽相邻成一个 `task` 段，你的包可以换段序、不能拆开或重排三个 task 槽；准备时冻结选中的包和两份文字。
+- **渲染（S15）：** 每段带今天渲染器给的标题；`workspace: <id>@<revision>` 没有空格；目标首行最多 160 码点、超出加 `…`；没有回答的旧轮写 `secretary.noAnswer`、空格、关闭码；旧轮之间空一行；`secretary.initialDrafts` 跟 v2 回答格式后一行；无目标请求的 `notes` 是项目理解和规范；前奏是今天的 Query 前奏。
+- **`initial_coordination`（S10、S11）：** v2 协议不变；v2 解析器原样搬到 `contracts/initial-planning-parse.ts`，`initial-plan.ts` 转出；无目标时 `secretary.initialDrafts` 跟在回答格式后。drafts 只给无目标请求，有目标带 drafts 是 `protocol`；6A 不提议、不采用。
+- **坏回答（S5、S13、S21）：** 终端观察带 `answerCheck`（`empty`/`too_long`/`protocol`）；终端提交写 `closeReason invalid_answer`，message 用平台文字、裁到既有上限。`invalid_answer` 的行只冻结 `{code, detail}` 和非空 message，message 文字不冻结。
+- **`selectIdea`（S22、S23）：** index 从 0；三个拒绝理由冻结为平台文字（`index is outside the answer ideas`、`the answer does not carry 2-3 ideas`、`the round is no longer the request latest answered round`）。`assignedSession` 是创建时的分配，routing 不改；owner 取最后一个承载归属的轮；`session` 是尝试的 Session。
+- **等 Work 的秘书（S19）：** 被 `@` 或手动转交时回 `unavailable`，原因 `archive_wait_disposal_required: the Session is waiting for a continuation reply`。
+- **无目标（L8）：** 秘书轮可以没有目标，`look`/`find` 走项目分支；要目标而没目标回 `invalid`「this request has no goal」；不自动跨目标理解，秘书用 look/find 读别的目标。
+- **开放轮的读（S17）：** `RequestRoundPort.open` 给队列一页开着的轮，和 `unassigned` 共用游标和页读；排空持唤醒信号，每次最多 20 个请求。
+- **`advance` 的增补（D-06）：** 加可选的 `ids`、`consumerId`；任务书冻结的三个字段不动。
+
+经过见证据（已归档：`D:\1.project\Software\agent-next-archive\docs\refactor\reviews\slice6a2-2026-10-24\`）。
+
 **后注（6A-1 合入，lead 2026-10-24）：** 6A-1 合入 lead 分支（`f32a9eeb`，10-24）。正文原样保留；施工中定下的读法按 HANDOFF 决定 88 和 6A 任务书 §3 读，会影响本规格读法的几处：
 - **索引：** 不建 `s6-query-queued-by-session`；`s6-query-unassigned` 是 `s6-query-open-by-workspace` 的 `pending` 分区上的具名读取（每条再用请求事实复核），不是一张索引；新增 `s6-query-open-by-workspace`、`s6-query-ran-by-session-goal`。§0.3 L2 的 `s6-query-by-request` 照建；6A-3 的主对话分页用 `s6-request-roots-by-goal`。
 - **索引槽：** 槽位由编解码从快照推出，解码时再核，不由状态构造器写（L6）；6A 任务书 §3.2 的“槽位由状态构造器写”按此读。
