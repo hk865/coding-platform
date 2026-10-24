@@ -9,6 +9,9 @@
  * already begun/entered/settled QueryRun is only observed. It never invents a
  * second model loop and never copies ModelBudget/meter logic.
  */
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
@@ -16,7 +19,7 @@ import type { ModelCallAccess } from '../../contracts/dispatch.js';
 import { queryExecutionBindingOf, type QueryModelUsageV1, type QueryRunRef } from '../../contracts/query-job.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { HookPort } from '../../../vendor/coding-agent/dist/public-api.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import {
   decodePromptSetV1, promptSelectionOf, type ModelRequestPromptFactsV1, type PromptSetV1,
   type QueryRequestPromptFactsV1,
@@ -53,21 +56,6 @@ export type QueryExecutionDriverPort = {
 
 const BUILTIN_TOOL_NAMES = new Set<string>(['read', 'write', 'shell']);
 
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function sameRef(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 function ownContext(ctx: CoreCallContext): CoreCallContext | null {
   try {
     return {

@@ -16,7 +16,7 @@ import type { CoreRejection, ReadResult } from '../../../contracts/core/results.
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { RunSnapshot } from '../../../contracts/dispatch.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalKey } from '../../../contracts/fingerprint.js';
 import type { AggregateRef, GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { EvidenceOutcome } from '../../../contracts/evidence.js';
 import type { Disposition, PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
@@ -89,10 +89,6 @@ export type TaskTimelineDependencies = {
 // --------------------------------------------------------------------------
 
 const PAGE_LIMIT = 200;
-
-function canonicalKey(value: unknown): string {
-  return canonicalJson(value as JsonValue);
-}
 
 // --------------------------------------------------------------------------
 // Points and folding (L11)

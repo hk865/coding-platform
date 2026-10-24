@@ -288,11 +288,6 @@ function answerRefIssues(value: unknown): string[] {
   return issues;
 }
 
-/** `SessionRef` is `{projectId, sessionId}`; one shape rule, shared with the other codecs. */
-function isSessionRef(value: unknown): boolean {
-  return sessionRefProblem(value, 'SessionRef') === null;
-}
-
 /** A `VersionedRef`: a complete aggregate ref plus a positive revision. */
 function versionedRefIssue(value: unknown): string | null {
   if (!isRecord(value)) return 'must be an object';
@@ -305,8 +300,8 @@ function routingIssues(value: unknown): string[] {
   if (value === null) return [];
   if (!isRecord(value)) return ['job.routing must be null or an object'];
   const issues: string[] = [];
-  if (!(value['from'] === null || isSessionRef(value['from']))) issues.push('job.routing.from must be null or a SessionRef');
-  if (!(value['to'] === null || isSessionRef(value['to']))) issues.push('job.routing.to must be null or a SessionRef');
+  if (!(value['from'] === null || sessionRefProblem(value['from'], 'SessionRef') === null)) issues.push('job.routing.from must be null or a SessionRef');
+  if (!(value['to'] === null || sessionRefProblem(value['to'], 'SessionRef') === null)) issues.push('job.routing.to must be null or a SessionRef');
   if (!['handoff', 'manual', 'archived', 'dropped', 'assigned'].includes(value['reason'] as string)) {
     issues.push('job.routing.reason is not a legal routing reason');
   }
@@ -322,7 +317,7 @@ function receiptIssues(value: unknown): string[] {
     if (queryJobRefFromValue(value['requestRoot']) === null) issues.push('job.receipt.requestRoot is not a complete QueryJobRef');
     if (queryJobRefFromValue(value['round']) === null) issues.push('job.receipt.round is not a complete QueryJobRef');
     if (value['assignment'] === 'assigned') {
-      if (!isSessionRef(value['secretary'])) issues.push('job.receipt.secretary must be a SessionRef when assigned');
+      if (!(sessionRefProblem(value['secretary'], 'SessionRef') === null)) issues.push('job.receipt.secretary must be a SessionRef when assigned');
       if (typeof value['created'] !== 'boolean') issues.push('job.receipt.created must be a boolean');
     } else if (value['assignment'] === 'unassigned') {
       if (value['secretary'] !== null) issues.push('job.receipt.secretary must be null when unassigned');
@@ -339,7 +334,7 @@ function receiptIssues(value: unknown): string[] {
   if (kind === 'select_idea' || kind === 'ask') {
     const issues: string[] = [];
     if (queryJobRefFromValue(value['followupRound']) === null) issues.push('job.receipt.followupRound is not a complete QueryJobRef');
-    if (!(value['secretary'] === null || isSessionRef(value['secretary']))) {
+    if (!(value['secretary'] === null || sessionRefProblem(value['secretary'], 'SessionRef') === null)) {
       issues.push('job.receipt.secretary must be null or a SessionRef');
     }
     return issues;
@@ -733,7 +728,7 @@ function jobIssues(value: unknown, expectedRef: QueryJobRef | null): string[] {
   if (!(value['requestGoalId'] === null || nonEmpty(value['requestGoalId']))) {
     issues.push('job.requestGoalId must be null or a non-empty string');
   }
-  if (!(value['assignedSession'] === null || isSessionRef(value['assignedSession']))) {
+  if (!(value['assignedSession'] === null || sessionRefProblem(value['assignedSession'], 'SessionRef') === null)) {
     issues.push('job.assignedSession must be null or a SessionRef');
   }
   issues.push(...routingIssues(value['routing']));
@@ -769,10 +764,10 @@ function jobIssues(value: unknown, expectedRef: QueryJobRef | null): string[] {
       if (problem !== null) issues.push(`job.relatedCardRefs[${index}] is not a complete VersionedRef: ${problem}`);
     });
   }
-  if (!(value['enteredSession'] === null || isSessionRef(value['enteredSession']))) {
+  if (!(value['enteredSession'] === null || sessionRefProblem(value['enteredSession'], 'SessionRef') === null)) {
     issues.push('job.enteredSession must be null or a SessionRef');
   }
-  if (!(value['intakeSession'] === null || isSessionRef(value['intakeSession']))) {
+  if (!(value['intakeSession'] === null || sessionRefProblem(value['intakeSession'], 'SessionRef') === null)) {
     issues.push('job.intakeSession must be null or a SessionRef');
   }
   issues.push(...receiptIssues(value['receipt']));

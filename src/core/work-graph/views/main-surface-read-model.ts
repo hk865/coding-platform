@@ -29,6 +29,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import { canonicalKey as keyOf } from '../../../contracts/fingerprint.js';
 
 import type { NoticeCategoryV1, NoticePositionV1 } from '../../../contracts/goal-decisions.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
@@ -41,7 +42,6 @@ import {
 } from '../model/request-contracts.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { decodeQueryJobSnapshot } from '../queries/query-record-codecs.js';
-import { keyOf } from '../queries/request-round-claims.js';
 import { readGoalsByWorkspaceCreated } from '../tasks/plan-readers.js';
 import type { RequestFactsPort } from '../tasks/request-facts.js';
 import { cardInScope, type DecisionWholePageReader } from './decision-read-model.js';

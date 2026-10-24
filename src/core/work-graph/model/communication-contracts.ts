@@ -32,7 +32,8 @@ import type { RoleBindingFactsPort } from './configuration-contracts.js';
 import type { ToolCommitLookup } from '../../../contracts/unknown-call-review.js';
 import type { MessageDutiesFactsPort } from './decision-contracts.js';
 import type { MaterialPort } from './material-contracts.js';
-import type { GraphWrite, SessionDirectoryPort, SessionPage, SessionPageRequest } from './session-contracts.js';
+import type { SessionDirectoryPort, SessionPage, SessionPageRequest } from './session-contracts.js';
+import type { GraphWrite } from './task-contracts.js';
 import type { ExecutionEntryDependencies } from './execution-entry-contracts.js';
 import type { ExecutionReadPort } from './execution-read-contracts.js';
 import type {

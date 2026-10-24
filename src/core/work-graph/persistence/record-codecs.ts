@@ -28,7 +28,7 @@ import {
   type WorkspaceDecisionSettingsV1,
 } from "../../../contracts/goal-decisions.js";
 import type { PlanRevisionRef } from "../../../contracts/plan.js";
-import { canonicalJson, type JsonValue } from "../../../contracts/fingerprint.js";
+import { canonicalJson, canonicalKey, type JsonValue } from "../../../contracts/fingerprint.js";
 import {
   invalid, isNonNeg, isRecord, nonEmpty, parseTaggedObject,
 } from "../../../contracts/validation/common.js";
@@ -76,8 +76,8 @@ export type GoalDesiredStateChangedEvent = {
  * Canonical key of a FULL aggregate ref. The RecordStore keys snapshots by this
  * exact string (`ref_key`), never by a bare local id.
  */
-export function canonicalRefKey(ref: GoalRef | ProjectRef | WorkspaceRef): string {
-  return canonicalJson(ref as unknown as JsonValue);
+export function canonicalRefKey(ref: object): string {
+  return canonicalKey(ref);
 }
 
 // --------------------------------------------------------------------------

@@ -11,6 +11,7 @@
  * `runBaselineKnown: false`, and a window that cannot be read at all is
  * `unavailable` with a reason, never an empty "no changes".
  */
+import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { ReadResult } from '../../contracts/core/results.js';
 import type { RunRef } from '../../contracts/dispatch.js';
@@ -44,10 +45,6 @@ export interface ArchiveChangedFilesReader {
 const MIXED_OWNERSHIP_WARNING = '工作区里还没提交的改动，可能混有别的执行的改动，不一定是这次执行改的';
 const REASON_LIMIT = 2000;
 const PATHS_LIMIT = CONTINUATION_BRIEF_LIMITS.paths;
-
-function rejected(code: 'invalid' | 'unavailable' | 'cancelled', reason: string): { status: 'rejected'; code: 'invalid' | 'unavailable' | 'cancelled'; reason: string } {
-  return { status: 'rejected', code, reason };
-}
 
 function isRunRef(value: unknown): value is RunRef {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;

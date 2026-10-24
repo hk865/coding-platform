@@ -9,6 +9,9 @@
  * Artifact capacity is an explicit rejection.
  */
 import type { ArtifactRef } from '../../contracts/artifact.js';
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
@@ -202,21 +205,9 @@ async function recordWorkspaceBaseline(
   return { status: 'captured', ref: stored.value.ref, digest: stored.value.ref.digest };
 }
 
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function sameRef(left: unknown, right: unknown): boolean {
+/** Key-order-sensitive `JSON.stringify` comparison: two `undefined` values are equal and `undefined` properties are omitted. */
+function sameJsonText(left: unknown, right: unknown): boolean {
   try { return JSON.stringify(left) === JSON.stringify(right); } catch { return false; }
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 function ownContext(ctx: CoreCallContext): CoreCallContext | null {
   try {
@@ -343,9 +334,9 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // K3 L13/L20: a review-purpose Run's tools and empty write scope are fixed
       // by purpose (either phase), not by the Role/Host intersection.
       const reviewPurpose = run.purpose?.kind === 'unknown_call_review' ? run.purpose : undefined;
-      if (!sameRef(run.ref, runRef) || !sameRef(claim.runRef, runRef)) return rejected('unavailable', 'the claim facts do not name the requested Run');
-      if (!sameRef(claim.task, run.task)) return rejected('unavailable', 'the claim task disagrees with the Run task');
-      if (!sameRef(claim.planRef, run.planRef)) return rejected('unavailable', 'the claim plan disagrees with the Run plan');
+      if (!sameJsonText(run.ref, runRef) || !sameJsonText(claim.runRef, runRef)) return rejected('unavailable', 'the claim facts do not name the requested Run');
+      if (!sameJsonText(claim.task, run.task)) return rejected('unavailable', 'the claim task disagrees with the Run task');
+      if (!sameJsonText(claim.planRef, run.planRef)) return rejected('unavailable', 'the claim plan disagrees with the Run plan');
       if (session.ref.projectId !== runRef.projectId || session.ref.sessionId !== claim.sessionRef.sessionId) {
         return rejected('unavailable', 'the claim Session mapping is inconsistent');
       }
@@ -837,7 +828,7 @@ export async function loadPreparedManifest(
     return rejected('invalid', 'the prepared manifest has no valid prompt set');
   }
   const manifest = parsed as unknown as PreparedTaskManifestV1;
-  if (!sameRef(manifest.claim, prepared.claim)) return rejected('invalid', 'the prepared manifest claim disagrees with the returned claim');
+  if (!sameJsonText(manifest.claim, prepared.claim)) return rejected('invalid', 'the prepared manifest claim disagrees with the returned claim');
   if (sha256Hex(manifest.input) !== manifest.inputDigest) return rejected('invalid', 'the prepared manifest input digest is not the digest of its input');
   if (manifest.inputDigest !== (binding as RuntimeInputBindingV1).inputDigest
     || (binding as RuntimeInputBindingV1).manifestDigest !== bundleRef.digest) {
@@ -853,7 +844,7 @@ export async function loadPreparedManifest(
     [envelope['budget'], manifest.budget],
   ];
   for (const [left, right] of envelopeFields) {
-    if (!sameRef(left, right)) return rejected('invalid', 'the Prepared envelope disagrees with the persisted manifest');
+    if (!sameJsonText(left, right)) return rejected('invalid', 'the Prepared envelope disagrees with the persisted manifest');
   }
   return { status: 'ready', value: { manifest, bundleRef } };
 }

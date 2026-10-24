@@ -2,6 +2,7 @@ import { realpath } from 'node:fs/promises';
 import { WorkspaceSandbox, DefaultPermissionPolicy } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import { messageOf } from '../../contracts/error-message.js';
 import type { GitFileIdentity, WorkspaceResult } from './ports.js';
 import { createWorkspaceGitReadAccess, type GitProjectFileListing } from './git-read.js';
 import { WORKSPACE_DENIED_PREFIXES } from './denied-prefixes.js';
@@ -149,5 +150,3 @@ export function createWorkspaceAccessFactory(bindings: WorkspaceHostBindings): W
     },
   };
 }
-
-const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);

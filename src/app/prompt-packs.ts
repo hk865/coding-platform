@@ -18,6 +18,7 @@ import type {
     PromptPackChainEntryV1, PromptPackProblemV1, PromptPackSourcePort, ResolvedPromptPackV1, ToolTextV1,
 } from '../contracts/prompts/prompt-pack.js';
 import { resolvePromptPackV1 } from '../contracts/prompts/resolve-pack.js';
+import { isRecord } from '../contracts/validation/common.js';
 import type { PromptPackListV1 } from './host-settings-types.js';
 
 /** The one pack-id syntax (ruling 1): `platform` is reserved but has this shape. */
@@ -44,10 +45,6 @@ const problem = (packId: string, templateId: string | null, reason: string,
     toolName?: string): PromptPackProblemV1 => toolName === undefined
     ? { packId, templateId, reason }
     : { packId, templateId, toolName, reason };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** A manifest path is relative, has no `..` segment (a name `..x` is legal) and no drive. */
 function unsafeFileReason(file: string): string | null {

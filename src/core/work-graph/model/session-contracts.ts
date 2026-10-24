@@ -3,13 +3,14 @@
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { CommandMeta, RoleConfigurationRef, SessionRef, WorkspaceScope, WorkLinkRelation, WorkLinkTarget } from '../../../contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef, WorkspaceScope, WorkLinkRelation, WorkLinkTarget } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { SessionRecord, SessionProvenanceV1, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type { GraphWrite } from './task-contracts.js';
 
-export type GraphWrite<T> = { input: T; meta: CommandMeta };
+export type { GraphWrite } from './task-contracts.js';
 export type SessionPageRequest = { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
 export type SessionPage<T> = { items: T[]; nextCursor: string | null; sourceCursor: CommitCursor };
 /**

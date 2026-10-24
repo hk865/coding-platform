@@ -9,6 +9,9 @@
  * it. Nothing is fabricated: a missing fact, an inadmissible Role, a revoked
  * Host grant or a manifest over the Artifact capacity is an explicit rejection.
  */
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
@@ -57,18 +60,6 @@ const FORBIDDEN_QUERY_TOOL_NAMES = new Set<string>([
   'write', 'edit', 'shell', ...SESSION_MAILBOX_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES,
 ]);
 
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 function ownContext(ctx: CoreCallContext): CoreCallContext | null {
   try {
     return {

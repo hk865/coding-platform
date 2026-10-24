@@ -16,7 +16,7 @@
  * (the Workspace version did not match).
  */
 import type { SessionRef } from '../../../contracts/core/identity.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalKey as keyOf } from '../../../contracts/fingerprint.js';
 import type { WorkspaceLineSettingsV1, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import { accept, reject, type Transition } from './transition.js';
 
@@ -53,10 +53,6 @@ const PIN_EFFECTS: readonly LinePinEffectV1[] = [{ type: 'workspace_line_pins_ch
 
 /** The read-side default: an absent table is the empty pin table. */
 const EMPTY_LINE_SETTINGS: WorkspaceLineSettingsV1 = { schemaVersion: 1, pinned: [] };
-
-function keyOf(ref: SessionRef): string {
-  return canonicalJson(ref as unknown as JsonValue);
-}
 
 function currentSettings(state: WorkspaceSnapshot): WorkspaceLineSettingsV1 {
   return state.lineSettings ?? EMPTY_LINE_SETTINGS;

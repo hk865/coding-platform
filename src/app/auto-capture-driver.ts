@@ -29,6 +29,7 @@ import type { ArchitectureAutoCaptureFailureV1, ArchitectureAutoCaptureRecordV1,
 import type { WorkspaceScope } from '../contracts/core/identity.js';
 import type { PersistedSourceCaptureRef } from '../contracts/core/source.js';
 import { moduleMappingsOf, type AdoptedArchitecture } from '../contracts/architecture-catalog.js';
+import { messageOf } from '../contracts/error-message.js';
 import { canonicalJson } from '../contracts/fingerprint.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
@@ -74,10 +75,6 @@ function scopeKeyOf(scope: WorkspaceScope): string {
 function copyScope(scope: WorkspaceScope): WorkspaceScope {
   return { projectId: scope.projectId, workspaceId: scope.workspaceId };
 }
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 export function createAutoCaptureDriver(deps: AutoCaptureDriverDependencies): AutoCaptureDriver {
   const actor: HostActor = { kind: deps.actor.kind, id: deps.actor.id };
   /** Waiting captures by workspace; one entry per workspace is the coalescing rule. */

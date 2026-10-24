@@ -27,7 +27,8 @@ import type { VersionPin } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import type { RunReconciliationBasisV1, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { hasOnlyKeys, inList, isNonNeg, utf8Bytes } from '../../../contracts/validation/common.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type { EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreCommitReceipt } from '../../record-store/ports.js';
@@ -36,6 +37,7 @@ import {
   executionRunReconciledEventFromEvent, isExecutionAuthorizationV2, type ExecutionRunReconciledEvent,
 } from '../persistence/execution-entry-codecs.js';
 import { attemptEventFromRunEvent, type AttemptEvent, type AttemptGuardContext } from '../state/attempt-machine.js';
+import { MAX_ATTESTATION_REASON_CHARS } from '../state/query-run-recovery.js';
 import {
   runStateOf, transitionRun, type AutoCleanupCandidateV1 as StateAutoCleanupCandidate, type RunEffect, type RunEvent,
   type RunGuardContext, type RunNode, type RunTransition,
@@ -104,7 +106,6 @@ const RECONCILE_PREFIX = 'a2-run-reconcile:';
 const RESOLVE_PREFIX = 'a2-run-resolve:';
 const RESOLVE_KIND = 'a2-run-resolve';
 const CONTROLS_PREFIX = 'a2-run-controls:';
-const MAX_ATTESTATION_REASON_CHARS = 2000;
 const PROBE_VERDICTS: readonly string[] = ['ready', 'missing', 'damaged', 'host_config', 'transient', 'cancelled'];
 const UNKNOWN_CAUSES: readonly string[] = ['tool_calls_unresolved', 'kernel_unreadable', 'continuation_unrebuildable'];
 
@@ -114,7 +115,6 @@ function reject(code: CoreError, reason: string): CoreRejection {
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
-function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 /** The reason of a non-ready read that is a rejection; the two other statuses get their own words. */
 function readFailureReason(read: { status: string; reason?: string }): string {
   if (read.status === 'not_found') return 'not_found';
@@ -122,9 +122,6 @@ function readFailureReason(read: { status: string; reason?: string }): string {
   return read.reason ?? read.status;
 }
 function fingerprintOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
-function sameJson(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
-}
 function refKeyOf(value: object): string { return canonicalJson(value as unknown as JsonValue); }
 function identityKey(prefix: string, actor: HostActor, scope: { projectId: string; workspaceId: string }, requestId: string): string {
   return prefix + sha256Hex(canonicalJson({ actor: { kind: actor.kind, id: actor.id },

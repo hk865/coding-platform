@@ -98,7 +98,7 @@
 | `transitionGoalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:190` | Goal 设置迁移（order_set 用已有顺序的下标） | 修改 Goal 设置 |
 | `goalStartPolicy` | `src/core/work-graph/state/goal-settings-machine.ts:238` | 启动准入策略 | 自动启动 Goal 前 |
 | `goalDecisionBasisMatches` | `src/core/work-graph/state/goal-settings-machine.ts:256` | 决策依据是否仍对应当前 Goal | 复用/重算决策时 |
-| `transitionLinePins` | `src/core/work-graph/state/line-pin-machine.ts:85` | 一次原子增删置顶项；无变化时 effects 为空 | 修改工作线置顶 |
+| `transitionLinePins` | `src/core/work-graph/state/line-pin-machine.ts:81` | 一次原子增删置顶项；无变化时 effects 为空 | 修改工作线置顶 |
 | `deriveLineStatus` | `src/core/work-graph/state/line-status.ts:259` | 唯一的工作线状态派生（词、注意、标记、桶） | 列表、悬停卡、详情 |
 | `deriveLineControls` | `src/core/work-graph/state/line-status.ts:485` | 由事实与状态派生可用控制项 | 画工作线操作 |
 | `deriveAttentionAll` | `src/core/work-graph/state/line-status.ts:741` | 一条线上所有注意项及来源 | 需要完整注意清单时 |
@@ -126,8 +126,8 @@
 | `settleQueryRunRecord` | `src/core/work-graph/state/query-run-recovery.ts:701` | 一起结清 Job 与 Run；带答案检查的 failed 关闭原因为 `invalid_answer` | Query 终态 |
 | `transitionQueryRunRecovery` | `src/core/work-graph/state/query-run-recovery.ts:216` | QRR 恢复子机器；请求轮的 not-entered 按是否被 drop 覆盖分成结束或新 attempt | 启动对账与人工确认 |
 | `queryRecoveryStateOf` | `src/core/work-graph/state/query-run-recovery.ts:505` | Job+Run 的恢复机器状态 | 恢复迁移前 |
-| `MAX_ATTESTATION_REASON_CHARS` / `QueryAnswerCheck` | `src/core/work-graph/state/query-run-recovery.ts:135`、`src/core/work-graph/state/query-run-recovery.ts:129` | 人工确认理由和关闭消息的上限（2000 个 UTF-16 单位，截断不留半个代理对）；答案检查失败的 detail 与理由 | 校验确认理由、结清带答案检查的终态；`src/core/work-graph/tasks/run-reconcile-service.ts:107` 另有私有副本 |
-| `sameRef`（**正本**） | `src/core/work-graph/state/ref-equality.ts:2` | 与键序无关的 ref 结构相等；本层是唯一正本 | 比较 ref；不要再写第二份，旧副本见“不要做”（M1-32） |
+| `MAX_ATTESTATION_REASON_CHARS` / `QueryAnswerCheck` | `src/core/work-graph/state/query-run-recovery.ts:135`、`src/core/work-graph/state/query-run-recovery.ts:129` | 人工确认理由和关闭消息的上限（2000 个 UTF-16 单位，截断不留半个代理对）；答案检查失败的 detail 与理由 | 校验确认理由、结清带答案检查的终态；`src/core/work-graph/tasks/run-reconcile-service.ts` 只复用这个常量，不另写答案检查类型 |
+| `sameRef`（**正本**） | `src/core/work-graph/state/ref-equality.ts:2` | 与键序无关的 ref 结构相等；本层是唯一正本 | 比较 ref；不要再写第二份 |
 | `newRequestRound` | `src/core/work-graph/state/request-rounds.ts:58` | 建新请求轮（Job/Run 对） | 收到新请求 |
 | `newRoutingRound` | `src/core/work-graph/state/request-rounds.ts:101` | 建只路由、不跑的轮（无 Run） | 秘书分派 |
 | `endUnstartedRound` | `src/core/work-graph/state/request-rounds.ts:143` | 结束未开始的轮 | 未执行即关闭 |
@@ -218,7 +218,4 @@
 - 不要手抄 Session 的 lifecycle/health/occupancy 判定：领用走 `occupancyAdmissionProblem`，只共享 lifecycle/health 的候选筛选走 `sessionAvailabilityAdmissionProblem` 并把 busy 单列（FP-09、M1-04）。
 - 不要把 Query 的 claimed/prepared 当成不可达，也不要只结清 Job/Run 的一半（M1-01、M1-36、CS-03）。
 - 不要手搓 Attempt/Lease/Outbox，或假设 Run 完成等于 Task/Goal 完成；effects 交 `claimEffectRecords`（`src/core/work-graph/tasks/execution-entry-service.ts:892`）翻译。
-- `sameRef` 另有旧副本：`src/core/work-graph/tasks/execution-entry-service.ts:144`（导出副本），新代码一律用正本 `src/core/work-graph/state/ref-equality.ts:2`，旧副本由清理轮删除（M1-32）。
-- `sameRef` 另有旧副本：`src/core/work-graph/queries/query-execution.ts:104`、`src/core/work-graph/tasks/claim-service.ts:122` 等 `tasks/`、`queries/`、`agent-runtime/` 私有副本，新代码一律用正本 `src/core/work-graph/state/ref-equality.ts:2`，旧副本由清理轮删除（M1-32）。
-- `sameJson` 另有旧副本：`src/core/work-graph/state/goal-settings-machine.ts:80`（私有），正本在 `src/contracts/fingerprint.ts:50`，新代码一律用正本，旧副本由清理轮删除（M1-32）。
 - 不要在本层 import 时钟、随机数、计时器、网络、进程或任何 store；时间与 id 由调用方传入。

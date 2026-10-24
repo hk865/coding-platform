@@ -1,3 +1,6 @@
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
+import { packString } from '../../contracts/prompts/pack-string.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import {
   ContinuationBriefCapacityError, continuationBriefDigest, renderContinuationBriefZh,
@@ -34,18 +37,11 @@ import {
 } from './context-rendering.js';
 import { takesSessionHistoryOf } from './context-history-facts.js';
 import { assembleReviewForContext } from './context-review-recipe.js';
-import { canonical, messageOf, rejected, requirementIdOf, sortedSources } from './context-support.js';
+import { canonical, requirementIdOf, sortedSources } from './context-support.js';
 import type {
   AssembledContextV1, ContextAssemblerDependencies, ContextWorkHistoryInputV1, OptionalRow,
 } from './context-types.js';
 import type { ResolvedRuntimeConfiguration } from './execution-contracts.js';
-
-/** One fixed string of the resolved pack; a missing key is a pack bug. */
-function packString(texts: PromptTextsV1, key: string): string {
-  const value = texts.strings[key];
-  if (value === undefined) throw new Error(`the resolved prompt pack has no string "${key}"`);
-  return value;
-}
 
 export async function assembleWorkContext(
   deps: ContextAssemblerDependencies, clock: (() => string) | undefined, ctx: CoreCallContext,

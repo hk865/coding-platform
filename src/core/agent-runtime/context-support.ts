@@ -1,21 +1,10 @@
+import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { ContextExtensionsV1, ContextIndexRowV1, ContextSourceV1 } from '../../contracts/graph-context.js';
 
-export function utf8Bytes(value: string): number {
-  return Buffer.byteLength(value, 'utf8');
-}
 export function byKey(left: { key: string }, right: { key: string }): number {
   return left.key < right.key ? -1 : left.key > right.key ? 1 : 0;
-}
-export function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-export function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
 }
 /** Propagate a must-fail read with its own code; never turn it into a ready default. */
 export function mapRead(result: ReadResult<unknown>): CoreRejection {

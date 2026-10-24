@@ -30,7 +30,7 @@ import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreError, ReadResult } from '../../../contracts/core/results.js';
 import type { RoleBindingRefV1, RunRef } from '../../../contracts/dispatch.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sameJson as sameRef, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { RecordGuard } from '../../record-store/ports.js';
 import { isExecutionAuthorizationV2 } from '../persistence/execution-entry-codecs.js';
@@ -45,7 +45,6 @@ import {
   mergeGuards,
   readStoredManifest,
   recheckHostRoleAdmission,
-  sameRef,
 } from './execution-entry-service.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';

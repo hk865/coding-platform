@@ -7,6 +7,7 @@
 - 模板渲染与选包各只有一份正本，就是本目录；上层只能消费，不得复制第二份。
 
 ## 文件
+- `pack-string.ts` — 从已解析包里取一个固定字符串；缺键是包缺陷，抛错而不是回退。
 - `platform-pack.generated.ts` — 由 `resources/prompts/platform/` 经 `scripts/build-platform-prompts.mjs` 生成的平台包常量，运行时直接引用，不读盘。
 - `platform-skills.ts` — 平台 Skill 的 id/title/kind/priority/templateId 清单；包只提供文字，身份与选择优先级留在代码里。
 - `prompt-pack.ts` — 包清单、链条目、解析结果、`PromptPackSourcePort` 和生成平台包的来源实现。
@@ -19,6 +20,7 @@
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `renderTemplate` | `src/contracts/prompts/render-template.ts:387` | 按代码槽表渲染一个模板，返回文本和每个 section 的字节范围；槽值原样插入。 | 所有模板渲染：上下文装配、接续简报、审查/提案、设置预览。不要另写替换器。 |
+| `packString` | `src/contracts/prompts/pack-string.ts:4` | 取已解析包里的一个固定字符串；缺键抛错，不回落默认文字。 | 渲染器、准备执行读固定文案时；不要另写查表 |
 | `parseTemplateV1` | `src/contracts/prompts/render-template.ts:279` | 只解析模板，收齐槽、必填槽和输入模板段序等可独立判定的问题；`secretary-round` 的三个 `task_*` 槽都必须出现（值可空），块分开或换序也算问题。 | 选包校验或需要一次报告多个模板问题时；真正出文字用 `renderTemplate`。 |
 | `contextSectionOfSlot` | `src/contracts/prompts/render-template.ts:53` | 把一个槽名投影到它所属的段；`task_round`/`task_batched`/`task_earlier` 都是 `task`。 | 段序计算与校验；不要另写槽到段的映射。 |
 | `PromptRenderError` | `src/contracts/prompts/render-template.ts:21` | 模板非法、必填槽为空、段序非法的错误类型，带 `code`/`templateId`/`slot`。 | 把渲染失败映射成 `invalid`，或按 code 收集问题。 |

@@ -40,7 +40,8 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { isPos as isPositiveRevision, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
@@ -80,16 +81,6 @@ const HISTORY_IDENTITY_PREFIX = 'execution-history:';
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-function sameRef(left: unknown, right: unknown): boolean {
-  try {
-    return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue);
-  } catch {
-    return false;
-  }
-}
 function isRunRef(value: unknown): value is RunRef {
   return isRecord(value) && value['aggregateType'] === 'Run'
     && nonEmpty(value['projectId']) && nonEmpty(value['goalId']) && nonEmpty(value['runId']);

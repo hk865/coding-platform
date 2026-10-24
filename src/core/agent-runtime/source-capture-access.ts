@@ -1,5 +1,6 @@
 /** Migrated R2c/R2d guards. Reads accepted facts through WorkGraph; this component
  * does not create/dispatch Runs. Target lifecycle consumers are still to be wired. */
+import { rejected } from '../../contracts/core/rejections.js';
 import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
 import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { SourceAuthorityReads, SourceSnapshotReads, SourceSnapshotResult } from '../work-graph/source-authority-ports.js';
@@ -22,7 +23,6 @@ import type { RuntimeSourceCaptureAccess, RuntimeSourceCaptureFactory } from './
 /** Trusted, narrow policy for one registered mount; never handed to the model. */
 export type SourcePolicy = { root: string; permissionRevision: string; allowsRead(path: string): boolean };
 
-const rejected = <T>(code: 'forbidden' | 'not_found' | 'cancelled' | 'unavailable' | 'unsupported' | 'invalid', reason: string): WorkspaceResult<T> => ({ status: 'rejected', code, reason });
 const copyWorkspace = (workspace: WorkspaceRef): WorkspaceRef => ({ aggregateType: 'Workspace', projectId: workspace.projectId, workspaceId: workspace.workspaceId });
 
 /** `unavailable`/`unsupported` keep their own name on every consumption path; a genuine

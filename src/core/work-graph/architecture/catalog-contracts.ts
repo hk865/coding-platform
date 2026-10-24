@@ -18,7 +18,7 @@ import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from '.
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RecordGuard } from '../../record-store/ports.js';
-import type { GraphWrite } from './contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 
 import type {
   AdoptInitialArchitectureInput,

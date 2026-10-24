@@ -1,3 +1,4 @@
+import { sameActorKindAndId as sameActor } from '../../../contracts/actor-equality.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { ArtifactRecord, ArtifactRef } from '../../../contracts/artifact.js';
 import { ARTIFACT_MAX_SIZE_BYTES, artifactBodySize } from '../../../contracts/artifact.js';
@@ -291,10 +292,6 @@ function writeOriginMatchesContext(
     return workspaceId === undefined || origin.ref.workspaceId === workspaceId;
   }
   return false;
-}
-
-function sameActor(a: { kind: string; id: string }, b: { kind: string; id: string }): boolean {
-  return a.kind === b.kind && a.id === b.id;
 }
 
 function mapBodyStoreError(failure: StoreFailure): 'invalid' | 'not_found' | 'revision_conflict' | 'idempotency_conflict' | 'unsupported' | 'unavailable' {

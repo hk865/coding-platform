@@ -19,7 +19,7 @@ import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/ses
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { SessionFactsPort } from '../model/session-facts-contracts.js';
-import type { GraphWrite } from '../model/session-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 
 /** The existing Session directory stores; this service adds no store of its own. */
 export type SessionLifecycleStores = {

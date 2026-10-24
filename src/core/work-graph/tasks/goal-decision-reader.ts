@@ -15,6 +15,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreError, ReadResult } from '../../../contracts/core/results.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
   DEFAULT_GOAL_SETTINGS_V1,
@@ -89,9 +90,6 @@ function forbidden(reason: string): Rej {
 }
 function unavailable(reason: string): Rej {
   return { status: 'rejected', code: 'unavailable', reason };
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 /** The Goal plus the watermark its own read observed. */
 type GoalRecordRead = { goal: GoalSnapshot; readThrough: CommitCursor | null };

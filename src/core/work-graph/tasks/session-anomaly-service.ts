@@ -14,7 +14,7 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sameJson as sameRef, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isRecord, nonEmpty, parseObject as parseJsonObject } from '../../../contracts/validation/common.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { rejected } from '../../../contracts/core/rejections.js';
@@ -91,9 +91,6 @@ const SESSION_EXECUTION_MAX_PAGES = 25;
 // Small pure helpers
 // --------------------------------------------------------------------------
 
-function sameRef(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
-}
 function reject(code: CoreError, reason: string): CoreRejection {
   return rejected(code, reason);
 }

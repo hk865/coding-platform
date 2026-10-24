@@ -9,6 +9,7 @@ import type {
     ResolvedPromptPackV1, ToolTextV1,
 } from './prompt-pack.js';
 import { parseTemplateV1 } from './render-template.js';
+import { isRecord } from '../validation/common.js';
 import { TEMPLATE_SLOTS } from './slot-tables.js';
 
 const PACK_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -20,10 +21,6 @@ const FIXED_STRINGS: ReadonlySet<string> = new Set([
 ]);
 
 type JsonRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is JsonRecord {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function isString(value: unknown): value is string {
     return typeof value === 'string';

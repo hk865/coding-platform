@@ -8,6 +8,7 @@ import type { ArtifactRef } from '../artifact.js';
 import type { ReadResult } from '../core/results.js';
 import type { ContextCallKindV1, ContextSectionNameV1 } from '../graph-context.js';
 import { sha256Hex } from '../fingerprint.js';
+import { isRecord } from '../validation/common.js';
 import type { ToolTextV1 } from './prompt-pack.js';
 
 /** Content type of a prompt text body: a template, the merged string table, the merged base or a Skill content. */
@@ -137,8 +138,6 @@ export function decodePromptSetV1(value: unknown): PromptSetV1 | null {
     ]);
     const SOURCE_KINDS: ReadonlySet<string> = new Set(['plan-revision', 'workspace', 'governance', 'artifact', 'memory']);
     const DIGEST = /^[0-9a-f]{64}$/;
-    const isRecord = (input: unknown): input is Record<string, unknown> =>
-        typeof input === 'object' && input !== null && !Array.isArray(input);
     const isString = (input: unknown): input is string => typeof input === 'string';
     const isNumber = (input: unknown): input is number => typeof input === 'number' && Number.isFinite(input);
     const hasExactKeys = (input: Record<string, unknown>, keys: readonly string[]): boolean => {

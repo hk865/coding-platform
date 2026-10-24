@@ -30,7 +30,10 @@ import type { RunContinuationV1, RunRef } from '../contracts/dispatch.js';
 import type { GoalRef } from '../contracts/ledger.js';
 import type { SessionRef } from '../contracts/core/identity.js';
 import type { MessageRecipient } from '../contracts/core/session-message.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
+import { messageOf } from '../contracts/error-message.js';
+import { rejected } from '../contracts/core/rejections.js';
+import { canonicalJson, sameJson as sameCanonical, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
+import { isRecord, nonEmpty } from '../contracts/validation/common.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
 import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.js';
@@ -149,24 +152,8 @@ const MAX_PROJECTED_MESSAGES = 50;
 
 type UnknownRecord = Record<string, unknown>;
 
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function canonicalOf(value: unknown): string | null {
   try { return canonicalJson(value as JsonValue); } catch { return null; }
-}
-function sameCanonical(left: unknown, right: unknown): boolean {
-  const leftKey = canonicalOf(left);
-  return leftKey !== null && leftKey === canonicalOf(right);
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
 }
 function isRunRef(value: unknown): value is RunRef {
   return isRecord(value) && value['aggregateType'] === 'Run'

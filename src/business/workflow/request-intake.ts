@@ -40,6 +40,7 @@ import type { ReadResult } from '../../contracts/core/results.js';
 import type { VersionedRef } from '../../contracts/ledger.js';
 import type { QueryJobRef } from '../../contracts/query-job.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
+import { messageOf } from '../../contracts/error-message.js';
 import type {
   RequestCoreViewV1, SecretaryProfilePort, SecretaryProfileV1, SecretarySelectionFactsV1,
 } from '../../core/work-graph/model/request-contracts.js';
@@ -125,10 +126,6 @@ export type RequestIntakeDependencies = {
 };
 
 const WAITING_PLAN: RequestPlanV1 = { assignTo: null, createdLine: false, capacityBlocked: false };
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function refusal(code: RequestRejectionV1['code'], reason: string): RequestRejectionV1 {
   return { status: 'rejected', code, reason };

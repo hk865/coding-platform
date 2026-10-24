@@ -1,3 +1,6 @@
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
+import { isRecord } from '../../contracts/validation/common.js';
 import type { PreparedTaskManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { ReadResult } from '../../contracts/core/results.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
@@ -6,7 +9,6 @@ import type { KernelCallRefV1 } from '../../contracts/unknown-call-review.js';
 import type { ContinuationBasis, TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import type { KernelCommandFactV1 } from '../work-graph/model/kernel-command-read-contracts.js';
 import { requeueHistorySourceOf } from '../work-graph/state/task-failure.js';
-import { isRecord, messageOf, rejected } from './context-support.js';
 import type {
   ContextAssemblerDependencies, HistoryDecisionV1, SessionBasisV1,
   SessionHistoryDecisionInputV1,

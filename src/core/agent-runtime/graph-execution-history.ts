@@ -36,9 +36,12 @@
  *    dependency becomes `unavailable`, never a silent empty page.
  */
 import { Buffer } from 'node:buffer';
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
+import { isRecord } from '../../contracts/validation/common.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
-import type { CoreError, CoreRejection, ReadResult } from '../../contracts/core/results.js';
+import type { ReadResult } from '../../contracts/core/results.js';
 import type { RunRef } from '../../contracts/dispatch.js';
 import { isRunExecutionHistoryV1 } from '../work-graph/persistence/execution-history-codecs.js';
 import type { SessionHistoryRange } from './session-operations.js';
@@ -66,14 +69,8 @@ type GraphHistoryBinding = {
 
 type GraphHistoryCursor = GraphHistoryBinding & { runRef: RunRef; after: string };
 
-function rejected(code: CoreError, reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
 function signalAborted(signal: unknown): boolean {
   return signal instanceof AbortSignal && signal.aborted;
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
@@ -89,9 +86,6 @@ function isRunRef(value: unknown): value is RunRef {
 function sameRunRef(left: RunRef, right: RunRef): boolean {
   return left.aggregateType === right.aggregateType && left.projectId === right.projectId
     && left.goalId === right.goalId && left.runId === right.runId;
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** Own the call context before the first await while preserving the original signal. */

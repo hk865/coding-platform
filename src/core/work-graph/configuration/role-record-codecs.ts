@@ -25,12 +25,13 @@ import type {
   RoleSpecInstalledEvent, RoleSpecRevisionRef, RoleSpecRevisionSnapshot,
 } from '../../../contracts/role-spec.js';
 import { roleSpecContentDigest } from '../../../contracts/role-spec.js';
-import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalOf } from '../../../contracts/fingerprint.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import { invalid, isNonNeg, isPos, isRecord, nonEmpty, type UnknownRecord } from '../../../contracts/validation/common.js';
 import type { ValidationIssue } from '../../../contracts/validation/common.js';
 import { validateCoordinationRoleMatrix, validateRoleSpecContent } from '../../../contracts/validation/role.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
+import { canonicalRefKey } from '../persistence/record-codecs.js';
 
 export const ROLE_SPEC_REVISION_SCHEMA_ID = 'RoleSpecRevisionSnapshot@1';
 export const PROJECT_ROLE_SPEC_ACTIVE_SCHEMA_ID = 'ProjectRoleSpecActiveSnapshot@1';
@@ -125,10 +126,6 @@ export function projectCoordinationPolicyActiveRefFromValue(value: unknown): Pro
   if (!isRecord(value) || value['aggregateType'] !== 'ProjectCoordinationPolicyActive') return null;
   if (!nonEmpty(value['projectId'])) return null;
   return { aggregateType: 'ProjectCoordinationPolicyActive', projectId: value['projectId'] };
-}
-
-export function canonicalRefKey(ref: object): string {
-  return canonicalJson(ref as unknown as JsonValue);
 }
 
 // --------------------------------------------------------------------------

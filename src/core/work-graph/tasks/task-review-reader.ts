@@ -13,6 +13,7 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
 
 /** The paging half of the UnknownCallReview owner; the ONE read this module needs. */
@@ -20,10 +21,6 @@ export type TaskReviewPagingPort = Pick<UnknownCallReviewReadPort, 'listReviews'
 
 const PAGE_LIMIT = 200;
 const MAX_PAGES = 10_000;
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function mapRead(result: ReadResult<unknown>): CoreRejection {
   if (result.status === 'ready') return rejected('unavailable', 'a must-fail read unexpectedly returned a value');

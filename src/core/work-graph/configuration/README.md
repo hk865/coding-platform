@@ -30,10 +30,10 @@
 | `ROLE_RECORD_SCHEMAS` | `src/core/work-graph/configuration/role-record-codecs.ts:491` | role-spec / coordination-policy 四类记录与两个事件的 backend schema 注册 | 组合根注册记录与事件 schema 时 |
 | `PROJECT_BOOTSTRAP_RECORD_SCHEMAS` | `src/core/work-graph/configuration/project-bootstrap-record-codecs.ts:425` | 四个初始化事件的 schema 注册 | 组合根注册事件 schema 时 |
 
-同一种能力的多份实现：`canonicalRefKey` 的正本在 `src/core/work-graph/persistence/record-codecs.ts:79`，本层 `src/core/work-graph/configuration/role-record-codecs.ts:130` 是旧副本；`sameActor` 在 `src/core/work-graph/configuration/workspace-settings-reads.ts:51` 导出，另有 `src/core/work-graph/communication/decision-service.ts`、`src/core/work-graph/communication/mailbox-service.ts` 等私有同名实现。
+同一种能力的正本：`canonicalKey` 在 `src/contracts/fingerprint.ts`；`canonicalRefKey`（`src/core/work-graph/persistence/record-codecs.ts:79`）把对象 ref 交给它。`sameActorIdentity`（unknown 值）与 `sameActorKindAndId`（typed 形状）在 `src/contracts/actor-equality.ts`，本层用前者。
 
 ## 内部用
-- 设置基元：`ownScope`、`isOwned`、`sameActor`、`workspacePinProblem`、`loadWorkspace`、`replayWorkspace`。
+- 设置基元：`ownScope`、`isOwned`、`workspacePinProblem`、`loadWorkspace`、`replayWorkspace`。
 - codec 辅助（role）：`roleSpecRevisionRefFromValue`、`projectRoleSpecActiveRefFromValue`、`coordinationPolicyRevisionRefFromValue`、`projectCoordinationPolicyActiveRefFromValue`、`roleSpecRevisionSnapshotFromValue`、`projectRoleSpecActiveSnapshotFromValue`、`coordinationPolicyRevisionSnapshotFromValue`、`projectCoordinationPolicyActiveSnapshotFromValue`、`decodeRoleSpecRevisionSnapshot`、`decodeProjectRoleSpecActiveSnapshot`、`decodeCoordinationPolicyRevisionSnapshot`、`decodeProjectCoordinationPolicyActiveSnapshot`、`decodeRoleSpecInstalledEvent`、`decodeRoleSpecActivatedEvent`、`encodeRoleSpecRevisionSnapshot`、`encodeProjectRoleSpecActiveSnapshot`、`encodeRoleSpecInstalledEvent`、`encodeRoleSpecActivatedEvent`、`canonicalRefKey`。
 - codec 辅助（project bootstrap）：`completionPolicyContentProblem`、`decodeProjectRegisteredEvent`、`decodeProjectWorkspaceRegisteredEvent`、`decodeProjectCompletionPolicyInstalledEvent`、`decodeProjectCompletionPolicyActivatedEvent`、`encodeProjectRegisteredEvent`、`encodeProjectWorkspaceRegisteredEvent`、`encodeProjectCompletionPolicyInstalledEvent`、`encodeProjectCompletionPolicyActivatedEvent`。
 - 常量：`ROLE_SPEC_REVISION_SCHEMA_ID`、`PROJECT_ROLE_SPEC_ACTIVE_SCHEMA_ID`、`COORDINATION_POLICY_REVISION_SCHEMA_ID`、`PROJECT_COORDINATION_POLICY_ACTIVE_SCHEMA_ID`、`ROLE_SPEC_INSTALLED_EVENT_TYPE`、`ROLE_SPEC_ACTIVATED_EVENT_TYPE`、`PROJECT_REGISTERED_EVENT`、`PROJECT_WORKSPACE_REGISTERED_EVENT`、`PROJECT_COMPLETION_POLICY_INSTALLED_EVENT`、`PROJECT_COMPLETION_POLICY_ACTIVATED_EVENT`、`PROJECT_BOOTSTRAP_EVENT_SCHEMA_VERSION`。
@@ -45,4 +45,3 @@
 - 不要在 configuration 里 import 上层；需要的 Session/材料读取由组合根注入窄端口。
 - 不要只改类型或只改消费方；新配置要贯穿声明、校验、组合根转发与 reopen（FP-15、MH-02）。
 - 不要在本层改 Session 生命周期、发消息或判断完成；这些有各自的 owner，状态写只经 `state/`。
-- `canonicalRefKey` 另有旧副本：`src/core/work-graph/configuration/role-record-codecs.ts:130`，正本在 `src/core/work-graph/persistence/record-codecs.ts:79`，新代码一律用正本，旧副本由清理轮删除。

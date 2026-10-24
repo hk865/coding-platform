@@ -1,3 +1,6 @@
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
+import { isRecord } from '../../contracts/validation/common.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import {
   renderUnknownCallReviewZh,
@@ -10,7 +13,7 @@ import type { UnknownCallReviewRef, UnknownCallReviewV1 } from '../../contracts/
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import { readKernelCommandFacts, reviewSessionBasis } from './context-history-facts.js';
 import { buildUnknownCallReviewInputV1, type ReviewCommandFactV1 } from './context-review-input.js';
-import { isRecord, mapRead, messageOf, rejected } from './context-support.js';
+import { mapRead } from './context-support.js';
 import type { ContextAssemblerDependencies } from './context-types.js';
 import { readReviewCaptureChanges } from './context-workspace-facts.js';
 

@@ -18,6 +18,7 @@ import type { RunOutcome, RunRef, TaskAttemptRef, TaskTriple } from './dispatch.
 import { EVIDENCE_OUTCOMES } from './evidence.js';
 import { canonicalJson, sha256Hex, type JsonValue } from './fingerprint.js';
 import { truncateUtf8 } from './utf8.js';
+import { nonEmpty } from './validation/common.js';
 import type { RunFailureOrigin } from './no-progress.js';
 import type { FailingCheckFactV1 } from './task-failure.js';
 import type {
@@ -30,6 +31,7 @@ import {
 import { ROUND_CHECK_INCOMPLETE_CAUSES, type VerificationRoundRef } from './verification.js';
 import { PLATFORM_PROMPT_PACK_V1 } from './prompts/platform-pack.generated.js';
 import type { PromptTextsV1 } from './prompts/prompt-set.js';
+import { packString } from './prompts/pack-string.js';
 import { parseTemplateV1, renderTemplate, type TemplateNodeV1 } from './prompts/render-template.js';
 
 // ------------------------------------------------------------------------ //
@@ -363,13 +365,6 @@ type BriefTexts = {
   reviewMode: Readonly<Record<'replace' | 'create', string>>;
   reviewDiffReason: Readonly<Record<ContinuationDiffOmittedReasonV1, string>>;
 };
-
-/** One fixed string of the resolved pack; a missing key is a pack bug. */
-function packString(texts: PromptTextsV1, key: string): string {
-  const value = texts.strings[key];
-  if (value === undefined) throw new Error(`the resolved prompt pack has no string "${key}"`);
-  return value;
-}
 
 /** Builds the whole fixed-text table from one pack; nothing falls back per key. */
 function briefTexts(texts: PromptTextsV1): BriefTexts {
@@ -1211,9 +1206,6 @@ function exact(value: unknown, path: string, keys: readonly string[], optional: 
   }
   for (const key of keys) if (!Object.hasOwn(value, key)) return `${path}.${key} is required`;
   return value;
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
 }
 function isCount(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;

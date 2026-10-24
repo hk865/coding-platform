@@ -25,6 +25,7 @@ import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+import { sameActorIdentity as sameActor } from '../../../contracts/actor-equality.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { LineSettingsSessionRead, WorkLineSettingsPort } from '../model/work-line-contracts.js';
 import { canonicalRefKey, encodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
@@ -33,7 +34,7 @@ import { WORKSPACE_LINE_PINS_CHANGED_EVENT,
 import type { LinePinGuardV1 } from '../state/line-pin-machine.js';
 import { transitionLinePins } from '../state/line-pin-machine.js';
 import {
-  isOwned, loadWorkspace, ownScope, replayWorkspace, sameActor,
+  isOwned, loadWorkspace, ownScope, replayWorkspace,
   workspacePinProblem as sharedWorkspacePinProblem, type Owned, type WorkspaceReplayTexts,
 } from './workspace-settings-reads.js';
 

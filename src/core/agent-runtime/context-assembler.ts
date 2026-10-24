@@ -3,9 +3,9 @@
  * surface plus the dependency wiring of `createContextAssembler`. The assembly
  * recipes live in the neighbouring `context-*` modules.
  */
+import { rejected } from '../../contracts/core/rejections.js';
 import type { ContextAssembler, ContextAssemblerDependencies, ContextClock } from './context-types.js';
 import { assembleQueryContext } from './context-query-recipe.js';
-import { rejected } from './context-support.js';
 import { assembleWorkContext } from './context-work-recipe.js';
 
 export type { AttentionGraphReadRequestV1 } from '../../contracts/graph-context.js';

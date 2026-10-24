@@ -9,7 +9,8 @@ import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
 import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
 import type { PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
-import type { GraphWrite, SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
+import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
+import type { SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
 import type {
   SessionFactsPort, SessionResponsibilityBasisPort,
 } from '../../core/work-graph/model/session-facts-contracts.js';

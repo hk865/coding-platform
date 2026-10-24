@@ -1,6 +1,7 @@
 /** identity protocol schema validation. Structural checks do not grant authority. */
 import type { ValidationIssue } from './common.js';
 import { isRecord, stringField } from './common.js';
+/** This contract validator appends ValidationIssues (void); W/persistence/rework-codecs.ts returns the first string/null and must not be imported here. */
 export function validateActor(value: unknown, path: string, issues: ValidationIssue[]): void {
     if (!isRecord(value)) {
         issues.push({ path, code: "bad_type", message: `${path} must be an object` });

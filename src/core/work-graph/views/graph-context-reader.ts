@@ -19,7 +19,9 @@
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
-import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -94,12 +96,6 @@ const ROUND_LOOKUP_LIMIT = 50;
 const SESSION_PAGE_LIMIT = 200;
 const EXECUTION_PAGE_LIMIT = 100;
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-function rejected<T>(code: CoreError, reason: string): ReadResult<T> {
-  return { status: 'rejected', code, reason };
-}
 /** Propagate a non-ready dependency read without inventing a value. */
 function propagate<T>(result: ReadResult<unknown>): ReadResult<T> {
   if (result.status === 'ready') throw new Error('propagate expects a non-ready read result');
@@ -238,7 +234,8 @@ function pathMatches(value: string, needle: string, ownership: PathSearchOwnersh
   if (path === ownership.path) return true;
   return path.startsWith(`${needle}/`);
 }
-function sameActor(left: ActorRef, right: ActorRef): boolean {
+/** The full actor identity, including the agent `runRef`. */
+function sameActorWithRun(left: ActorRef, right: ActorRef): boolean {
   if (left.kind !== right.kind || left.id !== right.id) return false;
   if (left.kind === 'agent' && right.kind === 'agent') {
     return left.runRef.projectId === right.runRef.projectId && left.runRef.goalId === right.runRef.goalId
@@ -625,7 +622,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     if (actor.kind !== 'human' && actor.kind !== 'system') {
       return rejected('unsupported', 'the original Query initiator kind is unsupported');
     }
-    if (!sameActor(actor, principal.initiator)) {
+    if (!sameActorWithRun(actor, principal.initiator)) {
       return rejected('forbidden', 'the QueryRun initiator is not the original submission actor');
     }
     return { status: 'ready', value: internalHostContext(ctx, { kind: actor.kind, id: actor.id }) };

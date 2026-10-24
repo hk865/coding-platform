@@ -44,7 +44,7 @@ import type {
 import {
   continuationBriefDigest, continuationBriefShapeProblem, renderContinuationBriefZh,
 } from '../../../contracts/continuation-brief.js';
-import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
   PROMPT_TEXT_CONTENT_TYPE, checkPromptBody, decodePromptSetV1, type PromptTextsV1,
 } from '../../../contracts/prompts/prompt-set.js';
@@ -141,9 +141,7 @@ function busy(reason: string): CoreRejection { return reject('busy', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
 function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
 function notFound(reason: string): CoreRejection { return reject('not_found', reason); }
-export function sameRef(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
-}
+export { sameJson as sameRef } from '../../../contracts/fingerprint.js';
 function refKeyOf(value: object): string | null {
   return canonicalOf(value);
 }
@@ -231,7 +229,7 @@ export function checkRunPin(expected: readonly VersionPin[], runRef: RunRef): { 
   if (!isRecord(raw) || !isRecord(raw['ref']) || !isPositiveSafeInteger(raw['revision'])) {
     return { ok: false, rejection: invalid('the expected Run pin must carry a ref and a positive safe revision') };
   }
-  if (!sameRef(raw['ref'], runRef)) {
+  if (!sameJson(raw['ref'], runRef)) {
     return { ok: false, rejection: invalid('meta.expected must pin exactly the target Run') };
   }
   return { ok: true, pin: { ref: raw['ref'] as VersionPin['ref'], revision: raw['revision'] } };
@@ -246,8 +244,8 @@ export function checkRunAndPermitPins(
   if (expected.length !== 2) {
     return { ok: false, rejection: invalid('meta.expected must contain exactly the Run pin and the permit@1 pin') };
   }
-  const runPin = expected.find(pin => sameRef(pin.ref, runRef));
-  const permitPin = expected.find(pin => sameRef(pin.ref, permitRef));
+  const runPin = expected.find(pin => sameJson(pin.ref, runRef));
+  const permitPin = expected.find(pin => sameJson(pin.ref, permitRef));
   if (runPin === undefined || permitPin === undefined || runPin === permitPin) {
     return { ok: false, rejection: invalid('meta.expected must be the Run and permit pins without extras') };
   }
@@ -542,7 +540,7 @@ export async function recheckHostRoleAdmission(
     return { ok: false, rejection: forbidden('the current role resolution changed since the manifest was prepared') };
   }
   if (resolution.status === 'resolved' && input.manifestRole.status === 'resolved') {
-    if (resolution.roleId !== input.manifestRole.roleId || !sameRef(resolution.revision, input.manifestRole.revision)) {
+    if (resolution.roleId !== input.manifestRole.roleId || !sameJson(resolution.revision, input.manifestRole.revision)) {
       return { ok: false, rejection: forbidden('the current resolved role spec does not match the prepared manifest') };
     }
   }
@@ -564,8 +562,8 @@ export async function recheckHostRoleAdmission(
   });
   if (host.status !== 'ready') return { ok: false, rejection: mapReadResult(host) };
   if (host.value.configurationRevision !== input.configurationRevision
-    || !sameRef(host.value.permissions, input.permissions)
-    || !sameRef(host.value.hostTemplate, input.hostTemplate)) {
+    || !sameJson(host.value.permissions, input.permissions)
+    || !sameJson(host.value.hostTemplate, input.hostTemplate)) {
     return { ok: false, rejection: forbidden('the trusted Host configuration disagrees with the prepared manifest') };
   }
   return { ok: true, value: { roleFacts, host: host.value } };
@@ -1301,7 +1299,7 @@ function continuationBriefVerdict(
   if (requeueRef === undefined) return digest === undefined && brief === undefined ? 'absent_ok' : 'unexpected';
   if (digest === undefined || (manifest !== null && brief === undefined)) return 'missing';
   if (manifest === null || brief === undefined) return 'bound';
-  if (!sameRef(brief.runRef, claim.runRef) || !sameRef(brief.requeueRef, requeueRef)
+  if (!sameJson(brief.runRef, claim.runRef) || !sameJson(brief.requeueRef, requeueRef)
     || continuationBriefDigest(brief) !== digest) {
     return 'mismatch';
   }
@@ -1433,11 +1431,11 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
     if (decoded.status !== 'decoded') return { ok: false, rejection: unavailable(`the wait message is damaged: ${decoded.reason}`) };
     const message = decoded.value;
     const sender = message.sender;
-    if (sender.kind !== 'work_run' || !sameRef(sender.runRef, claim.runRef) || sender.generation !== claim.generation
+    if (sender.kind !== 'work_run' || !sameJson(sender.runRef, claim.runRef) || sender.generation !== claim.generation
       || message.waitAfterSend !== true) {
       return { ok: false, rejection: invalid('the wait message was not sent and waited on by this Run at its claim generation (RD-3)') };
     }
-    if (!sameRef(continuation.task, claim.task) || !sameRef(continuation.sessionRef, claim.sessionRef)) {
+    if (!sameJson(continuation.task, claim.task) || !sameJson(continuation.sessionRef, claim.sessionRef)) {
       return { ok: false, rejection: invalid('the continuation names another Task or Session than the claim (RD-3)') };
     }
     return { ok: true, guard: { refKey: key, expectedRevision: message.revision } };
@@ -1549,7 +1547,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
         const phaseRead = await readGoalPhase(records, { aggregateType: 'GoalPhase', projectId: waitingRef.projectId, goalId: waitingRef.goalId });
         if (phaseRead.status !== 'ready') return mapReaderRejection(phaseRead);
         const formallyCompleted = phaseRead.snapshot !== null && predecessorRead.goal.activePlanRevision !== null
-          && sameRef(phaseRead.snapshot.planRef, predecessorRead.goal.activePlanRevision);
+          && sameJson(phaseRead.snapshot.planRef, predecessorRead.goal.activePlanRevision);
         const policy = goalStartPolicy({ action: 'enter', goal: goalScope.goal,
           predecessor: { exists: true, cancelled: predecessorRead.goal.desiredState === 'cancelled',
             formallyCompletedForActivePlan: formallyCompleted } });
@@ -1561,7 +1559,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
       }
       const activePlan = goalScope.goal.activePlanRevision;
       runCtx = { ...runCtx, goal: { desiredState: goalScope.goal.desiredState,
-        activePlanMatchesClaim: activePlan !== null && sameRef(activePlan, claim.planRef) } };
+        activePlanMatchesClaim: activePlan !== null && sameJson(activePlan, claim.planRef) } };
       const onGoal = transitionRun(state, runEvent, runCtx);
       if (!onGoal.ok) return runRefusal(onGoal);
       const entryPlan = await readEntryPlanVerdict(records, { goalRef: goalRefOf(claim.task), taskId: claim.task.taskId,
@@ -1608,7 +1606,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
       if (reviewFacts !== null) {
         const review = reviewFacts.record;
         const active = review.activeRound;
-        const waitingForRound = active !== null && sameRef(active.runRef, claim.runRef)
+        const waitingForRound = active !== null && sameJson(active.runRef, claim.runRef)
           && ((review.status === 'pending_review' && active.phase === 'review')
             || (review.status === 'awaiting_proposal' && active.phase === 'proposal'))
           && (review.disposition?.hold ?? null) !== 'held';
@@ -1681,7 +1679,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
     const event = decoded.value;
     if (event.identityKey !== identity || event.fingerprint !== fingerprint) return unavailable('the recorded authorization disagrees with the request identity');
     if (event.actor.kind !== actor.kind || event.actor.id !== actor.id) return unavailable('the recorded authorization belongs to another actor');
-    if (!sameRef(event.permit.claim, claim) || event.permit.consumerId !== consumerId) {
+    if (!sameJson(event.permit.claim, claim) || event.permit.consumerId !== consumerId) {
       return unavailable('the recorded authorization disagrees with the request content');
     }
     return { status: 'committed', value: event.permit, replayed: true, cursor: receipt.cursor };
@@ -1780,7 +1778,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
     const event = decoded.value;
     if (event.identityKey !== identity || event.fingerprint !== fingerprint) return unavailable('the recorded begin disagrees with the request identity');
     if (event.actor.kind !== actor.kind || event.actor.id !== actor.id) return unavailable('the recorded begin belongs to another actor');
-    if (!sameRef(event.permit, permit) || !sameKernel(event.kernel, kernel)) {
+    if (!sameJson(event.permit, permit) || !sameKernel(event.kernel, kernel)) {
       return unavailable('the recorded begin disagrees with the request content');
     }
     return { status: 'committed', value: event.entry, replayed: true, cursor: receipt.cursor };
@@ -1881,7 +1879,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
     const event = decoded.value;
     if (event.identityKey !== identity || event.fingerprint !== fingerprint) return unavailable('the recorded entered fact disagrees with the request identity');
     if (event.actor.kind !== actor.kind || event.actor.id !== actor.id) return unavailable('the recorded entered fact belongs to another actor');
-    if (!sameRef(event.permit, permit)) return unavailable('the recorded entered fact disagrees with the request permit');
+    if (!sameJson(event.permit, permit)) return unavailable('the recorded entered fact disagrees with the request permit');
     return { status: 'committed', value: event.run, replayed: true, cursor: receipt.cursor };
   }
 
@@ -2087,7 +2085,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
     const event = decoded.value;
     if (event.identityKey !== identity || event.fingerprint !== fingerprint) return unavailable('the recorded result disagrees with the request identity');
     if (event.actor.kind !== actor.kind || event.actor.id !== actor.id) return unavailable('the recorded result belongs to another actor');
-    if (!sameRef(event.claim, claim) || event.entry.consumerId !== observation.entry.consumerId
+    if (!sameJson(event.claim, claim) || event.entry.consumerId !== observation.entry.consumerId
       || event.entry.entryGeneration !== observation.entry.entryGeneration) {
       return unavailable('the recorded result disagrees with the request content');
     }
@@ -2118,8 +2116,8 @@ function encodeLease(lease: TaskLeaseSnapshot): EncodedRecord {
 function preparedEnvelopeProblem(envelope: Record<string, unknown>, claim: TaskClaim): CoreRejection | null {
   if (envelope['schemaVersion'] !== 1) return invalid('the prepared envelope schemaVersion must be 1');
   if (!nonEmpty(envelope['envelopeId'])) return invalid('the prepared envelope requires an envelopeId');
-  if (!sameRef(envelope['runRef'], claim.runRef) || !sameRef(envelope['attemptRef'], claim.attemptRef)
-    || !sameRef(envelope['planRef'], claim.planRef)) {
+  if (!sameJson(envelope['runRef'], claim.runRef) || !sameJson(envelope['attemptRef'], claim.attemptRef)
+    || !sameJson(envelope['planRef'], claim.planRef)) {
     return invalid('the prepared envelope identity disagrees with the claim');
   }
   if (envelope['projectId'] !== claim.task.projectId || envelope['goalId'] !== claim.task.goalId
@@ -2142,27 +2140,27 @@ function manifestAgainstPrepared(
   bodyDigest: string,
   scope: WorkspaceScope,
 ): CoreRejection | null {
-  if (!sameRef(manifest.claim, facts.outbox.claim)) return invalid('the saved manifest claim disagrees with the persisted claim');
-  if (!sameRef(manifest.roleBinding, prepared.envelope.roleBinding)) return forbidden('the saved manifest role binding disagrees with the envelope');
-  if (!sameRef(manifest.workspaceSnapshot, prepared.envelope.workspaceSnapshot)) {
+  if (!sameJson(manifest.claim, facts.outbox.claim)) return invalid('the saved manifest claim disagrees with the persisted claim');
+  if (!sameJson(manifest.roleBinding, prepared.envelope.roleBinding)) return forbidden('the saved manifest role binding disagrees with the envelope');
+  if (!sameJson(manifest.workspaceSnapshot, prepared.envelope.workspaceSnapshot)) {
     return forbidden('the saved manifest workspace snapshot disagrees with the envelope');
   }
-  if (!sameRef(manifest.budget, prepared.envelope.budget)) return forbidden('the saved manifest budget disagrees with the envelope');
-  if (!sameRef(manifest.permissions, prepared.envelope.permissions)) {
+  if (!sameJson(manifest.budget, prepared.envelope.budget)) return forbidden('the saved manifest budget disagrees with the envelope');
+  if (!sameJson(manifest.permissions, prepared.envelope.permissions)) {
     return forbidden('the saved manifest permissions disagree with the envelope');
   }
-  if (!sameRef(manifest.sourceRefs, prepared.envelope.sourceRefs)) return forbidden('the saved manifest sources disagree with the envelope');
-  if (!sameRef(manifest.sessionRole, facts.session.role)) return forbidden('the saved manifest session role disagrees with the Session');
+  if (!sameJson(manifest.sourceRefs, prepared.envelope.sourceRefs)) return forbidden('the saved manifest sources disagree with the envelope');
+  if (!sameJson(manifest.sessionRole, facts.session.role)) return forbidden('the saved manifest session role disagrees with the Session');
   if (manifest.workspaceSnapshot.workspaceId !== scope.workspaceId) return forbidden('the saved manifest workspace is outside the Host scope');
   if (manifest.inputDigest !== artifactBodyDigest(manifest.input)) return invalid('the saved manifest inputDigest does not match its input');
   const binding = prepared.inputBinding;
   if (binding.inputDigest !== manifest.inputDigest) return invalid('the input binding digest disagrees with the saved manifest input');
   if (binding.manifestDigest !== bodyDigest) return invalid('the input binding manifestDigest disagrees with the saved manifest body');
-  if (!sameRef(binding.materialAccessRefs, manifest.materialAccessRefs)) {
+  if (!sameJson(binding.materialAccessRefs, manifest.materialAccessRefs)) {
     return forbidden('the input binding material access refs disagree with the saved manifest');
   }
-  if (!sameRef(binding.deliveryRefs, manifest.deliveryRefs)) return forbidden('the input binding delivery refs disagree with the saved manifest');
-  if (!sameRef(binding.additionalMaterialRefs ?? [], manifest.additionalMaterialRefs)) {
+  if (!sameJson(binding.deliveryRefs, manifest.deliveryRefs)) return forbidden('the input binding delivery refs disagree with the saved manifest');
+  if (!sameJson(binding.additionalMaterialRefs ?? [], manifest.additionalMaterialRefs)) {
     return forbidden('the input binding additional materials disagree with the saved manifest');
   }
   return null;

@@ -12,7 +12,7 @@
  * acceptance or Role binding, and it never turns an omitted optional field into
  * a required one.
  */
-import { rejected as coreRejected } from '../../../contracts/core/rejections.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection } from '../../../contracts/core/results.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PlanRevisionDraft } from '../../../contracts/plan.js';
@@ -40,10 +40,6 @@ export type { InitialPlanAnswerFacts } from '../../../contracts/query-job.js';
 export type InitialPlanNormalization =
   | { status: 'plan'; summary: string; draft: PlanRevisionDraft; origin: InitialPlanOrigin }
   | { status: 'needs_decision'; summary: string; questions: string[] };
-
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return coreRejected(code, reason);
-}
 
 /** Deterministic identity from the SAVED Job intent only; never a caller field. */
 export function initialPlanIdFor(input: { projectId: string; goalId: string; intentId: string }): string {

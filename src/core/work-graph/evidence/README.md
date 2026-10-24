@@ -26,7 +26,7 @@
 | `reverifyRound` | `src/core/work-graph/evidence/evidence-service.ts:1793` | 在 finalized 非 PASS 链头上开后继轮，或提交一条策略拒绝 | 自动复核/返工；不要另开第二轮 |
 | `compileVerificationPlan` | `src/core/work-graph/evidence/verification-plan.ts:61` | 纯编译：每个必需要求绑定可覆盖的冻结能力，缺覆盖记 `uncovered`，空必需集 `invalid`，不接受调用方 digest/coverage/PASS | open/reverify 冻结检查计划 |
 | `evidenceApplicabilityWithBasis`、`selectEffectiveEvidenceSet` | `src/core/work-graph/tasks/evidence-coverage.ts:153`、`src/core/work-graph/tasks/evidence-coverage.ts:76` | 证据适用性判定与有效证据的单一纯折叠 | finalize 与完成读取；不要在本层重算 applicability |
-| `sameRef` **正本** | `src/core/work-graph/state/ref-equality.ts:2` | 引用的结构判等 | 证据 commit 组装；执行入口的 `src/core/work-graph/tasks/execution-entry-service.ts:144` 是旧副本 |
+| `sameRef` **正本** | `src/core/work-graph/state/ref-equality.ts:2` | 引用的结构判等；不是 `sameJson` 的等价物 | 证据 commit 组装；执行入口的 `src/core/work-graph/tasks/execution-entry-service.ts:144` 只是转出 `sameJson as sameRef`，不是结构副本 |
 | `mergeGuards`、`mapStoreFailure` | `src/core/work-graph/persistence/record-guards.ts:12`、`src/core/work-graph/tasks/execution-entry-service.ts:150` | 合并一个 commit 的读 guards、把执行写失败映射成 `CoreRejection` | 证据 commit 组装（M1-27、M1-30、M1-32） |
 | `bindTrustedContext`、`isolateWrite` | `src/core/work-graph/tasks/execution-entry-service.ts:210`、`src/core/work-graph/tasks/execution-entry-service.ts:218` | 绑定可信 Host 上下文并同步隔离写入请求 | 每个证据写入入口；不要另写绑定与检查顺序 |
 
@@ -42,5 +42,4 @@
 - 不要另写证据适用性或有效证据折叠：用 `evidenceApplicabilityWithBasis`、`selectEffectiveEvidenceSet`；不要从 Plan、列表顺序或时间猜 supersession。
 - 不要绕过 `state/verification-machine.ts` 手改 round/check/index 的受保护字段；轮次与检查写入都由机器决定并一个 commit 写齐（M1-01、M1-36）。
 - 不要 import `queries/sessions`、`communication/views`、`agent-runtime`、`app`/`business`/`composition`，也不要另写 RecordStore 事务、store 失败映射或 guard 合并；用注入的 `records` 与 `mapStoreFailure`、`mergeGuards` 等既有缝（M1-27、M1-30）。
-- `sameRef` 另有旧副本：`src/core/work-graph/tasks/execution-entry-service.ts:144`，正本在 `src/core/work-graph/state/ref-equality.ts:2`，新代码一律用正本，旧副本由清理轮删除。
 - 不要把不可读的 source、配置或链头当成“没有轮次”或空证据；`incomplete`/`unavailable` 原样返回，未知窗口只能等待。

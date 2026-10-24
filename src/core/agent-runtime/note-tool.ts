@@ -17,6 +17,7 @@
  * note service remains the one owner of authority: a non-scribe `review` gets
  * the service's `forbidden`, not a second tool-level check.
  */
+import { messageOf } from '../../contracts/error-message.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type {
   NoteCheckPort, NoteCheckV1, NoteDispositionResult, NoteWritePort, WriteNoteInput,
@@ -115,10 +116,6 @@ function failure(callId: string, code: 'invalid_arguments' | 'execution_failed',
     schemaVersion: 1, callId, status: 'error',
     error: { code, message, retryable: false }, output: [], effects: noneEffects(),
   };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 // --------------------------------------------------------------------------

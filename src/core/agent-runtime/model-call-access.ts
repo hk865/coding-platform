@@ -9,6 +9,7 @@
  * the provider and never returns a fabricated success.
  */
 import { createHash } from 'node:crypto';
+import { messageOf } from '../../contracts/error-message.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreError } from '../../contracts/core/results.js';
 import type { TaskEntryPermit } from '../work-graph/model/execution-entry-contracts.js';
@@ -33,10 +34,6 @@ export class RuntimeModelCallRejected extends Error {
 }
 
 const attemptIdFor = (requestId: string): string => 'b2-model-attempt:' + createHash('sha256').update(requestId).digest('hex');
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 export function createRuntimeModelCallAccess(deps: RuntimeModelCallAccessDependencies): ModelCallAccess {
   const { permit, context } = deps;

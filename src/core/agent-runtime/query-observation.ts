@@ -9,6 +9,9 @@
  * transcript and no per-run cache: every observation is reconstructed from the
  * persisted QueryRun + the original Kernel records.
  */
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
@@ -46,18 +49,6 @@ const MAX_SOURCES = 64;
 
 type DecodedRecord = { position: number; record: KernelSessionRecord };
 
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 function ownContext(ctx: CoreCallContext): CoreCallContext | null {
   try {
     return {

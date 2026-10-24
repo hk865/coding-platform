@@ -43,7 +43,8 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { ReadResult } from '../../contracts/core/results.js';
 import type { QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../contracts/query-job.js';
-import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { canonicalJson, canonicalKey as keyOf, sameJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { messageOf } from '../../contracts/error-message.js';
 import { isRecord } from '../../contracts/validation/common.js';
 import {
   LIVE_ATTEMPT_PHASES, REQUEST_ADVANCES_PER_PASS, REQUEST_BACKOFF_INITIAL_MS, REQUEST_BACKOFF_MAX_MS,
@@ -51,7 +52,6 @@ import {
   type SecretaryProfilePort, type SecretaryProfileV1,
 } from '../../core/work-graph/model/request-contracts.js';
 import type { SessionFactsPort } from '../../core/work-graph/model/session-facts-contracts.js';
-import { keyOf } from '../../core/work-graph/queries/request-round-claims.js';
 import {
   compareRequestRounds, oldestPendingRound, type RequestRoundsFactsV1,
 } from '../../core/work-graph/queries/request-rounds-read.js';
@@ -216,10 +216,6 @@ function decodeTraversal(continuation: string | null): RoundTraversalV1 {
 
 function encodeTraversal(traversal: RoundTraversalV1): string {
   return JSON.stringify(traversal);
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** A workspace's place in the queue maps; the project and workspace ids identify it. */

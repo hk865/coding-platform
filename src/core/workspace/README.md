@@ -10,6 +10,7 @@
 
 ## 文件
 - `access.ts` — 根绑定与每次读取资格：包装 `WorkspaceSandbox`，把 Host 授权与内核路径策略取交集。
+- `path-validation.ts` — `isSafeSourceRelativePath`：唯一的词法源相对路径规则（非空、≤4096 UTF-16、无 `\`/`:`/NUL、每段非空且不是 `.`/`..`）。
 - `ports.ts` — 本层请求/结果/端口 DTO，`deepFreeze` 与 `validateSourceQuery`。
 - `workspace-tools.ts` — 装配唯一公开工具面 `WorkspaceToolsPort`、Host 限额校验与 continuation 读取。
 - `capture.ts` — `CaptureRegistry`：捕获/观测、查询、导出、核验、释放、架构源、文件图、读/比较、关闭。
@@ -62,7 +63,7 @@
 | `PythonSourceIndex` | `src/core/workspace/python-source-index.ts:17` | 权限过滤后的 Python 来源查询 | 探索工具要 Python 符号/import 时 |
 | `readSourceIdentity` | `src/core/workspace/source-identity.ts:4` | 读 workspace 的固定 HEAD 身份 | 需要来源 pin、又不想引入完整 Git 读取时 |
 
-路径校验的正本定为 `src/core/workspace/access.ts` 这一层（尚未落地；`access.ts` 目前只做根绑定与授权）。现存旧副本的用途差异见“不要做”。
+路径校验的共用词法规则是 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）；真实路径包含判断在 app 的 `isPathWithin`，Query 范围规则是 `validateSourceQuery`（`src/core/workspace/ports.ts:226`）。
 
 ## 内部用
 - 捕获/读取内部件：`captureProjectSource`、`captureObservationSource`、`projectSnapshotOf`、`observationSkipReason`、`normalizeCoverageNotes`、`captureTextSource`、`scanTypeScript`、`querySource`、`toSourceLocation`、`toSourceRelation`、`toCallRelation`、`toSourceDiagnostic`、`toSourceFileEntry`、`readCapturedFile`、`readWorkingTreeFile`、`diffContent`、`summaryChanges`、`comparisonChanges`、`compareCapturedFiles`、`scopeContains`、`manifestOf`、`readFailure`、`deepFreeze`、`validateSourceQuery`。
@@ -75,10 +76,7 @@
 - 不要另写捕获、分页游标或各语言索引规则；用 `CaptureRegistry` 和同一 capture 的游标。
 - 不要用 shell/hook/外部 diff 读仓库，也不要让项目自带的编译器执行；Git 与解析器调用已有固定入口。
 - 不要承诺“完整工作树”：capture 的 scope/coverage 有明确上限，`complete` 不等于整个仓库或完整调用图。
-- `isSafeSourcePath` 另有旧副本：`src/core/workspace/project-source-snapshot.ts:101`，用于项目输入/源码捕获的词法校验；正本定为 `src/core/workspace/access.ts` 这一层（尚未落地），新代码一律用正本，旧副本由清理轮删除。
-- `isSafeWorkspaceRelativePath` 另有旧副本：`src/core/workspace/continuation-diff-reads.ts:38`，用于 diff 路径，先 `path.normalize`、能识别 `a/../..` 这类逃逸；正本同上，新代码一律用正本，旧副本由清理轮删除。
-- `reviewerSourcePathAllowed` 另有旧副本：`src/core/workspace/reviewer-source-reader.ts:4`，在词法规则上再加 candidate 排除项；正本同上，新代码一律用正本，旧副本由清理轮删除。
-- `safeRelative` 另有旧副本：`src/core/workspace/ports.ts:223`、`src/core/workspace/ports.ts:227`、`src/core/workspace/workspace-read.ts:22`（三份同形词法校验，供请求 DTO），`validateSourceQuery`（`src/core/workspace/ports.ts:227`）在它之上做查询范围校验；正本同上，新代码一律用正本，旧副本由清理轮删除。
-- `messageOf` 另有旧副本：`src/core/workspace/workspace-read.ts:26`，正本将落在 `src/contracts`（M1-38，尚未落地），新代码一律用正本，旧副本由清理轮删除。
-- `messageOf` 另有旧副本：`src/core/workspace/access.ts:153`，正本将落在 `src/contracts`（M1-38，尚未落地），新代码一律用正本，旧副本由清理轮删除。
-- `messageOf` 另有旧副本：`src/core/workspace/continuation-diff-reads.ts:31`，正本将落在 `src/contracts`（M1-38，尚未落地），新代码一律用正本，旧副本由清理轮删除。
+- `isSafeSourcePath`（`src/core/workspace/project-source-snapshot.ts:102`）是源码捕获的路径规则，不做 4096 上限；它不是 `isSafeSourceRelativePath` 的副本。
+- `isSafeWorkspaceRelativePath`（`src/core/workspace/continuation-diff-reads.ts:37`）先 `path.normalize` 再判定，用于 diff 路径，不是词法规则的副本。
+- `reviewerSourcePathAllowed`（`src/core/workspace/reviewer-source-reader.ts:5`）在词法规则上再加 Candidate 排除项；它保留自己的规则。
+- `validateSourceQuery`（`src/core/workspace/ports.ts:226`）是 Query 范围规则；`capture.ts`、`workspace-read.ts` 与 `ports.ts` 都只调 `isSafeSourceRelativePath`，不另写词法校验。

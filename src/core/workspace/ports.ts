@@ -3,6 +3,7 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SourceCaptureRef } from '../../contracts/core/source.js';
 import type { ArchitectureSourceMapping, ArchitectureSourceSnapshotV1 } from '../../contracts/architecture-source.js';
 import type { ProjectFileGraphV1 } from './architecture-language-provider.js';
+import { isSafeSourceRelativePath as safeRelative } from './path-validation.js';
 
 /**
  * WorkspaceTools wire contract. `WorkspaceCapturePort` is the R2c capture subset; the full
@@ -220,9 +221,7 @@ export function deepFreeze<T>(value: T): T {
   return value;
 }
 
-const safeRelative = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 4096 &&
-  !/[\\:\0]/.test(value) && value.split('/').every(segment => !!segment && segment !== '.' && segment !== '..');
-
+// The Query scope rule (path plus coordinates and text), not a copy of the source-path rule.
 /** Validate query scope in the core so a malformed path/prefix/coordinate is rejected, never an empty match. */
 export function validateSourceQuery(query: SourceQuery): string | null {
   const scope = (value: string | undefined, label: string) => value !== undefined && !safeRelative(value) ? `${label} must be a normalized relative path` : null;

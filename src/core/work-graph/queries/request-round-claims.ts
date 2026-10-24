@@ -18,7 +18,7 @@ import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreRejection } from '../../../contracts/core/results.js';
 import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
-import { canonicalJson, sameJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalKey as keyOf, sameJson } from '../../../contracts/fingerprint.js';
 import type {
   QueryJobRef, QueryJobSnapshot, QueryRunSnapshot, SecretaryRoundMaterialV1,
 } from '../../../contracts/query-job.js';
@@ -31,10 +31,6 @@ import {
 } from '../state/request-rounds.js';
 import { releaseUnenteredQuerySession } from '../state/session-availability.js';
 import type { RequestRoundsFactsV1 } from './request-rounds-read.js';
-
-export function keyOf(value: unknown): string {
-  return canonicalJson(value as JsonValue);
-}
 
 /** A no-op tail CAS: `end_unbound` adds no round but still excludes a concurrent append. */
 export function noopTailClaim(facts: RequestRoundsFactsV1): UniqueClaimChange {

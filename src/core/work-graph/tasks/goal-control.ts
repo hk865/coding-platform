@@ -20,7 +20,8 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/core/results.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalPhaseRef } from '../../../contracts/goal-phase.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
@@ -31,7 +32,7 @@ import {
   goalSnapshotFromDesiredStateChangedEvent, type GoalDesiredStateChangedEvent,
 } from '../persistence/record-codecs.js';
 import { goalStateOf, transitionGoal, type GoalControl } from '../state/goal-machine.js';
-import { bindTrustedContext, isolateWrite, isRecord, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef } from './execution-entry-service.js';
+import { bindTrustedContext, isolateWrite, isRecord, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty } from './execution-entry-service.js';
 import type { GraphWrite, SetGoalControlInput } from '../model/task-contracts.js';
 import { readGoal, readGoalPhase } from './plan-readers.js';
 
@@ -51,7 +52,6 @@ function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRe
 }
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
-function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function refKeyOf(value: unknown): string { return canonicalJson(value as JsonValue); }
 
 function inputProblem(value: unknown, projectId: string): string | null {

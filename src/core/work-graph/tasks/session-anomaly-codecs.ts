@@ -9,7 +9,7 @@
  */
 import type { SessionAnomalyAnchorRef, SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
-import { hasOnlyKeys, invalid, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
+import { hasOnlyKeys, invalid, isRecord as isObject, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
@@ -42,9 +42,6 @@ export type SessionAnomalyRecordedEventV1 = Slice1EventHeaderV1 & {
 
 type UnknownRecord = Record<string, unknown>;
 
-function isObject(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 function isRevisionOne(value: unknown): value is number {
   return value === 1;
 }

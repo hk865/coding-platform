@@ -67,7 +67,9 @@ function attemptRefProblem(value: unknown): string | null {
   }
   return null;
 }
-function sessionRefProblem(value: unknown): string | null {
+/** This codec's loose SessionRef check: extra keys are allowed (the shared
+ *  `sessionRefProblem` also requires only the known keys). */
+function looseSessionRefProblem(value: unknown): string | null {
   if (!isJsonObject(value) || !nonEmpty(value['projectId']) || !nonEmpty(value['sessionId'])) {
     return 'sessionRef must be a complete SessionRef';
   }
@@ -233,7 +235,7 @@ export function taskLeaseReleaseV1Problem(value: unknown): string | null {
   if (runProblem !== null) return runProblem;
   const attemptProblem = attemptRefProblem(value['attemptRef']);
   if (attemptProblem !== null) return attemptProblem;
-  const sessionProblem = sessionRefProblem(value['sessionRef']);
+  const sessionProblem = looseSessionRefProblem(value['sessionRef']);
   if (sessionProblem !== null) return sessionProblem;
   if (!isPositiveSafeInteger(value['generation'])) return 'lease release generation must be a positive safe integer';
   if (!nonEmpty(value['releasedAt'])) return 'lease release releasedAt is required';

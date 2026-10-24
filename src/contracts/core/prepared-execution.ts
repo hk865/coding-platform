@@ -34,17 +34,11 @@ import type {
 import type { BoundedTextV1 } from '../continuation-brief.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../prompts/platform-pack.generated.js';
 import type { PromptTextsV1 } from '../prompts/prompt-set.js';
+import { packString } from '../prompts/pack-string.js';
 import { renderTemplate } from '../prompts/render-template.js';
 
 /** A direct call keeps the generated platform pack (ruling 14). */
 const DEFAULT_TEXTS: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1;
-
-/** One fixed string of the resolved pack; a missing key is a pack bug. */
-function packString(texts: PromptTextsV1, key: string): string {
-  const value = texts.strings[key];
-  if (value === undefined) throw new Error(`the resolved prompt pack has no string "${key}"`);
-  return value;
-}
 
 /**
  * K3: the review-round input handed to the Kernel (spec §2). Only the review /

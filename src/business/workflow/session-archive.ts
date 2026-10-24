@@ -19,9 +19,10 @@ import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { ArchiveChangedFilesV1, ArchiveRequeueOriginV1, SessionAnomalyAnchorV1 } from '../../contracts/session-anomaly.js';
 import type { SubmitControlInput } from '../../contracts/control-intent.js';
 import type { TaskRequeueRef, TaskReworkRefusalSnapshotV1 } from '../../contracts/task-requeue.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { canonicalJson, sameJson as sameCanonical, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { SessionMailboxPort } from '../../core/work-graph/model/communication-contracts.js';
-import type { GraphWrite } from '../../core/work-graph/model/session-contracts.js';
+import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { RequeueTaskInput } from '../../core/work-graph/model/claim-contracts.js';
 import type { SessionFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
 import type { WorkflowDependencies } from './ports.js';
@@ -96,12 +97,6 @@ type HostActor = { kind: 'human' | 'system'; id: string };
 const ARCHIVE_MODES: readonly SessionArchiveRequestV1['mode'][] =
   ['operator', 'executor_idle', 'retired', 'answered_copy', 'handoff_complete'];
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function reject(code: CoreRejection['code'], reason: string, current?: VersionPin[]): CoreRejection {
   return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
 }
@@ -112,11 +107,6 @@ function readFailure(result: Exclude<ReadResult<unknown>, { status: 'ready' }>, 
 }
 function canonical(value: unknown): string | null {
   try { return canonicalJson(value as JsonValue); } catch { return null; }
-}
-function sameCanonical(left: unknown, right: unknown): boolean {
-  const a = canonical(left);
-  const b = canonical(right);
-  return a !== null && a === b;
 }
 function contextForActor(ctx: CoreCallContext, actor: HostActor): CoreCallContext {
   const workspaceId = ctx.workspaceId;

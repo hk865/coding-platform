@@ -55,6 +55,10 @@ export function sameJson(left: unknown, right: unknown): boolean {
         return false;
     }
 }
+/** Canonical JSON of any value; unlike `canonicalOf` an unencodable value throws. */
+export function canonicalKey(value: unknown): string {
+    return canonicalJson(value as JsonValue);
+}
 /** Canonical JSON, or `null` when the value is not canonical JSON. */
 export function canonicalOf(value: unknown): string | null {
     try {

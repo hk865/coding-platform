@@ -1,3 +1,4 @@
+import { messageOf } from '../../contracts/error-message.js';
 import {
   CONTINUATION_BRIEF_LIMITS, type ContinuationSourceCheckpointV1,
 } from '../../contracts/continuation-brief.js';
@@ -10,7 +11,6 @@ import {
   readWorkspaceBaselineFromBundle, readWorkspaceCaptureChanges,
 } from '../workspace/workspace-baseline-artifact.js';
 import type { BriefWorkspaceFacts, ReviewFileRead } from './continuation-brief-assembly.js';
-import { messageOf } from './context-support.js';
 import type { ContextAssemblerDependencies } from './context-types.js';
 import type { ContinuationWorkspaceBytes, RuntimeExecutionDependencies } from './execution-contracts.js';
 

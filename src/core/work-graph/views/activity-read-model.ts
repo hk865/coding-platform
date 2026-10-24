@@ -23,7 +23,7 @@ import type { CoreRejection, ReadResult } from '../../../contracts/core/results.
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalKey } from '../../../contracts/fingerprint.js';
 import type { QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type {
   ActivityRecordingSnapshot, ActivityTotalsV1, QueryActivitySnapshot, RunActivitySnapshot,
@@ -1006,11 +1006,6 @@ async function subjectSessionCached(
   return session;
 }
 
-function canonicalKey(value: unknown): string {
-  // Refs are plain JSON objects with stable key order; the record key is the
-  // canonical JSON of the full ref (contracts/fingerprint.canonicalJson).
-  return canonicalJson(value as JsonValue);
-}
 
 // --------------------------------------------------------------------------
 // readRunActivities (L10)

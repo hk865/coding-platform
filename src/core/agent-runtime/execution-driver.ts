@@ -9,6 +9,9 @@
  * after the Kernel persisted Turn/Run and refuses the provider when that write
  * fails or the persistent deadline has passed.
  */
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../contracts/core/prepared-execution.js';
@@ -17,7 +20,7 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import type { GoalRef, WorkspaceRef } from '../../contracts/ledger.js';
 import type { UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
 import type { CommandRerunRequestV1 } from '../../contracts/command-rerun-request.js';
-import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
+import { canonicalJson, sameJson as sameRef, sha256Hex } from '../../contracts/fingerprint.js';
 import type {
   HookPort, SqliteStores, ToolCall, ToolDefinition, ToolGroupBarrier, WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
@@ -88,22 +91,8 @@ export type ExecutionDriverService = {
 
 type KernelSessionReader = Pick<SqliteStores, 'get' | 'read'>;
 
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-
 export { BUILTIN_TOOL_NAMES, RESERVED_TOOL_NAMES } from './tool-group-assembly.js';
 export { createGraphHistoryProxy } from './tool-group-assembly.js';
-
-function sameRef(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as never) === canonicalJson(right as never); } catch { return false; }
-}
 
 /**
  * Ruling 16: the Host binding still names the prepared prompt selection and the
@@ -141,9 +130,6 @@ function boundInputProblem(run: Pick<RunSnapshot, 'inputBinding' | 'envelope'>, 
     return 'the Prepared value is not canonical JSON';
   }
   return null;
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 function mapRead(result: ReadResult<unknown>): CoreRejection {
   if (result.status === 'ready') return rejected('unavailable', 'a must-fail read unexpectedly returned a value');

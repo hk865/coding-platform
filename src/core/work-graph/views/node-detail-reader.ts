@@ -27,7 +27,7 @@ import type { RunRef, RunSnapshot, TaskTriple, DispatchOutboxRef } from '../../.
 import type { ModuleContainment, ModuleDefinition } from '../../../contracts/architecture-catalog.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { GraphNodeRefV1 } from '../../../contracts/graph-context.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalKey as keyOf } from '../../../contracts/fingerprint.js';
 import type {
   ExecutedFileV1, FromExecutedFilesV1, GraphHoverReadV1, GroupHoverV1, LineBriefV1, LineCountV1,
   LineParticipationV1, ModuleHoverV1, NodeDetailRequestV1, NodeDetailV1, NodeNoteRowV1, NodeNotesV1, NodeRiskV1,
@@ -81,10 +81,6 @@ const PAGE = 200;
 const ZERO_CURSOR = 'c0000000000' as CommitCursor;
 /** L1b-style guard: the anomaly index is paged to the end, but never unbounded. */
 const MAX_ANOMALY_PAGES = 1000;
-
-function keyOf(value: unknown): string {
-  return canonicalJson(value as JsonValue);
-}
 
 /** A failed read as the port rejection the whole read returns (rule 3 / item 2). */
 function storeRejection(read: { status: string; code?: string; reason?: string }): CoreRejection {

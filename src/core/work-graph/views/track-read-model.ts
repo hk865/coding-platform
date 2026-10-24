@@ -30,7 +30,7 @@ import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { VerificationRoundRef, RoundSnapshot } from '../../../contracts/verification.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalKey, canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
   ACTIVITY_READ_RECORD_CAP,
   type ActivityRecordingSnapshot,
@@ -166,9 +166,6 @@ class ForbiddenError extends Error {
 type OrderedPage = Awaited<ReturnType<RecordOrderedLookupPort['lookupOrdered']>>;
 type EqualityPage = Awaited<ReturnType<RecordLookupPort['lookup']>>;
 
-function canonicalKey(value: unknown): string {
-  return canonicalJson(value as JsonValue);
-}
 function sessionKey(session: SessionRef): string {
   return `${session.projectId}/${session.sessionId}`;
 }

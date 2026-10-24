@@ -48,6 +48,7 @@
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
 import type { ReadResult, WriteResult } from '../contracts/core/results.js';
+import { messageOf } from '../contracts/error-message.js';
 import type { RunRef, RunSnapshot } from '../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../contracts/ledger.js';
 import type { RecordCommitNotice } from '../composition/commit-observer.js';
@@ -176,7 +177,6 @@ type RowVerdict = { submit: true } | { submit: false; reason: string; watch: Con
 /** A Run's submission is retried at most this often within one pass (idempotency / revision conflicts). */
 const MAX_RUN_ATTEMPTS = 3;
 
-function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function reasonOf(result: { status: string; reason?: string }): string {
   return result.reason === undefined ? result.status : `${result.status}: ${result.reason}`;
 }

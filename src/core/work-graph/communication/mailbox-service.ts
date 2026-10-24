@@ -41,6 +41,7 @@
  * constructors (§14.1).
  */
 import type { ArtifactRecord, ArtifactRef } from '../../../contracts/artifact.js';
+import { sameActorIdentity as sameActor } from '../../../contracts/actor-equality.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
@@ -80,7 +81,8 @@ import { checkPlainSessionRef, decodeSessionRecord, encodeSessionRecord, plainSe
 import {
   SESSION_ARCHIVE_REQUESTED_EVENT, sessionArchiveChangedEventFromEvent, type SessionArchiveChangedEventV1,
 } from '../sessions/lifecycle-record-codecs.js';
-import type { GraphWrite, SessionPage, SessionPageRequest } from '../model/session-contracts.js';
+import type { SessionPage, SessionPageRequest } from '../model/session-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import { SESSION_BY_PROVENANCE_LOOKUP, SESSION_REPLY_BY_HANDLER_LOOKUP } from '../model/session-facts-contracts.js';
 import type { DecisionMessagePort, MessageWriteOwnerPort } from '../model/decision-contracts.js';
 import type { RecordBatchRead, EncodedDomainEvent, EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreFailure, StoreResult, UniqueClaimChange } from '../../record-store/ports.js';
@@ -125,10 +127,6 @@ type HostActor = Extract<CorePrincipal, { kind: 'host' }>['actor'];
 // --------------------------------------------------------------------------
 // Small pure helpers
 // --------------------------------------------------------------------------
-
-function sameActor(left: unknown, right: unknown): boolean {
-  return isObject(left) && isObject(right) && left['kind'] === right['kind'] && left['id'] === right['id'];
-}
 
 /**
  * The historical mailbox paths here address a Session. This pure discriminator

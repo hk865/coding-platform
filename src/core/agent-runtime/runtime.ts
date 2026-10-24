@@ -35,6 +35,8 @@ import {
   type PromptRecordRequestV1, type PromptSetV1,
 } from '../../contracts/prompts/prompt-set.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
+import { messageOf as sharedMessageOf } from '../../contracts/error-message.js';
+import { rejected as sharedRejected } from '../../contracts/core/rejections.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
@@ -60,9 +62,9 @@ const unsupported = (reason: string) => ({
   status: 'rejected' as const, code: 'unsupported' as const, reason,
 });
 
-const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error);
-const rejected = (code: CoreRejection['code'], reason: string): CoreRejection =>
-  ({ status: 'rejected', code, reason });
+/** Local names for the shared originals, kept because the production-reach allowlist names these two nodes. */
+const messageOf: (error: unknown) => string = sharedMessageOf;
+const rejected: (code: CoreRejection['code'], reason: string) => CoreRejection = sharedRejected;
 
 /** Ruling 29: the Query manifest is re-read through these exact identity fields. */
 function sameQueryRunRef(value: unknown, ref: QueryRunRef): boolean {

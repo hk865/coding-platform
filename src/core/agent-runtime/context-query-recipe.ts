@@ -6,6 +6,8 @@ import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.g
 import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
 import { isRequestRound } from '../../contracts/query-job.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
 import type { GraphContextFactsV1 } from '../work-graph/model/graph-context-contracts.js';
@@ -14,11 +16,12 @@ import {
   queryFocusLines, queryPlanSummary, rolePayload, topLevelModuleCards,
 } from './context-fact-text.js';
 import {
-  CONTEXT_FORMAT_VERSION, packString, queryContextPrelude, renderQueryContext, sectionOrderFor,
+  CONTEXT_FORMAT_VERSION, queryContextPrelude, renderQueryContext, sectionOrderFor,
 } from './context-rendering.js';
+import { packString } from '../../contracts/prompts/pack-string.js';
 import { takesSessionHistoryOf } from './context-history-facts.js';
 import { assembleSecretaryContext } from './context-secretary-recipe.js';
-import { messageOf, rejected, sortedSources } from './context-support.js';
+import { sortedSources } from './context-support.js';
 import type {
   AssembledContextV1, ContextAssemblerDependencies, ContextQueryHistoryInputV1,
 } from './context-types.js';

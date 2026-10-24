@@ -7,9 +7,10 @@
  * transcript, reduces Run state or decides entry/recovery/terminal outcome.
  */
 import { Buffer } from 'node:buffer';
+import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
-import type { CoreError, CoreRejection, Page, ReadResult } from '../../contracts/core/results.js';
+import type { Page, ReadResult } from '../../contracts/core/results.js';
 import { sessionRecordSchema } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { SessionRecord as KernelSessionRecord } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { SessionHistoryEntry, SessionHistoryRange } from './session-operations.js';
@@ -44,10 +45,6 @@ type ExecutionHistoryCursor = {
   after: string;
 };
 
-function rejected(code: CoreError, reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-
 function signalAborted(signal: unknown): boolean {
   return signal instanceof AbortSignal && signal.aborted;
 }
@@ -56,7 +53,8 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-function isSessionRef(value: unknown): value is SessionRef {
+/** Looser history-read admission than the canonical check: only a non-null object with two non-empty fields; arrays and extra keys pass. */
+function looksLikeSessionRef(value: unknown): value is SessionRef {
   if (typeof value !== 'object' || value === null) return false;
   const ref = value as Record<string, unknown>;
   return isNonEmptyString(ref['projectId']) && isNonEmptyString(ref['sessionId']);
@@ -253,7 +251,7 @@ export function createExecutionHistoryReader(deps: ExecutionHistoryDependencies)
         return rejected('cancelled', 'the execution history read was cancelled before delegation');
       }
       const { sessionRef, executionIdentity, afterCursor, throughCursor, limit, range } = owned;
-      if (!isSessionRef(sessionRef) || !isExecutionIdentity(executionIdentity)) {
+      if (!looksLikeSessionRef(sessionRef) || !isExecutionIdentity(executionIdentity)) {
         return rejected('invalid', 'targeted execution history requires a Session reference and a runId/turnId identity');
       }
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_EXECUTION_HISTORY_LIMIT) {

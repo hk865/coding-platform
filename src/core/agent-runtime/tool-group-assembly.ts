@@ -7,6 +7,8 @@
  * modules that own each path keep their own eligibility and failure rules; only
  * the assembly code below is shared.
  */
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
@@ -64,13 +66,6 @@ const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
  * The set is deliberately NOT all of `RESERVED_TOOL_NAMES`: a mutation name
  * such as `edit` stays unknown and is refused `unsupported` (KB-09). */
 const EXPLORATION_TOOL_NAME_SET = new Set<string>(EXPLORATION_TOOL_NAMES);
-
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** Builtin Kernel file/process tools. The platform coordination tools below are
  * extension tools and are never file/read/shell capabilities. */

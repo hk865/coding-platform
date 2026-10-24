@@ -21,7 +21,8 @@ import type {
 } from '../../contracts/control-intent.js';
 import type { ReadResult } from '../../contracts/core/results.js';
 import type { RunContinuationV1, RunRef, RunSnapshot, TaskTriple } from '../../contracts/dispatch.js';
-import { canonicalJson } from '../../contracts/fingerprint.js';
+import { canonicalOf as keyOf, sameJson as sameRef } from '../../contracts/fingerprint.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
 import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
 import type { SourceSnapshotReads } from '../work-graph/source-authority-ports.js';
@@ -105,12 +106,6 @@ export type RuntimeControlCoordinator = {
   close(): Promise<void>;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function isControlIntentRef(value: unknown): value is ControlIntentRef {
   return isRecord(value) && value['aggregateType'] === 'ControlIntent'
     && nonEmpty(value['projectId']) && nonEmpty(value['workspaceId']) && nonEmpty(value['intentId']);
@@ -119,19 +114,10 @@ function isRunRef(value: unknown): value is RunRef {
   return isRecord(value) && value['aggregateType'] === 'Run'
     && nonEmpty(value['projectId']) && nonEmpty(value['goalId']) && nonEmpty(value['runId']);
 }
-function sameRef(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as never) === canonicalJson(right as never); } catch { return false; }
-}
-
 export function createRuntimeControlCoordinator(
   deps: RuntimeControlCoordinatorDependencies,
 ): RuntimeControlCoordinator {
   const handles = new Map<string, RuntimeControlHandle>();
-  // The key is the FULL canonical RunRef. A serialization failure never
-  // degrades to the bare runId: such a handle is simply not addressable.
-  const keyOf = (runRef: RunRef): string | null => {
-    try { return canonicalJson(runRef as never); } catch { return null; }
-  };
   const unsupported = (reason: string): ReadResult<ControlIntentSnapshotV1> =>
     ({ status: 'rejected', code: 'unsupported', reason });
   /** True while the live Kernel call can still actually receive a signal. */

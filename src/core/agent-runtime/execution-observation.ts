@@ -10,6 +10,9 @@
  * keeps the real occupancy. No Kernel entry yet and no locator means there is
  * nothing to release and the current record is returned unchanged.
  */
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { VersionPin } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
@@ -17,7 +20,7 @@ import type { SessionRecord } from '../../contracts/core/session.js';
 import type { ControlIntentRef, ControlObservationV1 } from '../../contracts/control-intent.js';
 import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
 import type { ExecutionAuthorizationV2, RunRef, RunSnapshot, RuntimeEventV1 } from '../../contracts/dispatch.js';
-import { canonicalJson } from '../../contracts/fingerprint.js';
+import { canonicalJson, sameJson as sameRef } from '../../contracts/fingerprint.js';
 import {
   assertTranscriptExchangeIntegrity, projectTerminalTranscript, validateRunStateInvariants,
 } from '../../../vendor/coding-agent/dist/public-api.js';
@@ -87,18 +90,6 @@ type PendingUnknownEnd = { endPosition: number; requestId: string;
  * the SAME idempotency fingerprint and recovers the original receipt. */
 type PendingControlAck = { observation: ControlObservationV1; requestId: string; expected: VersionPin[] };
 
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 function settledStatus(status: string): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
@@ -157,9 +148,6 @@ export function terminalEventOf(state: RunState, runRef: RunRef, sequence: numbe
 
 type ControlAckKind = ControlObservationV1['kind'];
 
-function sameRef(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as never) === canonicalJson(right as never); } catch { return false; }
-}
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }

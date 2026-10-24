@@ -50,9 +50,9 @@
 | `deriveArchiveStepCommitIdentityV1` | `src/contracts/core/session-archive.ts:52` | 由请求与步骤派生 identityKey、fingerprint、eventId。 | 归档各步骤提交；步骤必须属于该请求，否则抛错。 |
 | `SessionMessageRef` | `src/contracts/core/session-message.ts:24` | 带项目/工作区范围的完整消息聚合引用。 | 寻址消息；`messageId` 单独不是地址，也不是授权。 |
 | `isUserMessageRecipient` | `src/contracts/core/session-message.ts:99` | 结构判定收件人是否为工作区用户。 | 分派/展示消息；不要从 id 猜收件人。 |
-| `renderUnknownCallReviewZh` | `src/contracts/core/prepared-execution.ts:112` | 把结构化审查输入渲染成中文章节，可重渲染比对。 | 准备审查/提案轮输入；WorkGraph 校验章节区间与摘要时复用。 |
-| `PreparedTaskManifestV1` | `src/contracts/core/prepared-execution.ts:212` | 任务执行清单：claim、role、预算、上下文、提示词、唯一 input。 | 准备/校验任务 Run；清单内容必须重新对正式事实核对。 |
-| `PreparedQueryManifestV1` | `src/contracts/core/prepared-execution.ts:284` | Query 执行清单与 `PreparedQueryExecution` 回执形状；`goal` 可空（仅 secretary callKind），`request` 必填（非 request 为 null）。 | 准备/校验 Query Run。 |
+| `renderUnknownCallReviewZh` | `src/contracts/core/prepared-execution.ts:106` | 把结构化审查输入渲染成中文章节，可重渲染比对。 | 准备审查/提案轮输入；WorkGraph 校验章节区间与摘要时复用。 |
+| `PreparedTaskManifestV1` | `src/contracts/core/prepared-execution.ts:206` | 任务执行清单：claim、role、预算、上下文、提示词、唯一 input。 | 准备/校验任务 Run；清单内容必须重新对正式事实核对。 |
+| `PreparedQueryManifestV1` | `src/contracts/core/prepared-execution.ts:278` | Query 执行清单与 `PreparedQueryExecution` 回执形状；`goal` 可空（仅 secretary callKind），`request` 必填（非 request 为 null）。 | 准备/校验 Query Run。 |
 
 ## 内部用
 
@@ -61,7 +61,6 @@
 ## 不要做
 
 - 不要另写 `rejection` 或结果包装；用 `rejected`/`rejectedWith*` 与 `ReadResult`/`WriteResult`（**M1-29**）。
-- `rejected` 另有旧副本：`src/business/workflow/workflow.ts:131`、`src/business/workflow/activity-backfill.ts:74`、`src/core/work-graph/tasks/context-input-service.ts:107`、`src/core/work-graph/views/context-extensions.ts:169` 的本地 `rejection`（`request-service.ts` 已改为引用正本），新代码一律用正本，旧副本由清理轮删除。
 - 不要把读取失败折叠成空事实、普通阻塞项或成功的 drain（**FP-05, M1-12, M1-15, MH-06**）。
 - 不要在本层 import 上层实现，或加入 I/O、时钟、状态机；状态迁移只经过 `src/core/work-graph/state/`。
 - 不要把 `SessionRef` 当裸 id 或文件路径，也不要用 `messageId` 单独寻址消息。

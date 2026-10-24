@@ -20,7 +20,7 @@ import type { QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../c
 import { isRequestRound } from '../../../contracts/query-job.js';
 import type { QueryActivitySnapshot, RunActivityFactsV1, RunActivitySnapshot } from '../../../contracts/run-activity.js';
 import { provenNotEnteredKernel } from '../../../contracts/run-activity.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalKey } from '../../../contracts/fingerprint.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
@@ -403,6 +403,3 @@ export async function gateInfoOf(
   return info;
 }
 
-function canonicalKey(value: unknown): string {
-  return canonicalJson(value as JsonValue);
-}

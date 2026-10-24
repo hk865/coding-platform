@@ -1,3 +1,5 @@
+import { rejected } from '../../contracts/core/rejections.js';
+import { packString } from '../../contracts/prompts/pack-string.js';
 import type { CoreRejection } from '../../contracts/core/results.js';
 import type { RoleConfigurationRef } from '../../contracts/core/identity.js';
 import type { TaskTriple } from '../../contracts/dispatch.js';
@@ -18,19 +20,12 @@ import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import type { GraphContextFactsV1 } from '../work-graph/model/graph-context-contracts.js';
 import { platformRoleProfile } from './role-profiles.js';
-import { canonical, emptyNotes, indexRowText, rejected } from './context-support.js';
+import { canonical, emptyNotes, indexRowText } from './context-support.js';
 import type { OptionalRow } from './context-types.js';
 import type { ResolvedRuntimeConfiguration } from './execution-contracts.js';
 
 /** A direct call keeps the generated platform pack (ruling 14). */
 const DEFAULT_TEXTS: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1;
-
-/** One fixed string of the resolved pack; a missing key is a pack bug. */
-function packString(texts: PromptTextsV1, key: string): string {
-  const value = texts.strings[key];
-  if (value === undefined) throw new Error(`the resolved prompt pack has no string "${key}"`);
-  return value;
-}
 
 const PLATFORM_DUTIES: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
 

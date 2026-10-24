@@ -8,12 +8,12 @@ import type { CodeGraphEdge, CodeGraphNode, FileGraphNodeV1, FileGraphPageV1, Fo
   LanguageCoverageV1, ObservedCaptureRef, ObservationInventoryV1 } from '../../../contracts/architecture-inspection.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { CommandMeta, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { PersistedSourceCaptureRef } from '../../../contracts/core/source.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 
-/** Local request envelope; no architecture dependency on the Session component. */
-export type GraphWrite<T> = { input: T; meta: CommandMeta };
+export type { GraphWrite } from '../model/task-contracts.js';
 
 export type ObservedArchitectureRef = {
   aggregateType: 'ObservedArchitecture'; projectId: string; workspaceId: string; captureId: string;

@@ -13,6 +13,7 @@
  */
 import type { CommitCursor } from "../../contracts/command-event.js";
 import type { CommitCursorBinding, DecodeResult, EncodedRecord, StoreFailure, UniqueClaimChange } from "./ports.js";
+import { isRecord as isObject } from "../../contracts/validation/common.js";
 
 export type ClaimConflict = { claimKey: string; owner: string | null };
 
@@ -34,10 +35,6 @@ export class RejectedInsideTransaction extends Error {
     this.name = "RejectedInsideTransaction";
     this.failure = failure;
   }
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNonEmptyText(value: unknown): value is string {

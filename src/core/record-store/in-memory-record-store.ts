@@ -28,7 +28,8 @@
 import type { CommitCursor, CommandFingerprint } from "../../contracts/command-event.js";
 import { makeCommitCursor, seqOfCommitCursor } from "../../contracts/ledger.js";
 import type { VersionedRef } from "../../contracts/ledger.js";
-import { applyEventSchema, applyRecordSchema, bindPreparedRecords, checkPersistedIdempotencyRecord, clonePersistedIdempotencyRecord, committedReceiptFromIdempotency, corruptFailure, createRecordSchemaRegistry, decodeRecordBody, decodeRefKey, decodeStoredEventBody, guardIsSatisfied, idempotencyConflictFailure, invalidFailure, isNonEmptyString, messageOf, notFoundFailure, planPreparedCommit, revisionConflictFailure, uniqueConflictFailure, unsupportedFailure, type PlannedCommit, type RecordSchemaRegistry } from "./record-codec.js";
+import { messageOf } from "../../contracts/error-message.js";
+import { applyEventSchema, applyRecordSchema, bindPreparedRecords, checkPersistedIdempotencyRecord, clonePersistedIdempotencyRecord, committedReceiptFromIdempotency, corruptFailure, createRecordSchemaRegistry, decodeRecordBody, decodeRefKey, decodeStoredEventBody, guardIsSatisfied, idempotencyConflictFailure, invalidFailure, isNonEmptyString, notFoundFailure, planPreparedCommit, revisionConflictFailure, uniqueConflictFailure, unsupportedFailure, type PlannedCommit, type RecordSchemaRegistry } from "./record-codec.js";
 import { decodeGuardedRevision } from "./guarded-revision.js";
 import { findClaimConflicts, ledgerHorizonMatches, RejectedInsideTransaction } from "./commit-extensions.js";
 import { compareOrderedValues, compareRefKeys, createRecordLookupRegistry, decodeCountRequest, decodeLookupRequest, decodeOrderedLookupRequest, decodeTextSearchRequest, distinctLookupValueKeyOf, encodeLookupValues, lookupIndexKeyOf, matchesOrderedRequest, orderedLookupCandidateOf, type RecordLookupRegistry, type RegisteredLookupIndex } from "./lookup-index.js";

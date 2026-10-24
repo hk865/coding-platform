@@ -13,7 +13,8 @@ import type {
   QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobIntentV1, QueryRunRef,
 } from '../../contracts/query-job.js';
 import { consultationQueryRefs } from '../../contracts/query-job.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { canonicalJson, sameJson as sameCanonical, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
@@ -35,15 +36,6 @@ import { ownContext, type Owned } from './workflow.js';
 // the shared `ownContext` extracted from the Workflow owner, never duplicated.
 // --------------------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function sameCanonical(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
-}
 function reject(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
 }

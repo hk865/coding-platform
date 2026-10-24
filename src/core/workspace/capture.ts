@@ -15,6 +15,7 @@ import { compareCapturedFiles, diffContent, manifestOf, readCapturedFile, readWo
 import { compareGitWorkspaceTrees, compareGitWorkingTree, isCompleteCommitOid, readGitWorkspaceFile } from './git-read.js';
 import { querySource, toSourceDiagnostic, toSourceFileEntry, toSourceRelation } from './source-query.js';
 import { deepFreeze } from './ports.js';
+import { isSafeSourceRelativePath as safeRelative } from './path-validation.js';
 import type { WorkspaceAccessFactory, WorkspaceReadAccess } from './access.js';
 import type { CaptureContentScope, CaptureSourceRequest, CaptureSummary, GitWorkspaceVersion, GitWorkingTreePair, ReadWorkspaceRequest, SourceCaptureMaterial, SourceCoverage, SourceDiagnostic, SourceFileEntry, SourceHit, SourcePage, SourcePageRequest, SourceRelation, WorkspaceCaptureLimits, WorkspaceComparison, WorkspaceComparisonRequest, WorkspaceError, WorkspaceFile, WorkspaceResult, WorkspaceVersion } from './ports.js';
 
@@ -70,9 +71,8 @@ const message = (error: unknown): string => {
 export function normalizeCoverageNotes(notes: readonly string[]): string[] {
   return [...new Set(notes.map(note => note.slice(0, 200)))].sort().slice(0, 10);
 }
-const safeRelative = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 4096 &&
-  !/[\\:\0]/.test(value) && value.split('/').every(segment => !!segment && segment !== '.' && segment !== '..');
-const sameRef = (a: SourceCaptureRef, b: SourceCaptureRef) =>
+// Capture identity: exactly the seven SourceCaptureRef fields; extra fields are ignored.
+const sameCaptureIdentity = (a: SourceCaptureRef, b: SourceCaptureRef) =>
   a.projectId === b.projectId && a.workspaceId === b.workspaceId && a.captureId === b.captureId &&
   a.workspaceRevision === b.workspaceRevision && a.sourceDigest === b.sourceDigest &&
   a.configDigest === b.configDigest && a.indexVersion === b.indexVersion;
@@ -517,7 +517,7 @@ export class CaptureRegistry {
     this.sweep();
     const liveBefore = this.liveEntry(beforeRef);
     if (liveBefore.status !== 'ready') return liveBefore;
-    const liveAfter = beforeRef.captureId === afterRef.captureId && sameRef(beforeRef, afterRef) ? liveBefore : this.liveEntry(afterRef);
+    const liveAfter = beforeRef.captureId === afterRef.captureId && sameCaptureIdentity(beforeRef, afterRef) ? liveBefore : this.liveEntry(afterRef);
     if (liveAfter.status !== 'ready') return liveAfter;
     const before = liveBefore.value, after = liveAfter.value, same = before === after;
     if (before.ref.projectId !== after.ref.projectId || before.ref.workspaceId !== after.ref.workspaceId)
@@ -563,7 +563,7 @@ export class CaptureRegistry {
 
   private liveEntry(ref: SourceCaptureRef): WorkspaceResult<CaptureEntry> {
     const entry = this.entries.get(ref.captureId);
-    if (!entry || !sameRef(entry.ref, ref)) return rejected('capture_expired', 'capture is not retained by this process');
+    if (!entry || !sameCaptureIdentity(entry.ref, ref)) return rejected('capture_expired', 'capture is not retained by this process');
     if (entry.released) return rejected('capture_expired', 'capture was released');
     if (this.expired(entry)) { this.sweep(); return rejected('capture_expired', 'capture expired'); }
     return { status: 'ready', value: entry };
@@ -734,7 +734,7 @@ export class CaptureRegistry {
       let changes: CaptureSummary['changes'] = { added: files.map(file => file.path), modified: [], deleted: [] };
       if (input.previous) {
         const previous = this.entries.get(input.previous.captureId);
-        if (!previous || !sameRef(previous.ref, input.previous) || previous.released) return rejected('capture_expired', 'previous capture is no longer retained');
+        if (!previous || !sameCaptureIdentity(previous.ref, input.previous) || previous.released) return rejected('capture_expired', 'previous capture is no longer retained');
         if (this.expired(previous)) { this.sweep(); return rejected('capture_expired', 'previous capture expired'); }
         // A previous baseline only applies to the same scope, authorization domain and provider.
         if (previous.ref.projectId !== workspace.projectId || previous.ref.workspaceId !== workspace.workspaceId)
@@ -779,9 +779,9 @@ export class CaptureRegistry {
     if (this.stopping) return rejected('cancelled', 'workspace capture service is closing');
     this.sweep();
     const entry = this.entries.get(ref.captureId);
-    if (entry && !sameRef(entry.ref, ref)) return rejected('capture_expired', 'capture reference does not match retained material');
+    if (entry && !sameCaptureIdentity(entry.ref, ref)) return rejected('capture_expired', 'capture reference does not match retained material');
     const tombstone = entry ? undefined : this.tombstones.get(ref.captureId);
-    if (!entry && (!tombstone || !sameRef(tombstone.ref, ref))) return rejected('capture_expired', 'capture is not retained by this process');
+    if (!entry && (!tombstone || !sameCaptureIdentity(tombstone.ref, ref))) return rejected('capture_expired', 'capture is not retained by this process');
     const subjectKey = entry ? entry.subjectKey : tombstone!.subjectKey;
     if (entry && this.expired(entry)) { this.sweep(); return rejected('capture_expired', 'capture expired'); }
     const opened = await this.open(ctx, signal, workspaceOf(ref));

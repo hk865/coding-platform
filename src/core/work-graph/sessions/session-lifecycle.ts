@@ -57,7 +57,7 @@ import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
 } from '../../record-store/ports.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
-import type { GraphWrite } from '../model/session-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import type {
   ArchiveSessionInput, LinkSessionWorkInput, SessionLifecyclePort,
   SessionLifecycleStores,

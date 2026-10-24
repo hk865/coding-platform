@@ -8,6 +8,7 @@
  * and a reduced Turn mean the same thing everywhere. It only reads: it never
  * writes a platform fact and never decides a terminal.
  */
+import { isRecord } from '../../contracts/validation/common.js';
 import { createInitialRunState, reduceRunState, sessionRecordSchema } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { RunState, SessionRecord as KernelSessionRecord } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
@@ -15,10 +16,6 @@ import type { SessionHistoryEntry } from './session-operations.js';
 
 /** One original Kernel record at its verified Session position. */
 export type DecodedKernelRecord = { position: number; record: KernelSessionRecord };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * Decode one history entry into its Kernel SessionRecord. A body that is not an

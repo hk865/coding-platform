@@ -37,7 +37,7 @@ import type {
   TaskTriple,
 } from '../../../contracts/dispatch.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
-import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, sameJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
 import { isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
 import { rejected as reject } from '../../../contracts/core/rejections.js';
@@ -348,11 +348,6 @@ async function collectRunCandidateKeys(
   return { status: 'ready', refKeys: result.value.records.map(record => record.refKey) };
 }
 
-/** `canonicalJson` equality for two refs (the anchor refs are plain JSON records). */
-function sameJsonRef(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
-}
-
 const ANCHOR_LOOKUP_PAGE_LIMIT = 100;
 const ANCHOR_LOOKUP_MAX_PAGES = 25;
 
@@ -401,7 +396,7 @@ async function readTaskPendingAnchors(
     if (anchor.workspaceId !== workspaceId || anchor.task.taskId !== task.taskId || anchor.task.goalId !== task.goalId) continue;
     const entered = runs
       .filter(run => run.ref.runId !== anchor.runRef.runId && run.executionHistory !== undefined
-        && run.inputBinding?.anomalyAnchorRefs?.some(ref => sameJsonRef(ref, anchor.ref)))
+        && run.inputBinding?.anomalyAnchorRefs?.some(ref => sameJson(ref, anchor.ref)))
       .map(run => ({ runRef: run.ref, sessionRef: run.executionHistory!.sessionRef,
         enteredAt: run.startedAt ?? run.endedAt ?? '', anchorRefs: run.inputBinding!.anomalyAnchorRefs! }));
     if (deriveSessionAnomalyView(anchor, entered).pickedUpBy === null) anchors.push(anchor);

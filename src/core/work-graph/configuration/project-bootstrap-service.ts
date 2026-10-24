@@ -21,6 +21,7 @@ import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreError, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { completionPolicyContentDigest } from '../../../contracts/governance.js';
 import type {
@@ -95,9 +96,6 @@ function forbidden(reason: string): Rejection {
 }
 function unavailable(reason: string): Rejection {
   return rejected('unavailable', reason);
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 function refFromRefKey(refKey: string): unknown {
   try {

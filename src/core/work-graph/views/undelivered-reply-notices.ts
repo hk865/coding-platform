@@ -364,12 +364,12 @@ function sourceMismatchReason(
     return 'belongs to another workspace';
   }
   if (message.sender.kind !== 'work_run') return 'is not a work_run message';
-  if (!sameRef(message.sender.sessionRef, source)) return 'names another source Session';
+  if (!sameSessionIdentity(message.sender.sessionRef, source)) return 'names another source Session';
   // §4.4 rule 3/line 248: the complete DTO source identity is part of the
   // contract. The directory-derived `source` is the authority; a DTO that
   // names a different source Session is stable damage, never a silent
   // collapse into the directory's identity.
-  if (!sameRef(reply.sourceSessionRef, source)) return 'names another source Session';
+  if (!sameSessionIdentity(reply.sourceSessionRef, source)) return 'names another source Session';
   if (message.response === null) return 'has no saved response';
   if (canonicalJson(message.response.bodyRef as unknown as JsonValue)
     !== canonicalJson(reply.responseRef as unknown as JsonValue)) return 'names another response';
@@ -478,7 +478,8 @@ function isNoticePosition(value: unknown): value is NoticePositionV1 {
   return position.kind === 'commit' && typeof position.cursor === 'string';
 }
 
-function sameRef(left: { projectId: string; sessionId: string }, right: { projectId: string; sessionId: string }): boolean {
+/** Session identity: `projectId` and `sessionId` only; other fields are ignored. */
+function sameSessionIdentity(left: { projectId: string; sessionId: string }, right: { projectId: string; sessionId: string }): boolean {
   return left.projectId === right.projectId && left.sessionId === right.sessionId;
 }
 

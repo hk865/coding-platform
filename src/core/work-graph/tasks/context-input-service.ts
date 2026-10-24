@@ -23,7 +23,7 @@
 import type { ArtifactOwnerRunRef, ArtifactRef, ArtifactRecord } from '../../../contracts/artifact.js';
 import { artifactBodyDigest, artifactBodySize } from '../../../contracts/artifact.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
-import { rejected } from '../../../contracts/core/rejections.js';
+import { rejected as rejection } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
@@ -103,10 +103,6 @@ type PageCursor = {
 
 const CURSOR_PREFIX = 's3ip1.';
 const MAX_PAGE_BYTES = 4096;
-
-function rejection(code: CoreError, reason: string): CoreRejection {
-  return rejected(code, reason);
-}
 
 function cancelledRejection(): CoreRejection {
   return rejection('cancelled', 'the task-input read was cancelled before any store or material IO');

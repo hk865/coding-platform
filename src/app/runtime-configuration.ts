@@ -16,6 +16,7 @@
  * other page working.
  */
 import { canonicalJson, sha256Hex } from '../contracts/fingerprint.js';
+import { nonEmpty } from '../contracts/validation/common.js';
 import {
   createBuiltinProviderRegistry,
   type ProviderId,
@@ -211,8 +212,6 @@ export type WorkbenchRuntimeConfigurationProblem = {
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
-const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
-
 const scopeKey = (scope: WorkspaceScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
 
 /** The identity a settings catalog projects for a direct Host model, and the

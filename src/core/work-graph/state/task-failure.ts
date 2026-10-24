@@ -32,6 +32,7 @@
  * all come in the input. Pure: imports only `src/contracts` and this
  * directory (§14.4).
  */
+import { sameActorKindAndId as sameActor } from '../../../contracts/actor-equality.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import { compareSourceCheckpoints } from '../../../contracts/continuation-brief.js';
 import type { ControlIntentRef, ControlIntentRequestV1 } from '../../../contracts/control-intent.js';
@@ -1457,9 +1458,6 @@ export function taskReworkRefusalEffects(input: NewTaskReworkRefusalInputV1): Ta
 // ------------------------------------------------------------------------ //
 // Helpers                                                                   //
 // ------------------------------------------------------------------------ //
-function sameActor(left: ActorRef, right: { kind: string; id: string }): boolean {
-  return left.kind === right.kind && left.id === right.id;
-}
 function sameRunRef(left: RunRef, right: RunRef): boolean {
   return left.aggregateType === right.aggregateType && left.projectId === right.projectId
     && left.goalId === right.goalId && left.runId === right.runId;

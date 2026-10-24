@@ -13,7 +13,8 @@ import type {
   ArchivedLinePageV1, GraphHoverReadV1, LineConversationSourceV1, NodeDetailRequestV1, NodeDetailV1,
   WorkLineDetailV1, WorkLineListV1, WorkLineSectionPageV1,
 } from '../../../contracts/work-line.js';
-import type { GraphWrite, SessionDirectoryPort } from './session-contracts.js';
+import type { SessionDirectoryPort } from './session-contracts.js';
+import type { GraphWrite } from './task-contracts.js';
 
 export type SessionDutyReadPort =
   (role: RoleConfigurationRef, ctx: CoreCallContext) => Promise<ReadResult<PlatformDutyV1 | 'unknown'>>;

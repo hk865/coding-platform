@@ -31,6 +31,7 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type {
     EffectivityAnchorV1, EvidenceOutcome, EvidenceRef, EvidenceSnapshot, EvidenceV1,
@@ -54,7 +55,7 @@ import type {
 import type {
     VerificationRoundMaterialIdentity, VerificationRoundSourcePort, VerificationRoundSourceResult,
 } from '../../../contracts/verification-context.js';
-import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
@@ -80,7 +81,7 @@ import {
     buildEffectiveTaskBasis, isBasisUnsupported,
 } from '../tasks/plan-task-basis.js';
 import {
-    bindTrustedContext, isolateWrite, loadReplayEvent, mapStoreFailure, mergeGuards, sameRef,
+    bindTrustedContext, isolateWrite, loadReplayEvent, mapStoreFailure, mergeGuards,
 } from '../tasks/execution-entry-service.js';
 import {
     authorizeDelegatedWrite, identifyDelegatedWriter, type AgentPlanWriter, type PlanDelegatedWriteDependencies,
@@ -142,8 +143,6 @@ function notFound(reason: string): CoreRejection { return rejected('not_found', 
 function incomplete(reason: string): CoreRejection { return rejected('incomplete', reason); }
 function unsupported(reason: string): CoreRejection { return rejected('unsupported', reason); }
 function cancelled(reason: string): CoreRejection { return rejected('cancelled', reason); }
-function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-
 function fingerprintOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
 function digestOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
 function identityKeyOf(prefix: string, actor: Pick<ActorRef, 'kind' | 'id'>, projectId: string, workspaceId: string,

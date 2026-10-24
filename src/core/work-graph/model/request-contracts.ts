@@ -69,7 +69,7 @@ export function requestTailKey(requestRoot: QueryJobRef): string {
   return REQUEST_TAIL_PREFIX + canonicalJson(requestRoot as unknown as JsonValue);
 }
 
-/** The Session aggregate key of the intake slot; the Session is the physical owner. */
+/** The Session aggregate key of the intake claim slot, not a record key; the Session is the physical owner. */
 export function secretaryIntakeKey(session: SessionRef): string {
   return SECRETARY_INTAKE_PREFIX + canonicalJson({
     aggregateType: 'Session', projectId: session.projectId, sessionId: session.sessionId,

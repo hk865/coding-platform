@@ -59,9 +59,9 @@
 | `createWorkbenchRuntimeHostBindings` | `src/app/runtime-configuration.ts:394` | 把受信任运行期配置变成 Kernel `RuntimeHostBindings`，首次解析才读 secret | 构造 Host runtime 时；不要复制 provider 或凭据存储 |
 | `validateWorkbenchRuntimeConfiguration` | `src/app/runtime-configuration.ts:285` | 纯校验 binding/profile/grant/budget，重复或错配直接报错 | 装载或替换运行期配置前 |
 | `narrowResolvedReadonlyCommands` | `src/app/runtime-configuration.ts:188` | 按 Host `allowReadonlyCommands:false` 收窄每个已解析 binding 的工具 | 通用 binding 解析边界；设置重建也要走 |
-| `createSecretaryProfiles` | `src/app/secretary-profiles.ts:50` | Host 的 `SecretaryProfilePort`：`forSession` 只按实时 profile 列表匹配 workspace 与完整 `sessionRole`（`sameJson`），不做 duty 判定；`forNewLine` 调真正的 duty resolver | Host 在 `src/app/secretary-profiles.ts:50` 构造并作为 `secretaryProfiles` 选项注入（`src/app/secretary-profiles.ts:50`）；duty 正本是 `createSessionDutyResolver`（`src/core/work-graph/configuration/message-duties-adapter.ts:105`），不要另写判断 |
+| `createSecretaryProfiles` | `src/app/secretary-profiles.ts:50` | Host 的 `SecretaryProfilePort`：`forSession` 只按实时 profile 列表匹配 workspace 与完整 `sessionRole`（`sameJson`），不做 duty 判定；`forNewLine` 调真正的 duty resolver | Host 在 `src/app/secretary-profiles.ts:50` 构造并作为 `secretaryProfiles` 选项注入（`src/app/secretary-profiles.ts:50`）；duty 正本是 `createSessionDutyResolver`（`src/composition/session-duty.ts:57`），不要另写判断 |
 | `createSessionDutyResolver` | `src/composition/session-duty.ts:57` | **正本**：受信任 duty 解析；RoleSpec 的 `platformDuty` 与精确 legacy 模板任一侧可定，缺证据才回退 Work binding 的 `sessionRole`，否则 `unknown` | admission、secretary 判定都调它；本层 `forNewLine` 经它，不要另写 duty 判断 |
-| `sameJson` | `src/contracts/fingerprint.ts:50` | **正本**：按规范 JSON 做与键序无关的相等比较；不能编码的值永不相等 | 比较完整 `sessionRole` 等结构时；本层 `src/core/work-graph/configuration/message-duties-adapter.ts:105` 的 `sameCanonical` 是旧副本，见“不要做” |
+| `sameJson` | `src/contracts/fingerprint.ts:50` | **正本**：按规范 JSON 做与键序无关的相等比较；不能编码的值永不相等 | 比较完整 `sessionRole` 等结构时；不要另写比较 |
 | `createWorkspaceAccessFactory` | `src/core/workspace/access.ts:83` | **正本**（路径校验这一层的入口）：经 Host 绑定的 root realpath 与当前授权开工作区读访问 | 判断工作区路径是否可读/在根内时；不要用本层 `isPathWithin` 当通用校验 |
 | `createHostSettings` | `src/app/host-settings.ts:470` | 读写 Host 本地设置：目录、模型、检查、自动化、资源上限、提示词包，并推送私有快照 | Host 启动或设置路由；凭据只写不读 |
 | `createHostRuntimeResolverRegistry` | `src/app/host-settings.ts:248` | 保存当前 `RuntimeHostBindings` 并安装新的不可变版本 | 设置变更要热替换运行期版本时 |
@@ -69,7 +69,7 @@
 | `createAttentionScanner` | `src/app/attention-observer.ts:616` | 把工作区与图状态扫成一份 `AttentionSnapshot` | 注意力心跳读取当前事实时 |
 | `createAutoCaptureDriver` | `src/app/auto-capture-driver.ts:81` | 每 Host 一个自动捕获驱动：一次一个 workspace，请求记录先写 | Host 启动自动捕获时；失败写 failAutoCapture，取消不写 |
 | `createChangeFeed` | `src/app/change-feed.ts:87` | 汇总 commit 与 Host 句柄变更，保留窗口并回答 SSE 恢复 | `changes` 长连接；notice 只带粗粒度类型与 project |
-| `createCollaborationDriver` | `src/app/collaboration-driver.ts:326` | 持续协作的活句柄：Task 选择、Work/outbox 并发、等回复、stop/pause、read | Host 的持续通信；不拥有 store，只组合既有 owner |
+| `createCollaborationDriver` | `src/app/collaboration-driver.ts:313` | 持续协作的活句柄：Task 选择、Work/outbox 并发、等回复、stop/pause、read | Host 的持续通信；不拥有 store，只组合既有 owner |
 | `createGoalFanOutDriver` | `src/app/goal-fan-out-driver.ts:201` | Goal 控制提交后，对每个受影响 Run 提交幂等 fan-out 控制并观察未知结果 | Goal pause/resume/cancel 与启动重驱；不要重复提交 intent |
 | `createWakeLoop` | `src/app/wake-loop.ts:131` | 两条请求队列的唤醒循环：合并脏标记、一次一个 pass、`more` 让出后重跑、失败退避、commit notice 配对、未武装与 `close` | Host 的请求队列驱动；`driving` 传租约是否持有，别在别处另写合并或退避 |
 | `acquireHostInstanceLease` | `src/app/host-instance-lease.ts:113` | 取得/释放 SQLite 旁的单 Host 锁，处理陈旧锁与 takeover | 建平台之前；没持锁的 Host 只做读与 owner 写 |
@@ -90,9 +90,7 @@
 - 不要在 Host 里实现领域规则、直接读写 RecordStore 或另建服务图；只调用 composition 暴露的公开端口。
 - 不要从 HTTP body 取 root、token、凭据或 store 路径；ctx 只由 `createHostCoreCallContext`（`src/app/core-call-context.ts:17`）构造。
 - 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:1236`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
-- `sameJson` 另有旧副本：`src/app/collaboration-driver.ts:161` 的 `sameCanonical`（私有），正本在 `src/contracts/fingerprint.ts:50`，新代码一律用正本，旧副本由清理轮删除（M1-32）。
-- `messageOf` 另有旧副本：`src/app/auto-capture-driver.ts:77`、`src/app/collaboration-driver.ts:165`、`src/app/goal-fan-out-driver.ts:179`、`src/app/host-instance-lease.ts:86`、`src/app/startup-reconcile.ts:191`，新代码一律用 `src/contracts` 新增的正本（M1-38，尚未落地），旧副本由清理轮删除。
-- 路径校验另有旧副本：`isPathWithin`（`src/app/prompt-packs.ts:31`）是本层的真实路径包含判断（`preparePackWriteTarget` 也用它），新代码一律用 `src/core/workspace/access.ts` 这一层的正本，旧副本由清理轮删除。
+- 路径校验不要混用：`isPathWithin`（`src/app/prompt-packs.ts:31`）是真实路径包含判断（`preparePackWriteTarget` 也用它），不是词法副本；源相对路径的词法规则用 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）。
 - 不要另写 duty 判定：用 `createSessionDutyResolver`（`src/composition/session-duty.ts:57`）；`forSession` 只按 workspace 与完整 `sessionRole` 查 profile，不做 duty 判断（FP-02、MH-01）。
 - 不要只改 Host 选项的类型或消费端：声明、校验、转发、adapter 构造与重开路径都要接上（FP-15、MH-02）。
 - 不要假设未配置的 secretary/cap/wake 有默认实现：默认 profile 返回 null、无 cap 全放行、`wake` 为 no-op；真实行为必须显式配置（FP-12、MH-12）。

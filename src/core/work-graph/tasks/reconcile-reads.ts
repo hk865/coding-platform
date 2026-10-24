@@ -12,7 +12,8 @@
  * reported, never skipped silently.
  */
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
-import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
+import type { ReadResult } from '../../../contracts/core/results.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { GoalSnapshot } from '../../../contracts/ledger.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
@@ -44,9 +45,6 @@ const PAGE_LIMIT = 200;
 /** A bounded scan: a workspace with more candidates is reported `capacity`, never truncated silently. */
 const MAX_PAGES = 50;
 
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
 function runKeyOf(ref: RunRef): string { return `${ref.projectId}\u0000${ref.goalId}\u0000${ref.runId}`; }
 
 export function createReconcileCandidateReader(deps: { records: RecordLookupPort }): ReconcileCandidateReader {

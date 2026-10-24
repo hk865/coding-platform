@@ -19,7 +19,9 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { sameActorKindAndId as sameActor } from '../../../contracts/actor-equality.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import { canonicalKey as keyOf, canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
   QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRoundKind, QueryRunSnapshot,
 } from '../../../contracts/query-job.js';
@@ -163,14 +165,6 @@ export interface RequestFactsPort {
 
 function unavailable(reason: string): { status: 'rejected'; code: 'unavailable'; reason: string } {
   return { status: 'rejected', code: 'unavailable', reason };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function keyOf(ref: unknown): string {
-  return canonicalJson(ref as JsonValue);
 }
 
 function orderedStoreOf(deps: RequestFactsDependencies): RecordOrderedLookupPort | null {
@@ -344,10 +338,6 @@ function boundOperator(ctx: CoreCallContext): { kind: 'human' | 'system'; id: st
   if (!isRecord(actor) || !nonEmpty(actor['id'])) return null;
   if (actor['kind'] !== 'human' && actor['kind'] !== 'system') return null;
   return { kind: actor['kind'], id: actor['id'] };
-}
-
-function sameActor(left: { kind: string; id: string }, right: { kind: string; id: string }): boolean {
-  return left.kind === right.kind && left.id === right.id;
 }
 
 /**

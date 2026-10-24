@@ -14,9 +14,10 @@ import type { SessionMessageRef } from '../../contracts/core/session-message.js'
 import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
 import { SESSION_ARCHIVE_AUTOMATION_ACTOR } from '../../contracts/task-requeue.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import type { SessionFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
-import type { GraphWrite } from '../../core/work-graph/model/session-contracts.js';
+import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import { executorArchiveDue } from '../../core/work-graph/state/session-availability.js';
 import { sessionResponsibilityChangedEventFromEvent } from '../../core/work-graph/sessions/lifecycle-record-codecs.js';
 import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
@@ -99,12 +100,6 @@ const PAGE_LIMIT_MAX = 100;
 /** The three answers of the review claim's Goal read (see `reviewClaimCanRun`). */
 type ReviewClaimState = 'active' | 'inactive' | 'unreadable';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function reject(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
 }

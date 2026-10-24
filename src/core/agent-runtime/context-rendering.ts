@@ -12,9 +12,11 @@ import type {
   AttentionChangesV1, ContextAssemblyBindingV1, ContextCallKindV1, ContextSectionNameV1,
 } from '../../contracts/graph-context.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import { packString } from '../../contracts/prompts/pack-string.js';
 import type { PromptSetV1, PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import { contextSectionOfSlot, parseTemplateV1, renderTemplate } from '../../contracts/prompts/render-template.js';
-import { byKey, utf8Bytes } from './context-support.js';
+import { utf8Bytes } from '../../contracts/validation/common.js';
+import { byKey } from './context-support.js';
 import type {
   ContextRenderMaterialV1, ContextRerenderV1, ContextSectionPlanV1, ContextTemplateId,
   OptionalRow, OptionalSectionName,
@@ -22,13 +24,6 @@ import type {
 
 /** A direct call without a resolved pack keeps the generated platform pack (ruling 14). */
 const DEFAULT_TEXTS: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1;
-
-/** One fixed string of the resolved pack; a missing key is a pack bug. */
-export function packString(texts: PromptTextsV1, key: string): string {
-  const value = texts.strings[key];
-  if (value === undefined) throw new Error(`the resolved prompt pack has no string "${key}"`);
-  return value;
-}
 
 /** The section headers of one resolved pack, in render order. */
 export function contextSectionHeaders(texts: PromptTextsV1): Readonly<Record<ContextSectionNameV1, string>> {

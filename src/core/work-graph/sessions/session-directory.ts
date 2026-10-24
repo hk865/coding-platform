@@ -53,9 +53,10 @@ import {
   type HostActor, type TrustedContext,
 } from './trusted-context.js';
 import type {
-  GraphWrite, SessionCard, SessionCreationInput, SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort,
+  SessionCard, SessionCreationInput, SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort,
   SessionOperationRecord, SessionPage,
 } from '../model/session-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import {
   SESSION_BY_WORKSPACE_LOOKUP, SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
   SESSION_BY_WORKSPACE_LEGACY_ROLE_LOOKUP, SESSION_BY_WORKSPACE_SPEC_ROLE_LOOKUP,

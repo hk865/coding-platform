@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { stat } from 'node:fs/promises';
+import { rejected } from '../../contracts/core/rejections.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
@@ -119,10 +120,6 @@ type HistoryRequestValue = {
   limit: number;
   range?: SessionHistoryRange;
 };
-
-function rejected(code: CoreError, reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
 
 function signalAborted(signal: unknown): boolean {
   return signal instanceof AbortSignal && signal.aborted;

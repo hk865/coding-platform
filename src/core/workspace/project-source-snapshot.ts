@@ -98,6 +98,7 @@ export const sha256Text = (text: string) => createHash('sha256').update(text).di
 export const isSourcePath = (path: string) => /\.(?:[cm]?[jt]sx?)$/.test(path);
 export const isIgnoredSourcePath = (path: string) => path.split('/').some(segment =>
   ['.git', '.platform-runtime', '.evaluator', '.oracle', 'hidden-tests', '.pnpm', '.cache', '__pycache__'].includes(segment));
+// The source-capture rule: the lexical segment checks only, with no 4096 length cap.
 export const isSafeSourcePath = (path: string) => !!path && !/[\\:\0]/.test(path) &&
   !path.split('/').some(segment => !segment || segment === '.' || segment === '..');
 export const isProjectInputPath = (path: string) => isSourcePath(path) || path.endsWith('.json');

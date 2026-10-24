@@ -61,7 +61,7 @@
 | `decodeTextTerms` | `src/core/record-store/lookup-index.ts:699` | 1–8 个、每词 2–64 码点、无空白的词项规则。 | 端口和 read model 共用；不要另写词项校验。 |
 | `textMatches` | `src/core/record-store/text-scan.ts:67` | all/any 子串匹配。 | 全文扫描与 read model 复核。 |
 | `decodeTextSearchAfter` | `src/core/record-store/lookup-index.ts:751` | 续页 key 必须是本 aggregateType 的完整 canonical refKey。 | 全文检索续页。 |
-| `messageOf` | `src/core/record-store/record-codec.ts:77` | `Error.message`，否则 `String(error)`。 | 本层拼 reason；上层不要为它 import RecordStore。正本将落在 `src/contracts`（M1-38，尚未落地）；本行是现存旧副本，另有 `src/core/agent-runtime/context-support.ts:11` 导出和约 40 处私有副本。 |
+| `messageOf` | `src/contracts/error-message.ts:2` | `Error.message`，否则 `String(error)`。 | 本层与上层拼 reason；`record-codec.ts:78` 只是转出入口，正本在 `src/contracts/error-message.ts`，不要为它 import RecordStore。 |
 | `bindPreparedRecords` | `src/core/record-store/record-codec.ts:698` | 事务内把真实末事件 cursor 绑到注册的 null 字段，再做最终 schema 校验。 | 只有两个 backend 在 commit 内调用；上层写 null 占位 + bindings，不要自己填 since/until（CS-01、CS-08、CS-10）。 |
 | `bindCommitCursor` | `src/core/record-store/commit-extensions.ts:113` | 机械绑定：形状、重复、白名单、null 占位检查。 | 同上，事务内；不要绕过它手改记录 JSON。 |
 
@@ -86,5 +86,4 @@
 - 不要手填提交游标：记录里先留 null 占位，再用 `commitCursorBindings`，事务内绑定后做最终 schema 校验（CS-01、CS-08、CS-10）。
 - 不要在 store 外重建回执或重放：用 `lookupCommit`/`eventAt`；恢复时不要把 lookup 失败当“未提交”（M1-14、M1-15、M1-26）。
 - 不要重写 idempotency/快照的编码，也不要重新序列化旧记录：保持旧列/旧 JSON 的原字节（CS-01、CS-08、CS-10；另写事件/记录构造的同类错误见 M1-37）。
-- `messageOf` 另有旧副本：`src/core/record-store/record-codec.ts:77`（现存导出；正本将落在 `src/contracts`，M1-38 尚未落地），新代码一律用正本，旧副本由清理轮删除。
 - `lookupReceipt` 不是本层导出：它只是 `src/core/work-graph/queries/query-job-service.ts:416`、`src/core/work-graph/tasks/completion.ts:174`、`src/core/work-graph/evidence/evidence-service.ts:465` 各自的私有包装；不要把它写成 `ports.ts` 的端口，收拢前按各 owner 的代码使用。

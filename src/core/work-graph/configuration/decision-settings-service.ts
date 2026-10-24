@@ -9,6 +9,7 @@
  * `state/notice-settings-machine.ts`. It never touches a key, a clock or a
  * notice source; `configuration → state` is the only new dependency edge.
  */
+import { sameActorIdentity as sameActor } from '../../../contracts/actor-equality.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
@@ -28,7 +29,7 @@ import { decodeWorkspaceNoticeSeenChangedEvent,
 import { transitionNoticeSettings, type NoticeSeenUpdateV1,
   type NoticeSettingsEventV1 } from '../state/notice-settings-machine.js';
 import {
-  isOwned, loadWorkspace, ownScope, replayWorkspace, sameActor,
+  isOwned, loadWorkspace, ownScope, replayWorkspace,
   workspacePinProblem as sharedWorkspacePinProblem, type Owned, type WorkspaceReplayTexts,
 } from './workspace-settings-reads.js';
 

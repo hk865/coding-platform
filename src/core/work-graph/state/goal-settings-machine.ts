@@ -76,13 +76,13 @@ function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/** Key-order-free equality by canonical JSON; the settings/refs here always encode. */
-function sameJson(left: unknown, right: unknown): boolean {
+/** Key-order-free equality by canonical JSON; a value it cannot encode throws, unlike the canonical `sameJson`. */
+function sameJsonOrThrow(left: unknown, right: unknown): boolean {
   return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue);
 }
 
 function samePlanPointer(left: PlanRevisionRef | null, right: PlanRevisionRef | null): boolean {
-  return left === null || right === null ? left === right : sameJson(left, right);
+  return left === null || right === null ? left === right : sameJsonOrThrow(left, right);
 }
 
 /** The saved settings, or the exact §2.2 default, as an owned (mutable) copy. */
@@ -196,7 +196,7 @@ export function transitionGoalSettings(
     case 'settings_set': {
       if (!isLegalSettings(event.settings)) return invalid('the Goal settings shape is invalid');
       const wait = event.settings.waitForGoalRef;
-      if (wait !== null && sameJson(wait, state.ref)) return invalid('a Goal cannot wait for itself');
+      if (wait !== null && sameJsonOrThrow(wait, state.ref)) return invalid('a Goal cannot wait for itself');
       if (wait !== null) {
         if (!facts.predecessorExists) return reject('illegal', 'not_found', 'the selected predecessor Goal does not exist');
         if (facts.waitingCycle) return invalid('the selected wait would form a cycle');
@@ -208,7 +208,7 @@ export function transitionGoalSettings(
       return accept(buildGoalSettingsRecord(state, { ...settingsOf(state), order: event.order }), SETTINGS_CHANGED);
     }
     case 'wait_selected': {
-      if (sameJson(event.predecessor, state.ref)) return invalid('a Goal cannot wait for itself');
+      if (sameJsonOrThrow(event.predecessor, state.ref)) return invalid('a Goal cannot wait for itself');
       if (!facts.predecessorExists) return reject('illegal', 'not_found', 'the selected predecessor Goal does not exist');
       if (facts.waitingCycle) return invalid('the selected wait would form a cycle');
       if (!facts.pairPlanPointersMatch) return stale('the conflict pair plan pointers changed since they were read');
@@ -216,11 +216,11 @@ export function transitionGoalSettings(
         SETTINGS_CHANGED);
     }
     case 'risk_accepted': {
-      if (sameJson(event.risk.otherGoalRef, state.ref)) return invalid('a Goal cannot accept a parallel risk with itself');
+      if (sameJsonOrThrow(event.risk.otherGoalRef, state.ref)) return invalid('a Goal cannot accept a parallel risk with itself');
       if (!facts.predecessorExists) return reject('illegal', 'not_found', 'the other Goal of the conflict pair does not exist');
       if (!facts.pairPlanPointersMatch) return stale('the conflict pair plan pointers changed since they were read');
       const settings = settingsOf(state);
-      const risks = settings.parallelRisks.filter((risk) => !sameJson(risk.otherGoalRef, event.risk.otherGoalRef));
+      const risks = settings.parallelRisks.filter((risk) => !sameJsonOrThrow(risk.otherGoalRef, event.risk.otherGoalRef));
       risks.push(event.risk);
       return accept(buildGoalSettingsRecord(state, { ...settings, parallelRisks: risks }), SETTINGS_CHANGED);
     }
@@ -254,13 +254,13 @@ export function goalStartPolicy(input: {
 
 /** S5-GS-06/§2.8: the captured answer basis still equals the current Goal control content. */
 export function goalDecisionBasisMatches(basis: GoalDecisionBasisV1, current: GoalSnapshot): boolean {
-  if (!sameJson(basis.goalRef, current.ref)) return false;
-  if (!sameJson(basis.workspaceRef, current.workspaceRef)) return false;
+  if (!sameJsonOrThrow(basis.goalRef, current.ref)) return false;
+  if (!sameJsonOrThrow(basis.workspaceRef, current.workspaceRef)) return false;
   if (basis.objective !== current.objective) return false;
   if (!samePlanPointer(basis.activePlanRef, current.activePlanRevision)) return false;
   const captured = comparableSettings({ ...DEFAULT_GOAL_SETTINGS_V1, ...basis.settings });
   const actual = comparableSettings({ ...DEFAULT_GOAL_SETTINGS_V1, ...(current.settings ?? {}) });
-  return sameJson(captured, actual);
+  return sameJsonOrThrow(captured, actual);
 }
 
 /** §2.8: the overlap facts of two Goal footprints, pure and order-independent. */

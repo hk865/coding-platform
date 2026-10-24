@@ -27,7 +27,7 @@ import type {
   RecordBatchRead,
   StoreResult,
 } from '../../record-store/ports.js';
-import { isJsonObject, isNonEmptyString, isRevision, messageOf, parseJsonObject } from '../../record-store/record-codec.js';
+import { isJsonObject, isNonEmptyString, isRevision, parseJsonObject } from '../../record-store/record-codec.js';
 import { GOAL_RECORD_SCHEMAS } from '../persistence/record-codecs.js';
 import { isRunExecutionHistoryV1 } from '../persistence/execution-history-codecs.js';
 import {
@@ -35,6 +35,7 @@ import {
 } from '../persistence/execution-entry-codecs.js';
 import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
 import { runControlStateProblem } from '../persistence/control-record-codecs.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { validateRuntimeBudget } from '../../../contracts/runtime-budget.js';
 import { invalid } from '../../../contracts/validation/common.js';

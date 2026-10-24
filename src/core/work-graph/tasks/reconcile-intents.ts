@@ -31,7 +31,7 @@ import type {
 import type { CoreRejection } from '../../../contracts/core/results.js';
 import type { RunSnapshot } from '../../../contracts/dispatch.js';
 import type { GoalSnapshot } from '../../../contracts/ledger.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sameJson as sameRef, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { EncodedRecord, GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
 import { decodeControlIntentSnapshot, encodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
 import { isExecutionAuthorizationV2 } from '../persistence/execution-entry-codecs.js';
@@ -81,10 +81,6 @@ function refKeyOf(value: object): string {
 }
 function unavailable(reason: string): CoreRejection {
   return { status: 'rejected', code: 'unavailable', reason };
-}
-/** Key-order-free equality by canonical JSON (this file does not import the entry service, which imports it). */
-function sameRef(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
 }
 
 /**

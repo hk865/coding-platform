@@ -2,7 +2,7 @@ import type { UnknownCallReviewInputV1 } from '../../contracts/core/prepared-exe
 import type {
   CapturedPathV1, UnknownCallReviewRef, UnknownCallReviewV1,
 } from '../../contracts/unknown-call-review.js';
-import { utf8Bytes } from './context-support.js';
+import { utf8Bytes } from '../../contracts/validation/common.js';
 
 /** D8: one command and its cwd together may not exceed this many UTF-8 bytes. */
 export const REVIEW_COMMAND_MAX_BYTES = 4 * 1024;

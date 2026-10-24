@@ -40,7 +40,7 @@ import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.
 import type { SessionArchiveRequestV1 } from '../../../contracts/core/session-archive.js';
 import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../../contracts/dispatch.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { GoalRef, GoalSnapshot, WorkspaceRef } from '../../../contracts/ledger.js';
 import {
@@ -95,7 +95,7 @@ import type {
 import type { GoalSettingsPort } from '../model/decision-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
-import { loadReplayEvent, mapStoreFailure, mergeGuards, sameRef } from './execution-entry-service.js';
+import { loadReplayEvent, mapStoreFailure, mergeGuards } from './execution-entry-service.js';
 import {
   readCanonicalTaskFacts, readGoal, readGoalRunsForCount, readPlan, readPointerIntents, readRunRoundChain, sameCursor,
   type CanonicalTaskFacts, type CanonicalTaskState,

@@ -19,6 +19,9 @@
  * reads which queued steers the Kernel accepted before an earlier end
  * (CTL-08(e)).
  */
+import { messageOf } from '../../contracts/error-message.js';
+import { sameJson as sameRef } from '../../contracts/fingerprint.js';
+import { isRecord } from '../../contracts/validation/common.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { ControlIntentRef } from '../../contracts/control-intent.js';
 import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
@@ -27,7 +30,6 @@ import type { SessionRecord } from '../../contracts/core/session.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { RunContinuationV1, RunReconciliationBasisV1, RunRef, RunSnapshot } from '../../contracts/dispatch.js';
-import { canonicalJson } from '../../contracts/fingerprint.js';
 import { validateRunStateInvariants, type RunState } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { SessionMailboxPort } from '../work-graph/model/communication-contracts.js';
 import type { QueryExecutionPort, QueryExecutionRecord, QueryReconcileInput } from '../work-graph/queries/contracts.js';
@@ -90,13 +92,6 @@ type TurnRead =
   | { ok: true; decoded: DecodedKernelRecord[]; entries: SessionHistoryEntry[]; through: number }
   | { ok: false; reason: string };
 
-function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-function sameRef(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as never) === canonicalJson(right as never); } catch { return false; }
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 /** The begin authorization's fixed Kernel identity. Every caller passes a Run the
  * platform already authorized; a missing authorization is not a reachable state. */
 function isV2Kernel(run: RunSnapshot): KernelExecutionBinding | null {

@@ -17,7 +17,8 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
-import { canonicalJson, sameJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import { canonicalJson, canonicalKey as keyOf, sameJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
   isRequestRound, type QueryJobSnapshot, type QueryRunRef, type SecretaryRoundMaterialV1,
 } from '../../../contracts/query-job.js';
@@ -48,14 +49,6 @@ export type SecretaryPreparationFactsDependencies = {
 
 /** A Run in one of these phases has a live attempt and is not part of the batch. */
 const LIVE_ATTEMPT_PHASES: ReadonlySet<string> = new Set(['claimed', 'prepared', 'entering', 'entered']);
-
-function keyOf(ref: unknown): string {
-  return canonicalJson(ref as JsonValue);
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function exactQueryRunRef(value: unknown): value is QueryRunRef {
   return isRecord(value) && value['aggregateType'] === 'QueryRun' && nonEmpty(value['projectId'])

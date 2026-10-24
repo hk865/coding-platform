@@ -27,7 +27,7 @@
 - `request-contracts.ts` — request round 视图、秘书选择端口、队列预算常量、活尝试阶段集合（`LIVE_ATTEMPT_PHASES`，队列与秘书选择共用）、Query/Request 索引名与请求根索引的槽值。
 - `request-ideas.ts` — 回答思路的唯一规则：`validIdeaCount` 与 `ideasIssues`（纯函数）。
 - `secretary-contracts.ts` — 秘书准备读取的契约：`SecretaryHistoryEntryV1`、`SecretaryPreparationFactsV1`、`SecretaryPreparationFactsPort`（实现在 views，组合根注入）。
-- `session-contracts.ts` — Session 创建/目录/分页契约；文件里的 `GraphWrite` 是旧副本，正本在 `task-contracts.ts`。
+- `session-contracts.ts` — Session 创建/目录/分页契约；只 `export type { GraphWrite }` 转出（测试经此路径 import），正本在 `task-contracts.ts`。
 - `session-facts-contracts.ts` — Session facts/责任 basis 端口、6 个查找索引名与 `SLICE1_LOOKUP_INDEXES`。
 - `tool-commit-arguments.ts` — Kernel 工具参数到 owner `GraphWrite` 的纯映射，以及 tool commit 的 identity/lookup 辅助。
 
@@ -51,7 +51,7 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `GraphWrite` **正本** | `src/core/work-graph/model/task-contracts.ts:28` | 写请求信封 `{input, meta}`。旧副本在 `session-contracts.ts:12`、`src/core/work-graph/architecture/contracts.ts:16`，见“不要做” | 所有 GraphWrite 端口的请求参数 |
+| `GraphWrite` **正本** | `src/core/work-graph/model/task-contracts.ts:28` | 写请求信封 `{input, meta}`。`session-contracts.ts:12`、`src/core/work-graph/architecture/contracts.ts:16` 只是转出，不是副本 | 所有 GraphWrite 端口的请求参数 |
 | `TaskClaimPort` | `src/core/work-graph/model/claim-contracts.ts:115` | 认领、重新入队、审查认领的写入口 | Task claim owner 注入时 |
 | `SessionDirectoryPort` | `src/core/work-graph/model/session-contracts.ts:66` | Session 创建、读取与分页目录 | Session 目录消费者 |
 | `GoalTaskPort` | `src/core/work-graph/model/task-contracts.ts:59` | Goal 创建、Task/Goal 正式完成与 desired state 控制 | Goal/Task 写 owner |
@@ -117,5 +117,4 @@
 - 不要在这里 import 上层子模块、读 store、写记录或做状态迁移；状态只经 `state/`（`AGENTS.md` 第 9 条、M1-01）。
 - 不要把失败或不可读读成 `not_found`、空事实或“已完成”（FP-05、M1-12、MH-06）。
 - 不要声明没有真实操作支撑的端口方法；空壳会让消费者依赖不存在的行为。
-- `GraphWrite` 另有旧副本：`src/core/work-graph/model/session-contracts.ts:12`、`src/core/work-graph/architecture/contracts.ts:16`，新代码一律用正本，旧副本由清理轮删除。
 - 不要写不存在的索引 `s6-query-queued-by-session`、`s6-query-unassigned`：队列读取走 `QUERY_OPEN_BY_WORKSPACE_INDEX`；`unassigned` 是 `requestRounds.unassigned`（`RequestRoundPort.unassigned`）这个具名读取，不是索引名。

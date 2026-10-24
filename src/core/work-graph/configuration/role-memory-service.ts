@@ -59,8 +59,9 @@ import type {
   StoreFailure,
 } from '../../record-store/ports.js';
 import type { RoleBindingFacts, RoleConfigurationPort, RoleBindingFactsPort } from '../model/configuration-contracts.js';
+import { canonicalRefKey } from '../persistence/record-codecs.js';
 import {
-  canonicalRefKey, decodeCoordinationPolicyRevisionSnapshot, decodeProjectCoordinationPolicyActiveSnapshot,
+  decodeCoordinationPolicyRevisionSnapshot, decodeProjectCoordinationPolicyActiveSnapshot,
   decodeProjectRoleSpecActiveSnapshot, decodeRoleSpecActivatedEvent, decodeRoleSpecInstalledEvent,
   decodeRoleSpecRevisionSnapshot, encodeProjectRoleSpecActiveSnapshot, encodeRoleSpecActivatedEvent,
   encodeRoleSpecInstalledEvent, encodeRoleSpecRevisionSnapshot,

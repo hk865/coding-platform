@@ -9,6 +9,8 @@
  * budget, the omission block's place at the end of the task segment and the
  * three-slot task range; this file only composes the section bodies.
  */
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
@@ -36,10 +38,11 @@ import {
 } from './context-fact-text.js';
 import { takesSessionHistoryOf } from './context-history-facts.js';
 import {
-  CONTEXT_FORMAT_VERSION, contextSectionHeaders, packString, queryContextPrelude, renderQueryContext,
+  CONTEXT_FORMAT_VERSION, contextSectionHeaders, queryContextPrelude, renderQueryContext,
   sectionOrderFor,
 } from './context-rendering.js';
-import { messageOf, rejected, sortedSources, utf8Bytes } from './context-support.js';
+import { packString } from '../../contracts/prompts/pack-string.js';
+import { sortedSources } from './context-support.js';
 import type {
   AssembledContextV1, ContextAssemblerDependencies, ContextQueryHistoryInputV1, OptionalRow,
 } from './context-types.js';

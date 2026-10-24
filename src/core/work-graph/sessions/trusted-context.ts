@@ -18,7 +18,7 @@ import type { CoreRejection } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
-import type { GraphWrite } from '../model/session-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 
 export type HostActor = { kind: 'human' | 'system'; id: string };
 export type TrustedContext =

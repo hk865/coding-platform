@@ -39,7 +39,7 @@ import type {
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
 import { revisionAssignments } from '../../../contracts/plan.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
 import { roleSpecContentDigest } from '../../../contracts/role-spec.js';
 import { isAutomationActor, type TaskRequeueRef, type TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
@@ -118,9 +118,6 @@ function incomplete(reason: string): CoreRejection { return reject('incomplete',
 
 function refKeyOf(ref: unknown): string {
   return canonicalJson(ref as JsonValue);
-}
-function sameRef(left: unknown, right: unknown): boolean {
-  try { return refKeyOf(left) === refKeyOf(right); } catch { return false; }
 }
 function mapStoreFailure(failure: StoreFailure): CoreRejection {
   switch (failure.code) {

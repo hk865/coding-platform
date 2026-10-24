@@ -20,8 +20,10 @@ import { readTaskReviews } from '../work-graph/tasks/task-review-reader.js';
 import { unknownCallReviewRefKey } from '../work-graph/tasks/unknown-call-review-codecs.js';
 import { assembleAnomalySection, assembleContinuationBrief, readPreviousTurn, type PreviousTurnFacts,
   type PreviousTurnRetry } from './continuation-brief-assembly.js';
+import { messageOf } from '../../contracts/error-message.js';
+import { rejected } from '../../contracts/core/rejections.js';
 import { archiveOriginSkipsHistorySeed, runEnteredKernel, sessionBasisForContext } from './context-history-facts.js';
-import { rejected, mapRead, messageOf } from './context-support.js';
+import { mapRead } from './context-support.js';
 import type { ContextAssemblerDependencies } from './context-types.js';
 import { briefWorkspaceFactsFor, readReviewCaptureChanges, unknownCallReviewFilesFor } from './context-workspace-facts.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';

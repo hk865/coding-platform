@@ -8,7 +8,9 @@
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import { rejected as rejection } from '../../../contracts/core/rejections.js';
+import type { ReadResult } from '../../../contracts/core/results.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../../contracts/prompts/platform-pack.generated.js';
@@ -168,10 +170,6 @@ function emptyNotes(): ContextExtensionsV1['notes'] {
   };
 }
 
-function rejection(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-
 /** A `not_implemented` Goal-settings extension (no Goal, or no port). */
 function notImplementedGoalSettings(): ContextExtensionsV1['goalSettings'] {
   return { availability: 'not_implemented', autonomy: null };
@@ -235,10 +233,6 @@ async function projectExtensions(
     goalSettings: notImplementedGoalSettings(),
     decisions: notImplemented(),
   } };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** L9: the one deterministic index line for an anchor, never UI wording. */

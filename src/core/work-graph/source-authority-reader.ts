@@ -23,6 +23,7 @@
  * QueryJob's own locator and uses the Store's exact identity/fingerprint
  * `lookupCommit` -> `eventAt`, never a full-history scan.
  */
+import { messageOf } from '../../contracts/error-message.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { QueryJobRef, QueryJobSnapshot } from '../../contracts/query-job.js';
 import type { MaterialCanonicalRef } from './materials/record-ports.js';
@@ -49,7 +50,6 @@ type RefKind = keyof typeof REF_KEYS;
 type SupportedSourceRef = Extract<SourceCanonicalRef, { aggregateType: 'Workspace' | 'Run' | 'QueryRun' }>;
 type QueryJobSourceRef = Extract<SourceCanonicalRef, { aggregateType: 'QueryJob' }>;
 
-const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const unavailable = (reason: string): SourceSnapshotResult => ({ status: 'unavailable', reason });
 
 function isRefKind(value: unknown): value is RefKind {

@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
+import { messageOf } from '../../contracts/error-message.js';
 import { WORKSPACE_DENIED_PREFIXES } from './denied-prefixes.js';
 
 const execute = promisify(execFile);
@@ -28,12 +29,10 @@ export type ContinuationWorkspaceBytes =
 /** L6: either side over this size gets no diff. */
 export const CONTINUATION_DIFF_MAX_BYTES = 1024 * 1024;
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 function gitArgs(root: string, args: readonly string[]): string[] {
   return ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-C', root, ...args];
 }
+// The continuation-diff rule: normalise first, then require the normalised path to stay inside the root.
 /** A workspace-relative path only: an absolute path or one that escapes the root is refused. */
 export function isSafeWorkspaceRelativePath(path: string): boolean {
   if (path.length === 0 || isAbsolute(path)) return false;

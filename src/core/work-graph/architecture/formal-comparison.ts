@@ -23,7 +23,8 @@ export type CompareFormalObservedGraphsInputV1 = {
 const refKey = (ref: ModuleRef | null): string =>
   ref === null ? '' : `${ref.projectId}\u0000${ref.moduleId}`;
 
-const sameRef = (a: ModuleRef, b: ModuleRef): boolean =>
+/** Module identity: `projectId` and `moduleId` only; other fields are ignored. */
+const sameModuleIdentity = (a: ModuleRef, b: ModuleRef): boolean =>
   a.projectId === b.projectId && a.moduleId === b.moduleId;
 
 export function compareFormalObservedGraphs(input: CompareFormalObservedGraphsInputV1): FormalObservedFindingV1[] {
@@ -94,7 +95,7 @@ export function compareFormalObservedGraphs(input: CompareFormalObservedGraphsIn
     const toOwner = ownerOf(edge.to);
     if (!fromOwner || !toOwner) continue;
     // Item 3(a): an intra-module import is never a finding.
-    if (sameRef(fromOwner.ref, toOwner.ref)) continue;
+    if (sameModuleIdentity(fromOwner.ref, toOwner.ref)) continue;
     const pair = dependencyPairKey(fromOwner.ref, toOwner.ref);
     observedPairs.add(pair);
     if (!declaredPairs.has(pair)) {
@@ -149,7 +150,7 @@ export function compareFormalObservedGraphs(input: CompareFormalObservedGraphsIn
     if (unknownReachModules.has(key) || skippedOrFailedModules.has(key)) return true;
     for (const node of fileGraph.nodes) {
       const owned = ownerOf(node.path);
-      if (!owned || !sameRef(owned.ref, fromModule.ref)) continue;
+      if (!owned || !sameModuleIdentity(owned.ref, fromModule.ref)) continue;
       // A file of language `other` never alone makes a dependency unknown.
       if (node.language === 'other') continue;
       if (unresolvedFrom.has(node.path) || !languageProven(node.path)) return true;
@@ -159,7 +160,7 @@ export function compareFormalObservedGraphs(input: CompareFormalObservedGraphsIn
 
   for (const dependency of architecture.dependencies) {
     if (observedPairs.has(dependencyPairKey(dependency.from, dependency.to))) continue;
-    const fromModule = modules.find(module => sameRef(module.ref, dependency.from)) ?? null;
+    const fromModule = modules.find(module => sameModuleIdentity(module.ref, dependency.from)) ?? null;
     let certainty: FormalObservedFindingV1['certainty'] = 'proven';
     if (issuesTruncated) certainty = 'unknown';
     else if (ambiguousModules.has(refKey(dependency.from))) certainty = 'unknown';

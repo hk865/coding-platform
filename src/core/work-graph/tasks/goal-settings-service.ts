@@ -25,6 +25,7 @@ import {
   type GoalDecisionBasisV1,
   type GoalSettingsV1,
 } from '../../../contracts/goal-decisions.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalPhaseRef } from '../../../contracts/goal-phase.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
@@ -81,7 +82,6 @@ function invalid(reason: string): CoreRejection { return reject('invalid', reaso
 function forbidden(reason: string): CoreRejection { return reject('forbidden', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
 function refKeyOf(value: unknown): string { return canonicalJson(value as JsonValue); }
-function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
 /** §2.2: the saved Goal settings, or the exact default for an old record. */
 function settingsOf(goal: GoalSnapshot): GoalSettingsV1 {

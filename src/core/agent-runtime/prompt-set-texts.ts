@@ -10,6 +10,8 @@
  * origin it is (a body may have been written by an earlier run).
  */
 import { resolve } from 'node:path';
+import { rejected } from '../../contracts/core/rejections.js';
+import { isRecord } from '../../contracts/validation/common.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { SourceRefV1 } from '../../contracts/dispatch.js';
 import type { BaseSystemPromptInput } from '../../../vendor/coding-agent/dist/public-api.js';
@@ -96,10 +98,6 @@ export function trackPromptTexts(pack: { templates: Readonly<Record<string, stri
   return { texts: { templates, strings: pack.strings }, usedTemplates: () => [...used] };
 }
 
-function rejected(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-
 /**
  * A render-time pack/template failure is `invalid`, naming the
  * pack, the template and the reason. Any other error keeps its own handling.
@@ -154,10 +152,6 @@ export async function resolvePromptPack(
     return rejected('invalid', `the prompt pack ${packId} could not be resolved: ${resolved.reason}`);
   }
   return { status: 'ready', value: resolved.value };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {

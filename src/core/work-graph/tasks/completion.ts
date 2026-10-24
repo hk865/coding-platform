@@ -39,7 +39,8 @@ import type { TaskReductionRef, TaskReductionSnapshot } from '../../../contracts
 import type { RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
 import type { VerificationRoundRef, RoundSnapshot } from '../../../contracts/verification.js';
-import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import { canonicalJson, canonicalOf, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isNonNeg as isNonNegativeSafeInteger, isPos as isPositiveSafeInteger } from '../../../contracts/validation/common.js';
 import type {
   DecodeResult, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
@@ -61,7 +62,7 @@ import {
 } from '../persistence/evidence-record-codecs.js';
 import { evidenceApplicabilityWithBasis, evidenceBindingFor, selectEffectiveEvidenceSet } from './evidence-coverage.js';
 import {
-  bindTrustedContext, isolateWrite, isRecord, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef,
+  bindTrustedContext, isolateWrite, isRecord, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty,
 } from './execution-entry-service.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { evaluateGoalCompletion, evaluateTaskCompletion } from './completion-policy.js';
@@ -99,7 +100,6 @@ function notFound(reason: string): CoreRejection { return reject('not_found', re
 function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
 function cancelled(reason: string): CoreRejection { return reject('cancelled', reason); }
-function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
 function mapRejected(rejection: Rejected): CoreRejection {
   return reject(rejection.code, rejection.reason);

@@ -25,7 +25,8 @@ import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identit
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { GoalRef, VersionedRef } from '../../../contracts/ledger.js';
-import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import { canonicalKey as keyOf, canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
   queryJobRefFor, type PendingQueryJobSnapshot, type QueryJobIntentV1, type QueryJobRef, type QueryJobSnapshot,
   type QueryRunRef, type QueryRunSnapshot, type QuerySubmissionBindingV1, type RequestCommandReceiptV1,
@@ -46,7 +47,7 @@ import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import type { RequestFactsPort } from './request-facts.js';
 import { oldestPendingRound, type RequestRoundsFactsV1 } from '../queries/request-rounds-read.js';
-import { keyOf, noopTailClaim, rootOfFacts } from '../queries/request-round-claims.js';
+import { noopTailClaim, rootOfFacts } from '../queries/request-round-claims.js';
 import {
   decodeQueryJobSnapshot, decodeQueryJobSubmittedEvent, encodeQueryExecutionRecordedEvent, encodeQueryJobSnapshot,
   encodeQueryJobSubmittedEvent, encodeQueryRunSnapshotRecord, type QueryJobSubmittedEventV1,
@@ -158,10 +159,6 @@ export type RequestRoundDependencies = {
 
 /** The slot prefixes stay importable here for the existing callers; the keys live in `model/request-contracts`. */
 export { REQUEST_TAIL_PREFIX, SECRETARY_INTAKE_PREFIX };
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function unavailable(reason: string): RequestRejectionV1 {
   return rejected('unavailable', reason);

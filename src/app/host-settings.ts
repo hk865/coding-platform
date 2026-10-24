@@ -24,6 +24,7 @@ import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 
 import { homedir, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
+import { isRecord, nonEmpty } from '../contracts/validation/common.js';
 import type { PromptPackChainEntryV1, PromptPackManifestV1, PromptPackProblemV1, ToolTextV1 } from '../contracts/prompts/prompt-pack.js';
 import { resolvePromptPackV1 } from '../contracts/prompts/resolve-pack.js';
 import { canonicalToolTextBody, promptToolTextDigest } from '../contracts/prompts/prompt-set.js';
@@ -317,9 +318,6 @@ type PersistedSettingsV1 = {
   resourceCaps?: ResourceCapSettingsV1;
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
 
 function validScope(value: unknown): value is CoreScope {

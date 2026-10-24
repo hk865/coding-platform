@@ -44,7 +44,8 @@ import type { VersionPin } from '../../../contracts/core/identity.js';
 import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
-import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import { canonicalJson, canonicalOf, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import { isPos as isPositiveSafeInteger } from '../../../contracts/validation/common.js';
@@ -78,7 +79,7 @@ import type { TransitionRejectReason } from '../state/transition.js';
 import { dispatchOutboxRefKey, taskAttemptRefKey } from './claim-record-codecs.js';
 import {
   bindTrustedContext, checkRunPin, claimEffectRecords, claimLeaseOf, claimSessionOf, isRecord, isolateWrite,
-  loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef,
+  loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty,
 } from './execution-entry-service.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import type {
@@ -111,7 +112,6 @@ function forbidden(reason: string): CoreRejection { return reject('forbidden', r
 function unavailable(reason: string): CoreRejection { return reject('unavailable', reason); }
 function notFound(reason: string): CoreRejection { return reject('not_found', reason); }
 function cancelled(reason: string): CoreRejection { return reject('cancelled', reason); }
-function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
 function isRunRef(value: unknown): value is RunRef {
   return isRecord(value) && value['aggregateType'] === 'Run' && nonEmpty(value['projectId'])

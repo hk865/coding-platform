@@ -21,6 +21,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { SessionProvenanceV1, SessionRecord } from '../../../contracts/core/session.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { QueryJobRef, QueryJobSnapshot, QueryRunSnapshot } from '../../../contracts/query-job.js';
@@ -68,10 +69,6 @@ export type RequestRoundsFactsV1 = {
 
 function unavailable(reason: string): { status: 'rejected'; code: 'unavailable'; reason: string } {
   return { status: 'rejected', code: 'unavailable', reason };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function keyOfRef(ref: unknown): string {
@@ -184,7 +181,8 @@ export function deriveRequestOwner(
     : { owner: { ...successor.session }, ownerState: 'owned', lastOwner };
 }
 
-function guardAppend(guards: RecordGuard[], guard: RecordGuard): void {
+// In-place read-window guard: the first duplicate refKey wins and a duplicate is not rejected.
+function appendGuardFirstWins(guards: RecordGuard[], guard: RecordGuard): void {
   if (!guards.some((existing) => existing.refKey === guard.refKey)) guards.push(guard);
 }
 
@@ -221,7 +219,7 @@ async function readSuccessorFacts(
     for (const record of page.value.records) {
       const decoded = decodeSessionRecord(record);
       if (decoded.status !== 'decoded') return unavailable(`a successor Session is damaged: ${decoded.reason}`);
-      guardAppend(guards, { refKey: record.refKey, expectedRevision: record.revision });
+      appendGuardFirstWins(guards, { refKey: record.refKey, expectedRevision: record.revision });
       facts.push({
         session: sessionRefOf(decoded.value), lifecycle: decoded.value.lifecycle, provenance: decoded.value.provenance,
       });
@@ -316,7 +314,7 @@ export async function readRequestRounds(
       if (round.ref.projectId !== ctx.projectId || round.ref.workspaceId !== requestRoot.workspaceId) {
         return unavailable('a request round belongs to another project or workspace');
       }
-      guardAppend(guards, { refKey: record.refKey, expectedRevision: record.revision });
+      appendGuardFirstWins(guards, { refKey: record.refKey, expectedRevision: record.revision });
       rounds.push(round);
     }
     if (stale) continue;
@@ -354,7 +352,7 @@ export async function readRequestRounds(
         if (keyOfRef(run.ref) !== keyOfRef(runRef) || keyOfRef(run.run.queryJobRef) !== keyOfRef(round.ref)) {
           return unavailable('a request QueryRun does not belong to its round');
         }
-        guardAppend(guards, { refKey: record.refKey, expectedRevision: record.revision });
+        appendGuardFirstWins(guards, { refKey: record.refKey, expectedRevision: record.revision });
         runs.push(run);
       }
     }
@@ -375,7 +373,7 @@ export async function readRequestRounds(
       const record = ownerRead.value.records[0]!;
       const decoded = decodeSessionRecord(record);
       if (decoded.status !== 'decoded') return unavailable(`the owner Session is damaged: ${decoded.reason}`);
-      guardAppend(guards, { refKey: record.refKey, expectedRevision: record.revision });
+      appendGuardFirstWins(guards, { refKey: record.refKey, expectedRevision: record.revision });
       watermark = laterCursor(watermark, ownerRead.value.readThrough);
       const ownerFact = decoded.value;
       ownerFacts.push({
@@ -384,7 +382,7 @@ export async function readRequestRounds(
       if (ownerFact.lifecycle !== 'active') {
         const successors = await readSuccessorFacts(store, sessionRefOf(ownerFact), requestRoot.workspaceId);
         if (successors.status !== 'ready') return successors;
-        for (const guard of successors.value.guards) guardAppend(guards, guard);
+        for (const guard of successors.value.guards) appendGuardFirstWins(guards, guard);
         watermark = laterCursor(watermark, successors.value.watermark);
         ownerFacts.push(...successors.value.facts);
       }

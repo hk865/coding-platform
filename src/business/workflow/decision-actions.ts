@@ -27,6 +27,7 @@ import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
 import type { UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
 import type { CommandRerunRequestV1 } from '../../contracts/command-rerun-request.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import type { CommandRerunRequestPort } from '../../core/work-graph/model/command-rerun-request-contracts.js';
 import { commandRerunRequestRefOfSource } from '../../core/work-graph/tasks/command-rerun-request-codecs.js';
@@ -147,12 +148,6 @@ function ready(value: ResolveDecisionReadV1): ReadResult<ResolveDecisionReadV1> 
   return { status: 'ready', value };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 function goalKey(goalRef: GoalRef): string {
   return canonicalJson(goalRef as unknown as JsonValue);
 }

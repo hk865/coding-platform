@@ -14,6 +14,7 @@
  * dependencies; a missing dependency is an `undetermined` platform item and a
  * `not_configured` workspace, never a throw.
  */
+import { isRecord, utf8Bytes } from '../../contracts/validation/common.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
@@ -66,12 +67,6 @@ const CALL_ID_MAX_BYTES = 512;
 const COMMAND_MAX = 512;
 const PATH_MAX = 512;
 const MAX_PATHS = 8;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-const utf8Bytes = (text: string): number => new TextEncoder().encode(text).length;
 
 function bounded(text: string, max: number): { text: string; truncated: boolean } {
   return text.length <= max ? { text, truncated: false } : { text: text.slice(0, max), truncated: true };

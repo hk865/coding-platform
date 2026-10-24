@@ -33,6 +33,7 @@ import type { UnknownCallReviewReadPort } from '../core/work-graph/model/unknown
 import type { ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { DecisionSourceV1 } from '../contracts/goal-decisions.js';
+import { messageOf } from '../contracts/error-message.js';
 import { decisionSourceKey } from '../contracts/goal-decisions.js';
 import type { SessionRecord } from '../contracts/core/session.js';
 import type { RunSnapshot } from '../contracts/dispatch.js';
@@ -188,7 +189,6 @@ const MAX_SESSION_PAGES = 100;
 const REVIEW_PAGE_LIMIT = 100;
 const MAX_REVIEW_PAGES = 100;
 
-function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function rejectionText(result: CoreRejection | { status: string }): string {
   return 'reason' in result ? `${(result as CoreRejection).code}: ${(result as CoreRejection).reason}` : result.status;
 }

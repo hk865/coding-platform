@@ -878,13 +878,13 @@ export function planProposalProblem(
 // --------------------------------------------------------------------------
 
 /** Key-order-free equality by canonical JSON; a value it cannot encode throws (the records here always encode). */
-function sameRef(left: object, right: object): boolean {
+function sameCanonicalOrThrow(left: object, right: object): boolean {
   return canonicalJson(left as unknown as JsonValue) === canonicalJson(right as unknown as JsonValue);
 }
 
 /** Two Goal plan pointers (`null` = no active plan) name the same PlanRevision; the Goal machine asks the same. */
 export function samePlanPointer(left: PlanRevisionRef | null, right: PlanRevisionRef | null): boolean {
-  return left === null || right === null ? left === right : sameRef(left, right);
+  return left === null || right === null ? left === right : sameCanonicalOrThrow(left, right);
 }
 
 /** A forwarded read/admission verdict keeps its own code; an old basis is `stale`. */
@@ -1167,7 +1167,7 @@ function hostProvenanceProblem(event: RecordedWriterEvent): GuardStep {
 function sameRecordedCandidate(state: PlanProposalRecord, candidate: CandidatePlanProposal): boolean {
   if (state.kind !== 'candidate_v2' || state.status !== 'candidate' || state.revision !== 1) return false;
   try {
-    return sameRef({ ...state, issues: [] }, { ...candidate, issues: [] });
+    return sameCanonicalOrThrow({ ...state, issues: [] }, { ...candidate, issues: [] });
   } catch {
     // A non-JSON value (never produced by the record decoders or the owned input) is not the same content.
     return false;
@@ -1305,8 +1305,8 @@ function agentCandidateProblem(proposal: CandidatePlanProposal, event: AcceptedE
   if (submittedBy === undefined) {
     return reject('guard_failed', 'forbidden', 'a candidate without an Agent submission source cannot be adopted by an Agent');
   }
-  if (!sameRef(submittedBy.runRef, writer.runRef) || !sameRef(submittedBy.sessionRef, writer.sessionRef)
-    || !sameRef(submittedBy.roleBinding, writer.roleBinding)) {
+  if (!sameCanonicalOrThrow(submittedBy.runRef, writer.runRef) || !sameCanonicalOrThrow(submittedBy.sessionRef, writer.sessionRef)
+    || !sameCanonicalOrThrow(submittedBy.roleBinding, writer.roleBinding)) {
     return reject('guard_failed', 'forbidden', 'the candidate was submitted by another Agent Run');
   }
   if (proposal.goalRef.projectId !== event.proposalRef.projectId || proposal.goalRef.goalId !== writer.goalRef.goalId) {

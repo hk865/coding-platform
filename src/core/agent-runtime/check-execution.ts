@@ -23,6 +23,7 @@
  * result whose record fails on a stale pin or an unavailable report store is
  * retried a bounded number of times with the same request id (VD-10).
  */
+import { messageOf } from '../../contracts/error-message.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CheckProcessObservation, RoundSnapshot, VerificationRoundRef } from '../../contracts/verification.js';
@@ -73,7 +74,6 @@ function mapWorkspaceCode(code: string): CoreError {
     }
     return 'unavailable';
 }
-function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
 export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependencies): RegisteredCheckRunner {
     /** A finishing signal under the same Host identity/scope (B2 cleanup pattern): a proven fact survives a late cancel. */

@@ -23,6 +23,8 @@ import type { QueryRunRef } from '../../contracts/query-job.js';
 import { ACTIVITY_RECENT_WINDOW_DAYS } from '../../contracts/run-activity.js';
 import type { RunActivityFactsV1 } from '../../contracts/run-activity.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { rejected as rejection } from '../../contracts/core/rejections.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type {
   ActivityBackfillCandidate, ActivityBackfillCursor, RunActivityPort,
@@ -69,17 +71,6 @@ export type ActivityBackfillOperations = {
   backfillActivityRange(ctx: CoreCallContext, input: { workspace: WorkspaceScope; from: string; to: string; cursor: string | null }):
     Promise<ReadResult<ActivityBackfillBatchV1>>;
 };
-
-function rejection(code: CoreRejection['code'], reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
 
 function parseCursor(raw: string | null): Cursor | null | 'invalid' {
   if (raw === null || raw === undefined) return null;

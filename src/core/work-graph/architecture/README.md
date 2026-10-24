@@ -4,7 +4,7 @@
 - L2，允许依赖 `model`、`state`、`persistence`；另用 `workspace` 与 `record-store` 的端口。不得 import `sessions/queries/tasks/notes/evidence/communication/views`、`src/core/agent-runtime`、`src/app`、`src/business`、`src/composition`。
 - 管两个不同的面：观测架构是某一次有界源捕获的证据，永远不是正式 baseline；正式 catalog 是已采用的模块/依赖结构，有单独的 `baselineId`/`revision` 和 active pointer。正式架构的初始接受（`adoptInitialArchitecture`）和修订由 `catalog-service.ts` 负责；`architecture-service.ts` 只做观测捕获/查询/比较，不做正式接受。
 - 写入只经注入的 `GoalRecordTransactionPort`（`src/core/record-store/ports.ts:188`）一次提交，记录/事件编解码复用 `persistence/`；自动捕获请求/失败的受保护状态经 `state/architecture-capture.ts` 构造，状态迁移只经 `state/`（根 `AGENTS.md` 第 9 条）。
-- 记录/图 DTO 的正本在 `src/contracts/architecture-*.ts`、`src/contracts/governance.ts` 与 `src/contracts/core/`（身份/结果/拒绝）；本层只声明端口和本地 `GraphWrite` 信封（`src/core/work-graph/architecture/contracts.ts:16` 是旧副本，正本在 `src/core/work-graph/model/task-contracts.ts:28`），不另建平行身份或结果类型。
+- 记录/图 DTO 的正本在 `src/contracts/architecture-*.ts`、`src/contracts/governance.ts` 与 `src/contracts/core/`（身份/结果/拒绝）；本层只声明端口和转出的 `GraphWrite`（`src/core/work-graph/architecture/contracts.ts:16` 只是转出；正本在 `src/core/work-graph/model/task-contracts.ts:28`），不另建平行身份或结果类型。
 - 只做形状、身份、版本与纯图算法：不抓源码（`WorkspaceTools` 做）、不写 SQL/事务、不做 UI 读模型、不做决定/迁移门。
 - 读失败、损坏或缺失保持 `unavailable`/`rejected`，不猜空目录；路径和名字只是标签，不能证明语义移动或依赖关系。
 
@@ -15,7 +15,7 @@
 - `catalog-contracts.ts` — 正式 catalog 的 adoption/revision 端口、revision 快照与 module facts DTO。
 - `catalog-record-codecs.ts` — catalog 记录/事件 codec、adoption 闭包校验、`architectureBaselineDigest` 与 schema 注册。
 - `catalog-service.ts` — 正式架构的初始接受（`adoptInitialArchitecture`）、catalog 修订（`reviseArchitectureCatalog`）、revision 读取、当前 catalog 的 module facts 与 guards。
-- `contracts.ts` — observed architecture 的记录/端口/DTO，以及本文件的 `GraphWrite`（`src/core/work-graph/architecture/contracts.ts:16` 是旧副本；正本在 `src/core/work-graph/model/task-contracts.ts:28`）。
+- `contracts.ts` — observed architecture 的记录/端口/DTO，以及本文件的 `GraphWrite` 转出（`src/core/work-graph/architecture/contracts.ts:16` 只是转出；正本在 `src/core/work-graph/model/task-contracts.ts:28`）。
 - `file-graph-index.ts` — 纯文件级图分页：listFiles/neighbors/impact 与 cursor 绑定。
 - `formal-comparison.ts` — 正式 catalog 与观测文件图的纯比较（ownership/ambiguous/SCC 等 finding）。
 - `graph-index.ts` — 纯观测图遍历：邻域、反向影响闭包、分页与 `encodeCursor`。
@@ -53,7 +53,6 @@
 
 ## 不要做
 - 不要把观测 capture 当正式 baseline 或 adopted architecture；两者是不同聚合，正式采用（`adoptInitialArchitecture`）和修订只由 `catalog-service.ts` 负责，`architecture-service.ts` 不做这件事。
-- `GraphWrite` 另有旧副本：`src/core/work-graph/architecture/contracts.ts:16`，正本在 `src/core/work-graph/model/task-contracts.ts:28`，新代码一律用正本，旧副本由清理轮删除。
 - 不要另写图遍历、SCC 或 cursor 编解码；用 `graph-index.ts`、`architecture-delta.ts`、`encodeCursor`（M1-37 的同类教训是别复制管线）。
 - 不要用路径/名字猜语义移动、依赖方向或规则结论；差异只报结构 key 与 digest 证明的事实。
 - 不要绕过注入的 `GoalRecordTransactionPort` 写记录，也不要手改受保护状态字段；状态写入只经 `state/`（`AGENTS.md` 第 9 条、M1-01）。

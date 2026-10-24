@@ -37,21 +37,21 @@
 | `queryRunEndedWithoutAnswer` | `src/business/workflow/query-stage-driver.ts:71` | 已正式关闭或 `settled`、不会再有 Answer 的 QueryRun 判定 | 咨询与阶段链共用；不要另写终态判断 |
 | `createRequestRoundQueues` | `src/business/workflow/request-round-queue.ts:306` | 两条队列处理器：`rounds` 分页读开放轮，分区游标、遍历中已找到的每 Session 最老新轮（各带请求根）以及满 50 次上限后没发出的活尝试和新轮，都随冻结的 continuation 跨 pass 续接（读失败不推进游标；整轮遍历完才用 `compareRequestRounds` 选每 Session 最老轮；全部发出后才报 `wrapped`）；发出前重读该请求的 facts，按此刻的活尝试、owner、可派轮及其 Run 派发，profile 取此刻 owner 的；选定的新轮重读后可派轮、Run 或 owner 已变（drop、改派、claim），它涉及的新旧两个 Session 都不发，整轮遍历从头重读（返回 `more`、不 `wrapped`），所选全部成立的遍历才能 `wrapped`；continuation 里的引用和游标严格解码（完整的 QueryJob/QueryRun/Session 引用和提交游标），否则整个 continuation 读不了；请求已有活尝试就不再给它第二轮；无 profile 就 `end_unbound`，先飞不等待、按 Session 退避（随 advance 的 signal 中止）并在结束时 `settle()`；`unassigned` 每 pass 调一次注入的 drain | Host 的 wake loop 注册两个队列 |
 | `REQUEST_ROUNDS_QUEUE`、`REQUEST_UNASSIGNED_QUEUE` | `src/business/workflow/request-round-queue.ts:67`、`src/business/workflow/request-round-queue.ts:69` | 两个队列在 wake loop 里的注册键 | 组合根注册与唤醒；不要另写字面量 |
-| `createSessionArchiveService` | `src/business/workflow/session-archive.ts:155` | 登记不可变归档请求后逐步 stop、anchor、responsibility、reply_handler/wait_cancel、requeue、archive，各一个 sub-commit，已提交步骤不撤销 | Host 归档、维护、咨询回执归档 |
-| `createSessionMaintenanceService` | `src/business/workflow/session-maintenance.ts:156` | 每次最多一页的有界维护；按到期与真实关闭时间归档 | 启动或推进时跑一页维护 |
-| `createDecisionActions` | `src/business/workflow/decision-actions.ts:294` | `resolveDecision` 的三段有限协调与只读 `orderGoalAdvances` | 决定卡作答与 Host 排序 |
-| `createCommandRerunRequestApplicationAdapter` | `src/business/workflow/decision-actions.ts:252` | `command_rerun_request` 卡的第②步适配器：按答案派生身份提交，重试重放 | 组合根注册 `command_rerun_request` 应用 |
-| `createConsultationConsumer` | `src/business/workflow/consultation.ts:106` | 一条信箱输入 → 一条只读 Query；复用已有答案，必要时归档副本；阶段链经 `createQueryStageDriver` | Host 处理咨询消息 |
+| `createSessionArchiveService` | `src/business/workflow/session-archive.ts:145` | 登记不可变归档请求后逐步 stop、anchor、responsibility、reply_handler/wait_cancel、requeue、archive，各一个 sub-commit，已提交步骤不撤销 | Host 归档、维护、咨询回执归档 |
+| `createSessionMaintenanceService` | `src/business/workflow/session-maintenance.ts:151` | 每次最多一页的有界维护；按到期与真实关闭时间归档 | 启动或推进时跑一页维护 |
+| `createDecisionActions` | `src/business/workflow/decision-actions.ts:289` | `resolveDecision` 的三段有限协调与只读 `orderGoalAdvances` | 决定卡作答与 Host 排序 |
+| `createCommandRerunRequestApplicationAdapter` | `src/business/workflow/decision-actions.ts:247` | `command_rerun_request` 卡的第②步适配器：按答案派生身份提交，重试重放 | 组合根注册 `command_rerun_request` 应用 |
+| `createConsultationConsumer` | `src/business/workflow/consultation.ts:99` | 一条信箱输入 → 一条只读 Query；复用已有答案，必要时归档副本；阶段链经 `createQueryStageDriver` | Host 处理咨询消息 |
 | `createActivityBackfill` | `src/business/workflow/activity-backfill.ts:122` | 用 `countRunActivity`/`countQueryActivity` 计数并经 `recordRunActivity`/`recordQueryActivity` 写回填批次，不改 Run/Task/Attempt/Query | 启动自动回填与人工区间回填 |
 | `orderTasksByDependency` | `src/business/workflow/task-order.ts:14` | 按 DAG 边的稳定 Kahn 排序，只影响候选尝试顺序 | 选择候选 Task 前的软排序 |
 | `DEFAULT_SESSION_ARCHIVE_POLICY` | `src/business/workflow/ports.ts:73` | 冻结默认归档策略：一天、每页 100 | 组合根未显式配置时 |
 | `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:157` | 由同一稳定 `commandId` 派生 Session 创建身份 | 建线与崩溃重试；不要另写身份配方（MH-03、FP-13） |
 | `compareRequestRounds` | `src/core/work-graph/queries/request-rounds-read.ts:102` | request round 的稳定先后比较，只取 `ref` 与 `since` 两项 | drain、最老 pending 选择与请求队列候选的排序；不要另写排序 |
-| `orderCandidates`、`createSecretarySelection` | `src/core/work-graph/tasks/secretary-selection.ts:134`、`src/core/work-graph/tasks/secretary-selection.ts:511` | 秘书候选的准入子集、busy 分类与稳定排序 | 请求分配；不要另算候选或另写排序 |
+| `orderCandidates`、`createSecretarySelection` | `src/core/work-graph/tasks/secretary-selection.ts:125`、`src/core/work-graph/tasks/secretary-selection.ts:502` | 秘书候选的准入子集、busy 分类与稳定排序 | 请求分配；不要另算候选或另写排序 |
 | `plainSessionRefToAggregate`、`sessionAggregateRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:1004`、`src/core/work-graph/sessions/session-record-codecs.ts:998` | 普通 SessionRef 转聚合引用，并生成规范键 | guard、claim 与引用比较；不要内联序列化 Session 聚合 |
-| `oldestPendingRound` | `src/core/work-graph/queries/request-rounds-read.ts:473` | 选最老的 pending 非 routing round；**正本**（6A-1 已合成一份，不列另一份） | intake 转移、未分配遍历、Workflow 计划；不要另写排序（M1-16、M1-18、MH-24） |
+| `oldestPendingRound` | `src/core/work-graph/queries/request-rounds-read.ts:473` | 选最老的 pending 非 routing round；**正本**（只此一份） | intake 转移、未分配遍历、Workflow 计划；不要另写排序（M1-16、M1-18、MH-24） |
 | `oldestPending`（私有） | `src/business/workflow/request-intake.ts:164` | 把正本结果投影成 `QueryJobRef` 的私有包装 | 本层 intake/drain 使用；不要在这里重写选轮规则 |
-| `sameJson` | `src/contracts/fingerprint.ts:50` | 按规范 JSON 判等（不可编码即不相等）；**正本** | 引用/输入判等；`sameCanonical` 私有副本见“不要做”（M1-32） |
+| `sameJson` | `src/contracts/fingerprint.ts:50` | 按规范 JSON 判等（不可编码即不相等）；**正本** | 引用/输入判等；不要另写比较 |
 | `rejected`、`rejectedWithCurrent` | `src/contracts/core/rejections.ts:5`、`src/contracts/core/rejections.ts:13` | 领域 rejection 构造器，区分是否保留 `current` | 返回失败；本层 `reject` 只保留 owner 专属文案，不重建结果机器（M1-29） |
 
 ## 内部用
@@ -64,8 +64,6 @@
 - 不要绕过 `src/core/work-graph/state/` 改受保护字段；Session/Goal/Task/Run 的生命周期写入各有 owner（AGENTS 第 9 条）。
 - 不要另写 oldest-pending 或容量规则：`oldestPendingRound` 已合成一份正本（`src/core/work-graph/queries/request-rounds-read.ts:473`），本层 `oldestPending` 只是私有包装；`createAlwaysAdmitCapacity` 只是默认，真实 Host 用真实上限（M1-16、M1-18、MH-24、FP-12、MH-12）。
 - 不要跳过 `findLine` 直接新建线，也不要假设新建 Session 的 revision 仍是 1；重试先按 `commandId` 查回原行并读当前 revision（MH-03、FP-13）。
-- `sameJson` 另有旧副本：`src/business/workflow/workflow.ts:134`、`src/business/workflow/consultation.ts:43`、`src/business/workflow/session-archive.ts:116`、`src/app/collaboration-driver.ts:161` 的 `sameCanonical`，新代码一律用正本 `src/contracts/fingerprint.ts:50`，旧副本由清理轮删除（M1-32）。
-- `messageOf` 另有旧副本：`src/business/workflow/request-intake.ts:129`，正本定为 `src/contracts` 新增（M1-38，尚未落地），新代码一律用正本，旧副本由清理轮删除。
 - 不要另写 rejection 构造：用 `src/contracts/core/rejections.ts` 的 `rejected`/`rejectedWithCurrent`，本层只保留 owner 专属文案（M1-29）。
 - 不要把 `advanceWork` 改成有状态循环、调度器或第二内核：每次只调一个 owner 并保留其完整 receipt；`waiting`/`completed` 必须 `next: null`。
 - 不要在 `request-round-queue.ts` 里读记录库或重算规则：它只经注入端口（`rounds`、`facts`、`sessions`、`profiles`、`drain`、`driver`）工作，选轮用 `oldestPendingRound`、Session profile 用 `forSession`、页与退避上限取 `src/core/work-graph/model/request-contracts.ts` 的常量；队列也不做第二个调度器，唤醒只来自 `wake` 与注入的 `settle()`。

@@ -20,6 +20,7 @@ import { canonicalJson, type JsonValue } from "../../contracts/fingerprint.js";
 import type { CommitCursor, CommandFingerprint } from "../../contracts/command-event.js";
 import { seqOfCommitCursor } from "../../contracts/ledger.js";
 import type { AggregateRef, VersionedRef } from "../../contracts/ledger.js";
+import { messageOf } from "../../contracts/error-message.js";
 import type { CommitCursorBinding, DecodeResult, EncodedDomainEvent, EncodedEventSchema, EncodedRecord, EncodedRecordSchema, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordGuard, StoreCommitReceipt, StoreFailure, StoredVersion, UniqueClaimChange } from "./ports.js";
 import { bindCommitCursor, COMMIT_CURSOR_FIELDS, validateUniqueClaims } from "./commit-extensions.js";
 
@@ -74,9 +75,7 @@ export function isRevision(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-export function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+export { messageOf } from "../../contracts/error-message.js";
 
 function canonicalOf(value: unknown): DecodeResult<string> {
   try {

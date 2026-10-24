@@ -166,7 +166,7 @@ import type { GoalRef } from '../contracts/ledger.js';
 import type { RoleConfigurationRef } from '../contracts/core/identity.js';
 import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../contracts/review-admission.js';
 import type { PlatformDutyV1 } from '../contracts/platform-duty.js';
-import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
+import { canonicalJson, sameJson, type JsonValue } from '../contracts/fingerprint.js';
 import type { RuntimeCapabilities } from '../core/agent-runtime/contracts.js';
 import type {
   ContinuationWorkspaceSource, ReadonlyCommandAccessInput, RuntimeExecutionDependencies, RuntimeHostBindings,
@@ -376,10 +376,6 @@ export type TargetPlatformOptions = {
  * platform material reads and mailbox body storage; it never replaces the real
  * command actor/sender. */
 const SYSTEM_ACTOR = Object.freeze({ kind: 'system' as const, id: 'platform-composition-host' });
-
-function sameJson(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
-}
 
 /** Slice 4C-2 U6: the four note-card options the notes owner accepts. */
 type NoteOptionId = 'accept' | 'reject' | 'supersede' | 'coexist';

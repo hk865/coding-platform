@@ -10,6 +10,7 @@
  * the body store and ONE message commit. A paused Goal never refuses the
  * answer; no Plan is applied here.
  */
+import { sameActorIdentity as sameActor } from '../../../contracts/actor-equality.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext, CorePrincipal } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
@@ -50,9 +51,6 @@ import {
 // Small helpers                                                               //
 // -------------------------------------------------------------------------- //
 
-function sameActor(left: unknown, right: unknown): boolean {
-  return isRecord(left) && isRecord(right) && left['kind'] === right['kind'] && left['id'] === right['id'];
-}
 function mapStoreFailure(failure: { code: string; reason: string }): CoreRejection {
   switch (failure.code) {
     case 'not_found': return rejectedWithCurrent('not_found', failure.reason);

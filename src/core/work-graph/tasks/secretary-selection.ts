@@ -28,7 +28,8 @@ import type { CoreError, ReadResult } from '../../../contracts/core/results.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { QueryJobSnapshot } from '../../../contracts/query-job.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import { canonicalKey as keyOf, canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
 import type { SessionFactsPort, SessionWorkWaitV1 } from '../model/session-facts-contracts.js';
@@ -107,19 +108,12 @@ function unavailable(reason: string): { status: 'rejected'; code: 'unavailable';
   return { status: 'rejected', code: 'unavailable', reason };
 }
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function keyOf(value: unknown): string {
-  return canonicalJson(value as JsonValue);
-}
-
 function sessionKey(session: SessionRef): string {
   return keyOf(plainSessionRefToAggregate(session));
 }
 
-function guardAppend(guards: RecordGuard[], guard: RecordGuard): void {
+/** First-wins append for read windows: it must keep the copy behaviour and is not the mergeGuards submit-time merger. */
+function appendGuardCopyFirstWins(guards: RecordGuard[], guard: RecordGuard): void {
   if (!guards.some((existing) => existing.refKey === guard.refKey)) guards.push({ ...guard });
 }
 
@@ -353,7 +347,7 @@ async function readOpenRequestFacts(
         ? `the request rounds read failed: ${facts.reason}`
         : 'an open request round no longer reads as a request root');
     }
-    for (const guard of facts.value.guards) guardAppend(guards, guard);
+    for (const guard of facts.value.guards) appendGuardCopyFirstWins(guards, guard);
     watermark = laterCursor(watermark, facts.value.watermark);
 
     const covered = new Set(facts.value.coveredByDrop.map((ref) => keyOf(ref)));
@@ -534,7 +528,7 @@ export function createSecretarySelection(deps: SecretarySelectionDependencies): 
       if (admission.status !== 'ready') return admission;
       if (admission.value.status === 'refused') continue;
       const admittedFacts = admission.value;
-      for (const guard of admittedFacts.guards) guardAppend(guards, guard);
+      for (const guard of admittedFacts.guards) appendGuardCopyFirstWins(guards, guard);
       admitted.push({ ref, session: admittedFacts.session, profile: admittedFacts.profile });
     }
 
@@ -544,7 +538,7 @@ export function createSecretarySelection(deps: SecretarySelectionDependencies): 
 
     const openRead = await readOpenRequestFacts(deps.records, ctx, scope);
     if (openRead.status !== 'ready') return openRead;
-    for (const guard of openRead.value.guards) guardAppend(guards, guard);
+    for (const guard of openRead.value.guards) appendGuardCopyFirstWins(guards, guard);
     watermark = laterCursor(watermark, openRead.value.watermark);
 
     const copiesRead = await readActiveCopies(deps.records, scope);

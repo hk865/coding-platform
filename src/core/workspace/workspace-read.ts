@@ -1,5 +1,7 @@
 import { canonicalJson } from '../../contracts/fingerprint.js';
+import { messageOf } from '../../contracts/error-message.js';
 import { isProjectInputPath } from './project-source-snapshot.js';
+import { isSafeSourceRelativePath as safeRelative } from './path-validation.js';
 import { textSourceKey } from './text-source-snapshot.js';
 import type { CaptureEntry, CaptureMaterial } from './capture.js';
 import type { WorkspaceReadAccess } from './access.js';
@@ -19,11 +21,8 @@ export type ContentManifest = ReadonlyMap<string, ContentFile>;
 const rejected = <T>(code: 'invalid' | 'forbidden' | 'not_found' | 'source_stale' | 'capacity' | 'unsupported' | 'unavailable' | 'cancelled', reason: string): WorkspaceResult<T> =>
   ({ status: 'rejected', code, reason });
 
-const safeRelative = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 4096 &&
-  !/[\\:\0]/.test(value) && value.split('/').every(segment => !!segment && segment !== '.' && segment !== '..');
 const kernelCode = (error: unknown): string | null =>
   error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : null;
-const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 /** The declared scope decides whether a missing file is "absent here" or "outside this capture". */
 export const scopeContains = (scope: CaptureContentScope, path: string): boolean =>

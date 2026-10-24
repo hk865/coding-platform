@@ -24,7 +24,8 @@ import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/
 import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import type { ContextCallKindV1, PlatformDutyV1 } from '../../../contracts/graph-context.js';
 import { consultationQueryRefs, isRequestRound, queryExecutionBindingOf } from '../../../contracts/query-job.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
@@ -101,9 +102,6 @@ function dedupeGuards(guards: readonly RecordGuard[]): RecordGuard[] {
   for (const guard of guards) if (!seen.has(guard.refKey)) seen.set(guard.refKey, guard);
   return [...seen.values()];
 }
-function sameRef(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
-}
 /** §2.4 item 3 / §2.5: the duty a versioned legacy Session role ref fixes, or none. */
 function legacyTemplateDutyOf(role: PreparedQueryManifestV1['sessionRole']): PlatformDutyV1 | undefined {
   if (role.kind !== 'legacy_template' || role.templateRevision !== 's3.1') return undefined;
@@ -139,9 +137,6 @@ function queryRunPinOf(expected: readonly { ref: unknown; revision: number }[], 
   const [pin] = expected;
   if (expected.length !== 1 || pin === undefined || !isRecord(queryRunRef) || !sameRef(pin.ref, queryRunRef)) return null;
   return Number.isSafeInteger(pin.revision) && pin.revision >= 0 ? pin.revision : null;
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 /**
  * A claim profile is an object with its Session role, so a malformed profile
@@ -243,9 +238,6 @@ function queryJobRefKey(ref: QueryJobRef): string {
 function queryJobAnswerRefKey(ref: QueryJobAnswerRef): string {
   return canonicalJson(ref as unknown as JsonValue);
 }
-function sessionKeyOf(ref: SessionRecord['ref']): string {
-  return sessionAggregateRefKey(ref);
-}
 
 // --------------------------------------------------------------------------
 // S1-DISPATCH-02: the Query-claim exclusion (spec §3.2, §3.3)
@@ -304,7 +296,7 @@ async function readCore(
 ): Promise<ReadResult<Core>> {
   const jobKey = queryJobRefKey(queryJobRefFor(queryRunRef));
   const runKey = queryRunRefKey(queryRunRef);
-  const keys = sessionRef === null ? [jobKey, runKey] : [jobKey, runKey, sessionKeyOf(plainSessionRefToAggregate(sessionRef))];
+  const keys = sessionRef === null ? [jobKey, runKey] : [jobKey, runKey, sessionAggregateRefKey(plainSessionRefToAggregate(sessionRef))];
   let read;
   try {
     read = await deps.records.readMany(keys);
@@ -333,7 +325,7 @@ async function readCore(
     if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted Session binding');
     return readCore(deps, queryRunRef, state.sessionRef);
   }
-  const session = decodeOne(sessionKeyOf(plainSessionRefToAggregate(sessionRef)), present, missing, decodeSessionRecord);
+  const session = decodeOne(sessionAggregateRefKey(plainSessionRefToAggregate(sessionRef)), present, missing, decodeSessionRecord);
   if (session.status === 'missing') return { status: 'not_found' };
   if (session.status === 'unavailable') return rejectedWithNonEmptyCurrent('unavailable', `the Session is not readable: ${session.reason}`);
   return { status: 'ready', value: { job: job.value, run: run.value, session: session.value } };
@@ -1126,7 +1118,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       return revisionConflict([
         { refKey: queryJobRefKey(queryJobRef), revision: job.revision },
         { refKey: queryRunRefKey(queryRunRef), revision: run.revision },
-        { refKey: sessionKeyOf(session.ref), revision: session.revision },
+        { refKey: sessionAggregateRefKey(session.ref), revision: session.revision },
       ]);
     }
     // A claimed or prepared attempt keeps its Job and Run `pending`; its execution
@@ -1236,7 +1228,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const guards: RecordGuard[] = dedupeGuards([
       { refKey: queryJobRefKey(queryJobRef), expectedRevision: expected.job! },
       { refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! },
-      { refKey: sessionKeyOf(session.ref), expectedRevision: expected.session! },
+      { refKey: sessionAggregateRefKey(session.ref), expectedRevision: expected.session! },
       ...roleFacts.guards,
     ]);
     return commitOperation({
@@ -1292,7 +1284,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (expected.run !== run.revision || expected.session !== session.revision || expected.sessionId !== session.ref.sessionId) {
       return revisionConflict([
         { refKey: queryRunRefKey(queryRunRef), revision: run.revision },
-        { refKey: sessionKeyOf(session.ref), revision: session.revision },
+        { refKey: sessionAggregateRefKey(session.ref), revision: session.revision },
       ]);
     }
     if (!ownsQuery(session, queryRunRef, state)) {
@@ -1389,7 +1381,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       deps, identityKey, fingerprint,
       guards: [
         { refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! },
-        { refKey: sessionKeyOf(session.ref), expectedRevision: expected.session! },
+        { refKey: sessionAggregateRefKey(session.ref), expectedRevision: expected.session! },
       ],
       records: [encodeQueryRunSnapshotRecord(nextRun)],
       events: [encodeQueryExecutionRecordedEvent(event)],
@@ -1460,7 +1452,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       return revisionConflict([
         { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), revision: job.revision },
         { refKey: queryRunRefKey(queryRunRef), revision: run.revision },
-        { refKey: sessionKeyOf(session.ref), revision: session.revision },
+        { refKey: sessionAggregateRefKey(session.ref), revision: session.revision },
       ]);
     }
     if (state.phase !== 'prepared') {
@@ -1480,7 +1472,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const pins: RecordGuard[] = [
       { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: expected.job! },
       { refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! },
-      { refKey: sessionKeyOf(session.ref), expectedRevision: expected.session! },
+      { refKey: sessionAggregateRefKey(session.ref), expectedRevision: expected.session! },
     ];
     // A request round starts only on its request's owner. The facts are read
     // here and every one of them is guarded by the start commit itself.
@@ -2010,7 +2002,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const terminalGuards: RecordGuard[] = [
       ...guards,
       { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision },
-      { refKey: sessionKeyOf(session.ref), expectedRevision: session.revision },
+      { refKey: sessionAggregateRefKey(session.ref), expectedRevision: session.revision },
     ];
     if (next.answer !== null) terminalGuards.push({ refKey: queryJobAnswerRefKey(next.answer.ref), expectedRevision: null });
     terminalGuards.push(...activityPlan.guards);
@@ -2163,7 +2155,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const guards = mergeGuards([
       { refKey: queryRunRefKey(queryRunRef), expectedRevision: run.revision },
       { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision },
-      { refKey: sessionKeyOf(session.ref), expectedRevision: session.revision },
+      { refKey: sessionAggregateRefKey(session.ref), expectedRevision: session.revision },
       ...requestGuards,
       ...activityPlan.guards,
     ]);

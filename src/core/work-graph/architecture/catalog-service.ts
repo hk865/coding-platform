@@ -29,6 +29,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ModuleRef, VersionPin } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
 import type { ProjectRef, WorkspaceRef } from '../../../contracts/ledger.js';
@@ -39,7 +40,6 @@ import type {
   ArchitectureCatalogPort, ArchitectureCatalogRecord, ArchitectureCatalogRef, ArchitectureRevision,
   CatalogModuleFacts, ReadArchitectureRevisionInput, ReviseArchitectureCatalogInput,
 } from './catalog-contracts.js';
-import type { GraphWrite } from './contracts.js';
 import {
   ARCHITECTURE_CATALOG_ADOPTED_EVENT, ARCHITECTURE_CATALOG_REVISED_EVENT, architectureBaselineDigest,
   decodeArchitectureCatalogAdoptedEvent, decodeArchitectureCatalogRecord, decodeArchitectureCatalogRevisedEvent,
@@ -48,6 +48,7 @@ import {
   readModuleRef, validateAdoptedArchitecture,
   type ArchitectureCatalogAdoptedEventV1, type ArchitectureCatalogRevisedEventV1,
 } from './catalog-record-codecs.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import { decodeProjectSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { projectRefFor, workspaceRefFor } from '../persistence/commit-compiler.js';
 
@@ -78,9 +79,6 @@ function invalid(reason: string): Rejection { return rejected('invalid', reason)
 function unavailable(reason: string): Rejection { return rejected('unavailable', reason); }
 function asReadResult<T>(rejection: Rejection): ReadResult<T> {
   return rejection.code === 'not_found' ? { status: 'not_found' } : rejection;
-}
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 function mapStoreFailure(failure: StoreFailure): Rejection {
   switch (failure.code) {

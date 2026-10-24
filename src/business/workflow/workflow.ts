@@ -1,5 +1,5 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
-import type { CoreError, CoreRejection, ReadResult } from '../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
 import type { SessionProvenanceV1 } from '../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
@@ -18,7 +18,9 @@ import type { TaskAutomationStopReason, TaskAutomationVerdictV1, TaskFailureFact
 import {
   WORKFLOW_AUTOMATION_ACTOR, type ReworkFailureClass, type TaskRequeueRef, type TaskReworkRefusalRef,
 } from '../../contracts/task-requeue.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { canonicalJson, sameJson as sameCanonical, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { rejected as rejection } from '../../contracts/core/rejections.js';
+import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey, type DecisionSelectionV1, type DecisionSourceV1, type UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
 import { UNKNOWN_CALL_REVIEW_T02_REASON } from '../../contracts/unknown-call-review.js';
 import type { CreateSessionRequest } from '../../core/agent-runtime/session-operations.js';
@@ -122,18 +124,6 @@ type ReviewGate =
 // Small pure helpers
 // --------------------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function nonEmpty(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-function rejection(code: CoreError, reason: string): CoreRejection {
-  return { status: 'rejected', code, reason };
-}
-function sameCanonical(left: unknown, right: unknown): boolean {
-  try { return canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue); } catch { return false; }
-}
 function sessionAggregateRef(projectId: string, sessionId: string): SessionRef & { aggregateType: 'Session' } {
   return { aggregateType: 'Session', projectId, sessionId };
 }

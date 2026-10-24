@@ -26,7 +26,7 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
-import type { GraphWrite } from '../model/session-contracts.js';
+import type { GraphWrite } from '../model/task-contracts.js';
 import type { SessionResponsibilityBasisPort, SessionResponsibilityBasisV1 } from '../model/session-facts-contracts.js';
 import {
   checkPlainSessionRef, checkTarget, decodeSessionRecord, decodeSessionWorkLink,

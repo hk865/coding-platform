@@ -15,7 +15,7 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ModelRequestPermitRef, RunRef } from '../../../contracts/dispatch.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sameJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PreparedCommit, RecordGuard, StoreFailure, StoreResult, UniqueClaimChange } from '../../record-store/ports.js';
 import type { RecordLookupPage } from '../../record-store/lookup-ports.js';
 import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
@@ -25,7 +25,7 @@ import { ownerReadStoreFailureToRejection } from '../persistence/read-result-fai
 import type { GraphWrite } from '../model/task-contracts.js';
 import {
   admitEnteredRun, bindTrustedContext, checkRunAndPermitPins, checkRunPin, isRecord, isSha256Hex,
-  isolateWrite, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, sameRef, taskEntryPermitProblem,
+  isolateWrite, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, taskEntryPermitProblem,
 } from './execution-entry-service.js';
 import type { EnteredAdmission } from './execution-entry-service.js';
 import type {

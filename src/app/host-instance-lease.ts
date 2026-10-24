@@ -31,6 +31,7 @@
 import { randomUUID } from 'node:crypto';
 import { link, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { messageOf } from '../contracts/error-message.js';
 import type { HostTakeoverProofV1 } from '../contracts/unknown-call-review.js';
 
 export const HOST_INSTANCE_LOCK_FILE = 'host-instance.lock';
@@ -83,10 +84,6 @@ function defaultIsAlive(pid: number): boolean {
 function codeOf(error: unknown): string | undefined {
   return (error as NodeJS.ErrnoException | undefined)?.code;
 }
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function parseLock(text: string): HostInstanceLockContent | null {
   let value: unknown;
   try { value = JSON.parse(text); } catch { return null; }

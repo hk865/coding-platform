@@ -48,10 +48,6 @@ export type WorkspaceEventDecoder = (
   event: EncodedDomainEvent,
 ) => DecodeResult<{ payload: { value: WorkspaceSnapshot } }>;
 
-export function sameActor(left: unknown, right: unknown): boolean {
-  return isRecord(left) && isRecord(right) && left['kind'] === right['kind'] && left['id'] === right['id'];
-}
-
 /** The trusted bound context; `forbiddenReason` is the owner's own exact text. */
 export function ownScope(ctx: CoreCallContext, forbiddenReason: string): Owned | CoreRejection {
   if (!isRecord(ctx) || !nonEmpty(ctx.projectId) || !nonEmpty(ctx.workspaceId)
