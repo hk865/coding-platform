@@ -21,6 +21,7 @@ import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/f
 import {
   hasOnlyKeys, invalid, isNonNeg, isPos, isRecord, nonEmpty, parseObject, type UnknownRecord,
 } from '../../../contracts/validation/common.js';
+import { isNonZeroPlatformCursor, isPlatformCursor } from '../../../contracts/validation/cursors.js';
 import type {
   SessionAggregateRef, SessionRef, SessionWorkLinkRef, WorkLinkRelation,
 } from '../../../contracts/core/identity.js';
@@ -116,14 +117,13 @@ export type PendingSessionWorkLink = {
 /** `null` = the check passed; a string is the precise rejection reason. */
 export type Problem = string | null;
 
-/** Platform ledger cursor, opaque to the domain except for this shape rule. */
-export function isPlatformCursor(value: unknown): value is string {
-  return nonEmpty(value) && /^c\d{10}$/.test(value);
-}
-/** Spec §2.3: a stored notice position must be a NONZERO ledger commit cursor. */
-export function isNonZeroPlatformCursor(value: unknown): value is string {
-  return isPlatformCursor(value) && value !== 'c0000000000';
-}
+// The two ledger cursor checks live in `src/contracts/validation/cursors.ts`: one copy, shared with the field-table
+// formats (`f.cursor('ledger')` and `f.cursor('ledgerNonZero')`) and with the codecs of this file.
+//   - `isPlatformCursor`: a platform ledger cursor is `c` and ten digits, opaque to the domain otherwise;
+//   - `isNonZeroPlatformCursor`: a stored notice position is a NONZERO ledger commit cursor (spec §2.3), so
+//     `c0000000000` is refused.
+// The Session, message, query and workflow modules import them from this file, so it re-exports them.
+export { isNonZeroPlatformCursor, isPlatformCursor };
 function isNullableCursor(value: unknown): boolean {
   return value === null || isPlatformCursor(value);
 }

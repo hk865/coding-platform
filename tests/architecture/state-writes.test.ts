@@ -9,7 +9,10 @@
  * `Partial`/`Readonly`/`Pick`/`Omit`/`Required`, an array element, the
  * constraint of a type parameter (`<T extends P>`), or the record whose
  * properties a derived object type keeps (a re-aliased mapped type, an object
- * rest, a spread copy) is one of them. Outside `state/` and outside the §14.2
+ * rest, a spread copy) is one of them. A row may name an alias inferred from a
+ * field-table format (`type X = InferRecord<(typeof XFormat)['fields']>`); it
+ * then protects every type inferred from the same `fields` literal, e.g. the
+ * parameter of `codec.encode`. Outside `state/` and outside the §14.2
  * decoder functions:
  *
  * - R1: an object literal whose contextual type, or a type it is asserted to
@@ -215,6 +218,9 @@ const ALLOWED_DECODERS: readonly { file: string; functions: readonly string[] }[
 ];
 
 const WRAPPER_ALIASES = new Set(['Partial', 'Readonly', 'Pick', 'Omit', 'Required']);
+/** The aliases a field-table format infers its types with (`src/contracts/data-format.ts`). */
+const DATA_FORMAT = 'src/contracts/data-format.ts';
+const INFERRED_ALIASES = new Set(['InferShape', 'InferRecord', 'InferPending', 'InferEvent']);
 const ARRAY_MUTATORS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin']);
 
 function globPattern(pattern: string): RegExp {
@@ -234,7 +240,7 @@ type ScanResult = {
   scannedFiles: number;
 };
 
-function scanStateWrites(projectDir: string): ScanResult {
+function scanStateWrites(projectDir: string, protectedTypes: readonly ProtectedType[] = PROTECTED_TYPES): ScanResult {
   const root = resolve(projectDir);
   const configPath = join(root, 'tsconfig.json');
   const config = ts.readConfigFile(configPath, ts.sys.readFile);
@@ -244,9 +250,42 @@ function scanStateWrites(projectDir: string): ScanResult {
   const sourceNames = parsed.fileNames.filter(name => relativePath(name).startsWith('src/'));
   const program = ts.createProgram({ rootNames: sourceNames, options: parsed.options });
   const checker = program.getTypeChecker();
-  const protectedByKey = new Map(PROTECTED_TYPES.map(entry => [`${entry.file}#${entry.name}`, entry]));
+  const protectedByKey = new Map(protectedTypes.map(entry => [`${entry.file}#${entry.name}`, entry]));
   const allowedByFile = new Map(ALLOWED_DECODERS.map(entry => [WORK_GRAPH + entry.file, entry.functions.map(globPattern)]));
   const found = new Map<string, string>();
+
+  // ---- records inferred from a field-table format ----------------------- //
+
+  /**
+   * A protected alias `X = InferRecord<(typeof Format)['fields']>` protects every type inferred from that `fields` literal
+   * (`InferPending<F>`, the parameter of `codec.encode`; `InferRecord<F>`, a decoded value) and every type keeping the
+   * declarations of its properties (a spread copy), which sit in the literal or in a fragment the literal spreads.
+   */
+  const fieldTableOf = (type: ts.Type | undefined) => type?.getSymbol()?.declarations?.[0];
+  const inferredAlias = (symbol: ts.Symbol | undefined) => symbol !== undefined && INFERRED_ALIASES.has(symbol.name)
+    && (symbol.declarations ?? []).some(declaration => relativePath(declaration.getSourceFile().fileName) === DATA_FORMAT);
+  const entryByFieldTable = new Map<ts.Node, ProtectedType>();
+  const entriesByFieldDeclaration = new Map<ts.Node, Set<ProtectedType>>();
+  for (const entry of protectedTypes) {
+    const declaration = program.getSourceFiles().find(sourceFile => relativePath(sourceFile.fileName) === entry.file)?.statements
+      .find((statement): statement is ts.TypeAliasDeclaration => ts.isTypeAliasDeclaration(statement) && statement.name.text === entry.name);
+    const reference = declaration?.type;
+    if (reference === undefined || !ts.isTypeReferenceNode(reference) || reference.typeArguments === undefined) continue;
+    let symbol = checker.getSymbolAtLocation(reference.typeName);
+    if (symbol !== undefined && (symbol.flags & ts.SymbolFlags.Alias) !== 0) symbol = checker.getAliasedSymbol(symbol);
+    const fieldTable = checker.getTypeFromTypeNode(reference.typeArguments.at(-1)!);
+    const table = inferredAlias(symbol) ? fieldTableOf(fieldTable) : undefined;
+    if (table === undefined) continue;
+    entryByFieldTable.set(table, entry);
+    for (const declaration of fieldTable.getProperties().flatMap(property => property.declarations ?? [])) {
+      entriesByFieldDeclaration.set(declaration, new Set([...entriesByFieldDeclaration.get(declaration) ?? [], entry]));
+    }
+  }
+  function inferredEntries(type: ts.Type): ProtectedType[] {
+    const table = inferredAlias(type.aliasSymbol) ? fieldTableOf(type.aliasTypeArguments?.at(-1)) : undefined;
+    const entry = table === undefined ? undefined : entryByFieldTable.get(table);
+    return entry === undefined ? [] : [entry];
+  }
 
   // ---- protected type identification ----------------------------------- //
 
@@ -285,6 +324,7 @@ function scanStateWrites(projectDir: string): ScanResult {
       if (WRAPPER_ALIASES.has(type.aliasSymbol.name) && argument !== undefined) add(protectedOf(argument));
     }
     add(entriesOfSymbol(type.getSymbol()));
+    add(inferredEntries(type));
     // A generic helper `<T extends P>(value: T)` writes P through T.
     const constraint = constraintOf(type);
     if (constraint !== type) add(protectedOf(constraint));
@@ -299,9 +339,10 @@ function scanStateWrites(projectDir: string): ScanResult {
       && !checker.isArrayType(type) && !checker.isTupleType(type)) {
       for (const property of type.getProperties()) {
         for (const declaration of property.declarations ?? []) {
-          if (!ts.isPropertySignature(declaration)) continue;
-          const entry = entryOfDeclaration(declaration.parent);
+          const entry = ts.isPropertySignature(declaration) ? entryOfDeclaration(declaration.parent) : undefined;
           if (entry !== undefined) entries.add(entry);
+          // A field-table field is declared in its format's `fields` literal or in a fragment that literal spreads.
+          add([...entriesByFieldDeclaration.get(declaration) ?? []]);
         }
       }
     }
@@ -319,7 +360,7 @@ function scanStateWrites(projectDir: string): ScanResult {
     return membersOf(type).some(member => (member.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) === 0
       && !(member.aliasSymbol !== undefined && WRAPPER_ALIASES.has(member.aliasSymbol.name))
       && ((member.flags & ts.TypeFlags.Object) === 0 || ((member as ts.ObjectType).objectFlags & ts.ObjectFlags.Mapped) === 0)
-      && [...entriesOfSymbol(member.aliasSymbol), ...entriesOfSymbol(member.getSymbol())].includes(entry));
+      && [...entriesOfSymbol(member.aliasSymbol), ...entriesOfSymbol(member.getSymbol()), ...inferredEntries(member)].includes(entry));
   }
   const protects = (entry: ProtectedType, field: string) => entry.fields === 'all' || entry.fields.includes(field);
 
@@ -513,7 +554,8 @@ function scanStateWrites(projectDir: string): ScanResult {
   }
 
   function visit(file: string, sourceFile: ts.SourceFile, node: ts.Node): void {
-    if (ts.isObjectLiteralExpression(node)) {
+    // A format's own `fields` literal declares the fields; it writes no record.
+    if (ts.isObjectLiteralExpression(node) && !entryByFieldTable.has(node)) {
       // R1: the literal's contextual type, or a type it is asserted to, is protected.
       const contextual = checker.getContextualType(node);
       const contextualEntries = new Set([...contextual === undefined ? [] : protectedOf(contextual),
@@ -617,7 +659,7 @@ function scanStateWrites(projectDir: string): ScanResult {
   // The tables must keep naming real declarations, fields and functions.
   const sourceByPath = new Map(program.getSourceFiles().map(sourceFile => [relativePath(sourceFile.fileName), sourceFile]));
   const unknownProtected: string[] = [];
-  for (const entry of PROTECTED_TYPES) {
+  for (const entry of protectedTypes) {
     const sourceFile = sourceByPath.get(entry.file);
     const declaration = sourceFile?.statements.find((statement): statement is ts.TypeAliasDeclaration | ts.InterfaceDeclaration =>
       (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement)) && statement.name.text === entry.name);
@@ -856,10 +898,15 @@ export function inline(taskId: string, running: boolean): CanonicalTaskState {
 };
 
 /** A temporary project with the real `tsconfig.json` and `src/contracts`, plus the given `src/` files. */
-async function fixtureProject(files: Record<string, string>): Promise<string> {
+async function fixtureProject(files: Record<string, string>, copies: readonly string[] = []): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'next-state-writes-test-'));
   await cp(join(project, 'tsconfig.json'), join(dir, 'tsconfig.json'));
   await cp(join(project, 'src', 'contracts'), join(dir, 'src', 'contracts'), { recursive: true });
+  // Real src/ files a fixture also needs (relative to src/), copied unchanged.
+  for (const path of copies) {
+    await mkdir(dirname(join(dir, 'src', path)), { recursive: true });
+    await cp(join(project, 'src', path), join(dir, 'src', path));
+  }
   for (const [path, text] of Object.entries(files)) {
     await mkdir(dirname(join(dir, 'src', path)), { recursive: true });
     await writeFile(join(dir, 'src', path), text.trimStart());
@@ -1096,5 +1143,73 @@ describe('state-writes checker: generic, nested, asserted and destructured write
   it('reports nothing else', () => {
     const covered = Object.keys(SHAPE_FIXTURES).map(path => `src/${path}:`);
     expect(result.violations.filter(line => !covered.some(prefix => line.startsWith(prefix)))).toEqual([]);
+  });
+});
+
+// -------------------------------------------------------------------------- //
+// Fixtures: record types inferred from field-table formats                    //
+// -------------------------------------------------------------------------- //
+
+/** Rows naming aliases inferred from formats (`Spread`'s fields all come from a spread fragment); this scan only. */
+const FORMAT_PROTECTED: readonly ProtectedType[] = ['Sample', 'Spread'].map(name => ({ file: 'src/contracts/sample-format.ts', name,
+  kind: 'record' as const, fields: ['status', 'tags'], use: 'state/sample-machine.ts closeSample' }));
+/** The field-table adapter and its imports, so `codec.encode` has its real parameter type. */
+const FORMAT_COPIES = ['core/work-graph/persistence/field-table-codec.ts', 'core/work-graph/persistence/event-codec-factory.ts',
+  'core/work-graph/persistence/event-envelope.ts', 'core/work-graph/persistence/event-validation.ts', 'core/record-store/ports.ts',
+  'core/record-store/lookup-ports.ts', 'core/record-store/record-codec.ts', 'core/record-store/commit-extensions.ts'];
+const FORMAT_FIXTURES: Record<string, string> = {
+  'contracts/sample-format.ts': `
+import { defineRecord, defineShape, f, type InferRecord } from './data-format.js';
+const SampleRef = defineShape({ name: 'SampleRef', fields: { aggregateType: f.literal('Sample'), sampleId: f.string() } });
+const common = { ref: f.ref(SampleRef), revision: f.revision({ min: 1 }), status: f.enumOf(['open', 'closed']), tags: f.array(f.string()) };
+export const SampleFormat = defineRecord({ name: 'Sample', schemaId: 'Sample@1', aggregateType: 'Sample', fields: {
+  ref: f.ref(SampleRef), revision: f.revision({ min: 1 }), since: f.boundCursor('since'), status: f.enumOf(['open', 'closed']), tags: f.array(f.string()) } });
+export const SpreadFormat = defineRecord({ name: 'Spread', schemaId: 'Spread@1', aggregateType: 'Sample', fields: { ...common } });
+export type Sample = InferRecord<(typeof SampleFormat)['fields']>;
+export type Spread = InferRecord<(typeof SpreadFormat)['fields']>;
+`,
+  'core/work-graph/tasks/format-writes.ts': `
+import type { CommitCursor } from '../../../contracts/command-event.js';
+import { SampleFormat, SpreadFormat, type Sample, type Spread } from '../../../contracts/sample-format.js';
+import type { EncodedRecord } from '../../record-store/ports.js';
+import { createRecordCodec } from '../persistence/field-table-codec.js';
+const [codec, spreadCodec] = [createRecordCodec(SampleFormat), createRecordCodec(SpreadFormat)];
+export function writes(sample: Sample, frozen: Readonly<Sample>, patch: Partial<Sample>, spread: Spread, since: CommitCursor) {
+  const literal: Sample = { ref: sample.ref, revision: 1, since, status: 'open', tags: [] };
+  codec.encode({ ref: sample.ref, revision: 1, since: null, status: 'open', tags: [] });
+  spreadCodec.encode({ ref: spread.ref, revision: 1, status: 'open', tags: [] });
+  const [copy, spreadCopy, changed] = [{ ...sample }, { ...spread }, { ...sample, status: 'closed' as const }];
+  sample.status = 'closed'; frozen.tags.push('x');
+  delete patch.status; Object.assign(sample, { tags: [] });
+  copy.status = 'closed'; spreadCopy.status = 'closed';
+  const merged = { ...sample, ...patch };
+  return [literal, changed, merged, withPatch(sample, patch)];
+}
+export const generic = <T extends Sample>(sample: T): T => { sample.status = 'closed'; return sample; };
+function withPatch(sample: Sample, patch: Partial<Sample>): Sample { return patch.status === undefined ? sample : sample; }
+export function reads(sample: Readonly<Sample>, other: Sample, record: EncodedRecord) {
+  const [whole, decoded] = [{ ...sample }, codec.decode(record)];
+  return [sample.status, sample.tags.length, { ...whole, ...other }, decoded.status === 'decoded' ? { ...other, ...decoded.value } : other];
+}
+`,
+  'core/work-graph/state/sample-machine.ts': `
+import type { Sample } from '../../../contracts/sample-format.js';
+export const closeSample = (sample: Sample): Sample => ({ ...sample, status: 'closed', tags: [...sample.tags] });
+`,
+};
+
+describe('state-writes checker: record types inferred from field-table formats', () => {
+  it('catches each write shape through the aliases, encode and a spread fragment; reads and state/ stay quiet', async () => {
+    const dir = await fixtureProject(FORMAT_FIXTURES, FORMAT_COPIES);
+    const result = scanStateWrites(dir, FORMAT_PROTECTED);
+    await rm(dir, { recursive: true, force: true });
+    const hit = (line: number, entry: string, ...fields: string[]) => fields.map(field => `src/core/work-graph/tasks/format-writes.ts:${line}: ${entry}.${field}`);
+    expect(result.unknownProtected).toEqual([]);
+    expect(result.violations.map(line => line.replace(/ written .*$/, ''))).toEqual([
+      ...hit(7, 'Sample', 'status', 'tags'), ...hit(8, 'Sample', 'status', 'tags'), ...hit(9, 'Spread', 'status', 'tags'), // the alias literal; encode
+      ...hit(10, 'Sample', 'status'), ...hit(11, 'Sample', 'status', 'tags'), // a spread then a write; an assignment, a Readonly array mutator
+      ...hit(12, 'Sample', 'status', 'tags'), ...hit(13, 'Sample', 'status'), ...hit(13, 'Spread', 'status'), // delete, Object.assign; spread copies
+      ...hit(14, 'Sample', 'status', 'tags'), ...hit(15, 'Sample', 'status', 'tags'), ...hit(17, 'Sample', 'status'), // Partial patch and helper; generic
+    ]);
   });
 });

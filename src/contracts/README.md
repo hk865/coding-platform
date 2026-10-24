@@ -70,6 +70,8 @@
 ### 记录与通用编码
 做命令/指纹/游标、注记、角色规格、资源上限和品牌/编码原语的去这组。
 - `command-event.ts` — 命令/事件基线：`CommitCursor`、`CommandFingerprint`、`ActorRef`、`CommandIdentity`、`normalizeObjective`、`commandFingerprint`、`commandIdentityKey`。
+- `data-format.ts` — 字段表格式：字段只写一次的运行时描述（`f` 的封闭字段种类、`defineShape`/`defineRecord`/`defineEvent`），TS 类型由它推导（`InferShape`、`InferRecord`、`InferPending`、`InferEvent`）；描述在构造时校验，坏描述抛 `<what> description is invalid: <detail>`。值检查在 `validation/data-format.ts`，RecordStore 适配在 `src/core/work-graph/persistence/field-table-codec.ts`。
+- `data-format-refs.ts` — 字段表格式可复用的 ref 描述（16 种，每种与手写 ref 类型一致）：带 `aggregateType` 的聚合 ref 与不带标签的 `SessionRef`/`ModuleRef`/`TaskTriple` 各自一份。
 - `fingerprint.ts` — JCS/SHA-256 原语：`canonicalJson`、`sameJson`、`canonicalOf`、`sha256Hex`、`CanonicalJsonError`。
 - `goal-decisions.ts` — Goal/工作区决策设置、对象/选项/来源与 `decisionSourceKey`、默认设置常量。
 - `governance.ts` — 完成策略/架构基线的 revision、pin 与 `completionPolicyContentDigest`。
@@ -92,6 +94,9 @@
 | `canonicalJson` | `src/contracts/fingerprint.ts:24` | RFC 8785/JCS 规范 JSON：键排序、拒绝非 JSON 值。 | 需要稳定字节、摘要或跨进程比较时；身份/指纹只用这一份序列化。 |
 | `sameJson` **正本** | `src/contracts/fingerprint.ts:50` | 无视键顺序的 JSON 内容相等；不可编码即不相等。**正本**只此一份，别处同名的私有副本由清理轮删除。 | 比较两个已解析值是否表示同一内容。 |
 | `sha256Hex` | `src/contracts/fingerprint.ts:68` | UTF-8 文本的 SHA-256 小写十六进制。 | 所有内容寻址与摘要的哈希原语。 |
+| `f` | `src/contracts/data-format.ts:129` | 字段表的封闭字段种类：字符串（字节/码点上限）、sha256、整数、有限数、revision、字面量（字符串、安全整数或布尔）、枚举、布尔、ref、游标、可绑定游标、ISO 时间、optional/nullable、数组、精确对象、判别联合。 | 新记录、事件或嵌套形状写字段表时；不在此列的是具名规则（`rules`）或留手写。 |
+| `defineShape`、`defineRecord`、`defineEvent` | `src/contracts/data-format.ts:244`、`src/contracts/data-format.ts:308`、`src/contracts/data-format.ts:340` | 构造并校验嵌套形状、存储记录（`ref` 是本 `aggregateType` 的完整带标签 ref，`revision` 是 `f.revision` 或 `f.literal(1)`，可带 lookup）和事件（字段不含四个信封键）。 | 新格式只写这一份字段表；类型用 `InferRecord`/`InferPending`/`InferEvent` 推导，不再手写一份。 |
+| `ProjectRefShape` 等 16 个 ref 描述 | `src/contracts/data-format-refs.ts:12` | `ProjectRefShape`、`WorkspaceRefShape`、`GoalRefShape`、`SessionRefShape`、`SessionAggregateRefShape`、`ModuleRefShape`、`QueryJobRefShape`、`QueryRunRefShape`、`QueryJobAnswerRefShape`、`SessionMessageRefShape`、`TaskTripleShape`、`RunRefShape`、`OperationRefShape`、`PlanProposalRefShape`、`TaskRequeueRefShape`、`VerificationRoundRefShape`。 | 字段表里的 `f.ref(...)`；不要另写只查 `aggregateType`/`projectId` 的通用 ref 检查。 |
 | `CanonicalJsonError` | `src/contracts/fingerprint.ts:18` | 规范 JSON 编码失败的错误类型。 | 需要捕获并区分不可编码值时。 |
 | `messageOf` | 正本位置（待新增，M1-38）：`src/contracts/` 新文件 | 把 unknown 错误转成可读文本；现存同名私有函数都是旧副本，尚未合并。 | 统一错误文本时；新代码等正本落地，不要再另写一份。 |
 | `commandIdentityKey` | `src/contracts/command-event.ts:98` | 命令幂等身份键：projectId、actor、idempotencyKey、agentPrincipal。 | 命令幂等/replay 查重；不要退回只比 idempotencyKey。 |

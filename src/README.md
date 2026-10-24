@@ -50,6 +50,7 @@
 | `core/work-graph/notes/` | 注记写入/处置/读取、锚点、书记范围与记忆材料 | [core/work-graph/notes/README.md](core/work-graph/notes/README.md) |
 | `core/work-graph/evidence/` | 证据与验证轮唯一写入 owner，编译检查计划并折证据 | [core/work-graph/evidence/README.md](core/work-graph/evidence/README.md) |
 | `core/work-graph/communication/` | 决定答复与 Session 邮箱的事实 owner | [core/work-graph/communication/README.md](core/work-graph/communication/README.md) |
+| `core/work-graph/communication/decision-source/` | 每种决定来源一个 handler，从正式记录重建该分支的完整事实 | [core/work-graph/communication/decision-source/README.md](core/work-graph/communication/decision-source/README.md) |
 | `core/work-graph/views/` | 只读投影：工作线、图、轨道、活动、决定队列与请知悉 | [core/work-graph/views/README.md](core/work-graph/views/README.md) |
 | `core/workspace/` | 文件/Git/源码捕获、路径边界、TS/Python/C++ 索引 | [core/workspace/README.md](core/workspace/README.md) |
 
@@ -84,7 +85,7 @@
 | 工具注册/工具组 | `src/core/agent-runtime/`（`tool-group-assembly.ts`） | `selectWorkToolGroup`（`src/core/agent-runtime/tool-group-assembly.ts:220`）、`finalToolNamesOf`（`src/core/agent-runtime/tool-group-assembly.ts:519`） |
 | 上下文装配 | `src/core/agent-runtime/`（`context-assembler.ts`、`context-rendering.ts`、`context-secretary-recipe.ts`） | `createContextAssembler`（`src/core/agent-runtime/context-assembler.ts:27`）、`renderContext`（`src/core/agent-runtime/context-rendering.ts:396`）、`assembleSecretaryContext`（`src/core/agent-runtime/context-secretary-recipe.ts:106`） |
 | 模型调用 permit | `src/core/work-graph/tasks/`（`model-call-service.ts`、`model-call-contracts.ts`） | `createModelCallService`（`src/core/work-graph/tasks/model-call-service.ts:154`）、`modelRequestPermitIdFor`（`src/core/work-graph/tasks/model-call-contracts.ts:80`） |
-| Goal/Plan | `src/core/work-graph/tasks/`（`task-service.ts`、`plan-service.ts`） | `admitGoalCreation`（`src/core/work-graph/tasks/task-service.ts:155`）、`createPlanService`（`src/core/work-graph/tasks/plan-service.ts:1059`） |
+| Goal/Plan | `src/core/work-graph/tasks/`（`task-service.ts`、`plan-service.ts`） | `admitGoalCreation`（`src/core/work-graph/tasks/task-service.ts:155`）、`createPlanService`（`src/core/work-graph/tasks/plan-service.ts:1035`） |
 | 返工/重排队 | `src/core/work-graph/tasks/`（`requeue-service.ts`）+ `src/core/work-graph/state/` | `createTaskRequeueService`（`src/core/work-graph/tasks/requeue-service.ts:600`）、`newTaskRequeueRecord`（`src/core/work-graph/state/task-machine.ts:711`） |
 | 源码探索与捕获 | `src/core/workspace/`（`capture.ts`、`workspace-tools.ts`） | `CaptureRegistry`（`src/core/workspace/capture.ts:111`）、`createWorkspaceTools`（`src/core/workspace/workspace-tools.ts:74`） |
 | Git 与工作树比较 | `src/core/workspace/`（`git-read.ts`、`workspace-change-capture.ts`） | `compareGitWorkingTree`（`src/core/workspace/git-read.ts:583`）、`captureWorkspaceChange`（`src/core/workspace/workspace-change-capture.ts:276`） |

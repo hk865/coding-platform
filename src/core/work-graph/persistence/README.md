@@ -8,6 +8,7 @@
 - 状态迁移仍只经 `src/core/work-graph/state/`；这里看到状态字段也只校验形状。
 
 ## 文件
+- `command-executor.ts` — 写入执行器：一次原子写的唯一顺序（身份/指纹→回执查找→事实→决定→片段→guard 合并→提交前检查→一次提交→冲突映射/重试→严格结果投影）；导出 `Keys`、`CommittedReceipt`、`CommitFragment`、`CommandRejection`、`CommandResult`、`WriteCommand`、`executeWriteCommand`，owner 只保留自己的事实、决定、片段与结果投影。
 - `commit-compiler.ts` — Goal 创建的纯编译：identity/fingerprint、`GoalCreated` 事件、revision-1 快照与 guard 的 `PreparedCommit`，以及 caller version pins。
 - `control-record-codecs.ts` — `ControlIntentSnapshot@1`、提交/观察事件、控制状态形状检查与注册。
 - `decision-record-codecs.ts` — 决定写事件（`GoalSettingsChanged`、`WorkspaceNoticeSeenChanged`）、notice origin 解码与决定证明校验。
@@ -17,6 +18,7 @@
 - `evidence-record-codecs.ts` — 验证轮/证据/任务证据索引记录与轮事件 codec、相关查询索引。
 - `execution-entry-codecs.ts` — 执行进入的嵌套事实校验与授权/开始/进入/结果/对账事件 codec。
 - `execution-history-codecs.ts` — `RunExecutionHistoryV1` 校验与 `ExecutionHistoryRecorded` 事件 codec。
+- `field-table-codec.ts` — 字段表格式（`src/contracts/data-format.ts`）的 RecordStore 适配：由一份格式得到记录/事件 codec（check、encode、decode、注册、lookup）和 `formatSchemas`；encode 原样 stringify 调用者的对象，decode 不补值；事件复用 `event-codec-factory.ts` 的管线。
 - `graph-repository.ts` — Goal 图仓库：一次读快照、幂等查找、单次提交、按 receipt cursor 重放恢复。
 - `line-settings-codecs.ts` — `WorkspaceLinePinsChanged@1` 事件 codec。
 - `lookup-all.ts` — 等值索引完整候选集的稳定窗口分页。
@@ -25,6 +27,7 @@
 - `plan-record-codecs.ts` — PlanProposal/PlanRevision 记录与事件 codec、proposal 链位置比较。
 - `query-activity-codecs.ts` — `QueryActivity@1` 记录与 `QueryActivityRecorded` 事件 codec；tally 规则全部调用 `run-activity-codecs.ts` 的同一份校验器。
 - `read-result-failures.ts` — Store 失败到 `CoreRejection` 的映射与游标下限检查。
+- `receipt-lookup.ts` — 唯一的已提交回执存储查找：按 identity/fingerprint 精确 `lookupCommit` 并分类 found/missing/conflict/invalid/unavailable（抛错也记为 unavailable）；导出 `CommittedReceipt`（`receipt-lookup.ts:4`）、`ReceiptLookup`（`receipt-lookup.ts:6`）、`lookupCommittedReceipt`（`receipt-lookup.ts:18`）；旧的 query 模块改为 import 后再导出它们，既有调用点不变。
 - `record-guards.ts` — 全仓唯一的 guard 合并：同 key 不同 revision 立即 `revision_conflict`，绝不静默去重。
 - `record-codecs.ts` — Goal 家族记录/事件 codec、`canonicalRefKey`、Goal/Workspace 设置校验。
 - `rework-codecs.ts` — 返工/引用/notice origin 等纯形状校验（actor、Run、Session、Task 等 ref）。
@@ -33,6 +36,8 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
+| `executeWriteCommand` | `src/core/work-graph/persistence/command-executor.ts:145` | 一次原子写的固定顺序与失败表：回执查找与严格重放、guard 合并、提交前检查、单次提交、冲突映射与最多 3 次重试、结果投影 | 新 owner 的原子写入；owner 只提供事实、决定、片段与投影，不复制顺序或失败表 |
+| `lookupCommittedReceipt` | `src/core/work-graph/persistence/receipt-lookup.ts:18` | 按 identity/fingerprint 精确 `lookupCommit` 并分类回执：found/missing/conflict/invalid/unavailable，抛错记为 unavailable；`CommittedReceipt`、`ReceiptLookup` 随函数一起导出 | 需要幂等回执查找或严格重放的起点；旧的 query 模块已改为再导出，调用点不变 |
 | `storeFailureCode` | `src/core/work-graph/persistence/read-result-failures.ts:37` | 把 Store 失败码收窄为 `CoreRejection['code']` | 需要判断失败类别时 |
 | `storeFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:42` | 通用 Store 失败→`CoreRejection`，可带 `current`；**正本** | 没有 owner 特有语义的读写失败；request-service 的旧映射已删，见“不要做” |
 | `pinsFromStoreCurrent` | `src/core/work-graph/persistence/read-result-failures.ts:48` | 从 Store 的 conflict `current` 解出可回填的 version pins | 映射 revision conflict 时 |
@@ -63,6 +68,9 @@
 | `decodeNoticeOrigin` | `src/core/work-graph/persistence/decision-record-codecs.ts:387` | 解码 wire-only 的 notice origin | SessionMessage/TaskRequeue/轮次共享 |
 | `runControlStateProblem` | `src/core/work-graph/persistence/control-record-codecs.ts:85` | 校验 Run 的 controlState 形状；不判断能否执行 | Run 记录读取器 |
 | `createEventCodec` | `src/core/work-graph/persistence/event-codec-factory.ts:42` | 由一份事件描述生成 encode/decode/注册，固定校验顺序与首错 | 新增兼容事件格式时 |
+| `createRecordCodec` | `src/core/work-graph/persistence/field-table-codec.ts:57` | 由字段表记录格式生成 check/encode/decode/注册/lookup：键是完整 ref 的 `canonicalJson`，encode 先按 pending 检查、不排序不补值，decode 先核对信封（`decodeRefKey`、`decodeRecordBody`）再按 stored 检查 | 新记录格式；顶层可绑定游标自动声明为 `commitCursorFields` |
+| `createEventCodec` | `src/core/work-graph/persistence/field-table-codec.ts:104` | 由字段表事件格式生成 codec：encode 先检查再原样交给信封编码，decode 走事件 codec 工厂的固定管线后做字段检查 | 新事件格式；同名的事件 codec 工厂（`event-codec-factory.ts`）是它复用的管线，旧事件仍直接用工厂 |
+| `formatSchemas` | `src/core/work-graph/persistence/field-table-codec.ts:124` | 把字段表 codec 汇成两个后端共用的 `RecordBackendSchemas`；重复的 schemaId、aggregateType 或 事件 type@version 抛错 | 注册新格式时 |
 | `encodeEventEnvelope` | `src/core/work-graph/persistence/event-envelope.ts:4` | 编码外层事件信封，body 原样 stringify | 手写事件 codec 时 |
 | `eventEnvelopeProblem` | `src/core/work-graph/persistence/event-validation.ts:6` | 校验外层信封四字段 | 事件解码第一步 |
 | `eventBodyEnvelopeProblem` | `src/core/work-graph/persistence/event-validation.ts:25` | 校验 body 与编码信封在 id/type/version/time 上一致 | 解析 body 后 |

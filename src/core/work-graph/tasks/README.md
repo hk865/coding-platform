@@ -11,7 +11,7 @@
 
 ## 文件
 
-本目录 68 个 `.ts`，按主题分组。
+本目录 70 个 `.ts`，按主题分组。
 
 ### 请求、秘书与决定卡（13 个）
 
@@ -31,7 +31,7 @@
 - `unknown-call-review-service.ts` — `UnknownCallReview` 读写 owner。
 - `unknown-call-review-target-digests.ts` — review 卡目标路径工作树摘要的单一读取。
 
-### 计划与 Goal（15 个）
+### 计划与 Goal（17 个）
 
 做 Plan 采用/校验、Goal 设置/控制/读取与 Goal 创建入口的去这组。
 
@@ -41,9 +41,11 @@
 - `goal-executed-files-reader.ts` — Goal 已执行文件的真实端口，按 Goal 索引分页到结尾。
 - `goal-settings-service.ts` — Goal 设置、工作区 Goal 顺序与冲突解决的 owner。
 - `initial-plan.ts` — 初始 Plan 响应 v2 的规范化与 plan id；v2 解析在 `src/contracts/initial-planning-parse.ts`，本文件为旧调用方再导出。
+- `initial-plan-answer.ts` — 初始 Plan 答案的事实读取与采用侧重核；工厂 `createInitialPlanAnswerReader` 只消费注入的 records/materials/bodies 端口，不调 Runtime，也不进 Kernel store。
 - `initialization-pointers.ts` — 项目两个 active 治理指针（完成策略、架构基线）的唯一读取与 `activeRevision` 解码；缺失是 `null`，坏读是 `unavailable`。
 - `plan-commit-compiler.ts` — 初始/未来 Plan 采用的一次性 `PreparedCommit` 编译。
 - `plan-readers.ts` — canonical Task/Goal/Plan/治理/closure 的读取总汇与记录 schema/索引名；`policyRefFromBody`/`architectureRefFromBody` 是治理指针体的唯一解析器。
+- `plan-result-helpers.ts` — 计划服务共用的 `Owned`/`Rejection` 形状，以及 `messageOf`、`rejected`、`mapStoreReadFailure`、`asWriteRejection`。
 - `plan-service.ts` — Plan 采用与 task 读的协调 owner，另有 request candidate service。
 - `plan-task-basis.ts` — Task 有效 basis、冻结执行定义与 origin 判定的纯规则。
 - `plan-validation.ts` — Plan 草稿准入的纯校验（义务、DAG、assignment、future delta）。
@@ -174,7 +176,8 @@
 | `executionReadGuards`、`claimEffectRecords`、`claimLeaseOf`、`claimSessionOf`、`hostLeaseOf` | `execution-entry-service.ts:949`、`execution-entry-service.ts:892`、`execution-entry-service.ts:677`、`execution-entry-service.ts:688`、`execution-entry-service.ts:795` | 执行读 guard、Run effect 到记录/effect 的翻译、Lease/Session 上下文 | 执行/对账 commit；不要手拼相关记录 |
 | `identifyDelegatedWriter`、`authorizeDelegatedWrite` | `plan-write-admission.ts:144`、`plan-write-admission.ts:234` | 委派写者身份识别与当前权限复核（含真实 guards） | Agent 计划写、requeue；两步顺序不可换 |
 | `admitGoalCreation`、`createGoalService` | `task-service.ts:155`、`task-service.ts:414` | Goal 创建的准入管线与服务工厂 | Host 建 Goal |
-| `createPlanService`、`createRequestCandidateService` | `plan-service.ts:1059`、`plan-service.ts:2300` | Plan 采用/task 读服务与 request candidate 服务 | 组合根接线 |
+| `createInitialPlanAnswerReader` | `initial-plan-answer.ts:46` | 初始 Plan 答案的事实读取与采用侧重核（同一 records/materials/bodies 端口） | 初答读取、模型协调草稿的采用前证明 |
+| `createPlanService`、`createRequestCandidateService` | `plan-service.ts:1035`、`plan-service.ts:2080` | Plan 采用/task 读服务与 request candidate 服务 | 组合根接线 |
 | `createRequestRoundService` | `request-service.ts:950` | request round 的读写端口 | Host 与 Workflow 的请求入口 |
 | `open`、`unassigned` **正本** | `request-service.ts:1703`、`request-service.ts:1651` | 两条具名开放轮读取：`open` 一页给出某状态分区里有开放轮的请求根（每个根一次，带 continuation 与 `wrapped`）；`unassigned` 给出最老 pending 轮命中的未分配请求 | 队列分派与 drain；两者共用 `readOpenIndexPage`（`request-service.ts:1703`）的游标解析和页读取，不要另写一份 |
 | `createTaskClaimService`、`workClaimDispatchProblem`、`createTaskRequeueService`、`createReconcileCandidateReader` | `claim-service.ts:722`、`claim-service.ts:171`、`requeue-service.ts:600`、`reconcile-reads.ts:52` | 认领服务、认领分派前置检查、返工服务与对账候选读取器 | 组合根与启动对账 |
@@ -231,7 +234,7 @@
 - `sessionAggregateRefKey` 只有 `src/core/work-graph/sessions/session-record-codecs.ts:998` 这一份；`secretaryIntakeKey`（`src/core/work-graph/model/request-contracts.ts:73`）调用它，旧的内联序列化已合成，不要恢复。
 - `storeFailureToRejection` 只有 `src/core/work-graph/persistence/read-result-failures.ts:42`；owner 用同文件的 `ownerWriteStoreFailureToRejection`（`src/core/work-graph/persistence/read-result-failures.ts:110`），`request-service` 的本地 store 失败 switch 已改为调用它，不要恢复手写映射。
 - `rejected` 只有 `src/contracts/core/rejections.ts:5` 这一份；`request-service` 的本地 `rejection` 已删，不要恢复。
-- `messageOf` 另有旧副本：`src/core/record-store/record-codec.ts:77`、`src/core/agent-runtime/context-support.ts:11`，本目录还有 `request-service.ts:162`、`request-facts.ts:168`、`secretary-selection.ts:110`、`completion.ts:102`、`control-service.ts:114`、`execution-history-service.ts:83`、`goal-control.ts:54`、`goal-decision-reader.ts:93`、`goal-settings-service.ts:84`、`plan-service.ts:285`、`run-reconcile-service.ts:117`、`task-review-reader.ts:24`；正本定为 `src/contracts` 新增（M1-38，尚未落地），落地后新代码一律用正本，旧副本由清理轮删除。
+- `messageOf` 另有旧副本：`src/core/record-store/record-codec.ts:77`、`src/core/agent-runtime/context-support.ts:11`，本目录还有 `request-service.ts:162`、`request-facts.ts:168`、`secretary-selection.ts:110`、`completion.ts:102`、`control-service.ts:114`、`execution-history-service.ts:83`、`goal-control.ts:54`、`goal-decision-reader.ts:93`、`goal-settings-service.ts:84`、`plan-result-helpers.ts:11`、`run-reconcile-service.ts:117`、`task-review-reader.ts:24`；正本定为 `src/contracts` 新增（M1-38，尚未落地），落地后新代码一律用正本，旧副本由清理轮删除。
 - `sessionRefProblem` 正本在 `src/core/work-graph/persistence/rework-codecs.ts:154`；`src/core/work-graph/sessions/session-record-codecs.ts:149` 的 `checkPlainSessionRef` 是 planned SessionRef 的更严旧副本，`src/core/work-graph/queries/query-record-codecs.ts:290` 的 `isSessionRef` 只是调用正本的布尔包装；不要新增形状检查副本。
 - 不要把失败的读取变成空事实、`not_found` 或普通 blocked；`unavailable`/`incomplete` 原样返回（FP-05、M1-12、MH-06）。
 - 不要手改受保护字段或只写生命周期的一半：Run、Attempt、Lease、Outbox、Session 占用、Task/Goal reduction 都经 `state/` 的构造函数，并在同一 commit 里写齐（M1-01、M1-05、M1-36）。

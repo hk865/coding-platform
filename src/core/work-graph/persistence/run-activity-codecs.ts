@@ -28,6 +28,7 @@ import {
   hasOnlyKeys, invalid, isNonNeg as isNonNegativeSafeInteger, isPos as isPositiveSafeInteger,
   isRecord as isObject, nonEmpty, parseObject,
 } from '../../../contracts/validation/common.js';
+import { isIsoZulu } from '../../../contracts/validation/time.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
@@ -99,9 +100,6 @@ function totalsProblem(value: unknown, label: string): string | null {
     if (!isNonNegativeSafeInteger(value[field])) return `${label}.${field} must be a non-negative safe integer`;
   }
   return null;
-}
-function isIsoZulu(value: unknown): value is string {
-  return nonEmpty(value) && value.endsWith('Z') && Number.isFinite(Date.parse(value));
 }
 function quartersProblem(value: unknown): string | null {
   if (!Array.isArray(value)) return 'facts.quarters must be an array';

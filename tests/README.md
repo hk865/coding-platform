@@ -209,4 +209,6 @@ commit 闸门、阻塞替身、store/Kernel 读故障和崩溃重启；只在规
 - `K3-padded-review-record.ts` — 纯输入：32 个 codec 合法 process item、200×512 字节 changed-path 和 32 项 notVisible，把记录顶到 B=158,720 字节；`tests/runtime/K3-48-3-extremes-pure.test.ts` 在用。
 - `SP-record-store-support.ts` — SP store 契约共用：schema 构造与 `commit` 写入，期望值留在测试；`tests/record-store/SP-literal-type.test.ts` 在用。
 - `change-stream-reader.ts` — 逐帧读真实 `text/event-stream` 响应体，心跳注释返回 `{ comment: true }`；`tests/app/change-commit-observer.test.ts` 在用。
+- `field-table-fixture.ts` — 测试本地的字段表格式（`Parcel` 记录和 `ParcelMoved` 事件，没有生产聚合）注册到两个真实 RecordStore 后端，经公共 `commit` 写、`readMany`/`lookupOrdered` 读回；`tests/work-graph/field-table-codec.test.ts` 在用。
 - `workspace-tools-fixture.ts` — 真实临时根上的 `createWorkspaceTools` + permission-filtered sandbox，三个调用方共用，暴露各 wrapper；`tests/data/S8D-language-providers.test.ts` 在用。
+- `write-command-fixture.ts` — 写入执行器的测试本地格式和命令（`Exchange@1` 记录、`ExchangeCommitted` 事件），先前记录都经 `executeWriteCommand` 写入；`script` 在 `lookupCommit`/`commit`/`eventAt` 计数或注入一次失败后原样委托；`tests/work-graph/command-executor.test.ts` 在用。

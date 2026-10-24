@@ -87,4 +87,4 @@
 - 不要在 store 外重建回执或重放：用 `lookupCommit`/`eventAt`；恢复时不要把 lookup 失败当“未提交”（M1-14、M1-15、M1-26）。
 - 不要重写 idempotency/快照的编码，也不要重新序列化旧记录：保持旧列/旧 JSON 的原字节（CS-01、CS-08、CS-10；另写事件/记录构造的同类错误见 M1-37）。
 - `messageOf` 另有旧副本：`src/core/record-store/record-codec.ts:77`（现存导出；正本将落在 `src/contracts`，M1-38 尚未落地），新代码一律用正本，旧副本由清理轮删除。
-- `lookupReceipt` 不是本层导出：它只是 `src/core/work-graph/queries/query-job-service.ts:448`、`src/core/work-graph/tasks/completion.ts:174`、`src/core/work-graph/evidence/evidence-service.ts:465` 各自的私有包装；不要把它写成 `ports.ts` 的端口，收拢前按各 owner 的代码使用。
+- `lookupReceipt` 不是本层导出：它只是 `src/core/work-graph/queries/query-job-service.ts:416`、`src/core/work-graph/tasks/completion.ts:174`、`src/core/work-graph/evidence/evidence-service.ts:465` 各自的私有包装；不要把它写成 `ports.ts` 的端口，收拢前按各 owner 的代码使用。

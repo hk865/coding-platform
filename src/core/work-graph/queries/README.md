@@ -21,9 +21,9 @@
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `queryTextProblem` | `src/core/work-graph/queries/query-job-service.ts:85` | 所有 Query/请求文本的规则：非空、≤16 KiB UTF-8、不 trim | 任何 Query/请求文本入口；不要另写文本校验 |
-| `createQueryJobService` | `src/core/work-graph/queries/query-job-service.ts:912` | pending 提交/读取端口；可选注入执行端口转发 claim/readAnswer | composition 装配 QueryJob 端口 |
-| `lookupCommittedReceipt` | `src/core/work-graph/queries/query-job-service.ts:424` | 唯一的提交收据查找：按 identity/fingerprint 调 `lookupCommit`（`src/core/record-store/ports.ts:190`），把 missing/conflict/invalid/unavailable 分类；**正本** | 提交前查重；提交抛异常后只按 identity/fingerprint 查原收据恢复，绝不重试（M1-14、M1-15、M1-26） |
+| `queryTextProblem` | `src/core/work-graph/queries/query-job-service.ts:86` | 所有 Query/请求文本的规则：非空、≤16 KiB UTF-8、不 trim | 任何 Query/请求文本入口；不要另写文本校验 |
+| `createQueryJobService` | `src/core/work-graph/queries/query-job-service.ts:880` | pending 提交/读取端口；可选注入执行端口转发 claim/readAnswer | composition 装配 QueryJob 端口 |
+| `lookupCommittedReceipt` | `src/core/work-graph/persistence/receipt-lookup.ts:18`（本模块 `query-job-service.ts` 转出） | 唯一的提交收据查找：按 identity/fingerprint 调 `lookupCommit`（`src/core/record-store/ports.ts:190`），把 missing/conflict/invalid/unavailable 分类；**正本** | 提交前查重；提交抛异常后只按 identity/fingerprint 查原收据恢复，绝不重试（M1-14、M1-15、M1-26） |
 | `createQueryExecution` | `src/core/work-graph/queries/query-execution.ts:1050` | 唯一 Query 执行写入端口：claim/prepare/entry/model/usage/observation/answer/recovery；claim 只收没有执行状态的 Run（已 claim 或已 prepare 的 attempt 答 `busy`）；请求轮的起跑提交输给先提交的请求命令（tail 或 intake 被移动、读过的记录变了，答 `revision_conflict`）时重读再判，最多 `SECRETARY_TAIL_RETRIES` 次 | composition 注入执行端口；Runtime 只经端口调用 |
 | `queryClaimDispatchProblem` | `src/core/work-graph/queries/query-execution.ts:265` | Query claim 的 Session 排除：archive 请求/Work wait 为 busy，只读副本只允许自己的 consultation Query | claim 前的准入判断 |
 | `readRequestRounds` | `src/core/work-graph/queries/request-rounds-read.ts:235` | 一个请求根的全部轮次：稳定水位重读、规范重读、QueryRun/owner/后继/initiator/guards | 需要一次请求的完整事实快照时；不要自己拼多页 |
@@ -53,7 +53,7 @@
 | `S5_QUERY_JOB_BY_GOAL` | `src/core/work-graph/queries/query-record-codecs.ts:80` | 一个 Goal 在 workspace 里的 QueryJob 索引名 | tasks 的问题读取 |
 | `S2B_QUERY_RUN_BY_SESSION_ENDED_LOOKUP` | `src/core/work-graph/queries/query-record-codecs.ts:1159` | 按结束时间排序的 Session QueryRun 索引名（track） | views 的轨道读取 |
 | `S6_QUERY_RUN_BY_WORKSPACE_ENDED_LOOKUP` | `src/core/work-graph/queries/query-record-codecs.ts:1171` | 一个 workspace 里按 `run.endedAt` 排序的 QueryRun 索引名 | 合并的 Query 活动 backfill 读取 |
-| `messageOf` | **正本**（待落地）：`src/contracts` 新增（M1-38）；旧副本 `src/core/work-graph/queries/query-job-service.ts:91`、`src/core/work-graph/queries/query-execution.ts:143`、`src/core/work-graph/queries/request-rounds-read.ts:73`、`src/core/record-store/record-codec.ts:77`、`src/core/agent-runtime/context-support.ts:11` | 取 `Error.message`，否则 `String(error)`；保持原错误文本 | 错误文本；全仓约 40 份私有副本，新共享代码等 M1-38 正本落地，不要在本层再抽一份 |
+| `messageOf` | **正本**（待落地）：`src/contracts` 新增（M1-38）；旧副本 `src/core/work-graph/queries/query-job-service.ts:92`、`src/core/work-graph/queries/query-execution.ts:143`、`src/core/work-graph/queries/request-rounds-read.ts:73`、`src/core/record-store/record-codec.ts:77`、`src/core/agent-runtime/context-support.ts:11` | 取 `Error.message`，否则 `String(error)`；保持原错误文本 | 错误文本；全仓约 40 份私有副本，新共享代码等 M1-38 正本落地，不要在本层再抽一份 |
 | `mergeGuards` | `src/core/work-graph/persistence/record-guards.ts:12` | 唯一的提交前 guard 合并：同 key 不同 revision 立即 `revision_conflict`，绝不 first-wins；**正本** | 提交前合并全部读依赖；queries 不能 import tasks，需要时先报 lead，不要另写 |
 | `guardAppend`（私有） | `src/core/work-graph/queries/request-rounds-read.ts:187` | 只保留第一条 guard 的旧合并行为，仅用于本层读窗口 | 不要用于提交前合并；旧副本见“不要做” |
 | `checkSessionProvenance` / `readSuccessorFacts` | `src/core/work-graph/sessions/session-record-codecs.ts:382`、`src/core/work-graph/queries/request-rounds-read.ts:197` | `checkSessionProvenance` 校验 new/task 续接/secretary handoff/readonly-copy；`readSuccessorFacts` 按 provenance 读 owner 的 live 后继索引 | 请求 owner 延续；完整 provenance 判定在 sessions |
@@ -70,6 +70,6 @@
 - 不把查询/执行读失败折成空事实或 `not_found`；`not_ready`/`unavailable`/`conflict` 原样返回（FP-05、M1-12、MH-06）。
 - `mergeGuards` 另有旧副本：`src/core/work-graph/queries/request-rounds-read.ts:187` 的私有 `guardAppend`（first-wins，只用于本层读窗口），新代码一律用正本，旧副本由清理轮删除（M1-27）。
 - `sessionRefProblem` 另有旧副本：`src/core/work-graph/queries/query-record-codecs.ts:290` 的私有 `isSessionRef`（现委托正本），新代码一律用正本 `src/core/work-graph/persistence/rework-codecs.ts:154`，旧副本由清理轮删除（CS-11、M1-31）。
-- `messageOf` 另有旧副本：`src/core/work-graph/queries/query-job-service.ts:91`、`src/core/work-graph/queries/query-execution.ts:143`、`src/core/work-graph/queries/request-rounds-read.ts:73`，正本定为 `src/contracts` 新增（M1-38，尚未落地），新代码一律用正本，旧副本由清理轮删除。
-- 不另写文本校验或收据查找；分别用 `queryTextProblem`、`lookupCommittedReceipt`（M1-26、M1-38）。
+- `messageOf` 另有旧副本：`src/core/work-graph/queries/query-job-service.ts:92`、`src/core/work-graph/queries/query-execution.ts:143`、`src/core/work-graph/queries/request-rounds-read.ts:73`，正本定为 `src/contracts` 新增（M1-38，尚未落地），新代码一律用正本，旧副本由清理轮删除。
+- 不另写文本校验或收据查找；分别用 `queryTextProblem`、`lookupCommittedReceipt`（正本 `src/core/work-graph/persistence/receipt-lookup.ts:18`，本模块转出）（M1-26、M1-38）。
 - 不 import `tasks`/`notes`/`evidence`/`communication`/`views` 或上层 `app`/`business`/`composition`；需要那边的事实就让调用方传入或走已声明的依赖。

@@ -103,7 +103,7 @@
 | `workspaceScopeProblem` | `src/core/work-graph/views/goal-conflicts.ts:94` | 在任何记录读之前比较显式 workspace 与 `ctx` 范围 | 每个显式 workspace 输入的读 |
 | `listWorkspaceGoals` | `src/core/work-graph/views/goal-conflicts.ts:121` | 读完一个 workspace 的 Goal 集合，带 watermark 与 truncated | 需要 Goal 全集的读 |
 | `readGoalTerminalState` | `src/core/work-graph/views/goal-conflicts.ts:165` | 判断 Goal 是否 cancelled 或由 GoalPhase 证明 completed；读失败不当“未终止” | 冲突卡片是否需要关闭时 |
-| `CONFLICT_OPTIONS` | `src/core/work-graph/views/goal-conflicts.ts:70`、`src/core/work-graph/communication/decision-source-facts.ts:166` | 固定的 wait/order/parallel 三个冲突选项 | 冲突卡片；同一能力两份，正本待 lead 定 |
+| `CONFLICT_OPTIONS` | `src/core/work-graph/views/goal-conflicts.ts:70`、`src/core/work-graph/communication/decision-source/goal-conflict.ts:15` | 固定的 wait/order/parallel 三个冲突选项 | 冲突卡片；同一能力两份，正本待 lead 定 |
 | `readWatermark` | `src/core/work-graph/views/activity-read-helpers.ts:130`、`src/contracts/core/results.ts:25` | 读存储读水位：活动读返回 `ReadResult`，决定读返回 ready/rejection | 一次读的前后水位；同一能力两份，正本待 lead 定 |
 | `createActivityReadModel` | `src/core/work-graph/views/activity-read-model.ts:1130` | 日历（Goal/workspace 范围，含 Query 步数与查询覆盖）、单 Run 与单 Query 活动视图 | 活动页、Run/Query 活动列 |
 | `classifyMissingActivity` | `src/core/work-graph/views/activity-read-helpers.ts:171` | Work 与 Query 共用的缺失记录规则：never entered、进行中、未补记/未记录/无记录起点 | 任何按活动记录判空/判未知的读；不要另写一份 |
