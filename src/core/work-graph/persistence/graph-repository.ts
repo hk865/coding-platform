@@ -15,7 +15,9 @@
  * No SQL, no Map, no domain admission and no legacy ledger import.
  */
 import type { ActorRef, CommitCursor, CommandIdentity } from "../../../contracts/command-event.js";
-import type { GoalRef, GoalSnapshot, ProjectRef, ProjectSnapshot, WorkspaceRef, WorkspaceSnapshot } from "../../../contracts/ledger.js";
+import type {
+  GoalRef, GoalSnapshot, PendingGoalSnapshot, ProjectRef, ProjectSnapshot, WorkspaceRef, WorkspaceSnapshot,
+} from "../../../contracts/ledger.js";
 import type { DecodeResult, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, StoreCommitReceipt } from "../../record-store/ports.js";
 import { goalCreateIdentityKey } from "./commit-compiler.js";
 import { canonicalRefKey, decodeGoalCreatedEvent, decodeGoalSnapshot, decodeProjectSnapshot, decodeWorkspaceSnapshot, goalSnapshotFromCreatedEvent } from "./record-codecs.js";
@@ -71,7 +73,7 @@ export type GoalLookupResult =
 export type GoalCommitInput = {
   prepared: PreparedCommit;
   /** The freshly folded value, returned when THIS call performed the commit. */
-  folded: GoalSnapshot;
+  folded: PendingGoalSnapshot;
   expected: GoalCreateIdentity;
 };
 
@@ -268,8 +270,12 @@ export function createGoalGraphRepository(records: GoalRecordTransactionPort): G
       };
     }
     // Rebuilt from the EVENT only: never the retry payload, the current
-    // snapshot or the current clock.
-    return { status: "restored", snapshot: goalSnapshotFromCreatedEvent(event) };
+    // snapshot or the current clock. The creation cursor is the receipt's own,
+    // the same one that locates this event.
+    return {
+      status: "restored",
+      snapshot: { ...goalSnapshotFromCreatedEvent(event), since: receipt.cursor },
+    };
   }
 
   async function lookupCommit(input: GoalLookupInput): Promise<GoalLookupResult> {
@@ -314,9 +320,9 @@ export function createGoalGraphRepository(records: GoalRecordTransactionPort): G
     if (raw.status === "committed") {
       const receipt = copyReceipt(raw);
       if (!receipt.replayed) {
-        // A brand-new commit returns the freshly folded value directly; the
-        // original-event read is reserved for replays only.
-        return { status: "committed", receipt, snapshot: input.folded };
+        // A brand-new commit returns the freshly folded value with the cursor
+        // THIS commit bound; the original-event read is reserved for replays only.
+        return { status: "committed", receipt, snapshot: { ...input.folded, since: receipt.cursor } };
       }
       // A racing request won between the early lookup and this commit: only the
       // ORIGINAL event may be reported, never this call's folded value.

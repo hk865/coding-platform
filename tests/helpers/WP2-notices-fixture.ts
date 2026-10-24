@@ -214,7 +214,18 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
       const answer: QueryJobAnswerV1 = { schemaVersion: 1, answerId: f.id(), queryJobRef, runRef: queryRunRef,
         roundIndex: 0, answer: text, sources: [], followsAnswerRef: null, stale: false, staleReason: null, answeredAt: f.now(), bodyRef: stored.ref, ideas: [], goalCardDrafts: [] };
       const result = committed(await owner.recordQueryObservation(ctx, { input: { entry, history: { ...history, observedThroughPosition: 3, endPosition: 3 },
-        source: { position: 3, cursor: 'wp2-query-answer' }, observation: { kind: 'terminal', occurredAt: f.now(), outcome: 'answered', answer, reason: null, answerCheck: null } },
+        source: { position: 3, cursor: 'wp2-query-answer' }, observation: { kind: 'terminal', occurredAt: f.now(), outcome: 'answered', answer, reason: null, answerCheck: null,
+          activity: {
+            status: 'counted', ruleVersion: 1,
+            window: { kernelRunId: 'inert-run', kernelTurnId: 'inert-turn', fromPosition: 1, throughPosition: 1,
+              bound: 'end_position', turnTerminal: true, unresolvedCalls: 0,
+              turnStartedAt: '2026-10-23T09:00:00.000Z', lastRecordAt: '2026-10-23T09:00:00.000Z' },
+            quarters: [], overflow: null, totals: { steps: 0, edits: 0, editsUnknown: 0 },
+            changedFiles: { definite: [], possible: [], definiteOmitted: 0, possibleOmitted: 0,
+              possiblyIncomplete: false, incompleteBecause: [] },
+            usage: { requests: [], omitted: 0, totals: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }, complete: true },
+          },
+        } },
         meta: { requestId: f.id(), expected: [await f.pin(queryRunRef)] } }));
       if (!result.value.answer || !message) throw new Error('answer association requires real consultation');
       const write = { input: { messageRef: message.ref, answerRef: result.value.answer.ref }, meta: { requestId: f.id(), expected: [await f.pin(message.ref)] } };

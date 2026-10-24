@@ -33,7 +33,7 @@
 - `execution-feedback.ts` — `FeedbackSource`：验证失败调查的输入来源。
 - `query-execution-context.ts` — `QueryExecutionRequest`：持久化的 Query 请求形状。
 - `query-job.ts` — Query 聚合/意图/执行/答案：`QueryJobV1`、`consultationQueryRefs`、`queryJobRefFor`、`validQueryExecution`。
-- `run-activity.ts` — Run 活动读数：规则版本、各项上限、`RunActivitySnapshot` 与 `provenNotEnteredKernel`。
+- `run-activity.ts` — Run/Query 活动读数：规则版本、各项上限、`RunActivitySnapshot`、`QueryActivitySnapshot`、带 `querySince` 的 `ActivityRecordingSnapshot`、显式 unknown 的唯一构造 `unknownFacts` 与 `provenNotEnteredKernel`。
 - `runtime-budget.ts` — `RuntimeBudget`、`DEFAULT_RUNTIME_BUDGET`、`MAX_RESPONSE_TOKENS`、`validateRuntimeBudget`。
 
 ### Session/通信
@@ -42,7 +42,7 @@
 - `coordination.ts` — `WorkParticipationRef` 与 `AgentPrincipalRefV1`（参与关系与 Agent 归因）。
 - `delegated-write.ts` — `DelegatedWriteProvenanceV1`/`PlanWriteProvenanceV1`：Agent 写入来源与授权代数。
 - `session-anomaly.ts` — `SessionAnomalyAnchorRef`、归档变更与排队来源视图。
-- `work-line.ts` — 工作线读 DTO：列表、详情、悬停、分段与执行项。
+- `work-line.ts` — 工作线读 DTO：列表、详情、悬停、分段与执行项；秘书线的名字是“秘书 N”（`LineNameV1.ordinal`）。
 
 ### 证据与审查
 做证据、无进展、审查准入/材料与验证范围/导入的去这组。
@@ -75,7 +75,7 @@
 - `governance.ts` — 完成策略/架构基线的 revision、pin 与 `completionPolicyContentDigest`。
 - `graph-context.ts` — 上下文装配/图读模型/注意力/任务输入页 DTO，以及 `goalContextContentV1`、`goalContextDigestV1`。
 - `human-role-collaboration.ts` — 协作策略 revision/active 与 `coordinationPolicyContentDigest`。
-- `ledger.ts` — 聚合引用/快照、`AggregateRef` 闭集、`makeCommitCursor`/`seqOfCommitCursor`。
+- `ledger.ts` — 聚合引用/快照、`AggregateRef` 闭集、`makeCommitCursor`/`seqOfCommitCursor`；`GoalSnapshot` 带创建提交的 `since`，创建路径用预绑定的 `PendingGoalSnapshot`（`since` 为提交占位符）。
 - `memory.ts` — `MemoryPurpose`：记忆用途闭集。
 - `note.ts` — 注记 Head/Version/CurrentPointer、锚点、`NOTE_GENERAL_KINDS` 与 `renderNoteHeader`。
 - `opaque.ts` — `Opaque<Value, Brand>` 品牌类型。
@@ -107,8 +107,8 @@
 | `requirementKeyOf` | `src/contracts/evidence.ts:130` | 由 obligationId 与 requirementId 生成键。 | 证据覆盖与需求查找。 |
 | `edgeDeclarationId` | `src/contracts/input-declaration-id.ts:5` | 内容派生的执行 DAG 边 `edge:` 声明 id。 | 计划输入声明。 |
 | `legacyDeclarationId` | `src/contracts/input-declaration-id.ts:14` | `inputRequirements` 条目的 `legacy:` 声明 id。 | 兼容旧计划输入时。 |
-| `makeCommitCursor` | `src/contracts/ledger.ts:101` | 由序号构造 `CommitCursor`。 | 合成/测试游标；生产写入从提交回执取真实游标。 |
-| `seqOfCommitCursor` | `src/contracts/ledger.ts:107` | 从 `CommitCursor` 取回序号。 | 排序、日志与范围比较。 |
+| `makeCommitCursor` | `src/contracts/ledger.ts:109` | 由序号构造 `CommitCursor`。 | 合成/测试游标；生产写入从提交回执取真实游标。 |
+| `seqOfCommitCursor` | `src/contracts/ledger.ts:115` | 从 `CommitCursor` 取回序号。 | 排序、日志与范围比较。 |
 | `completionPolicyContentDigest` | `src/contracts/governance.ts:106` | 完成策略正文摘要。 | 安装/激活 revision 前对齐摘要。 |
 | `coordinationPolicyContentDigest` | `src/contracts/human-role-collaboration.ts:88` | 协作策略正文摘要。 | 安装/激活协作策略 revision。 |
 | `roleSpecContentDigest` | `src/contracts/role-spec.ts:156` | 角色规格正文摘要。 | 安装/激活角色规格。 |
@@ -124,7 +124,8 @@
 | `sameArtifactOwnerRunRef` | `src/contracts/material-access.ts:88` | 比较 artifact 的 Run/QueryRun 所有者。 | 归属与读取授权判断。 |
 | `defaultResourceCapSettings` | `src/contracts/resource-caps.ts:25` | 按本机内存算默认 memory 上限与 tasksMax。 | Host 未配置资源上限时的默认值。 |
 | `validateRuntimeBudget` | `src/contracts/runtime-budget.ts:29` | 归一/校验不可信预算；累积上限保持 null。 | HTTP 或边界接受预算时。 |
-| `provenNotEnteredKernel` | `src/contracts/run-activity.ts:91` | 判定已结束 Run 是否可证明未进入 Kernel。 | 无进展/返工判断；running 必须当作不完整。 |
+| `provenNotEnteredKernel` | `src/contracts/run-activity.ts:128` | 判定已结束 Run 是否可证明未进入 Kernel。 | 无进展/返工判断；running 必须当作不完整。 |
+| `unknownFacts` | `src/contracts/run-activity.ts:104` | 带规则版本的显式 unknown 活动读数，detail 截到 500 字；唯一构造。 | Runtime 读窗口失败、WorkGraph 收尾提交没拿到 tally 时；不要写 0，也不要另写构造。 |
 | `isAutomationActor` | `src/contracts/task-requeue.ts:57` | 判断 actor 是否为平台自动化 actor。 | 归因分类与权限判断。 |
 | `reworkActorClassOf` | `src/contracts/task-requeue.ts:75` | 由 principal 与 actor 定 agent/system/human。 | 返工/重跑归因；`query_run` 返回 null。 |
 | `isReviewRoundPurpose` | `src/contracts/review-admission.ts:57` | 判断 Run 是否为审查/提案轮。 | 审查准入分支；缺失 purpose 是普通工作。 |
@@ -177,7 +178,7 @@
 - 不要在本层 import `src/core`、`src/app`、`src/business`、`src/composition` 的实现，或加入 I/O、时钟、状态机；状态迁移只经过 `src/core/work-graph/state/`。
 - 不要另写 `rejection`/结果包装；用 `rejected*` 与 `ReadResult`/`WriteResult` 原语（**M1-29**）。
 - 不要另写 JSON 相等比较；`sameJson` 的唯一正本在本表（`fingerprint.ts`），别处同名的私有副本由清理轮删除。
-- 不要在 `app`/`agent-runtime`/`queries` 另写 `messageOf`；契约层正本待新增（M1-38），现存副本（如 `src/composition/create-platform.ts:1424`、`src/composition/create-platform.ts:1424`）由清理轮替换。
+- 不要在 `app`/`agent-runtime`/`queries` 另写 `messageOf`；契约层正本待新增（M1-38），现存副本（如 `src/composition/create-platform.ts:1428`、`src/composition/create-platform.ts:1428`）由清理轮替换。
 - 不要在公共命令身份/指纹里塞入会变的选中事实、当前 revision 或重试数据（**M1-25, MH-03**）。
 - 不要另写规范 JSON、相等或哈希；也不要另造聚合 key（**M1-32**）。
 - 不要用裸局部 ID 作记录键，或只校验一半的引用形状（**M1-31, CS-04**）。

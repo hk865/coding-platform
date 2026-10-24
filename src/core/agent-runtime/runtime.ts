@@ -16,7 +16,7 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
 import type { RunRef } from '../../contracts/dispatch.js';
-import type { QueryRunRef } from '../../contracts/query-job.js';
+import type { QueryRunRef, QueryRunSnapshot } from '../../contracts/query-job.js';
 import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
 import type { TaskRow } from '../work-graph/model/plan-contracts.js';
 import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
@@ -52,8 +52,8 @@ import { readonlyCommandSandboxOptions } from './readonly-command-tool.js';
 import { WORKSPACE_DENIED_PREFIXES } from '../workspace/denied-prefixes.js';
 import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { AgentRuntimePort, AgentRuntimeService, RuntimeExecutionPort } from './ports.js';
-import { readRunActivityFacts, unknownFacts } from './run-activity-reader.js';
-import { provenNotEnteredKernel } from '../../contracts/run-activity.js';
+import { readRunActivityFacts, unknownFacts, type RunActivityRead } from './run-activity-reader.js';
+import { provenNotEnteredKernel, type RunActivityBound } from '../../contracts/run-activity.js';
 import { isRunExecutionHistoryV1 } from '../work-graph/persistence/execution-history-codecs.js';
 
 const unsupported = (reason: string) => ({
@@ -779,12 +779,51 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
     return after.status === 'ready' ? after : delivered;
   };
   /**
+   * L6: the ONE upper-bound choice of an ended execution's activity window,
+   * shared by the Run and the Query tally: the recorded `endPosition`, then K
+   * part A's `readTurnBounds` (the Turn's own end), then the saved reconcile
+   * observation, else `kernel_tail` when the Kernel has the Turn. A Turn the
+   * Kernel does not have, an unreadable Kernel or a bounds read that cannot
+   * locate the Turn with no saved observation is an explicit `unknown`; a
+   * cancelled bounds read proves nothing (`retry_later`). Either way the answer
+   * is final and nothing is read past it.
+   */
+  async function activityUpperBound(ctx: CoreCallContext, input: {
+    session: SessionRecord; kernelRunId: string; endPosition: number | null; reconciledThrough: number | null;
+  }): Promise<{ kind: 'through'; through: { position: number; bound: Exclude<RunActivityBound, 'kernel_tail'> } | 'kernel_tail' }
+    | { kind: 'answer'; value: RunActivityRead }> {
+    if (input.endPosition !== null) return { kind: 'through', through: { position: input.endPosition, bound: 'end_position' } };
+    const bounds = await historyCursorOwner.readTurnBounds({ session: input.session,
+      kernelRunId: input.kernelRunId, signal: ctx.signal });
+    // R6: the real bounds owner answers `unreadable` on cancellation
+    // (`session-operations.ts`), so check the caller's signal immediately
+    // after the await, before interpreting `unreadable`/`not_found`. A
+    // cancelled read proves nothing and writes nothing (`retry_later`).
+    if (ctx.signal.aborted) {
+      return { kind: 'answer', value: { kind: 'retry_later', reason: 'the activity window read was cancelled' } };
+    }
+    if (bounds.status === 'not_found') {
+      return { kind: 'answer', value: { kind: 'facts', facts: unknownFacts('turn_not_found', 'the Kernel has no Turn of this identity') } };
+    }
+    if (bounds.status === 'unreadable') {
+      return { kind: 'answer', value: { kind: 'facts', facts: unknownFacts('kernel_unreadable', bounds.reason) } };
+    }
+    if (bounds.status === 'found' && bounds.endPosition !== null) {
+      return { kind: 'through', through: { position: bounds.endPosition, bound: 'turn_bounds' } };
+    }
+    if (input.reconciledThrough !== null) {
+      return { kind: 'through', through: { position: input.reconciledThrough, bound: 'reconcile_observation' } };
+    }
+    if (bounds.status === 'found') return { kind: 'through', through: 'kernel_tail' };
+    return { kind: 'answer', value: { kind: 'facts', facts: unknownFacts('history_read_failed', bounds.reason) } };
+  }
+  /**
    * Slice 2B L6 (backfill): read one ended Run's activity window and tally it.
    * A Run with no position record is `not_entered` only when the platform can
    * prove it never entered the Kernel (L7); otherwise it is an explicit
-   * `unknown('no_history_locator')`. The window's upper bound follows L6
-   * exactly: the recorded `endPosition` first, then K part A's
-   * `readTurnBounds`, then the reconcile observation, else `kernel_tail`.
+   * `unknown('no_history_locator')`. The window's upper bound is the shared
+   * `activityUpperBound` choice; the Run's saved reconcile observation is its
+   * `interrupted_clean` last position or its `unresolved` watermark.
    */
   const countRunActivity: NonNullable<RuntimeExecutionPort['countRunActivity']> = async (ctx, input) => {
     if (ctx.principal.kind !== 'host') {
@@ -840,43 +879,91 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
     if (probe.verdict !== 'ready') {
       return { status: 'ready', value: { kind: 'retry_later', reason: probe.reason } };
     }
-    let through: { position: number; bound: 'end_position' | 'turn_bounds' | 'reconcile_observation' } | 'kernel_tail';
-    if (locator.endPosition !== null) {
-      through = { position: locator.endPosition, bound: 'end_position' };
-    } else {
-      const bounds = await historyCursorOwner.readTurnBounds({ session: record.session,
-        kernelRunId: locator.kernel.runId, signal: ctx.signal });
-      // R6: the real bounds owner answers `unreadable` on cancellation
-      // (`session-operations.ts`), so check the caller's signal immediately
-      // after the await, before interpreting `unreadable`/`not_found`. A
-      // cancelled read proves nothing and writes nothing (`retry_later`).
-      if (ctx.signal.aborted) {
-        return { status: 'ready', value: { kind: 'retry_later', reason: 'the activity window read was cancelled' } };
-      }
-      if (bounds.status === 'not_found') {
-        return { status: 'ready', value: { kind: 'facts', facts: unknownFacts('turn_not_found', 'the Kernel has no Turn of this identity') } };
-      }
-      if (bounds.status === 'unreadable') {
-        return { status: 'ready', value: { kind: 'facts', facts: unknownFacts('kernel_unreadable', bounds.reason) } };
-      }
-      if (bounds.status === 'found' && bounds.endPosition !== null) {
-        through = { position: bounds.endPosition, bound: 'turn_bounds' };
-      } else {
-        const observation = run.reconciliation?.observation;
-        const reconciled = observation?.kind === 'interrupted_clean' ? observation.lastPosition
-          : observation?.kind === 'unresolved' ? observation.observedThroughPosition : null;
-        if (reconciled !== null && reconciled !== undefined) {
-          through = { position: reconciled, bound: 'reconcile_observation' };
-        } else if (bounds.status === 'found') {
-          through = 'kernel_tail';
-        } else {
-          return { status: 'ready', value: { kind: 'facts',
-            facts: unknownFacts('history_read_failed', bounds.reason) } };
-        }
-      }
-    }
+    const observation = run.reconciliation?.observation;
+    const reconciled = observation?.kind === 'interrupted_clean' ? observation.lastPosition
+      : observation?.kind === 'unresolved' ? observation.observedThroughPosition : null;
+    const bound = await activityUpperBound(ctx, { session: record.session, kernelRunId: locator.kernel.runId,
+      endPosition: locator.endPosition, reconciledThrough: reconciled ?? null });
+    if (bound.kind === 'answer') return { status: 'ready', value: bound.value };
     const result = await readRunActivityFacts(historyCursorOwner, { session: record.session, kernel: locator.kernel,
-      fromPosition: locator.startPosition, through, probeFirst: false, signal: ctx.signal,
+      fromPosition: locator.startPosition, through: bound.through, probeFirst: false, signal: ctx.signal,
+      ...(maxPages === undefined ? {} : { maxPages }) });
+    return { status: 'ready', value: result };
+  };
+  /**
+   * Slice 6A L16: read one ended QueryRun's activity window and tally it. The
+   * QueryRun is read by its exact ref first: an ended QueryRun with no
+   * execution state, no fixed entry or a `not_entered` outcome never entered
+   * the Kernel (QRR-01/02, a drop or an unbound end before any claim), so the
+   * answer is `not_entered`, never a zero count. Otherwise the executing
+   * Session is read and the window runs from the saved start (position 0 when
+   * the window is lost) to the shared `activityUpperBound`, whose saved
+   * reconcile observation is the Query's own watermark. It writes nothing.
+   */
+  const countQueryActivity: NonNullable<RuntimeExecutionPort['countQueryActivity']> = async (ctx, input) => {
+    if (ctx.principal.kind !== 'host') {
+      return { status: 'rejected', code: 'forbidden', reason: 'the activity read requires the Host principal' };
+    }
+    const raw = input as unknown as { queryRunRef?: unknown; maxPages?: unknown } | null | undefined;
+    const runRefRaw = raw?.queryRunRef;
+    if (typeof runRefRaw !== 'object' || runRefRaw === null || (runRefRaw as { aggregateType?: unknown }).aggregateType !== 'QueryRun'
+      || !['projectId', 'workspaceId', 'queryJobId', 'runId'].every((field) => typeof (runRefRaw as Record<string, unknown>)[field] === 'string'
+        && ((runRefRaw as Record<string, unknown>)[field] as string).length > 0)) {
+      return { status: 'rejected', code: 'invalid', reason: 'countQueryActivity requires a complete QueryRunRef' };
+    }
+    const queryRunRef = runRefRaw as QueryRunRef;
+    if (queryRunRef.projectId !== ctx.projectId || queryRunRef.workspaceId !== ctx.workspaceId) {
+      return { status: 'rejected', code: 'forbidden', reason: 'the QueryRun is outside the Host call scope' };
+    }
+    // Passed on as given: the window reader rejects a bound that is not a positive safe integer.
+    const maxPages = input.maxPages;
+    const loaded = await deps.sourceAuthority().load(queryRunRef);
+    if (loaded.status === 'not_found') return { status: 'not_found' };
+    if (loaded.status !== 'found') {
+      return { status: 'rejected', code: 'unavailable', reason: `the QueryRun could not be read: ${loaded.reason}` };
+    }
+    if (loaded.snapshot.ref.aggregateType !== 'QueryRun') {
+      return { status: 'rejected', code: 'unavailable', reason: 'the QueryRun read answered another aggregate' };
+    }
+    const run = (loaded.snapshot as QueryRunSnapshot).run;
+    if (run.endedAt === null) {
+      return { status: 'rejected', code: 'invalid', reason: 'countQueryActivity requires an ended QueryRun' };
+    }
+    const state = run.executionState;
+    if (state === undefined || state.entry === null || run.outcome === 'not_entered') {
+      return { status: 'ready', value: { kind: 'not_entered' } };
+    }
+    const entry = state.entry;
+    if (deps.queryExecution === undefined) {
+      return { status: 'rejected', code: 'unsupported', reason: 'the Query activity read needs the trusted QueryExecutionPort' };
+    }
+    // The executing Session, whose Kernel mapping the window is read through.
+    const read = await deps.queryExecution.readQueryExecution(ctx, queryRunRef);
+    if (read.status !== 'ready') return read;
+    const record = read.value;
+    const history = state.history;
+    if (history !== null
+      && (history.sessionRef.projectId !== ctx.projectId
+        || history.kernel.kernelSessionId !== record.session.kernel.kernelSessionId)) {
+      return { status: 'ready', value: { kind: 'facts',
+        facts: unknownFacts('history_read_failed', 'the persisted history disagrees with the claim Session mapping') } };
+    }
+    // The mandatory probe runs before the window read, as the Run tally does: a
+    // missing or damaged mapping is a definite `kernel_unreadable`, and a probe
+    // that proves nothing writes nothing.
+    const probe = await historyCursorOwner.probe({ session: record.session, signal: ctx.signal });
+    if (probe.verdict === 'missing' || probe.verdict === 'damaged') {
+      return { status: 'ready', value: { kind: 'facts', facts: unknownFacts('kernel_unreadable', probe.reason) } };
+    }
+    if (probe.verdict !== 'ready') {
+      return { status: 'ready', value: { kind: 'retry_later', reason: probe.reason } };
+    }
+    const kernel = history?.kernel ?? entry.kernel;
+    const bound = await activityUpperBound(ctx, { session: record.session, kernelRunId: kernel.runId,
+      endPosition: history?.endPosition ?? null, reconciledThrough: history?.observedThroughPosition ?? null });
+    if (bound.kind === 'answer') return { status: 'ready', value: bound.value };
+    const result = await readRunActivityFacts(historyCursorOwner, { session: record.session, kernel,
+      fromPosition: history === null ? 0 : history.startPosition, through: bound.through, probeFirst: false, signal: ctx.signal,
       ...(maxPages === undefined ? {} : { maxPages }) });
     return { status: 'ready', value: result };
   };
@@ -924,6 +1011,7 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
     observeQuery: (ctx, request) => queryObservation.observe(ctx, request),
     readAttentionGraph: (ctx, request) => contextAssembler.readAttentionGraph(ctx, request),
     countRunActivity: (ctx, input) => countRunActivity(ctx, input),
+    countQueryActivity: (ctx, input) => countQueryActivity(ctx, input),
   };
   // M1: without the injected closure dependency the port does not publish the
   // operation, and the Workflow's `close_open_turn` answers `unsupported`.

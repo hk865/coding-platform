@@ -19,6 +19,7 @@ import {canonicalJson,type JsonValue} from '../../src/contracts/fingerprint.js';
 import type {RunRef} from '../../src/contracts/dispatch.js';
 import {EXECUTION_ENTRY_RECORD_SCHEMAS} from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import {MODEL_REQUEST_RECORD_SCHEMAS} from '../../src/core/work-graph/tasks/model-request-codecs.js';
+import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import {createSqliteRawArtifactStore} from '../../src/core/record-store/sqlite-body-store.js';
 import {createSessionDirectory} from '../../src/core/work-graph/sessions/session-directory.js';
 import {createPlanService} from '../../src/core/work-graph/tasks/plan-service.js';
@@ -178,7 +179,7 @@ export async function createB2RuntimeFixture(options: {
   additionalSchemas?: RecordBackendSchemas;
 } = {}): Promise<B2RuntimeFixture> {
   const kind = options.kind ?? 'memory';
-  const schemas=[EXECUTION_ENTRY_RECORD_SCHEMAS,MODEL_REQUEST_RECORD_SCHEMAS];
+  const schemas=[EXECUTION_ENTRY_RECORD_SCHEMAS,MODEL_REQUEST_RECORD_SCHEMAS,QUERY_JOB_RECORD_SCHEMAS];
   const additional=options.additionalSchemas;
   const claimFixture = await createTaskClaimFixture(kind,{records:[...schemas.flatMap(s=>s.records),...(additional?.records??[])],
     events:[...schemas.flatMap(s=>s.events),...(additional?.events??[])],

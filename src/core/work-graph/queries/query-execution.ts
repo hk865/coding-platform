@@ -32,6 +32,7 @@ import type { GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../../contracts/no-progress.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
+import { unknownFacts, type QueryActivitySnapshot, type RunActivityFactsV1 } from '../../../contracts/run-activity.js';
 import { decodePromptSetV1, type QueryRequestPromptFactsV1 } from '../../../contracts/prompts/prompt-set.js';
 import type {
   QueryExecutionStateV1, QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef,
@@ -43,6 +44,10 @@ import type {
 } from '../../record-store/ports.js';
 import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
+import {
+  decodeQueryActivitySnapshot, encodeQueryActivitySnapshot, queryActivityRefKey,
+} from '../persistence/query-activity-codecs.js';
+import { planQueryActivityWrite, queryActivityRefOf, queryActivitySourceOf } from '../model/query-activity-plan.js';
 import {
   decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey, SESSION_RECORD_SCHEMA_ID,
 } from '../sessions/session-record-codecs.js';
@@ -1373,7 +1378,8 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const eventId = deps.eventId();
     if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejectedWithNonEmptyCurrent('unsupported', 'the injected clock/id source produced an empty value');
     const nextRun = advanceQueryExecutionRecord({ job, run }, { phase: 'prepared',
-      prepared: { bundleRef: loaded.value.bundleRef, inputDigest: (prepared as unknown as PreparedQueryExecution).inputDigest } }).run;
+      prepared: { bundleRef: loaded.value.bundleRef, inputDigest: (prepared as unknown as PreparedQueryExecution).inputDigest,
+        requestEffectiveGoalId: manifest.request === null ? null : manifest.request.effectiveGoalId } }).run;
     const nextRecord: QueryExecutionRecord = { job, run: nextRun, session, answer: null };
     const event = buildRecordedEvent({
       eventId, identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
@@ -1813,6 +1819,55 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     });
   }
 
+  /**
+   * L16: the `QueryActivity` record a closing Query write stores in the SAME
+   * commit. The record is keyed by the full QueryRunRef; only a key the batch
+   * reports missing means "no record yet", and `unchanged` writes nothing.
+   * Every closing commit of an entered QueryRun writes it: a caller that
+   * supplies no tally records an explicit `unknown` the backfill retries, never
+   * zero and never nothing.
+   */
+  async function plannedQueryActivity(
+    job: QueryJobSnapshot, run: QueryRunSnapshot, supplied: RunActivityFactsV1 | undefined, recordedAt: string,
+  ): Promise<{ records: EncodedRecord[]; guards: RecordGuard[] } | CoreRejection> {
+    const facts = supplied ?? unknownFacts('history_read_failed', 'the closing Query write supplied no activity window');
+    const ref = queryActivityRefOf(run.ref);
+    const key = queryActivityRefKey(ref);
+    let read;
+    try { read = await deps.records.readMany([key]); }
+    catch (error) { return rejectedWithNonEmptyCurrent('unavailable', `the QueryActivity read failed: ${messageOf(error)}`); }
+    if (read.status !== 'ready') return rejectedWithNonEmptyCurrent('unavailable', `${read.code}: ${read.reason}`);
+    let existing: QueryActivitySnapshot | null = null;
+    const record = read.value.records.find(candidate => candidate.refKey === key);
+    if (record !== undefined) {
+      const decoded = decodeQueryActivitySnapshot(record);
+      if (decoded.status !== 'decoded') {
+        return rejectedWithNonEmptyCurrent('unavailable', `the QueryActivity record is not decodable: ${decoded.reason}`);
+      }
+      existing = decoded.value;
+    } else if (!read.value.missing.includes(key)) {
+      return rejectedWithNonEmptyCurrent('unavailable', 'the read batch neither returned nor reported missing the QueryActivity');
+    }
+    // The goal and the two Sessions the record names; the closing commit reads
+    // nothing more for them.
+    const source = queryActivitySourceOf(job, run);
+    if (!source.ok) return rejectedWithNonEmptyCurrent('incomplete', source.reason);
+    const plan = planQueryActivityWrite(existing, facts, {
+      queryRunRef: run.ref,
+      ...source.source,
+      queryEndedAt: run.run.endedAt ?? recordedAt,
+      queryStartedAt: run.run.startedAt,
+      recordedBy: 'query_end',
+      recordedAt,
+      endCommit: true,
+    });
+    if (plan.outcome === 'unchanged') return { records: [], guards: [] };
+    return {
+      records: [encodeQueryActivitySnapshot(plan.snapshot)],
+      guards: [{ refKey: key, expectedRevision: existing?.revision ?? null }],
+    };
+  }
+
   async function recordObservation(
     ctx: CoreCallContext,
     request: GraphWrite<QueryHistoryObservation>,
@@ -1929,6 +1984,9 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const next = settledRecords({ job, run, session }, state.phase, settled.effects, occurredAt);
     if ('status' in next) return next;
     const nextRecord: QueryExecutionRecord = { job: next.job, run: next.run, session: next.session ?? session, answer: next.answer };
+    // L16: the tally rides in this closing commit; no extra event accompanies it.
+    const activityPlan = await plannedQueryActivity(next.job, next.run, fact.activity, occurredAt);
+    if (!('records' in activityPlan)) return activityPlan;
     const event = buildRecordedEvent({
       eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
       correlationId: job.job.intent.correlationId, operation: 'observed', result: nextRecord, run: next.run,
@@ -1936,6 +1994,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(next.run), encodeQueryJobSnapshot(next.job)];
     if (next.answer !== null) records.push(encodeQueryJobAnswerSnapshot(next.answer));
     if (next.session !== null) records.push(encodeSessionRecord(next.session));
+    records.push(...activityPlan.records);
     // The Answer's event first, then the settled Run's, which carries the result a replay restores.
     const events: import('../../record-store/ports.js').EncodedDomainEvent[] = [];
     if (next.answer !== null) {
@@ -1954,6 +2013,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       { refKey: sessionKeyOf(session.ref), expectedRevision: session.revision },
     ];
     if (next.answer !== null) terminalGuards.push({ refKey: queryJobAnswerRefKey(next.answer.ref), expectedRevision: null });
+    terminalGuards.push(...activityPlan.guards);
     return commitOperation({
       deps, identityKey, fingerprint, guards: terminalGuards, records, events, value: nextRecord, operation: 'observed',
     });
@@ -1987,6 +2047,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
    */
   async function settleRecovery(
     ctx: CoreCallContext, queryRunRef: QueryRunRef, requestId: string, expectedRun: number, content: unknown,
+    activity: RunActivityFactsV1 | undefined,
     eventOf: (state: QueryExecutionStateV1) => RecoveryStep,
   ): Promise<WriteResult<QueryExecutionRecord>> {
     const identity = recoveryIdentity(ctx, queryRunRef, requestId, expectedRun, content);
@@ -2079,6 +2140,14 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       }
     }
     if (entered) nextJob = enteredJob(nextJob, run);
+    // L16: only the two rows whose QueryRun entered the Kernel carry a tally;
+    // QRR-01/02 wrote none and QRR-05 marks the Run unknown.
+    let activityPlan: { records: EncodedRecord[]; guards: RecordGuard[] } = { records: [], guards: [] };
+    if (event.kind === 'query_reconcile_interrupted_clean' || event.kind === 'query_unknown_attested') {
+      const planned = await plannedQueryActivity(nextJob, nextRun, activity, occurredAt);
+      if (!('records' in planned)) return planned;
+      activityPlan = planned;
+    }
     const nextRecord: QueryExecutionRecord = { job: nextJob, run: nextRun, session: nextSession ?? session, answer: null };
     // One event per QueryRun the commit writes: a new attempt's pending Run first, then this one.
     const events = newRun === null
@@ -2090,11 +2159,13 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (newRun !== null) records.push(encodeQueryRunSnapshotRecord(newRun));
     if (nextJob.revision !== job.revision) records.push(encodeQueryJobSnapshot(nextJob));
     if (nextSession !== null) records.push(encodeSessionRecord(nextSession));
+    records.push(...activityPlan.records);
     const guards = mergeGuards([
       { refKey: queryRunRefKey(queryRunRef), expectedRevision: run.revision },
       { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision },
       { refKey: sessionKeyOf(session.ref), expectedRevision: session.revision },
       ...requestGuards,
+      ...activityPlan.guards,
     ]);
     if (!guards.ok) return guards.rejection;
     return commitOperation({ deps, identityKey, fingerprint, guards: guards.guards, records, claims,
@@ -2119,7 +2190,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const hostLease: 'owned' | 'held_by_other' | null = host === undefined ? null
       : host.lease === 'owned' && host.hostInstanceId === input.hostInstanceId ? 'owned' : 'held_by_other';
     const result = input.result;
-    return settleRecovery(ctx, input.queryRunRef, requestId, expectedRun, input, (state): RecoveryStep => {
+    return settleRecovery(ctx, input.queryRunRef, requestId, expectedRun, input, input.activity, (state): RecoveryStep => {
       const base = { caller: 'reconcile' as const, hostLease, probe: input.probe, inputsConfirmed: input.inputsConfirmed,
         actor: 'system' as const, reason: null };
       switch (result.kind) {
@@ -2169,7 +2240,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     }
     const actor = hostActor(ctx);
     const host = deps.hostInstance;
-    return settleRecovery(ctx, input.queryRunRef, requestId, expectedRun, attestationContent(input), (): RecoveryStep => ({
+    return settleRecovery(ctx, input.queryRunRef, requestId, expectedRun, attestationContent(input), input.activity, (): RecoveryStep => ({
       event: { kind: 'query_unknown_attested' },
       guard: { caller: 'host_entry', hostLease: host === undefined ? null : host.lease, probe: null, kernel: null,
         inputsConfirmed: input.inputsConfirmed === null ? 'kernel_unreadable' : input.inputsConfirmed,

@@ -86,7 +86,9 @@ describe.each(['memory', 'sqlite'] as const)('S2B activity calendar (%s)', (kind
     });
     // 13:00 local starts at 05:00Z, after the 04:10Z "now".
     expect(cellAt(calendar, 13).future).toBe(true);
-    expect(calendar.totals).toEqual({ steps: 3, edits: 1, editsUnknown: 0, checks: 0, complete: true });
+    expect(calendar.totals).toEqual({
+      steps: 3, querySteps: 0, edits: 1, editsUnknown: 0, checks: 0, complete: true,
+    });
     expect(calendar.coverage).toMatchObject({
       runsCounted: 1, runsRecordedLate: 0, runsNotEntered: 0, runsInProgress: 0,
       runsUncounted: [], runsUnplaced: 0, checksUnplaced: 0,
@@ -275,7 +277,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B activity calendar (%s)', (kind
 
     const counts: ReadCounts = { roundIndexRows: 0, eventAtCalls: 0 };
     const calendar = readyCalendar(await f.readModelWith(countingRecords(f.records, counts)).readActivityCalendar(f.ctx, {
-      goalRef, from: '2026-10-14T10:00:00.000Z', to: '2026-10-14T11:00:00.000Z',
+      scope: { kind: 'goal', goalRef }, from: '2026-10-14T10:00:00.000Z', to: '2026-10-14T11:00:00.000Z',
       granularity: 'hour', timeZone: 'UTC',
     }));
 

@@ -52,6 +52,7 @@ const goal: GoalSnapshot = {
   desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
   activePlanRevision: null, revision: 4,
   settings: { schemaVersion: 1, autonomy: 'every_step', order: 0, waitForGoalRef: null, parallelRisks: [] },
+  since: 'c0000000001' as GoalSnapshot['since'],
 };
 
 const baseRequest: CommandRerunRequestV1 = {

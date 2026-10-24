@@ -28,7 +28,7 @@ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js
 import type { GoalRef, WorkspaceLineSettingsV1, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { QueryRunSnapshot } from '../../../contracts/query-job.js';
-import type { GoalRecordTransactionPort, StoreFailure } from '../../record-store/ports.js';
+import type { EncodedRecord, GoalRecordTransactionPort, StoreFailure } from '../../record-store/ports.js';
 import type {
   RecordCountPort, RecordCountRequest, RecordLookupPort, RecordLookupRequest,
   RecordOrderedLookupPort, OrderedLookupRequest,
@@ -67,10 +67,11 @@ import {
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
 import { decodeQueryRunSnapshotRecord, S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP } from '../queries/query-record-codecs.js';
 import { canonicalRefKey, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
+import { lookupAll, type LookupBatch } from '../persistence/lookup-all.js';
 import {
   S2C_CLOSED_TASK_LINKS_LOOKUP, S2C_OPEN_LINKS_BY_SESSION_LOOKUP, S2C_SESSION_ARCHIVED_AT_LOOKUP,
   S2C_SESSION_BY_KIND_FROM_LOOKUP, S2C_SESSION_BY_LIFECYCLE_KIND_LOOKUP,
-  SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP, SESSION_WORK_LINKS_LOOKUP,
+  SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP, SESSION_BY_WORKSPACE_LOOKUP, SESSION_WORK_LINKS_LOOKUP,
   decodeSessionRecord, decodeSessionWorkLink, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
 import {
@@ -247,7 +248,129 @@ export function toBrief(row: LineRowV1): LineBriefV1 {
 type SharedReads = {
   goals: Map<string, GoalFacts>;
   workspace: WorkspaceSnapshot | null;
+  /**
+   * The workspace's secretary numbers, read once per read when the first
+   * secretary line needs them (never per line).
+   */
+  secretaryOrdinals: Promise<SecretaryOrdinalsRead> | null;
 };
+
+/** The secretary numbers by canonical Session key, or the failure that kept them from being read. */
+export type SecretaryOrdinalsRead =
+  | { status: 'ready'; value: Map<string, number> }
+  | { status: 'failed'; failure: { code: string; reason: string } };
+
+/**
+ * The `秘书 N` numbers of one workspace's secretary Sessions: N is the place in
+ * the creation order, counted from 1, ordered by `createdAt` and, between
+ * Sessions created at the same instant, by the canonical Session key, so the
+ * numbers never depend on the order the store returned the Sessions in.
+ */
+export function secretaryOrdinals(sessions: readonly { key: string; createdAt: string }[]): Map<string, number> {
+  const ordered = [...sessions].sort((left, right) => {
+    if (left.createdAt !== right.createdAt) return left.createdAt < right.createdAt ? -1 : 1;
+    if (left.key !== right.key) return left.key < right.key ? -1 : 1;
+    return 0;
+  });
+  return new Map(ordered.map((session, index) => [session.key, index + 1]));
+}
+
+/** One non-copy Session of the workspace as the numbering sees it. */
+export type SecretaryNumberingEntry = {
+  key: string; createdAt: string; roleKind: RoleConfigurationRef['kind']; duty: LineFactsV1['duty'];
+};
+
+/**
+ * The secretary numbers from every non-copy Session's resolved duty. A
+ * legacy-template role that resolves to unknown is certainly not a secretary
+ * (a legacy ref is never read; only the five platform templates fix a duty
+ * from one) and is skipped. A RoleSpec role that resolves to unknown may hide a
+ * secretary whose RoleSpec could not be read, so the numbers are not known.
+ */
+export function secretaryNumbering(entries: readonly SecretaryNumberingEntry[]): SecretaryOrdinalsRead {
+  const secretaries: { key: string; createdAt: string }[] = [];
+  for (const entry of entries) {
+    if (entry.duty === 'unknown' && entry.roleKind === 'role_spec') {
+      return { status: 'failed', failure: { code: 'unavailable',
+        reason: 'a Session duty is unknown; secretary numbering is incomplete' } };
+    }
+    if (entry.duty === 'secretary') secretaries.push({ key: entry.key, createdAt: entry.createdAt });
+  }
+  return { status: 'ready', value: secretaryOrdinals(secretaries) };
+}
+
+/**
+ * Every Session of the workspace, every lifecycle (an archived secretary keeps
+ * its number), in one stable window; read-only copies are not secretaries of
+ * their own and take no number. The duty comes from the same resolver the
+ * lines use, once per role; a duty that is not readable fails the numbers,
+ * since that Session could be a secretary that would shift them, and
+ * `secretaryNumbering` decides what an unknown duty means. Undecodable Session
+ * records are skipped as every line read skips them.
+ */
+async function readSecretaryOrdinals(deps: WorkLineReaderDeps, ctx: CoreCallContext,
+  workspace: WorkspaceScope): Promise<SecretaryOrdinalsRead> {
+  let batch: LookupBatch<EncodedRecord>;
+  try {
+    batch = await lookupAll(deps.records, SESSION_BY_WORKSPACE_LOOKUP, [workspace.projectId, workspace.workspaceId],
+      { pageLimit: deps.lookupPageLimit ?? 200 });
+  } catch (error) {
+    return { status: 'failed', failure: thrownFailure(error, 'the secretary Sessions read failed') };
+  }
+  const duties = new Map<string, Awaited<ReturnType<SessionDutyReadPort>>>();
+  const entries: SecretaryNumberingEntry[] = [];
+  for (const record of batch.items) {
+    const decoded = decodeSessionRecord(record);
+    if (decoded.status !== 'decoded') continue;
+    const session = decoded.value;
+    if (session.workspaceId !== workspace.workspaceId || session.provenance.kind === 'readonly_copy') continue;
+    const roleKey = refKey(session.role);
+    let duty = duties.get(roleKey);
+    if (duty === undefined) {
+      duty = await deps.dutyFor(session.role, ctx);
+      duties.set(roleKey, duty);
+    }
+    if (duty.status !== 'ready') {
+      const reason = duty.status === 'rejected' ? duty.reason : duty.status;
+      return { status: 'failed', failure: { code: duty.status === 'rejected' ? duty.code : 'unavailable',
+        reason: `the duty of Session ${session.ref.sessionId} is not readable: ${reason}` } };
+    }
+    entries.push({ key: sessionAggregateRefKey(session.ref), createdAt: session.createdAt, roleKind: session.role.kind,
+      duty: duty.value });
+  }
+  return secretaryNumbering(entries);
+}
+
+/** A thrown store rejection keeps its code and reason; anything else is `unavailable`. */
+function thrownFailure(error: unknown, what: string): { code: string; reason: string } {
+  if (typeof error === 'object' && error !== null) {
+    const { code, reason } = error as { code?: unknown; reason?: unknown };
+    if (typeof code === 'string' && typeof reason === 'string') return { code, reason: `${what}: ${reason}` };
+  }
+  return { code: 'unavailable', reason: `${what}: ${error instanceof Error ? error.message : String(error)}` };
+}
+
+/**
+ * This secretary line's number. A failed read of the numbers, or a head the
+ * numbers do not list (a Session that appeared after they were read), leaves
+ * the number unknown and marks the line with the problem.
+ */
+async function secretaryOrdinalOf(deps: WorkLineReaderDeps, ctx: CoreCallContext, workspace: WorkspaceScope,
+  shared: SharedReads, head: SessionRecord, state: LineReadState): Promise<number | null> {
+  shared.secretaryOrdinals ??= readSecretaryOrdinals(deps, ctx, workspace);
+  const read = await shared.secretaryOrdinals;
+  if (read.status !== 'ready') {
+    noteProblem(state, read.failure);
+    return null;
+  }
+  const ordinal = read.value.get(sessionAggregateRefKey(head.ref));
+  if (ordinal === undefined) {
+    noteProblem(state, { code: 'unavailable',
+      reason: `the secretary Session ${head.ref.sessionId} is not among the workspace's secretary Sessions read` });
+    return null;
+  }
+  return ordinal;
+}
 
 type GoalFacts = {
   goalRef: GoalRef;
@@ -290,7 +413,7 @@ async function assembleLineRows(
   activeCopies?: ActiveCopies,
 ): Promise<ReadResult<{ rows: LineRowV1[]; facts: Map<string, LineFactsV1>; attentionProblem: string | null; legacyUnchecked: LineCountV1 }>> {
   const budgetValue = deps.historyReadBudget ?? LINE_HISTORY_READ_BUDGET;
-  const shared: SharedReads = { goals: new Map(), workspace: null };
+  const shared: SharedReads = { goals: new Map(), workspace: null, secretaryOrdinals: null };
   const queue = await readDecisionQueue(deps, ctx, workspace);
   // L1/N1 (review item 4a): read the active copies once per list (the active list
   // already enumerated them and passes the index in). Bounded by current work.
@@ -418,15 +541,9 @@ async function assembleOneLine(
   const copies = earlyProblem === null ? await readCopies(deps.records, workspace, chain, activeCopies, lineState) : [];
   const latestQuery = earlyProblem === null && needsLatestQuery(duty, holder, latestWork, headRecord)
     ? await readLatestQuery(deps.records, workspace, headRecord, lineState) : null;
-  // L20 (review item 10): the secretary's interim name uses the latest Query's
-  // Goal title, not the Goal id.
-  let secretaryGoalTitle: string | null = null;
-  if (duty === 'secretary' && latestQuery !== null && latestQuery.goalId !== null) {
-    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: workspace.projectId, goalId: latestQuery.goalId };
-    const goalRead = deps.plans === undefined ? null : await deps.plans.queryGoal(ctx, goalRef);
-    if (goalRead !== null && goalRead.status === 'ready') secretaryGoalTitle = goalRead.value.goal.objective;
-    else if (goalRead !== null && goalRead.status === 'rejected') noteProblem(lineState, goalRead);
-  }
+  // A secretary line is named by its Session's number among the workspace's secretaries.
+  const secretaryOrdinal = duty === 'secretary'
+    ? await secretaryOrdinalOf(deps, ctx, workspace, shared, headRecord, lineState) : null;
 
   const pinnedEntries = await readPins(shared, deps.records, workspace, lineState);
   const chainKeys = new Set(chain.map((entry) => refKey(entry.session)));
@@ -522,7 +639,7 @@ async function assembleOneLine(
     problem,
   };
   const status = deriveLineStatus(facts);
-  const name = deriveName(duty, holder, latestWork, latestQuery, responsibleOpen, taskFacts, headRecord, secretaryGoalTitle);
+  const name = deriveName(duty, holder, latestWork, latestQuery, responsibleOpen, taskFacts, headRecord, secretaryOrdinal);
   const sessionCount: LineCountV1 = omitted.status === 'exact'
     ? { status: 'exact', value: chain.length }
     : { status: 'partial', atLeast: chain.length + 1, reason: 'the chain exceeds 32 predecessors (L2)' };
@@ -1221,6 +1338,23 @@ async function readLatestQuery(records: WorkLineStore, workspace: WorkspaceScope
 
 type LatestQuery = { query: QueryRunSnapshot; goalId: string | null };
 
+/**
+ * The Goal of a line head's latest Query, read the way the line itself reads
+ * it (the occupying or last QueryRun, else the newest by generation): the fact
+ * the graph's Goal owners are filtered by. `null` when the head is not a
+ * readable Session of this workspace, ran no Query, or its Query names no Goal.
+ */
+export async function readLatestQueryGoal(records: WorkLineStore, workspace: WorkspaceScope,
+  head: SessionRef): Promise<StoreRead<string | null>> {
+  const headRead = await readSession(records, workspace, head);
+  if (headRead.status !== 'ready') return headRead;
+  if (headRead.value === null) return { status: 'ready', value: null };
+  const state: LineReadState = { problem: null };
+  const latest = await readLatestQuery(records, workspace, headRead.value, state);
+  if (state.problem !== null) return rejectionOf(state.problem);
+  return { status: 'ready', value: latest?.goalId ?? null };
+}
+
 // --- copies (N1, M6) ------------------------------------------------------- //
 
 async function readCopies(records: WorkLineStore, workspace: WorkspaceScope,
@@ -1683,34 +1817,41 @@ function deriveName(
   responsibleOpen: readonly LineTaskFactV1[],
   taskFacts: Map<string, LineTaskFactV1>,
   head: SessionRecord,
-  secretaryGoalTitle: string | null,
+  /** The secretary's number; null for other duties or when it could not be read. */
+  secretaryOrdinal: number | null,
 ): LineNameV1 {
   const titleOf = (task: TaskTriple): string => taskFacts.get(taskCanonicalKey(task))?.title ?? task.taskId;
   if (duty === 'secretary') {
-    if (latestQuery !== null && latestQuery.goalId !== null) {
-      const goal = latestQuery.goalId;
-      return { source: 'secretary_interim', primary: secretaryGoalTitle ?? goal, extraCount: 0, tasks: [], goalRef: { aggregateType: 'Goal', projectId: head.ref.projectId, goalId: goal }, complete: true };
+    // The Goal of the secretary's latest Query stays on the name: the graph's
+    // Goal owners and the person's view of what the secretary talked about last.
+    const goalRef: GoalRef | null = latestQuery !== null && latestQuery.goalId !== null
+      ? { aggregateType: 'Goal', projectId: head.ref.projectId, goalId: latestQuery.goalId } : null;
+    if (secretaryOrdinal === null) {
+      return { source: 'secretary_ordinal', primary: '秘书', ordinal: null, extraCount: 0, tasks: [], goalRef, complete: false };
     }
-    return { source: 'secretary_interim', primary: '秘书 · 未定话题', extraCount: 0, tasks: [], goalRef: null, complete: true };
+    return { source: 'secretary_ordinal', primary: `秘书 ${String(secretaryOrdinal)}`, ordinal: secretaryOrdinal,
+      extraCount: 0, tasks: [], goalRef, complete: true };
   }
   if (holder !== null && holder.kind === 'run') {
     const task = holder.run.run.task;
-    return { source: 'running_task', primary: titleOf(task), extraCount: 0, tasks: [task],
+    return { source: 'running_task', primary: titleOf(task), ordinal: null, extraCount: 0, tasks: [task],
       goalRef: { aggregateType: 'Goal', projectId: head.ref.projectId, goalId: task.goalId }, complete: true };
   }
   if (responsibleOpen.length > 0) {
     const first = responsibleOpen[0]!;
-    return { source: 'open_tasks', primary: titleOf(first.task), extraCount: responsibleOpen.length - 1,
+    return { source: 'open_tasks', primary: titleOf(first.task), ordinal: null, extraCount: responsibleOpen.length - 1,
       tasks: responsibleOpen.map((task) => task.task),
       goalRef: { aggregateType: 'Goal', projectId: head.ref.projectId, goalId: first.task.goalId }, complete: true };
   }
   if (latestWork !== null) {
     const task = latestWork.run.task;
-    return { source: 'recent_task', primary: titleOf(task), extraCount: 0, tasks: [task],
+    return { source: 'recent_task', primary: titleOf(task), ordinal: null, extraCount: 0, tasks: [task],
       goalRef: { aggregateType: 'Goal', projectId: head.ref.projectId, goalId: task.goalId }, complete: true };
   }
-  if (duty === 'unknown') return { source: 'duty_only', primary: 'unknown', extraCount: 0, tasks: [], goalRef: null, complete: true };
-  return { source: 'duty_only', primary: duty, extraCount: 0, tasks: [], goalRef: null, complete: true };
+  if (duty === 'unknown') {
+    return { source: 'duty_only', primary: 'unknown', ordinal: null, extraCount: 0, tasks: [], goalRef: null, complete: true };
+  }
+  return { source: 'duty_only', primary: duty, ordinal: null, extraCount: 0, tasks: [], goalRef: null, complete: true };
 }
 
 function deriveLastActivity(
@@ -2302,7 +2443,7 @@ async function readGateChecks(
 ): Promise<LineGateCheckV1[]> {
   if (deps.plans === undefined) return [];
   const listPageLimit = deps.listPageLimit ?? 100;
-  const shared: SharedReads = { goals: new Map(), workspace: null };
+  const shared: SharedReads = { goals: new Map(), workspace: null, secretaryOrdinals: null };
   const result: LineGateCheckV1[] = [];
   const seenRounds = new Set<string>();
   const seenTasks = new Set<string>();

@@ -73,6 +73,7 @@ function goal(ref: GoalRef, overrides: Partial<GoalSnapshot> = {}): GoalSnapshot
     activePlanRevision: ref.goalId === 'A' ? PA1 : PB1,
     revision: GOAL_REVISION,
     settings: settings({ order: ref.goalId === 'A' ? GOAL_ORDER.A : GOAL_ORDER.B }),
+    since: 'c0000000001' as GoalSnapshot['since'],
     ...overrides,
   };
 }

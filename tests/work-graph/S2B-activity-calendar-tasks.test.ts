@@ -196,7 +196,9 @@ describe.each(['memory', 'sqlite'] as const)('S2B activity calendar tasks (%s)',
     const withProducer = readyCalendar(await f.readCalendar({ goalRef: f.goalRef, ...UTC_HOURS,
       sessionRefs: [producer] }));
     expect(cellAt(withProducer, 10).checks).toBe(1);
-    expect(cellAt(withProducer, 10).tasks).toEqual([{ taskId: 'work-1', steps: 0, edits: 0, checks: 1 }]);
+    expect(cellAt(withProducer, 10).tasks).toEqual([
+      { taskId: 'work-1', goalId: f.goalRef.goalId, steps: 0, edits: 0, checks: 1 },
+    ]);
     expect(withProducer.coverage.checksGateUnplaced).toBe(0);
 
     // Handover in flight: two open responsible links on the gate task.

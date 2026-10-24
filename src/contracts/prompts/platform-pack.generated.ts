@@ -602,6 +602,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     "secretary.noGoal": "This request has no goal yet.",
     "secretary.roundHeading": "## This round",
     "secretary.selectedIdea": "Selected idea:",
+    "secretary.cardsHeading": "## Cards",
     "secretary.batchedHeading": "## Also queued in this request",
     "secretary.earlierHeading": "## Earlier rounds of this request on other secretaries",
     "secretary.answerOmitted": "(answer cut at 2 KiB)",

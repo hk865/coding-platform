@@ -135,7 +135,7 @@ describe('S2B Group B — Workflow backfill (BE3)', () => {
     expect(batch.status).toBe('ready');
     if (batch.status !== 'ready') return;
     expect(batch.value.done).toBe(true);
-    expect(batch.value.processed.map(entry => entry.runRef.runId)).toEqual([r2.runId, r13.runId]);
+    expect(batch.value.processed.map(entry => entry.kind === 'run' ? entry.runRef.runId : entry.kind)).toEqual([r2.runId, r13.runId]);
     expect(batch.value.processed.every(entry => entry.outcome === 'counted')).toBe(true);
 
     const after = await f.readRuns([r2, r13, r15, r30]);
@@ -188,7 +188,7 @@ describe('S2B Group B — Workflow backfill (BE3)', () => {
     expect(first.status).toBe('ready');
     if (first.status !== 'ready') return;
     expect(first.value.processed).toHaveLength(1);
-    expect(first.value.processed[0]!.runRef.runId).toBe(r15.runId);
+    expect(first.value.processed[0]).toMatchObject({ kind: 'run', runRef: { runId: r15.runId } });
     expect(first.value.next).not.toBeNull();
     expect(first.value.done).toBe(false);
     // The other Run is still unmaterialised until the cursor is followed.
@@ -198,7 +198,7 @@ describe('S2B Group B — Workflow backfill (BE3)', () => {
     expect(second.status).toBe('ready');
     if (second.status !== 'ready') return;
     expect(second.value.processed).toHaveLength(1);
-    expect(second.value.processed[0]!.runRef.runId).toBe(r30.runId);
+    expect(second.value.processed[0]).toMatchObject({ kind: 'run', runRef: { runId: r30.runId } });
     expect(second.value.next).toBeNull();
     expect(second.value.done).toBe(true);
 
@@ -266,7 +266,7 @@ describe('S2B Group B — Workflow backfill (BE3)', () => {
     const retryBatch = await backfill.backfillRecentActivity(f.ctx, { workspace: f.b2.base.scope, cursor: null });
     expect(retryBatch.status).toBe('ready');
     if (retryBatch.status !== 'ready') return;
-    const retried = retryBatch.value.processed.find(entry => entry.runRef.runId === retry.runId);
+    const retried = retryBatch.value.processed.find(entry => entry.kind === 'run' && entry.runRef.runId === retry.runId);
     expect(retried).toMatchObject({ outcome: 'retry_later' });
     expect(retryBatch.value.next).not.toBeNull();
     expect(viewOf(await f.readRuns([retry]), retry.runId)).toMatchObject({ status: 'unknown', reason: 'not_recorded', error: true });
@@ -362,7 +362,7 @@ describe('S2B Group B — Workflow backfill (BE3)', () => {
     });
     expect(batch.status).toBe('ready');
     if (batch.status !== 'ready') return;
-    expect(batch.value.processed).toEqual([{ runRef: old, outcome: 'unknown', reason: 'no_history_locator' }]);
+    expect(batch.value.processed).toEqual([{ kind: 'run', runRef: old, outcome: 'unknown', reason: 'no_history_locator' }]);
     expect(viewOf(await f.readRuns([old]), old.runId)).toMatchObject({
       status: 'unknown', reason: 'no_history_locator', error: false, recordedBy: 'backfill',
     });

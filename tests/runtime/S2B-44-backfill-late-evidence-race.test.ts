@@ -151,7 +151,7 @@ it('2B-44 (BE1r): a backfill stopped at the RecordStore boundary loses to RUN-21
     expect(batch.status).toBe('ready');
     if (batch.status !== 'ready') return;
     expect(batch.value.processed).toEqual([
-      { runRef: fx.claim.runRef, outcome: 'skipped', reason: 'record_changed' },
+      { kind: 'run', runRef: fx.claim.runRef, outcome: 'skipped', reason: 'record_changed' },
     ]);
 
     const final = await fx.activity.readRunActivities(fx.ctx, { runRefs: [fx.claim.runRef] });

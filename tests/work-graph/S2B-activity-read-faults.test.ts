@@ -73,7 +73,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B activity read faults (%s)', (k
       quarters: [{ at: '2026-10-14T02:00:00.000Z', steps: 1, edits: 0, editsUnknown: 0 }],
     }));
     f.setClock('2026-10-14T04:00:00.000Z');
-    const input = { goalRef, from: '2026-10-13T16:00:00.000Z', to: '2026-10-14T16:00:00.000Z',
+    const input = { scope: { kind: 'goal' as const, goalRef }, from: '2026-10-13T16:00:00.000Z', to: '2026-10-14T16:00:00.000Z',
       granularity: 'hour' as const, timeZone: 'UTC' };
 
     const indexResult = await f.readModelWith(faultyRecords(f.records, { failIndex: 's2b-run-activity-by-goal-last' }))
@@ -109,12 +109,14 @@ describe.each(['memory', 'sqlite'] as const)('S2B activity read faults (%s)', (k
       quarters: [{ at: '2026-10-14T02:00:00.000Z', steps: 3, edits: 1, editsUnknown: 0 }],
     }));
     f.setClock('2026-10-14T04:10:00.000Z');
-    const input = { goalRef, from: '2026-10-13T16:00:00.000Z', to: '2026-10-14T16:00:00.000Z',
+    const input = { scope: { kind: 'goal' as const, goalRef }, from: '2026-10-13T16:00:00.000Z', to: '2026-10-14T16:00:00.000Z',
       granularity: 'hour' as const, timeZone: 'Asia/Shanghai' };
 
     const movedOnce = readyCalendar(await f.readModelWith(faultyRecords(f.records, { watermark: 'advance-once' }))
       .readActivityCalendar(f.ctx, input));
-    expect(movedOnce.totals).toEqual({ steps: 3, edits: 1, editsUnknown: 0, checks: 0, complete: true });
+    expect(movedOnce.totals).toEqual({
+      steps: 3, querySteps: 0, edits: 1, editsUnknown: 0, checks: 0, complete: true,
+    });
 
     const never = await f.readModelWith(faultyRecords(f.records, { watermark: 'always' }))
       .readActivityCalendar(f.ctx, input);

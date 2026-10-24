@@ -61,7 +61,7 @@
 ## 不要做
 
 - 不要另写 `rejection` 或结果包装；用 `rejected`/`rejectedWith*` 与 `ReadResult`/`WriteResult`（**M1-29**）。
-- `rejected` 另有旧副本：`src/business/workflow/workflow.ts:131`、`src/business/workflow/activity-backfill.ts:62`、`src/core/work-graph/tasks/context-input-service.ts:107`、`src/core/work-graph/views/context-extensions.ts:169` 的本地 `rejection`（`request-service.ts` 已改为引用正本），新代码一律用正本，旧副本由清理轮删除。
+- `rejected` 另有旧副本：`src/business/workflow/workflow.ts:131`、`src/business/workflow/activity-backfill.ts:74`、`src/core/work-graph/tasks/context-input-service.ts:107`、`src/core/work-graph/views/context-extensions.ts:169` 的本地 `rejection`（`request-service.ts` 已改为引用正本），新代码一律用正本，旧副本由清理轮删除。
 - 不要把读取失败折叠成空事实、普通阻塞项或成功的 drain（**FP-05, M1-12, M1-15, MH-06**）。
 - 不要在本层 import 上层实现，或加入 I/O、时钟、状态机；状态迁移只经过 `src/core/work-graph/state/`。
 - 不要把 `SessionRef` 当裸 id 或文件路径，也不要用 `messageId` 单独寻址消息。

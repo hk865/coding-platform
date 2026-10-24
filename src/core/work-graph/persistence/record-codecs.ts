@@ -15,9 +15,11 @@
  *     (`...@1`), never an aggregate revision;
  *   - a historical `objective` is never re-normalized on read.
  */
-import type { ActorRef, GoalCreatedEvent } from "../../../contracts/command-event.js";
-import type {
-  GoalDesiredState, GoalRef, GoalSnapshot, ProjectRef, ProjectSnapshot, WorkspaceRef, WorkspaceSnapshot,
+import type { ActorRef, CommitCursor, GoalCreatedEvent } from "../../../contracts/command-event.js";
+import {
+  seqOfCommitCursor,
+  type GoalDesiredState, type GoalRef, type GoalSnapshot, type PendingGoalSnapshot, type ProjectRef, type ProjectSnapshot,
+  type WorkspaceRef, type WorkspaceSnapshot,
 } from "../../../contracts/ledger.js";
 import {
   DEFAULT_GOAL_SETTINGS_V1,
@@ -356,6 +358,18 @@ export function goalSnapshotProblem(parsed: UnknownRecord): string | null {
     const settingsProblem = goalSettingsProblem(parsed["settings"], ref.projectId);
     if (settingsProblem !== null) return settingsProblem;
   }
+  // The creation cursor is bound by the creating commit; a record still holding
+  // the null placeholder (or any other value) is not a readable Goal. The ledger's
+  // own cursor rule decides the rest: ten digits and a sequence >= 1, so the zero
+  // cursor no commit ever made is refused too. `seqOfCommitCursor` stringifies its
+  // input, so the string boundary is checked first.
+  const since = parsed["since"];
+  if (typeof since !== "string") return "Goal snapshot since must be a CommitCursor";
+  try {
+    seqOfCommitCursor(since as CommitCursor);
+  } catch {
+    return "Goal snapshot since must be a CommitCursor";
+  }
   return null;
 }
 
@@ -499,7 +513,7 @@ function hasExactKeys(value: unknown, keys: readonly string[]): boolean {
  */
 const WRITTEN_GOAL_KEYS: readonly string[] = [
   "ref", "workspaceRef", "objective", "desiredState", "desiredStateRevision", "desiredStateRequestedBy",
-  "activePlanRevision", "revision",
+  "activePlanRevision", "revision", "since",
 ];
 
 function writtenGoalHasExactShape(goal: UnknownRecord): boolean {
@@ -650,6 +664,8 @@ const WORKSPACE_RECORD_SCHEMA: EncodedRecordSchema = {
 const GOAL_RECORD_SCHEMA: EncodedRecordSchema = {
   schemaId: GOAL_SNAPSHOT_SCHEMA_ID,
   aggregateType: "Goal",
+  // The creating commit binds the creation cursor; every later write carries it.
+  commitCursorFields: ["since"],
   validate: validateGoalSnapshot,
 };
 
@@ -700,7 +716,7 @@ export function encodeWorkspaceSnapshot(snapshot: WorkspaceSnapshot): EncodedRec
  * as given (no added `schemaId`, no re-normalization), including both D-9
  * fields, so an unchanged Goal keeps its current written shape.
  */
-export function encodeGoalSnapshot(snapshot: GoalSnapshot): EncodedRecord {
+export function encodeGoalSnapshot(snapshot: PendingGoalSnapshot): EncodedRecord {
   return {
     refKey: canonicalRefKey(snapshot.ref),
     schemaId: GOAL_SNAPSHOT_SCHEMA_ID,
@@ -766,6 +782,8 @@ export function decodeGoalSnapshot(record: EncodedRecord): DecodeResult<GoalSnap
       // Present stays byte-identical, absent stays absent (the default
       // is applied by `readGoalSettings` at the consumption point, never stored).
       ...(settings === undefined ? {} : { settings }),
+      // The validated creation cursor, not the envelope's revision.
+      since: parsed.since,
     },
   };
 }
@@ -825,8 +843,10 @@ export function decodeGoalCreatedEvent(event: EncodedDomainEvent): DecodeResult<
  * Rebuilds the ORIGINAL creation snapshot from the recorded `GoalCreated`
  * event — never from a retry payload, the current snapshot or the current
  * clock (R3a §6). The event is the only historical record of the created Goal.
+ * The creation cursor comes from the receipt that points at that event, so the
+ * event JSON keeps the shape it was written with.
  */
-export function goalSnapshotFromCreatedEvent(event: GoalCreatedEvent): GoalSnapshot {
+export function goalSnapshotFromCreatedEvent(event: GoalCreatedEvent): PendingGoalSnapshot {
   return {
     ref: { aggregateType: "Goal", projectId: event.projectId, goalId: event.aggregateId },
     workspaceRef: {
@@ -840,6 +860,7 @@ export function goalSnapshotFromCreatedEvent(event: GoalCreatedEvent): GoalSnaps
     desiredStateRequestedBy: null,
     activePlanRevision: event.payload.activePlanRevision,
     revision: 1,
+    since: null,
   };
 }
 

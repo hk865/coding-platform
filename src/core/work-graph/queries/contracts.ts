@@ -34,6 +34,7 @@ import type {
   QueryRunRef,
   QueryRunSnapshot,
 } from '../../../contracts/query-job.js';
+import type { RunActivityFactsV1 } from '../../../contracts/run-activity.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
 import type { QueryRequestPromptFactsV1 } from '../../../contracts/prompts/prompt-set.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
@@ -113,6 +114,8 @@ export type QueryHistoryObservation = {
         reason: string | null;
         /** Why a request round's answer failed the protocol; null on every other terminal. */
         answerCheck: { detail: 'too_long' | 'empty' | 'protocol'; reason: string } | null;
+        /** The tally the writer records in the same closing commit. */
+        activity: RunActivityFactsV1;
       };
 };
 
@@ -192,6 +195,12 @@ export type QueryReconcileInput = {
   probe: 'ready' | 'missing' | 'damaged' | 'host_config' | 'transient' | 'cancelled';
   /** Every accepted input confirmed against its source (§10.3); `kernel_unreadable` without a readable Kernel. */
   inputsConfirmed: boolean | 'kernel_unreadable';
+  /**
+   * The tally of the window this reconcile read. The rows that end an entered
+   * QueryRun record it in the same closing commit; absent there, the writer
+   * records an explicit `unknown`. The other rows write no activity.
+   */
+  activity?: RunActivityFactsV1;
   result:
     /** Q-01 (claimed/prepared) and Q-02 (entering, the readable Kernel holds no fixed Turn). */
     | { kind: 'not_entered' }
@@ -207,6 +216,8 @@ export type ResolveUnknownQueryRunInput = {
   reason: string;
   kernelTurnOpen: boolean;
   inputsConfirmed: boolean | null;
+  /** The tally recorded in the same closing commit; absent, the writer records an explicit `unknown`. */
+  activity?: RunActivityFactsV1;
 };
 
 /**

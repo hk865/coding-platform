@@ -92,7 +92,7 @@ import {
   type GoalTerminalState,
 } from './goal-conflicts.js';
 import { compareNoticePositions, mergeNoticePages, type NoticeSourceItemsV1 } from './notice-position.js';
-import { groupNotices, seenThroughOfNotices } from './notice-grouping.js';
+import { goalNoticePage, groupNotices, seenThroughOfNotices, type NoticeLineV1 } from './notice-grouping.js';
 
 /**
  * The narrow readers, the shared Store seam and the two injected helpers. A
@@ -111,6 +111,30 @@ export type DecisionReadModelDependencies = {
   /** The page width of one shared lookup batch and both candidate enumerations (default 200). */
   lookupPageLimit?: number;
 };
+
+/**
+ * The main conversation's whole page (slice-6-SPEC L6): the queue's own source
+ * assembly run once for the workspace, with no page limit and no cursor. It
+ * answers every card in the queue's order and, when `notices` names a Goal, that
+ * Goal's notice lines as the main read groups them (each Goal's automatic
+ * reworks folded into one line), with the seen advance computed over the
+ * workspace's full member set and a display token issued for it; with
+ * `notices: null` it reads no notice and issues no token.
+ */
+export type DecisionWholePageInputV1 = {
+  workspace: WorkspaceScope;
+  notices: { goalRef: GoalRef } | null;
+};
+export type DecisionWholePageV1 = {
+  cards: DecisionCardV1[];
+  notices: NoticeLineV1[];
+  seenThrough: Partial<Record<NoticeCategoryV1, NoticePositionV1>>;
+  displayToken: string | null;
+  sourceCursor: CommitCursor;
+};
+export interface DecisionWholePageReader {
+  readWholePage(ctx: CoreCallContext, input: DecisionWholePageInputV1): Promise<ReadResult<DecisionWholePageV1>>;
+}
 
 type CardAction = DecisionCardV1['actions'][number];
 
@@ -172,10 +196,13 @@ type QueuePageCursorV1 = {
 /** Builds the read model; the factory itself never throws. */
 export function createDecisionReadModel(
   deps: DecisionReadModelDependencies,
-): DecisionReadPort {
+): DecisionReadPort & DecisionWholePageReader {
   return {
     async queryDecisionQueue(ctx, input): Promise<ReadResult<DecisionQueueReadV1>> {
       return queryDecisionQueue(deps, ctx, input);
+    },
+    async readWholePage(ctx, input): Promise<ReadResult<DecisionWholePageV1>> {
+      return readWholePage(deps, ctx, input);
     },
     async readDecisionCard(ctx, input): Promise<ReadResult<DecisionCardV1>> {
       return readDecisionCard(deps, ctx, input.source);
@@ -776,15 +803,65 @@ function goalCauseCard(cause: GoalDecisionCauseReadV1): DecisionCardV1 {
 
 type QueueInput = Parameters<DecisionReadPort['queryDecisionQueue']>[1];
 
+/**
+ * How one window attempt is cut: the queue's page (its limit, cursor, Goal
+ * filter and grouping), or the main read's whole page, which shows every card
+ * and one Goal's lines out of the workspace's full notice set.
+ */
+type WindowModeV1 = { kind: 'queue' } | { kind: 'whole'; noticeGoal: GoalRef | null };
+
+/** A window's answer: the queue's shape, whose notice lines may carry member views. */
+type DecisionWindowReadV1 = Omit<DecisionQueueReadV1, 'notices'> & { notices: NoticeLineV1[] };
+
+/** What one window shows, the seen advance it allows and its continuation. */
+type WindowPageCutV1 = {
+  displayedCards: DecisionCardV1[];
+  displayedNotices: NoticeLineV1[];
+  seenThrough: Partial<Record<NoticeCategoryV1, NoticePositionV1>>;
+  nextCursor: string | null;
+};
+
+const CARD_SECTIONS: QueueInput['sections'] = ['waiting_answer', 'answered_pending_application', 'history'];
+
 async function queryDecisionQueue(
   deps: DecisionReadModelDependencies,
   ctx: CoreCallContext,
   input: QueueInput,
 ): Promise<ReadResult<DecisionQueueReadV1>> {
+  return readStableWindow(deps, ctx, input, { kind: 'queue' });
+}
+
+async function readWholePage(
+  deps: DecisionReadModelDependencies,
+  ctx: CoreCallContext,
+  input: DecisionWholePageInputV1,
+): Promise<ReadResult<DecisionWholePageV1>> {
+  // The whole page reads no cursor and cuts no limit (`wholePageCut`).
+  const read = await readStableWindow(deps, ctx, {
+    workspace: input.workspace,
+    sections: input.notices === null ? CARD_SECTIONS : [...CARD_SECTIONS, 'notices'],
+    page: { limit: Number.MAX_SAFE_INTEGER },
+  }, { kind: 'whole', noticeGoal: input.notices === null ? null : input.notices.goalRef });
+  if (read.status !== 'ready') return read;
+  const cards: DecisionCardV1[] = [];
+  // L11: append without an unbounded argument spread.
+  for (const card of read.value.waitingAnswer) cards.push(card);
+  for (const card of read.value.answeredPendingApplication) cards.push(card);
+  for (const card of read.value.history) cards.push(card);
+  return { status: 'ready', value: { cards, notices: read.value.notices, seenThrough: read.value.seenThrough,
+    displayToken: read.value.displayToken, sourceCursor: read.value.sourceCursor } };
+}
+
+async function readStableWindow(
+  deps: DecisionReadModelDependencies,
+  ctx: CoreCallContext,
+  input: QueueInput,
+  mode: WindowModeV1,
+): Promise<ReadResult<DecisionWindowReadV1>> {
   // §4.1 line 772 / §3.3: one stable window, at most 4 attempts. A window that
   // keeps moving is `unavailable`, never stamped with a later watermark.
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
-    const result = await readDecisionQueueWindow(deps, ctx, input);
+    const result = await readDecisionQueueWindow(deps, ctx, input, mode);
     if (result !== WINDOW_MOVED) return result;
   }
   return { status: 'rejected', code: 'unavailable',
@@ -795,7 +872,8 @@ async function readDecisionQueueWindow(
   deps: DecisionReadModelDependencies,
   ctx: CoreCallContext,
   input: QueueInput,
-): Promise<ReadResult<DecisionQueueReadV1> | typeof WINDOW_MOVED> {
+  mode: WindowModeV1,
+): Promise<ReadResult<DecisionWindowReadV1> | typeof WINDOW_MOVED> {
   const workspace = input.workspace;
   // §8.2 scope row: the explicit Workspace (and GoalRef) are compared with the
   // bound scope BEFORE any read; a foreign request is `forbidden`.
@@ -807,8 +885,6 @@ async function readDecisionQueueWindow(
   const wantsCards = input.sections.some((section) => section !== 'notices');
   const wantsNotices = input.sections.includes('notices');
   const wantsGoals = wantsCards || input.goalRef !== undefined;
-  const limit = Number.isSafeInteger(input.page.limit) && input.page.limit >= 1 && input.page.limit <= 100
-    ? input.page.limit : 50;
 
   const injectedCards = new Map(deps.cardSources.map((source) => [source.kind, source]));
   const injectedNotices = new Map(deps.noticeSources.map((source) => [source.category, source]));
@@ -1045,8 +1121,9 @@ async function readDecisionQueueWindow(
     }
   }
   // U9: the ONE grouping. Only `note_review` scribe results fold (per Goal);
-  // every other category and own-line note passes through unchanged.
-  const groupedAll = groupNotices(allNotices, 'user_affected_per_goal');
+  // every other category and own-line note passes through unchanged. The main
+  // read's whole page also folds each Goal's automatic reworks (slice-6-SPEC L6).
+  const groupedAll = groupNotices(allNotices, mode.kind === 'whole' ? 'main_conversation' : 'user_affected_per_goal');
 
   // ---- one stable global page ----------------------------------------------
   // §4.1: the requested sections are selected BEFORE paging; a page of 50
@@ -1057,33 +1134,10 @@ async function readDecisionQueueWindow(
   if (input.sections.includes('answered_pending_application')) for (const card of answered) orderedCards.push(card);
   if (input.sections.includes('history')) for (const card of history) orderedCards.push(card);
 
-  const cursor = parseQueueCursor(input.page.cursor);
-  if (cursor === 'invalid') return { status: 'rejected', code: 'invalid', reason: 'the queue cursor is not a real page point' };
-  // §2.5/§4.1: a continuation is tied to stable card/notice positions. Once the
-  // cards are exhausted the page resumes at the notices; a notice that was
-  // acknowledged meanwhile cannot move the cursor onto a later, unseen item.
-  const noticesStarted = cursor !== null && cursor.notices !== undefined;
-  const remainingCards = noticesStarted ? []
-    : cursor === null || cursor.card === undefined ? orderedCards
-      : orderedCards.filter((card) => compareCardSeek(cardSeek(card), cursor.card!) > 0);
-  const noticeAfter = cursor?.notices ?? {};
-  const remainingNotices = groupedAll.filter((item) => {
-    const after = noticeAfter[item.category];
-    return after === undefined || compareNoticePositions(item.position, after) > 0;
-  });
-  const combined = [...remainingCards, ...remainingNotices];
-  const pageItems = combined.slice(0, limit);
-  const displayedCards = pageItems.filter((item): item is DecisionCardV1 => 'cardKey' in item);
-  const displayedNotices = pageItems.filter((item): item is NoticeItemV1 => 'itemKey' in item);
-  // Lead ruling 8: advance `seenThrough` only over the lines this query already
-  // delivered. A folded line shows all its members, and the previous pages of
-  // this same query (at or below the cursor's position) count as delivered.
-  const previousLines = groupedAll.filter((item) => {
-    const after = noticeAfter[item.category];
-    return after !== undefined && compareNoticePositions(item.position, after) <= 0;
-  });
-  const seenThrough = seenThroughOfNotices(groupedAll, [...displayedNotices, ...previousLines]);
-  const nextCursor = nextQueueCursor(combined.slice(limit), displayedCards, displayedNotices, cursor);
+  const cut = mode.kind === 'whole' ? wholePageCut(orderedCards, groupedAll, mode.noticeGoal)
+    : queuePageCut(input, orderedCards, groupedAll);
+  if (cut === 'invalid') return { status: 'rejected', code: 'invalid', reason: 'the queue cursor is not a real page point' };
+  const { displayedCards, displayedNotices, seenThrough, nextCursor } = cut;
 
   let displayToken: string | null = null;
   // §4.1 line 772 / §3.3: every source above was read inside the window fixed by
@@ -1102,7 +1156,8 @@ async function readDecisionQueueWindow(
       schemaVersion: 1,
       workspace: { projectId: workspace.projectId, workspaceId: workspace.workspaceId },
       operator: operatorOf(ctx),
-      goalRef: input.goalRef ?? null,
+      issuer: mode.kind === 'whole' ? 'main' : 'queue',
+      goalRef: mode.kind === 'whole' ? mode.noticeGoal : input.goalRef ?? null,
       categories: [...(input.categories ?? NOTICE_CATEGORIES)],
       sourceCursor: fixedWindow,
       queryCursor: input.page.cursor ?? null,
@@ -1127,6 +1182,61 @@ async function readDecisionQueueWindow(
     displayToken,
     capabilities: capabilityList,
   } };
+}
+
+/**
+ * The queue's page: at most `page.limit` items (1–100, default 50) after the
+ * cursor, the cards first, then the notice lines.
+ */
+function queuePageCut(
+  input: QueueInput,
+  orderedCards: readonly DecisionCardV1[],
+  groupedAll: readonly NoticeLineV1[],
+): WindowPageCutV1 | 'invalid' {
+  const limit = Number.isSafeInteger(input.page.limit) && input.page.limit >= 1 && input.page.limit <= 100
+    ? input.page.limit : 50;
+  const cursor = parseQueueCursor(input.page.cursor);
+  if (cursor === 'invalid') return 'invalid';
+  // §2.5/§4.1: a continuation is tied to stable card/notice positions. Once the
+  // cards are exhausted the page resumes at the notices; a notice that was
+  // acknowledged meanwhile cannot move the cursor onto a later, unseen item.
+  const noticesStarted = cursor !== null && cursor.notices !== undefined;
+  const remainingCards = noticesStarted ? []
+    : cursor === null || cursor.card === undefined ? orderedCards
+      : orderedCards.filter((card) => compareCardSeek(cardSeek(card), cursor.card!) > 0);
+  const noticeAfter = cursor?.notices ?? {};
+  const remainingNotices = groupedAll.filter((item) => {
+    const after = noticeAfter[item.category];
+    return after === undefined || compareNoticePositions(item.position, after) > 0;
+  });
+  const combined = [...remainingCards, ...remainingNotices];
+  const pageItems = combined.slice(0, limit);
+  const displayedCards = pageItems.filter((item): item is DecisionCardV1 => 'cardKey' in item);
+  const displayedNotices = pageItems.filter((item): item is NoticeLineV1 => 'itemKey' in item);
+  // Lead ruling 8: advance `seenThrough` only over the lines this query already
+  // delivered. A folded line shows all its members, and the previous pages of
+  // this same query (at or below the cursor's position) count as delivered.
+  const previousLines = groupedAll.filter((item) => {
+    const after = noticeAfter[item.category];
+    return after !== undefined && compareNoticePositions(item.position, after) <= 0;
+  });
+  const seenThrough = seenThroughOfNotices(groupedAll, [...displayedNotices, ...previousLines]);
+  const nextCursor = nextQueueCursor(combined.slice(limit), displayedCards, displayedNotices, cursor);
+  return { displayedCards, displayedNotices, seenThrough, nextCursor };
+}
+
+/**
+ * The main read's whole page: every card, and the one Goal's lines out of the
+ * workspace's full line set with the advance `goalNoticePage` allows (none
+ * without a Goal); no limit and no continuation.
+ */
+function wholePageCut(
+  orderedCards: readonly DecisionCardV1[],
+  groupedAll: readonly NoticeLineV1[],
+  noticeGoal: GoalRef | null,
+): WindowPageCutV1 {
+  const page = noticeGoal === null ? { lines: [], seenThrough: {} } : goalNoticePage(groupedAll, noticeGoal);
+  return { displayedCards: orderedCards.slice(), displayedNotices: page.lines, seenThrough: page.seenThrough, nextCursor: null };
 }
 
 // -------------------------------------------------------------------------- //
@@ -1889,9 +1999,10 @@ function sameGoal(left: GoalRef, right: GoalRef): boolean {
 
 /**
  * A card belongs to a Goal-filtered read when its own Goal matches, or — for an
- * unordered conflict pair — when either Goal of the pair matches.
+ * unordered conflict pair — when either Goal of the pair matches. The main read
+ * takes a Goal's cards by the same rule.
  */
-function cardInScope(card: DecisionCardV1, goalRef: GoalRef): boolean {
+export function cardInScope(card: DecisionCardV1, goalRef: GoalRef): boolean {
   if (sameGoal(card.goalRef, goalRef)) return true;
   if (card.source.kind !== 'goal_conflict') return false;
   const identity = parseIdentity(card.source.key);

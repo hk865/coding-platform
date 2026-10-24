@@ -11,6 +11,12 @@
  * `session-anomaly-codecs.ts`, never imported: a `persistence` codec may not
  * import a `tasks` module, so the spec §6 path `tasks/run-activity-codecs.ts`
  * re-exports this file for the task/views importers.
+ *
+ * L16: the Query record carries the same tally and ref shapes, so
+ * `query-activity-codecs.ts` calls the facts, span and ref validators
+ * exported below instead of writing a second copy of those rules. Both
+ * records check their SessionRefs with the one `sessionRefProblem`
+ * (`rework-codecs.ts`).
  */
 import type {
   ActivityRecordingRef, ActivityRecordingSnapshot, RunActivityBound,
@@ -27,6 +33,7 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import { encodeEventEnvelope } from './event-envelope.js';
+import { sessionRefProblem } from './rework-codecs.js';
 
 export const RUN_ACTIVITY_SCHEMA_ID = 'RunActivity@1' as const;
 export const ACTIVITY_RECORDING_SCHEMA_ID = 'ActivityRecording@1' as const;
@@ -59,20 +66,14 @@ export type ActivityRecordingStartedEventV1 = RunActivityEventHeaderV1 & {
 
 type UnknownRecord = Record<string, unknown>;
 
-function refProblem(value: unknown, aggregateType: string, fields: readonly string[], label: string): string | null {
+/** A complete aggregate ref of the given type; the Query record reuses it for its own refs. */
+export function activityRecordRefProblem(value: unknown, aggregateType: string, fields: readonly string[], label: string): string | null {
   if (!isObject(value) || value['aggregateType'] !== aggregateType
     || !hasOnlyKeys(value, ['aggregateType', ...fields])) {
     return `${label} must be a complete ${aggregateType}Ref`;
   }
   for (const field of fields) {
     if (!nonEmpty(value[field])) return `${label} is missing ${field}`;
-  }
-  return null;
-}
-function sessionRefProblem(value: unknown): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['projectId', 'sessionId'])
-    || !nonEmpty(value['projectId']) || !nonEmpty(value['sessionId'])) {
-    return 'sessionRef must be a complete SessionRef';
   }
   return null;
 }
@@ -223,7 +224,8 @@ function usageProblem(value: unknown): string | null {
   if (typeof value['complete'] !== 'boolean') return 'facts.usage.complete must be a boolean';
   return null;
 }
-function factsProblem(value: unknown): string | null {
+/** The one `RunActivityFactsV1` validator, shared by the Work and Query records. */
+export function runActivityFactsProblem(value: unknown): string | null {
   if (!isObject(value)) return 'facts must be an object';
   if (!isPositiveSafeInteger(value['ruleVersion'])) return 'facts.ruleVersion must be a positive safe integer';
   if (value['status'] === 'unknown') {
@@ -250,7 +252,8 @@ function factsProblem(value: unknown): string | null {
   if (changed !== null) return changed;
   return usageProblem(value['usage']);
 }
-function spanProblem(value: unknown): string | null {
+/** The one activity span validator, shared by the Work and Query records. */
+export function runActivitySpanProblem(value: unknown): string | null {
   if (!isObject(value) || !hasOnlyKeys(value, ['firstAt', 'lastAt', 'basis'])) return 'span carries unknown fields';
   if (!(value['firstAt'] === null || nonEmpty(value['firstAt']))) return 'span.firstAt must be a non-empty string or null';
   if (!nonEmpty(value['lastAt'])) return 'span.lastAt must be a non-empty string';
@@ -269,11 +272,11 @@ const RUN_ACTIVITY_BODY_KEYS: readonly string[] = [
 
 function runActivityBodyProblem(body: UnknownRecord): string | null {
   if (!hasOnlyKeys(body, RUN_ACTIVITY_BODY_KEYS)) return 'RunActivity record carries unknown fields';
-  const ref = refProblem(body['ref'], 'RunActivity', ['projectId', 'goalId', 'runId'], 'RunActivity ref');
+  const ref = activityRecordRefProblem(body['ref'], 'RunActivity', ['projectId', 'goalId', 'runId'], 'RunActivity ref');
   if (ref !== null) return ref;
   if (!isPositiveSafeInteger(body['revision'])) return 'RunActivity revision must be a positive safe integer';
   if (body['schemaVersion'] !== 1) return 'RunActivity schemaVersion must be 1';
-  const runRef = refProblem(body['runRef'], 'Run', ['projectId', 'goalId', 'runId'], 'RunActivity runRef');
+  const runRef = activityRecordRefProblem(body['runRef'], 'Run', ['projectId', 'goalId', 'runId'], 'RunActivity runRef');
   if (runRef !== null) return runRef;
   const refValue = body['ref'] as UnknownRecord;
   const runValue = body['runRef'] as UnknownRecord;
@@ -284,7 +287,7 @@ function runActivityBodyProblem(body: UnknownRecord): string | null {
   if (!nonEmpty(body['taskId'])) return 'RunActivity taskId is required';
   if (!nonEmpty(body['workspaceId'])) return 'RunActivity workspaceId is required';
   if (body['sessionRef'] !== null) {
-    const session = sessionRefProblem(body['sessionRef']);
+    const session = sessionRefProblem(body['sessionRef'], 'sessionRef');
     if (session !== null) return session;
     if ((body['sessionRef'] as UnknownRecord)['projectId'] !== refValue['projectId']) {
       return 'RunActivity sessionRef belongs to another project';
@@ -293,20 +296,23 @@ function runActivityBodyProblem(body: UnknownRecord): string | null {
   if (!nonEmpty(body['runEndedAt'])) return 'RunActivity runEndedAt is required';
   if (body['recordedBy'] !== 'run_end' && body['recordedBy'] !== 'backfill') return 'RunActivity recordedBy is not recognized';
   if (!nonEmpty(body['recordedAt'])) return 'RunActivity recordedAt is required';
-  const facts = factsProblem(body['facts']);
+  const facts = runActivityFactsProblem(body['facts']);
   if (facts !== null) return facts;
-  return spanProblem(body['span']);
+  return runActivitySpanProblem(body['span']);
 }
 
 function activityRecordingBodyProblem(body: UnknownRecord): string | null {
-  if (!hasOnlyKeys(body, ['ref', 'revision', 'schemaVersion', 'since'])) {
+  if (!hasOnlyKeys(body, ['ref', 'revision', 'schemaVersion', 'since', 'querySince'])) {
     return 'ActivityRecording record carries unknown fields';
   }
-  const ref = refProblem(body['ref'], 'ActivityRecording', ['projectId', 'workspaceId'], 'ActivityRecording ref');
+  const ref = activityRecordRefProblem(body['ref'], 'ActivityRecording', ['projectId', 'workspaceId'], 'ActivityRecording ref');
   if (ref !== null) return ref;
   if (!isPositiveSafeInteger(body['revision'])) return 'ActivityRecording revision must be a positive safe integer';
   if (body['schemaVersion'] !== 1) return 'ActivityRecording schemaVersion must be 1';
   if (!nonEmpty(body['since'])) return 'ActivityRecording since is required';
+  // L16: the current format always carries the Query epoch key; `null` means no
+  // Query epoch yet, and a missing key is not an older format to default.
+  if (body['querySince'] !== null && !nonEmpty(body['querySince'])) return 'ActivityRecording querySince is required';
   return null;
 }
 

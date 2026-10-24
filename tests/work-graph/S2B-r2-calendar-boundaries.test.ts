@@ -63,7 +63,9 @@ describe.each(['memory', 'sqlite'] as const)('S2B round-2 calendar boundaries (%
     // the in-window Run is not counted twice.
     expect(calendar.coverage.runsCounted).toBe(1);
     expect(calendar.coverage.runsUncounted).toEqual([]);
-    expect(calendar.totals).toEqual({ steps: 3, edits: 1, editsUnknown: 0, checks: 0, complete: true });
+    expect(calendar.totals).toEqual({
+      steps: 3, querySteps: 0, edits: 1, editsUnknown: 0, checks: 0, complete: true,
+    });
     expect(cellAt(calendar, 10).uncountedRuns).toBe(0);
   });
 

@@ -51,9 +51,9 @@ function expectedWorkspace(ref: WorkspaceRef): WorkspaceSnapshot {
   return { ref, revision: 1 };
 }
 function expectedGoal(ref: GoalRef, workspaceRef: WorkspaceRef, objective: string,
-  activePlanRevision: PlanRevisionRef | null, revision: number): GoalSnapshot {
+  activePlanRevision: PlanRevisionRef | null, revision: number, since: GoalSnapshot['since']): GoalSnapshot {
   return { ref, workspaceRef, objective, desiredState: 'active', desiredStateRevision: 1,
-    desiredStateRequestedBy: null, activePlanRevision, revision };
+    desiredStateRequestedBy: null, activePlanRevision, revision, since };
 }
 function expectedRun(ref: RunRef, taskId: string, attemptId: string, planRef: PlanRevisionRef,
   workspaceId: string): RunSnapshot {
@@ -157,6 +157,10 @@ it.each(['memory', 'sqlite'] as const)('%s: canonical material records use compl
     if (architectureB.status !== 'committed') throw new Error(`other architecture adoption failed: ${JSON.stringify(architectureB)}`);
 
     // ---- Goals and Plans through the public owners -------------------------
+    // Each Goal's creation cursor comes from its own create result; a Goal id
+    // repeats across projects, so the key names the whole ref.
+    const goalCursors = new Map<string, GoalSnapshot['since']>();
+    const cursorKey = (ref: GoalRef): string => `${ref.projectId}/${ref.goalId}`;
     async function createGoal(ctx: CoreCallContext, goalRef: GoalRef, objective: string): Promise<void> {
       const created = await f.goals.createGoal(ctx, {
         input: { goalId: goalRef.goalId, workspace: { projectId: ctx.projectId, workspaceId: ctx.workspaceId! }, objective },
@@ -165,6 +169,7 @@ it.each(['memory', 'sqlite'] as const)('%s: canonical material records use compl
           { ref: { aggregateType: 'Workspace', projectId: ctx.projectId, workspaceId: ctx.workspaceId! }, revision: 1 }] },
       });
       if (created.status !== 'committed') throw new Error(`Goal creation failed: ${JSON.stringify(created)}`);
+      goalCursors.set(cursorKey(goalRef), created.cursor);
     }
     async function adoptPlan(ctx: CoreCallContext, goalRef: GoalRef, planRef: PlanRevisionRef): Promise<void> {
       const proposed = await f.plans.proposePlan(ctx, {
@@ -277,10 +282,12 @@ it.each(['memory', 'sqlite'] as const)('%s: canonical material records use compl
     const { authority } = createMaterialRecordReaders(f.records);
     const expected = [
       expectedWorkspace(workspaceARef), expectedWorkspace(otherWorkspaceRef), expectedWorkspace(workspaceBRef),
-      expectedGoal(mainGoalRef, workspaceARef, 'Preserve the original material', mainPlanRef, 2),
-      expectedGoal(otherGoalRef, workspaceARef, 'Other goal in the main workspace', otherPlanRef, 2),
-      expectedGoal(otherWorkspaceGoalRef, otherWorkspaceRef, 'Goal in the other workspace', null, 1),
-      expectedGoal(projectBGoalRef, workspaceBRef, 'Preserve the original material', projectBPlanRef, 2),
+      expectedGoal(mainGoalRef, workspaceARef, 'Preserve the original material', mainPlanRef, 2, goalCursors.get(cursorKey(mainGoalRef))!),
+      expectedGoal(otherGoalRef, workspaceARef, 'Other goal in the main workspace', otherPlanRef, 2, goalCursors.get(cursorKey(otherGoalRef))!),
+      expectedGoal(otherWorkspaceGoalRef, otherWorkspaceRef, 'Goal in the other workspace', null, 1,
+        goalCursors.get(cursorKey(otherWorkspaceGoalRef))!),
+      expectedGoal(projectBGoalRef, workspaceBRef, 'Preserve the original material', projectBPlanRef, 2,
+        goalCursors.get(cursorKey(projectBGoalRef))!),
       expectedRun(runMain, 'task-1', 'main-attempt', mainPlanRef, workspaceA),
       expectedRun(runOtherGoal, 'task-1', 'other-goal-attempt', otherPlanRef, workspaceA),
       expectedRun(runB, 'task-1', 'other-project-attempt', projectBPlanRef, workspaceB),

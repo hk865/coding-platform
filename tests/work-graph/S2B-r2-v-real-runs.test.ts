@@ -48,7 +48,8 @@ async function readTrack(f: S2BBe1PlatformFixture, from: string, to: string): Pr
 
 async function readCalendar(f: S2BBe1PlatformFixture,
   input: { from: string; to: string; granularity: 'hour' | 'day'; timeZone: string }): Promise<ActivityCalendarV1> {
-  const result = await activityOf(f).readActivityCalendar(f.ctx, { ...input, goalRef: f.goalRef });
+  const result = await activityOf(f).readActivityCalendar(f.ctx, {
+    ...input, scope: { kind: 'goal', goalRef: f.goalRef } });
   if (result.status !== 'ready') throw new Error(`readActivityCalendar failed: ${JSON.stringify(result)}`);
   return result.value;
 }
@@ -89,7 +90,9 @@ describe('S2B-r2 Group V real-Runtime runs', () => {
     });
     // 13:00 local starts at 05:00Z, after the 04:10Z read clock.
     expect(calendar.cells.find((cell) => cell.localHour === 13)?.future).toBe(true);
-    expect(calendar.totals).toEqual({ steps: 1, edits: 0, editsUnknown: 0, checks: 0, complete: true });
+    expect(calendar.totals).toEqual({
+      steps: 1, querySteps: 0, edits: 0, editsUnknown: 0, checks: 0, complete: true,
+    });
   }, S2B_SLOW_TIMEOUT_MS);
 
   it('2B-26 a real Run end carries its own task steps into the cell and a sessionRefs filter keeps its line', async () => {
@@ -115,7 +118,8 @@ describe('S2B-r2 Group V real-Runtime runs', () => {
     });
 
     const line = f.runs[0]!.sessionRef;
-    const result = await activityOf(f).readActivityCalendar(f.ctx, { ...window, goalRef: f.goalRef, sessionRefs: [line] });
+    const result = await activityOf(f).readActivityCalendar(f.ctx, {
+      ...window, scope: { kind: 'goal', goalRef: f.goalRef }, sessionRefs: [line] });
     if (result.status !== 'ready') throw new Error(`filtered calendar failed: ${JSON.stringify(result)}`);
     const filtered = result.value.cells.find((cell) => cell.localHour === 10);
     expect(filtered).toMatchObject({ steps: 1, sessions: [line],

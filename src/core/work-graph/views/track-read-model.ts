@@ -23,6 +23,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { SessionProvenanceV1, SessionRecord } from '../../../contracts/core/session.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
@@ -32,7 +33,6 @@ import type { VerificationRoundRef, RoundSnapshot } from '../../../contracts/ver
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
   ACTIVITY_READ_RECORD_CAP,
-  provenNotEnteredKernel,
   type ActivityRecordingSnapshot,
 } from '../../../contracts/run-activity.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
@@ -46,6 +46,8 @@ import {
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { decodeControlIntentSnapshot, S2B_CONTROL_BY_RUN_LOOKUP } from '../persistence/control-record-codecs.js';
 import { decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord, S2B_QUERY_RUN_BY_SESSION_ENDED_LOOKUP } from '../queries/query-record-codecs.js';
+import { decodeQueryActivitySnapshot, queryActivityRefKey } from '../persistence/query-activity-codecs.js';
+import { queryActivityRefOf } from '../model/query-activity-plan.js';
 import { SESSION_BY_PROVENANCE_LOOKUP } from '../model/session-facts-contracts.js';
 import {
   decodeSessionRecord,
@@ -67,13 +69,14 @@ import { runErrorOf } from '../state/task-failure.js';
 import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
 import { storeFailureToRejection } from './goal-conflicts.js';
 import {
-  activityViewOf, Budget, CapacityError, claimingSessionOf, emptyView, gateInfoOf,
-  isQuarterInstant, readEqualityAll, readOneKeyed,
+  activityViewOf, Budget, CapacityError, claimingSessionOf, classifyMissingActivity, gateInfoOf,
+  isQuarterInstant, queryActivityViewOf, queryExecutingSession, queryMissingActivityFacts, queryMissingActivityViewOf,
+  readEqualityAll, readOneKeyed, runMissingActivityFacts, runMissingActivityViewOf,
 } from './activity-read-helpers.js';
 import {
   ACTIVITY_WINDOW_MAX_ATTEMPTS, readStableActivityWindow,
 } from './activity-stable-window.js';
-import type { ActivityUncountedReason, RunActivityViewV1 } from './activity-read-model.js';
+import type { QueryActivityViewV1, RunActivityViewV1 } from './activity-read-model.js';
 
 // --------------------------------------------------------------------------
 // Public view types (spec §2 `TrackBarV1`, `TrackBarsPageV1`)
@@ -104,6 +107,7 @@ export type TrackQueryBarV1 = {
   kind: 'query'; queryRunRef: QueryRunRef; sessionRef: SessionRef; askedSessionRef: SessionRef | null;
   via: 'turn' | 'consultation'; startAt: string; endAt: string | null;
   result: 'running' | NonNullable<QueryRunSnapshot['run']['outcome']> | 'unknown';
+  activity: QueryActivityViewV1;
 };
 
 export type TrackBarV1 = TrackRunBarV1 | TrackCheckBarV1 | TrackQueryBarV1;
@@ -170,6 +174,87 @@ function sessionKey(session: SessionRef): string {
 }
 function byteOrder(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/**
+ * L16: one read counts a Query once, by its full `QueryRunRef` (two attempts
+ * of one QueryJob are two bars). Which line a Query is drawn on is decided
+ * before (`queryOwnScanOf`), never by which stream reaches it first; this is
+ * only the identity guard that drops a repeat of an emitted QueryRunRef.
+ */
+export function dedupeQueryBarsByRunRef<T extends Pick<TrackQueryBarV1, 'queryRunRef'>>(
+  candidates: readonly T[],
+): T[] {
+  const seen = new Set<string>();
+  const kept: T[] = [];
+  for (const candidate of candidates) {
+    const key = canonicalKey(candidate.queryRunRef);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push(candidate);
+  }
+  return kept;
+}
+
+/**
+ * L16: a readonly copy counts on the line it was asked from. The QueryActivity
+ * record's formal `askedSessionRef` wins when it carries one; otherwise the
+ * track keeps its own provenance read (in real use the derivation's source
+ * Session and the copy's provenance are the same Session).
+ */
+export function queryBarAskedOf(
+  activity: QueryActivityViewV1,
+  provenance: SessionRef | null,
+): SessionRef | null {
+  return activity.askedSessionRef ?? provenance;
+}
+
+/** How one selected Session's own Queries are drawn (`queryOwnScanOf`). */
+export type QueryOwnScanV1 =
+  | { draw: 'turn' }
+  | { draw: 'consultation'; from: SessionRef }
+  | { draw: 'none' };
+
+/**
+ * L16: how a selected Session's own Queries are drawn, decided from its
+ * provenance before any of them is read. A Session that is not a readonly
+ * copy draws its own turns (the track's Goal filter applies). A readonly
+ * copy's Queries are consultations asked from its source, not filtered by
+ * Goal; when the source is selected too, the source's copy stream draws them
+ * and the copy's own scan draws nothing. So a copy's Query has one attribution
+ * whatever the order of `sessionRefs`.
+ */
+export function queryOwnScanOf(
+  provenance: SessionProvenanceV1 | null,
+  selected: readonly SessionRef[],
+): QueryOwnScanV1 {
+  if (provenance === null || provenance.kind !== 'readonly_copy') return { draw: 'turn' };
+  const from = provenance.from;
+  if (selected.some((session) => session.projectId === from.projectId && session.sessionId === from.sessionId)) {
+    return { draw: 'none' };
+  }
+  return { draw: 'consultation', from };
+}
+
+/**
+ * L16: the Query's own activity view. A missing record is classified by the
+ * one shared rule from the QueryRun's own state, with the workspace's Query
+ * epoch (`querySince`), never the Work epoch.
+ */
+async function queryActivityFor(
+  ctx: SegmentContext,
+  queryRun: QueryRunSnapshot,
+): Promise<QueryActivityViewV1> {
+  const record = await readOneKeyed(ctx.records, queryActivityRefKey(queryActivityRefOf(queryRun.ref)), ctx.budget);
+  if (record === undefined) {
+    return queryMissingActivityViewOf(queryRun.ref, queryExecutingSession(queryRun),
+      classifyMissingActivity(queryMissingActivityFacts(queryRun, ctx.querySince)));
+  }
+  const decoded = decodeQueryActivitySnapshot(record);
+  if (decoded.status !== 'decoded') {
+    throw rejected('unavailable', `QueryActivity record ${record.refKey}: ${decoded.reason}`);
+  }
+  return queryActivityViewOf(decoded.value, ctx.querySince);
 }
 
 // --------------------------------------------------------------------------
@@ -266,6 +351,8 @@ type SegmentContext = {
   bySession: Set<string> | null;
   sessionRefs: readonly SessionRef[] | null;
   since: string | null;
+  /** The workspace's Query epoch; a Query's missing record is classified against it. */
+  querySince: string | null;
 };
 
 /** The metadata a bounded page's scan produced. */
@@ -308,18 +395,8 @@ async function activityViewFor(
     if (decoded.status !== 'decoded') throw rejected('unavailable', `RunActivity record ${record.refKey}: ${decoded.reason}`);
     return activityViewOf(decoded.value, ctx.since);
   }
-  if (run.status === 'starting' || run.status === 'running') return emptyView(run.ref, 'in_progress', null, false);
-  // The ONE shared L7 predicate (V2 authorization only, ended Runs only,
-  // no position record). Starting/running Runs were handled above.
-  if (provenNotEnteredKernel(run, ctx.since)) {
-    return { runRef: run.ref, status: 'not_entered', reason: null, error: false,
-      totals: { steps: 0, edits: 0, editsUnknown: 0 },
-      changedFiles: { definite: 0, possible: 0, possiblyIncomplete: false }, usage: null,
-      recordedBy: null, recordedAt: null, countedThroughTurnEnd: null, unresolvedCalls: null };
-  }
-  const reason: ActivityUncountedReason = ctx.since === null ? 'no_recording_epoch'
-    : run.endedAt !== null && run.endedAt >= ctx.since ? 'not_recorded' : 'not_backfilled';
-  return emptyView(run.ref, 'unknown', reason, reason === 'not_recorded');
+  // A missing record is classified by the one shared missing-activity rule.
+  return runMissingActivityViewOf(run.ref, classifyMissingActivity(runMissingActivityFacts(run, ctx.since)));
 }
 
 type RequeueInfo = { actorClass: string; automaticCount: number | null; reason: string };
@@ -780,7 +857,32 @@ async function scanQueries(
   if (refs === null) return { filled: false, done: true, cursor: null };
   const before = out.bars.length;
   const q0 = start?.q ?? null;
-  const seen = new Set<string>();
+  // The Query bars this scan emitted, for `dedupeQueryBarsByRunRef`'s identity
+  // guard. Each Query's line is already fixed by `queryOwnScanOf`.
+  const emittedQueries: TrackQueryBarV1[] = [];
+
+  // One read of each selected Session record per page, shared by the copy rule
+  // and the occupant stream.
+  const sessionRecords = new Map<string, SessionRecord | null>();
+  const sessionRecordOf = async (session: SessionRef): Promise<SessionRecord | null> => {
+    const key = sessionKey(session);
+    const cached = sessionRecords.get(key);
+    if (cached !== undefined) return cached;
+    const record = await readOneKeyed(records, sessionAggregateRefKey({
+      aggregateType: 'Session', projectId: goalRef.projectId, sessionId: session.sessionId }), budget);
+    let value: SessionRecord | null = null;
+    if (record !== undefined) {
+      const decoded = decodeSessionRecord(record);
+      if (decoded.status !== 'decoded') throw rejected('unavailable', `Session ${record.refKey}: ${decoded.reason}`);
+      // R4: a Session record outside the bound workspace must not leak.
+      if (decoded.value.workspaceId !== workspaceId) {
+        throw new ForbiddenError(`Session ${record.refKey} is outside the bound workspace`);
+      }
+      value = decoded.value;
+    }
+    sessionRecords.set(key, value);
+    return value;
+  };
 
   const jobGoalIdOf = async (queryRun: QueryRunSnapshot): Promise<string | null> => {
     const record = await readOneKeyed(records, canonicalKey(queryRun.run.queryJobRef), budget);
@@ -791,22 +893,32 @@ async function scanQueries(
   };
 
   const pushQuery = async (
-    queryRun: QueryRunSnapshot, sessionRef: SessionRef, askedSessionRef: SessionRef | null,
+    queryRun: QueryRunSnapshot, sessionRef: SessionRef, provenance: SessionRef | null,
     via: 'turn' | 'consultation',
   ): Promise<boolean> => {
     if (queryRun.run.startedAt === null || queryRun.run.startedAt >= to) return false;
-    const key = canonicalKey(queryRun.ref);
-    if (seen.has(key)) return false;
-    if (await jobGoalIdOf(queryRun) !== goalRef.goalId) return false;
-    seen.add(key);
-    out.bars.push({ kind: 'query', queryRunRef: queryRun.ref, sessionRef, askedSessionRef, via,
+    // Dedupe before the goal and activity reads, so a repeat costs neither.
+    if (dedupeQueryBarsByRunRef([...emittedQueries, { queryRunRef: queryRun.ref }]).length
+      === emittedQueries.length) return false;
+    // L12 picks a plain turn by the Query's goal; a readonly copy counts on the
+    // asked line and is not filtered by the Query's own goal.
+    if (via === 'turn' && await jobGoalIdOf(queryRun) !== goalRef.goalId) return false;
+    const activity = await queryActivityFor(ctx, queryRun);
+    const bar: TrackQueryBarV1 = {
+      kind: 'query', queryRunRef: queryRun.ref, sessionRef,
+      askedSessionRef: queryBarAskedOf(activity, provenance), via,
       startAt: queryRun.run.startedAt, endAt: queryRun.run.endedAt,
-      result: queryRun.run.endedAt === null ? 'running' : queryRun.run.outcome ?? 'unknown' });
+      result: queryRun.run.endedAt === null ? 'running' : queryRun.run.outcome ?? 'unknown',
+      activity,
+    };
+    emittedQueries.push(bar);
+    out.bars.push(bar);
     return true;
   };
 
   const scanOrderedOwn = async (
     session: SessionRef, startAfter: { order: string | number; refKey: string } | undefined,
+    provenance: SessionRef | null, via: 'turn' | 'consultation',
   ): Promise<QueryRunSnapshot | null> => {
     let after = startAfter;
     for (;;) {
@@ -823,7 +935,7 @@ async function scanQueries(
       for (const record of page.value.records) {
         const decoded = decodeQueryRunSnapshotRecord(record);
         if (decoded.status !== 'decoded') throw rejected('unavailable', `QueryRun ${record.refKey}: ${decoded.reason}`);
-        const emitted = await pushQuery(decoded.value, session, null, 'turn');
+        const emitted = await pushQuery(decoded.value, session, provenance, via);
         if (emitted && out.bars.length - before >= need) return decoded.value;
       }
       if (page.value.next === null) return null;
@@ -832,16 +944,9 @@ async function scanQueries(
   };
 
   const occupantQueryOf = async (session: SessionRef): Promise<QueryRunSnapshot | null> => {
-    const askedRecord = await readOneKeyed(records, sessionAggregateRefKey({
-      aggregateType: 'Session', projectId: goalRef.projectId, sessionId: session.sessionId }), budget);
-    if (askedRecord === undefined) return null;
-    const decoded = decodeSessionRecord(askedRecord);
-    if (decoded.status !== 'decoded') throw rejected('unavailable', `Session ${askedRecord.refKey}: ${decoded.reason}`);
-    // R4: a Session record outside the bound workspace must not leak.
-    if (decoded.value.workspaceId !== workspaceId) {
-      throw new ForbiddenError(`Session ${askedRecord.refKey} is outside the bound workspace`);
-    }
-    const occupant = decoded.value.occupancy;
+    const sessionRecord = await sessionRecordOf(session);
+    if (sessionRecord === null) return null;
+    const occupant = sessionRecord.occupancy;
     if (occupant === null || occupant.kind !== 'execution' || occupant.executionRef.aggregateType !== 'QueryRun') return null;
     const record = await readOneKeyed(records, canonicalKey(occupant.executionRef), budget);
     if (record === undefined) return null;
@@ -884,11 +989,18 @@ async function scanQueries(
   for (let a = q0?.a ?? 0; a < refs.length; a += 1) {
     const asked = refs[a]!;
     const resumeP = q0 !== null && q0.a === a ? q0.p : 'own_ended';
+    // The Session's own two streams are drawn by its provenance (L16): its
+    // turns, its consultations as a copy, or nothing when its source is
+    // selected too and draws them through its copy stream.
+    const own = resumeP === 'copies' ? { draw: 'none' } as const
+      : queryOwnScanOf((await sessionRecordOf(asked))?.provenance ?? null, refs);
+    const ownVia = own.draw === 'consultation' ? 'consultation' : 'turn';
+    const ownFrom = own.draw === 'consultation' ? own.from : null;
 
-    if (resumeP === 'own_ended') {
+    if (resumeP === 'own_ended' && own.draw !== 'none') {
       const startAfter = q0 !== null && q0.a === a && q0.o !== null && q0.k !== null
         ? { order: q0.o, refKey: q0.k } : undefined;
-      const filling = await scanOrderedOwn(asked, startAfter);
+      const filling = await scanOrderedOwn(asked, startAfter, ownFrom, ownVia);
       if (filling !== null) {
         return { filled: true, done: false, cursor: { s: 'queries', o: null, k: null, q: {
           a, p: 'own_ended', c: null, p2: null, o: filling.run.endedAt,
@@ -896,12 +1008,12 @@ async function scanQueries(
       }
     }
 
-    if (resumeP === 'own_ended' || resumeP === 'own_occ') {
+    if ((resumeP === 'own_ended' || resumeP === 'own_occ') && own.draw !== 'none') {
       const occDone = resumeP === 'own_occ' && q0!.occ;
       if (!occDone) {
         const occupant = await occupantQueryOf(asked);
         if (occupant !== null) {
-          const emitted = await pushQuery(occupant, asked, null, 'turn');
+          const emitted = await pushQuery(occupant, asked, ownFrom, ownVia);
           if (emitted && out.bars.length - before >= need) {
             return { filled: true, done: false, cursor: { s: 'queries', o: null, k: null, q: {
               a, p: 'own_occ', c: null, p2: null, o: null, k: null, occ: true, ca: null } } };
@@ -1115,6 +1227,7 @@ async function readTrackBarsWindow(
     toMs: Date.parse(input.to),
     bySession: sessionRefs === null ? null : new Set(sessionRefs.map(sessionKey)),
     sessionRefs, since: recording === null ? null : recording.since,
+    querySince: recording === null ? null : recording.querySince,
   };
 
   const cursor = input.cursor === null ? null : decodeCursor(input.cursor);

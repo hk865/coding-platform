@@ -76,7 +76,8 @@ function round(id: string, since: number, overrides: Partial<NewRequestRoundInpu
 function prepared(records: QueryLifecycleRecords): QueryLifecycleRecords {
   const claimed = advanceQueryExecutionRecord(records, { phase: 'claimed', claim: { sessionRef: SESSION_A, sessionGeneration: 2, role: ROLE,
     roleBinding: ROLE_BINDING, roleResolution: ROLE_RESOLUTION, priorHistoryCursor: null, requestProfile: PROFILE } });
-  return advanceQueryExecutionRecord(claimed, { phase: 'prepared', prepared: { bundleRef: BUNDLE_REF, inputDigest: 'i'.repeat(64) } });
+  return advanceQueryExecutionRecord(claimed, { phase: 'prepared',
+    prepared: { bundleRef: BUNDLE_REF, inputDigest: 'i'.repeat(64), requestEffectiveGoalId: null } });
 }
 
 function entering(records: QueryLifecycleRecords): QueryLifecycleRecords {

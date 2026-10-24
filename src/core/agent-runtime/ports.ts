@@ -146,6 +146,14 @@ export interface RuntimeExecutionPort {
    */
   countRunActivity?(ctx: CoreCallContext, input: { runRef: RunRef; maxPages?: number }):
     Promise<ReadResult<RunActivityRead | { kind: 'not_entered' }>>;
+  /**
+   * Slice 6A L16: the read-only Query activity tally for one ended QueryRun.
+   * `{kind:'not_entered'}` is the proof that the QueryRun never claimed a
+   * Kernel identity (QRR-01/02 wrote no record). It reads only the Kernel and
+   * writes nothing; `maxPages` is the same bounded-read injection point.
+   */
+  countQueryActivity?(ctx: CoreCallContext, input: { queryRunRef: QueryRunRef; maxPages?: number }):
+    Promise<ReadResult<RunActivityRead | { kind: 'not_entered' }>>;
 }
 
 /** What the agent factory itself publishes. The five Session/capability members

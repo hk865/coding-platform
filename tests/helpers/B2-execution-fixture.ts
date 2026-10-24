@@ -37,6 +37,7 @@ import type {
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
+import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import { PROMPT_TOOL_SPECS_CONTENT_TYPE, type ModelRequestPromptFactsV1 } from '../../src/contracts/prompts/prompt-set.js';
 import type { ModelRequestPort, ActualModelRequest } from '../../src/core/work-graph/tasks/model-call-contracts.js';
@@ -130,11 +131,11 @@ export async function createB2ExecutionFixture<Base extends TaskClaimFixture = T
 ): Promise<B2ExecutionFixture<Base>> {
   const schemas: RecordBackendSchemas = {
     records: [...EXECUTION_ENTRY_RECORD_SCHEMAS.records, ...MODEL_REQUEST_RECORD_SCHEMAS.records,
-      ...additionalSchemas.records],
+      ...QUERY_JOB_RECORD_SCHEMAS.records, ...additionalSchemas.records],
     events: [...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...MODEL_REQUEST_RECORD_SCHEMAS.events,
-      ...additionalSchemas.events],
+      ...QUERY_JOB_RECORD_SCHEMAS.events, ...additionalSchemas.events],
     lookups: [...EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? [], ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [],
-      ...(additionalSchemas.lookups ?? [])],
+      ...QUERY_JOB_RECORD_SCHEMAS.lookups ?? [], ...(additionalSchemas.lookups ?? [])],
   };
   const base = options.baseFactory === undefined
     ? await createTaskClaimFixture(kind, schemas) as Base

@@ -98,7 +98,7 @@ it('2B-14 (a) (RUN-21 at a restart): a recovered Kernel turns unknown(kernel_unr
     const batch = await backfill.backfillRecentActivity(fx.ctx, { workspace: fx.scope, cursor: null });
     expect(batch.status).toBe('ready');
     if (batch.status !== 'ready') return;
-    expect(batch.value.processed.find(entry => entry.runRef.runId === fx.claim.runRef.runId)).toBeUndefined();
+    expect(batch.value.processed.find(entry => entry.kind === 'run' && entry.runRef.runId === fx.claim.runRef.runId)).toBeUndefined();
 
     // No new evidence: the record is unchanged.
     expect(await restartHost(fx, BE2_HOST_3, controls).reconcile()).toMatchObject({ status: 'left' });

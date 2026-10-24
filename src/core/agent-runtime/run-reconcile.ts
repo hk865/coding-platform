@@ -578,11 +578,12 @@ export async function reconcileQueryRunAtStartup(
   const state = record.run.run.executionState;
   const left = (row: string, reason: string): QueryReconcileReport => ({ queryRunRef, row, status: 'left', reason });
   if (state === undefined || state.phase === 'settled') return left('Q-none', 'the QueryRun has no unsettled execution state');
-  const submit = async (row: string, result: QueryReconcileInput['result'], inputsConfirmed: boolean | 'kernel_unreadable'):
-    Promise<QueryReconcileReport> => {
+  const submit = async (row: string, result: QueryReconcileInput['result'], inputsConfirmed: boolean | 'kernel_unreadable',
+    activity?: RunActivityFactsV1): Promise<QueryReconcileReport> => {
     const reconcile = deps.queries.reconcileQueryRun;
     if (reconcile === undefined) return { queryRunRef, row, status: 'failed', reason: 'the Query reconcile writer is not configured' };
-    const written = await reconcile(ctx, { input: { queryRunRef, hostInstanceId, probe: probe.verdict, inputsConfirmed, result },
+    const written = await reconcile(ctx, { input: { queryRunRef, hostInstanceId, probe: probe.verdict, inputsConfirmed, result,
+      ...(activity === undefined ? {} : { activity }) },
       meta: { requestId: `a2-query-reconcile:${hostInstanceId}:${queryRunRef.runId}:${String(record.run.revision)}`,
         expected: [{ ref: queryRunRef, revision: record.run.revision }] } });
     if (written.status !== 'committed') return { queryRunRef, row, status: 'failed', reason: `${written.code}: ${written.reason}` };
@@ -634,7 +635,10 @@ export async function reconcileQueryRunAtStartup(
   const inputsConfirmed = await confirmMailboxInputs(deps.messages, ctx, queryRunRef, entry.kernel, read.decoded);
   const kernelStatus = turnState.status === 'paused' || turnState.status === 'yielded' || turnState.status === 'created'
     ? turnState.status : 'running';
-  return submit('Q-04', { kind: 'interrupted_clean', kernelStatus, history }, inputsConfirmed);
+  // L16: QRR-04 records the tally of the window this reconcile already read.
+  const activity = tallyTurnActivity(read.decoded, entry.kernel, { fromPosition: start.position,
+    throughPosition: read.decoded.at(-1)?.position ?? start.position, bound: 'reconcile_observation' });
+  return submit('Q-04', { kind: 'interrupted_clean', kernelStatus, history }, inputsConfirmed, activity);
 }
 
 // -------------------------------------------------------------------------- //
@@ -654,9 +658,12 @@ export async function reconcileQueryRunAtStartup(
 export async function readAttestationFacts(
   deps: Pick<RunReconcileClassifierDependencies, 'owner' | 'messages'>, ctx: CoreCallContext,
   input: { session: SessionRecord; executionRef: RunRef | QueryRunRef; kernel: KernelExecutionBinding; startPosition: number | null },
-): Promise<{ ok: true; kernelTurnOpen: boolean; inputsConfirmed: boolean | null } | { ok: false; rejection: CoreRejection }> {
+): Promise<{ ok: true; kernelTurnOpen: boolean; inputsConfirmed: boolean | null; activity: RunActivityFactsV1 }
+  | { ok: false; rejection: CoreRejection }> {
   const probe = await deps.owner.probe({ session: input.session, signal: ctx.signal });
-  if (probe.verdict === 'missing' || probe.verdict === 'damaged') return { ok: true, kernelTurnOpen: true, inputsConfirmed: null };
+  if (probe.verdict === 'missing' || probe.verdict === 'damaged') {
+    return { ok: true, kernelTurnOpen: true, inputsConfirmed: null, activity: unknownFacts('kernel_unreadable', probe.reason) };
+  }
   if (probe.verdict !== 'ready') {
     return { ok: false, rejection: { status: 'rejected', code: 'unavailable',
       reason: `the Kernel could not be read (${probe.verdict}: ${probe.reason}); retry the attestation` } };
@@ -669,9 +676,17 @@ export async function readAttestationFacts(
   }
   const state = reduceTurnFromStart(read.decoded, input.kernel);
   const inputsConfirmed = await confirmMailboxInputs(deps.messages, ctx, input.executionRef, input.kernel, read.decoded);
+  // L16: the attestation records the tally of the Turn it read; no Turn of the
+  // fixed identity is an explicit `unknown`, never zero.
+  const turnStart = turnStartOf(read.decoded, input.kernel);
+  const fromPosition = turnStart?.position ?? input.startPosition ?? 0;
+  const activity = turnStart === null
+    ? unknownFacts('turn_not_found', 'the attested QueryRun has no Kernel Turn')
+    : tallyTurnActivity(read.decoded, input.kernel, { fromPosition,
+      throughPosition: read.decoded.at(-1)?.position ?? fromPosition, bound: 'reconcile_observation' });
   // No Turn at all leaves nothing open; a Turn without a Kernel terminal is open.
-  if (state === null) return { ok: true, kernelTurnOpen: false, inputsConfirmed };
-  return { ok: true, kernelTurnOpen: !TERMINAL_STATUSES.includes(state.status), inputsConfirmed };
+  if (state === null) return { ok: true, kernelTurnOpen: false, inputsConfirmed, activity };
+  return { ok: true, kernelTurnOpen: !TERMINAL_STATUSES.includes(state.status), inputsConfirmed, activity };
 }
 
 // -------------------------------------------------------------------------- //

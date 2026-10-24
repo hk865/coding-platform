@@ -480,7 +480,13 @@ export type QueryExecutionStateV1 = {
     roleResolution: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>;
     /** The Session's original completed boundary; not this round's newest event. */
     priorHistoryCursor: string | null;
-    prepared: { bundleRef: ArtifactRef; inputDigest: string } | null;
+    /**
+     * The bound manifest. `requestEffectiveGoalId` is the request round's goal
+     * frozen from its prepared manifest (`request.effectiveGoalId`); null for a
+     * no-goal round and for every plain Query. Required: the closing commit
+     * reads the goal the round ran under here, not from the current Job.
+     */
+    prepared: { bundleRef: ArtifactRef; inputDigest: string; requestEffectiveGoalId: string | null } | null;
     entry: {
         generation: 1;
         consumerId: string;

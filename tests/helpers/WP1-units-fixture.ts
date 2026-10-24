@@ -377,7 +377,8 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
   const planRef: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: 'p', planId: 'p1' };
   const workspace: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projectId: 'p', workspaceId: 'w' }, revision: 7 };
   const goal: GoalSnapshot = { ref: goalRef, workspaceRef: workspace.ref, objective: 'Ship A\n第二行',
-    revision: 1, desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: planRef };
+    revision: 1, desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: planRef,
+    since: 'c0000000001' as GoalSnapshot['since'] };
   const plan: PlanRevisionSnapshot = { schemaVersion: 2, ref: planRef, revision: 1, goalRef, planId: 'p1', planRevision: 1,
     acceptedAt: T0,
     effectiveCompletionPolicy: { ref: { aggregateType: 'CompletionPolicyRevision', projectId: 'p', policyId: 'policy', revision: 1 }, digest: sha256Hex('policy') },

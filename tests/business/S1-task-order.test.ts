@@ -77,7 +77,7 @@ async function selectNextTask(
   const goal: GoalSnapshot = { ref: { aggregateType: 'Goal', projectId: ORDER_PROJECT, goalId: ORDER_GOAL },
     workspaceRef: { aggregateType: 'Workspace', projectId: ORDER_PROJECT, workspaceId: ORDER_WORKSPACE },
     objective: 'UT39', desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
-    activePlanRevision: ORDER_PLAN_REF, revision: 1 } as GoalSnapshot;
+    activePlanRevision: ORDER_PLAN_REF, revision: 1, since: 'c0000000001' } as GoalSnapshot;
   const plan = { ref: ORDER_PLAN_REF, tasks: rows.map((row) => row.definition),
     assignments: rows.map((row) => ({ taskId: row.definition.taskId, role: 'builder', instruction: 'work' })),
     executionDag: { dependsOn } };

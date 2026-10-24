@@ -4,7 +4,7 @@ import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/cor
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';
-import type { QueryJobAnswerSnapshot, QueryJobIntentV1 } from '../../contracts/query-job.js';
+import type { QueryJobAnswerSnapshot, QueryJobIntentV1, QueryRunRef } from '../../contracts/query-job.js';
 import type { RoleBindingRefV1, RunRef, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
 import type { CommandRerunRequestRef } from '../../contracts/command-rerun-request.js';
@@ -345,15 +345,20 @@ export type ConsultationResult = ReadResult<{
 }>;
 
 /**
- * Slice 2B §2/L8: one backfill batch. `processed` lists the Runs this batch
- * inspected (in scan order); `next` is the opaque cursor for the following
- * batch (`null` = done). A `retry_later` entry points `next` at that Run and
- * writes nothing; `skipped`/`record_changed` is a version conflict with a
- * concurrent end commit (RUN-21).
+ * Slice 2B §2/L8, extended by L16: one backfill batch. `processed` lists the
+ * entries this batch inspected (in scan order), each naming the Work Run or the
+ * Query it inspected; `next` is the opaque cursor for the following batch
+ * (`null` = done). A `retry_later` entry points `next` at that entry and writes
+ * nothing; `skipped`/`record_changed` is a version conflict with a concurrent
+ * end commit (RUN-21).
  */
+export type ActivityBackfillProcessedV1 =
+  | { kind: 'run'; runRef: RunRef; outcome: 'counted' | 'unknown' | 'unchanged' | 'skipped' | 'not_entered' | 'retry_later';
+      reason: string | null }
+  | { kind: 'query'; queryRunRef: QueryRunRef;
+      outcome: 'counted' | 'unknown' | 'unchanged' | 'skipped' | 'not_entered' | 'retry_later'; reason: string | null };
 export type ActivityBackfillBatchV1 = {
-  processed: { runRef: RunRef; outcome: 'counted' | 'unknown' | 'unchanged' | 'skipped' | 'not_entered' | 'retry_later';
-    reason: string | null }[];
+  processed: ActivityBackfillProcessedV1[];
   next: string | null;
   done: boolean;
 };

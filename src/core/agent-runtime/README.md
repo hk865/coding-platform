@@ -13,8 +13,8 @@
 做 Runtime 装配、执行端口和 Work/Query 驱动接线的去这组。
 - `index.ts` — 包入口，只导出 `createAgentRuntime` 与 capability 类型。
 - `contracts.ts` — capability 词汇（`RuntimeCapabilities`）。
-- `ports.ts` — `RuntimeExecutionPort`/`AgentRuntimePort`/`AgentRuntimeService`：整个执行面的正式端口。
-- `runtime.ts` — `createAgentRuntime`：装配并发布端口；无依赖时只给显式 unsupported/unavailable，不伪造能力。
+- `ports.ts` — `RuntimeExecutionPort`/`AgentRuntimePort`/`AgentRuntimeService`：整个执行面的正式端口；`countRunActivity` 与 `countQueryActivity` 是并排的只读活动计数。
+- `runtime.ts` — `createAgentRuntime`：装配并发布端口；无依赖时只给显式 unsupported/unavailable，不伪造能力。`countQueryActivity` 先按 ref 读已结束的 QueryRun：没有执行状态、没有固定入口或结果是 `not_entered` 的答 `not_entered`；其余再读执行 Session，窗口上界与 `countRunActivity` 共用一个选择（`endPosition` → Turn 终点 → 保存的对账观察 → Kernel 尾部），丢失窗口时从位置 0 读起；`maxPages` 原样交给窗口读取器校验。
 - `execution-contracts.ts` — 执行与 Query 的 prepare/start/observe 请求、结果和 `RuntimeExecutionDependencies` 依赖束。
 - `execution-history-contracts.ts` — 原历史分页与图执行历史的请求/端口类型。
 - `execution-control.ts` — 内部安全点控制协调器：pause/cancel 的 live handle 与退出证明。
@@ -43,7 +43,7 @@
 - `context-types.ts` — 装配器类型、模板 id（含 `secretary-round`）、节序与历史判定词汇；`ContextAssemblerDependencies.secretaryFacts?` 是同一准备端口的注入点。
 - `context-work-recipe.ts` — Work 上下文装配配方。
 - `context-query-recipe.ts` — Query 上下文装配配方；请求轮先按 `isRequestRound` 转到秘书配方。
-- `context-secretary-recipe.ts` — 秘书轮上下文装配：经声明的 `secretaryFacts`/`memoryMaterial` 依赖读一次事实，由共享渲染器写 `secretary-round` 的三个 task 槽与 notes 预算。
+- `context-secretary-recipe.ts` — 秘书轮上下文装配：经声明的 `secretaryFacts`/`memoryMaterial` 依赖读一次事实，由共享渲染器写 `secretary-round` 的三个 task 槽与 notes 预算。`roundMaterial` 渲染一轮的材料：输入行、选中的思路，再是 `ask` 带的卡片引用（`## Cards` 下每个引用一行，写钉住的版本；对象动过加 `(now @当前版本)`，不存在加 `(not found)`）。
 - `context-review-recipe.ts` — review 轮上下文装配。
 - `context-continuation-recipe.ts` — continuation 段的 blocked commands 与 brief 事实。
 - `context-history-facts.ts` — Session 历史模式/基线判定与 Kernel 命令事实。
@@ -72,14 +72,14 @@
 ### 观察与恢复
 做原历史观察、活动计数、continuation brief 和启动对账的去这组。
 - `execution-observation.ts` — Work 观察：沿 locator 读原历史、归约 Turn、提交唯一终态。
-- `query-observation.ts` — Query 原历史观察与终态提交；request round 的最终文本按 manifest 冻结的执行种类做秘书回答检查（`parseSecretaryAnswer`），空、超 16 KiB 或格式不符时终态 `failed`、不写回答、带 `answerCheck`；普通 Query 照旧记 `gap`。
+- `query-observation.ts` — Query 原历史观察与终态提交；request round 的最终文本按 manifest 冻结的执行种类做秘书回答检查（`parseSecretaryAnswer`），空、超 16 KiB 或格式不符时终态 `failed`、不写回答、带 `answerCheck`；普通 Query 照旧记 `gap`。终态提交在同一 commit 里写这一 Turn 的活动计数（`tallyTurnActivity`，`bound: 'end_position'`），格式失败的终态也照写。
 - `observation-recovery.ts` — 按 Kernel run/turn 过滤的精确原历史读取。
 - `graph-execution-history.ts` — WorkGraph locator 到 RT7 原历史的适配。
 - `continuation-brief-assembly.ts` — continuation brief 的事实读取与纯装配。
-- `run-reconcile.ts` — 启动与进程内 Run/Query 对账分类器。
+- `run-reconcile.ts` — 启动与进程内 Run/Query 对账分类器；QRR-04 用已读窗口写活动计数，QRR-06 的 attestation 事实带计数（Kernel 不可读或无固定 Turn 时是显式 `unknown`）。
 - `session-anomaly-facts.ts` — 归档异常锚点旁的变更文件快照。
 - `unknown-call-draft.ts` — unknown-call review 草稿读取与工作区捕获。
-- `run-activity-reader.ts` — 有界活动窗口读取。
+- `run-activity-reader.ts` — 有界活动窗口读取；`unknownFacts` 从 `src/contracts/run-activity.ts` 的正本转出。
 - `run-activity-tally.ts` — 纯 Turn 活动计数。
 
 ### 查询与来源绑定
@@ -96,7 +96,7 @@
 | --- | --- | --- | --- |
 | `createAgentRuntime` | `src/core/agent-runtime/runtime.ts:558` | 装配并发布整套执行端口；无依赖时只给显式 unsupported/unavailable，不伪造能力 | 组合根构造 Runtime 的唯一入口 |
 | `createContextAssembler` | `src/core/agent-runtime/context-assembler.ts:27` | 按调用种类装配一次上下文 | prepare 需要正式上下文时，别自己拼 |
-| `assembleSecretaryContext` | `src/core/agent-runtime/context-secretary-recipe.ts:85` | 按冻结的秘书准备事实渲染 `secretary-round` 并生成合法绑定 | 秘书请求轮装配；经 `assembleQuery` 自动进入 |
+| `assembleSecretaryContext` | `src/core/agent-runtime/context-secretary-recipe.ts:106` | 按冻结的秘书准备事实渲染 `secretary-round` 并生成合法绑定 | 秘书请求轮装配；经 `assembleQuery` 自动进入 |
 | `createExecutionPreparation` | `src/core/agent-runtime/execution-preparation.ts:315` | Work 有界准备与 manifest/提示词冻结 | 启动 Work Run 之前 |
 | `createExecutionDriver` | `src/core/agent-runtime/execution-driver.ts:323` | Work fresh 启动、进入与模型循环 | 正式 Work Run 启动 |
 | `createExecutionObservation` | `src/core/agent-runtime/execution-observation.ts:249` | 沿 locator 归约原历史并提交终态 | observe/reconcile Work Run |
@@ -117,15 +117,16 @@
 | `reduceTurnFromStart` | `src/core/agent-runtime/kernel-turn-facts.ts:53` | 从 turn 起点归约 `RunState` | 观察、对账、brief |
 | `applyTurnEvents` | `src/core/agent-runtime/kernel-turn-facts.ts:62` | 在已归约状态上应用增量 | 增量观察 |
 | `unresolvedToolCallIds` | `src/core/agent-runtime/kernel-turn-facts.ts:81` | 列未闭合工具调用 | 判断 Turn 能否完成 |
-| `readRunActivityFacts` | `src/core/agent-runtime/run-activity-reader.ts:53` | 显式窗口内的有界活动事实 | 结束 Run 的活动计数 |
+| `readRunActivityFacts` | `src/core/agent-runtime/run-activity-reader.ts:47` | 显式窗口内的有界活动事实 | 结束 Run 的活动计数 |
 | `tallyTurnActivity` | `src/core/agent-runtime/run-activity-tally.ts:104` | 纯 Turn 活动计数 | 已有解码 Turn 时 |
+| `countQueryActivity` | `src/core/agent-runtime/runtime.ts:903` | 已结束 QueryRun 的只读活动计数；从未进入 Kernel（没有执行状态、没有固定入口或 `not_entered`）答 `not_entered`，上界与 Run 计数同一选择，不写记录 | Query 活动 backfill 的读侧 |
 | `readPreviousTurn` | `src/core/agent-runtime/continuation-brief-assembly.ts:537` | 读上一 Turn 的真实证据 | requeue brief |
 | `assembleContinuationBrief` | `src/core/agent-runtime/continuation-brief-assembly.ts:798` | 纯函数装配 continuation brief | requeue Run 准备 |
 | `reconcileRunAtStartup` | `src/core/agent-runtime/run-reconcile.ts:219` | 启动时分类一个 Run 并提交一次对账 | 启动恢复 |
 | `reconcileQueryRunAtStartup` | `src/core/agent-runtime/run-reconcile.ts:572` | QueryRun 启动对账 | Query 恢复 |
 | `reconcileRunControlsAtStartup` | `src/core/agent-runtime/run-reconcile.ts:523` | 启动时结清排队控制与已接受的 steer | 控制意图恢复 |
-| `readAttestationFacts` | `src/core/agent-runtime/run-reconcile.ts:654` | 读 attestation 的 Kernel 与输入确认事实 | RUN-25 判定 |
-| `readReviewDraftAtEntry` | `src/core/agent-runtime/run-reconcile.ts:732` | 入口一次读 Kernel 事实与未截断 review 草稿 | review 轮入口 |
+| `readAttestationFacts` | `src/core/agent-runtime/run-reconcile.ts:658` | 读 attestation 的 Kernel 与输入确认事实 | RUN-25 判定 |
+| `readReviewDraftAtEntry` | `src/core/agent-runtime/run-reconcile.ts:747` | 入口一次读 Kernel 事实与未截断 review 草稿 | review 轮入口 |
 | `readUnknownCallReviewDraft` | `src/core/agent-runtime/unknown-call-draft.ts:174` | 读完整 review 草稿 | review 候选与 attestation |
 | `renderContext` | `src/core/agent-runtime/context-rendering.ts:396` | 按冻结模板渲染 Work 输入并记录节区间 | prepare Work |
 | `renderQueryContext` | `src/core/agent-runtime/context-rendering.ts:430` | 渲染 Query 输入 | prepare Query |

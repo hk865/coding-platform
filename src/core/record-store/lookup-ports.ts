@@ -51,6 +51,11 @@ export type OrderedLookupRequest = {
   bound?: { value: OrderedLookupValue; inclusive: boolean };
   /** Exclusive keyset after the previous page's last `(order, refKey)`. */
   after?: { order: OrderedLookupValue; refKey: string };
+  /**
+   * A lower bound on the order value whatever the direction. It is what a
+   * descending read needs to stop above a value: `bound` is its upper side.
+   */
+  lowerBound?: { value: OrderedLookupValue; inclusive: boolean };
   limit: number;
 };
 export type RecordOrderedLookupPage = {

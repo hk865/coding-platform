@@ -19,11 +19,14 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { RunRef } from '../../contracts/dispatch.js';
+import type { QueryRunRef } from '../../contracts/query-job.js';
 import { ACTIVITY_RECENT_WINDOW_DAYS } from '../../contracts/run-activity.js';
 import type { RunActivityFactsV1 } from '../../contracts/run-activity.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
-import type { RunActivityPort } from '../../core/work-graph/tasks/run-activity-service.js';
+import type {
+  ActivityBackfillCandidate, ActivityBackfillCursor, RunActivityPort,
+} from '../../core/work-graph/tasks/run-activity-service.js';
 import { reworkActorClassOf } from '../../contracts/task-requeue.js';
 import type { ActivityBackfillBatchV1 } from './contracts.js';
 
@@ -37,13 +40,21 @@ const DAY_MS = 86_400_000;
 /** A retry that must restart the scan, so the opaque cursor is not `null` (= done). */
 const RESTART_CURSOR = 'restart';
 
-type Cursor = { order: string; refKey: string };
+type Cursor = ActivityBackfillCursor;
 
 export type ActivityBackfillDependencies = {
-  /** The Runtime read side (L6); the operation publishes `unsupported` without it. */
-  runtime: Pick<RuntimeExecutionPort, 'countRunActivity'>;
-  /** The WorkGraph owner of the candidate scan and the record write (L8). */
-  activity: Pick<RunActivityPort, 'listActivityBackfillCandidates' | 'recordRunActivity'>;
+  /**
+   * The Runtime read side (L6/L16). A dependency without `countQueryActivity`
+   * leaves the Work branch unchanged and makes only a Query candidate answer
+   * `unsupported`.
+   */
+  runtime: Pick<RuntimeExecutionPort, 'countRunActivity'> & Partial<Pick<RuntimeExecutionPort, 'countQueryActivity'>>;
+  /**
+   * The WorkGraph owner of the candidate scan and the two record writes. A
+   * dependency without `recordQueryActivity` has the same narrow effect.
+   */
+  activity: Pick<RunActivityPort, 'listActivityBackfillCandidates' | 'recordRunActivity'>
+    & Partial<Pick<RunActivityPort, 'recordQueryActivity'>>;
   /** The trusted Host clock; required for the recent window and `recordedAt`. */
   now(): string;
   /** P4/L17 injection point; production never passes it. */
@@ -75,17 +86,18 @@ function parseCursor(raw: string | null): Cursor | null | 'invalid' {
   if (raw === RESTART_CURSOR) return null;
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { return 'invalid'; }
-  if (!isRecord(parsed) || !nonEmpty(parsed['order']) || !nonEmpty(parsed['refKey'])) return 'invalid';
-  return { order: parsed['order'] as string, refKey: parsed['refKey'] as string };
+  if (!isRecord(parsed) || !nonEmpty(parsed['order']) || !nonEmpty(parsed['refKey'])
+    || (parsed['kind'] !== 'run' && parsed['kind'] !== 'query')) return 'invalid';
+  return { order: parsed['order'] as string, kind: parsed['kind'], refKey: parsed['refKey'] as string };
 }
 
 function encodeCursor(cursor: Cursor | null): string | null {
-  return cursor === null ? null : JSON.stringify({ order: cursor.order, refKey: cursor.refKey });
+  return cursor === null ? null : JSON.stringify({ order: cursor.order, kind: cursor.kind, refKey: cursor.refKey });
 }
 
 /** A retry at the start of the scan is a non-null cursor that decodes to `null` again. */
 function encodeRetryCursor(cursor: Cursor | null): string {
-  return cursor === null ? RESTART_CURSOR : JSON.stringify({ order: cursor.order, refKey: cursor.refKey });
+  return cursor === null ? RESTART_CURSOR : JSON.stringify({ order: cursor.order, kind: cursor.kind, refKey: cursor.refKey });
 }
 
 function parseWorkspace(value: unknown): WorkspaceScope | null {
@@ -112,6 +124,10 @@ export function createActivityBackfill(deps: ActivityBackfillDependencies): Acti
     throw new Error('ACTIVITY_BACKFILL_BATCH_RUNS must be a positive safe integer');
   }
   const act = deps.runtime.countRunActivity?.bind(deps.runtime) ?? null;
+  const actQuery = typeof deps.runtime.countQueryActivity === 'function'
+    ? deps.runtime.countQueryActivity.bind(deps.runtime) : null;
+  const writeQuery = typeof deps.activity.recordQueryActivity === 'function'
+    ? deps.activity.recordQueryActivity.bind(deps.activity) : null;
 
   /**
    * R1: a submission identity that does not reset across Host lifetimes. The
@@ -123,8 +139,7 @@ export function createActivityBackfill(deps: ActivityBackfillDependencies): Acti
    * store reports no commit cursor at all.
    */
   function submissionToken(
-    selection: { cursor: string | null; activityRevisions: readonly (number | null)[] },
-    facts: RunActivityFactsV1,
+    selection: { cursor: string | null; activityRevision: number | null }, facts: RunActivityFactsV1,
   ): string {
     if (selection.cursor !== null) return selection.cursor;
     // No commit cursor from the backend: fall back to the selected record's
@@ -132,7 +147,7 @@ export function createActivityBackfill(deps: ActivityBackfillDependencies): Acti
     // same submission and distinct for different facts, and — unlike a
     // process-local counter or the deterministic keyset — stays unique across
     // Host lifetimes (review round 2, R1).
-    return sha256Hex(canonicalJson({ revision: selection.activityRevisions[0] ?? null, facts } as unknown as JsonValue));
+    return sha256Hex(canonicalJson({ revision: selection.activityRevision, facts } as unknown as JsonValue));
   }
 
   /**
@@ -152,46 +167,53 @@ export function createActivityBackfill(deps: ActivityBackfillDependencies): Acti
       const listed = await deps.activity.listActivityBackfillCandidates(ctx,
         { workspace, mode, from, to, after: at, limit: 1 });
       if (listed.status !== 'ready') return listed;
-      const runRef: RunRef | undefined = listed.value.runRefs[0];
-      if (runRef === undefined) {
+      const candidate = listed.value.candidates[0];
+      if (candidate === undefined) {
         // The scan found nothing more; a non-null `next` only appears when the
         // read cap stopped it, so the batch is not done yet.
         const next = listed.value.next ?? null;
         return { status: 'ready', value: { processed, next: encodeCursor(next), done: next === null } };
       }
-      const counted = await act(ctx, {
-        runRef, ...(deps.maxPages === undefined ? {} : { maxPages: deps.maxPages }),
-      });
+      // A missing Query-side dependency only stops the Query branch; a Work
+      // Run in the same list is still processed by the branch above.
+      if (candidate.kind === 'query' && (actQuery === null || writeQuery === null)) {
+        return rejection('unsupported', 'the activity backfill has no Query activity dependency');
+      }
+      const counted = candidate.kind === 'run'
+        ? await act(ctx, { runRef: candidate.runRef, ...(deps.maxPages === undefined ? {} : { maxPages: deps.maxPages }) })
+        : await actQuery!(ctx, { queryRunRef: candidate.queryRunRef,
+          ...(deps.maxPages === undefined ? {} : { maxPages: deps.maxPages }) });
       if (counted.status !== 'ready') {
         // L8: a rejected read coded `unavailable`/`cancelled` is retryable and
         // writes nothing; any other failure is returned, never an empty batch.
         if (counted.status === 'rejected' && (counted.code === 'unavailable' || counted.code === 'cancelled')) {
-          processed.push({ runRef, outcome: 'retry_later', reason: counted.reason });
+          processed.push(processedItem(candidate, 'retry_later', counted.reason));
           return { status: 'ready', value: { processed, next: encodeRetryCursor(at), done: false } };
         }
         return counted;
       }
       const value = counted.value;
       if (value.kind === 'retry_later') {
-        processed.push({ runRef, outcome: 'retry_later', reason: value.reason });
+        processed.push(processedItem(candidate, 'retry_later', value.reason));
         return { status: 'ready', value: { processed, next: encodeRetryCursor(at), done: false } };
       }
       if (value.kind === 'not_entered') {
-        processed.push({ runRef, outcome: 'not_entered', reason: null });
+        processed.push(processedItem(candidate, 'not_entered', null));
       } else {
-        const written = await writeFacts(ctx, runRef, value.facts, listed.value);
+        const written = await writeFacts(ctx, candidate, value.facts, { cursor: listed.value.cursor });
         if ('rejection' in written) return written.rejection;
         if ('skipped' in written) {
-          processed.push({ runRef, outcome: 'skipped', reason: 'record_changed' });
+          processed.push(processedItem(candidate, 'skipped', 'record_changed'));
         } else if (written.outcome === 'unchanged') {
-          processed.push({ runRef, outcome: 'unchanged', reason: null });
+          processed.push(processedItem(candidate, 'unchanged', null));
         } else {
-          processed.push({ runRef, outcome: value.facts.status === 'counted' ? 'counted' : 'unknown',
-            reason: value.facts.status === 'unknown' ? value.facts.reason : null });
+          processed.push(processedItem(candidate,
+            value.facts.status === 'counted' ? 'counted' : 'unknown',
+            value.facts.status === 'unknown' ? value.facts.reason : null));
         }
       }
-      // Advance strictly past the inspected Run; `next` is the keyset of that
-      // Run, so passing it back as `after` resumes after it.
+      // Advance strictly past the inspected entry; `next` is the keyset of that
+      // entry, so passing it back as `after` resumes after it.
       at = listed.value.next;
     }
     // The batch is full. Probe once from the cursor so `done`/`next` are exact
@@ -202,34 +224,50 @@ export function createActivityBackfill(deps: ActivityBackfillDependencies): Acti
       const probe = await deps.activity.listActivityBackfillCandidates(ctx,
         { workspace, mode, from, to, after: at, limit: 1 });
       if (probe.status !== 'ready') return probe;
-      if (probe.value.runRefs.length === 0) {
+      if (probe.value.candidates.length === 0) {
         const next = probe.value.next ?? null;
         return { status: 'ready', value: { processed, next: encodeCursor(next), done: next === null } };
       }
     }
-    // R9: a full batch whose last inspected Run had no continuation is done too
-    // (the scan is exhausted); `next: null` must not be paired with `done: false`.
+    // R9: a full batch whose last inspected entry had no continuation is done
+    // too (the scan is exhausted); `next: null` must not be paired with `done:
+    // false`.
     return { status: 'ready', value: { processed, next: encodeCursor(at), done: at === null } };
   }
 
   /**
    * Write one tally through the WorkGraph owner. A `revision_conflict` is L8's
-   * `skipped`/`record_changed` (RUN-21 committed first); any other rejection is
-   * returned unchanged.
+   * `skipped`/`record_changed` (the end commit committed first); any other
+   * rejection is returned unchanged.
    */
-  async function writeFacts(ctx: CoreCallContext, runRef: RunRef, facts: RunActivityFactsV1,
-    selection: { cursor: string | null; next: Cursor | null; activityRevisions: readonly (number | null)[] }):
+  async function writeFacts(ctx: CoreCallContext, candidate: ActivityBackfillCandidate, facts: RunActivityFactsV1,
+    selection: { cursor: string | null }):
     Promise<{ outcome: 'created' | 'replaced' | 'unchanged' } | { skipped: true } | { rejection: CoreRejection }> {
-    const activityRevision = selection.activityRevisions[0];
-    const written = await deps.activity.recordRunActivity(ctx, {
-      input: activityRevision === undefined
-        ? { runRef, facts }
-        : { runRef, facts, expectedActivityRevision: activityRevision },
-      meta: { requestId: `s2b-backfill:${runRef.runId}:${submissionToken(selection, facts)}`, expected: [] },
-    });
+    const token = submissionToken({ cursor: selection.cursor, activityRevision: candidate.activityRevision }, facts);
+    let written;
+    if (candidate.kind === 'run') {
+      written = await deps.activity.recordRunActivity(ctx, {
+        input: { runRef: candidate.runRef, facts, expectedActivityRevision: candidate.activityRevision },
+        meta: { requestId: `s2b-backfill:run:${candidate.runRef.runId}:${token}`, expected: [] },
+      });
+    } else {
+      written = await writeQuery!(ctx, {
+        input: { queryRunRef: candidate.queryRunRef, facts, expectedActivityRevision: candidate.activityRevision },
+        meta: { requestId: `s2b-backfill:query:${candidate.queryRunRef.queryJobId}:${candidate.queryRunRef.runId}:${token}`,
+          expected: [] },
+      });
+    }
     if (written.status === 'committed') return { outcome: written.value.outcome };
     if (written.code === 'revision_conflict') return { skipped: true };
     return { rejection: written };
+  }
+
+  /** The batch entry for one inspected candidate, in its own union member. */
+  function processedItem(candidate: ActivityBackfillCandidate, outcome: ActivityBackfillBatchV1['processed'][number]['outcome'],
+    reason: string | null): ActivityBackfillBatchV1['processed'][number] {
+    return candidate.kind === 'run'
+      ? { kind: 'run', runRef: candidate.runRef, outcome, reason }
+      : { kind: 'query', queryRunRef: candidate.queryRunRef, outcome, reason };
   }
 
   return {

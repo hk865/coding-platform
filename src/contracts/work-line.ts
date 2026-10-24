@@ -74,10 +74,12 @@ export type LineStatusV1 = {                                                // �
 };
 
 export type LineNameV1 = {
-  source: 'running_task' | 'open_tasks' | 'recent_task' | 'secretary_interim' | 'duty_only';
-  primary: string; extraCount: number;                                     // “首项等 n 项”
-  tasks: TaskTriple[]; goalRef: GoalRef | null;
-  complete: boolean;                                                       // false：秘书线头是旧 Session，最近的 Query 可能是读不到的旧记录（L4）
+  source: 'running_task' | 'open_tasks' | 'recent_task' | 'secretary_ordinal' | 'duty_only';
+  primary: string; extraCount: number;                                     // “首项等 n 项”；秘书是“秘书 N”
+  ordinal: number | null;                                                  // secretary_ordinal 的 N：本工作区秘书 Session 按创建顺序（createdAt，同刻按 Session 键）
+                                                                           // 从 1 数，归档的也算，只读副本不算；别的来源和读不到序号时为 null
+  tasks: TaskTriple[]; goalRef: GoalRef | null;                            // 秘书线的 goalRef 是它最近一次 Query 的目标
+  complete: boolean;                                                       // false：秘书的序号读不到，名字只给“秘书”，这一行同时带问题
 };
 export type LineTaskBriefV1 = {
   task: TaskTriple; title: string; phase: Phase; disposition: Disposition;

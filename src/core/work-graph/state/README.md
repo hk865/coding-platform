@@ -89,12 +89,12 @@
 | `decisionActionPolicy` | `src/core/work-graph/state/decision-policy.ts:31` | 自主级别 × 动作的唯四值表 | owner、工具、Workflow、路由都查它 |
 | `canSendUserMessage` | `src/core/work-graph/state/decision-policy.ts:71` | S5-AU-04 的 notify/decision_request 准入 | 准备向用户发消息 |
 | `automationConfirmationCause` | `src/core/work-graph/state/decision-policy.ts:118` | 从策略与已存受影响 refs 派生确认原因 | 需要 automation_confirmation_required 时 |
-| `newGoalSnapshot` | `src/core/work-graph/state/goal-machine.ts:90` | 建 Goal 快照 | 新建 Goal |
-| `goalStateOf` | `src/core/work-graph/state/goal-machine.ts:189` | Goal + GoalPhase 的机器状态 | Goal 迁移前 |
-| `goalCompletionProblem` | `src/core/work-graph/state/goal-machine.ts:404` | 完成事件的前置检查 | goal_completed 提交 |
-| `transitionGoal` | `src/core/work-graph/state/goal-machine.ts:550` | Goal 主迁移：目标状态、计划指针、完成 | Goal 写入 |
-| `goalFanOutRequestId` | `src/core/work-graph/state/goal-machine.ts:584` | 派生 fan-out 请求的稳定 id | pause/cancel/resume 的扇出 |
-| `findGoalResumeContinuations` | `src/core/work-graph/state/goal-machine.ts:637` | 从任务事实找 resume 的续作 | 恢复 Goal 后规划续作 |
+| `newGoalSnapshot` | `src/core/work-graph/state/goal-machine.ts:93` | 建 Goal 的预绑定快照（`since: null`，创建提交填游标） | 新建 Goal |
+| `goalStateOf` | `src/core/work-graph/state/goal-machine.ts:206` | Goal + GoalPhase 的机器状态；保留记录类型，预绑定 Goal 得 pending 状态 | Goal 迁移前 |
+| `goalCompletionProblem` | `src/core/work-graph/state/goal-machine.ts:433` | 完成事件的前置检查 | goal_completed 提交 |
+| `transitionGoal` | `src/core/work-graph/state/goal-machine.ts:583` | Goal 主迁移：目标状态、计划指针、完成；`goal_created` 的 `next` 是预绑定 Goal | Goal 写入 |
+| `goalFanOutRequestId` | `src/core/work-graph/state/goal-machine.ts:628` | 派生 fan-out 请求的稳定 id | pause/cancel/resume 的扇出 |
+| `findGoalResumeContinuations` | `src/core/work-graph/state/goal-machine.ts:681` | 从任务事实找 resume 的续作 | 恢复 Goal 后规划续作 |
 | `transitionGoalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:190` | Goal 设置迁移（order_set 用已有顺序的下标） | 修改 Goal 设置 |
 | `goalStartPolicy` | `src/core/work-graph/state/goal-settings-machine.ts:238` | 启动准入策略 | 自动启动 Goal 前 |
 | `goalDecisionBasisMatches` | `src/core/work-graph/state/goal-settings-machine.ts:256` | 决策依据是否仍对应当前 Goal | 复用/重算决策时 |
@@ -219,6 +219,6 @@
 - 不要把 Query 的 claimed/prepared 当成不可达，也不要只结清 Job/Run 的一半（M1-01、M1-36、CS-03）。
 - 不要手搓 Attempt/Lease/Outbox，或假设 Run 完成等于 Task/Goal 完成；effects 交 `claimEffectRecords`（`src/core/work-graph/tasks/execution-entry-service.ts:892`）翻译。
 - `sameRef` 另有旧副本：`src/core/work-graph/tasks/execution-entry-service.ts:144`（导出副本），新代码一律用正本 `src/core/work-graph/state/ref-equality.ts:2`，旧副本由清理轮删除（M1-32）。
-- `sameRef` 另有旧副本：`src/core/work-graph/queries/query-execution.ts:100`、`src/core/work-graph/tasks/claim-service.ts:122` 等 `tasks/`、`queries/`、`agent-runtime/` 私有副本，新代码一律用正本 `src/core/work-graph/state/ref-equality.ts:2`，旧副本由清理轮删除（M1-32）。
+- `sameRef` 另有旧副本：`src/core/work-graph/queries/query-execution.ts:104`、`src/core/work-graph/tasks/claim-service.ts:122` 等 `tasks/`、`queries/`、`agent-runtime/` 私有副本，新代码一律用正本 `src/core/work-graph/state/ref-equality.ts:2`，旧副本由清理轮删除（M1-32）。
 - `sameJson` 另有旧副本：`src/core/work-graph/state/goal-settings-machine.ts:80`（私有），正本在 `src/contracts/fingerprint.ts:50`，新代码一律用正本，旧副本由清理轮删除（M1-32）。
 - 不要在本层 import 时钟、随机数、计时器、网络、进程或任何 store；时间与 id 由调用方传入。

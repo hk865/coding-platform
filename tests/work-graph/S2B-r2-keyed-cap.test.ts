@@ -45,7 +45,8 @@ describe.each(['memory', 'sqlite'] as const)('S2B round-2 keyed read cap (%s)', 
 
     await f.runAndEnd('work-1', f.b2.base.sessions.second,
       '2026-10-14T10:00:00.000Z', '2026-10-14T10:30:00.000Z');
-    const input = { goalRef: f.goalRef, from: '2026-10-14T10:00:00.000Z', to: '2026-10-14T11:00:00.000Z',
+    const input = { scope: { kind: 'goal' as const, goalRef: f.goalRef },
+      from: '2026-10-14T10:00:00.000Z', to: '2026-10-14T11:00:00.000Z',
       granularity: 'hour' as const, timeZone: 'UTC' };
 
     // Reads: Goal (1) + epoch miss (1) + Run index row (1) + activity miss (1)

@@ -135,7 +135,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-30 graph hover (%s)', (kind) =>
     const goalGroup = hover.value.groups.find((group) => group.node.kind === 'goal')!;
     // Not every workspace secretary: only the one whose latest Query targets this Goal.
     expect(goalGroup.owners.map((owner) => owner.key.sessionId)).toEqual([forGoal.sessionId]);
-    expect(goalGroup.owners[0]!.name.source).toBe('secretary_interim');
+    expect(goalGroup.owners[0]!.name.source).toBe('secretary_ordinal');
     expect(noQuery.sessionId).not.toBe(forGoal.sessionId);
   });
 

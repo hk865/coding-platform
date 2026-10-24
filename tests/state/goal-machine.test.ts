@@ -14,7 +14,9 @@ import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../src/contra
 import type { CoreError } from '../../src/contracts/core/results.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, RuntimeEventV1 } from '../../src/contracts/dispatch.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../src/contracts/goal-phase.js';
-import type { GoalDesiredState, GoalRef, GoalSnapshot, WorkspaceRef } from '../../src/contracts/ledger.js';
+import type {
+  GoalDesiredState, GoalRef, GoalSnapshot, PendingGoalSnapshot, WorkspaceRef,
+} from '../../src/contracts/ledger.js';
 import type { PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { TaskReductionRef } from '../../src/contracts/reduction.js';
 import type {
@@ -73,7 +75,9 @@ const REDUCTION: { ref: TaskReductionRef; revision: number } = {
 };
 const OBJECTIVE = 'ship the release';
 
-const GOAL_NEW = newGoalSnapshot({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE });
+const pendingGoal = newGoalSnapshot({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE });
+/** The same Goal as the creating commit stores it: the bound creation cursor. */
+const GOAL_NEW: GoalSnapshot = { ...pendingGoal, since: 'c0000000001' as GoalSnapshot['since'] };
 /** Active Goals never changed their desired state; paused/cancelled ones did, by an operator. */
 function goalWithoutPlan(desiredState: GoalDesiredState): GoalSnapshot {
   return desiredState === 'active' ? GOAL_NEW : nextGoalDesiredState(GOAL_NEW, { to: desiredState, requestedBy: HUMAN });
@@ -137,10 +141,11 @@ function completeEffects(goalRevision: number, plan: PlanRevisionRef, phaseRevis
   ];
 }
 
+/** Results are typed as `transitionGoal` answers the whole event union: `goal_created` gives the pre-bind Goal. */
 type Expected =
-  | { ok: true; next: GoalMachineState; effects: GoalEffect[] }
+  | { ok: true; next: GoalMachineState<PendingGoalSnapshot>; effects: GoalEffect[] }
   | { ok: false; reason: TransitionRejectReason; code: CoreError; detail?: string };
-const ok = (next: GoalMachineState, effects: GoalEffect[] = []): Expected => ({ ok: true, next, effects });
+const ok = (next: GoalMachineState<PendingGoalSnapshot>, effects: GoalEffect[] = []): Expected => ({ ok: true, next, effects });
 const no = (reason: TransitionRejectReason, code: CoreError, detail?: string): Expected =>
   detail === undefined ? { ok: false, reason, code } : { ok: false, reason, code, detail };
 
@@ -150,7 +155,7 @@ function goalGuardHolds(state: GoalMachineState, effects: readonly GoalEffect[])
     || effect.guard.expectedRevision === (state.goal?.revision ?? null));
 }
 
-function expectResult(result: GoalTransition, expected: Expected): void {
+function expectResult(result: GoalTransition<PendingGoalSnapshot>, expected: Expected): void {
   if (expected.ok) {
     expect(result).toEqual({ ok: true, next: expected.next, effects: expected.effects });
     return;
@@ -174,12 +179,13 @@ function deepFreeze<T>(value: T): T {
 
 describe('§14.1 Goal record constructors', () => {
   it('newGoalSnapshot writes Goal@1 with today\'s key order, epoch 1 and no requester (commit-compiler.ts:111-118)', () => {
-    expect(JSON.stringify(GOAL_NEW)).toBe(JSON.stringify({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE,
-      desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: null, revision: 1 }));
-    expect(GOAL_NEW.desiredStateRevision).toBe(1);
-    expect(GOAL_NEW.desiredStateRequestedBy).toBeNull();
+    expect(JSON.stringify(pendingGoal)).toBe(JSON.stringify({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE,
+      desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: null, revision: 1,
+      since: null }));
+    expect(pendingGoal.desiredStateRevision).toBe(1);
+    expect(pendingGoal.desiredStateRequestedBy).toBeNull();
     // The contract reads the explicit fields as epoch 1 and no requester.
-    const view = goalStateOf(GOAL_NEW, null);
+    const view = goalStateOf(pendingGoal, null);
     expect(view).toMatchObject({ node: 'active', desiredStateRevision: 1, desiredStateRequestedByClass: null,
       activePlanRef: null, completion: 'none' });
   });
@@ -195,7 +201,7 @@ describe('§14.1 Goal record constructors', () => {
     expect(moved.desiredStateRequestedBy).toEqual(HUMAN);
     expect(JSON.stringify(nextGoalPointer(GOAL_NEW, P1))).toBe(JSON.stringify({ ref: GOAL, workspaceRef: WS,
       objective: OBJECTIVE, desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
-      activePlanRevision: P1, revision: 2 }));
+      activePlanRevision: P1, revision: 2, since: 'c0000000001' }));
   });
 
   it('nextGoalDesiredState writes every Goal field, the epoch rev+1 and a copy of the requester', () => {
@@ -203,9 +209,9 @@ describe('§14.1 Goal record constructors', () => {
     const actor = { kind: 'system' as const, id: 'host:operator-console' };
     const paused = nextGoalDesiredState(planned, { to: 'paused', requestedBy: actor });
     expect(Object.keys(paused)).toEqual(['ref', 'workspaceRef', 'objective', 'desiredState', 'desiredStateRevision',
-      'desiredStateRequestedBy', 'activePlanRevision', 'revision']);
+      'desiredStateRequestedBy', 'activePlanRevision', 'revision', 'since']);
     expect(paused).toEqual({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE, desiredState: 'paused',
-      desiredStateRevision: 3, desiredStateRequestedBy: actor, activePlanRevision: P1, revision: 3 });
+      desiredStateRevision: 3, desiredStateRequestedBy: actor, activePlanRevision: P1, revision: 3, since: 'c0000000001' });
     expect(paused.desiredStateRequestedBy).not.toBe(actor);
     // LA-7: a Host started with a kind:'system' actor is still an operator.
     expect(goalStateOf(paused, null).desiredStateRequestedByClass).toBe('human');
@@ -271,7 +277,7 @@ type EventName = keyof typeof EVENTS;
  * from ∅, and the store's Goal ∅ guard refuses it after its in-transaction
  * receipt lookup (§2.4 "Goal 已存在", asserted with `goalGuardHolds` below).
  */
-const CREATED_OVER = (phase: GoalPhaseSnapshot | null): Expected => ok(goalStateOf(GOAL_NEW, phase), CREATED_EFFECTS);
+const CREATED_OVER = (phase: GoalPhaseSnapshot | null): Expected => ok(goalStateOf(pendingGoal, phase), CREATED_EFFECTS);
 const NO_GOAL_PLAN = no('illegal', 'not_found', 'the goal does not exist');
 const NO_GOAL_COMPLETE = no('illegal', 'not_found', 'the Goal does not exist');
 const INITIAL_STALE = no('stale', 'revision_conflict', 'the goal already has an active plan; an initial adoption cannot replace it');
@@ -368,7 +374,7 @@ function rowsFor(ds: GoalDesiredState): Record<Variant, Record<EventName, Expect
 const TABLE: Record<StateName, Record<EventName, Expected>> = {
   absent: {
     // GOAL-01
-    created: ok(goalStateOf(GOAL_NEW, null), CREATED_EFFECTS),
+    created: ok(goalStateOf(pendingGoal, null), CREATED_EFFECTS),
     adoptInitial: NO_GOAL_PLAN,
     adoptFuture: NO_GOAL_PLAN,
     pause: NO_GOAL_COMPLETE,

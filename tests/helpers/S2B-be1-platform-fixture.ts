@@ -330,7 +330,9 @@ export async function createS2BBe1Platform(options: S2BBe1PlatformOptions): Prom
       return result.value;
     },
     async calendar(input) {
-      const result = await activityPort.readActivityCalendar(f.ctx, { ...input, goalRef: input.goalRef ?? f.goalRef,
+      const result = await activityPort.readActivityCalendar(f.ctx, {
+        scope: { kind: 'goal', goalRef: input.goalRef ?? f.goalRef },
+        from: input.from, to: input.to, granularity: input.granularity, timeZone: input.timeZone,
         ...(input.sessionRefs === undefined ? {} : { sessionRefs: input.sessionRefs }) });
       if (result.status !== 'ready') throw new Error(`S2B BE1 readActivityCalendar failed: ${JSON.stringify(result)}`);
       return result.value;

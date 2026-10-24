@@ -18,7 +18,7 @@
 - `tests/kernel/` — 冻结 Kernel 公共入口的集成（23 个 `*.test.ts`），另有 `README.md` 记录 R4a 迁移。
 - `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（13 个），例如 `SP-lookup-index-migration.test.ts`。
 - `tests/runtime/` — 真实 Runtime/Kernel 执行链（139 个），是行为面最大的文件夹。
-- `tests/scenarios/` — 跨片端到端场景：Host 重启、崩溃恢复、审批、白板（111 个，其中 S6A-secretary-flow-* 与 S6A-secretary-context-* 是秘书轮的整轮场景）。
+- `tests/scenarios/` — 跨片端到端场景：Host 重启、崩溃恢复、审批、白板（117 个，其中 S6A-secretary-flow-*、S6A-secretary-context-*、S6A-activity-*、S6A-main-read-joint 与 S6A-request-drop-settle 是秘书轮、查询活动和主读的整轮场景）。
 - `tests/state/` — 状态机、编解码、查询和恢复不变量（51 个），例如 `K3-14-conclusion-pure.test.ts`。
 - `tests/work-graph/` — WorkGraph 域服务和读模型（317 个），是夹具使用最密集的文件夹。
 
@@ -98,6 +98,7 @@ Goal/Plan/claim/prepare/execute 的共同前置；claim 只由 `TaskClaimPort` �
 - `S6A-history-fixture.ts` — 冻结；只用公开步骤造一条请求的历史：跨 A、B 两个 Session、十轮边界、带选中思路的吸收、drop 结束的轮、长 UTF-8 回答、A 上结果未知的轮、后来的回答；多数构造要等 6A-2 的轮次自己跑起来才能用。
 - `S6A-memory-fixture.ts` — 冻结；`seedS6AMemory` 经公开路由写项目理解、规范、注记和两个目标的理解，并给出治理操作（架构采纳和修订、完成策略安装、激活和换版）；`S6A_GOVERNANCE_CASES` 是 R-14 的四种指针组合。
 - `S6A-prompt-samples.ts` — 冻结；按模板、字符串表和 6A-2 裁定 S15 手写的秘书输入期望文本：各段的构造函数和整段的 `secretaryInputText`。
+- `S6A-cards-fixture.ts` — 冻结；6A-3 主对话的世界，两个：`openS6ACardsWorld`（SE1，请求世界加第二个工作区及其秘书绑定和 profile，Host 输入，规则 A8）和 `openS6ANoticesWorld`（SE2，两个目标各有采用的 Plan、一个 Work Session）；步骤：`s6aCardsWorkspace`（路由句柄）、`seedS6ASharedCards`（两请求各一候选、另一目标上的独立候选，卡的 `source.pins` 就是 `ask` 的 `cardRefs`）、`seedS6AGoalOrder`（已知顺序的目标和无目标请求，`goals/create` 返回创建游标）、`submitMany`、`seedReworkNotices`（真实 Workflow 的自动返工通知，位置 1、3 在目标 1、2 在目标 2）、`moveGoal`（只推进 revision）；不写记录、不读 store。
 - `S8A-L8-reminder-world.ts` — L8 rework-2 两个公开测试的共享世界：Project/Workspace/policy/catalog/Goal/Plan/Session/claim/source capture 全由平台产生，再走 H4 prepare；`tests/work-graph/S8A-L8-reminders-public.test.ts` 在用。
 - `WP2-duties-fixture.ts` — `WP2_DUTIES` 五个平台 duty、legacy template 精确匹配的 `wp2LegacyDuty` 和 `wp2RoleContent`；`tests/work-graph/WP2-message-duties.test.ts` 在用。
 - `WP2-notices-fixture.ts` — 真实 S1 owner/backend，构造钩子只加 schema 和 beforeWrite 故障点，不种历史或 cursor；`tests/work-graph/WP2-undelivered-notices.test.ts` 在用。
@@ -183,6 +184,7 @@ commit 闸门、阻塞替身、store/Kernel 读故障和崩溃重启；只在规
 - `S4A-note-interleave-fixture.ts` — 唯一允许的 commit gate double：只拦含 `NoteWritten` 的 `PreparedCommit`；`tests/work-graph/S4A-note-concurrency.test.ts` 在用。
 - `S6A-commit-barrier.ts` — 冻结，只能在末尾追加导出；mock 两个真实 backend factory，只包 `records.commit` 成提交闸门，其余导出保持真实；闸门只停在提交前（owner 读之后、store CAS 之前），没有提交之后的公开闸门，别在测试里另造；`tests/scenarios/S6A-request-concurrency.test.ts` 在用。
 - `S6A-registration-double.ts` — 冻结，只能在末尾追加导出；mock `session-directory.ts`，只包 `recordSessionCreated`，可 `failNext(n)` 或计数；`tests/scenarios/S6A-request-concurrency.test.ts` 在用。
+- `S6A-activity-boundary.ts` — 冻结；R-15、R-16 允许的两个 store 边界替身，装在冻结的提交闸门外面（测试文件装这里的两个 `vi.mock`，不再装 `S6A-commit-barrier.ts` 的）：`rejectQueryEnd` 让结束目标 Query 的那次提交在存储层失败一次（memory 写前抛出，SQLite 事务内回滚）；`dropQueryActivity` 只去掉那次提交里完整身份对上的 `QueryActivity` 记录及其游标绑定，别的记录、守卫和事件不动；`setQuerySince` 改写工作区 `ActivityRecording` 的 `querySince` 及事件里同 ref 同 revision 的快照；`afterEach` 里先 `activityBoundary.reset()` 再 `commitBarrier.reset()`。
 
 ### 注记和证据
 

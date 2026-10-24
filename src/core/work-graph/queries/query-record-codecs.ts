@@ -56,15 +56,16 @@ import type {
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
-import { QUERY_RUN_RECORD_SCHEMA, executionRequestProfileProblem, validateQueryRunSnapshot } from '../materials/record-readers.js';
+import { QUERY_RUN_RECORD_SCHEMA, executionPreparedProblem, executionRequestProfileProblem, validateQueryRunSnapshot } from '../materials/record-readers.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { isPlatformCursor } from '../sessions/session-record-codecs.js';
 import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
+import { QUERY_ACTIVITY_RECORD_SCHEMAS } from '../persistence/query-activity-codecs.js';
 import { sessionRefProblem } from '../persistence/rework-codecs.js';
 import { QUERY_RUN_BY_SESSION_LOOKUP } from '../model/session-facts-contracts.js';
 import {
   QUERY_BY_REQUEST_INDEX, QUERY_OPEN_BY_WORKSPACE_INDEX, QUERY_RAN_BY_SESSION_GOAL_INDEX,
-  REQUEST_ROOTS_BY_GOAL_INDEX,
+  REQUEST_ROOT_MARK, REQUEST_ROOTS_BY_GOAL_INDEX, requestGoalSlot,
 } from '../model/request-contracts.js';
 import { ideasIssues } from '../model/request-ideas.js';
 
@@ -189,7 +190,7 @@ function queryJobRefFromValue(value: unknown): QueryJobRef | null {
   };
 }
 
-function queryRunRefFromValue(value: unknown): QueryRunRef | null {
+export function queryRunRefFromValue(value: unknown): QueryRunRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'QueryRun') return null;
   if (!nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId']) ||
@@ -564,6 +565,8 @@ function executionStateIssues(value: unknown): string[] {
   });
   const requestProfileProblem = executionRequestProfileProblem(value['requestProfile']);
   if (requestProfileProblem !== null) issues.push(`executionState.${requestProfileProblem}`);
+  const preparedProblem = executionPreparedProblem(value['prepared']);
+  if (preparedProblem !== null) issues.push(`executionState.${preparedProblem}`);
   // QRR-05 (A.2 step 5.6): the optional cause of phase `unknown`.
   const unknown = value['unknown'];
   if (unknown !== undefined) {
@@ -798,8 +801,8 @@ export function queryJobIndexSlots(job: QueryJobV1): {
   return {
     rootKey: job.requestRoot === null ? 'none' : canonicalJson(job.requestRoot as unknown as JsonValue),
     requestMark: request ? 'request' : 'none',
-    rootMark: request && job.roundKind === 'request' ? 'root' : 'none',
-    goalSlot: !request ? 'none' : job.requestGoalId === null ? 'no-goal' : `g:${job.requestGoalId}`,
+    rootMark: request && job.roundKind === 'request' ? REQUEST_ROOT_MARK : 'none',
+    goalSlot: !request ? 'none' : requestGoalSlot(job.requestGoalId),
     enteredSlot: job.enteredSession === null ? 'none'
       : `s:${canonicalJson(job.enteredSession as unknown as JsonValue)}`,
   };
@@ -1163,9 +1166,24 @@ const QUERY_RUN_BY_SESSION_ENDED_LOOKUP: RecordLookupIndex = {
   orderBy: { path: 'run.endedAt' },
 };
 
+/**
+ * L16 backfill: a workspace's ended QueryRuns by end instant. The merged
+ * activity backfill reads Work and Query candidates from one ordered cursor.
+ */
+export const S6_QUERY_RUN_BY_WORKSPACE_ENDED_LOOKUP = 's6-query-run-by-workspace-ended';
+const QUERY_RUN_BY_WORKSPACE_ENDED_LOOKUP: RecordLookupIndex = {
+  name: S6_QUERY_RUN_BY_WORKSPACE_ENDED_LOOKUP,
+  aggregateType: 'QueryRun',
+  paths: ['ref.projectId', 'ref.workspaceId'],
+  orderBy: { path: 'run.endedAt' },
+};
+
 export const QUERY_JOB_RECORD_SCHEMAS: RecordBackendSchemas = {
-  records: [QUERY_JOB_SNAPSHOT_SCHEMA, QUERY_JOB_ANSWER_SNAPSHOT_SCHEMA],
-  events: [QUERY_JOB_SUBMITTED_SCHEMA, QUERY_EXECUTION_RECORDED_SCHEMA, QUERY_JOB_ANSWERED_SCHEMA],
+  records: [QUERY_JOB_SNAPSHOT_SCHEMA, QUERY_JOB_ANSWER_SNAPSHOT_SCHEMA, ...QUERY_ACTIVITY_RECORD_SCHEMAS.records],
+  events: [
+    QUERY_JOB_SUBMITTED_SCHEMA, QUERY_EXECUTION_RECORDED_SCHEMA, QUERY_JOB_ANSWERED_SCHEMA,
+    ...QUERY_ACTIVITY_RECORD_SCHEMAS.events,
+  ],
   lookups: [
     { name: QUERY_RUN_BY_SESSION_LOOKUP, aggregateType: 'QueryRun',
       paths: ['ref.projectId', 'ref.workspaceId', 'run.executionState.sessionRef.sessionId'] },
@@ -1178,5 +1196,6 @@ export const QUERY_JOB_RECORD_SCHEMAS: RecordBackendSchemas = {
     REQUEST_ROOTS_BY_GOAL_LOOKUP,
     QUERY_JOB_RAN_BY_SESSION_GOAL_LOOKUP,
     QUERY_RUN_BY_SESSION_ENDED_LOOKUP,
+    QUERY_RUN_BY_WORKSPACE_ENDED_LOOKUP,
   ],
 };

@@ -102,6 +102,7 @@ const CA_PERMISSIONS: TaskEnvelopeV1['permissions'] = {
 const GOAL_SNAPSHOT: GoalSnapshot = {
   ref: GOAL_REF, workspaceRef: WORKSPACE_REF, objective: 'Ship platform', desiredState: 'active',
   desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: PLAN_REF, revision: 1,
+  since: 'c0000000001' as GoalSnapshot['since'],
 };
 const WORKSPACE_SNAPSHOT: WorkspaceSnapshot = { ref: WORKSPACE_REF, revision: 7 };
 

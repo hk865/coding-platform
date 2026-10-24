@@ -14,7 +14,7 @@
 - `project-bootstrap-service.ts` — 四个 Host 写操作（建 Project、登记 Workspace、安装政策、激活政策）+ 三个精确读；一次 `PreparedCommit` 与 event replay。
 - `role-record-codecs.ts` — role-spec / coordination-policy 的记录与事件 codec、ref/snapshot 解码。
 - `role-memory-service.ts` — 角色规格安装、精确读、激活与绑定解析；文件名仍带 memory，但记忆读写尚未实现（memory 是独立未完成族）。
-- `decision-settings-service.ts` — Workspace 决定设置的唯一 owner：`markNoticesSeen`（display token、seenThrough、一次 Workspace 提交）。
+- `decision-settings-service.ts` — Workspace 决定设置的唯一 owner：`markNoticesSeen`（display token、seenThrough、一次 Workspace 提交）；带 Goal 的 token 只认主对话签发的，队列签发的照旧拒绝。
 - `line-settings-service.ts` — Workspace 工作线 pin 的唯一 owner：`setLinePins`（注入 Session 读、一次 Workspace 提交）。
 - `message-duties-adapter.ts` — 从 Session 固定角色与既有 resolver 派生唯一生效 duty 的事实适配器。
 - `workspace-settings-reads.ts` — 两个 Workspace owner 共用的绑定上下文、Workspace pin 校验、精确读与原始事件重放。
@@ -30,7 +30,7 @@
 | `ROLE_RECORD_SCHEMAS` | `src/core/work-graph/configuration/role-record-codecs.ts:491` | role-spec / coordination-policy 四类记录与两个事件的 backend schema 注册 | 组合根注册记录与事件 schema 时 |
 | `PROJECT_BOOTSTRAP_RECORD_SCHEMAS` | `src/core/work-graph/configuration/project-bootstrap-record-codecs.ts:425` | 四个初始化事件的 schema 注册 | 组合根注册事件 schema 时 |
 
-同一种能力的多份实现：`canonicalRefKey` 的正本在 `src/core/work-graph/persistence/record-codecs.ts:77`，本层 `src/core/work-graph/configuration/role-record-codecs.ts:130` 是旧副本；`sameActor` 在 `src/core/work-graph/configuration/workspace-settings-reads.ts:51` 导出，另有 `src/core/work-graph/communication/decision-service.ts`、`src/core/work-graph/communication/mailbox-service.ts` 等私有同名实现。
+同一种能力的多份实现：`canonicalRefKey` 的正本在 `src/core/work-graph/persistence/record-codecs.ts:79`，本层 `src/core/work-graph/configuration/role-record-codecs.ts:130` 是旧副本；`sameActor` 在 `src/core/work-graph/configuration/workspace-settings-reads.ts:51` 导出，另有 `src/core/work-graph/communication/decision-service.ts`、`src/core/work-graph/communication/mailbox-service.ts` 等私有同名实现。
 
 ## 内部用
 - 设置基元：`ownScope`、`isOwned`、`sameActor`、`workspacePinProblem`、`loadWorkspace`、`replayWorkspace`。
@@ -45,4 +45,4 @@
 - 不要在 configuration 里 import 上层；需要的 Session/材料读取由组合根注入窄端口。
 - 不要只改类型或只改消费方；新配置要贯穿声明、校验、组合根转发与 reopen（FP-15、MH-02）。
 - 不要在本层改 Session 生命周期、发消息或判断完成；这些有各自的 owner，状态写只经 `state/`。
-- `canonicalRefKey` 另有旧副本：`src/core/work-graph/configuration/role-record-codecs.ts:130`，正本在 `src/core/work-graph/persistence/record-codecs.ts:77`，新代码一律用正本，旧副本由清理轮删除。
+- `canonicalRefKey` 另有旧副本：`src/core/work-graph/configuration/role-record-codecs.ts:130`，正本在 `src/core/work-graph/persistence/record-codecs.ts:79`，新代码一律用正本，旧副本由清理轮删除。

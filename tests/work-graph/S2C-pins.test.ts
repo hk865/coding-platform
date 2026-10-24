@@ -50,7 +50,7 @@ function noticeHarness(f: S2CPinsFixture, now: () => string) {
   });
   const position: NoticePositionV1 = { kind: 'commit', cursor: makeCommitCursor(1), itemKey: 'n1' };
   const displayToken = displayTokens.issue({
-    schemaVersion: 1, workspace: f.scope, operator: f.operator, goalRef: null,
+    schemaVersion: 1, workspace: f.scope, operator: f.operator, issuer: 'queue', goalRef: null,
     categories: ['member_notice'], sourceCursor: makeCommitCursor(1), queryCursor: null,
     returnedKeys: ['n1'], seenThrough: { member_notice: position },
   });

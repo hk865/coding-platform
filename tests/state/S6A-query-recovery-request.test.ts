@@ -295,7 +295,8 @@ function pending(): QueryLifecycleRecords {
 /** An entered attempt: claimed, prepared, entering, entered. */
 function entered(): QueryLifecycleRecords {
   let records = advanceQueryExecutionRecord(pending(), claimStep(null));
-  records = advanceQueryExecutionRecord(records, { phase: 'prepared', prepared: { bundleRef: BUNDLE_REF, inputDigest: 'i'.repeat(64) } });
+  records = advanceQueryExecutionRecord(records, { phase: 'prepared',
+    prepared: { bundleRef: BUNDLE_REF, inputDigest: 'i'.repeat(64), requestEffectiveGoalId: null } });
   records = advanceQueryExecutionRecord(records, { phase: 'entering', occurredAt: '2026-10-24T00:00:03.000Z',
     entry: { generation: 1, consumerId: 'consumer-1', hostConfigurationRevision: 'cfg-1', permissions: { tools: [], writeScope: [] },
       budget: RUNTIME_BUDGET, kernel: { ...KERNEL } },

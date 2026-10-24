@@ -16,6 +16,7 @@
 - `execution-entry-contracts.ts` — 执行授权/开始/进入/结果的端口与 DTO（不含 Query/Review 的伪 Run）。
 - `execution-history-contracts.ts` — `RunExecutionHistory` 写入端口与输入/结果。
 - `execution-read-contracts.ts` — `TaskExecutionRecord` 精确读取与按 Goal/Task 的执行分页。
+- `query-activity-plan.ts` — Query 活动写入的纯计划：`queryActivityRefOf`、`QueryActivityRecordContent`、`planQueryActivityWrite`（替换规则调用 `state/activity-replacement.ts`）与 `queryActivitySourceOf`（记录里的目标和两个 Session）。
 - `task-contracts.ts` — `GoalTaskPort`（创建/完成/控制 Goal）与 `GraphWrite` 正本。
 - `task-index.ts` — plan-local 的正反邻接构造和两种环检测，纯算法、无 Store 语义。
 
@@ -23,7 +24,7 @@
 做 Session 目录、request round、收件箱、工具参数映射和命令识别的去这组。
 - `command-recognition-contracts.ts` — 阻塞命令识别结果 `BlockedCommandMatchV1` 与共享的 `CommandRecognizer` 类型。
 - `communication-contracts.ts` — Session 收件箱的 DTO/端口、消息事件类型与 `deriveSessionInputId`。
-- `request-contracts.ts` — request round 视图、秘书选择端口、队列预算常量、活尝试阶段集合（`LIVE_ATTEMPT_PHASES`，队列与秘书选择共用）与 Query/Request 索引名。
+- `request-contracts.ts` — request round 视图、秘书选择端口、队列预算常量、活尝试阶段集合（`LIVE_ATTEMPT_PHASES`，队列与秘书选择共用）、Query/Request 索引名与请求根索引的槽值。
 - `request-ideas.ts` — 回答思路的唯一规则：`validIdeaCount` 与 `ideasIssues`（纯函数）。
 - `secretary-contracts.ts` — 秘书准备读取的契约：`SecretaryHistoryEntryV1`、`SecretaryPreparationFactsV1`、`SecretaryPreparationFactsPort`（实现在 views，组合根注入）。
 - `session-contracts.ts` — Session 创建/目录/分页契约；文件里的 `GraphWrite` 是旧副本，正本在 `task-contracts.ts`。
@@ -60,9 +61,9 @@
 | `EvidencePort` | `src/core/work-graph/model/evidence-contracts.ts:110` | 验证轮与检查生命周期的唯一受信写入口 | 证据/验证 owner |
 | `MaterialPort` | `src/core/work-graph/model/material-contracts.ts:11` | 存 artifact、按引用打开并区分历史用途 | 材料读写 |
 | `SessionMailboxPort` | `src/core/work-graph/model/communication-contracts.ts:147` | 消息发送、读取、ack、回复；读不改状态 | 收件箱与决定消息 |
-| `DecisionReadPort` | `src/core/work-graph/model/decision-contracts.ts:341` | 决定队列、来源页与冲突读取 | 决定读模型 |
-| `DecisionCardSourcePort` | `src/core/work-graph/model/decision-contracts.ts:360` | 把来源记录投影成决定卡 | 卡片来源适配 |
-| `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:373` | notice 项的读取与排序 | notice 来源适配 |
+| `DecisionReadPort` | `src/core/work-graph/model/decision-contracts.ts:350` | 决定队列、来源页与冲突读取 | 决定读模型 |
+| `DecisionCardSourcePort` | `src/core/work-graph/model/decision-contracts.ts:369` | 把来源记录投影成决定卡 | 卡片来源适配 |
+| `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:382` | notice 项的读取与排序 | notice 来源适配 |
 | `NoteWritePort` | `src/core/work-graph/model/note-contracts.ts:89` | 注记写入、审核、撤回 | 注记写 owner |
 | `NoteReadPort` | `src/core/work-graph/model/note-contracts.ts:317` | 注记按引用/列表/版本读取 | 注记读模型 |
 | `NoteMemoryReadPort` | `src/core/work-graph/model/note-contracts.ts:414` | 记忆 lookup/neighbors/history/conflicts/find/stale | 注记检索 |
@@ -79,6 +80,9 @@
 | `buildTaskAdjacency` | `src/core/work-graph/model/task-index.ts:23` | 构造一个 plan 的正向/反向依赖表，保留声明顺序 | 需要 plan-local 邻接时 |
 | `hasDirectedCycle` | `src/core/work-graph/model/task-index.ts:46` | 对已有邻接表做 DFS 环检测 | 已构造邻接后校验 |
 | `hasCycleInEdges` | `src/core/work-graph/model/task-index.ts:69` | 对任意 `{from,to}` 边集做环检测 | 非执行 DAG 的关系校验 |
+| `queryActivityRefOf` | `src/core/work-graph/model/query-activity-plan.ts:26` | 由完整 `QueryRunRef` 构造 `QueryActivity` 记录 ref | 读写 Query 活动记录；不要另拼 ref |
+| `planQueryActivityWrite` | `src/core/work-graph/model/query-activity-plan.ts:41` | 调 `decideActivityOutcome` 定 created/replaced/unchanged 并构造下一版 `QueryActivity` 快照与 span | Query 收尾提交与 Query backfill；不要另写替换规则 |
+| `queryActivitySourceOf` | `src/core/work-graph/model/query-activity-plan.ts:79` | 从 QueryJob 与 QueryRun 读出记录要写的目标（请求轮取 prepared manifest 冻结的目标，其他取 intent 目标）、执行 Session 和被问 Session；两个 Session 都投影成 `{projectId, sessionId}`（claim 可能留下完整 Session aggregate ref）；进入了却没有 prepared manifest 的请求轮答原因 | Query 收尾提交与 Query backfill 写记录内容；不要另读目标或 Session |
 | `toolCommitRequestId` | `src/core/work-graph/model/tool-commit-arguments.ts:63` | 由 origin/toolName/kernelCallId 派生稳定的工具 commit request id | 工具 handler 与 lookup 需要同一 id |
 | `agentActorOf` | `src/core/work-graph/model/tool-commit-arguments.ts:80` | 由 SessionRef/RunRef 构造唯一的 agent actor | 委派写入身份 |
 | `sendSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:89` | `send_session_message` 参数 → mailbox 请求 | 工具 handler 构造请求 |
@@ -100,6 +104,7 @@
 | 思路的唯一规则 | `src/core/work-graph/model/request-ideas.ts:12`、`src/core/work-graph/model/request-ideas.ts:17` | `validIdeaCount`（0、2 或 3 个）；`ideasIssues`（数组、条数、每条 title/detail 是字符串、标题一行非空且 ≤120 码点、说明 ≤600 码点，返回问题列表） | 正本：秘书回答检查（`queries/secretary-answer.ts`）、回答 codec 的存储复检（`queries/query-record-codecs.ts`）和选思路入口（`tasks/request-service.ts`）都调它，不另写思路规则 |
 | 秘书准备的读取端口 | `src/core/work-graph/model/secretary-contracts.ts:49` | `SecretaryPreparationFactsPort`：按 QueryRun 读一次请求、工作区、架构、政策、目标列表和执行种类，带 guards 和 watermark | 秘书轮的准备只经这个端口取事实 |
 | Query/Request 索引名 | `src/core/work-graph/model/request-contracts.ts:51` | `QUERY_BY_REQUEST_INDEX`、`QUERY_OPEN_BY_WORKSPACE_INDEX`、`REQUEST_ROOTS_BY_GOAL_INDEX`、`QUERY_RAN_BY_SESSION_GOAL_INDEX` | 注册或查询这些固定索引时；`unassigned` 读取用 `QUERY_OPEN_BY_WORKSPACE_INDEX` |
+| 请求根索引的槽值 **正本** | `src/core/work-graph/model/request-contracts.ts:171`、`src/core/work-graph/model/request-contracts.ts:171` | `REQUEST_ROOT_MARK`（根轮的 `rootMark`）、`requestGoalSlot`（`g:<goalId>`，无 Goal 是 `no-goal`） | 写 `s6-request-roots-by-goal` 的槽（codec）和按它读（主对话）都用这一份，不另拼字符串 |
 | Session facts 索引名 | `src/core/work-graph/model/session-facts-contracts.ts:27` | `SESSION_BY_PROVENANCE_LOOKUP`、`WORK_EXECUTION_BY_SESSION_LOOKUP`、`QUERY_RUN_BY_SESSION_LOOKUP`、`SESSION_ANOMALY_BY_TASK_LOOKUP`、`SESSION_ANOMALY_BY_GOAL_LOOKUP`、`SESSION_REPLY_BY_HANDLER_LOOKUP`、`SLICE1_LOOKUP_INDEXES` | 注册/读取 Session facts 索引时 |
 
 ## 内部用

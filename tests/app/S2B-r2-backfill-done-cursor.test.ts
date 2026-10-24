@@ -197,14 +197,14 @@ describe('S2B round 2 R9 — the backfill keeps the scan continuation', () => {
     const first = await backfill.backfillRecentActivity(f.ctx, { workspace: f.b2.base.scope, cursor: null });
     expect(first.status).toBe('ready');
     if (first.status !== 'ready') return;
-    expect(first.value.processed).toEqual([{ runRef: firstCandidate, outcome: 'counted', reason: null }]);
+    expect(first.value.processed).toEqual([{ kind: 'run', runRef: firstCandidate, outcome: 'counted', reason: null }]);
     expect(first.value.done).toBe(false);
     expect(first.value.next).not.toBeNull();
 
     const second = await backfill.backfillRecentActivity(f.ctx, { workspace: f.b2.base.scope, cursor: first.value.next });
     expect(second.status).toBe('ready');
     if (second.status !== 'ready') return;
-    expect(second.value.processed).toEqual([{ runRef: missing, outcome: 'counted', reason: null }]);
+    expect(second.value.processed).toEqual([{ kind: 'run', runRef: missing, outcome: 'counted', reason: null }]);
     expect(second.value.done).toBe(true);
     expect(second.value.next).toBeNull();
 

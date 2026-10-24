@@ -306,6 +306,23 @@ export function executionRequestProfileProblem(value: unknown): string | null {
   return null;
 }
 
+/**
+ * The execution-state `prepared`: null before the bind, else the bound
+ * manifest whose `requestEffectiveGoalId` is required — the request round's
+ * frozen goal, null for a no-goal round and every plain Query — and never
+ * defaulted. Like the other partial execution-state checks here, an absent
+ * `prepared` key is not judged; a present one is.
+ */
+export function executionPreparedProblem(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (!isJsonObject(value)) return 'prepared must be null or an object';
+  const goalId = value['requestEffectiveGoalId'];
+  if (!(goalId === null || isNonEmptyString(goalId))) {
+    return 'prepared.requestEffectiveGoalId must be null or a non-empty string';
+  }
+  return null;
+}
+
 /** Narrow export: the ONE QueryRunSnapshot@1 validator stays owned here; query codecs reuse it. */
 export function validateQueryRunSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord> {
   if (record.schemaId !== QUERY_RUN_SNAPSHOT_SCHEMA_ID) {
@@ -363,6 +380,8 @@ export function validateQueryRunSnapshot(record: EncodedRecord): DecodeResult<En
     if (requestProfileProblem !== null) {
       return invalid(`QueryRun executionState.${requestProfileProblem}`);
     }
+    const preparedProblem = executionPreparedProblem(executionState['prepared']);
+    if (preparedProblem !== null) return invalid(`QueryRun executionState.${preparedProblem}`);
   }
   return { status: 'decoded', value: record };
 }

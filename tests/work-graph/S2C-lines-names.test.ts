@@ -101,12 +101,12 @@ describe.each(['memory', 'sqlite'] as const)('2C-16 line names and groups (%s)',
     const row = rowOf(ready(await reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, head);
     expect(row?.status.own).toBe('standby');
     expect(row?.status.ownReason.code).toBe('idle');
-    expect(row?.name.source).toBe('secretary_interim');
-    expect(row?.name.primary).toBe('秘书 · 未定话题');
+    expect(row?.name.source).toBe('secretary_ordinal');
+    expect(row?.name.primary).toBe('秘书 1');
     expect(row?.name.complete).toBe(true);
   });
 
-  it('2C-16 (f2) a secretary with an occupied Query uses the Goal title, not 未定话题', async () => {
+  it('2C-16 (f2) an occupied secretary keeps its ordinal name and exposes the Query goalRef', async () => {
     const f = await lineFixture();
     const goalRef = await f.runs.bareGoal('g16-secretary-query');
     const head = (await f.createSession('s16-secretary-query', { role: {
@@ -115,8 +115,8 @@ describe.each(['memory', 'sqlite'] as const)('2C-16 line names and groups (%s)',
     const reader = lineReaderOver(f.base, f.records,
       (role) => role.templateId === 'secretary' ? 'secretary' : 'executor');
     const row = rowOf(ready(await reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, head);
-    expect(row?.name.source).toBe('secretary_interim');
-    expect(row?.name.primary).toBe('S2C-L bare goal g16-secretary-query');
+    expect(row?.name.source).toBe('secretary_ordinal');
+    expect(row?.name.primary).toBe('秘书 1');
     expect(row?.name.goalRef).toEqual(goalRef);
   });
 

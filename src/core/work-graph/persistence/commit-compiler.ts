@@ -22,7 +22,7 @@ import type { VersionPin } from "../../../contracts/core/identity.js";
 import { isRecord } from "../../../contracts/validation/common.js";
 
 
-import type { GoalRef, GoalSnapshot, ProjectRef, WorkspaceRef } from "../../../contracts/ledger.js";
+import type { GoalRef, PendingGoalSnapshot, ProjectRef, WorkspaceRef } from "../../../contracts/ledger.js";
 import type { PreparedCommit, RecordGuard } from "../../record-store/ports.js";
 import { canonicalRefKey, cloneActorRef, encodeGoalCreatedEvent, encodeGoalSnapshot } from "./record-codecs.js";
 
@@ -66,9 +66,10 @@ export type GoalCreateCompileInput = {
   /**
    * Goal@1 as GOAL-01 wrote it (`newGoalSnapshot`), with the caller's
    * normalized objective. The event carries this same objective, so the event
-   * and the snapshot can never disagree.
+   * and the snapshot can never disagree. `since` is the null placeholder the
+   * creating commit fills with its cursor.
    */
-  goal: GoalSnapshot;
+  goal: PendingGoalSnapshot;
   /** GOAL-01's CAS guards as record guards, in the machine's order. */
   guards: readonly RecordGuard[];
   eventId: string;
@@ -116,6 +117,15 @@ export function compileGoalCreate(input: GoalCreateCompileInput): PreparedCommit
     indexGuards: [],
     indexChanges: [],
     events: [encodeGoalCreatedEvent(event)],
+    // The creation commit itself is the only source of the Goal's cursor.
+    commitCursorBindings: [{
+      refKey: canonicalRefKey({
+        aggregateType: "Goal",
+        projectId,
+        goalId,
+      }),
+      field: "since",
+    }],
   };
 }
 

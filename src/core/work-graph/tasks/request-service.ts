@@ -167,24 +167,28 @@ function unavailable(reason: string): RequestRejectionV1 {
   return rejected('unavailable', reason);
 }
 
-function isPerson(ctx: CoreCallContext): boolean {
-  return ctx.principal.kind === 'host' && ctx.principal.actor.kind === 'human';
-}
+/** The trusted Host principal a request command runs under. */
+type HostPrincipal = Extract<CoreCallContext['principal'], { kind: 'host' }>;
 
-function isSystem(ctx: CoreCallContext): boolean {
-  return ctx.principal.kind === 'host' && ctx.principal.actor.kind === 'system';
+/**
+ * The authorization check: the caller's Host principal when its actor is of
+ * the kind the command needs (the person for a public command, the trusted
+ * system for an internal one), else null. Every later step takes the returned
+ * principal, so nothing after the check can meet a caller that is not the Host.
+ */
+function hostPrincipalOf(ctx: CoreCallContext, actorKind: 'human' | 'system'): HostPrincipal | null {
+  return ctx.principal.kind === 'host' && ctx.principal.actor.kind === actorKind ? ctx.principal : null;
 }
 
 /** The trusted principal folded into the identity (the notes pattern, `note-service.ts:247`). */
-function principalOf(ctx: CoreCallContext): JsonValue {
-  if (ctx.principal.kind !== 'host') throw new Error('a request command requires a trusted Host actor');
-  return { kind: 'host', actor: { kind: ctx.principal.actor.kind, id: ctx.principal.actor.id } };
+function principalOf(principal: HostPrincipal): JsonValue {
+  return { kind: 'host', actor: { kind: principal.actor.kind, id: principal.actor.id } };
 }
 
 /** `request.<kind>:<sha256(operation, project, workspace, principal, commandId)>`. */
-function commandIdentity(ctx: CoreCallContext, kind: string, commandId: string): string {
+function commandIdentity(ctx: CoreCallContext, principal: HostPrincipal, kind: string, commandId: string): string {
   return `request.${kind}:` + sha256Hex(canonicalJson({ schemaVersion: 1, operation: `request.${kind}`,
-    projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null, principal: principalOf(ctx),
+    projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null, principal: principalOf(principal),
     commandId } as unknown as JsonValue));
 }
 
@@ -237,7 +241,81 @@ function versionedRefProblem(value: unknown, what: string): string | null {
   return null;
 }
 
-function publicCommandProblem(command: RequestPublicCommandV1): string | null {
+/** An `ask` names at most this many card refs (slice-6 spec L6: the refs of one card). */
+const ASK_CARD_REFS_MAX = 20;
+
+/** What a regeneration asks for; the person's words, when any, follow after a blank line. */
+const ASK_REGENERATE_TEXT = '请按当前事实重新出这个候选计划。';
+
+/**
+ * The input an `ask` stores on its follow-up round: the question as given, or
+ * for a regeneration the request to redo the candidate from the current facts
+ * followed by the person's words when there are any. The shared Query text
+ * rule applies to this stored text.
+ */
+export function askInputText(input: { regenerate: boolean; text: string }): string {
+  if (!input.regenerate) return input.text;
+  return input.text.length === 0 ? ASK_REGENERATE_TEXT : `${ASK_REGENERATE_TEXT}\n\n${input.text}`;
+}
+
+/**
+ * The answer to the read of the card objects an `ask` names: a type the store
+ * keeps no records of is `invalid` (asking again cannot help); any other failed
+ * read is `unavailable`; a read the store answered lets the `ask` through.
+ */
+export function cardRefsReadRefusal(
+  read: { status: 'ready' } | { status: 'rejected'; code: string; reason: string },
+): RequestRejectionV1 | null {
+  if (read.status === 'ready') return null;
+  if (read.code === 'unsupported') return rejected('invalid', `a card ref is not a stored object: ${read.reason}`);
+  return unavailable(`the card objects read failed: ${read.code}: ${read.reason}`);
+}
+
+/**
+ * The card objects an `ask` names, read once before a round is added. The
+ * secretary's preparation reads their current revisions in one batch, and the
+ * store fails such a batch whole when one type is not a stored object, which
+ * would stop every later preparation of the request. Missing objects pass (the
+ * context shows them as not found); the pinned revision is not compared with
+ * the current one.
+ */
+async function readCardObjects(records: RequestServiceStore,
+  cardRefs: readonly VersionedRef[]): Promise<RequestRejectionV1 | null> {
+  const keys = cardRefs.map((pin) => canonicalJson(pin.ref as unknown as JsonValue));
+  try {
+    return cardRefsReadRefusal(await records.readMany(keys));
+  } catch (error) {
+    return unavailable(`the card objects read failed: ${messageOf(error)}`);
+  }
+}
+
+/**
+ * The card refs of an `ask`: 1 to `ASK_CARD_REFS_MAX` well-formed VersionedRefs
+ * of the caller's project, no object named twice (whatever the revisions).
+ */
+function cardRefsProblem(cardRefs: unknown, projectId: string): string | null {
+  if (!Array.isArray(cardRefs)) return 'cardRefs must be an array';
+  if (cardRefs.length < 1 || cardRefs.length > ASK_CARD_REFS_MAX) {
+    return `cardRefs must name 1 to ${String(ASK_CARD_REFS_MAX)} refs`;
+  }
+  const seen = new Set<string>();
+  for (const [index, entry] of cardRefs.entries()) {
+    const problem = versionedRefProblem(entry, `cardRefs[${index}]`);
+    if (problem !== null) return problem;
+    const ref = (entry as VersionedRef).ref as unknown as Record<string, unknown>;
+    if (ref['projectId'] !== projectId) return `cardRefs[${index}].ref must name an object of this project`;
+    const key = keyOf(ref);
+    if (seen.has(key)) return `cardRefs[${index}] names the same object as an earlier ref`;
+    seen.add(key);
+  }
+  return null;
+}
+
+/**
+ * The pure input check of a public command (precheck step 2): shape, text and
+ * refs, with the caller's project the only context; nothing is read.
+ */
+export function publicCommandProblem(command: RequestPublicCommandV1, projectId: string): string | null {
   if (!isRecord(command) || !nonEmpty(command.commandId)) return 'the command requires a commandId';
   switch (command.kind) {
     case 'submit': {
@@ -271,14 +349,12 @@ function publicCommandProblem(command: RequestPublicCommandV1): string | null {
     case 'ask': {
       const problem = queryJobRefProblem(command.round, 'round');
       if (problem !== null) return problem;
-      const text = queryTextProblem(command.text);
-      if (text !== null) return `text ${text}`;
-      if (!Array.isArray(command.cardRefs)) return 'cardRefs must be an array';
-      for (const [index, ref] of command.cardRefs.entries()) {
-        const refProblem = versionedRefProblem(ref, `cardRefs[${index}]`);
-        if (refProblem !== null) return refProblem;
-      }
+      const refs = cardRefsProblem(command.cardRefs, projectId);
+      if (refs !== null) return refs;
       if (typeof command.regenerate !== 'boolean') return 'regenerate must be a boolean';
+      if (typeof command.text !== 'string') return 'text must be a string';
+      const text = queryTextProblem(askInputText(command));
+      if (text !== null) return `text ${text}`;
       return null;
     }
     default:
@@ -700,11 +776,10 @@ function intentOf(input: {
 }
 
 function submittedEvent(input: {
-  ctx: CoreCallContext; job: PendingQueryJobSnapshot; eventId: string; identityKey: string; fingerprint: string;
+  principal: HostPrincipal; job: PendingQueryJobSnapshot; eventId: string; identityKey: string; fingerprint: string;
   commandId: string; occurredAt: string;
 }): QueryJobSubmittedEventV1 {
-  if (input.ctx.principal.kind !== 'host') throw new Error('request-service: a request write requires a Host actor');
-  const actor = input.ctx.principal.actor;
+  const actor = input.principal.actor;
   return {
     eventId: input.eventId,
     eventType: 'QueryJobSubmitted',
@@ -882,13 +957,14 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       | { status: 'fresh'; command: RequestPublicCommandV1; facts: RequestCoreViewV1 | null }
       | RequestRejectionV1> {
     // (1) only the person, before anything is read.
-    if (!isPerson(ctx)) return rejected('forbidden', 'only the person may issue a request command');
+    const principal = hostPrincipalOf(ctx, 'human');
+    if (principal === null) return rejected('forbidden', 'only the person may issue a request command');
     // (2) pure input checks, nothing read.
-    const shape = publicCommandProblem(command);
+    const shape = publicCommandProblem(command, ctx.projectId);
     if (shape !== null) return rejected('invalid', shape);
 
     // (3) identity and fingerprint.
-    const identityKey = commandIdentity(ctx, command.kind, command.commandId);
+    const identityKey = commandIdentity(ctx, principal, command.kind, command.commandId);
     const fingerprint = commandFingerprint(command);
 
     // (4) a committed receipt replays before any pick, line or time-dependent check.
@@ -924,6 +1000,10 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       const problem = selectIdeaProblemOf(view.view, command.round, command.index);
       if (problem !== null) return problem;
     }
+    if (command.kind === 'ask') {
+      const cards = await readCardObjects(deps.records, command.cardRefs);
+      if (cards !== null) return cards;
+    }
     return { status: 'fresh', command, facts: view.view };
   }
 
@@ -935,29 +1015,34 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     input: { command: RequestPublicCommandV1; plan: RequestPlanV1 } | { command: RequestInternalCommandV1 },
   ): Promise<RequestAppendResultV1> {
     if ('plan' in input) {
-      if (!isPerson(ctx)) return rejected('forbidden', 'only the person may append a public request command');
-      const shape = publicCommandProblem(input.command);
+      const person = hostPrincipalOf(ctx, 'human');
+      if (person === null) return rejected('forbidden', 'only the person may append a public request command');
+      const shape = publicCommandProblem(input.command, ctx.projectId);
       if (shape !== null) return rejected('invalid', shape);
-      return appendPublic(ctx, input.command, input.plan);
+      return appendPublic(ctx, person, input.command, input.plan);
     }
     // Internal commands are authorized by principal kind, not by a human actor.
-    if (!isSystem(ctx)) return rejected('forbidden', 'only the trusted system actor may append an internal request command');
-    return appendInternal(ctx, input.command);
+    const system = hostPrincipalOf(ctx, 'system');
+    if (system === null) {
+      return rejected('forbidden', 'only the trusted system actor may append an internal request command');
+    }
+    return appendInternal(ctx, system, input.command);
   }
 
-  async function appendPublic(ctx: CoreCallContext, command: RequestPublicCommandV1, plan: RequestPlanV1):
-    Promise<RequestAppendResultV1> {
-    const identityKey = commandIdentity(ctx, command.kind, command.commandId);
+  async function appendPublic(ctx: CoreCallContext, principal: HostPrincipal, command: RequestPublicCommandV1,
+    plan: RequestPlanV1): Promise<RequestAppendResultV1> {
+    const identityKey = commandIdentity(ctx, principal, command.kind, command.commandId);
     const fingerprint = commandFingerprint(command);
     const replay = await replayPublic(deps, identityKey, fingerprint);
     if (replay.status === 'ready') return replay.result;
     if (replay.status === 'rejected') return replay;
-    return withTailRetries(() => preparePublic(ctx, command, plan, identityKey, fingerprint),
+    return withTailRetries(() => preparePublic(ctx, principal, command, plan, identityKey, fingerprint),
       (prepared) => commitPrepared(identityKey, fingerprint, prepared));
   }
 
-  async function appendInternal(ctx: CoreCallContext, command: RequestInternalCommandV1): Promise<RequestAppendResultV1> {
-    const identityKey = commandIdentity(ctx, command.kind, command.operationId);
+  async function appendInternal(ctx: CoreCallContext, principal: HostPrincipal, command: RequestInternalCommandV1):
+    Promise<RequestAppendResultV1> {
+    const identityKey = commandIdentity(ctx, principal, command.kind, command.operationId);
     const fingerprint = sha256Hex(canonicalJson({ kind: command.kind,
       root: command.kind === 'assigned' ? command.requestRoot : null,
       round: command.kind === 'end_unbound' ? command.round : null,
@@ -972,13 +1057,13 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     if (replay.status !== 'missing') return unavailable(`the idempotency lookup failed: ${replay.reason}`);
 
     if (command.kind === 'assigned') {
-      return withTailRetries(() => prepareAssigned(ctx, command, identityKey, fingerprint),
+      return withTailRetries(() => prepareAssigned(ctx, principal, command, identityKey, fingerprint),
         (prepared) => commitPrepared(identityKey, fingerprint, prepared));
     }
     if (command.kind !== 'end_unbound') {
       return unavailable(`the ${command.kind} operation has no producer on this platform`);
     }
-    return withTailRetries(() => prepareEndUnbound(ctx, command, identityKey, fingerprint),
+    return withTailRetries(() => prepareEndUnbound(ctx, principal, command, identityKey, fingerprint),
       (prepared) => commitPrepared(identityKey, fingerprint, prepared));
   }
 
@@ -1000,15 +1085,15 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
   }
 
   async function preparePublic(
-    ctx: CoreCallContext, command: RequestPublicCommandV1, plan: RequestPlanV1,
+    ctx: CoreCallContext, principal: HostPrincipal, command: RequestPublicCommandV1, plan: RequestPlanV1,
     identityKey: string, fingerprint: string,
   ): Promise<PreparedOutcome> {
     switch (command.kind) {
-      case 'submit': return prepareSubmit(ctx, command, plan, identityKey, fingerprint);
-      case 'route': return prepareRoute(ctx, command, identityKey, fingerprint);
+      case 'submit': return prepareSubmit(ctx, principal, command, plan, identityKey, fingerprint);
+      case 'route': return prepareRoute(ctx, principal, command, identityKey, fingerprint);
       case 'select_idea':
       case 'ask':
-        return prepareFollowup(ctx, command, plan, identityKey, fingerprint);
+        return prepareFollowup(ctx, principal, command, plan, identityKey, fingerprint);
     }
   }
 
@@ -1017,8 +1102,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
   // ---------------------------------------------------------------------- //
 
   async function prepareSubmit(
-    ctx: CoreCallContext, command: Extract<RequestPublicCommandV1, { kind: 'submit' }>, plan: RequestPlanV1,
-    identityKey: string, fingerprint: string,
+    ctx: CoreCallContext, principal: HostPrincipal, command: Extract<RequestPublicCommandV1, { kind: 'submit' }>,
+    plan: RequestPlanV1, identityKey: string, fingerprint: string,
   ): Promise<PreparedOutcome> {
     // The facts this command guards (a follow-up reads its request).
     let facts: RequestRoundsFactsV1 | null = null;
@@ -1043,7 +1128,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     const assignment = await resolveAssignment(ctx, facts, plan, row, command.recipient);
     if (assignment.status !== 'ready') return assignment;
     return buildRound({
-      ctx, commandId: command.commandId, identityKey, fingerprint, occurredAt: deps.now(),
+      ctx, principal, commandId: command.commandId, identityKey, fingerprint, occurredAt: deps.now(),
       requestRoot: command.continues, kind: command.continues === null ? 'request' : 'followup',
       requestGoalId: command.continues === null ? command.goalId : facts!.requestGoalId,
       text: command.text, selectedIdea: null, relatedCardRefs: [], createdLine: plan.createdLine,
@@ -1113,7 +1198,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
   }
 
   type BuildRoundInput = {
-    ctx: CoreCallContext; commandId: string; identityKey: string; fingerprint: string; occurredAt: string;
+    ctx: CoreCallContext; principal: HostPrincipal; commandId: string; identityKey: string; fingerprint: string;
+    occurredAt: string;
     requestRoot: QueryJobRef | null; kind: 'request' | 'followup'; requestGoalId: string | null;
     text: string; selectedIdea: { round: QueryJobRef; index: number } | null; relatedCardRefs: VersionedRef[];
     createdLine: boolean; receiptKind: 'submit' | 'select_idea' | 'ask';
@@ -1170,7 +1256,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       status: 'ready',
       value: {
         receipt, records,
-        events: [encodeQueryJobSubmittedEvent(submittedEvent({ ctx: input.ctx, job: pair.job, eventId,
+        events: [encodeQueryJobSubmittedEvent(submittedEvent({ principal: input.principal, job: pair.job, eventId,
           identityKey: input.identityKey, fingerprint: input.fingerprint, commandId: input.commandId,
           occurredAt: input.occurredAt }))],
         guards: guards.guards, claims, round: roundRef, sinceRefKey: keyOf(pair.job.ref),
@@ -1186,7 +1272,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
   // ---------------------------------------------------------------------- //
 
   async function prepareRoute(
-    ctx: CoreCallContext, command: Extract<RequestPublicCommandV1, { kind: 'route' }>,
+    ctx: CoreCallContext, principal: HostPrincipal, command: Extract<RequestPublicCommandV1, { kind: 'route' }>,
     identityKey: string, fingerprint: string,
   ): Promise<PreparedOutcome> {
     const resolved = await resolveRequestRoot(deps.records, ctx, command.round);
@@ -1290,8 +1376,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       value: {
         receipt,
         records,
-        events: [encodeQueryJobSubmittedEvent(submittedEvent({ ctx, job: routingJob, eventId, identityKey, fingerprint,
-          commandId: command.commandId, occurredAt }))],
+        events: [encodeQueryJobSubmittedEvent(submittedEvent({ principal, job: routingJob, eventId, identityKey,
+          fingerprint, commandId: command.commandId, occurredAt }))],
         guards: guards.guards, claims, round: roundRef, sinceRefKey: keyOf(routingJob.ref),
         conflict: { source, sessionRefKeys, intakeKey },
       },
@@ -1308,7 +1394,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
    * on a new secretary that then holds the intake.
    */
   async function prepareFollowup(
-    ctx: CoreCallContext,
+    ctx: CoreCallContext, principal: HostPrincipal,
     command: Extract<RequestPublicCommandV1, { kind: 'select_idea' | 'ask' }>,
     plan: RequestPlanV1, identityKey: string, fingerprint: string,
   ): Promise<PreparedOutcome> {
@@ -1334,12 +1420,12 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       text = `选了第 ${command.index + 1} 个思路：${answered.ideas[command.index]!.title}`;
       selectedIdea = { round: { ...command.round }, index: command.index };
     } else {
-      text = command.text;
+      text = askInputText(command);
     }
     const assignment = await resolveAssignment(ctx, facts, plan, requestAssignmentRow(command, facts), null);
     if (assignment.status !== 'ready') return assignment;
     return buildRound({
-      ctx, commandId: command.commandId, identityKey, fingerprint, occurredAt: deps.now(),
+      ctx, principal, commandId: command.commandId, identityKey, fingerprint, occurredAt: deps.now(),
       requestRoot, kind: 'followup', requestGoalId: facts.requestGoalId, text, selectedIdea,
       relatedCardRefs: command.kind === 'ask' ? command.cardRefs.map((ref) => structuredClone(ref)) : [],
       createdLine: plan.createdLine, receiptKind: command.kind, facts, goalGuard: null,
@@ -1351,7 +1437,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
   // ---------------------------------------------------------------------- //
 
   async function prepareAssigned(
-    ctx: CoreCallContext, command: Extract<RequestInternalCommandV1, { kind: 'assigned' }>,
+    ctx: CoreCallContext, principal: HostPrincipal, command: Extract<RequestInternalCommandV1, { kind: 'assigned' }>,
     identityKey: string, fingerprint: string,
   ): Promise<PreparedOutcome> {
     const read = await readRequestFacts(deps, ctx, command.requestRoot);
@@ -1396,8 +1482,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       status: 'ready',
       value: {
         receipt, records,
-        events: [encodeQueryJobSubmittedEvent(submittedEvent({ ctx, job: routingJob, eventId, identityKey, fingerprint,
-          commandId: command.operationId, occurredAt }))],
+        events: [encodeQueryJobSubmittedEvent(submittedEvent({ principal, job: routingJob, eventId, identityKey,
+          fingerprint, commandId: command.operationId, occurredAt }))],
         guards: guards.guards,
         claims: [moveTailClaim(facts, command.requestRoot, roundRef), ...intake.claims],
         round: roundRef, sinceRefKey: keyOf(routingJob.ref),
@@ -1412,10 +1498,9 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
   // ---------------------------------------------------------------------- //
 
   async function prepareEndUnbound(
-    ctx: CoreCallContext, command: Extract<RequestInternalCommandV1, { kind: 'end_unbound' }>,
+    ctx: CoreCallContext, principal: HostPrincipal, command: Extract<RequestInternalCommandV1, { kind: 'end_unbound' }>,
     identityKey: string, fingerprint: string,
   ): Promise<PreparedOutcome> {
-    if (ctx.principal.kind !== 'host') return rejected('forbidden', 'end_unbound requires a trusted Host actor');
     const resolved = await resolveRequestRoot(deps.records, ctx, command.round);
     if (resolved.status === 'not_found') return rejected('not_found', 'the round is not a request round of this workspace');
     if (resolved.status === 'rejected') return unavailable(resolved.reason);
@@ -1462,7 +1547,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     if (guards.status !== 'ready') return guards;
     const event = buildRecordedEvent({
       eventId: deps.operationId(), identityKey, fingerprint, occurredAt,
-      actor: { kind: ctx.principal.actor.kind, id: ctx.principal.actor.id },
+      actor: { kind: principal.actor.kind, id: principal.actor.id },
       queryRunRef: ended.run.ref, requestId: command.operationId,
       correlationId: round.job.intent.correlationId, operation: 'observed', result: ended.run, run: ended.run,
       endsUnstarted: true,

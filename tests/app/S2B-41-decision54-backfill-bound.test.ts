@@ -274,7 +274,7 @@ it('2B-41 (BE3): the automatic backfill bounds A by its own closed Turn, exclude
     expect(batch.status).toBe('ready');
     if (batch.status !== 'ready') return;
     expect(batch.value.processed).toEqual([
-      { runRef: fx.claim.runRef, outcome: 'counted', reason: null },
+      { kind: 'run', runRef: fx.claim.runRef, outcome: 'counted', reason: null },
     ]);
 
     const aFinal = await fx.activity.readRunActivities(fx.ctx, { runRefs: [fx.claim.runRef] });

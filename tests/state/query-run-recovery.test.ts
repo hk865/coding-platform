@@ -454,7 +454,7 @@ const ENTRY: NonNullable<QueryExecutionStateV1['entry']> = {
 };
 const STEPS: { readonly [P in QueryExecutionStep['phase']]: QueryExecutionStep } = {
   claimed: { phase: 'claimed', claim: { sessionRef: SESSION_REF, sessionGeneration: 5, role: ROLE, roleBinding: ROLE_BINDING, roleResolution: ROLE_RESOLUTION, priorHistoryCursor: 'cursor-2', requestProfile: null } },
-  prepared: { phase: 'prepared', prepared: { bundleRef: BUNDLE_REF, inputDigest: 'i'.repeat(64) } },
+  prepared: { phase: 'prepared', prepared: { bundleRef: BUNDLE_REF, inputDigest: 'i'.repeat(64), requestEffectiveGoalId: null } },
   entering: { phase: 'entering', entry: ENTRY, request: { runRef: RUN_REF, bundleRef: BUNDLE_REF, question: 'why?', budget: { maxTokens: null } }, occurredAt: '2026-10-04T00:00:03.000Z' },
   entered: { phase: 'entered', history: history(null) },
 };
@@ -519,7 +519,8 @@ describe('advanceQueryExecutionRecord', () => {
   it('prepared: binds the manifest only', () => {
     const after = advancedTo('prepared');
     expect(after.run.revision).toBe(3);
-    expect(after.run.run.executionState?.prepared).toEqual({ bundleRef: BUNDLE_REF, inputDigest: 'i'.repeat(64) });
+    expect(after.run.run.executionState?.prepared).toEqual({ bundleRef: BUNDLE_REF, inputDigest: 'i'.repeat(64),
+      requestEffectiveGoalId: null });
     expect(stateOf(after)).toEqual({ phase: 'prepared', runStatus: 'pending', jobStatus: 'pending', outcome: null, ended: false });
   });
 

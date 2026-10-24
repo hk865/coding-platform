@@ -99,7 +99,8 @@ describe('S2B Group B — Host backfill wiring (BE3)', () => {
 
     // The epoch is written by the leased Host itself (not by the fixture).
     const calendar = await reads.readActivityCalendar(f.ctx, {
-      goalRef: f.goalRef, from: at(-1), to: at(1), granularity: 'hour', timeZone: 'UTC',
+      scope: { kind: 'goal', goalRef: f.goalRef },
+      from: at(-1), to: at(1), granularity: 'hour', timeZone: 'UTC',
     });
     expect(calendar.status).toBe('ready');
     if (calendar.status !== 'ready') return;
@@ -165,7 +166,8 @@ describe('S2B Group B — Host backfill wiring (BE3)', () => {
     const reads = readModelOver(secondary.records as unknown as RecordOrderedLookupPort, () => at(0));
 
     const calendar = await reads.readActivityCalendar(f.ctx, {
-      goalRef: f.goalRef, from: at(-2), to: at(1), granularity: 'hour', timeZone: 'UTC',
+      scope: { kind: 'goal', goalRef: f.goalRef },
+      from: at(-2), to: at(1), granularity: 'hour', timeZone: 'UTC',
     });
     expect(calendar.status).toBe('ready');
     if (calendar.status !== 'ready') return;

@@ -2,8 +2,11 @@
 // per-Run step/edit tally, changed files and model usage read from the frozen
 // Kernel records; an `ActivityRecording` record marks when a workspace started
 // recording. Neither is a Run state field (L4, L16).
+// Slice 6A L16: the same tally is recorded for a Query entry, keyed by the full
+// `QueryRunRef`; the workspace recording also names the Query epoch.
 import type { SessionRef } from './core/identity.js';
 import type { RunRef, RunSnapshot } from './dispatch.js';
+import type { QueryRunRef } from './query-job.js';
 
 /** L1: the tally rule version. A record carries the version it was computed with. */
 export const RUN_ACTIVITY_RULE_VERSION = 1 as const;
@@ -66,8 +69,42 @@ export type RunActivitySnapshot = {
   facts: RunActivityFactsV1;
   span: { firstAt: string | null; lastAt: string; basis: 'kernel' | 'run_times' };       // L4: lastAt is always text
 };
+/** L16: one Query entry's tally, keyed by the full QueryRunRef so two attempts never share a record. */
+export type QueryActivityRef = {
+  aggregateType: 'QueryActivity'; projectId: string; workspaceId: string; queryJobId: string; runId: string;
+};
+export type QueryActivitySnapshot = {
+  ref: QueryActivityRef; revision: number; schemaVersion: 1;
+  queryRunRef: QueryRunRef;
+  sessionRef: SessionRef | null;          // the Session that ran it; null before a claim
+  askedSessionRef: SessionRef | null;     // only a consultation copy's formal source Session
+  goalId: string | null;
+  queryEndedAt: string;
+  recordedAt: string;
+  recordedBy: 'query_end' | 'backfill';
+  facts: RunActivityFactsV1;
+  span: { firstAt: string | null; lastAt: string; basis: 'kernel' | 'run_times' };  // same as the Work record
+};
 export type ActivityRecordingRef = { aggregateType: 'ActivityRecording'; projectId: string; workspaceId: string };
-export type ActivityRecordingSnapshot = { ref: ActivityRecordingRef; revision: number; schemaVersion: 1; since: string };
+export type ActivityRecordingSnapshot = {
+  ref: ActivityRecordingRef; revision: number; schemaVersion: 1;
+  since: string;
+  /** The Query epoch; null means no Query epoch has started yet. Required in the current format. */
+  querySince: string | null;
+};
+
+/** L6: an unknown tally's `detail` is cut to this many characters. */
+const ACTIVITY_UNKNOWN_DETAIL_LIMIT = 500;
+
+/**
+ * L6: an explicit unknown with the rule version and a bounded detail. The one
+ * constructor of an uncounted tally: the Runtime readers and the WorkGraph
+ * closing writes build it here, so an unread window is never written as zero.
+ */
+export function unknownFacts(reason: RunActivityUnknownReason, detail: string): RunActivityFactsV1 {
+  return { status: 'unknown', ruleVersion: RUN_ACTIVITY_RULE_VERSION, reason,
+    detail: detail.length <= ACTIVITY_UNKNOWN_DETAIL_LIMIT ? detail : detail.slice(0, ACTIVITY_UNKNOWN_DETAIL_LIMIT) };
+}
 
 /**
  * Slice 2B L7/round-2 R5: the ONE predicate for "the Run never entered the

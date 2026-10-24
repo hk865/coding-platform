@@ -37,6 +37,7 @@ import { createActivityBackfill, type ActivityBackfillOperations } from '../../s
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
+import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import { B2_AT } from './B2-runtime-fixture.js';
@@ -49,18 +50,19 @@ export const BE2_HOST_3: HostInstanceFacts = { hostInstanceId: 's2b-be2-host-3',
 
 /**
  * The extra registrations BE2 needs at the storage boundary: the real control
- * records for the pause/cancel flows and the real evidence group for the
- * calendar's verification-round reads. Both are real production schema groups;
- * neither is registered by the P7 base fixture.
+ * records for the pause/cancel flows, the real evidence group for the
+ * calendar's verification-round reads, and the Query group for the calendar's
+ * workspace QueryRun index. All are real production schema groups; none is
+ * registered by the P7 base fixture.
  */
 export function be2ExtraSchemas(): RecordBackendSchemas {
   return {
     records: [...EVIDENCE_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records,
-      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records],
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records, ...QUERY_JOB_RECORD_SCHEMAS.records],
     events: [...EVIDENCE_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events,
-      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events],
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events, ...QUERY_JOB_RECORD_SCHEMAS.events],
     lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
-      ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? [])],
+      ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []), ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? [])],
   };
 }
 
@@ -168,7 +170,8 @@ export async function calendarOf(
   fx: S2BRuntimeStoreFixture,
   input: { from: string; to: string; granularity: 'hour' | 'day'; timeZone: string },
 ): Promise<ActivityCalendarV1> {
-  const read = await fx.activity.readActivityCalendar(fx.ctx, { goalRef: fx.claimFixture.goalRef, ...input });
+  const read = await fx.activity.readActivityCalendar(fx.ctx, {
+    scope: { kind: 'goal', goalRef: fx.claimFixture.goalRef }, ...input });
   if (read.status !== 'ready') throw new Error(`readActivityCalendar: ${JSON.stringify(read)}`);
   return read.value;
 }

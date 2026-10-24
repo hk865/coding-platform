@@ -12,14 +12,18 @@
  *   - the four read owners (`createActivityReadModel`, `createTrackReadModel`,
  *     `createTaskStateTimeline`) over those stores;
  *   - the real HTTP seam (`createWorkbenchServer` over the real
- *     `createPlatformCoreRouteBindings`) for the four plain routes and for the
+ *     `createPlatformCoreRouteBindings`) for the plain read routes and for the
  *     storage-failure row; real `createLocalWorkbenchHost` instances for the
- *     human-admitted and no-lease `busy` rows.
+ *     human-admitted and no-lease `busy` rows;
+ *   - the per-Query read through that seam with one `QueryRunRef` of this
+ *     fixture's scope that no QueryRun record exists for, so the row names the
+ *     route's wiring and leaves the populated views to the Query activity tests.
  *
  * Expected values come from the public reads (the route must return exactly what
- * the owner read returns); the human-only row is asserted through the real route
- * binding with a non-Host principal, which the fixed Host actor cannot express.
- * No database reads and no model calls.
+ * the owner read returns), except the `activity/queries` rows, whose literals are
+ * the L16 view of a Query with no history. The human-only row is asserted through
+ * the real route binding with a non-Host principal, which the fixed Host actor
+ * cannot express. No database reads and no model calls.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -29,7 +33,10 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
-import type { ActivityCalendarV1, RunActivityViewV1 } from '../../src/core/work-graph/views/activity-read-model.js';
+import type { QueryRunRef } from '../../src/contracts/query-job.js';
+import type {
+  ActivityCalendarV1, QueryActivityViewV1, RunActivityViewV1,
+} from '../../src/core/work-graph/views/activity-read-model.js';
 import type { TrackBarsPageV1 } from '../../src/core/work-graph/views/track-read-model.js';
 import type { TaskStateTimelinePageV1 } from '../../src/core/work-graph/views/task-state-timeline.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
@@ -186,6 +193,12 @@ function baseOf(server: WorkbenchServer): string {
   return `http://${server.address!.host}:${server.address!.port}`;
 }
 
+/** The one QueryRunRef the `activity/queries` rows name: a real scope, no QueryRun record. */
+function missingQueryRef(): QueryRunRef {
+  return { aggregateType: 'QueryRun', projectId: activityScope.projectId,
+    workspaceId: activityScope.workspaceId, queryJobId: 's2b-35-missing', runId: 's2b-35-missing-run' };
+}
+
 /** A real leased Host over a fresh SQLite directory; returns it and its base/token. */
 async function startHost(actor: { kind: 'human' | 'system'; id: string }, scope: { projectId: string; workspaceId: string },
   lock: boolean): Promise<{ host: LocalWorkbenchHost; base: string; token: string }> {
@@ -216,7 +229,8 @@ async function startHost(actor: { kind: 'human' | 'system'; id: string }, scope:
 describe('S2B-35 activity and timeline routes (BE5)', () => {
   it('2B-35 (a) the four plain routes return exactly the public reads', async () => {
     const base = baseOf(successServer);
-    const calendarInput = { goalRef: activityGoal, from: FROM, to: TO, granularity: 'hour' as const, timeZone: 'UTC' };
+    const calendarInput = { scope: { kind: 'goal' as const, goalRef: activityGoal },
+      from: FROM, to: TO, granularity: 'hour' as const, timeZone: 'UTC' };
     const directCalendar = await activityReads.readActivityCalendar(activityFixture.ctx, calendarInput);
     expect(directCalendar.status).toBe('ready');
     expect(await post(base, 'activity/calendar', activityScope, calendarInput) as ReadResult<ActivityCalendarV1>)
@@ -245,7 +259,8 @@ describe('S2B-35 activity and timeline routes (BE5)', () => {
     const base = baseOf(failingServer);
     const expected = { status: 'rejected', code: 'unavailable', reason: FAILURE_REASON };
     expect(await post(base, 'activity/calendar', activityScope,
-      { goalRef: activityGoal, from: FROM, to: TO, granularity: 'hour', timeZone: 'UTC' })).toEqual(expected);
+      { scope: { kind: 'goal', goalRef: activityGoal }, from: FROM, to: TO, granularity: 'hour', timeZone: 'UTC' }))
+      .toEqual(expected);
     expect(await post(base, 'activity/runs', activityScope, { runRefs: [activityRun] })).toEqual(expected);
     expect(await post(base, 'activity/track', activityScope,
       { goalRef: activityGoal, from: FROM, to: TO, cursor: null, limit: 10 })).toEqual(expected);
@@ -298,4 +313,15 @@ describe('S2B-35 activity and timeline routes (BE5)', () => {
         from: FROM, to: TO, cursor: null });
     expect(busy).toMatchObject({ status: 'rejected', code: 'busy' });
   }, 120_000);
+
+  it('2B-35 (e) activity/queries answers one unknown view for a QueryRun with no history', async () => {
+    const missing = missingQueryRef();
+    const answer = await post(baseOf(successServer), 'activity/queries', activityScope, { refs: [missing] });
+    expect(answer as ReadResult<QueryActivityViewV1[]>).toEqual({ status: 'ready', value: [{
+      queryRunRef: missing, status: 'unknown', reason: 'no_history_locator', error: false,
+      totals: null, changedFiles: null, usage: null, recordedBy: null, recordedAt: null,
+      countedThroughTurnEnd: null, unresolvedCalls: null,
+      sessionRef: null, askedSessionRef: null, goalId: null,
+    }] });
+  });
 });

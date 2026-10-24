@@ -14,28 +14,22 @@
  * explicit `unknown`; a read failure is returned, never turned into success,
  * zero or an empty result (rule 3).
  */
-import { RUN_ACTIVITY_MAX_PAGES, RUN_ACTIVITY_RULE_VERSION } from '../../contracts/run-activity.js';
-import type { RunActivityBound, RunActivityFactsV1, RunActivityUnknownReason } from '../../contracts/run-activity.js';
+import { RUN_ACTIVITY_MAX_PAGES, unknownFacts } from '../../contracts/run-activity.js';
+import type { RunActivityBound, RunActivityFactsV1 } from '../../contracts/run-activity.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
 import { decodeKernelEntry, type DecodedKernelRecord } from './kernel-turn-facts.js';
 import { tallyTurnActivity } from './run-activity-tally.js';
 import type { SessionHistoryCursorOwner } from './session-operations.js';
 import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
 
+// The one explicit-unknown constructor lives in the contracts, so the WorkGraph
+// closing writes build the same value; the Runtime callers keep importing it here.
+export { unknownFacts } from '../../contracts/run-activity.js';
+
 /** L6: the answer of one window read. `retry_later` writes nothing and is retried later. */
 export type RunActivityRead = { kind: 'facts'; facts: RunActivityFactsV1 } | { kind: 'retry_later'; reason: string };
 
 const PAGE_LIMIT = 200;
-const DETAIL_LIMIT = 500;
-
-function truncateDetail(reason: string): string {
-  return reason.length <= DETAIL_LIMIT ? reason : reason.slice(0, DETAIL_LIMIT);
-}
-
-/** L6: an explicit unknown with the rule version and a bounded detail. */
-export function unknownFacts(reason: RunActivityUnknownReason, detail: string): RunActivityFactsV1 {
-  return { status: 'unknown', ruleVersion: RUN_ACTIVITY_RULE_VERSION, reason, detail: truncateDetail(detail) };
-}
 
 /**
  * L6: read the explicit window and tally it.

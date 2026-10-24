@@ -8,8 +8,9 @@
  * through the service's one assignment-row function, reads the selection facts,
  * retries a fresh pick on an intake / Session-revision conflict, calls
  * `ensureLine` when no candidate remains, and hands the service a
- * `RequestPlanV1`. `route` and `selectIdea` need no line of their own and go
- * through the same service port.
+ * `RequestPlanV1`. `route`, `selectIdea` and `ask` need no line of their own
+ * and go through the same service port; `selectIdea` and `ask` append a
+ * follow-up that may still need a pick (a waiting or dropped request).
  *
  * The drain (`drainUnassigned`) visits `s6-query-unassigned` in order, re-reads
  * each request, skips it unless it still reads `waiting` / `owner_archived`,
@@ -70,6 +71,9 @@ export type RequestRouteResultV1 = { status: 'routed'; routingRound: QueryJobRef
 
 export type RequestSelectIdeaResultV1 = { status: 'queued'; followupRound: QueryJobRef } | RequestRejectionV1;
 
+/** `ask` queues a follow-up exactly as `selectIdea` does. */
+export type RequestAskResultV1 = { status: 'queued'; followupRound: QueryJobRef } | RequestRejectionV1;
+
 export type DrainUnassignedResultV1 = {
   progressed: number;
   more: boolean;
@@ -90,6 +94,13 @@ export interface RequestSubmitPort {
   selectIdea(ctx: CoreCallContext, input: {
     commandId: string; round: QueryJobRef; index: number;
   }): Promise<RequestSelectIdeaResultV1>;
+  /**
+   * A card question or a candidate's regeneration on the request of `round`
+   * (slice-6 spec L6): a follow-up carrying the card's refs.
+   */
+  ask(ctx: CoreCallContext, input: {
+    commandId: string; round: QueryJobRef; cardRefs: VersionedRef[]; regenerate: boolean; text: string;
+  }): Promise<RequestAskResultV1>;
 }
 
 export type DrainReadResultV1 = ReadResult<DrainUnassignedResultV1>;
@@ -417,24 +428,46 @@ export function createRequestIntake(deps: RequestIntakeDependencies): RequestInt
   async function selectIdea(
     ctx: CoreCallContext, input: { commandId: string; round: QueryJobRef; index: number },
   ): Promise<RequestSelectIdeaResultV1> {
-    const command: RequestPublicCommandV1 = { kind: 'select_idea', commandId: input.commandId,
-      round: input.round, index: input.index };
+    return followup(ctx, { kind: 'select_idea', commandId: input.commandId, round: input.round, index: input.index });
+  }
+
+  // ---------------------------------------------------------------------- //
+  // ask                                                                    //
+  // ---------------------------------------------------------------------- //
+
+  async function ask(
+    ctx: CoreCallContext,
+    input: { commandId: string; round: QueryJobRef; cardRefs: VersionedRef[]; regenerate: boolean; text: string },
+  ): Promise<RequestAskResultV1> {
+    return followup(ctx, { kind: 'ask', commandId: input.commandId, round: input.round, cardRefs: input.cardRefs,
+      regenerate: input.regenerate, text: input.text });
+  }
+
+  /**
+   * The one follow-up path of `selectIdea` and `ask`: precheck, then the
+   * assignment row's pick when the request needs one, then the wake after a
+   * commit (never on a replay).
+   */
+  async function followup(
+    ctx: CoreCallContext, command: Extract<RequestPublicCommandV1, { kind: 'select_idea' | 'ask' }>,
+  ): Promise<{ status: 'queued'; followupRound: QueryJobRef } | RequestRejectionV1> {
     const pre = await deps.rounds.precheck(ctx, command);
     if (pre.status === 'rejected') return pre;
-    if (pre.status === 'fresh' && pre.facts === null) return unavailable('the answered round has no facts');
+    if (pre.status === 'fresh' && pre.facts === null) return unavailable('the round the follow-up names has no facts');
     const appended = await appendAfterPrecheck(ctx, command, pre);
-    const result = followupResultOf(appended);
+    const result = followupResultOf(appended, command.kind);
     if (result.status === 'queued' && appended.status === 'appended' && !appended.replayed) {
       deps.wake?.(workspaceOf(ctx), 'request_command');
     }
     return result;
   }
 
-  function followupResultOf(result: RequestAppendResultV1): RequestSelectIdeaResultV1 {
+  function followupResultOf(result: RequestAppendResultV1, kind: 'select_idea' | 'ask'):
+    { status: 'queued'; followupRound: QueryJobRef } | RequestRejectionV1 {
     if (result.status === 'rejected') return result;
     if (result.status !== 'appended') return unavailable('the follow-up did not append a round');
     const receipt = result.receipt;
-    if (receipt.kind !== 'select_idea') {
+    if ((receipt.kind !== 'select_idea' && receipt.kind !== 'ask') || receipt.kind !== kind) {
       return unavailable('the follow-up receipt names no follow-up round');
     }
     return { status: 'queued', followupRound: { ...receipt.followupRound } };
@@ -553,5 +586,5 @@ export function createRequestIntake(deps: RequestIntakeDependencies): RequestInt
     return { status: 'ready', plan: pickPlanOf(first) };
   }
 
-  return { submitRequest, route, selectIdea, drainUnassigned };
+  return { submitRequest, route, selectIdea, ask, drainUnassigned };
 }

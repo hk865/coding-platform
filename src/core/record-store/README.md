@@ -39,28 +39,28 @@
 | `EncodedRecordSchema`、`EncodedEventSchema`、`RecordBackendSchemas` | `src/core/record-store/ports.ts:154`、`src/core/record-store/ports.ts:162`、`src/core/record-store/ports.ts:168` | 注册 record/event codec、lookup 定义和可绑定字段白名单。 | 组合根建 backend 时；注册的 validate 是调用方的纯校验，不是本层的领域判断。 |
 | `PersistedIdempotencyRecord` | `src/core/record-store/ports.ts:209` | 旧库幂等行的字节兼容形状。 | 只在 store 内做 idempotency 编解码/回执恢复；上层不要解析这一行。 |
 | `RecordLookupPort`、`lookup` | `src/core/record-store/lookup-ports.ts:35` | 注册索引的 keyset 翻页，带 next 与 readThrough。 | 有界列表/队列；转发 continuation，不要在每页重复去重（M1-11、M1-13）。 |
-| `RecordOrderedLookupPort`、`lookupOrdered` | `src/core/record-store/lookup-ports.ts:62` | 按 (order, refKey) 有序翻页，可带 direction/bound。 | 需要稳定顺序与续页时；不要扫描无界页来凑一页过滤结果。 |
-| `RecordCountPort`、`countLookup` | `src/core/record-store/lookup-ports.ts:83` | 相等条件计数或 distinct 计数。 | 只要数量时；不要用翻页自行计数。 |
-| `RecordTextSearchPort`、`searchText` | `src/core/record-store/lookup-ports.ts:124` | 注册全文索引的子串检索，返回 complete/readThrough。 | 笔记/文本检索；不要另建 FTS 或在前端重扫。 |
+| `RecordOrderedLookupPort`、`lookupOrdered` | `src/core/record-store/lookup-ports.ts:67` | 按 (order, refKey) 有序翻页，可带 direction/bound；`lowerBound` 是不分方向的下界，倒序续页要停在某个值之上时用它。 | 需要稳定顺序与续页时；不要扫描无界页来凑一页过滤结果，也不要先探测再在读的一侧比对停止行。 |
+| `RecordCountPort`、`countLookup` | `src/core/record-store/lookup-ports.ts:88` | 相等条件计数或 distinct 计数。 | 只要数量时；不要用翻页自行计数。 |
+| `RecordTextSearchPort`、`searchText` | `src/core/record-store/lookup-ports.ts:129` | 注册全文索引的子串检索，返回 complete/readThrough。 | 笔记/文本检索；不要另建 FTS 或在前端重扫。 |
 | `RecordLookupIndex`、`RecordLookupRequest`、`RecordLookupPage`、`LookupValue` | `src/core/record-store/lookup-ports.ts:5`、`src/core/record-store/lookup-ports.ts:22`、`src/core/record-store/lookup-ports.ts:29`、`src/core/record-store/lookup-ports.ts:21` | lookup 注册与请求/页形状。 | 定义索引或调用精确 lookup 时。 |
-| `OrderedLookupRequest`、`OrderedLookupValue`、`RecordOrderedLookupPage` | `src/core/record-store/lookup-ports.ts:46`、`src/core/record-store/lookup-ports.ts:45`、`src/core/record-store/lookup-ports.ts:56` | 有序 lookup 的请求/续页形状。 | 有序列表、队列、历史翻页。 |
-| `RecordCountRequest`、`RecordCountResult` | `src/core/record-store/lookup-ports.ts:77`、`src/core/record-store/lookup-ports.ts:82` | 计数请求与结果。 | 调用 count 端口时。 |
-| `TextSearchRequest`、`TextSearchPage` | `src/core/record-store/lookup-ports.ts:108`、`src/core/record-store/lookup-ports.ts:117` | 全文请求与页（含 complete）。 | 调用 searchText 时。 |
-| `TEXT_SEARCH_PAGE_MAX`、`TEXT_SEARCH_MAX_TERMS`、`TEXT_SEARCH_TERM_MIN`、`TEXT_SEARCH_TERM_MAX` | `src/core/record-store/lookup-ports.ts:96`、`src/core/record-store/lookup-ports.ts:97`、`src/core/record-store/lookup-ports.ts:98`、`src/core/record-store/lookup-ports.ts:99`、`src/core/work-graph/model/note-contracts.ts:46` | 全文检索边界：单页 100 条、1–8 个词、每词 2–64 码点。 | 校验全文请求；`TEXT_SEARCH_MAX_TERMS` 在 WorkGraph 另有一份同值常量，正本待 lead 定。 |
+| `OrderedLookupRequest`、`OrderedLookupValue`、`RecordOrderedLookupPage` | `src/core/record-store/lookup-ports.ts:46`、`src/core/record-store/lookup-ports.ts:45`、`src/core/record-store/lookup-ports.ts:61` | 有序 lookup 的请求/续页形状。 | 有序列表、队列、历史翻页。 |
+| `RecordCountRequest`、`RecordCountResult` | `src/core/record-store/lookup-ports.ts:82`、`src/core/record-store/lookup-ports.ts:87` | 计数请求与结果。 | 调用 count 端口时。 |
+| `TextSearchRequest`、`TextSearchPage` | `src/core/record-store/lookup-ports.ts:113`、`src/core/record-store/lookup-ports.ts:122` | 全文请求与页（含 complete）。 | 调用 searchText 时。 |
+| `TEXT_SEARCH_PAGE_MAX`、`TEXT_SEARCH_MAX_TERMS`、`TEXT_SEARCH_TERM_MIN`、`TEXT_SEARCH_TERM_MAX` | `src/core/record-store/lookup-ports.ts:101`、`src/core/record-store/lookup-ports.ts:102`、`src/core/record-store/lookup-ports.ts:103`、`src/core/record-store/lookup-ports.ts:104`、`src/core/work-graph/model/note-contracts.ts:46` | 全文检索边界：单页 100 条、1–8 个词、每词 2–64 码点。 | 校验全文请求；`TEXT_SEARCH_MAX_TERMS` 在 WorkGraph 另有一份同值常量，正本待 lead 定。 |
 | `RawArtifactStorePort`、`RawArtifactPut`、`RawArtifactRecord`、`MaterialOrigin` | `src/core/record-store/body-ports.ts:23`、`src/core/record-store/body-ports.ts:10`、`src/core/record-store/body-ports.ts:17`、`src/core/record-store/body-ports.ts:7` | 原始正文端口：put 内容寻址、read 校验；origin 只记录来源，不解释授权。 | Runtime/WorkGraph 存取 artifact 正文时。 |
 | `RawArtifactBodyStore` | `src/core/record-store/body-store.ts:24` | 内存正文实现，共享 put/read 规则，Map seam 可替换。 | 内存存储的组合根或测试。 |
 | `createSqliteRawArtifactStore` | `src/core/record-store/sqlite-body-store.ts:25` | SQLite `artifacts` 表实现，`close` 幂等。 | 持久化内容寻址正文时。 |
 | `createInMemoryRecordBackend` | `src/core/record-store/in-memory-record-store.ts:71` | 内存记录 backend，同一事务契约，支持 `beforeWrite`。 | 内存模式与测试；不要把它当第二个业务真相源。 |
 | `createSqliteRecordBackend` | `src/core/record-store/sqlite-record-store.ts:111` | SQLite 记录 backend，一个连接、事务、部分表达式索引。 | 持久模式；组合根唯一创建处。 |
 | `isArtifactRef` | `src/core/record-store/body-codec.ts:59` | 校验完整 `ArtifactRef`（kind/contentType/digest/sizeBytes/source）。 | WorkGraph 解码嵌套 artifact ref 时复用，不要另写一份。 |
-| `compareRefKeys` | `src/core/record-store/lookup-index.ts:573` | 按 canonical refKey 的 UTF-8 字节序比较。 | 排序/合并 canonical key；不要用 JS 默认字符串序。 |
+| `compareRefKeys` | `src/core/record-store/lookup-index.ts:587` | 按 canonical refKey 的 UTF-8 字节序比较。 | 排序/合并 canonical key；不要用 JS 默认字符串序。 |
 | `compareRefKeysFast` | `src/core/record-store/text-scan.ts:46` | 同一字节序的免分配实现，ill-formed 时回退 Buffer。 | 内存全文扫描/热路径；与 `compareRefKeys` 同一排序规则，正本待 lead 定。 |
-| `normalizeSearchText` | `src/core/record-store/lookup-index.ts:634` | NFC 后只把 ASCII 大写转小写。 | 全文检索两侧归一化。 |
-| `bigramWindows` | `src/core/record-store/lookup-index.ts:643` | 无空白的两码点窗口集合。 | 笔记视图/文本候选构造。 |
-| `searchTextFrom` | `src/core/record-store/lookup-index.ts:660` | 把注册的 text paths 拼成比较文本并归一化。 | 建/查全文文本时。 |
-| `decodeTextTerms` | `src/core/record-store/lookup-index.ts:680` | 1–8 个、每词 2–64 码点、无空白的词项规则。 | 端口和 read model 共用；不要另写词项校验。 |
+| `normalizeSearchText` | `src/core/record-store/lookup-index.ts:653` | NFC 后只把 ASCII 大写转小写。 | 全文检索两侧归一化。 |
+| `bigramWindows` | `src/core/record-store/lookup-index.ts:662` | 无空白的两码点窗口集合。 | 笔记视图/文本候选构造。 |
+| `searchTextFrom` | `src/core/record-store/lookup-index.ts:679` | 把注册的 text paths 拼成比较文本并归一化。 | 建/查全文文本时。 |
+| `decodeTextTerms` | `src/core/record-store/lookup-index.ts:699` | 1–8 个、每词 2–64 码点、无空白的词项规则。 | 端口和 read model 共用；不要另写词项校验。 |
 | `textMatches` | `src/core/record-store/text-scan.ts:67` | all/any 子串匹配。 | 全文扫描与 read model 复核。 |
-| `decodeTextSearchAfter` | `src/core/record-store/lookup-index.ts:732` | 续页 key 必须是本 aggregateType 的完整 canonical refKey。 | 全文检索续页。 |
+| `decodeTextSearchAfter` | `src/core/record-store/lookup-index.ts:751` | 续页 key 必须是本 aggregateType 的完整 canonical refKey。 | 全文检索续页。 |
 | `messageOf` | `src/core/record-store/record-codec.ts:77` | `Error.message`，否则 `String(error)`。 | 本层拼 reason；上层不要为它 import RecordStore。正本将落在 `src/contracts`（M1-38，尚未落地）；本行是现存旧副本，另有 `src/core/agent-runtime/context-support.ts:11` 导出和约 40 处私有副本。 |
 | `bindPreparedRecords` | `src/core/record-store/record-codec.ts:698` | 事务内把真实末事件 cursor 绑到注册的 null 字段，再做最终 schema 校验。 | 只有两个 backend 在 commit 内调用；上层写 null 占位 + bindings，不要自己填 since/until（CS-01、CS-08、CS-10）。 |
 | `bindCommitCursor` | `src/core/record-store/commit-extensions.ts:113` | 机械绑定：形状、重复、白名单、null 占位检查。 | 同上，事务内；不要绕过它手改记录 JSON。 |

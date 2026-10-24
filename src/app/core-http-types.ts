@@ -70,9 +70,11 @@ import type { ReadResult, WriteResult } from '../contracts/core/results.js';
 import type {
   NoteListRequestV1, NoteListResultV1, NoteMemoryReadResult, WriteNoteEnvelopeV1, NoteWritePort, VersionListPageV1,
 } from '../core/work-graph/model/note-contracts.js';
-// The three person-only request command routes. Their bodies and results are
+// The four person-only request command routes. Their bodies and results are
 // derived from Workflow's `RequestSubmitPort`, never restated here.
 import type { RequestSubmitPort } from '../business/workflow/request-intake.js';
+// The main conversation's read and one request's read with its cards.
+import type { MainSurfaceReadPort } from '../core/work-graph/views/main-surface-read-model.js';
 
 /** The project/workspace navigation scope. It is a real domain scope, not a
  * second source of Project/Workspace registration truth. */
@@ -257,10 +259,12 @@ export type CoreRouteSuffix =
   | 'decisions/application'
   | 'decisions/notices/seen'
   | 'messages/user-send'
-  // Slice 2B L15: the five activity/timeline routes. All are `plain`; only the
+  // Slice 2B L15: the six activity/timeline routes. All are `plain`; only the
   // human-only range backfill performs a write (the Workflow operation).
   | 'activity/calendar'
   | 'activity/runs'
+  // Spec L16: the per-Query view beside the per-Run view.
+  | 'activity/queries'
   | 'activity/track'
   | 'tasks/timeline'
   | 'activity/backfill'
@@ -282,10 +286,14 @@ export type CoreRouteSuffix =
   | 'architecture/versions'
   // L8 (book ruling 8): the one public observation state with computed pending.
   | 'architecture/observation-state'
-  // The three person-only request commands.
+  // The four person-only request commands.
   | 'requests/submit'
   | 'requests/route'
-  | 'requests/select-idea';
+  | 'requests/select-idea'
+  | 'requests/ask'
+  // The main conversation's read and one request's read with its cards.
+  | 'main/read'
+  | 'requests/read';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -418,7 +426,7 @@ export type MessagesUserSendBody = GraphWriteBody<DecisionMessagePort['sendUserM
 export type MessagesUserSendResponse = RouteResponse<DecisionMessagePort['sendUserMessage']>;
 
 // ---------------------------------------------------------------------------
-// Slice 2B L15: the five activity/timeline route DTOs. Each alias derives from
+// Slice 2B L15: the six activity/timeline route DTOs. Each alias derives from
 // the exact public owner method the frozen route table names; the human-only
 // range backfill derives from the optional Workflow operation the real
 // composition always installs. Nothing in `src/` names these aliases at
@@ -428,6 +436,8 @@ export type ActivityCalendarBody = PlainBody<ActivityReadPort['readActivityCalen
 export type ActivityCalendarResponse = RouteResponse<ActivityReadPort['readActivityCalendar']>;
 export type ActivityRunsBody = PlainBody<ActivityReadPort['readRunActivities']>;
 export type ActivityRunsResponse = RouteResponse<ActivityReadPort['readRunActivities']>;
+export type ActivityQueriesBody = PlainBody<ActivityReadPort['readQueryActivities']>;
+export type ActivityQueriesResponse = RouteResponse<ActivityReadPort['readQueryActivities']>;
 export type ActivityTrackBody = PlainBody<TrackReadPort['readTrackBars']>;
 export type ActivityTrackResponse = RouteResponse<TrackReadPort['readTrackBars']>;
 export type TasksTimelineBody = PlainBody<TaskTimelineReadPort['readTaskStateTimeline']>;
@@ -497,7 +507,7 @@ export type ArchitectureVersionsBody = { scope: CoreScope; input: { limit: numbe
 export type ArchitectureVersionsResponse = ReadResult<VersionListPageV1>;
 
 // ---------------------------------------------------------------------------
-// The three request command routes. All are `plain` (the service owns
+// The four request command routes. All are `plain` (the service owns
 // identity/receipts/tail; the request carries no version pins) and person-only
 // at the Host layer. `route`'s public surface is `manual`/`dropped`;
 // `handoff`/`archived` stay internal.
@@ -508,12 +518,23 @@ export type RequestsRouteBody = PlainBody<RequestSubmitPort['route']>;
 export type RequestsRouteResponse = RouteResponse<RequestSubmitPort['route']>;
 export type RequestsSelectIdeaBody = PlainBody<RequestSubmitPort['selectIdea']>;
 export type RequestsSelectIdeaResponse = RouteResponse<RequestSubmitPort['selectIdea']>;
+export type RequestsAskBody = PlainBody<RequestSubmitPort['ask']>;
+export type RequestsAskResponse = RouteResponse<RequestSubmitPort['ask']>;
 
-/** The compile-time typed assembly of the three request command suffixes. */
+// The two reads are `plain` and open to any trusted caller of the workspace.
+export type MainReadBody = PlainBody<MainSurfaceReadPort['readMainPage']>;
+export type MainReadResponse = RouteResponse<MainSurfaceReadPort['readMainPage']>;
+export type RequestsReadBody = PlainBody<MainSurfaceReadPort['readRequestView']>;
+export type RequestsReadResponse = RouteResponse<MainSurfaceReadPort['readRequestView']>;
+
+/** The compile-time typed assembly of the request suffixes: the four commands and the two reads. */
 export type RequestCommandCoreRouteDto = {
   'requests/submit': { body: RequestsSubmitBody; response: RequestsSubmitResponse };
   'requests/route': { body: RequestsRouteBody; response: RequestsRouteResponse };
   'requests/select-idea': { body: RequestsSelectIdeaBody; response: RequestsSelectIdeaResponse };
+  'requests/ask': { body: RequestsAskBody; response: RequestsAskResponse };
+  'main/read': { body: MainReadBody; response: MainReadResponse };
+  'requests/read': { body: RequestsReadBody; response: RequestsReadResponse };
 };
 
 // ---------------------------------------------------------------------------

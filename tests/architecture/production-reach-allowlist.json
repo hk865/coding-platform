@@ -765,6 +765,18 @@
     },
     {
       "file": "src/app/core-http-types.ts",
+      "name": "ActivityQueriesBody",
+      "reason": "wire-format",
+      "note": "the frozen 6A-3 L16 activity/queries route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "ActivityQueriesResponse",
+      "reason": "wire-format",
+      "note": "the frozen 6A-3 L16 activity/queries route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
       "name": "ActivityTrackBody",
       "reason": "wire-format",
       "note": "the frozen §2B L15 activity/track route DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"

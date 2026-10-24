@@ -39,14 +39,14 @@ describe.each(['memory', 'sqlite'] as const)('S2B round-2 bound workspace (%s)',
 
     const model = f.readModelWith(f.records);
     const result = await model.readActivityCalendar(withForeignWorkspace(f), {
-      goalRef: f.goalRef, from: '2026-10-14T09:00:00.000Z', to: '2026-10-14T10:00:00.000Z',
+      scope: { kind: 'goal', goalRef: f.goalRef }, from: '2026-10-14T09:00:00.000Z', to: '2026-10-14T10:00:00.000Z',
       granularity: 'hour', timeZone: 'UTC',
     });
     expect(result).toMatchObject({ status: 'rejected', code: 'forbidden' });
 
     // The bound workspace's own read still answers ready.
     expect(await model.readActivityCalendar(f.ctx, {
-      goalRef: f.goalRef, from: '2026-10-14T09:00:00.000Z', to: '2026-10-14T10:00:00.000Z',
+      scope: { kind: 'goal', goalRef: f.goalRef }, from: '2026-10-14T09:00:00.000Z', to: '2026-10-14T10:00:00.000Z',
       granularity: 'hour', timeZone: 'UTC',
     })).toMatchObject({ status: 'ready' });
   });
@@ -90,7 +90,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B round-2 bound workspace (%s)',
 
     const bound = { projectId: f.b2.base.scope.projectId, workspaceId: 's2b-r2-route-bound-workspace' };
     const ctx = { ...f.ctx, workspaceId: bound.workspaceId };
-    const input = { goalRef: f.goalRef, from: '2026-10-14T09:00:00.000Z', to: '2026-10-14T10:00:00.000Z',
+    const input = { scope: { kind: 'goal', goalRef: f.goalRef }, from: '2026-10-14T09:00:00.000Z', to: '2026-10-14T10:00:00.000Z',
       granularity: 'hour', timeZone: 'UTC' };
     const parsed = parseCoreRouteRequest('activity/calendar', { scope: bound, input });
     const model = f.readModelWith(f.records);

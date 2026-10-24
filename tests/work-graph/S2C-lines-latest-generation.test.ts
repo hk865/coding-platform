@@ -6,7 +6,8 @@
  * id sequence; the QueryRuns through the real Query owners. Assertions read the
  * public line name, which is where both picks become visible.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import { lineReaderOver, openLineFixture, rowOf, type LineFixture } from '../helpers/S2C-L-line-support.js';
 import { completedEvent } from '../helpers/S2C-L-runs-support.js';
@@ -54,10 +55,21 @@ describe.each(['memory', 'sqlite'] as const)('2C-37 latest work and latest Query
     expect(row?.name.primary).toBe('T3 task');
   });
 
-  it('2C-37 (2) the secretary line names the later Query goal even with a reversed clock and refKey', async () => {
-    const f = await lineFixture();
-    // The injected duty resolver reports this Work-capable Session as secretary.
-    const session = (await f.createSession('s37-sec')).ref;
+  it('2C-37 (2) the secretary goalRef follows the latest Query generation despite reversed clocks and refKeys', async () => {
+    // The Sessions' creation instants are fixed (the fixture's two, then this one a second later), so the secretary
+    // number below never depends on two creations landing in the same millisecond.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    let f: LineFixture;
+    let session: SessionRef;
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      f = await lineFixture();
+      vi.setSystemTime(new Date('2026-01-01T00:00:01.000Z'));
+      // The injected duty resolver reports this Work-capable Session as secretary.
+      session = (await f.createSession('s37-sec')).ref;
+    } finally {
+      vi.useRealTimers();
+    }
     const g1 = await f.runs.bareGoal('g37-g1');
     const g2 = await f.runs.bareGoal('g37-g2');
     const q1 = await f.runs.claimQuery(session, g1, 'sec1');
@@ -72,9 +84,9 @@ describe.each(['memory', 'sqlite'] as const)('2C-37 latest work and latest Query
 
     const reader = lineReaderOver(f.base, f.records, () => 'secretary');
     const row = rowOf(ready(await reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, session);
-    expect(row?.name.source).toBe('secretary_interim');
-    // L20 / review item 10: the name uses the Goal title, not its id.
-    expect(row?.name.primary).toBe('S2C-L bare goal g37-g2');
+    expect(row?.name.source).toBe('secretary_ordinal');
+    // Every Session reads as a secretary here: the fixture's two Sessions come first.
+    expect(row?.name.primary).toBe('秘书 3');
     expect(row?.name.goalRef).toEqual(g2);
     expect(row?.name.complete).toBe(true);
   });

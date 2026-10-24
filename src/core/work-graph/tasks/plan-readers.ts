@@ -32,7 +32,7 @@ import type {
   TaskRequeueRef, TaskRequeueSnapshotV1, TaskReworkRefusalRef, TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
-import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordLookupRequest, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type {
   DecodeResult,
   EncodedRecord,
@@ -43,6 +43,7 @@ import type {
   StoreResult,
 } from '../../record-store/ports.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
+import { readAllOrdered } from '../persistence/lookup-ordered-all.js';
 import { taskLeaseSnapshotProblem } from '../persistence/execution-entry-codecs.js';
 import {
   derivePlanProposalStatus, derivePlanRevisionStatus, type FutureChangeTaskFactsV1, type TracedTaskFactsV1,
@@ -100,6 +101,8 @@ export const RUN_BY_TASK_INDEX = 'r4c-run-by-task';
 export const RUN_BY_WORKSPACE_STATUS_INDEX = 'a2-run-by-workspace-status';
 /** A.2 step 5.6: the Goals of one workspace (start-up reconcile, §12.1 steps 6 and 6b). */
 export const GOAL_BY_WORKSPACE_INDEX = 'a2-goal-by-workspace';
+/** Slice 6A L6: one workspace's Goals in creation order (the first goal, the pre-goal boundary). */
+export const GOAL_BY_WORKSPACE_CREATED_LOOKUP = 's6-goal-by-workspace-created';
 /** A.2 step 5.6: the Runs of one workspace by outcome; `outcome_unknown` for §12.1 step 2 (W-15) and step 5 (W-19). */
 export const RUN_BY_WORKSPACE_OUTCOME_INDEX = 'a2-run-by-workspace-outcome';
 /** Slice 2B L14: one Goal's ended Runs, ordered by `endedAt` (calendar/track windows). */
@@ -310,6 +313,8 @@ export const PLAN_STATE_RECORD_SCHEMAS: RecordBackendSchemas = {
     { name: RUN_BY_WORKSPACE_OUTCOME_INDEX, aggregateType: 'Run',
       paths: ['ref.projectId', 'workspaceSnapshot.workspaceId', 'outcome'] },
     { name: GOAL_BY_WORKSPACE_INDEX, aggregateType: 'Goal', paths: ['ref.projectId', 'workspaceRef.workspaceId'] },
+    { name: GOAL_BY_WORKSPACE_CREATED_LOOKUP, aggregateType: 'Goal',
+      paths: ['ref.projectId', 'workspaceRef.workspaceId'], orderBy: { path: 'since' } },
     { name: S2B_RUN_BY_GOAL_ENDED_LOOKUP, aggregateType: 'Run',
       paths: ['ref.projectId', 'ref.goalId'], orderBy: { path: 'endedAt' } },
     { name: S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP, aggregateType: 'Run',
@@ -390,6 +395,32 @@ export async function readGoal(
   const decoded = decodeGoalSnapshot(record);
   if (decoded.status !== 'decoded') return unavailable(`goal ${goalRef.goalId} is corrupt: ${decoded.reason}`);
   return { status: 'ready', goal: decoded.value, readThrough: read.batch.readThrough };
+}
+
+/**
+ * Every Goal of one workspace in creation order (ascending `since`, the store's
+ * cursor order). The first entry is the oldest Goal by creation; its `since` is
+ * the pre-goal boundary. The whole window is paged, not a bounded first page.
+ */
+export async function readGoalsByWorkspaceCreated(
+  records: RecordOrderedLookupPort,
+  input: { projectId: string; workspaceId: string },
+): Promise<{ status: 'ready'; goals: GoalSnapshot[]; readThrough: CommitCursor | null } | Rejected> {
+  const read = await readAllOrdered(records, {
+    index: GOAL_BY_WORKSPACE_CREATED_LOOKUP,
+    values: [input.projectId, input.workspaceId],
+    direction: 'asc',
+  });
+  if (read.status !== 'ready') {
+    return unavailable(`the workspace Goals read failed: ${read.code}: ${read.reason}`);
+  }
+  const goals: GoalSnapshot[] = [];
+  for (const record of read.value.records) {
+    const decoded = decodeGoalSnapshot(record);
+    if (decoded.status !== 'decoded') return unavailable(`a workspace Goal is damaged: ${decoded.reason}`);
+    goals.push(decoded.value);
+  }
+  return { status: 'ready', goals, readThrough: read.value.readThrough };
 }
 
 /**

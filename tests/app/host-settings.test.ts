@@ -626,13 +626,15 @@ describe('HOST settings model catalog, selection and Host effect', () => {
       expect(selected.workspaces.find(workspace => workspace.scope.workspaceId === two.scope.workspaceId)?.modelId)
         .toBeNull();
 
-      // A successful selection installs that scope's runtime binding, and only
-      // then does the published bootstrap expose exactly that one executable
-      // profile; the untouched second scope stays without one.
+      // A successful selection installs that scope's runtime bindings, and only
+      // then does the published bootstrap expose that scope's executable
+      // profiles: the local workbench profile first and the local secretary
+      // profile second; the untouched second scope stays without one.
       const afterSelect = await (await coreGet(started.base, BOOTSTRAP_SUFFIX, started.token))
         .json() as BootstrapResponse;
       const installedProfiles = profilesFor(afterSelect, one.scope);
-      expect(installedProfiles).toHaveLength(1);
+      expect(installedProfiles).toHaveLength(2);
+      expect(installedProfiles.map(profile => profile.label)).toEqual(['Local workbench', 'Local secretary']);
       expect(profilesFor(afterSelect, two.scope)).toEqual([]);
       // Frozen default installed by the local workbench: no hidden cumulative
       // Query token cap. null is neither 0 nor Infinity.

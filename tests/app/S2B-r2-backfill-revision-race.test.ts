@@ -73,7 +73,7 @@ describe('S2B round 2 R13 — the selected RunActivity revision rides the write'
     });
     expect(batch.status).toBe('ready');
     if (batch.status !== 'ready') return;
-    expect(batch.value.processed).toEqual([{ runRef: run, outcome: 'skipped', reason: 'record_changed' }]);
+    expect(batch.value.processed).toEqual([{ kind: 'run', runRef: run, outcome: 'skipped', reason: 'record_changed' }]);
     // The intervening write is the surviving record.
     expect(viewOf(await f.readRuns([run]), run.runId)).toMatchObject({
       status: 'counted', recordedBy: 'backfill',
@@ -97,7 +97,7 @@ describe('S2B round 2 R13 — the selected RunActivity revision rides the write'
     });
     expect(batch.status).toBe('ready');
     if (batch.status !== 'ready') return;
-    expect(batch.value.processed).toEqual([{ runRef: run, outcome: 'unchanged', reason: null }]);
+    expect(batch.value.processed).toEqual([{ kind: 'run', runRef: run, outcome: 'unchanged', reason: null }]);
     expect(viewOf(await f.readRuns([run]), run.runId).recordedAt).toBe(recordedAt);
   });
 });

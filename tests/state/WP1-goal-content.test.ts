@@ -32,6 +32,7 @@ function goal(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
     desiredStateRequestedBy: null,
     activePlanRevision: null,
     revision: 1,
+    since: 'c0000000001' as GoalSnapshot['since'],
     ...overrides,
   };
 }

@@ -98,6 +98,7 @@ export type WorkflowDependencies = {
   runtime: Pick<RuntimeExecutionPort,
     'createSession' | 'readCompletedBoundary' | 'prepareExecution' | 'startRun' | 'observeRun'
     | 'prepareQuery' | 'startQuery' | 'observeQuery' | 'closeOpenTurn' | 'countRunActivity'
+    | 'countQueryActivity'
     | 'reviewCapability' | 'deliverControl' | 'readArchiveChangedFiles'>;
   evidence: EvidencePort;
   checks: RegisteredCheckRunner;

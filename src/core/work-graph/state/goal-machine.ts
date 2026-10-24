@@ -38,7 +38,9 @@ import type {
 import type { RunOutcome, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
-import type { GoalDesiredState, GoalRef, GoalSnapshot, WorkspaceRef } from '../../../contracts/ledger.js';
+import type {
+  GoalDesiredState, GoalRef, GoalSnapshot, PendingGoalSnapshot, WorkspaceRef,
+} from '../../../contracts/ledger.js';
 import type { Disposition, Phase, PlanRevisionRef, RequirementLevel, TaskKind } from '../../../contracts/plan.js';
 import type { TaskReductionRef } from '../../../contracts/reduction.js';
 import type {
@@ -85,9 +87,10 @@ export function goalControlTarget(control: GoalControl): GoalDesiredState {
  * GOAL-01: Goal@1, `active`, no plan (the pre-step-3 `commit-compiler.ts:113-120`
  * literal, same key order). The two D-9 fields carry their creation values:
  * `desiredStateRevision` 1 and `desiredStateRequestedBy` null (`ledger.ts`);
- * a fresh commit returns this value as is (`graph-repository.ts:319`).
+ * a fresh commit returns this value with the creation cursor it bound
+ * (`graph-repository.ts`). `since` is the pre-bind placeholder.
  */
-export function newGoalSnapshot(input: { ref: GoalRef; workspaceRef: WorkspaceRef; objective: string }): GoalSnapshot {
+export function newGoalSnapshot(input: { ref: GoalRef; workspaceRef: WorkspaceRef; objective: string }): PendingGoalSnapshot {
   return {
     ref: input.ref,
     workspaceRef: input.workspaceRef,
@@ -97,6 +100,7 @@ export function newGoalSnapshot(input: { ref: GoalRef; workspaceRef: WorkspaceRe
     desiredStateRequestedBy: null,
     activePlanRevision: null,
     revision: 1,
+    since: null,
   };
 }
 
@@ -133,6 +137,8 @@ export function nextGoalDesiredState(goal: GoalSnapshot, input: {
     // Slice 5 F87: an explicitly configured Goal keeps its settings; a Goal
     // written before the field keeps its exact old shape (no `settings` key).
     ...(goal.settings === undefined ? {} : { settings: goal.settings }),
+    // The creation cursor never moves; every later write copies it unchanged.
+    since: goal.since,
   };
 }
 
@@ -172,7 +178,12 @@ export type GoalNode = 'absent' | GoalDesiredState;
 /** Whether the GoalPhase was reduced against the active plan (`plan-service.ts:1456-1459` `selectedPlanMatches`). */
 export type GoalCompletionRelation = 'none' | 'for_active' | 'for_other';
 
-export type GoalMachineState = {
+/**
+ * `G` is the type of the Goal record the state holds: a stored Goal (its creation
+ * cursor bound) by default; only the `next` of `goal_created` holds the pre-bind
+ * record whose `since` the creating commit fills.
+ */
+export type GoalMachineState<G extends PendingGoalSnapshot = GoalSnapshot> = {
   node: GoalNode;
   /** The fan-out epoch; 0 while `absent`, 1 for a Goal whose desired state never changed. */
   desiredStateRevision: number;
@@ -181,12 +192,26 @@ export type GoalMachineState = {
   /** `reworkActorClassOf(null, desiredStateRequestedBy)`; null while it was never changed (GOAL-05, LA-7). */
   desiredStateRequestedByClass: ReworkActorClass | null;
   /** The stored records (`null` = ∅). An accepted transition's `next` carries the whole next records. */
-  goal: GoalSnapshot | null;
+  goal: G | null;
   goalPhase: GoalPhaseSnapshot | null;
 };
 
-/** The machine state of the stored Goal and GoalPhase. */
-export function goalStateOf(goal: GoalSnapshot | null, goalPhase: GoalPhaseSnapshot | null): GoalMachineState {
+/**
+ * The machine state of a Goal record and the stored GoalPhase. The state keeps
+ * the record's own type: a stored Goal gives the bound state, the pre-bind
+ * creation record the pending one, so no caller reads a null `since` as bound.
+ * No Goal (∅) is a stored state; its own overload keeps a bare `null` from
+ * inferring the pending type.
+ */
+export function goalStateOf(goal: null, goalPhase: GoalPhaseSnapshot | null): GoalMachineState;
+export function goalStateOf<G extends PendingGoalSnapshot = GoalSnapshot>(
+  goal: G | null,
+  goalPhase: GoalPhaseSnapshot | null,
+): GoalMachineState<G>;
+export function goalStateOf<G extends PendingGoalSnapshot = GoalSnapshot>(
+  goal: G | null,
+  goalPhase: GoalPhaseSnapshot | null,
+): GoalMachineState<G> {
   const pointer = goal?.activePlanRevision ?? null;
   const completion: GoalCompletionRelation = goalPhase === null ? 'none'
     : pointer !== null && samePlanPointer(goalPhase.planRef, pointer) ? 'for_active' : 'for_other';
@@ -291,7 +316,8 @@ export type GoalEffect =
   | { kind: 'append_event'; eventType: 'GoalCreated' | 'GoalCompleted' | 'GoalDesiredStateChanged' }
   | { kind: 'guard'; guard: GoalCommitGuard };
 
-export type GoalTransition = Transition<GoalMachineState, GoalEvent, GoalEffect>;
+/** `G` as in `GoalMachineState`: only `goal_created` answers the pre-bind record. */
+export type GoalTransition<G extends PendingGoalSnapshot = GoalSnapshot> = Transition<GoalMachineState<G>, GoalEvent, GoalEffect>;
 
 // -------------------------------------------------------------------------- //
 // Shared helpers                                                              //
@@ -337,12 +363,15 @@ function onGoalCreated(
   state: GoalMachineState,
   event: Extract<GoalEvent, { type: 'goal_created' }>,
   ctx: GoalGuardContext,
-): GoalTransition {
+): GoalTransition<PendingGoalSnapshot> {
   if (!ctx.scopePinsAgree) {
     return reject('stale', 'revision_conflict', 'the supplied version pins do not match the versions read in this call');
   }
+  // The creation transition hands the owner the pre-bind record; the creating
+  // commit fills `since`. Every Goal the machine reads from a store already
+  // carries a bound cursor, so only this placeholder has a null one.
   const goal = newGoalSnapshot({ ref: event.ref, workspaceRef: event.workspaceRef, objective: event.objective });
-  return accept<GoalMachineState, GoalEffect>(goalStateOf(goal, state.goalPhase), [
+  return accept<GoalMachineState<PendingGoalSnapshot>, GoalEffect>(goalStateOf(goal, state.goalPhase), [
     { kind: 'write_goal' },
     { kind: 'append_event', eventType: 'GoalCreated' },
     guard({ target: 'project' }), guard({ target: 'workspace' }), guard({ target: 'goal', expectedRevision: null }),
@@ -546,8 +575,23 @@ function onGoalControl(state: GoalMachineState, event: GoalControlEvent, ctx: Go
   ]);
 }
 
-/** §2 Goal machine (GOAL-01..08 and the §2.4 rows). */
-export function transitionGoal(state: GoalMachineState, event: GoalEvent, ctx: GoalGuardContext): GoalTransition {
+/**
+ * §2 Goal machine (GOAL-01..08 and the §2.4 rows). Every input state holds a
+ * stored Goal or none. `goal_created` answers the pre-bind record, every other
+ * event a stored Goal; a caller passing the whole event union gets the pre-bind type.
+ */
+export function transitionGoal(
+  state: GoalMachineState, event: Extract<GoalEvent, { type: 'goal_created' }>, ctx: GoalGuardContext,
+): GoalTransition<PendingGoalSnapshot>;
+export function transitionGoal(
+  state: GoalMachineState, event: Exclude<GoalEvent, { type: 'goal_created' }>, ctx: GoalGuardContext,
+): GoalTransition;
+export function transitionGoal(
+  state: GoalMachineState, event: GoalEvent, ctx: GoalGuardContext,
+): GoalTransition<PendingGoalSnapshot>;
+export function transitionGoal(
+  state: GoalMachineState, event: GoalEvent, ctx: GoalGuardContext,
+): GoalTransition<PendingGoalSnapshot> {
   switch (event.type) {
     case 'goal_created':
       return onGoalCreated(state, event, ctx);

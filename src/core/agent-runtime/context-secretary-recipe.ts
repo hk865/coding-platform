@@ -11,6 +11,7 @@
  */
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
+import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { ReadResult } from '../../contracts/core/results.js';
 import { truncateUtf8 } from '../../contracts/utf8.js';
 import type {
@@ -51,11 +52,31 @@ function goalLineObjective(objective: string): string {
   return codePoints.length > 160 ? `${codePoints.slice(0, 160).join('')}…` : firstLine;
 }
 
-/** `- [<since>] <input>`, then the selected idea when there is one. */
-function roundMaterial(round: SecretaryRoundMaterialV1, texts: PromptTextsV1): string {
+/**
+ * One card ref of a round: `- <aggregateType> <the ref's other fields as
+ * canonical JSON> @<pinned revision>`, then ` (now @<current>)` when the
+ * object's revision moved since the card was read, or ` (not found)` when the
+ * object does not exist. The secretary reads the details through look/find.
+ */
+function relatedCardLine(card: SecretaryRoundMaterialV1['relatedCards'][number]): string {
+  const { aggregateType, ...id } = card.ref.ref as unknown as Record<string, JsonValue>;
+  const line = `- ${String(aggregateType)} ${canonicalJson(id)} @${String(card.ref.revision)}`;
+  if (card.current === null) return `${line} (not found)`;
+  return card.current === card.ref.revision ? line : `${line} (now @${String(card.current)})`;
+}
+
+/**
+ * `- [<since>] <input>`, then the selected idea when there is one, then the
+ * card refs the round carries (an `ask`) under their heading. A round with
+ * none of these renders its input line alone.
+ */
+export function roundMaterial(round: SecretaryRoundMaterialV1, texts: PromptTextsV1): string {
   const lines = [`- [${round.since}] ${round.text}`];
   if (round.selectedIdea !== null) {
     lines.push(packString(texts, 'secretary.selectedIdea'), `${round.selectedIdea.title}: ${round.selectedIdea.detail}`);
+  }
+  if (round.relatedCards.length > 0) {
+    lines.push(packString(texts, 'secretary.cardsHeading'), ...round.relatedCards.map(relatedCardLine));
   }
   return lines.join('\n');
 }

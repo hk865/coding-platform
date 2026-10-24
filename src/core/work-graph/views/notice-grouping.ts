@@ -9,7 +9,18 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoticeItemV1 } from '../model/decision-contracts.js';
 import { compareNoticePositions } from './notice-position.js';
 
-export type NoticeGroupingStrategyV1 = 'pass_through' | 'user_affected_per_goal';
+/**
+ * `main_conversation` is the main read's grouping (slice-6-SPEC L6): everything
+ * `user_affected_per_goal` does, and every Goal's automatic-rework notices fold
+ * into one "n 条自动返工" line. The decision queue keeps them one by one.
+ */
+export type NoticeGroupingStrategyV1 = 'pass_through' | 'user_affected_per_goal' | 'main_conversation';
+
+/**
+ * One shown notice line. A folded automatic-rework line of the main read also
+ * carries its members' own views, so opening it needs no second read.
+ */
+export type NoticeLineV1 = NoticeItemV1 & { memberViews?: NoticeItemV1[] };
 
 type NoticeMember = { itemKey: string; position: NoticePositionV1 };
 
@@ -27,32 +38,37 @@ function goalKey(goalRef: GoalRef): string {
  * U9: raw items + strategy -> shown lines. `pass_through` returns the items
  * unchanged. `user_affected_per_goal` keeps every non-`note_review` item and
  * every own-line note (`user_affected`, `structural` or an absent class), and
- * folds the `scribe_result` notes into one line per Goal.
+ * folds the `scribe_result` notes into one line per Goal. `main_conversation`
+ * also folds each Goal's `automatic_rework` notices into one line that lists
+ * its members and carries their views.
  */
-export function groupNotices(items: readonly NoticeItemV1[], strategy: NoticeGroupingStrategyV1): NoticeItemV1[] {
+export function groupNotices(items: readonly NoticeItemV1[], strategy: NoticeGroupingStrategyV1): NoticeLineV1[] {
   if (strategy === 'pass_through') return items.slice();
 
-  type Line = { item: NoticeItemV1; order: number };
-  type Folded = { goalRef: GoalRef; members: NoticeMember[]; objects: NoticeItemV1['objects'];
-    newest: NoticePositionV1; order: number };
+  type Line = { item: NoticeLineV1; order: number };
+  type FoldKind = 'scribe' | 'rework';
+  type Folded = { kind: FoldKind; goalRef: GoalRef; members: NoticeMember[]; views: NoticeItemV1[];
+    objects: NoticeItemV1['objects']; newest: NoticePositionV1; order: number };
   const lines: Line[] = [];
   const folded = new Map<string, Folded>();
 
   items.forEach((source, index) => {
-    const isScribe = source.category === 'note_review' && source.noteClass === 'scribe_result';
-    if (!isScribe) {
+    const kind: FoldKind | null = source.category === 'note_review' && source.noteClass === 'scribe_result' ? 'scribe'
+      : strategy === 'main_conversation' && source.category === 'automatic_rework' ? 'rework' : null;
+    if (kind === null) {
       lines.push({ item: source, order: index });
       return;
     }
-    const key = goalKey(source.goalRef);
+    const key = `${kind}|${goalKey(source.goalRef)}`;
     const member: NoticeMember = { itemKey: source.itemKey, position: source.position };
     const existing = folded.get(key);
     if (existing === undefined) {
-      folded.set(key, { goalRef: source.goalRef, members: [member], objects: [...source.objects],
+      folded.set(key, { kind, goalRef: source.goalRef, members: [member], views: [source], objects: [...source.objects],
         newest: source.position, order: index });
       return;
     }
     existing.members.push(member);
+    existing.views.push(source);
     // Verifier §7: never spread an unbounded folded group into call arguments
     // (a folded line can hold every unseen scribe result for its Goal).
     for (const object of source.objects) existing.objects.push(object);
@@ -65,11 +81,17 @@ export function groupNotices(items: readonly NoticeItemV1[], strategy: NoticeGro
   });
 
   for (const entry of folded.values()) {
-    lines.push({ order: entry.order, item: {
-      itemKey: `note_review_scribe:${entry.goalRef.projectId}/${entry.goalRef.goalId}`,
+    const goal = `${entry.goalRef.projectId}/${entry.goalRef.goalId}`;
+    lines.push({ order: entry.order, item: entry.kind === 'scribe' ? {
+      itemKey: `note_review_scribe:${goal}`,
       category: 'note_review', goalRef: entry.goalRef, position: entry.newest,
       summary: `书记整理 · ${entry.members.length} 条注记`, objects: entry.objects,
       rework: null, members: entry.members,
+    } : {
+      itemKey: `automatic_rework_group:${goal}`,
+      category: 'automatic_rework', goalRef: entry.goalRef, position: entry.newest,
+      summary: `${entry.members.length} 条自动返工`, objects: entry.objects,
+      rework: null, members: entry.members, memberViews: entry.views,
     } });
   }
 
@@ -113,4 +135,19 @@ export function seenThroughOfNotices(all: readonly NoticeItemV1[],
     if (highest !== undefined) seenThrough[category] = highest;
   }
   return seenThrough;
+}
+
+/**
+ * One Goal's notice lines out of `all`, the full ordered line set of the
+ * workspace (every category read, after the seen positions, before any Goal
+ * filter), and the advance those lines allow. The advance walks the full member
+ * set, so a member of another Goal between two shown members stops it there: a
+ * mark of this page never passes a member it did not show.
+ */
+export function goalNoticePage(all: readonly NoticeLineV1[], goalRef: GoalRef): {
+  lines: NoticeLineV1[]; seenThrough: Partial<Record<NoticeCategoryV1, NoticePositionV1>>;
+} {
+  const key = goalKey(goalRef);
+  const lines = all.filter((line) => goalKey(line.goalRef) === key);
+  return { lines, seenThrough: seenThroughOfNotices(all, lines) };
 }

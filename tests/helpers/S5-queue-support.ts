@@ -243,7 +243,18 @@ export async function answeredPlanningQuestion(f: S5DecisionFixture) {
   record = committed(await execution.recordQueryObservation(f.ctx, { input: { entry,
     history: { schemaVersion: 1, sessionRef: ticket.sessionRef, kernel: ticket.kernel, startPosition: 1, observedThroughPosition: 3, endPosition: 3 },
     source: { position: 3, cursor: 's5-planning-answered' },
-    observation: { kind: 'terminal', occurredAt: T, outcome: 'answered', answer, reason: null, answerCheck: null } },
+    observation: { kind: 'terminal', occurredAt: T, outcome: 'answered', answer, reason: null, answerCheck: null,
+      activity: {
+        status: 'counted', ruleVersion: 1,
+        window: { kernelRunId: 'inert-run', kernelTurnId: 'inert-turn', fromPosition: 1, throughPosition: 1,
+          bound: 'end_position', turnTerminal: true, unresolvedCalls: 0,
+          turnStartedAt: '2026-10-23T09:00:00.000Z', lastRecordAt: '2026-10-23T09:00:00.000Z' },
+        quarters: [], overflow: null, totals: { steps: 0, edits: 0, editsUnknown: 0 },
+        changedFiles: { definite: [], possible: [], definiteOmitted: 0, possibleOmitted: 0,
+          possiblyIncomplete: false, incompleteBecause: [] },
+        usage: { requests: [], omitted: 0, totals: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }, complete: true },
+      },
+    } },
     meta: { requestId: 's5-planning-answered', expected: [{ ref: runRef, revision: record.run.revision }] } }));
   expect(record.job.job.status).toBe('answered');
   expect(record.session.occupancy).toBeNull();

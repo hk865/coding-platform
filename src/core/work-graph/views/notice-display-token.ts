@@ -19,6 +19,7 @@ import type {
 /** Shape-check of the parsed body, so a forged/garbled payload never decodes. */
 function asPayload(value: unknown): NoticeDisplayTokenPayloadV1 | null {
   if (!isRecord(value) || value['schemaVersion'] !== 1) return null;
+  if (value['issuer'] !== 'queue' && value['issuer'] !== 'main') return null;
   if (!isRecord(value['workspace']) || !isRecord(value['operator'])) return null;
   if (typeof value['sourceCursor'] !== 'string') return null;
   if (!Array.isArray(value['categories']) || !Array.isArray(value['returnedKeys'])) return null;

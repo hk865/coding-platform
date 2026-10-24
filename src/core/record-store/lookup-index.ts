@@ -218,6 +218,8 @@ export type DecodedOrderedLookupRequest = {
   readonly direction: 'asc' | 'desc';
   readonly bound: { readonly value: OrderedLookupValue; readonly inclusive: boolean } | null;
   readonly after: { readonly order: OrderedLookupValue; readonly refKey: string } | null;
+  /** The direction-free lower bound on the order value. */
+  readonly lowerBound: { readonly value: OrderedLookupValue; readonly inclusive: boolean } | null;
   readonly limit: number;
 };
 
@@ -310,6 +312,17 @@ export function decodeOrderedLookupRequest(
     }
     after = Object.freeze({ order: rawAfter['order'] as OrderedLookupValue, refKey });
   }
+  const rawLower = request['lowerBound'];
+  let lowerBound: { value: OrderedLookupValue; inclusive: boolean } | null = null;
+  if (rawLower !== undefined) {
+    if (!isJsonObject(rawLower)) return { status: 'invalid', reason: 'ordered lookup lowerBound must be an object' };
+    if (typeof rawLower['inclusive'] !== 'boolean') {
+      return { status: 'invalid', reason: 'ordered lookup lowerBound.inclusive must be a boolean' };
+    }
+    const problem = orderedValueProblem(orderBy.valueType, rawLower['value'], 'ordered lookup lowerBound.value');
+    if (problem !== null) return { status: 'invalid', reason: problem };
+    lowerBound = Object.freeze({ value: rawLower['value'] as OrderedLookupValue, inclusive: rawLower['inclusive'] as boolean });
+  }
   return {
     status: 'decoded',
     value: Object.freeze({
@@ -318,6 +331,7 @@ export function decodeOrderedLookupRequest(
       direction: rawDirection,
       bound,
       after,
+      lowerBound,
       limit,
     }),
   };
@@ -594,8 +608,9 @@ export function compareOrderedValues(
 }
 
 /**
- * Whether one candidate satisfies BOTH the optional `bound` and the optional
- * `after` keyset of a decoded ordered request (their intersection, L1).
+ * Whether one candidate satisfies the optional `bound`, the optional `after`
+ * keyset and the optional `lowerBound` of a decoded ordered request (their
+ * intersection, L1).
  */
 export function matchesOrderedRequest(
   request: DecodedOrderedLookupRequest,
@@ -620,6 +635,10 @@ export function matchesOrderedRequest(
       if (compared > 0) return false;
       if (compared === 0 && compareRefKeys(refKey, request.after.refKey) >= 0) return false;
     }
+  }
+  if (request.lowerBound !== null) {
+    const compared = compareOrderedValues(valueType, order, request.lowerBound.value);
+    if (request.lowerBound.inclusive ? compared < 0 : compared <= 0) return false;
   }
   return true;
 }

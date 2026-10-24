@@ -69,7 +69,7 @@ describe('S2B round 2 R1 — backfill request identity across Host lifetimes', (
     const firstBatch = await firstHost.backfillRecentActivity(f.ctx, { workspace: f.b2.base.scope, cursor: null });
     expect(firstBatch.status).toBe('ready');
     if (firstBatch.status !== 'ready') return;
-    expect(firstBatch.value.processed).toEqual([{ runRef: run, outcome: 'unknown', reason: 'kernel_unreadable' }]);
+    expect(firstBatch.value.processed).toEqual([{ kind: 'run', runRef: run, outcome: 'unknown', reason: 'kernel_unreadable' }]);
     expect(viewOf(await f.readRuns([run]), run.runId)).toMatchObject({
       status: 'unknown', reason: 'kernel_unreadable', recordedBy: 'backfill',
     });
@@ -82,7 +82,7 @@ describe('S2B round 2 R1 — backfill request identity across Host lifetimes', (
     const secondBatch = await secondHost.backfillRecentActivity(f.ctx, { workspace: f.b2.base.scope, cursor: null });
     expect(secondBatch.status).toBe('ready');
     if (secondBatch.status !== 'ready') return;
-    expect(secondBatch.value.processed).toEqual([{ runRef: run, outcome: 'counted', reason: null }]);
+    expect(secondBatch.value.processed).toEqual([{ kind: 'run', runRef: run, outcome: 'counted', reason: null }]);
     expect(viewOf(await f.readRuns([run]), run.runId)).toMatchObject({
       status: 'counted', recordedBy: 'backfill', totals: { steps: 0, edits: 0, editsUnknown: 0 },
     });

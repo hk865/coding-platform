@@ -26,6 +26,7 @@ import {
 import type { RunState, SessionRecord as KernelSessionRecord } from '../../../vendor/coding-agent/dist/public-api.js';
 import { createSessionHistoryCursorOwner, type SessionHistoryEntry } from './session-operations.js';
 import { confirmMailboxInputs } from './execution-inputs.js';
+import { tallyTurnActivity } from './run-activity-tally.js';
 import type { RuntimeExecutionDependencies } from './execution-contracts.js';
 import type {
   QueryEntryIdentity, QueryExecutionRecord, QueryHistoryObservation,
@@ -537,6 +538,14 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
       endPosition: collected.value.lastPosition,
     };
     const requestId = `r5b-query-observe:${queryRunRef.runId}:${String(collected.value.lastPosition)}`;
+    // L16: the terminal commit records the tally of the window this observer
+    // already decoded. The window is complete, so a Turn of the fixed identity
+    // is always there; the tally itself answers `unknown` rather than zero.
+    const activity = tallyTurnActivity(collected.value.decoded, entry.kernel, {
+      fromPosition: collected.value.startPosition,
+      throughPosition: collected.value.lastPosition,
+      bound: 'end_position',
+    });
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const latest = await deps.queryExecution.readQueryExecution(owned, queryRunRef);
       if (latest.status !== 'ready') return latest;
@@ -550,6 +559,7 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
             reason: outcome === 'gap' ? 'the Query turn produced no bounded answer text'
               : answerCheck === null ? null : answerCheck.reason,
             answerCheck,
+            activity,
           },
         },
         meta: { requestId, expected: [{ ref: queryRunRef, revision: latest.value.run.revision }] },

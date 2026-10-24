@@ -63,6 +63,8 @@ import {
 } from './attention-observer.js';
 import { renderAttentionChanges } from '../core/agent-runtime/context-assembler.js';
 import { READONLY_COMMAND_TOOL_NAME } from '../core/agent-runtime/readonly-command-tool.js';
+import { GRAPH_TOOL_NAMES } from '../core/agent-runtime/graph-tools.js';
+import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import type { ReadonlyCommandAccessInput, RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
 import type { ReadResult } from '../contracts/core/results.js';
 import type { BootstrapExecution, BootstrapResponse, BootstrapReviewMaterial, CoreScope, WorkbenchActor } from './core-http-types.js';
@@ -315,6 +317,62 @@ function localWorkbenchBudget(model: HostSettingsStoredModel): typeof LOCAL_WORK
   return { ...LOCAL_WORKBENCH_BUDGET, contextWindowTokens };
 }
 
+/** The local grant's read tools: the Kernel file read and the two read-only
+ * graph tools. The local secretary gets these only. */
+const LOCAL_READ_TOOL_NAMES: readonly string[] = ['read', ...GRAPH_TOOL_NAMES];
+
+/** The local workbench secretary's binding identity. Its Role is the exact
+ * platform secretary legacy template, which the Session duty resolver reads as
+ * `secretary`; the local binding keeps its own identity and policy revision. */
+const LOCAL_SECRETARY_ROLE_BINDING_ID = 'local-workbench-secretary-binding';
+
+function localSecretaryRoleBinding(): WorkbenchQueryProfile['roleBinding'] {
+  const template = platformRoleProfile('secretary').template;
+  return {
+    schemaVersion: 1, bindingId: LOCAL_SECRETARY_ROLE_BINDING_ID,
+    templateId: template.templateId, templateRevision: template.templateRevision,
+    bindingVersion: 1, policyRevision: 'legacy-template',
+  };
+}
+
+/** The local secretary's grant: the local grant's model and budget with its read
+ * tools only, the platform secretary duty and the secretary behavior. It never
+ * carries a write scope, a command tool or command access. */
+function localSecretaryGrant(localGrant: WorkbenchRuntimeBinding['grant']): WorkbenchRuntimeBinding['grant'] {
+  const template = platformRoleProfile('secretary').template;
+  return {
+    budget: structuredClone(localGrant.budget),
+    hostTemplate: {
+      templateId: template.templateId, revision: template.templateRevision,
+      digest: sha256Hex(PLATFORM_PROMPT_PACK_V1.templates['skill-platform-secretary']),
+    },
+    tools: localGrant.tools.filter(name => LOCAL_READ_TOOL_NAMES.includes(name)),
+    writeScope: [],
+    skills: { bundle: 'platform', behaviors: ['secretary'] },
+    systemInstruction: null,
+    deniedPrefixes: [],
+    processSandboxOptions: {},
+    materialBasis: null,
+    platformDuty: 'secretary',
+    ...(localGrant.contextResidentBytes === undefined ? {} : { contextResidentBytes: localGrant.contextResidentBytes }),
+  };
+}
+
+/** One Host configuration version over the explicit resolved fields: a change
+ * to the duty, resident bytes, tools, write scope or model is a new version.
+ * The prefix separates the local workbench's two bindings. */
+function localBindingRevision(prefix: 'local-workbench' | 'local-secretary', scope: CoreScope,
+  grant: WorkbenchRuntimeBinding['grant'], model: WorkbenchModelConfiguration): string {
+  return `${prefix}:s3@${sha256Hex(canonicalJson({
+    scope: { projectId: scope.projectId, workspaceId: scope.workspaceId },
+    duty: grant.platformDuty ?? 'executor',
+    residentBytes: grant.contextResidentBytes ?? 4096,
+    tools: grant.tools,
+    writeScope: grant.writeScope,
+    modelRevision: model.revision,
+  } as unknown as JsonValue)).slice(0, 16)}`;
+}
+
 /**
  * L18 layer 1 (exported so the Host grant is reachable at its own seam): the
  * read-only process tool is granted only when the switch is on (default true)
@@ -335,7 +393,7 @@ export function localWorkbenchGrant(workspace: WorkbenchWorkspaceConfig, model: 
     // RW-1 (4C): `record_note` is a coordination tool that writes WorkGraph
     // records, so it follows the same `writeAllowed` condition as the mailbox
     // tools; a read-only or Query ceiling still strips it.
-    tools: ['read', 'look_graph', 'find_graph',
+    tools: [...LOCAL_READ_TOOL_NAMES,
       ...(readonlyCommandsAllowed ? [READONLY_COMMAND_TOOL_NAME] : []),
       ...(writeAllowed ? ['write', 'record_note', 'send_session_message',
         'read_session_inbox', 'read_session_message', 'read_session_message_body'] : []),
@@ -801,19 +859,30 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     });
   }
 
-  function localWorkbenchProfile(scope: CoreScope, bindingId: string, model: HostSettingsStoredModel): WorkbenchQueryProfile {
-    const suffix = sha256Hex(scopeKey(scope)).slice(0, 16);
+  function builtinQueryProfile(scope: CoreScope, bindingId: string, idPrefix: string, label: string,
+    sessionRole: WorkbenchQueryProfile['sessionRole'], roleBinding: WorkbenchQueryProfile['roleBinding'],
+    model: HostSettingsStoredModel): WorkbenchQueryProfile {
     return {
-      id: `local-workbench-query-${suffix}`,
-      label: 'Local workbench',
+      id: `${idPrefix}-${sha256Hex(scopeKey(scope)).slice(0, 16)}`,
+      label,
       scope: { projectId: scope.projectId, workspaceId: scope.workspaceId },
       runtimeBindingId: bindingId,
-      sessionRole: structuredClone(LOCAL_WORKBENCH_ROLE),
-      roleBinding: structuredClone(LOCAL_WORKBENCH_ROLE_BINDING),
+      sessionRole: structuredClone(sessionRole),
+      roleBinding: structuredClone(roleBinding),
       runtimeBudget: localWorkbenchBudget(model),
       budget: { maxTokens: null, deadline: null },
       consumerId: workflowConsumerId,
     };
+  }
+
+  function localWorkbenchProfile(scope: CoreScope, bindingId: string, model: HostSettingsStoredModel): WorkbenchQueryProfile {
+    return builtinQueryProfile(scope, bindingId, 'local-workbench-query', 'Local workbench',
+      LOCAL_WORKBENCH_ROLE, LOCAL_WORKBENCH_ROLE_BINDING, model);
+  }
+
+  function localSecretaryProfile(scope: CoreScope, bindingId: string, model: HostSettingsStoredModel): WorkbenchQueryProfile {
+    return builtinQueryProfile(scope, bindingId, 'local-secretary-query', 'Local secretary',
+      platformRoleProfile('secretary').template, localSecretaryRoleBinding(), model);
   }
 
   function settingsModelBinding(model: HostSettingsStoredModel): WorkbenchModelConfiguration {
@@ -869,27 +938,31 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const bindingId = `local-workbench-binding-${sha256Hex(key).slice(0, 16)}`;
       const grant = localWorkbenchGrant(workspace, selected);
       const boundModel = settingsModelBinding(selected);
-      // Slice 3 (§4.6): the revision is a function of the explicit resolved
-      // fields, so a change to the duty, budget, tools, write scope or model is
-      // a new Host configuration version instead of the same scope-only digest.
-      const configurationRevision = `local-workbench:s3@${sha256Hex(canonicalJson({
-        scope: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId },
-        duty: grant.platformDuty ?? 'executor',
-        residentBytes: grant.contextResidentBytes ?? 4096,
-        tools: grant.tools,
-        writeScope: grant.writeScope,
-        modelRevision: boundModel.revision,
-      } as unknown as JsonValue)).slice(0, 16)}`;
       nextBindings.push({
         id: bindingId,
         label: 'Local workbench',
         scope: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId },
         role: structuredClone(LOCAL_WORKBENCH_ROLE),
-        configurationRevision,
+        configurationRevision: localBindingRevision('local-workbench', workspace.scope, grant, boundModel),
         model: boundModel,
         grant,
       });
+      // After the local profile, the same directory also publishes a secretary
+      // profile, so a request written there finds a secretary binding while the
+      // local profile stays first for every caller that takes one profile.
+      const secretaryBindingId = `local-secretary-binding-${sha256Hex(key).slice(0, 16)}`;
+      const secretaryGrant = localSecretaryGrant(grant);
+      nextBindings.push({
+        id: secretaryBindingId,
+        label: 'Local secretary',
+        scope: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId },
+        role: platformRoleProfile('secretary').template,
+        configurationRevision: localBindingRevision('local-secretary', workspace.scope, secretaryGrant, boundModel),
+        model: boundModel,
+        grant: secretaryGrant,
+      });
       nextProfiles.push(localWorkbenchProfile(workspace.scope, bindingId, selected));
+      nextProfiles.push(localSecretaryProfile(workspace.scope, secretaryBindingId, selected));
     }
     return { schemaVersion: 1, bindings: nextBindings, queryProfiles: nextProfiles };
   }

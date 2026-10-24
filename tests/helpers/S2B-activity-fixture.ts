@@ -46,6 +46,7 @@ import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/e
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { completionPolicyContentDigest } from '../../src/contracts/governance.js';
@@ -73,13 +74,18 @@ export const WORK_TASK_IDS = ['work-1', 'work-2', 'work-3', 'work-4', 'work-5', 
 const ACTIVITY_SCHEMAS: RecordBackendSchemas = {
   // `RunActivity@1`/`ActivityRecording@1` already ride in
   // `EXECUTION_ENTRY_RECORD_SCHEMAS`, which `createB2ExecutionFixture` spreads;
-  // the verification-round group (for the check rows) and the project-bootstrap
-  // EVENTS (the real install/activate completion-policy path below) are added
-  // here. The bootstrap group carries no records in this baseline.
-  records: [...EVIDENCE_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records],
+  // the verification-round group (for the check rows), the project-bootstrap
+  // EVENTS (the real install/activate completion-policy path below) and the
+  // Query group (the calendar's workspace QueryRun index and QueryActivity
+  // records) are added here. The bootstrap group carries no records in this
+  // baseline.
+  records: [...EVIDENCE_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records,
+    ...QUERY_JOB_RECORD_SCHEMAS.records],
   events: [...EVIDENCE_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events,
-    ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
-  lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? [])],
+    ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events,
+    ...QUERY_JOB_RECORD_SCHEMAS.events],
+  lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
+    ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? [])],
 };
 
 /** Builds a literal `counted` facts value from an explicit quarter list (test-side expectation source). */
@@ -573,7 +579,11 @@ export async function openS2BActivityFixture(
     claimWork: claim,
     ensureRecording, runAndEnd, runOpen, claimThenCancel, writeActivity, openRound, beginChecks,
     linkResponsible, closeResponsible, archiveSession,
-    readCalendar: (input, options) => readModelWith(records, options?.readRecordCap).readActivityCalendar(b2.ctx, input),
+    readCalendar: (input, options) => readModelWith(records, options?.readRecordCap).readActivityCalendar(b2.ctx, {
+      scope: { kind: 'goal', goalRef: input.goalRef },
+      from: input.from, to: input.to, granularity: input.granularity, timeZone: input.timeZone,
+      ...(input.sessionRefs === undefined ? {} : { sessionRefs: input.sessionRefs }),
+    }),
     readRuns: (runRefs, options) => readModelWith(records, options?.readRecordCap).readRunActivities(b2.ctx, { runRefs }),
     readModelWith,
     close: () => b2.close(),

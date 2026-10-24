@@ -74,6 +74,9 @@ import {
 } from '../business/workflow/line-creation.js';
 import { createRequestFacts } from '../core/work-graph/tasks/request-facts.js';
 import {
+  createMainSurfaceReadModel, type MainSurfaceReadPort,
+} from '../core/work-graph/views/main-surface-read-model.js';
+import {
   createRequestRoundService, type RequestFactsReader, type RequestRoundPort,
 } from '../core/work-graph/tasks/request-service.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../core/work-graph/tasks/secretary-selection.js';
@@ -1190,6 +1193,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const activityReads: ActivityReadPort = createActivityReadModel({ records: backend.records, now });
     const activity: ActivityReadPort & Pick<TrackReadPort, 'readTrackBars'> = {
       ...activityReads,
+      readQueryActivities: (...args) => trackedCall(() => activityReads.readQueryActivities(...args), unavailable),
       ...createTrackReadModel({ records: backend.records, now }),
     };
     const timeline: TaskTimelineReadPort = createTaskStateTimeline({ records: backend.records });
@@ -2248,13 +2252,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       const state = read.value.run.run.executionState;
       const admitted = attestationAdmission(request, queryRunRef, read.value.run.revision, state?.phase === 'unknown', 'QueryRun');
       if (admitted !== null) return admitted;
-      const kernel = state?.entry?.kernel ?? null;
-      const facts = kernel === null || state === undefined ? { ok: true as const, kernelTurnOpen: false, inputsConfirmed: null }
-        : await readAttestationFacts({ owner: historyOwner, messages: classifierMessages }, ctx, { session: read.value.session,
-          executionRef: queryRunRef, kernel, startPosition: state.history?.startPosition ?? null });
+      // The admission above proved phase `unknown`, which only a QueryRun with
+      // its fixed entry reaches, so the Kernel facts and the tally are always read.
+      const facts = await readAttestationFacts({ owner: historyOwner, messages: classifierMessages }, ctx, {
+        session: read.value.session, executionRef: queryRunRef, kernel: state!.entry!.kernel,
+        startPosition: state!.history?.startPosition ?? null });
       if (!facts.ok) return facts.rejection;
       return queryExecution.resolveUnknownQueryRun(ctx, { input: { queryRunRef, reason: input.reason,
-        kernelTurnOpen: facts.kernelTurnOpen, inputsConfirmed: facts.inputsConfirmed }, meta: request.meta });
+        kernelTurnOpen: facts.kernelTurnOpen, inputsConfirmed: facts.inputsConfirmed, activity: facts.activity },
+        meta: request.meta });
     }
     // Slice 2C (spec §2, L1b, L13, L15): the ONE line read model, the ONE
     // node-detail read model, the pin write owner and the Host conversation
@@ -2350,6 +2356,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       effectiveGoalOf: (ctx, input) => trackedCall(() => rawRequestFacts.effectiveGoalOf(ctx, input), requestClosed),
       readFacts: (ctx, input) => trackedCall(() => rawRequestFacts.readFacts(ctx, input), requestClosed),
     };
+    // The main read and `requests/read`: the request facts above and ONE
+    // whole-page run of the decision read model's assembly per read.
+    const rawMainSurface = createMainSurfaceReadModel({ records: backend.records, requests: rawRequestFacts,
+      decisions: rawDecisionReads });
+    const mainSurface: MainSurfaceReadPort = {
+      readMainPage: (ctx, input) => trackedCall(() => rawMainSurface.readMainPage(ctx, input), requestClosed),
+      readRequestView: (ctx, input) => trackedCall(() => rawMainSurface.readRequestView(ctx, input), requestClosed),
+    };
     const requestRounds: RequestRoundPort = {
       precheck: (ctx, command) => trackedCall(() => rawRequestRounds.precheck(ctx, command), requestClosed),
       append: (ctx, input) => trackedCall(() => rawRequestRounds.append(ctx, input), requestClosed),
@@ -2362,6 +2376,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       submitRequest: (ctx, input) => trackedCall(() => rawRequestIntake.submitRequest(ctx, input), requestClosed),
       route: (ctx, input) => trackedCall(() => rawRequestIntake.route(ctx, input), requestClosed),
       selectIdea: (ctx, input) => trackedCall(() => rawRequestIntake.selectIdea(ctx, input), requestClosed),
+      ask: (ctx, input) => trackedCall(() => rawRequestIntake.ask(ctx, input), requestClosed),
       drainUnassigned: (ctx, scope, input) =>
         trackedCall(() => rawRequestIntake.drainUnassigned(ctx, scope, input), requestClosed),
     };
@@ -2391,6 +2406,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // The request command owner, its round/facts readers and the Host profile
       // port; internal like the other owner groups.
       requestIntake, requestRounds, requestFacts, secretaryProfiles,
+      // The main read and `requests/read` owner; internal like the request owners.
+      mainSurface,
       reconcile,
       /** RUN-22 (U): the operator's attestation through the Host entry; drained like every write. */
       resolveUnknownRun: (...args: Parameters<typeof resolveUnknownRun>) => trackedCall(() => resolveUnknownRun(...args), unavailable),
@@ -2468,7 +2485,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
       'runActivity', 'activity', 'timeline',
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
-      'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles'] as const) {
+      'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

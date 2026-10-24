@@ -176,7 +176,7 @@ const QRR_CLAIM: Extract<QueryExecutionStep, { phase: 'claimed' }> = {
 };
 const QRR_PREPARED: Extract<QueryExecutionStep, { phase: 'prepared' }> = {
   phase: 'prepared',
-  prepared: { bundleRef: QRR_BUNDLE, inputDigest: 'i'.repeat(64) },
+  prepared: { bundleRef: QRR_BUNDLE, inputDigest: 'i'.repeat(64), requestEffectiveGoalId: null },
 };
 const QRR_ENTERING: Extract<QueryExecutionStep, { phase: 'entering' }> = {
   phase: 'entering',

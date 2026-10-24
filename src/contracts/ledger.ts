@@ -86,7 +86,15 @@ export type GoalSnapshot = {
     revision: number;
     /** Slice 5 optional Goal settings; absent reads as the default. */
     settings?: GoalSettingsV1;
+    /** The Goal's creation commit cursor; every later write carries it unchanged. */
+    since: CommitCursor;
 };
+
+/**
+ * Pre-bind form the creation path builds: the RecordStore fills the `since`
+ * placeholder from the creation commit (`commitCursorFields`), as note records do.
+ */
+export type PendingGoalSnapshot = Omit<GoalSnapshot, 'since'> & { since: CommitCursor | null };
 export type VersionedRef = {
     ref: AggregateRef;
     revision: number;

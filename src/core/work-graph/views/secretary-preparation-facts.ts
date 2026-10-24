@@ -200,6 +200,46 @@ async function readSecretaryFactsOnce(
   if (answersRead.status !== 'ready') return answersRead;
   const answerByRef = new Map(answersRead.value.map((answer) => [keyOf(answer.ref), answer]));
 
+  // The current revision of every object the rendered rounds' card refs name
+  // (an `ask` stores a card's refs), read in one batch inside this read's
+  // window: an absent object reads `null` (rendered "not found"); a failed
+  // read fails the facts, never an empty card list.
+  const renderedRounds: QueryJobSnapshot[] = [executingRound, ...batchRounds];
+  for (const candidate of earlierRounds) {
+    renderedRounds.push(candidate.round);
+    for (const absorbedRef of candidate.round.job.absorbedRounds) {
+      const absorbedRound = facts.rounds.find((round) => sameJson(round.ref, absorbedRef));
+      if (absorbedRound !== undefined) renderedRounds.push(absorbedRound);
+    }
+  }
+  const cardKeys = [...new Set(renderedRounds.flatMap((round) =>
+    round.job.relatedCardRefs.map((pin) => keyOf(pin.ref))))];
+  const cardRevisions = new Map<string, number | null>();
+  const cardGuards: RecordGuard[] = [];
+  if (cardKeys.length > 0) {
+    let cardRead: Awaited<ReturnType<SecretaryPreparationFactsDependencies['records']['readMany']>>;
+    try {
+      cardRead = await deps.records.readMany(cardKeys);
+    } catch (error) {
+      return rejected('unavailable', `the card objects read failed: ${messageOf(error)}`);
+    }
+    if (cardRead.status !== 'ready') {
+      return rejected('unavailable', `the card objects read failed: ${cardRead.code}: ${cardRead.reason}`);
+    }
+    for (const cardKey of cardKeys) {
+      const record = cardRead.value.records.find((entry) => entry.refKey === cardKey);
+      if (record !== undefined) {
+        cardRevisions.set(cardKey, record.revision);
+        cardGuards.push({ refKey: cardKey, expectedRevision: record.revision });
+      } else if (cardRead.value.missing.includes(cardKey)) {
+        cardRevisions.set(cardKey, null);
+        cardGuards.push({ refKey: cardKey, expectedRevision: null });
+      } else {
+        return rejected('unavailable', `the card object read did not report ${cardKey}`);
+      }
+    }
+  }
+
   const materialOf = (round: QueryJobSnapshot): ReadResult<SecretaryRoundMaterialV1> => {
     if (round.job.roundKind === 'routing') {
       return rejected('unavailable', 'a routing round has no Query material');
@@ -233,6 +273,14 @@ async function readSecretaryFactsOnce(
       }
       selectedIdea = { round: chosen.round, index: chosen.index, title: idea.title, detail: idea.detail };
     }
+    const relatedCards: SecretaryRoundMaterialV1['relatedCards'] = [];
+    for (const pin of round.job.relatedCardRefs) {
+      const current = cardRevisions.get(keyOf(pin.ref));
+      if (current === undefined) {
+        return rejected('unavailable', `the card object ${keyOf(pin.ref)} of round ${round.ref.queryJobId} was not read`);
+      }
+      relatedCards.push({ ref: pin, current });
+    }
     return {
       status: 'ready',
       value: {
@@ -243,7 +291,7 @@ async function readSecretaryFactsOnce(
         since: round.since,
         text: round.job.intent.question,
         selectedIdea,
-        relatedCards: round.job.relatedCardRefs.map((ref) => ({ ref, current: null })),
+        relatedCards,
       },
     };
   };
@@ -403,6 +451,7 @@ async function readSecretaryFactsOnce(
     ...architectureGuards,
     ...goalGuards,
     ...sessionGuards,
+    ...cardGuards,
     { refKey: workspaceKey, expectedRevision: workspaceRecord.revision },
   ]);
   if (!merged.ok) return merged.rejection;

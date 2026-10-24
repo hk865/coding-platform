@@ -56,8 +56,9 @@ import type {
 import type { StartupReconcileReportV1 } from './startup-reconcile.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type {
-  RequestIntakePort, RequestRouteResultV1, RequestSelectIdeaResultV1, RequestSubmitResultV1,
+  RequestAskResultV1, RequestIntakePort, RequestRouteResultV1, RequestSelectIdeaResultV1, RequestSubmitResultV1,
 } from '../business/workflow/request-intake.js';
+import type { MainSurfaceReadPort } from '../core/work-graph/views/main-surface-read-model.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
 import type { GoalControlPort } from './goal-fan-out-driver.js';
 import type { WorkbenchToolsPort } from './workbench-tools.js';
@@ -219,10 +220,12 @@ export type CoreRouteBindings = {
   recordDecisionApplication: DecisionMessagePort['recordDecisionApplication'];
   markNoticesSeen: WorkspaceDecisionSettingsPort['markNoticesSeen'];
   sendUserMessage: DecisionMessagePort['sendUserMessage'];
-  // Slice 2B L9–L12/L15: the ONE activity owner (calendar + per-Run views +
-  // track bars) and the task-state timeline owner, plus the human range backfill.
+  // Slice 2B L9–L12/L15: the ONE activity owner (calendar + per-Run and
+  // per-Query views + track bars) and the task-state timeline owner, plus the
+  // human range backfill.
   readActivityCalendar: ActivityReadPort['readActivityCalendar'];
   readRunActivities: ActivityReadPort['readRunActivities'];
+  readQueryActivities: ActivityReadPort['readQueryActivities'];
   readTrackBars: TrackReadPort['readTrackBars'];
   readTaskStateTimeline: TaskTimelineReadPort['readTaskStateTimeline'];
   backfillActivityRange: NonNullable<WorkflowPort['backfillActivityRange']>;
@@ -250,7 +253,7 @@ export type CoreRouteBindings = {
     Promise<ReadResult<VersionListPageV1>>;
   listCatalogVersions: (ctx: CoreCallContext, input: { limit: number; cursor: string | null }) =>
     Promise<ReadResult<VersionListPageV1>>;
-  // The three person-only request commands. The Host layer
+  // The four person-only request commands. The Host layer
   // owns the public-surface checks (person, `manual`/`dropped`) and returns the
   // port's receipt/rejection body unchanged.
   submitRequest: (ctx: CoreCallContext, input: Parameters<RequestIntakePort['submitRequest']>[1]) =>
@@ -259,6 +262,12 @@ export type CoreRouteBindings = {
     Promise<RequestRouteResultV1 | CoreRejection>;
   selectRequestIdea: (ctx: CoreCallContext, input: Parameters<RequestIntakePort['selectIdea']>[1]) =>
     Promise<RequestSelectIdeaResultV1 | CoreRejection>;
+  askRequest: (ctx: CoreCallContext, input: Parameters<RequestIntakePort['ask']>[1]) =>
+    Promise<RequestAskResultV1 | CoreRejection>;
+  // The main conversation's read and one request's read with its cards: reads,
+  // open to any trusted caller of the workspace like the other reads.
+  readMainPage: MainSurfaceReadPort['readMainPage'];
+  readRequestView: MainSurfaceReadPort['readRequestView'];
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -339,6 +348,9 @@ export type CoreRoutePlatform = {
   /** The request command owner, non-enumerable on the
    * composed platform. A narrow platform without it answers `unsupported`. */
   requestIntake?: RequestIntakePort;
+  /** The main read and `requests/read` owner, non-enumerable on the composed
+   * platform. A narrow platform without it answers `unsupported`. */
+  mainSurface?: MainSurfaceReadPort;
   /** Slice 4C (spec §2/L15/L19): the non-enumerable `notes` owner group the six
    * notes/version-list routes bind. A narrow platform without it answers
    * `unsupported`. */
@@ -502,9 +514,10 @@ export const CORE_ROUTE_SPECS: Record<
   'decisions/application': { kind: 'graph_write', binding: 'recordDecisionApplication', owner: 'decisionMessages.recordDecisionApplication' },
   'decisions/notices/seen': { kind: 'graph_write', binding: 'markNoticesSeen', owner: 'workspaceDecisionSettings.markNoticesSeen' },
   'messages/user-send': { kind: 'graph_write', binding: 'sendUserMessage', owner: 'decisionMessages.sendUserMessage' },
-  // Slice 2B L9–L12/L15: the five activity/timeline reads and the human backfill.
+  // Slice 2B L9–L12/L15: the six activity/timeline reads and the human backfill.
   'activity/calendar': { kind: 'plain', binding: 'readActivityCalendar', owner: 'activity.readActivityCalendar' },
   'activity/runs': { kind: 'plain', binding: 'readRunActivities', owner: 'activity.readRunActivities' },
+  'activity/queries': { kind: 'plain', binding: 'readQueryActivities', owner: 'activity.readQueryActivities' },
   'activity/track': { kind: 'plain', binding: 'readTrackBars', owner: 'activity.readTrackBars' },
   'tasks/timeline': { kind: 'plain', binding: 'readTaskStateTimeline', owner: 'timeline.readTaskStateTimeline' },
   'activity/backfill': { kind: 'plain', binding: 'backfillActivityRange', owner: 'workflow.backfillActivityRange' },
@@ -525,11 +538,15 @@ export const CORE_ROUTE_SPECS: Record<
   'notes/review': { kind: 'plain', binding: 'reviewNote', owner: 'notes.reviewNote' },
   'plans/versions': { kind: 'plain', binding: 'listPlanVersions', owner: 'notes.listPlanVersions' },
   'architecture/versions': { kind: 'plain', binding: 'listCatalogVersions', owner: 'notes.listCatalogVersions' },
-  // The three person-only request commands. `route` accepts
+  // The four person-only request commands. `route` accepts
   // `manual`/`dropped` publicly; `handoff`/`archived` stay internal.
   'requests/submit': { kind: 'plain', binding: 'submitRequest', owner: 'requestIntake.submitRequest' },
   'requests/route': { kind: 'plain', binding: 'routeRequest', owner: 'requestIntake.route' },
   'requests/select-idea': { kind: 'plain', binding: 'selectRequestIdea', owner: 'requestIntake.selectIdea' },
+  'requests/ask': { kind: 'plain', binding: 'askRequest', owner: 'requestIntake.ask' },
+  // The main conversation's read and one request's read with its cards.
+  'main/read': { kind: 'plain', binding: 'readMainPage', owner: 'mainSurface.readMainPage' },
+  'requests/read': { kind: 'plain', binding: 'readRequestView', owner: 'mainSurface.readRequestView' },
 };
 
 export type ParsedCoreRequest =
@@ -674,7 +691,7 @@ export function createPlatformCoreRouteBindings(
   // precheck (one rule, one place).
   const requestEntryProblem = (ctx: CoreCallContext, input: unknown): CoreRejection | null => {
     if (!personOnly(ctx)) {
-      return { status: 'rejected', code: 'forbidden', reason: 'only the person may submit, route or select a request' };
+      return { status: 'rejected', code: 'forbidden', reason: 'only the person may issue a request command' };
     }
     if (!isPlainObject(input)) {
       return { status: 'rejected', code: 'invalid', reason: 'the request input must be a JSON object' };
@@ -899,6 +916,8 @@ export function createPlatformCoreRouteBindings(
       : platform.activity.readActivityCalendar.bind(platform.activity),
     readRunActivities: platform.activity === undefined ? unsupported('the platform does not publish activity.readRunActivities')
       : platform.activity.readRunActivities.bind(platform.activity),
+    readQueryActivities: platform.activity === undefined ? unsupported('the platform does not publish activity.readQueryActivities')
+      : platform.activity.readQueryActivities.bind(platform.activity),
     readTrackBars: platform.activity === undefined ? unsupported('the platform does not publish activity.readTrackBars')
       : platform.activity.readTrackBars.bind(platform.activity),
     readTaskStateTimeline: platform.timeline === undefined ? unsupported('the platform does not publish timeline.readTaskStateTimeline')
@@ -963,6 +982,20 @@ export function createPlatformCoreRouteBindings(
         if (refusal !== null) return refusal;
         return platform.requestIntake!.selectIdea(ctx, input);
       },
+    askRequest: platform.requestIntake === undefined
+      ? unsupported('the platform does not publish the request command owner (ask)')
+      : async (ctx, input) => {
+        const refusal = requestEntryProblem(ctx, input);
+        if (refusal !== null) return refusal;
+        return platform.requestIntake!.ask(ctx, input);
+      },
+    // The two reads of the non-enumerable `mainSurface` owner; a spread copy
+    // lacks it and the binding answers an explicit `unsupported`.
+    readMainPage: platform.mainSurface === undefined ? unsupported('the platform does not publish mainSurface.readMainPage')
+      : platform.mainSurface.readMainPage.bind(platform.mainSurface),
+    readRequestView: platform.mainSurface === undefined
+      ? unsupported('the platform does not publish mainSurface.readRequestView')
+      : platform.mainSurface.readRequestView.bind(platform.mainSurface),
   };
 }
 
@@ -1190,9 +1223,10 @@ export async function dispatchCoreRoute(
       case 'decisions/application': return bindings.recordDecisionApplication(ctx, graphWrite.request as never);
       case 'decisions/notices/seen': return bindings.markNoticesSeen(ctx, graphWrite.request as never);
       case 'messages/user-send': return bindings.sendUserMessage(ctx, graphWrite.request as never);
-      // Slice 2B L9–L12/L15: the five activity/timeline routes are all plain.
+      // Slice 2B L9–L12/L15: the six activity/timeline routes are all plain.
       case 'activity/calendar': return bindings.readActivityCalendar(ctx, plain.input as never);
       case 'activity/runs': return bindings.readRunActivities(ctx, plain.input as never);
+      case 'activity/queries': return bindings.readQueryActivities(ctx, plain.input as never);
       case 'activity/track': return bindings.readTrackBars(ctx, plain.input as never);
       case 'tasks/timeline': return bindings.readTaskStateTimeline(ctx, plain.input as never);
       case 'activity/backfill': return bindings.backfillActivityRange(ctx, plain.input as never);
@@ -1211,10 +1245,13 @@ export async function dispatchCoreRoute(
       case 'notes/review': return bindings.reviewNote(ctx, plain.input as never);
       case 'plans/versions': return bindings.listPlanVersions(ctx, plain.input as never);
       case 'architecture/versions': return bindings.listCatalogVersions(ctx, plain.input as never);
-      // The three person-only request commands.
+      // The four person-only request commands.
       case 'requests/submit': return bindings.submitRequest(ctx, plain.input as never);
       case 'requests/route': return bindings.routeRequest(ctx, plain.input as never);
       case 'requests/select-idea': return bindings.selectRequestIdea(ctx, plain.input as never);
+      case 'requests/ask': return bindings.askRequest(ctx, plain.input as never);
+      case 'main/read': return bindings.readMainPage(ctx, plain.input as never);
+      case 'requests/read': return bindings.readRequestView(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

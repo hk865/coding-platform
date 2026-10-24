@@ -115,7 +115,9 @@ export function createDecisionSettingsService(
       if (payload.workspace.projectId !== owned.projectId || payload.workspace.workspaceId !== owned.workspaceId) {
         return rejected('invalid', 'the notice display token belongs to another workspace');
       }
-      if (!sameActor(payload.operator, operator) || payload.goalRef !== null) {
+      // A Goal-filtered page marks only when the main read issued it: its
+      // `seenThrough` never passes a notice it did not show (slice-6-SPEC L6).
+      if (!sameActor(payload.operator, operator) || (payload.goalRef !== null && payload.issuer !== 'main')) {
         return rejected('invalid', 'the notice display token belongs to another caller or filter');
       }
       const requested = Object.entries(seenThrough) as [NoticeCategoryV1, NoticePositionV1][];

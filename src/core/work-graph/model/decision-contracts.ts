@@ -87,9 +87,18 @@ export interface CandidateRequestFactsPort {
 // Notice display token and position comparison (spec §2.8)                  //
 // ------------------------------------------------------------------------ //
 
-/** wire = base64url(UTF8(canonicalJson(payload))) + '.' + lowercase HMAC-SHA256 hex. */
+/**
+ * wire = base64url(UTF8(canonicalJson(payload))) + '.' + lowercase HMAC-SHA256 hex.
+ *
+ * `issuer` names the read that issued the token: the decision queue (`queue`)
+ * or the main conversation's read (`main`). A Goal-filtered queue page computes
+ * its `seenThrough` over that Goal's notices only, so it may pass a notice of
+ * another Goal it never showed; the main read computes it over the workspace's
+ * full member set and never does (slice-6-SPEC L6). `markNoticesSeen` reads it.
+ */
 export type NoticeDisplayTokenPayloadV1 = {
   schemaVersion: 1; workspace: WorkspaceScope; operator: ActorRef;
+  issuer: 'queue' | 'main';
   goalRef: GoalRef | null; categories: NoticeCategoryV1[];
   sourceCursor: CommitCursor; queryCursor: string | null;
   returnedKeys: string[];

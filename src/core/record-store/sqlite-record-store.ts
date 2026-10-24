@@ -663,6 +663,11 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
         params.push(safeIntegerMax);
       }
     }
+    // The direction-free lower bound is one more range term on the order column.
+    if (request.lowerBound !== null) {
+      conditions.push(`${orderExpr} ${request.lowerBound.inclusive ? '>=' : '>'} ?`);
+      params.push(request.lowerBound.value);
+    }
     if (plan.keyset && request.after !== null) {
       const operator = request.direction === 'asc' ? '>' : '<';
       conditions.push(`(${orderExpr}, ref_key COLLATE BINARY) ${operator} (?, ?)`);

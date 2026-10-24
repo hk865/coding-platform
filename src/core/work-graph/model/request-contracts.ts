@@ -162,3 +162,15 @@ export interface SecretaryScopePort {
  * but no queue advances it. The queue and the secretary pick read this one set.
  */
 export const LIVE_ATTEMPT_PHASES: ReadonlySet<string> = new Set(['claimed', 'prepared', 'entering', 'entered']);
+
+// ------------------------------------------------------------------------ //
+// The request-root index's slot values                                      //
+// ------------------------------------------------------------------------ //
+
+/** The `rootMark` of a request's root round in `s6-request-roots-by-goal`. */
+export const REQUEST_ROOT_MARK = 'root';
+
+/** The goal slot of a request in `s6-request-roots-by-goal`: `g:<goalId>`, or `no-goal` for a request with none. */
+export function requestGoalSlot(goalId: string | null): string {
+  return goalId === null ? 'no-goal' : `g:${goalId}`;
+}

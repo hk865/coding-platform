@@ -53,7 +53,8 @@ import { storeFailureCode } from '../persistence/read-result-failures.js';
 import { deriveTaskDisplayFacts, type LineTaskArchiveNextV1, type LineTaskFactV1 } from '../state/line-status.js';
 import { pathOwnershipOf } from '../notes/note-path-ownership.js';
 import {
-  assembleLineBriefs, resolveContinuationLine, type StoreRead, type WorkLineReaderDeps, type WorkLineStore,
+  assembleLineBriefs, readLatestQueryGoal, resolveContinuationLine, type StoreRead, type WorkLineReaderDeps,
+  type WorkLineStore,
 } from './work-line-reader.js';
 
 /**
@@ -691,14 +692,23 @@ async function buildLineIndexes(
   }
 
   // L20: the Goal's owners are the secretary lines whose latest Query targets
-  // this Goal, read from the shared assembly's `name`, never every secretary.
+  // this Goal, never every secretary. The filter reads that fact itself (the
+  // line head's latest Query and its Goal), never the line's name, which is the
+  // secretary's number. A failed read is a problem on the Goal node.
   const goalOwners = new Map<string, LineBriefV1>();
   if (secretary.status === 'ready') {
+    const checked = new Set<string>();
     for (const session of secretary.value) {
       for (const brief of briefsOf(session)) {
-        if (brief.name.source === 'secretary_interim' && brief.name.goalRef?.goalId === goalRef.goalId) {
-          goalOwners.set(keyOf(brief.key), brief);
+        const headKey = keyOf(brief.key);
+        if (brief.duty !== 'secretary' || checked.has(headKey)) continue;
+        checked.add(headKey);
+        const latestGoal = await readLatestQueryGoal(deps.records, scope, brief.key);
+        if (latestGoal.status !== 'ready') {
+          problems.push({ node: { kind: 'goal', ref: goalRef }, code: latestGoal.code, reason: latestGoal.reason });
+          continue;
         }
+        if (latestGoal.value === goalRef.goalId) goalOwners.set(headKey, brief);
       }
     }
   }

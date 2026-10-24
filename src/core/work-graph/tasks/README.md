@@ -23,7 +23,7 @@
 - `decision-answer-lookup.ts` — 决定答案索引分页到结尾的单一查找。
 - `decision-source-identity.ts` — 决定来源 `source.key` 的单一解析。
 - `request-facts.ts` — request 核心视图与 candidate adapter：`deriveRequestCore`、`createRequestFacts`、`createCandidateRequestFactsReader`、`readAnswers`（按已读轮次批读答案的唯一读法）。
-- `request-service.ts` — request round 的共享入口：人的命令与可信内部命令共用一条 commit 路径；`workspaceOf` 折调用 scope，`requestAssignmentRow` 是提交行的唯一纯判定；记录键、请求根和 `request-tail` 空操作 claim 用 `src/core/work-graph/queries/request-round-claims.ts` 的那一份。另有两条具名读取：`unassigned`（未分配 drain 的一页请求）与 `open`（某状态分区里有开放轮的请求根，每个根一次），两者共用 `readOpenIndexPage` 的游标解析与页读取。
+- `request-service.ts` — request round 的共享入口：人的命令与可信内部命令共用一条 commit 路径；`workspaceOf` 折调用 scope，`requestAssignmentRow` 是提交行的唯一纯判定；记录键、请求根和 `request-tail` 空操作 claim 用 `src/core/work-graph/queries/request-round-claims.ts` 的那一份。另有两条具名读取：`unassigned`（未分配 drain 的一页请求）与 `open`（某状态分区里有开放轮的请求根，每个根一次），两者共用 `readOpenIndexPage` 的游标解析与页读取。人的 `ask`（对一张卡片问秘书或重出候选）续请求的一轮，卡片引用是 1–20 个本项目的 `VersionedRef`、不重复，存为 `relatedCardRefs`；`askInputText` 给出存下的输入（重出时先放固定的一句），`publicCommandProblem` 是人命令形状与文本的唯一纯判定。加轮之前 precheck 用一次 `readMany` 读这些卡片对象，`cardRefsReadRefusal` 判定结果：存储不保存的类型 `invalid`（再问也没用），别的读失败 `unavailable`，不存在的对象放行（上下文里写 not found），不比较钉住的版本。授权检查收窄出 Host principal，命令身份和事件 actor 都取自它。
 - `secretary-selection.ts` — 秘书候选事实与选择：`admitRequestSecretary` 是唯一准入检查（scope、可用性、派发、duty、profile），`createSecretarySelection` 只列已准入候选；另有 `createProjectSecretaryScope`、`orderCandidates`。
 - `session-facts.ts` — `SessionFactsPort` 的唯一实现（keyset 分页，有页限）。
 - `unknown-call-review-answers.ts` — 决定答案索引的内部读取（UCR/CRR 两种 source kind）。
@@ -76,7 +76,7 @@
 - `reconcile-intents.ts` — 对账 Run end 时 queued `ControlIntent` 的观察与待写快照。
 - `reconcile-reads.ts` — 启动对账的候选集合读取（有界于未完成工作）。
 - `requeue-service.ts` — `requeueTask`：`TaskRequeue` 或 `TaskReworkRefusal` 的二选一 commit。
-- `run-activity-service.ts` — `RunActivity` 写入与 backfill 候选读取。
+- `run-activity-service.ts` — `RunActivity`/`QueryActivity` 的 backfill 写入与合并候选读取；合并顺序的纯函数 `compareActivityBackfillCandidates`、`orderActivityBackfillCandidates`、`activityBackfillCandidateAfter`、`activityBackfillCursorOf` 也在这里（游标判断和下一个时刻的选择都调 `compareActivityBackfillCandidates`）：两种记录共用 `decideActivityOutcome`、同一身份/指纹与 CAS 规则（`expectedActivityRevision`，私有 `activityRevisionMatches`）和已有记录的重算规则（私有 `shouldBackfillRecordedActivity`）；Query 记录的目标和 Session 取 `model/query-activity-plan.ts` 的 `queryActivitySourceOf`；`listActivityBackfillCandidates` 把 Work ended 索引与 `s6-query-run-by-workspace-ended` 合成一张按 `endedAt` 降序、同一时刻 Work Run 在前、再按 `refKey` 升序的列表，`limit` 数合并后的候选，游标是 `{order, kind, refKey}`，续页时请求的 `to` 仍是排他上界；读取上限按读到的索引记录数各计一次，本次调用检查到第一个位置以前所需的页都读，之后只在预算内读页，已读到的先检查完再停，`next` 是最后检查的位置，只有索引没有下一页或早于 `from` 才算读完；没有记录的已进入 Query 不论结束在 `querySince` 前后都是候选；`ensureActivityRecording` 在已有 `since`、`querySince` 为 null 时用自己的一次提交补 Query epoch（revision + 1，不动 `since`）；这次提交的身份和指纹只含请求，先查回执再读时钟，重试或提交抛错后都重放原回执。
 - `run-reconcile-contracts.ts` — Run 对账端口与输入/输出契约。
 - `run-reconcile-service.ts` — 无 Kernel terminal 的 Run end 判定、未知结果处置与一 commit。
 - `run-state-service.ts` — 精确 Task execution 读取：三段 `readMany`，只在引用漂移时重试。
@@ -118,8 +118,8 @@
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `readOwnerRecord` **正本** | `owner-record-read.ts:22` | 一次 `readMany` 读一条 owner 记录、解码，并区分缺失与坏记录 | 单记录 owner 读取；不要自己写 `readOne` |
-| `readBatch`、`readRevisionNumber` | `plan-readers.ts:359`、`plan-readers.ts:375` | 批量读完整 key（present/missing/readThrough），并取某 key 的 revision | 一次要读多条事实、据实读版本生成 guard |
-| `sameCursor`、`laterCursor` | `plan-readers.ts:340`、`plan-readers.ts:349` | 比较两个 commit cursor、取较晚的一个 | 保留真实水位，合并多次读 |
+| `readBatch`、`readRevisionNumber` | `plan-readers.ts:364`、`plan-readers.ts:380` | 批量读完整 key（present/missing/readThrough），并取某 key 的 revision | 一次要读多条事实、据实读版本生成 guard |
+| `sameCursor`、`laterCursor` | `plan-readers.ts:345`、`plan-readers.ts:354` | 比较两个 commit cursor、取较晚的一个 | 保留真实水位，合并多次读 |
 | `mergeGuards` **正本** | `src/core/work-graph/persistence/record-guards.ts:12` | 按 refKey 合并 guards；同 key 不同 revision 应当拒绝 | 提交前合并全部读依赖；已合成，只剩这一份 |
 | `pinRevision` | `revision-guard.ts:19` | 从 `meta.expected` 取某引用的唯一非负 revision | 校验 pins；不要另写数组扫描 |
 | `replayCommittedReceipt` | `receipt-replay.ts:85` | 在 receipt cursor 处定位原事件、核对 receipt/事件与身份、投影结果 | 已提交重放，以及 commit 抛错后的恢复 |
@@ -127,8 +127,8 @@
 | `bindTrustedContext`、`isolateWrite` | `execution-entry-service.ts:210`、`execution-entry-service.ts:218` | 上面两个的带标签包装，检查顺序与文案一致 | 证据、邮箱等要同一拒绝文案的入口 |
 | `mapStoreFailure` | `execution-entry-service.ts:146` | 把 execution-write 的 `StoreFailure` 映射成 `CoreRejection` | 执行类写入的失败映射；其它 owner 用 `src/core/work-graph/persistence/read-result-failures.ts` 的对应映射 |
 | `requestTailKey`、`secretaryIntakeKey` | `src/core/work-graph/model/request-contracts.ts:68`、`src/core/work-graph/model/request-contracts.ts:73` | request tail 与 secretary intake 两个物理唯一槽的 key；后者用 `sessionAggregateRefKey` 拼 | 认领/转移 request 所有权 |
-| `workspaceOf` **正本** | `request-service.ts:217` | 把 `CoreCallContext` 折成 `WorkspaceScope`（缺省 workspace 为空串） | 请求、秘书与读取统一 scope；不要各写一份 |
-| `requestAssignmentRow` **正本** | `request-service.ts:758` | submit/route 的提交行唯一纯判定（follow_owner/wait/pick/recipient） | Workflow 决定是否 pick；append 复核 |
+| `workspaceOf` **正本** | `request-service.ts:221` | 把 `CoreCallContext` 折成 `WorkspaceScope`（缺省 workspace 为空串） | 请求、秘书与读取统一 scope；不要各写一份 |
+| `requestAssignmentRow` **正本** | `request-service.ts:833` | submit/route 的提交行唯一纯判定（follow_owner/wait/pick/recipient） | Workflow 决定是否 pick；append 复核 |
 | `sameRef` **正本** | `src/core/work-graph/state/ref-equality.ts:2` | 按结构逐字段比较两个引用/JSON 是否同一（与 canonical JSON 等值同义） | 判等引用；本目录的导出副本见“不要做” |
 | `sessionAggregateRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:998` | Session 聚合键的规范序列化 | 拼 canonical key；不要内联序列化 |
 | `messageOf` **正本（M1-38，尚未落地）** | `src/contracts`（新增，尚未落地） | 取 `Error.message`，否则 `String(error)` | 错误文案；落地后一律用正本，现有导出全是旧副本 |
@@ -137,19 +137,20 @@
 | `rejected` **正本** | `src/contracts/core/rejections.ts:5` | 领域 rejection 构造器（无 `current`） | 返回失败时用 `rejected` |
 | `lookupCommit` **正本** | `src/core/record-store/ports.ts:190` | Store 的 exact identity/fingerprint 幂等查询端口 | 重放/恢复的底层查询；需要失败分类时用 `lookupCommittedReceipt`，不要复制整套分类 |
 | `oldestPendingRound` **正本** | `src/core/work-graph/queries/request-rounds-read.ts:473` | 选最老的 pending 非 routing round | intake 转移、未分配遍历、Workflow 计划；只有这一份 |
-| `buildRecordedEvent` **正本** | `src/core/work-graph/queries/query-execution.ts:570` | 从实际写入的 Run 构造执行事件 | 记录 Query 执行事件；只有这一份 |
+| `buildRecordedEvent` **正本** | `src/core/work-graph/queries/query-execution.ts:575` | 从实际写入的 Run 构造执行事件 | 记录 Query 执行事件；只有这一份 |
 | `latestActivityAt` **正本**、`indexActiveCopies`、`readActiveCopies` | `line-clock.ts:45`、`line-clock.ts:59`、`line-clock.ts:74` | 工作线时钟、活跃只读副本索引与完整分页枚举 | 工作线卡、秘书选择；不要把时钟或副本另读一份 |
 | `readLatestQueryRun`、`readQueryRunByRef`、`readQueryJobGoal` | `line-clock.ts:97`、`line-clock.ts:125`、`line-clock.ts:153` | 最近 Query、按 ref 读 QueryRun、读其 QueryJob 的 goal；失败经 sink 原样报 | 线卡与只读副本的阶段；`readQueryJobGoal` 由线卡和副本共用 |
 | `copyPhase`、`readClaimedAtForRun` **正本** | `line-clock.ts:180`、`line-clock.ts:198` | 副本的阶段/开始时刻；Run 无起止时间时按 claim 索引回退读 claimedAt | 线卡、秘书选择；不要把 claimedAt 另读一份 |
-| `readCanonicalTaskFacts`、`readTaskClosure`、`taskClosureOf` | `plan-readers.ts:1597`、`plan-readers.ts:1921`、`plan-readers.ts:1901` | 规范 Task 事实（Plan、phase、lease、requeue/refusal）与 Task closure | 认领、完成、对账、节点详情读 Task |
-| `readGoal`、`readGoalScope`、`readPlan`、`readProposal`、`readProposalOrigin` | `plan-readers.ts:381`、`plan-readers.ts:401`、`plan-readers.ts:432`、`plan-readers.ts:446`、`plan-readers.ts:467` | 单条 Goal/Plan/Proposal 及其来源的 canonical 读取 | 任何 owner 要一条已存记录时 |
-| `readGoalPlanWindow`、`confirmActivePlan`、`findPendingProposal`、`terminalProposalOf` | `plan-readers.ts:980`、`plan-readers.ts:964`、`plan-readers.ts:518`、`plan-readers.ts:759` | Goal 的 Plan 窗口、active Plan 确认与 proposal 终态 | 采用、决定队列、完成判定 |
-| `enumerateGoalCandidates`、`enumerateClosedGoalCandidates`、`readGoalTriggerRecords`、`readGoalRunsForCount` | `plan-readers.ts:619`、`plan-readers.ts:667`、`plan-readers.ts:1325`、`plan-readers.ts:1298` | 按索引枚举 Goal 候选、触发记录与 Run 计数 | 决定队列、预算/上限判断 |
-| `readRunRoundChain`、`readGateRoundChain`、`readPointerIntents`、`readPinnedCompletionPolicy` | `plan-readers.ts:1227`、`plan-readers.ts:1264`、`plan-readers.ts:1461`、`plan-readers.ts:913` | Run/gate 的 round 链、控制指针意图、钉住的完成策略 | 对账、完成、控制扇出 |
+| `readCanonicalTaskFacts`、`readTaskClosure`、`taskClosureOf` | `plan-readers.ts:1628`、`plan-readers.ts:1952`、`plan-readers.ts:1932` | 规范 Task 事实（Plan、phase、lease、requeue/refusal）与 Task closure | 认领、完成、对账、节点详情读 Task |
+| `readGoal`、`readGoalScope`、`readPlan`、`readProposal`、`readProposalOrigin` | `plan-readers.ts:386`、`plan-readers.ts:432`、`plan-readers.ts:463`、`plan-readers.ts:477`、`plan-readers.ts:498` | 单条 Goal/Plan/Proposal 及其来源的 canonical 读取 | 任何 owner 要一条已存记录时 |
+| `readGoalsByWorkspaceCreated` | `plan-readers.ts:405` | 按 `s6-goal-by-workspace-created` 升序分页读完一个工作区的全部 Goal（第一项即最早创建的 Goal） | `main/read` 取“首目标”与其前目标区边界 |
+| `readGoalPlanWindow`、`confirmActivePlan`、`findPendingProposal`、`terminalProposalOf` | `plan-readers.ts:1011`、`plan-readers.ts:995`、`plan-readers.ts:549`、`plan-readers.ts:790` | Goal 的 Plan 窗口、active Plan 确认与 proposal 终态 | 采用、决定队列、完成判定 |
+| `enumerateGoalCandidates`、`enumerateClosedGoalCandidates`、`readGoalTriggerRecords`、`readGoalRunsForCount` | `plan-readers.ts:650`、`plan-readers.ts:698`、`plan-readers.ts:1356`、`plan-readers.ts:1329` | 按索引枚举 Goal 候选、触发记录与 Run 计数 | 决定队列、预算/上限判断 |
+| `readRunRoundChain`、`readGateRoundChain`、`readPointerIntents`、`readPinnedCompletionPolicy` | `plan-readers.ts:1258`、`plan-readers.ts:1295`、`plan-readers.ts:1492`、`plan-readers.ts:944` | Run/gate 的 round 链、控制指针意图、钉住的完成策略 | 对账、完成、控制扇出 |
 | `readInitializationPointers` **正本** | `src/core/work-graph/tasks/initialization-pointers.ts:49` | 项目两个 active 治理指针的读取与 `activeRevision` 解码：返回架构基线/完成策略的 id 与 revision；缺失为 `null`，坏读为 `unavailable` | 判断项目是否已初始化、或者要指针里的 id/revision 时；不要另读这两个指针 |
-| `readGoalPhase`、`readOriginPlans`、`readFutureChangeTaskFacts`、`readDispositionChangeTaskFacts` | `plan-readers.ts:1949`、`plan-readers.ts:2152`、`plan-readers.ts:2008`、`plan-readers.ts:2092` | 阶段、来源 Plan、未来/处置变更的 Task 事实 | 各 owner 的定向读 |
-| `readUnknownCallReviewOutcome`、`readRequestCandidateHead`、`taskRecordRefKey`、`createNoteRunTaskResolver`、`createSessionResponsibilityBasisReader` | `plan-readers.ts:1124`、`plan-readers.ts:577`、`plan-readers.ts:1175`、`plan-readers.ts:1434`、`plan-readers.ts:2190` | 审查结果、候选头、Task/Lease 记录键与两个窄读取器 | 各 owner 的定向读；不要另写同一索引遍历 |
-| `PLAN_STATE_RECORD_SCHEMAS`、`PLAN_GOVERNANCE_RECORD_SCHEMAS`、`RUN_BY_TASK_INDEX`、`RUN_BY_WORKSPACE_STATUS_INDEX`、`GOAL_BY_WORKSPACE_INDEX`、`RUN_BY_WORKSPACE_OUTCOME_INDEX`、`S2B_RUN_BY_GOAL_ENDED_LOOKUP`、`S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP` | `plan-readers.ts:296`、`plan-readers.ts:323`、`plan-readers.ts:98`、`plan-readers.ts:100`、`plan-readers.ts:102`、`plan-readers.ts:104`、`plan-readers.ts:106`、`plan-readers.ts:108` | 记录 schema 注册组与已注册索引名 | 组合根注册、按索引读；不要自造索引名 |
+| `readGoalPhase`、`readOriginPlans`、`readFutureChangeTaskFacts`、`readDispositionChangeTaskFacts` | `plan-readers.ts:1980`、`plan-readers.ts:2183`、`plan-readers.ts:2039`、`plan-readers.ts:2123` | 阶段、来源 Plan、未来/处置变更的 Task 事实 | 各 owner 的定向读 |
+| `readUnknownCallReviewOutcome`、`readRequestCandidateHead`、`taskRecordRefKey`、`createNoteRunTaskResolver`、`createSessionResponsibilityBasisReader` | `plan-readers.ts:1155`、`plan-readers.ts:608`、`plan-readers.ts:1206`、`plan-readers.ts:1465`、`plan-readers.ts:2221` | 审查结果、候选头、Task/Lease 记录键与两个窄读取器 | 各 owner 的定向读；不要另写同一索引遍历 |
+| `PLAN_STATE_RECORD_SCHEMAS`、`PLAN_GOVERNANCE_RECORD_SCHEMAS`、`RUN_BY_TASK_INDEX`、`RUN_BY_WORKSPACE_STATUS_INDEX`、`GOAL_BY_WORKSPACE_INDEX`、`GOAL_BY_WORKSPACE_CREATED_LOOKUP`、`RUN_BY_WORKSPACE_OUTCOME_INDEX`、`S2B_RUN_BY_GOAL_ENDED_LOOKUP`、`S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP` | `plan-readers.ts:299`、`plan-readers.ts:328`、`plan-readers.ts:99`、`plan-readers.ts:101`、`plan-readers.ts:103`、`plan-readers.ts:105`、`plan-readers.ts:107`、`plan-readers.ts:109`、`plan-readers.ts:111` | 记录 schema 注册组与已注册索引名 | 组合根注册、按索引读；不要自造索引名 |
 | `planTaskFacts`、`buildEffectiveTaskBasis`、`isBasisUnsupported` | `plan-task-basis.ts:238`、`plan-task-basis.ts:102`、`plan-task-basis.ts:73` | Task 有效 basis 的每 Plan 索引与不可用判定 | 读 Plan 的 Task 与采用编译 |
 | `entryPlanVerdict`、`taskOriginVerdict` | `plan-task-basis.ts:379`、`plan-task-basis.ts:318` | 旧 Plan 的 claim 能否进入；来源 Plan 的事实是否描述所选 Plan 的 Task | 进入授权、证据归属 |
 | `validatePlanDraft`、`validatePlanAssignments` | `plan-validation.ts:34`、`plan-validation.ts:200` | Plan 草稿的义务/DAG/assignment 校验与 assignment 唯一性 | 采用前校验；不要另写一套 |
@@ -174,12 +175,12 @@
 | `identifyDelegatedWriter`、`authorizeDelegatedWrite` | `plan-write-admission.ts:144`、`plan-write-admission.ts:234` | 委派写者身份识别与当前权限复核（含真实 guards） | Agent 计划写、requeue；两步顺序不可换 |
 | `admitGoalCreation`、`createGoalService` | `task-service.ts:155`、`task-service.ts:414` | Goal 创建的准入管线与服务工厂 | Host 建 Goal |
 | `createPlanService`、`createRequestCandidateService` | `plan-service.ts:1059`、`plan-service.ts:2300` | Plan 采用/task 读服务与 request candidate 服务 | 组合根接线 |
-| `createRequestRoundService` | `request-service.ts:875` | request round 的读写端口 | Host 与 Workflow 的请求入口 |
-| `open`、`unassigned` **正本** | `request-service.ts:1618`、`request-service.ts:1566` | 两条具名开放轮读取：`open` 一页给出某状态分区里有开放轮的请求根（每个根一次，带 continuation 与 `wrapped`）；`unassigned` 给出最老 pending 轮命中的未分配请求 | 队列分派与 drain；两者共用 `readOpenIndexPage`（`request-service.ts:1618`）的游标解析和页读取，不要另写一份 |
+| `createRequestRoundService` | `request-service.ts:950` | request round 的读写端口 | Host 与 Workflow 的请求入口 |
+| `open`、`unassigned` **正本** | `request-service.ts:1703`、`request-service.ts:1651` | 两条具名开放轮读取：`open` 一页给出某状态分区里有开放轮的请求根（每个根一次，带 continuation 与 `wrapped`）；`unassigned` 给出最老 pending 轮命中的未分配请求 | 队列分派与 drain；两者共用 `readOpenIndexPage`（`request-service.ts:1703`）的游标解析和页读取，不要另写一份 |
 | `createTaskClaimService`、`workClaimDispatchProblem`、`createTaskRequeueService`、`createReconcileCandidateReader` | `claim-service.ts:722`、`claim-service.ts:171`、`requeue-service.ts:600`、`reconcile-reads.ts:52` | 认领服务、认领分派前置检查、返工服务与对账候选读取器 | 组合根与启动对账 |
 | `createExecutionEntryService`、`createModelCallService`、`createModelRequestReadPort`、`modelRequestPermitIdFor` | `execution-entry-service.ts:1406`、`model-call-service.ts:154`、`model-call-service.ts:366`、`model-call-contracts.ts:80` | 执行入口、模型请求读写与 permit id | 组合根接线 |
 | `createRunControlService`、`controlIntentRefFor`、`createRunStateReader` | `control-service.ts:583`、`control-service.ts:159`、`run-state-service.ts:416` | Run 控制服务、确定性的 intent 引用与执行读取器 | 组合根、Goal 扇出、执行读取 |
-| `createRunReconcileService`、`createExecutionHistoryService`、`createRunActivityService`、`runActivityRefOf` | `run-reconcile-service.ts:649`、`execution-history-service.ts:213`、`run-activity-service.ts:238`、`run-activity-service.ts:188` | Run 对账、执行历史定位器、活动回填与活动引用 | 启动对账与活动回填 |
+| `createRunReconcileService`、`createExecutionHistoryService`、`createRunActivityService`、`runActivityRefOf` | `run-reconcile-service.ts:649`、`execution-history-service.ts:213`、`run-activity-service.ts:376`、`run-activity-service.ts:277` | Run 对账、执行历史定位器、活动回填与活动引用 | 启动对账与活动回填 |
 | `createGoalSettingsService`、`setGoalControlFromHost`、`createGoalDecisionCauseReader` | `goal-settings-service.ts:174`、`goal-control.ts:125`、`goal-decision-reader.ts:117` | Goal 设置、desired state 与决定原因读取 | 组合根、Host 控制、决定队列 |
 | `createGoalExecutedFilesReader`、`createPlanningQuestionReader` | `goal-executed-files-reader.ts:72`、`planning-question-reader.ts:70` | Goal 已执行文件与已保存 planning question 的只读端口 | 决定队列与 Host 读 |
 | `admitRequestSecretary` **正本** | `secretary-selection.ts:204` | 请求秘书的唯一准入检查：caller scope、occupancy 可用性、Query 派发、duty 与 profile；占用只表示 busy | 分配、转交与候选列表都走它；不要复制准入算法 |
@@ -218,14 +219,14 @@
 ## 不要做
 
 - 不要另写 `sessionRefProblem`、`sameRef`、`messageOf`、`mergeGuards`、store 失败映射、`rejected` 的本地副本；下表每个能力只认一个正本（标 **正本** 的那一行），旧副本列在各自条目里。
-- `sameRef` 另有旧副本：`execution-entry-service.ts:144`、`claim-service.ts:122`、`execution-history-service.ts:86`、`reconcile-intents.ts:86`、`session-anomaly-service.ts:94`、`src/core/work-graph/queries/query-execution.ts:99`；新代码一律用正本 `src/core/work-graph/state/ref-equality.ts:2`，旧副本由清理轮删除。
+- `sameRef` 另有旧副本：`execution-entry-service.ts:144`、`claim-service.ts:122`、`execution-history-service.ts:86`、`reconcile-intents.ts:86`、`session-anomaly-service.ts:94`、`src/core/work-graph/queries/query-execution.ts:104`；新代码一律用正本 `src/core/work-graph/state/ref-equality.ts:2`，旧副本由清理轮删除。
 - `sameJson` 另有旧副本：`src/core/work-graph/tasks/run-reconcile-service.ts:125`、`src/core/work-graph/tasks/run-state-service.ts:352` 的 `sameJsonRef`（私有），正本在 `src/contracts/fingerprint.ts:50`，新代码一律用正本，旧副本由清理轮删除（M1-32）。
 - `mergeGuards` 的旧副本（曾在本目录 `request-service.ts`、`request-facts.ts` 和 `queries/request-rounds-read.ts`）已合成；只有 `src/core/work-graph/persistence/record-guards.ts:12` 这一份，不要再写。
 - `oldestPendingRound` 只有 `src/core/work-graph/queries/request-rounds-read.ts:473` 这一份，已合成；不要另写选最老 pending round 的私有副本。
-- `buildRecordedEvent` 只有 `src/core/work-graph/queries/query-execution.ts:570` 这一份，已合成；不要在 request-service 内联第二份。
-- 开放轮遍历只有 `unassigned` 和 `open` 两条具名读取，且共用 `readOpenIndexPage`（`request-service.ts:824`）的游标解析与页读取；不要在别处再写 `s6-query-open-by-workspace` 的分页、`after` 解析或候选解码。`open` 只投影 `job.requestRoot`，不读请求事实。
+- `buildRecordedEvent` 只有 `src/core/work-graph/queries/query-execution.ts:575` 这一份，已合成；不要在 request-service 内联第二份。
+- 开放轮遍历只有 `unassigned` 和 `open` 两条具名读取，且共用 `readOpenIndexPage`（`request-service.ts:899`）的游标解析与页读取；不要在别处再写 `s6-query-open-by-workspace` 的分页、`after` 解析或候选解码。`open` 只投影 `job.requestRoot`，不读请求事实。
 - `readClaimedAtForRun` 的正本在 `line-clock.ts:198`；`views/work-line-reader.ts` 只在已由 claim 定位 Run 的分支里直接取 claimedAt（`src/core/work-graph/tasks/line-clock.ts:198` 仍调用正本），`secretary-selection.ts` 已改调它，旧的私有 `readClaimedAt` 已删；不要新增第三份。
-- `readOwnerRecord`（`owner-record-read.ts:22`）是单条 owner 读的正本；`request-service.ts:298` 的 `readOne` 只是包着它的 owner 分类器，`run-state-service.ts:655` 是批量读的另一回事。不要再写新的 `readOne` 通用副本。
+- `readOwnerRecord`（`owner-record-read.ts:22`）是单条 owner 读的正本；`request-service.ts:374` 的 `readOne` 只是包着它的 owner 分类器，`run-state-service.ts:655` 是批量读的另一回事。不要再写新的 `readOne` 通用副本。
 - `lookupCommit` 只有 `src/core/record-store/ports.ts:190` 这个端口；`lookupCommittedReceipt`（`src/core/work-graph/queries/query-job-service.ts:424`）是带失败分类的唯一包装。claim/control 等 owner 直接调用端口时也要自己分类失败，不要复制整套重试与分类逻辑。
 - `sessionAggregateRefKey` 只有 `src/core/work-graph/sessions/session-record-codecs.ts:998` 这一份；`secretaryIntakeKey`（`src/core/work-graph/model/request-contracts.ts:73`）调用它，旧的内联序列化已合成，不要恢复。
 - `storeFailureToRejection` 只有 `src/core/work-graph/persistence/read-result-failures.ts:42`；owner 用同文件的 `ownerWriteStoreFailureToRejection`（`src/core/work-graph/persistence/read-result-failures.ts:110`），`request-service` 的本地 store 失败 switch 已改为调用它，不要恢复手写映射。
