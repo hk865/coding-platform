@@ -22,6 +22,7 @@
 - `request-round-queue.ts` — 两条请求队列处理器（`request-rounds` 分派开放轮、`unassigned` 跑未分配 drain）及 `settle()`：分页遍历、按 Session 的先飞集合、退避与唤醒都由端口注入，不读记录库。
 - `session-archive.ts` — 单一 Session 归档组合入口：按不可变归档请求逐步提交，已提交的步骤不撤销。
 - `session-maintenance.ts` — 有界单页 Session 维护：读到期事实并按到期归档，不启动任何东西。
+- `task-gate.ts` — 任务门与自动 requeue/reverify、自动化确认、gate perform；`createTaskGate` 由 `workflow.ts` 原位装配。
 - `task-order.ts` — 按真实 `executionDag.dependsOn` 的稳定 Kahn 软排序，只改选择顺序。
 - `workflow.ts` — `advanceWork` 的选择/推进、`handleGoalInput` 与 Workflow 工厂；`ownContext` 做可信上下文绑定。
 
@@ -29,7 +30,8 @@
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createWorkflow` | `src/business/workflow/workflow.ts:800` | Workflow 唯一组合工厂：发布 `advanceWork`、`handleGoalInput`、咨询、决定、归档、维护与回填 | 组合根建 Workflow 端口 |
+| `createWorkflow` | `src/business/workflow/workflow.ts:764` | Workflow 唯一组合工厂：发布 `advanceWork`、`handleGoalInput`、咨询、决定、归档、维护与回填 | 组合根建 Workflow 端口 |
+| `createTaskGate` | `src/business/workflow/task-gate.ts:71` | `select_work`/`perform` 共用的任务门、自动 requeue/reverify、自动化确认与 gate perform；读 `createWorkflow` 的同一个 `deps` 引用，不复制 | `createWorkflow` 原位装配；不要另写门或确认规则 |
 | `createLineCreation` | `src/business/workflow/line-creation.ts:80` | 按稳定 `commandId` 先查回已有 Session 创建操作并重放，只有新线才查容量，再走真实 `createSession` | 请求选人无候选、崩溃后重试建线 |
 | `createAlwaysAdmitCapacity` | `src/business/workflow/line-creation.ts:60` | 默认容量适配器：没有真实上限时全部放行 | 直接平台 fixture；真实 Host 必须换成 `secretaryOpenCap` 适配器 |
 | `createRequestIntake` | `src/business/workflow/request-intake.ts:188` | request 的 submit/route/selectIdea/ask 与未分配 drain；重试 submit 先用 `findLine` 查回旧线；drain 在每条请求前看调用 signal，已停止就带着已提交的计数返回 | 请求命令与启动/唤醒 drain |
@@ -56,7 +58,7 @@
 
 ## 内部用
 
-- `workflow.ts`：`ownContext`（本层入口共用的可信 Host 上下文绑定）；`activity-backfill.ts`：`ACTIVITY_BACKFILL_BATCH_RUNS`（默认批大小 5）。
+- `workflow.ts`：`ownContext`（本层入口共用的可信 Host 上下文绑定）与模块级构造器 `graphWrite`、`prepareStep`、`settleReviewStep`、`cancelReviewRoundStep`、`requeueTaskStep`、`reverifyRoundStep`、`readyValue`、`waiting`（供 `task-gate.ts` 装配）；`activity-backfill.ts`：`ACTIVITY_BACKFILL_BATCH_RUNS`（默认批大小 5）。
 
 ## 不要做
 
