@@ -108,3 +108,4 @@
 | `docs/refactor/reviews/decision89-dedup-2026-10-24/` | 决定 89（去重 skill）的冻结稿（第 3 稿）、第 1 稿的 Codex 审查和第 2 稿的快速核对，各带提示词。lead 2026-10-24 复制进存档，不在上面 4,543 个文件的清单里。 |
 | `docs/refactor/reviews/slice6b0-2026-10-24/` | 6B-0 和 CL-1 的任务书（6B-0 的书、各组运行说明、返工说明）和开工裁定、Codex 对 C3、A1、R1、R2、CL-1 的只读审查、lead 的裁定、DSH 和 Opus 的回复、全量和规模批的检查日志、lead 的胶水脚本和 README、src、tests 的 diff。lead 2026-10-24 复制进存档，不在上面 4,543 个文件的清单里。 |
 | `docs/refactor/reviews/cl2-d89-2026-10-24/` | 决定 89 小步和 CL-2 的任务书、草案、Codex 对 D89 和 CL-2 的只读审查、lead 的裁定、DSH 和 Opus 的回复与返工、CL-2 的证明脚本和输出、全量和规模批的检查日志（27 个文件）。lead 2026-10-24 复制进存档，不在上面 4,543 个文件的清单里。 |
+| `docs/refactor/reviews/slice7b0-2026-10-25/` | 7B-0（A2、D5-gate）的任务书、开工裁定、Codex 的只读审查和 lead 的裁定、DSH 和 Opus 的回复与返工、证明、全量和规模批的检查日志（30 个文件）。lead 2026-10-25 复制进存档，不在上面 4,543 个文件的清单里。 |
