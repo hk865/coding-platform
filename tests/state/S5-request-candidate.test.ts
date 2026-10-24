@@ -12,6 +12,7 @@
  * their named transition. Independent Host recording/read behaviour already exists.
  */
 import { describe, expect, it } from 'vitest';
+import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
@@ -58,6 +59,11 @@ const Q1 = queryJobRef('Q1');
 const Q2 = queryJobRef('Q2');
 
 const REASON: PlanChangeReason = { text: 'the first user request candidate', sources: [] };
+const PIN: ArchitectureCatalogPinV1 = {
+  catalogRef: { aggregateType: 'ArchitectureCatalog', projectId: PROJECT, baselineId: 'baseline-1', revision: 1 },
+  baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: PROJECT, baselineId: 'baseline-1', revision: 1 },
+    digest: '0123456789abcdef'.repeat(4) },
+};
 
 function draftOf(planId: string, planRevision: number): PlanRevisionDraft {
   return {
@@ -87,7 +93,7 @@ function expectedCandidate(
 ): CandidatePlanProposal {
   return { kind: 'candidate_v2', schemaVersion: 2, ref, revision: 1,
     goalRef: GOAL_B, basedOn, draft: draftOf(planId, planRevision), reason: REASON,
-    issues: [], status: 'candidate', ...(requestRef === null ? {} : { requestRef }) };
+    issues: [], catalogPin: PIN, status: 'candidate', ...(requestRef === null ? {} : { requestRef }) };
 }
 
 const guard = (value: PlanCommitGuard): PlanProposalEffect => ({ kind: 'guard', guard: value });
@@ -161,6 +167,7 @@ function context(overrides: Partial<PlanProposalGuardContext> = {}): PlanProposa
     pinsAgree: true,
     agentAdmission: null,
     source: null,
+    modules: 'ok',
     initial: null,
     future: null,
     requestCandidate: requestFacts(),
@@ -177,7 +184,7 @@ function recordedEvent(
   expect(issues).toEqual([]);
   return {
     type: 'proposal_recorded', writer: 'host', ref, goalRef: GOAL_B, basedOn,
-    draft, reason: REASON, issues, submittedBy: null,
+    draft, reason: REASON, issues, catalogPin: PIN, submittedBy: null,
     ...association,
   };
 }
@@ -186,6 +193,7 @@ const SOURCE_B1: PlanSourceFacts = { ref: PB1, goalRef: GOAL_B, planId: 'PB1', p
 
 /** PLAN-05: PB1 and the candidate retain the same legal plan_only task; only the Plan identity changes. */
 const FUTURE_OK: FutureAdoptionFacts = {
+  modules: 'ok',
   draftIssues: validatePlanDraft(draftOf('PB2', 2), null),
   assignmentReasons: validatePlanAssignments(draftOf('PB2', 2)),
   phaseReasons: planPhaseGuardReasons(draftOf('PB2', 2).tasks),
@@ -220,7 +228,7 @@ describe('S5 request candidate unit rows (§5.2 PC01..PC10)', () => {
     const head = candidate(U1, PB1, 'u1-plan', 2, Q1);
     const event: ReplacedEvent = {
       type: 'proposal_replaced', writer: 'host', ref: U3, goalRef: GOAL_B, basedOn: PB1,
-      draft: draftOf('u3-plan', 2), reason: REASON, issues: [], submittedBy: null,
+      draft: draftOf('u3-plan', 2), reason: REASON, issues: [], catalogPin: PIN, submittedBy: null,
       expectedHeadRevision: 1, head: { proposalRef: U1, revision: 1 },
       replaces: { proposalRef: U1, revision: 1 }, requestRef: Q1,
       requestedBy: OPERATOR, at: T,
@@ -249,7 +257,7 @@ describe('S5 request candidate unit rows (§5.2 PC01..PC10)', () => {
     const head = candidate(U1, PB1, 'u1-plan', 2, Q1);
     const event: ReplacedEvent = {
       type: 'proposal_replaced', writer: 'host', ref: U3, goalRef: GOAL_B, basedOn: PB1,
-      draft: draftOf('u3-plan', 2), reason: REASON, issues: [], submittedBy: null,
+      draft: draftOf('u3-plan', 2), reason: REASON, issues: [], catalogPin: PIN, submittedBy: null,
       expectedHeadRevision: 0, head: { proposalRef: U1, revision: 1 },
       replaces: { proposalRef: U1, revision: 1 }, requestRef: Q1,
       requestedBy: OPERATOR, at: T,
@@ -269,7 +277,7 @@ describe('S5 request candidate unit rows (§5.2 PC01..PC10)', () => {
     const other = candidate(U2, PB1, 'u2-plan', 2, Q2);
     const event: ReplacedEvent = {
       type: 'proposal_replaced', writer: 'host', ref: U3, goalRef: GOAL_B, basedOn: PB1,
-      draft: draftOf('u3-plan', 2), reason: REASON, issues: [], submittedBy: null,
+      draft: draftOf('u3-plan', 2), reason: REASON, issues: [], catalogPin: PIN, submittedBy: null,
       expectedHeadRevision: 1, head: { proposalRef: U1, revision: 1 },
       replaces: { proposalRef: other.ref, revision: other.revision }, requestRef: Q1,
       requestedBy: OPERATOR, at: T,

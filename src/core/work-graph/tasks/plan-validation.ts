@@ -1,12 +1,15 @@
 /** Pure Plan admission rules with one owner.
  * Codecs validate persisted shape; this file judges obligations/DAG/assignments
  * plus the v2 whiteboard-relation and exact-input membership rules. */
+import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
 import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js';
 import type {
   AcceptanceObligation, PlanRevisionDraft, PlanRevisionSnapshot, PlanValidationError,
   RuntimeTask, TaskInputRequirementV2,
 } from '../../../contracts/plan.js';
 import { planValidationError, revisionAssignments } from '../../../contracts/plan.js';
+import { rejected } from '../../../contracts/core/rejections.js';
+import type { CoreRejection } from '../../../contracts/core/results.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import type { FutureCarrierRemovalV1, FutureDispositionChangeV1 } from '../state/plan-machine.js';
@@ -599,4 +602,28 @@ export function validateFutureObligationCoverage(input: {
   }
 
   return issues.length > 0 ? { status: 'rejected', issues } : { status: 'supported' };
+}
+
+/** L10 (8B §3.3): one module-scoped task whose moduleRef names no module of the catalog. */
+export type UnknownModuleTaskV1 = { taskId: string; moduleId: string };
+
+/** L10: every task with `scope.kind === 'module'` whose `moduleRef` is not a `catalog.modules[].ref.moduleId`, in
+ * draft task order, whatever its kind, level, disposition or acceptance. Tolerant like `validatePlanDraft` (:34–:36):
+ * `draft.tasks ?? []`, a task without an object `scope` is skipped; never throws. (body free) */
+export function unknownModuleTasksOf(draft: PlanRevisionDraft, catalog: AdoptedArchitecture): UnknownModuleTaskV1[] {
+  const known = new Set(catalog.modules.map((module) => module.ref.moduleId));
+  const unknown: UnknownModuleTaskV1[] = [];
+  const tasks = Array.isArray(draft.tasks) ? draft.tasks : [];
+  for (const task of tasks) {
+    if (task === null || typeof task !== 'object') continue;
+    const scope = task.scope;
+    if (scope === null || typeof scope !== 'object' || scope.kind !== 'module') continue;
+    if (!known.has(scope.moduleRef)) unknown.push({ taskId: task.taskId, moduleId: scope.moduleRef });
+  }
+  return unknown;
+}
+
+/** The one refusal; called only with a non-empty list. One entry per task, no de-duplication of module ids. */
+export function unknownModuleRejection(tasks: readonly UnknownModuleTaskV1[]): CoreRejection {
+  return rejected('invalid', `unknown_module: ${tasks.map((task) => `${task.taskId}=${task.moduleId}`).join(', ')}`);
 }

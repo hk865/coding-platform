@@ -7,7 +7,7 @@
 import { defineShape, f } from './data-format.js';
 
 /** Every id inside a ref is a non-empty string, as the hand-written ref checks require. */
-const id = f.string({ min: 1, unit: 'codePoints' });
+export const id = f.string({ min: 1, unit: 'codePoints' });
 
 export const ProjectRefShape = defineShape({ name: 'ProjectRef', fields: { aggregateType: f.literal('Project'), projectId: id } });
 export const WorkspaceRefShape = defineShape({

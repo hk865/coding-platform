@@ -35,6 +35,7 @@ import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { createScriptedModel, digestOf } from '../helpers/B2-runtime-fixture.js';
+import { activatePolicy, runInitialAnswer } from '../helpers/S8B-catalog-steps.js';
 
 const AT = '2026-09-26T00:00:00.000Z';
 const projectId = 'r5b-initial-project';
@@ -44,8 +45,6 @@ const human = { kind: 'human' as const, id: 'r5b-initial-operator' };
 const projectRef = { aggregateType: 'Project' as const, projectId };
 const workspaceRef = { aggregateType: 'Workspace' as const, projectId, workspaceId };
 const goalRef = { aggregateType: 'Goal' as const, projectId, goalId: 'r5b-initial-goal' };
-const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId, policyId: 'r5b-initial-policy', revision: 1 };
-const activeRef = { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId };
 const queryJobRef: QueryJobRef = { aggregateType: 'QueryJob', projectId, workspaceId, queryJobId: 'r5b-initial-job' };
 const queryRunRef: QueryRunRef = { aggregateType: 'QueryRun', projectId, workspaceId, queryJobId: 'r5b-initial-job', runId: 'r5b-initial-run' };
 const roleBinding = { schemaVersion: 1 as const, bindingId: 'r5b-initial-binding', templateId: 'advisor', templateRevision: '1', bindingVersion: 1, policyRevision: '1' };
@@ -157,15 +156,7 @@ async function bootstrap(platform: Awaited<ReturnType<typeof createTargetPlatfor
  * the candidate (the candidate must stay readable while governance is absent). */
 async function completeGovernance(platform: Awaited<ReturnType<typeof createTargetPlatform>>) {
   const host = hostCtx();
-  const installed = await platform.completionPolicies.installCompletionPolicy(host, { meta: { requestId: 'r5b-initial-policy-1',
-    expected: [{ ref: projectRef, revision: 1 }, { ref: policyRef, revision: 0 }] },
-    input: { policyId: 'r5b-initial-policy', contentRevision: 1,
-      content: completionPolicyContent } });
-  expect(installed, 'the CompletionPolicy must install').toMatchObject({ status: 'committed' });
-  if (installed.status !== 'committed') throw new Error('policy install failed');
-  expect(await platform.completionPolicies.activateCompletionPolicy(host, { meta: { requestId: 'r5b-initial-policy-active',
-    expected: [{ ref: projectRef, revision: 1 }, { ref: activeRef, revision: 0 }] },
-    input: { target: { ref: installed.value.ref, digest: installed.value.contentDigest } } })).toMatchObject({ status: 'committed' });
+  await activatePolicy(platform, host, completionPolicyContent, 'r5b-initial-policy');
   expect(await platform.architecture.adoptInitialArchitecture(host, { meta: { requestId: 'r5b-initial-baseline',
     expected: [{ ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 }] },
     input: { baselineId: 'r5b-initial-baseline', description: 'The initial plan module boundary', constraints: [], catalog: {
@@ -222,33 +213,16 @@ it('consumes one real v2 answer into the same Plan owner candidate, then adopts 
     await bootstrap(platform, state);
 
     // 1. Formal pending submit, formal Session, then the R5b.2 claim/prepare/start.
-    expect(await platform.queries.submitQueryJob(hostCtx(), submitRequest('r5b-initial-submit-1')))
-      .toMatchObject({ status: 'committed', replayed: false });
-    const created = await platform.runtime.createSession(hostCtx(), {
-      workspace: scope, role: sessionRole, recommendedRefs: [], initialLinks: [],
-      meta: { requestId: 'r5b-initial-session-1', expected: [] },
+    const { started } = await runInitialAnswer(platform, hostCtx(), {
+      requestPrefix: 'r5b-initial', consumerId: 'r5b-initial-consumer', submit: submitRequest('r5b-initial-submit-1'),
+      session: { workspace: scope, role: sessionRole, recommendedRefs: [], initialLinks: [],
+        meta: { requestId: 'r5b-initial-session-1', expected: [] } },
     });
-    expect(created).toMatchObject({ status: 'completed' });
-    if (created.status !== 'completed') throw new Error('Session creation did not complete');
-    const sessionRef = created.value.ref;
-    const claim = await platform.queries.claimQuery(hostCtx(), {
-      meta: { requestId: 'r5b-initial-claim-1', expected: [
-        { ref: queryJobRef, revision: 1 }, { ref: queryRunRef, revision: 1 }, { ref: sessionRef, revision: created.value.revision }] },
-      input: { queryRunRef, sessionRef },
-    });
-    expect(claim).toMatchObject({ status: 'committed' });
-    if (claim.status !== 'committed') throw new Error('Query claim did not commit: ' + JSON.stringify(claim));
-    const prepared = await platform.runtime.prepareQuery(hostCtx(), { queryRunRef, requestId: 'r5b-initial-prepare-1' });
-    expect(prepared).toMatchObject({ status: 'ready' });
-    if (prepared.status !== 'ready') throw new Error('Query preparation did not become ready');
-    const started = await platform.runtime.startQuery(hostCtx(), { prepared: prepared.value, consumerId: 'r5b-initial-consumer', requestId: 'r5b-initial-start-1' });
-    expect(started).toMatchObject({ status: 'ready' });
-    if (started.status !== 'ready') throw new Error('Query start did not become ready');
 
     // 2. The answer is the real v2 plan JSON and keeps the real source witness.
-    expect(started.value.job.job.status).toBe('answered');
-    expect(started.value.answer).not.toBeNull();
-    const answerRef = started.value.answer?.ref as QueryJobAnswerRef | undefined;
+    expect(started.job.job.status).toBe('answered');
+    expect(started.answer).not.toBeNull();
+    const answerRef = started.answer?.ref as QueryJobAnswerRef | undefined;
     if (answerRef === undefined) throw new Error('the QueryRun did not record a formal answer');
     expect(scripted.calls()).toBe(2);
     const answer = await platform.queries.readQueryAnswer(hostCtx(), answerRef);
@@ -302,7 +276,7 @@ it('consumes one real v2 answer into the same Plan owner candidate, then adopts 
       goalRef: { aggregateType: 'Goal', projectId, goalId: 'r5b-guide-example-goal' },
       basedOn: null, draft: exampleDraft,
       reason: { text: 'Shape-check the example the response guide shows the model', sources: [] },
-      status: 'candidate', issues: [],
+      status: 'candidate', issues: [], catalogPin: null,
     };
     const decodedExample = decodePlanProposalRecord(encodePlanProposal(exampleProposal));
     expect(decodedExample,
@@ -468,7 +442,7 @@ For plan, provide summary and plan with schemaVersion 2 and the following fields
 - executionDag: {dependsOn:[{taskId, dependsOnId, requires:{kind, label}}]}. requires.kind is "output-contract", "artifact", "decision", "environment-revision" or "gate-result"; use a real versioned input/output dependency, keep the DAG acyclic and never make a task depend on itself.
 - taskRelations (optional): array of {fromTaskId, toTaskId, kind, note}; kind is "coordination" or "expected_dependency". It is advisory only and never a dispatch prerequisite.
 You MAY also add an OPTIONAL top-level "setup" sibling of "plan"; it is a SUGGESTION only and grants no Host/tool permission. It has exactly these three fields:
-- architecture: {baselineId, description, constraints:[{name, scope}], catalog:{requireDag:true, dependencies:[{from:{projectId, moduleId}, to:{projectId, moduleId}, reason}], modules:[{ref:{projectId, moduleId}, name, responsibility, paths, interfaces:[{id, description, paths}]}]}}. Every module ref MUST use the REAL projectId of this request; never guess a project/workspace id.
+- architecture: {baselineId, description, constraints:[{name, scope}], catalog:{requireDag:true, dependencies:[{from:{projectId, moduleId}, to:{projectId, moduleId}, reason}], modules:[{ref:{projectId, moduleId}, name, responsibility, paths, interfaces:[{id, description, paths}]}], containment:{parentOf:[{parent:{projectId, moduleId}, child:{projectId, moduleId}}]}}}. Every module ref MUST use the REAL projectId of this request; never guess a project/workspace id. containment is OPTIONAL: give a parent/child pair only when the real sources show that one module contains the other; omit containment when you do not know (an omitted containment means unknown, never flat); an explicit {parentOf:[]} means every module is flat; never derive a parent from paths or dependencies.
 - completionPolicy: {schemaVersion:1, requirementKinds:[...], minimumRequiredRequirementsPerObligation:N}. Copy the requirementKinds of the effective CompletionPolicy shown in this context. When no policy is shown, propose the smallest REAL policy this request needs; never emit an empty policy whose vacuously satisfied obligations would auto-PASS.
 - checks: array of {checkId, kind, command, cwd, timeoutMs, taskIds}. "kind" is exactly a policy requirement kind ("static" or "dynamic") and maps directly to the requirement.kind it satisfies; there is NO coverage field and never add one. taskIds is "all" or the real task ids. Use only a command that must really run for this request: never assume a test file exists, never copy an unrelated command, and never invent an empty check list to force a PASS.
 Omit "setup" entirely when you have no real architecture/policy/check to propose.

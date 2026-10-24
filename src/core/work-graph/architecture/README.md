@@ -14,7 +14,7 @@
 - `architecture-service.ts` — `ObservedArchitecturePort` 实现：源捕获、历史读、邻域/影响/比较、自动捕获、文件图分页与 chunk 打包。
 - `catalog-contracts.ts` — 正式 catalog 的 adoption/revision 端口、revision 快照与 module facts DTO。
 - `catalog-record-codecs.ts` — catalog 记录/事件 codec、adoption 闭包校验、`architectureBaselineDigest` 与 schema 注册。
-- `catalog-service.ts` — 正式架构的初始接受（`adoptInitialArchitecture`）、catalog 修订（`reviseArchitectureCatalog`）、revision 读取、当前 catalog 的 module facts 与 guards。
+- `catalog-service.ts` — 正式架构的初始接受（`adoptInitialArchitecture`）、catalog 修订（`reviseArchitectureCatalog`）、revision 读取、当前 catalog 的 module facts、revision 的完整 pin（`catalogPinOf`）与 guards。
 - `contracts.ts` — observed architecture 的记录/端口/DTO，以及本文件的 `GraphWrite` 转出（`src/core/work-graph/architecture/contracts.ts:16` 只是转出；正本在 `src/core/work-graph/model/task-contracts.ts:28`）。
 - `file-graph-index.ts` — 纯文件级图分页：listFiles/neighbors/impact 与 cursor 绑定。
 - `formal-comparison.ts` — 正式 catalog 与观测文件图的纯比较（ownership/ambiguous/SCC 等 finding）。
@@ -26,11 +26,12 @@
 | `ObservedArchitecturePort` | `src/core/work-graph/architecture/contracts.ts:115` | 观测架构的捕获、自动捕获、查询、比较、影响与文件图读端口 | 消费观测架构时只依赖此端口 |
 | `ArchitectureCatalogPort` | `src/core/work-graph/architecture/catalog-contracts.ts:119` | 正式架构的初始采用、修订与 revision 读取 | 正式架构的写读入口 |
 | `createObservedArchitecture` | `src/core/work-graph/architecture/architecture-service.ts:904` | 绑定 workspace/bodies/records 等依赖，实现观测端口 | 组合根装配观测架构服务 |
-| `createArchitectureCatalogService` | `src/core/work-graph/architecture/catalog-service.ts:447` | 绑定 records，实现正式 catalog 端口 | 组合根装配正式架构服务 |
+| `createArchitectureCatalogService` | `src/core/work-graph/architecture/catalog-service.ts:453` | 绑定 records，实现正式 catalog 端口 | 组合根装配正式架构服务 |
 | `readCurrentCatalogWindow` | `src/core/work-graph/architecture/catalog-service.ts:368` | 解析 active pointer，再在同一窗口读 pointer+baseline+catalog，复核后返回 CAS guards | 需要当前正式架构及其 guards 时 |
 | `readRevisionByRef` | `src/core/work-graph/architecture/catalog-service.ts:428` | 按引用读不可变 baseline 与同 revision 的 catalog | 正式/观测比较解析 pin 时 |
-| `readCatalogModuleFacts` | `src/core/work-graph/architecture/catalog-service.ts:794` | 把 `ModuleRef` 解析到当前 catalog 的 module，并带出 guards | Session 写 work link 前的准入 |
-| `catalogModuleFactsOf` | `src/core/work-graph/architecture/catalog-service.ts:810` | 从已读的 current window 投影某个 module 的事实 | 一次调用有多个模块目标时共享一次读 |
+| `catalogPinOf` | `src/core/work-graph/architecture/catalog-service.ts:443` | 把一次已读 revision（current window 或 `readRevisionByRef`）折成完整 `ArchitectureCatalogPinV1`；pin 只从读出的记录来，绝不来自输入 | propose 记录候选的 `catalogPin`，或需要当时的完整 pin 时 |
+| `readCatalogModuleFacts` | `src/core/work-graph/architecture/catalog-service.ts:800` | 把 `ModuleRef` 解析到当前 catalog 的 module，并带出 guards | Session 写 work link 前的准入 |
+| `catalogModuleFactsOf` | `src/core/work-graph/architecture/catalog-service.ts:816` | 从已读的 current window 投影某个 module 的事实 | 一次调用有多个模块目标时共享一次读 |
 | `compareObservedGraphs` | `src/core/work-graph/architecture/architecture-delta.ts:89` | 两份观测的节点/边结构差异与环变化 | 观测版本比较 |
 | `stronglyConnectedCycles` | `src/core/work-graph/architecture/architecture-delta.ts:24` | 确定性 SCC（成员数 >1 或自环）检测 | 观测差异与正式比较共用 |
 | `buildObservedNeighborhood` | `src/core/work-graph/architecture/graph-index.ts:161` | 按 anchor/depth/relations 取有界邻域页，带 unresolved 归属 | 图邻域查询 |

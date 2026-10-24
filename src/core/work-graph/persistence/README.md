@@ -24,7 +24,7 @@
 - `lookup-all.ts` — 等值索引完整候选集的稳定窗口分页。
 - `lookup-ordered-all.ts` — 有序索引完整分页读取。
 - `note-record-codecs.ts` — Note 记录/事件/索引 codec，含 cursor-bound 记录先例。
-- `plan-record-codecs.ts` — PlanProposal/PlanRevision 记录与事件 codec、proposal 链位置比较。
+- `plan-record-codecs.ts` — PlanProposal/PlanRevision 记录与事件 codec、proposal 链位置比较。`candidate_v2` 必须带 `catalogPin`（`ArchitectureCatalogPinV1` 或 `null`，缺了就是坏记录，不补默认值），非 `null` 的 pin 必须指向本项目的 catalog。
 - `query-activity-codecs.ts` — `QueryActivity@1` 记录与 `QueryActivityRecorded` 事件 codec；tally 规则全部调用 `run-activity-codecs.ts` 的同一份校验器。
 - `read-result-failures.ts` — Store 失败到 `CoreRejection` 的映射与游标下限检查。
 - `receipt-lookup.ts` — 唯一的已提交回执存储查找：按 identity/fingerprint 精确 `lookupCommit` 并分类 found/missing/conflict/invalid/unavailable（抛错也记为 unavailable）；导出 `CommittedReceipt`（`receipt-lookup.ts:4`）、`ReceiptLookup`（`receipt-lookup.ts:6`）、`lookupCommittedReceipt`（`receipt-lookup.ts:18`）；旧的 query 模块改为 import 后再导出它们，既有调用点不变。
@@ -78,7 +78,7 @@
 | `actorProblem` | `src/core/work-graph/persistence/event-validation.ts:40` | 通用 actor 形状校验 | 事件 body 含 actor 时 |
 | `eventBodyProblem` | `src/core/work-graph/persistence/event-validation.ts:57` | 校验事件 body 的通用字段与 actor | 事件 body 校验 |
 | `isRunExecutionHistoryV1` | `src/core/work-graph/persistence/execution-history-codecs.ts:73` | 纯 `RunExecutionHistoryV1` 形状/范围校验 | Run 记录与写入规则共用时 |
-| `compareProposalChainPositions` | `src/core/work-graph/persistence/plan-record-codecs.ts:120` | 比较 proposal 链位置 | 需要 proposal 顺序时 |
+| `compareProposalChainPositions` | `src/core/work-graph/persistence/plan-record-codecs.ts:123` | 比较 proposal 链位置 | 需要 proposal 顺序时 |
 | `RUN_SNAPSHOT_SCHEMA_ID` | `src/core/work-graph/persistence/run-record-codecs.ts:26` | `RunSnapshot@1` 的 schema id；materials 注册读取它 | 注册或核对 Run 记录 schema 时 |
 | `QUERY_RUN_SNAPSHOT_SCHEMA_ID` | `src/core/work-graph/persistence/run-record-codecs.ts:27` | `QueryRunSnapshot@1` 的 schema id；materials 注册读取它 | 注册或核对 QueryRun 记录 schema 时 |
 | `validateRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:163` | 唯一的 `RunSnapshot@1` 编码校验；不判断业务准入 | Run 记录读取/解码；不要再写一份 |

@@ -9,6 +9,7 @@
  * Pure: no RecordStore, no Kernel.
  */
 import { describe, expect, it } from 'vitest';
+import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
 import type { ActorRef } from '../../src/contracts/command-event.js';
 import type { ControlIntentSnapshotV1 } from '../../src/contracts/control-intent.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
@@ -72,6 +73,11 @@ const P0 = planRef('plan-0');
 const P1 = planRef('plan-1');
 const P2 = planRef('plan-2');
 const PROPOSAL_REF: PlanProposalRef = { aggregateType: 'PlanProposal', projectId: PROJECT, workspaceId: WORKSPACE, proposalId: 'proposal-1' };
+const PIN: ArchitectureCatalogPinV1 = {
+  catalogRef: { aggregateType: 'ArchitectureCatalog', projectId: PROJECT, baselineId: 'baseline-1', revision: 1 },
+  baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: PROJECT, baselineId: 'baseline-1', revision: 1 },
+    digest: '0123456789abcdef'.repeat(4) },
+};
 const REASON: PlanChangeReason = { text: 'add the docs task', sources: [] };
 const ROLE: RoleBindingRefV1 = {
   schemaVersion: 1, bindingId: 'binding-1', templateId: 'worker', templateRevision: 'r1', bindingVersion: 1, policyRevision: 'policy-1',
@@ -102,19 +108,19 @@ const FUTURE_DRAFT = draftOf({ planId: 'plan-2', planRevision: 2 });
 const SOURCE: PlanSourceFacts = { ref: P1, goalRef: GOAL, planId: 'plan-1', planRevision: 1 };
 
 function candidate(input: { basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
-  submittedBy?: PlanWriteProvenanceV1 | null; reason?: PlanChangeReason }): CandidatePlanProposal {
+  catalogPin: ArchitectureCatalogPinV1 | null; submittedBy?: PlanWriteProvenanceV1 | null; reason?: PlanChangeReason }): CandidatePlanProposal {
   return newCandidateProposal({ ref: PROPOSAL_REF, goalRef: GOAL, basedOn: input.basedOn, draft: input.draft,
-    reason: input.reason ?? REASON, issues: [], submittedBy: input.submittedBy ?? null });
+    reason: input.reason ?? REASON, issues: [], catalogPin: input.catalogPin, submittedBy: input.submittedBy ?? null });
 }
 
-const CANDIDATE_INITIAL = candidate({ basedOn: null, draft: INITIAL_DRAFT });
+const CANDIDATE_INITIAL = candidate({ basedOn: null, draft: INITIAL_DRAFT, catalogPin: PIN });
 /** An Agent-submitted future candidate: both adopters can take it. */
-const CANDIDATE_FUTURE = candidate({ basedOn: P1, draft: FUTURE_DRAFT, submittedBy: PROVENANCE });
+const CANDIDATE_FUTURE = candidate({ basedOn: P1, draft: FUTURE_DRAFT, catalogPin: PIN, submittedBy: PROVENANCE });
 const ACCEPTED = acceptProposalRecord(CANDIDATE_FUTURE);
 const REJECTED: CandidatePlanProposal = { ...CANDIDATE_FUTURE, revision: 2, status: 'rejected' };
 
 const INITIAL_FACTS: InitialAdoptionFacts = {
-  origin: 'ok', governance: 'ok', draftIssues: [], assignmentReasons: [], phaseReasons: [],
+  modules: 'ok', origin: 'ok', governance: 'ok', draftIssues: [], assignmentReasons: [], phaseReasons: [],
 };
 const DOCS_FACTS: FutureChangeTaskFactsV1 = { taskId: 't-docs', runs: [], lease: null, reduction: null };
 /** A supported delta (C7, 5.10: without disposition-only Tasks unless the test names them). */
@@ -122,7 +128,7 @@ const delta = (changedTaskIds: string[], addedTaskIds: string[], c7: Partial<Pic
   { status: 'supported' }>, 'dispositionOnlyTaskIds' | 'dispositionChanges' | 'carrierRemovals'>> = {}): FuturePlanDeltaVerdict =>
   ({ status: 'supported', changedTaskIds, addedTaskIds, dispositionOnlyTaskIds: [], dispositionChanges: [], carrierRemovals: [], ...c7 });
 const FUTURE_FACTS: FutureAdoptionFacts = {
-  targetExists: false, delta: delta([], ['t-docs']),
+  modules: 'ok', targetExists: false, delta: delta([], ['t-docs']),
   coverage: { status: 'supported' }, pinnedPolicy: 'not_needed', draftIssues: [], assignmentReasons: [], phaseReasons: [],
   touchedTaskFacts: [DOCS_FACTS],
   // C7 (5.10): an operator adoption without disposition-only Tasks reads no carrier.
@@ -133,7 +139,7 @@ const AGENT_FUTURE_FACTS: FutureAdoptionFacts = { ...FUTURE_FACTS, adopterClass:
 
 function context(overrides: Partial<PlanProposalGuardContext> = {}): PlanProposalGuardContext {
   return { goal: { activePlanRevision: P1, desiredState: 'active' }, goalInWorkspace: true, pinsAgree: true,
-    agentAdmission: null, source: SOURCE, initial: INITIAL_FACTS, future: FUTURE_FACTS, ...overrides };
+    agentAdmission: null, source: SOURCE, modules: 'ok', initial: INITIAL_FACTS, future: FUTURE_FACTS, ...overrides };
 }
 const pointer = (activePlanRevision: PlanRevisionRef | null, desiredState: 'active' | 'paused' | 'cancelled' = 'active') =>
   ({ goal: { activePlanRevision, desiredState } });
@@ -143,7 +149,7 @@ type RecordedEvent = Extract<PlanProposalEvent, { type: 'proposal_recorded' }>;
 type AcceptedEvent = Extract<PlanProposalEvent, { type: 'proposal_accepted' }>;
 
 const RECORD_HOST: RecordedEvent = { type: 'proposal_recorded', writer: 'host', ref: PROPOSAL_REF, goalRef: GOAL,
-  basedOn: null, draft: INITIAL_DRAFT, reason: REASON, issues: [], submittedBy: null };
+  basedOn: null, draft: INITIAL_DRAFT, reason: REASON, issues: [], catalogPin: PIN, submittedBy: null };
 const RECORD_ANSWER: RecordedEvent = { ...RECORD_HOST, writer: 'initial_answer' };
 const RECORD_AGENT: RecordedEvent = { ...RECORD_HOST, writer: 'agent', basedOn: P1, draft: FUTURE_DRAFT, submittedBy: PROVENANCE };
 const ACCEPT_HOST: AcceptedEvent = { type: 'proposal_accepted', adopter: 'host', proposalRef: PROPOSAL_REF,
@@ -295,22 +301,23 @@ describe('§14.1 PlanProposal record constructors', () => {
 
   it('newCandidateProposal writes candidate@1 with today\'s key order (plan-service.ts:965-967)', () => {
     const host = newCandidateProposal({ ref: PROPOSAL_REF, goalRef: GOAL, basedOn: null, draft: INITIAL_DRAFT, reason: REASON,
-      issues: [], submittedBy: null });
+      issues: [], catalogPin: PIN, submittedBy: null });
     expect(JSON.stringify(host)).toBe(JSON.stringify({ kind: 'candidate_v2', ref: PROPOSAL_REF, revision: 1, schemaVersion: 2,
-      goalRef: GOAL, basedOn: null, draft: INITIAL_DRAFT, reason: REASON, status: 'candidate', issues: [] }));
+      goalRef: GOAL, basedOn: null, draft: INITIAL_DRAFT, reason: REASON, status: 'candidate', issues: [], catalogPin: PIN }));
     expect('submittedBy' in host).toBe(false);
   });
 
   it('an Agent candidate carries submittedBy last (plan-service.ts:1974-1977)', () => {
     const issues: PlanValidationError[] = [{ path: 'tasks[0]', code: 'missing_task_assignment', message: 'no assignment' }];
     const agent = newCandidateProposal({ ref: PROPOSAL_REF, goalRef: GOAL, basedOn: P1, draft: FUTURE_DRAFT, reason: REASON,
-      issues, submittedBy: PROVENANCE });
+      issues, catalogPin: PIN, submittedBy: PROVENANCE });
     expect(JSON.stringify(agent)).toBe(JSON.stringify({ kind: 'candidate_v2', ref: PROPOSAL_REF, revision: 1, schemaVersion: 2,
-      goalRef: GOAL, basedOn: P1, draft: FUTURE_DRAFT, reason: REASON, status: 'candidate', issues, submittedBy: PROVENANCE }));
+      goalRef: GOAL, basedOn: P1, draft: FUTURE_DRAFT, reason: REASON, status: 'candidate', issues, catalogPin: PIN,
+      submittedBy: PROVENANCE }));
   });
 
   it('acceptProposalRecord bumps the revision and sets accepted without touching the input (plan-commit-compiler.ts:145-149)', () => {
-    const input = deepFreeze(candidate({ basedOn: P1, draft: FUTURE_DRAFT, submittedBy: PROVENANCE }));
+    const input = deepFreeze(candidate({ basedOn: P1, draft: FUTURE_DRAFT, catalogPin: PIN, submittedBy: PROVENANCE }));
     const accepted = acceptProposalRecord(input);
     expect(accepted).toEqual({ ...input, revision: 2, status: 'accepted' });
     expect(Object.keys(accepted)).toEqual(Object.keys(input));
@@ -611,7 +618,7 @@ describe('PLAN-04 initial proposal_accepted (plan-service.ts:1140-1215)', () => 
   });
 
   it('keeps today\'s order: revision, scope, decisionRefs, pointer, origin, governance, draft, assignments, phase', () => {
-    const all = initialCtx({ ...pointer(P0), initial: { origin: rejection('invalid', 'o'), governance: rejection('unavailable', 'g'),
+    const all = initialCtx({ ...pointer(P0), initial: { modules: 'ok', origin: rejection('invalid', 'o'), governance: rejection('unavailable', 'g'),
       draftIssues: [issue('dag_cycle')], assignmentReasons: ['a'], phaseReasons: ['p'] } });
     expectResult(adopt({ ...ACCEPT_HOST, expectedProposalRevision: 3 }, { ...all, pinsAgree: false }),
       no('stale', 'revision_conflict', 'the proposal revision changed'));
@@ -624,14 +631,14 @@ describe('PLAN-04 initial proposal_accepted (plan-service.ts:1140-1215)', () => 
 
   it('a model-origin draft joins the origin guards first (plan-service.ts:1174-1176, :1188)', () => {
     const draft = { ...INITIAL_DRAFT, origin: { kind: 'initial_coordination' } as unknown as InitialPlanOrigin } as PlanRevisionDraft;
-    const proposal = candidate({ basedOn: null, draft });
+    const proposal = candidate({ basedOn: null, draft, catalogPin: PIN });
     const result = adopt(ACCEPT_HOST, initialCtx(), proposal);
     expectResult(result, ok(acceptProposalRecord(proposal), [...INITIAL_ADOPTION_EFFECTS.slice(0, 4), g({ target: 'origin_sources' }),
       ...INITIAL_ADOPTION_EFFECTS.slice(4)]));
   });
 
   it('an Agent can never take the initial path', () => {
-    const agentInitial = candidate({ basedOn: null, draft: INITIAL_DRAFT, submittedBy: PROVENANCE });
+    const agentInitial = candidate({ basedOn: null, draft: INITIAL_DRAFT, catalogPin: PIN, submittedBy: PROVENANCE });
     expectResult(adopt(ACCEPT_AGENT, initialCtx({ agentAdmission: 'ok' }), agentInitial),
       no('guard_failed', 'forbidden', 'an Agent apply requires a future revision with a source plan'));
   });
@@ -645,7 +652,7 @@ describe('PLAN-05 future-only proposal_accepted (applyFutureRevision, plan-servi
   const adopt = (event: AcceptedEvent, overrides: Partial<PlanProposalGuardContext> = {},
     state: PlanProposalMachineState = CANDIDATE_FUTURE) => transitionPlanProposal(state, event, context(overrides));
   const facts = (overrides: Partial<FutureAdoptionFacts>): Partial<PlanProposalGuardContext> => ({ future: { ...FUTURE_FACTS, ...overrides } });
-  const withDraft = (draft: PlanRevisionDraft) => candidate({ basedOn: P1, draft, submittedBy: PROVENANCE });
+  const withDraft = (draft: PlanRevisionDraft) => candidate({ basedOn: P1, draft, catalogPin: PIN, submittedBy: PROVENANCE });
   const issue = (code: PlanValidationError['code']): PlanValidationError => ({ path: 'tasks', code, message: code });
 
   it.each<[string, AcceptedEvent, Partial<PlanProposalGuardContext>, PlanProposalMachineState, Expected]>([
@@ -766,7 +773,7 @@ describe('PLAN-05 Agent proposal_accepted (applyPlanChangeAsAgent, plan-service.
     ['the admission sees a newer version', CANDIDATE_FUTURE, ACCEPT_AGENT,
       { agentAdmission: rejection('revision_conflict', 'changed') }, no('stale', 'revision_conflict')],
     ['the writer was not identified', CANDIDATE_FUTURE, { ...ACCEPT_AGENT, agentWriter: null }, {}, no('illegal', 'invalid')],
-    ['a Host candidate without submittedBy (:2075-2078)', candidate({ basedOn: P1, draft: FUTURE_DRAFT }), ACCEPT_AGENT, {},
+    ['a Host candidate without submittedBy (:2075-2078)', candidate({ basedOn: P1, draft: FUTURE_DRAFT, catalogPin: PIN }), ACCEPT_AGENT, {},
       no('guard_failed', 'forbidden', 'a candidate without an Agent submission source cannot be adopted by an Agent')],
     ['submitted by another Run (:2079-2082)', CANDIDATE_FUTURE, otherWriter({ runRef: runRef('run-other') }), {},
       no('guard_failed', 'forbidden', 'the candidate was submitted by another Agent Run')],
@@ -855,15 +862,15 @@ describe('planProposalProblem (the owner asks after each read)', () => {
     no('guard_failed', 'invalid', 'not the unique normalization'));
     // The draft validators run one after the other.
     expect(planProposalProblem(CANDIDATE_INITIAL, ACCEPT_HOST,
-      { ...scope, initial: { origin: 'ok', governance: 'ok', draftIssues: [] } })).toBeNull();
+      { ...scope, initial: { modules: 'ok', origin: 'ok', governance: 'ok', draftIssues: [] } })).toBeNull();
     expectResult(planProposalProblem(CANDIDATE_INITIAL, ACCEPT_HOST,
-      { ...scope, initial: { origin: 'ok', governance: 'ok', draftIssues: [], assignmentReasons: ['a'] } })!,
+      { ...scope, initial: { modules: 'ok', origin: 'ok', governance: 'ok', draftIssues: [], assignmentReasons: ['a'] } })!,
     no('guard_failed', 'incomplete', 'the initial plan is not admissible: a'));
   });
 
   it('an unread fact holds: the guards after it wait for the read (future adoption)', () => {
     const scope: PlanProposalReadFacts = { goal: { activePlanRevision: P1, desiredState: 'active' }, goalInWorkspace: true, pinsAgree: true };
-    const badTarget = candidate({ basedOn: P1, draft: draftOf({ planId: 'plan-2', planRevision: 5 }), submittedBy: PROVENANCE });
+    const badTarget = candidate({ basedOn: P1, draft: draftOf({ planId: 'plan-2', planRevision: 5 }), catalogPin: PIN, submittedBy: PROVENANCE });
     // Source not read: the draft schema and decisionRefs are judged, the source-relative rules wait.
     expect(planProposalProblem(badTarget, ACCEPT_HOST, scope)).toBeNull();
     expectResult(planProposalProblem(badTarget, { ...ACCEPT_HOST, decisionRefs: [{ ref: GOAL, revision: 1 }] }, scope)!,
@@ -967,8 +974,8 @@ describe('derivePlanProposalStatus (PLAN-06)', () => {
     ['initial candidate after the pointer moved (irreversible)', CANDIDATE_INITIAL, P1, 'stale'],
     ['future candidate on the active plan', CANDIDATE_FUTURE, P1, 'candidate'],
     ['future candidate after the pointer moved past basedOn (irreversible)', CANDIDATE_FUTURE, P2, 'stale'],
-    ['candidate on a planId that does not exist yet', candidate({ basedOn: planRef('plan-x'), draft: FUTURE_DRAFT }), P1, 'stale'],
-    ['the same candidate once that planId is adopted (reversible, GAP-14)', candidate({ basedOn: planRef('plan-x'), draft: FUTURE_DRAFT }),
+    ['candidate on a planId that does not exist yet', candidate({ basedOn: planRef('plan-x'), draft: FUTURE_DRAFT, catalogPin: PIN }), P1, 'stale'],
+    ['the same candidate once that planId is adopted (reversible, GAP-14)', candidate({ basedOn: planRef('plan-x'), draft: FUTURE_DRAFT, catalogPin: PIN }),
       planRef('plan-x'), 'candidate'],
     ['accepted', ACCEPTED, P2, 'accepted'],
     ['rejected', REJECTED, P1, 'rejected'],
@@ -1241,7 +1248,7 @@ describe('C7 PLAN-01/02 (§3.4): the reason.affectedTaskIds shape and a draft di
 
 describe('C7 PLAN-05 (5.10): disposition-only Tasks (TASK-19) and the parallel carrier fence (guard 9)', () => {
   const DEFER = { taskId: 't-build', from: 'active' as const, to: 'deferred' as const, replacedByTaskId: null };
-  const listed = candidate({ basedOn: P1, draft: FUTURE_DRAFT, submittedBy: PROVENANCE,
+  const listed = candidate({ basedOn: P1, draft: FUTURE_DRAFT, catalogPin: PIN, submittedBy: PROVENANCE,
     reason: { ...REASON, affectedTaskIds: ['t-build'] } });
   const adopt = (future: Partial<FutureAdoptionFacts>, state: PlanProposalMachineState = listed, event: AcceptedEvent = ACCEPT_HOST,
     overrides: Partial<PlanProposalGuardContext> = {}) =>
@@ -1325,7 +1332,7 @@ describe('C7 PLAN-05 (5.10): disposition-only Tasks (TASK-19) and the parallel c
     const PARALLEL_DRAFT: PlanRevisionDraft = { ...FUTURE_DRAFT, tasks: [runtimeTask('t-build'), runtimeTask('t-fix')],
       obligations: [{ obligationId: 'o-1', title: 'Deliver', requirementLevel: 'required', taskIds: ['t-build', 't-fix'],
         verificationRequirements: [{ requirementId: 'r-1', requirementLevel: 'required', kind: 'test', description: 'Tests pass' }] }] };
-    const parallel = candidate({ basedOn: P1, draft: PARALLEL_DRAFT, submittedBy: PROVENANCE });
+    const parallel = candidate({ basedOn: P1, draft: PARALLEL_DRAFT, catalogPin: PIN, submittedBy: PROVENANCE });
     const addCarrier = (adopterClass: FutureAdoptionFacts['adopterClass'], carrierFacts: TracedTaskFactsV1[] | undefined) => ({
       delta: delta([], ['t-fix']), touchedTaskFacts: [{ taskId: 't-fix', runs: [], lease: null, reduction: null }],
       adopterClass, sourceCarriers: SOURCE_CARRIERS, ...(carrierFacts === undefined ? {} : { carrierFacts }) });

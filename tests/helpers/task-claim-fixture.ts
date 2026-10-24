@@ -25,7 +25,6 @@ import type {
 import type { LookupValue, RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
@@ -393,14 +392,11 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
     templateId: 'builder', templateRevision: '1', bindingVersion: 1, policyRevision: 'legacy-template' };
   const budget: TaskBudgetV1 = { tokenBudget: 100000, deadline: null };
 
-  async function decodedRevision(refKey: string): Promise<number> {
-    const read = await backend.records.readMany([refKey]);
-    if (read.status !== 'ready') throw new Error(`fixture revision read failed: ${JSON.stringify(read)}`);
-    const record = read.value.records.find(candidate => candidate.refKey === refKey);
-    if (record === undefined) throw new Error(`fixture record is absent: ${refKey}`);
-    const parsed = JSON.parse(record.json) as { revision?: unknown };
-    if (typeof parsed.revision !== 'number') throw new Error(`fixture record has no revision: ${refKey}`);
-    return parsed.revision;
+  /** The Workspace pin from the bootstrap owner's public registration read. */
+  async function registeredWorkspacePin(): Promise<VersionPin> {
+    const registration = await bootstrap.projects.readWorkspaceRegistration(ctx, scope);
+    if (registration.status !== 'ready') throw new Error(`fixture registration read failed: ${JSON.stringify(registration)}`);
+    return { ref: registration.value.workspace.ref, revision: registration.value.workspace.revision };
   }
 
   function openSecondary(path: string): ClaimConnection {
@@ -424,7 +420,7 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
       if (card.status !== 'ready') throw new Error(`fixture session read failed: ${JSON.stringify(card)}`);
       const expected = overrides.expected ?? [
         { ref: requestedGoalRef, revision: goalRead.value.goal.revision },
-        { ref: workspaceRef, revision: await decodedRevision(canonicalRefKey(workspaceRef)) },
+        await registeredWorkspacePin(),
         { ref: plainSessionRefToAggregate(sessionRef), revision: card.value.record.revision },
       ];
       return { input: {

@@ -50,6 +50,7 @@
  */
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
 import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ModuleRef, RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope } from '../../src/contracts/core/identity.js';
@@ -295,7 +296,7 @@ export function observeRecords(
 export type S5DecisionFixtureOptions = {
   duties?: readonly PlatformDutyV1[];
   operatorActor?: Extract<ActorRef, { kind: 'human' | 'system' }>;
-  /** `modules` publicly adopts M/N before Plan adoption; the default publicly adopts an empty module catalog. */
+  /** Both publicly adopt M/N before Plan adoption: `modules` with their paths, the default with empty paths. */
   catalog?: 'baseline' | 'modules';
   /** SS11/SS12/SS15: B@5, real PB1 adoption@6, then a real pause@7 after the first claim and its entry. */
   pausedB?: boolean;
@@ -362,6 +363,8 @@ export type S5DecisionFixture = {
   workspace: WorkspaceSnapshot;
   goals: { A: S5GoalSeed; B: S5GoalSeed; C: S5GoalSeed };
   plans: { A1: PlanRevisionSnapshot; B1: PlanRevisionSnapshot; C1: PlanRevisionSnapshot };
+  /** The adopted catalog's pin, from the public current-revision read after the adoption: a seeded candidate's pin. */
+  catalogPin: ArchitectureCatalogPinV1;
   sessionS: SessionRef;
   sessionSecond: SessionRef;
   claimRA: TaskClaim;
@@ -708,17 +711,24 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
       { ref: { aggregateType: 'ProjectCompletionPolicyActive', projectId: PROJECT_ID }, revision: 0 }] },
   });
   if (activated.status !== 'committed') throw new Error(`S5 policy activation failed: ${JSON.stringify(activated)}`);
+  // The Plan drafts below scope tasks to M and N, so both branches adopt them; the default keeps its "no file
+  // ownership" meaning through empty paths.
+  const pathsOf = (module: 'M' | 'N'): string[] => catalogKind === 'modules' ? [...MODULE_PATHS[module]] : [];
   const catalog = await createArchitectureCatalogService({ records }).adoptInitialArchitecture(ctx, {
     input: { baselineId: 's5-baseline', description: 'S5 architecture baseline', constraints: [],
-      catalog: { requireDag: true, dependencies: [], modules: catalogKind === 'modules' ? [
-        { ref: MODULE_M, name: 'M', responsibility: 'Module M work', paths: [...MODULE_PATHS.M], interfaces: [] },
-        { ref: MODULE_N, name: 'N', responsibility: 'Module N work', paths: [...MODULE_PATHS.N], interfaces: [] },
-      ] : [] } },
+      catalog: { requireDag: true, dependencies: [], modules: [
+        { ref: MODULE_M, name: 'M', responsibility: 'Module M work', paths: pathsOf('M'), interfaces: [] },
+        { ref: MODULE_N, name: 'N', responsibility: 'Module N work', paths: pathsOf('N'), interfaces: [] },
+      ] } },
     meta: { requestId: 's5-adopt-catalog', expected: [
       { ref: PROJECT, revision: 1 }, { ref: WORKSPACE, revision: WORKSPACE_REVISION },
     ] },
   });
   if (catalog.status !== 'committed') throw new Error(`S5 catalog adoption failed: ${JSON.stringify(catalog)}`);
+  const adopted = await createArchitectureCatalogService({ records }).readArchitectureRevision(ctx, { selection: { kind: 'current' } });
+  if (adopted.status !== 'ready') throw new Error(`S5 catalog read failed: ${JSON.stringify(adopted)}`);
+  const catalogPin: ArchitectureCatalogPinV1 = { catalogRef: adopted.value.catalog.ref,
+    baseline: { ref: adopted.value.baseline.ref, digest: adopted.value.baseline.contentDigest } };
 
   // ---- three Goals through the public create/reorder/settings owners -------
   // createGoal writes Goal@1. The public reorder A, B, C leaves A@1 (its order
@@ -1284,7 +1294,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
     goals: { A: { ref: GOAL_A, snapshot: goalA, order: GOAL_ORDER.A, autonomy: goalA.settings!.autonomy },
       B: { ref: GOAL_B, snapshot: goalB, order: GOAL_ORDER.B, autonomy: goalB.settings!.autonomy },
       C: { ref: GOAL_C, snapshot: goalC, order: GOAL_ORDER.C, autonomy: goalC.settings!.autonomy } },
-    plans: { A1: planA1, B1: planB1, C1: planC1 },
+    plans: { A1: planA1, B1: planB1, C1: planC1 }, catalogPin,
     sessionS, sessionSecond, claimRA, runRA, claimRB, runRB, duties: fixtureDuties, operatorActor,
     requests: { Q1, Q2 }, candidates: { U1, U2 }, messages: { decision: decisionMessage, answered: answeredMessage },
     seedCommit, seedGoalSnapshot: snapshot => seedCommit([encodeGoalSnapshot(snapshot)]),

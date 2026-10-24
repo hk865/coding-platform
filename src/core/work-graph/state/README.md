@@ -114,12 +114,13 @@
 | `newNoteVersionRecord` | `src/core/work-graph/state/note-machine.ts:294` | 建注记版本 | 追加注记版本 |
 | `userReasonsOf` | `src/core/work-graph/state/note-machine.ts:150` | 由处置关系算用户复查原因 | 注记复查 |
 | `transitionNoticeSettings` | `src/core/work-graph/state/notice-settings-machine.ts:45` | 通知已读位置迁移；无前进更新则不写记录 | 标记通知已读 |
-| `newCandidateProposal` | `src/core/work-graph/state/plan-machine.ts:115` | 建候选计划提案 | 提交计划草案 |
-| `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:181` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
-| `derivePlanRevisionStatus` | `src/core/work-graph/state/plan-machine.ts:203` | adopted/superseded 派生，不落库 | 读计划修订 |
-| `planRevisionTargetOf` | `src/core/work-graph/state/plan-machine.ts:215` | 由提案与草稿算目标修订 ref | 采纳提案前 |
-| `transitionPlanProposal` | `src/core/work-graph/state/plan-machine.ts:1691` | 提案主迁移；采纳与 Goal 指针同一提交 | 计划写入 |
-| `planProposalProblem` | `src/core/work-graph/state/plan-machine.ts:857` | 提案事件的前置检查 | 提案迁移前 |
+| `newCandidateProposal` | `src/core/work-graph/state/plan-machine.ts:119` | 建候选计划提案；候选带 `catalogPin`（只在创建时写，不受保护，采用重核不比较） | 提交计划草案 |
+| `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:186` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
+| `derivePlanRevisionStatus` | `src/core/work-graph/state/plan-machine.ts:208` | adopted/superseded 派生，不落库 | 读计划修订 |
+| `planRevisionTargetOf` | `src/core/work-graph/state/plan-machine.ts:220` | 由提案与草稿算目标修订 ref | 采纳提案前 |
+| `transitionPlanProposal` | `src/core/work-graph/state/plan-machine.ts:1735` | 提案主迁移；采纳与 Goal 指针同一提交 | 计划写入 |
+| `planProposalProblem` | `src/core/work-graph/state/plan-machine.ts:872` | 提案事件的前置检查 | 提案迁移前 |
+| `draftHasModuleTask` | `src/core/work-graph/state/plan-machine.ts:1543` | 草稿里有 module 作用域的任务（`scope.kind === 'module'`），采用时要读 catalog | 采用 effects 需要决定是否加 catalog guard 时 |
 | `newPendingQueryRecords` | `src/core/work-graph/state/query-run-recovery.ts:533` | 建 pending 的 QueryJob/QueryRun 对 | 新 Query 请求 |
 | `advanceQueryExecutionRecord` | `src/core/work-graph/state/query-run-recovery.ts:608` | 推进 claimed/prepared/entering/entered | Query 进入执行 |
 | `markQueryRunUnknownRecord` | `src/core/work-graph/state/query-run-recovery.ts:681` | 记录 unknown（Job 保持 running） | 结果未知 |

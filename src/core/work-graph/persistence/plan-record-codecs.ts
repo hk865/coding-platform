@@ -10,8 +10,11 @@
  * This file performs no I/O: it only checks pure encoding, identity, version and
  * plan structure, and it computes no digest and starts no transaction.
  */
+import { architectureCatalogPinShape, type ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import { defineShape, f } from '../../../contracts/data-format.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { RoleBindingRefV1, RunRef } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -720,6 +723,11 @@ export function candidateRequestRef(proposal: PlanProposal): QueryJobRef | null 
   return proposal.requestRef ?? null;
 }
 
+/** L10: the candidate's catalog pin as an R1 fragment of this hand-written codec: exact keys, `null` allowed, absent
+ * refused (a present key holding `undefined` is invalid). */
+const planProposalCatalogPinShape = defineShape({ name: 'PlanProposalCatalogPinV1',
+  fields: { catalogPin: f.nullable(f.ref(architectureCatalogPinShape)) } });
+
 function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null): string[] {
   if (!isRecord(value)) return ['PlanProposal must be an object'];
   const ref = planProposalRefFromValue(value['ref']);
@@ -778,6 +786,12 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
       issues.push('candidate_v2.status must be candidate|accepted|rejected|not_adopted');
     }
     issues.push(...planValidationErrorArrayIssues(value['issues']));
+    const catalogPin = value['catalogPin'];
+    const pinProblem = checkShape(planProposalCatalogPinShape, { catalogPin }, 'stored');
+    if (pinProblem !== null) issues.push(pinProblem);
+    else if (catalogPin !== null && (catalogPin as ArchitectureCatalogPinV1).catalogRef.projectId !== ref.projectId) {
+      issues.push('candidate_v2.catalogPin must name a catalog of this project');
+    }
     return issues;
   }
   issues.push('PlanProposal.kind must be candidate_v2');

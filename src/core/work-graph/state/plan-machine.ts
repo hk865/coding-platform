@@ -36,6 +36,7 @@
  * The `plan-service.ts`, `plan-commit-compiler.ts` and `plan-readers.ts` line
  * references below cite the pre-step-3 worktree (2026-10-02, as the spec does).
  */
+import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
@@ -92,6 +93,9 @@ export type CandidatePlanProposal = {
   goalRef: GoalRef; basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
   reason: PlanChangeReason; status: 'candidate' | 'accepted' | 'rejected' | 'not_adopted';
   issues: PlanValidationError[];
+  /** L10 (8B §3.1): the active catalog this candidate was checked against at propose; `null` = none was active.
+   * Creation-only and not protected; the adoption re-check does not compare it. */
+  catalogPin: ArchitectureCatalogPinV1 | null;
   /** Slice 5: first user-initiated request this candidate belongs to; absent = independent. */
   requestRef?: QueryJobRef | null;
   /** Slice 5: the exact non-adoption fact, when this candidate was not adopted. */
@@ -119,11 +123,12 @@ export function newCandidateProposal(input: {
   draft: PlanRevisionDraft;
   reason: PlanChangeReason;
   issues: PlanValidationError[];
+  catalogPin: ArchitectureCatalogPinV1 | null;
   submittedBy: PlanWriteProvenanceV1 | null;
 }): CandidatePlanProposal {
   const candidate: CandidatePlanProposal = { kind: 'candidate_v2', ref: input.ref, revision: 1, schemaVersion: 2,
     goalRef: input.goalRef, basedOn: input.basedOn, draft: input.draft, reason: input.reason,
-    status: 'candidate', issues: input.issues };
+    status: 'candidate', issues: input.issues, catalogPin: input.catalogPin };
   return input.submittedBy === null ? candidate : { ...candidate, submittedBy: input.submittedBy };
 }
 
@@ -255,6 +260,7 @@ export type PlanProposalEvent =
     draft: PlanRevisionDraft;
     reason: PlanChangeReason;
     issues: PlanValidationError[];
+    catalogPin: ArchitectureCatalogPinV1 | null;
     submittedBy: PlanWriteProvenanceV1 | null;
     /**
      * S5-PLAN-01 request association (spec §2.4): the first user-initiated
@@ -290,6 +296,7 @@ export type PlanProposalEvent =
     draft: PlanRevisionDraft;
     reason: PlanChangeReason;
     issues: PlanValidationError[];
+    catalogPin: ArchitectureCatalogPinV1 | null;
     submittedBy: PlanWriteProvenanceV1 | null;
     expectedHeadRevision: number;
     /**
@@ -358,6 +365,8 @@ export type FutureCoverageVerdict =
 
 /** The draft admission validators of `plan-validation.ts`, run by the service. */
 export type PlanDraftAdmissionFacts = {
+  /** L10 (8B §3.5): `unknownModuleTasksOf` against the adoption's catalog; `'ok'` with no module task. */
+  modules: 'ok' | CoreRejection;
   /** `validatePlanDraft(draft, policy)`. */
   draftIssues: readonly PlanValidationError[];
   /** `validatePlanAssignments(draft)`. */
@@ -461,6 +470,8 @@ export type PlanProposalGuardContext = {
   agentAdmission: 'ok' | CoreRejection | null;
   /** The source Plan read through `basedOn` (Agent propose, every future adoption). */
   source: PlanSourceFacts | null;
+  /** L10 (8B §3.4): the propose module fact; `null` = this event does not ask it. */
+  modules: 'ok' | CoreRejection | null;
   /** `proposal_accepted` with `basedOn = null` (PLAN-04). */
   initial: InitialAdoptionFacts | null;
   /** `proposal_accepted` with `basedOn ≠ null` (PLAN-05). */
@@ -476,6 +487,7 @@ export type PlanProposalGuardContext = {
  * - `origin_sources`: the guards of `verifyModelCoordinationDraft` (PLAN-04 with `origin`);
  * - `project`/`workspace`/`goal`: the revisions read by `readGoalScope`;
  * - `governance`/`pinned_policy`: the governance or pinned policy guards;
+ * - `catalog`: the future adoption's active catalog pointer, when the draft has a module-scoped task;
  * - `proposal`: the candidate (`null` = must not exist);
  * - `plan_revision`: the source Plan @1 or the target Plan ∅;
  * - `task_record_absent`: the Lease/Reduction ∅ of a changed or added Task,
@@ -488,7 +500,7 @@ export type PlanProposalGuardContext = {
  */
 export type PlanCommitGuard =
   | { target: 'answer_facts' | 'agent_admission' | 'origin_sources' | 'project' | 'workspace' | 'goal'
-    | 'governance' | 'pinned_policy' }
+    | 'governance' | 'pinned_policy' | 'catalog' }
   | { target: 'proposal'; expectedRevision: number | null }
   | { target: 'plan_revision'; ref: PlanRevisionRef; expectedRevision: 1 | null }
   | { target: 'task_record_absent'; record: 'TaskLease' | 'TaskReduction'; taskId: string }
@@ -795,13 +807,16 @@ export type PlanProposalReadFacts = {
   pinsAgree?: boolean;
   agentAdmission?: 'ok' | CoreRejection | null;
   source?: PlanSourceFacts | null;
+  /** L10 (8B §3.4): the propose module fact; `undefined` = not read yet, `null` = not this event. */
+  modules?: 'ok' | CoreRejection | null;
   initial?: Partial<InitialAdoptionFacts> | null;
   future?: Partial<FutureAdoptionFacts> | null;
   /** Slice 5 request-candidate rows only (S5-PLAN-01..05). */
   requestCandidate?: PlanRequestCandidateFacts | null;
 };
 
-type RecordedGuardEvent = Omit<Extract<PlanProposalEvent, { type: 'proposal_recorded' }>, 'issues'>;
+type RecordedGuardEvent = Omit<Extract<PlanProposalEvent, { type: 'proposal_recorded' }>, 'issues' | 'catalogPin'>
+  & { catalogPin?: ArchitectureCatalogPinV1 | null };
 type AcceptedEvent = Extract<PlanProposalEvent, { type: 'proposal_accepted' }>;
 
 /**
@@ -902,6 +917,13 @@ function agentAdmissionStep(facts: PlanProposalReadFacts): GuardStep {
   return verdictStep(facts.agentAdmission);
 }
 
+/** L10: the propose module fact (null is a missing fact, as `agentAdmissionStep` :899–:901). */
+function proposalModulesStep(facts: PlanProposalReadFacts): GuardStep {
+  if (facts.modules === undefined) return UNREAD;
+  if (facts.modules === null) return reject('illegal', 'invalid', 'a plan proposal requires the module fact');
+  return verdictStep(facts.modules);
+}
+
 /**
  * `readGoalScope` workspace + pin comparison (propose :955-961, :1941-1950;
  * apply `validateProposalScope`, :1644-1666), then D-9 (§2.4, §3.4, step 5.5):
@@ -933,6 +955,8 @@ function planAdmissionProblem(label: string, issues: readonly PlanValidationErro
  * one before it holds.
  */
 function draftAdmissionStep(label: string, facts: Partial<PlanDraftAdmissionFacts>): GuardStep {
+  const modules = verdictStep(facts.modules);
+  if (modules !== null) return modules;
   if (facts.draftIssues === undefined) return UNREAD;
   if (facts.draftIssues.length > 0) return planAdmissionProblem(label, facts.draftIssues);
   if (facts.assignmentReasons === undefined) return UNREAD;
@@ -986,6 +1010,8 @@ function recordedStep(
   const request = requestRecordedStep(event, facts);
   if (request !== null) return request;
   if (state === undefined) return UNREAD;
+  const modules = proposalModulesStep(facts);
+  if (modules !== null) return modules;
   // The proposalId is derived from the request id (:269-271, :1836-1839). The
   // receipt lookup runs first (:942-951, :1921-1925); a record found after it
   // was committed in between. Today the store replays a same-identity commit
@@ -994,8 +1020,10 @@ function recordedStep(
   // receipt (replay, or `idempotency_conflict`), and with no receipt for this
   // identity keeps today's create CAS ∅ code, `revision_conflict` (:985, :1991).
   if (state !== null) {
+    if (event.catalogPin === undefined) return UNREAD;
     const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
-      draft: event.draft, reason: event.reason, issues: [], submittedBy: event.submittedBy }), event.requestRef);
+      draft: event.draft, reason: event.reason, issues: [], catalogPin: event.catalogPin,
+      submittedBy: event.submittedBy }), event.requestRef);
     return sameRecordedCandidate(state, candidate)
       ? reject('duplicate', 'revision_conflict',
         `proposal ${event.ref.proposalId} is already recorded with the same content; only its original receipt replays`)
@@ -1078,7 +1106,8 @@ function onProposalRecorded(
   if (problem === UNREAD) return unreachable(problem as never, 'unread plan proposal guard fact');
   if (problem !== null) return problem;
   const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
-    draft: event.draft, reason: event.reason, issues: event.issues, submittedBy: event.submittedBy }), event.requestRef);
+    draft: event.draft, reason: event.reason, issues: event.issues, catalogPin: event.catalogPin,
+    submittedBy: event.submittedBy }), event.requestRef);
   /** The writer's own CAS guards: `before` the Goal scope guards, `after` them (the source Plan). */
   let writerGuards: { before: PlanCommitGuard[]; after: PlanCommitGuard[] };
   switch (event.writer) {
@@ -1501,12 +1530,23 @@ function adoptionEffects(admitted: AdmittedAdoption, adopter: PlanAdopter): Plan
       // C7 (TASK-19): the traced disposition-only Tasks' facts; guard 9: the carriers read.
       for (const taskId of admitted.tracedDispositionTaskIds) effects.push(guard({ target: 'task_facts', taskId }));
       for (const taskId of admitted.carrierTaskIds) effects.push(guard({ target: 'carrier_facts', taskId }));
+      if (draftHasModuleTask(proposal.draft)) effects.push(guard({ target: 'catalog' }));
       effects.push(guard({ target: 'plan_revision', ref: admitted.target, expectedRevision: null }));
       return effects;
     }
     default:
       return unreachable(admitted, 'admitted adoption');
   }
+}
+
+/** L10 (8B §3.5): the draft has a module-scoped task, so adoption reads a catalog. Tolerant; never throws (OQ3). */
+export function draftHasModuleTask(draft: PlanRevisionDraft): boolean {
+  const tasks: unknown = draft.tasks;
+  if (!Array.isArray(tasks)) return false;
+  return tasks.some((task: unknown) => {
+    const scope: unknown = typeof task === 'object' && task !== null ? (task as { scope?: unknown }).scope : undefined;
+    return typeof scope === 'object' && scope !== null && (scope as { kind?: unknown }).kind === 'module';
+  });
 }
 
 /**
@@ -1594,8 +1634,12 @@ function onProposalReplaced(
   if (!request.replacesComplete) {
     return reject('guard_failed', 'invalid', 'the replacement does not name the complete current head');
   }
+  const modules = proposalModulesStep(ctx);
+  if (modules === UNREAD) return unreachable(modules as never, 'unread plan proposal module fact');
+  if (modules !== null) return modules;
   const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
-    draft: event.draft, reason: event.reason, issues: event.issues, submittedBy: event.submittedBy }), event.requestRef);
+    draft: event.draft, reason: event.reason, issues: event.issues, catalogPin: event.catalogPin,
+    submittedBy: event.submittedBy }), event.requestRef);
   const replaced: CandidatePlanProposal = { ...state, revision: state.revision + 1, status: 'not_adopted',
     notAdopted: { reason: 'replaced', requestedBy: event.requestedBy, at: event.at, replacedBy: candidate.ref } };
   const effects: PlanProposalEffect[] = [

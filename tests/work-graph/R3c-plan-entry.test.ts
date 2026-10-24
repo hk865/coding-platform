@@ -8,6 +8,7 @@ import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js'
 import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
@@ -23,7 +24,8 @@ const workspace: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projec
 const actor = { kind: 'human' as const, id: 'r3c-host' };
 const ctx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host', actor },
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
-const schemas: RecordBackendSchemas = { records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_RECORD_SCHEMAS.records],
+const schemas: RecordBackendSchemas = { records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_RECORD_SCHEMAS.records,
+    ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_RECORD_SCHEMAS.events,
     ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
   lookups: PLAN_RECORD_SCHEMAS.lookups };

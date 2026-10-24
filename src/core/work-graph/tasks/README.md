@@ -46,9 +46,9 @@
 - `plan-commit-compiler.ts` — 初始/未来 Plan 采用的一次性 `PreparedCommit` 编译。
 - `plan-readers.ts` — canonical Task/Goal/Plan/治理/closure 的读取总汇与记录 schema/索引名；`policyRefFromBody`/`architectureRefFromBody` 是治理指针体的唯一解析器。
 - `plan-result-helpers.ts` — 计划服务共用的 `Owned`/`Rejection` 形状与 `mapStoreReadFailure`/`asWriteRejection`；`messageOf`、`rejected` 直接用 `src/contracts` 的正本。
-- `plan-service.ts` — Plan 采用与 task 读的协调 owner，另有 request candidate service。
+- `plan-service.ts` — Plan 采用与 task 读的协调 owner，另有 request candidate service。提案（Host、替换、初始化答案、Agent）读当前 catalog：候选记下 `catalogPin`（没有 active catalog 时为 `null`），module 作用域任务按 `plan-validation.ts` 的模块规则判；初始采用按治理选定的架构基线的 catalog 判（候选的 pin 不参与），未来采用按采用时的当前 catalog 判并把 catalog 守卫交给提交；草稿里没有 module 作用域任务时采用不读 catalog。
 - `plan-task-basis.ts` — Task 有效 basis、冻结执行定义与 origin 判定的纯规则。
-- `plan-validation.ts` — Plan 草稿准入的纯校验（义务、DAG、assignment、future delta）。
+- `plan-validation.ts` — Plan 草稿准入的纯校验（义务、DAG、assignment、future delta，以及 module 作用域任务的 `moduleRef` 必须命中 `catalog.modules[].ref.moduleId`）。
 - `plan-write-admission.ts` — 委派写者身份识别与当前 Host/Role/Run 权限复核。
 - `planning-question-reader.ts` — 已保存 planning question 的只读读取。
 - `task-service.ts` — Goal 创建的两条 Host 入口，共用同一 `admitGoalCreation` 管线。
@@ -156,7 +156,8 @@
 | `PLAN_STATE_RECORD_SCHEMAS`、`PLAN_GOVERNANCE_RECORD_SCHEMAS`、`RUN_BY_TASK_INDEX`、`RUN_BY_WORKSPACE_STATUS_INDEX`、`GOAL_BY_WORKSPACE_INDEX`、`GOAL_BY_WORKSPACE_CREATED_LOOKUP`、`RUN_BY_WORKSPACE_OUTCOME_INDEX`、`S2B_RUN_BY_GOAL_ENDED_LOOKUP`、`S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP` | `plan-readers.ts:299`、`plan-readers.ts:328`、`plan-readers.ts:99`、`plan-readers.ts:101`、`plan-readers.ts:103`、`plan-readers.ts:105`、`plan-readers.ts:107`、`plan-readers.ts:109`、`plan-readers.ts:111` | 记录 schema 注册组与已注册索引名 | 组合根注册、按索引读；不要自造索引名 |
 | `planTaskFacts`、`buildEffectiveTaskBasis`、`isBasisUnsupported` | `plan-task-basis.ts:238`、`plan-task-basis.ts:102`、`plan-task-basis.ts:73` | Task 有效 basis 的每 Plan 索引与不可用判定 | 读 Plan 的 Task 与采用编译 |
 | `entryPlanVerdict`、`taskOriginVerdict` | `plan-task-basis.ts:379`、`plan-task-basis.ts:318` | 旧 Plan 的 claim 能否进入；来源 Plan 的事实是否描述所选 Plan 的 Task | 进入授权、证据归属 |
-| `validatePlanDraft`、`validatePlanAssignments` | `plan-validation.ts:34`、`plan-validation.ts:200` | Plan 草稿的义务/DAG/assignment 校验与 assignment 唯一性 | 采用前校验；不要另写一套 |
+| `validatePlanDraft`、`validatePlanAssignments` | `plan-validation.ts:37`、`plan-validation.ts:203` | Plan 草稿的义务/DAG/assignment 校验与 assignment 唯一性 | 采用前校验；不要另写一套 |
+| `unknownModuleTasksOf`、`unknownModuleRejection`、`UnknownModuleTaskV1` | `plan-validation.ts:613`、`plan-validation.ts:627`、`plan-validation.ts:608` | L10：每个 module 作用域任务的 `moduleRef` 必须是 `catalog.modules[].ref.moduleId`；按草稿任务顺序列出未知项（`{taskId, moduleId}`），并由它们生成唯一拒绝 `invalid` / `unknown_module: <taskId>=<moduleId>, …`（每任务一条，不合并 module id） | 采用草稿前按当前 catalog 校验 module 引用；不要另写遍历或拒绝文案 |
 | `evaluateTaskCompletion`、`evaluateGoalCompletion` | `completion-policy.ts:59`、`completion-policy.ts:178` | Task/Goal 完成判定的纯规则 | 完成服务与状态机前置判断 |
 | `evidenceBindingFor`、`selectEffectiveEvidenceSet`、`evidenceApplicabilityWithBasis` | `evidence-coverage.ts:34`、`evidence-coverage.ts:76`、`evidence-coverage.ts:153` | 证据绑定、有效证据折叠与适用性判定 | 完成、证据读；不要重算 applicability |
 | `goalDecisionBasis` | `goal-basis.ts:14` | 给 Goal 内容套上已存设置默认值 | 读模型与来源事实需要同一 basis |
@@ -178,7 +179,7 @@
 | `identifyDelegatedWriter`、`authorizeDelegatedWrite` | `plan-write-admission.ts:144`、`plan-write-admission.ts:234` | 委派写者身份识别与当前权限复核（含真实 guards） | Agent 计划写、requeue；两步顺序不可换 |
 | `admitGoalCreation`、`createGoalService` | `task-service.ts:155`、`task-service.ts:414` | Goal 创建的准入管线与服务工厂 | Host 建 Goal |
 | `createInitialPlanAnswerReader` | `initial-plan-answer.ts:48` | 初始 Plan 答案的事实读取与采用侧重核（同一 records/materials/bodies 端口） | 初答读取、模型协调草稿的采用前证明 |
-| `createPlanService`、`createRequestCandidateService` | `plan-service.ts:1037`、`plan-service.ts:2082` | Plan 采用/task 读服务与 request candidate 服务 | 组合根接线 |
+| `createPlanService`、`createRequestCandidateService` | `plan-service.ts:1041`、`plan-service.ts:2103` | Plan 采用/task 读服务与 request candidate 服务 | 组合根接线 |
 | `createRequestRoundService` | `request-service.ts:950` | request round 的读写端口 | Host 与 Workflow 的请求入口 |
 | `open`、`unassigned` **正本** | `request-service.ts:1703`、`request-service.ts:1651` | 两条具名开放轮读取：`open` 一页给出某状态分区里有开放轮的请求根（每个根一次，带 continuation 与 `wrapped`）；`unassigned` 给出最老 pending 轮命中的未分配请求 | 队列分派与 drain；两者共用 `readOpenIndexPage`（`request-service.ts:1703`）的游标解析和页读取，不要另写一份 |
 | `createTaskClaimService`、`workClaimDispatchProblem`、`createTaskRequeueService`、`createReconcileCandidateReader` | `claim-service.ts:722`、`claim-service.ts:171`、`requeue-service.ts:600`、`reconcile-reads.ts:52` | 认领服务、认领分派前置检查、返工服务与对账候选读取器 | 组合根与启动对账 |
@@ -212,7 +213,7 @@
 - `unknown-call-review-card.ts`：`UNKNOWN_CALL_REVIEW_OPTION_LABELS`、`UNKNOWN_CALL_APPROVAL_OPTION_LABELS`、`UNKNOWN_CALL_REVIEW_MIXED_LINE`、`unknownCallReviewOptions`、`unknownCallReviewIsMixed`、`unknownCallReviewSummary`
 - `unknown-call-review-answers.ts`：`UCR_DISPOSITION_IDENTITY_PREFIX`、`unknownCallAnswerPhase`、`unknownCallReviewDispositionIdentity`
 - `unknown-call-review-service.ts`、`unknown-call-review-target-digests.ts`、`codec-shape-checks.ts`：`blockedCommandsBytes`、`REVIEW_TARGET_FILE_MAX_BYTES`、`sessionMessageRefProblem`
-- `plan-validation.ts`：`explicitExecutionIntentTaskIds`、`planPhaseGuardReasons`、`deriveFuturePlanDelta`、`validateFutureObligationCoverage`
+- `plan-validation.ts`：`explicitExecutionIntentTaskIds`、`planPhaseGuardReasons`、`deriveFuturePlanDelta`、`validateFutureObligationCoverage`、`unknownModuleTasksOf`、`unknownModuleRejection`（后两个已列在上表，可跨层复用）
 - `plan-task-basis.ts`：`buildTargetTaskBasis`、`buildFrozenTaskDefinitions`、`frozenTaskDefinitionsAgree`、`executionDefinitionsAgree`、`verifyBasisDelegation`
 - `plan-commit-compiler.ts`、`plan-readers.ts`：`compileInitialPlanAdoption`、`compileFuturePlanAdoption`、`resolveGovernance`、`tryPolicyContent`
 - `plan-write-admission.ts`、`execution-entry-service.ts`：`identifyPlanWriter`、`authorizePlanWrite`、`checkRunPin`、`checkRunAndPermitPins`、`anomalyAnchorRefsMatch`、`taskEntryPermitProblem`

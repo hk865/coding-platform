@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "cd1b65ab8ed1416e35ff77ec939bb57418e377eac933988dd94da62334811935"
+    "sha256": "e88fb3dfe3dd62155bbc7faeb92dcc2d0ba89b8aac5dad84fab7f17848b20863"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -21,7 +21,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
-    "sha256": "0ce75daec4258062d451703fb6efb22879a7e2e8359767a17d0f2666bfe8bd3d"
+    "sha256": "68dea8aeb3b5fa89e00c991bacc17648875fbe91b27822fd5947687cd73a69e6"
   },
   {
     "path": "resources/prompts/platform/templates/consultation-received-input.txt",

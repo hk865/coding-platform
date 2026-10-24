@@ -5,7 +5,7 @@
   "templates": {
     "initial-planning-answer": {
       "file": "templates/initial-planning-answer.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "consultation-received-input": {

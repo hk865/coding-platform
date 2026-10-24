@@ -23,6 +23,7 @@
  * provider framework.
  */
 import { randomUUID } from 'node:crypto';
+import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
@@ -436,6 +437,13 @@ export async function readRevisionByRef(records: GoalRecordTransactionPort, ref:
   const catalog = readCatalogBesideBaseline(ref, catalogKey, byKey);
   if (catalog.status !== 'ok') return catalog.rejection;
   return { status: 'ready', value: { baseline, catalog: catalog.value } };
+}
+
+/** L10 (8B §3.4): the complete pin of one read revision (a current window or `readRevisionByRef`); never from input. */
+export function catalogPinOf(revision: { baseline: ArchitectureBaselineRevisionSnapshot;
+  catalog: ArchitectureCatalogRecord }): ArchitectureCatalogPinV1 {
+  return { catalogRef: revision.catalog.ref,
+    baseline: { ref: revision.baseline.ref, digest: revision.baseline.contentDigest } };
 }
 
 // --------------------------------------------------------------------------

@@ -14,13 +14,13 @@
 - `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（17 个），例如 `PC-prompt-set-v1.test.ts`。
 - `tests/core/` — 只有 `work-graph/MVP-execution-list.test.ts`，核对与 `src/core` 对齐的清单。
 - `tests/data/` — 记录存储、材料、工作区文件、git 操作和编码边界（52 个），例如 `R2e-git-operations.test.ts`。
-- `tests/helpers/` — 共享测试夹具，共 130 个文件；本清单主体在下一节。
+- `tests/helpers/` — 共享测试夹具，共 140 个文件；本清单主体在下一节。
 - `tests/kernel/` — 冻结 Kernel 公共入口的集成（23 个 `*.test.ts`），另有 `README.md` 记录 R4a 迁移。
 - `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（14 个），例如 `SP-lookup-index-migration.test.ts`。
 - `tests/runtime/` — 真实 Runtime/Kernel 执行链（145 个），是行为面最大的文件夹；`D89-skill-render.test.ts` 按授权组合渲染决定 89 的 Skill 段落，并在 memory 上用真实的 Work 和 Query 调用核对最终工具和渲染出的段落。
 - `tests/scenarios/` — 跨片端到端场景：Host 重启、崩溃恢复、审批、白板（117 个，其中 S6A-secretary-flow-*、S6A-secretary-context-*、S6A-activity-*、S6A-main-read-joint 与 S6A-request-drop-settle 是秘书轮、查询活动和主读的整轮场景）。
 - `tests/state/` — 状态机、编解码、查询和恢复不变量（52 个），例如 `K3-14-conclusion-pure.test.ts`。
-- `tests/work-graph/` — WorkGraph 域服务和读模型（345 个），是夹具使用最密集的文件夹。
+- `tests/work-graph/` — WorkGraph 域服务和读模型（347 个），是夹具使用最密集的文件夹。
 
 ## tests/helpers/ 的夹具
 
@@ -72,6 +72,7 @@ Goal/Plan/claim/prepare/execute 的共同前置；claim 只由 `TaskClaimPort` �
 - `S2B-runtime-tools-support.ts` — 三个从既有测试原样搬来的工具：`blockingTool`、`restartedHost`、`controlledTool`；`tests/app/S2B-be2-run23-activity.test.ts` 在用。
 - `S5-decision-fixture.ts` — 真实 Store 上建 P/W、Goal A/B/C、Plan 指针、Session 和 claim→enter Run 的完整 slice-5 世界；`tests/scenarios/K3-29-startup-reconcile-2b.test.ts` 在用。
 - `S8A-L8-prepare.ts` — 经 `runtime.prepareExecution` + `materials.openArtifact` 的公开 `historical_explanation` 读拿到 prepared 和 manifest body；`tests/work-graph/S8A-L8-chunk-scope.test.ts` 在用。
+- `S8B-catalog-steps.ts` — 冻结，只能在末尾追加导出；计划上的模块规则和候选 catalog pin 的公开步骤：S8D 平台世界加三项 Host 输入（Kernel store、脚本模型的 query runtime、秘书 profile 端口），Agent 一侧用 W2 白板世界；每个 pin 都取自刚做的公开读，缺状态就抛错；`tests/work-graph/S8B-plan-catalog.test.ts`、`tests/work-graph/R5b-initial-plan.test.ts` 在用。
 - `WP1-entry-fixture.ts` — GE01–GE07 的 goal-content entry：真实 claim/prepare/assembler/graph，含 unbound、换 Plan、RUN-16 等分支；`tests/work-graph/WP1-goal-content-entry.test.ts` 在用。
 - `ordered-lookup-forward.ts` — 给 Query 执行 owner 的 `records` 依赖转发真实 backend 的 `lookupOrdered`（请求轮的事实按有序查找读），其余成员在调用时转给原 port；`S1-session-facts-fixture.ts`、`S1-workflow-archive-fixture.ts`、`S2B-track-fixture.ts`、`S2C-L-runs-support.ts`、`WP2-notices-fixture.ts` 和 `tests/work-graph/PC-query-record-usage.test.ts`、`S3-graph-context.test.ts`、`S3-prepared-context-admission.test.ts` 在用。
 - `task-claim-fixture.ts` — R4c.1：真实 Project/Workspace/governance + Goal/接受 Plan + 映射 Session，claim 只由 `TaskClaimPort` 产生；`tests/scenarios/A7-control.test.ts` 在用。

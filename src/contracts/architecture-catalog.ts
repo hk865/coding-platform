@@ -85,3 +85,31 @@ export function moduleMappingsOf(catalog: AdoptedArchitecture): ArchitectureSour
     paths: module.paths,
   }));
 }
+
+import { defineShape, f, type ShapeRule } from './data-format.js';
+import { id } from './data-format-refs.js';
+
+/** `ArchitectureBaselineRevisionRef` (`governance.ts:11`). */
+export const architectureBaselineRevisionRefShape = defineShape({ name: 'ArchitectureBaselineRevisionRef', fields: {
+  aggregateType: f.literal('ArchitectureBaselineRevision'), projectId: id, baselineId: id,
+  revision: f.integer({ min: 1 }) } });
+
+/** `ArchitectureCatalogRef` (:66). */
+export const architectureCatalogRefShape = defineShape({ name: 'ArchitectureCatalogRef', fields: {
+  aggregateType: f.literal('ArchitectureCatalog'), projectId: id, baselineId: id,
+  revision: f.integer({ min: 1 }) } });
+
+const CATALOG_BESIDE_BASELINE =
+  'ArchitectureCatalogPinV1.catalogRef must name the project, baseline and revision of baseline.ref';
+/** The catalog row is keyed by its baseline revision (`catalog-service.ts:126`); runs after the fields hold. */
+const catalogBesideBaseline: ShapeRule = (value) => {
+  const { catalogRef, baseline: { ref } } = value as ArchitectureCatalogPinV1;
+  return catalogRef.projectId === ref.projectId && catalogRef.baselineId === ref.baselineId
+    && catalogRef.revision === ref.revision ? null : CATALOG_BESIDE_BASELINE;
+};
+
+/** `ArchitectureCatalogPinV1` (:71) as an R1 fragment, checked inside the old PlanProposal codec (8B §3.2). */
+export const architectureCatalogPinShape = defineShape({ name: 'ArchitectureCatalogPinV1', fields: {
+  catalogRef: f.ref(architectureCatalogRefShape),
+  baseline: f.object({ ref: f.ref(architectureBaselineRevisionRefShape), digest: f.sha256() }),
+}, rules: [catalogBesideBaseline] });

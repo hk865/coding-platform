@@ -98,7 +98,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
         // Every platform template id with its pack, version and mentions, hand-written:
         // no key or version is read from the manifest or the generated origins.
         expect(PACK.origins).toEqual({
-            'initial-planning-answer': { packId: 'platform', version: 1, mentionsTools: [] },
+            'initial-planning-answer': { packId: 'platform', version: 2, mentionsTools: [] },
             'consultation-received-input': { packId: 'platform', version: 1, mentionsTools: [] },
             'user-decision-response': { packId: 'platform', version: 1, mentionsTools: [] },
             'scribe-reminder': { packId: 'platform', version: 1, mentionsTools: [] },

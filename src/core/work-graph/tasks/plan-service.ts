@@ -18,6 +18,7 @@
  * A v2 candidate carries a full draft, not the legacy restricted delta/target
  * digest; the initial and future-only adoption paths judge that same draft.
  */
+import type { AdoptedArchitecture, ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { CoreCallContext, CorePrincipal } from '../../../contracts/core/call-context.js';
@@ -73,6 +74,7 @@ import type {
   StoreFailure,
   UniqueClaimChange,
 } from '../../record-store/ports.js';
+import { catalogPinOf, readCurrentCatalogWindow, readRevisionByRef } from '../architecture/catalog-service.js';
 import { cloneActorRef } from '../persistence/record-codecs.js';
 import { goalRefFor, projectRefFor, workspaceRefFor } from '../persistence/commit-compiler.js';
 import { evaluateEligibility } from './eligibility.js';
@@ -151,6 +153,8 @@ import {
   deriveFuturePlanDelta,
   planPhaseGuardReasons,
   type FuturePlanDelta,
+  unknownModuleRejection,
+  unknownModuleTasksOf,
   validateFutureObligationCoverage,
   validatePlanAssignments,
   validatePlanDraft,
@@ -171,7 +175,7 @@ import { notEnteredEntryPhase } from '../state/control-intent-machine.js';
 import { runControlNodeOf } from '../state/run-machine.js';
 import { controlIntentRefFor } from './control-service.js';
 import {
-  derivePlanProposalReadVerdict, derivePlanRevisionStatus, parallelCarrierFactTaskIds, planProposalProblem,
+  derivePlanProposalReadVerdict, derivePlanRevisionStatus, draftHasModuleTask, parallelCarrierFactTaskIds, planProposalProblem,
   planRevisionTargetOf, transitionPlanProposal,
   type CandidatePlanProposal, type FutureAdoptionFacts, type FuturePlanDeltaVerdict, type InitialAdoptionFacts,
   type PlanCarrierViewV1, type PlanCommitGuard, type PlanProposalEffect, type PlanProposalEvent,
@@ -1148,13 +1152,15 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     if (replaces !== null) {
       // S5-PLAN-02: the replacement transition over the real old head. The old
       // head's complete next record and the slot move are separate effects.
+      // L10: the machine judges the head before the module fact read here.
+      const catalog = await proposeCatalogFacts(records, goalRef.projectId, input.draft);
       const event = { type: 'proposal_replaced' as const, writer: input.writer, ref: input.ref, goalRef,
         basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
-        issues, submittedBy: null, expectedHeadRevision: replaces.revision, requestedBy: input.actor,
-        at: deps.now(), head: { proposalRef: replaces.proposalRef, revision: replaces.revision },
+        issues, catalogPin: catalog.catalogPin, submittedBy: null, expectedHeadRevision: replaces.revision,
+        requestedBy: input.actor, at: deps.now(), head: { proposalRef: replaces.proposalRef, revision: replaces.revision },
         replaces, requestRef: requestRef! };
       const guardCtx: PlanProposalGuardContext = { ...scoped.facts, agentAdmission: null, source: null,
-        initial: null, future: null, requestCandidate: requestFacts };
+        modules: catalog.modules, initial: null, future: null, requestCandidate: requestFacts };
       const decided = transitionPlanProposal(oldHead, event, guardCtx);
       if (!decided.ok) return refusalOf(decided);
       const commit = planCommitOf(decided, { scope: scoped.scope, actor: input.actor, answerFacts: input.extraGuards });
@@ -1169,11 +1175,14 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const recorded = { type: 'proposal_recorded' as const, writer: input.writer, ref: input.ref, goalRef,
         basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason, submittedBy: null,
         ...(requestRef === null ? {} : { requestRef }) };
-      const guardCtx: PlanProposalGuardContext = { ...scoped.facts, agentAdmission: null, source: null, initial: null,
+      // L10: the early ask has no module fact yet, so it stops before it; the catalog is read only after it holds.
+      const readFacts = { ...scoped.facts, agentAdmission: null, source: null, initial: null,
         future: null, requestCandidate: requestFacts };
-      const refused = planProposalProblem(null, recorded, guardCtx);
+      const refused = planProposalProblem(null, recorded, readFacts);
       if (refused?.ok === false) return refusalOf(refused, pinsCurrent(refused, scoped.comparison));
-      const decided = transitionPlanProposal(null, { ...recorded, issues }, guardCtx);
+      const catalog = await proposeCatalogFacts(records, goalRef.projectId, input.draft);
+      const guardCtx: PlanProposalGuardContext = { ...readFacts, modules: catalog.modules };
+      const decided = transitionPlanProposal(null, { ...recorded, issues, catalogPin: catalog.catalogPin }, guardCtx);
       if (!decided.ok) return refusalOf(decided);
       const commit = planCommitOf(decided, { scope: scoped.scope, actor: input.actor, answerFacts: input.extraGuards });
       if (commit.status !== 'ready') return commit;
@@ -1462,6 +1471,18 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (refused !== null) return refusalOf(refused);
       // PLAN-04 refused an unresolved governance above.
       const resolved = governanceRead.status === 'resolved' ? governanceRead : null;
+      // L10: a module-scoped task is checked against the catalog governance selected, whatever the candidate's pin.
+      // Governance's guards already hold the pointer and the baseline, and the catalog row is create-only.
+      let modules: 'ok' | CoreRejection = 'ok';
+      if (draftHasModuleTask(candidate.draft)) {
+        const selected = await readRevisionByRef(records, resolved!.governance.architectureBaseline.ref);
+        if (selected.status === 'ready') modules = moduleFactOf(candidate.draft, selected.value.catalog.catalog);
+        else if (selected.status === 'not_found') {
+          modules = rejected('unavailable', 'the governance architecture baseline has no catalog row');
+        } else modules = asWriteRejection(selected, 'the governance architecture catalog is unavailable');
+      }
+      refused = ask({ modules });
+      if (refused !== null) return refusalOf(refused);
       // The draft validators run one after the other, each only once the one before it holds.
       const draftIssues = validatePlanDraft(candidate.draft, resolved!.policyContent);
       refused = ask({ draftIssues });
@@ -1472,8 +1493,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const phaseReasons = planPhaseGuardReasons(candidate.draft.tasks);
 
       // PLAN-04 + GOAL-02: the accepted candidate, the moved Goal and the guards of the one commit.
-      const decided = transitionPlanProposal(candidate, adoptedEvent, { ...adoptionScope, source: null,
-        initial: { origin, governance, draftIssues, assignmentReasons, phaseReasons }, future: null,
+      const decided = transitionPlanProposal(candidate, adoptedEvent, { ...adoptionScope, source: null, modules: null,
+        initial: { origin, governance, modules, draftIssues, assignmentReasons, phaseReasons }, future: null,
         requestCandidate: requestFacts });
       if (!decided.ok) return refusalOf(decided);
       const commit = planCommitOf(decided, { scope, actor: bound.actor,
@@ -2206,9 +2227,9 @@ export function createRequestCandidateService(deps: PlanServiceDependencies): Re
       // request candidate; the fact is never hardcoded (`boundWriteActor` above
       // already bound the trusted Host actor).
       const operatorMatches = hostOperatorMatches(deps.operatorActor, actor, true);
-      const guardCtx: PlanProposalGuardContext = { ...scoped.facts, agentAdmission: null, source: null, initial: null,
-        future: null, requestCandidate: requestCandidateFacts({ operatorMatches, headPinMatches, goalNotCancelled,
-          replacesIsNull: true }) };
+      const guardCtx: PlanProposalGuardContext = { ...scoped.facts, agentAdmission: null, source: null, modules: null,
+        initial: null, future: null, requestCandidate: requestCandidateFacts({ operatorMatches, headPinMatches,
+          goalNotCancelled, replacesIsNull: true }) };
       const decided = transitionPlanProposal(proposal, { type: 'proposal_abandoned', proposalRef,
         requestedBy: actor, at: deps.now(), expectedProposalRevision, requestRef }, guardCtx);
       if (!decided.ok) return refusalOf(decided);
@@ -2346,6 +2367,25 @@ function planSourceFactsOf(plan: PlanRevisionSnapshot): PlanSourceFacts {
   return { ref: plan.ref, goalRef: plan.goalRef, planId: plan.planId, planRevision: plan.planRevision };
 }
 
+/** L10: a draft's module fact against one catalog — `'ok'`, or the one `unknown_module` refusal. */
+function moduleFactOf(draft: PlanRevisionDraft, catalog: AdoptedArchitecture): 'ok' | CoreRejection {
+  const unknown = unknownModuleTasksOf(draft, catalog);
+  return unknown.length === 0 ? 'ok' : unknownModuleRejection(unknown);
+}
+
+/**
+ * L10: the one catalog read of a propose, after every other refusal point. An active catalog gives the candidate's
+ * pin and the module fact; none defers the check to adoption (`null` pin); a refused read is the fact itself and pins
+ * nothing, never read as "no catalog".
+ */
+async function proposeCatalogFacts(records: GoalRecordTransactionPort, projectId: string, draft: PlanRevisionDraft):
+  Promise<{ catalogPin: ArchitectureCatalogPinV1 | null; modules: 'ok' | CoreRejection }> {
+  const window = await readCurrentCatalogWindow(records, projectId);
+  if (window.status === 'not_found') return { catalogPin: null, modules: 'ok' };
+  if (window.status !== 'ready') return { catalogPin: null, modules: rejected(window.code, window.reason) };
+  return { catalogPin: catalogPinOf(window), modules: moduleFactOf(draft, window.catalog.catalog) };
+}
+
 /** What a plan commit's effects name beyond the machine's own records: the scope read, the adopter, the guards read. */
 type PlanCommitSources = {
   scope: GoalScopeFacts;
@@ -2356,6 +2396,8 @@ type PlanCommitSources = {
   originSources?: readonly RecordGuard[];
   governance?: readonly RecordGuard[];
   pinnedPolicy?: readonly RecordGuard[];
+  /** L10: the active catalog window's guards a future adoption with a module-scoped task read. */
+  catalog?: readonly RecordGuard[];
   /** C7: what the Task machine reads for each `change_task_disposition`, and the guards of the facts read. */
   disposition?: AdoptionDispositionFacts;
 };
@@ -2555,6 +2597,7 @@ function recordGuardsOf(guard: PlanCommitGuard, proposal: PlanCommit['proposal']
     case 'origin_sources': return named(sources.originSources);
     case 'governance': return named(sources.governance);
     case 'pinned_policy': return named(sources.pinnedPolicy);
+    case 'catalog': return named(sources.catalog);
     case 'project': return [{ refKey: scope.projectKey, expectedRevision: scope.projectRevision }];
     case 'workspace': return [{ refKey: scope.workspaceKey, expectedRevision: scope.workspaceRevision }];
     case 'goal': return [{ refKey: refKeyOf(scope.goal.ref), expectedRevision: scope.goal.revision }];
@@ -2740,6 +2783,21 @@ async function applyFutureRevision(input: {
   }
   refused = ask({ pinnedPolicy });
   if (refused !== null) return refusalOf(refused);
+  // L10: every module-scoped task of the new draft, future intents included, against the catalog active now; the
+  // window's guards join the commit, so a pointer that moves before it commits is a revision conflict.
+  let modules: 'ok' | CoreRejection = 'ok';
+  let catalogGuards: readonly RecordGuard[] | undefined;
+  if (draftHasModuleTask(proposal.draft)) {
+    const window = await readCurrentCatalogWindow(records, proposal.goalRef.projectId);
+    if (window.status === 'ready') {
+      modules = moduleFactOf(proposal.draft, window.catalog.catalog);
+      catalogGuards = window.guards;
+    } else if (window.status === 'not_found') {
+      modules = rejected('incomplete', 'the project has no active architecture catalog');
+    } else modules = rejected(window.code, window.reason);
+  }
+  refused = ask({ modules });
+  if (refused !== null) return refusalOf(refused);
   // The draft validators run one after the other, each only once the one before it holds.
   const draftIssues = validatePlanDraft(proposal.draft, pinnedPolicyContent);
   refused = ask({ draftIssues });
@@ -2805,13 +2863,14 @@ async function applyFutureRevision(input: {
   const adoptedEvent: PlanProposalEvent = { ...adoption, type: 'proposal_adopted', requestRef };
   // PLAN-05 (the untraced rule, TASK-19 and guard 9 judge the facts just read) + GOAL-03: the
   // accepted candidate, the moved Goal and the guards of the one commit.
-  const decided = transitionPlanProposal(proposal, adoptedEvent, { ...adoptionScope, source: sourceFacts, initial: null,
-    requestCandidate: requestFacts,
-    future: { targetExists, delta, coverage, pinnedPolicy, draftIssues, assignmentReasons, phaseReasons,
+  const decided = transitionPlanProposal(proposal, adoptedEvent, { ...adoptionScope, source: sourceFacts, modules: null,
+    initial: null, requestCandidate: requestFacts,
+    future: { targetExists, delta, coverage, pinnedPolicy, modules, draftIssues, assignmentReasons, phaseReasons,
       touchedTaskFacts: futureFacts.value.tasks, adopterClass, dispositionTaskFacts, sourceCarriers, carrierFacts } });
   if (!decided.ok) return refusalOf(decided);
   const commit = planCommitOf(decided, { scope: goalScope, actor,
     agentAdmission: input.extraGuards, pinnedPolicy: pinnedPolicyGuards,
+    ...(catalogGuards === undefined ? {} : { catalog: catalogGuards }),
     disposition: adoptionDispositionFacts({ source, delta: supported!, read: dispositionRead.tasks, carriers: carrierRead,
       goalDesiredState: goalScope.goal.desiredState, affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass }) });
   if (commit.status !== 'ready') return commit;
@@ -3074,10 +3133,10 @@ async function proposePlanAsAgent(
     const sourceRead = await readPlan(records, input.basedOn!);
     if (sourceRead.status !== 'ready') return sourceRead;
     const source = sourceRead.plan;
-    const ctxFacts: PlanProposalGuardContext = { ...scoped.facts, agentAdmission: 'ok', source: planSourceFactsOf(source),
+    const readFacts = { ...scoped.facts, agentAdmission: 'ok' as const, source: planSourceFactsOf(source),
       initial: null, future: null, requestCandidate: requestFacts };
     if (input.replaces === null) {
-      const refused = planProposalProblem(null, recorded, ctxFacts);
+      const refused = planProposalProblem(null, recorded, readFacts);
       // The stale source refusal is "not the active plan": it reports the source, as today.
       if (refused?.ok === false) {
         return refusalOf(refused, refused.reason === 'stale' ? [{ ref: source.ref, revision: source.revision }] : undefined);
@@ -3085,12 +3144,16 @@ async function proposePlanAsAgent(
     }
     const policyRead = await tryPolicyContent(records, input.goalRef.projectId);
     const issues = validatePlanDraft(input.draft, policyRead.policy);
+    // L10: the catalog is read once every other refusal point has passed; a replacement's head is judged first.
+    const catalog = await proposeCatalogFacts(records, input.goalRef.projectId, input.draft);
+    const ctxFacts: PlanProposalGuardContext = { ...readFacts, modules: catalog.modules };
     const decided = oldHead === null
-      ? transitionPlanProposal(null, { ...recorded, issues,
+      ? transitionPlanProposal(null, { ...recorded, issues, catalogPin: catalog.catalogPin,
         ...(input.requestRef === null ? {} : { requestRef: input.requestRef }) }, ctxFacts)
       : transitionPlanProposal(oldHead, { type: 'proposal_replaced' as const, writer: 'agent' as const, ref,
         goalRef: input.goalRef, basedOn: input.basedOn, draft: input.draft,
-        reason: input.reason as unknown as PlanChangeReason, issues, submittedBy: admission.provenance,
+        reason: input.reason as unknown as PlanChangeReason, issues, catalogPin: catalog.catalogPin,
+        submittedBy: admission.provenance,
         expectedHeadRevision: input.replaces!.revision, requestedBy: writer.actor, at: deps.now(),
         head: { proposalRef: input.replaces!.proposalRef, revision: input.replaces!.revision },
         replaces: input.replaces!, requestRef: input.requestRef! }, ctxFacts);

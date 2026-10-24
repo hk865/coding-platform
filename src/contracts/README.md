@@ -58,7 +58,7 @@
 
 ### 材料与架构
 做架构目录/观察/源码快照、artifact、材料授权与路径归属的去这组。
-- `architecture-catalog.ts` — 架构目录 DTO：`ModuleDefinition`、`AdoptedArchitecture`、`ArchitectureCatalogPinV1` 与 `moduleMappingsOf`。
+- `architecture-catalog.ts` — 架构目录 DTO：`ModuleDefinition`、`AdoptedArchitecture`、`ArchitectureCatalogPinV1` 与 `moduleMappingsOf`；R1 字段表形状 `architectureBaselineRevisionRefShape`、`architectureCatalogRefShape`、`architectureCatalogPinShape`（pin 的 `catalogRef` 必须与 `baseline.ref` 同 project/baseline/revision）。
 - `architecture-inspection.ts` — 代码图/观察清单：`CodeGraphNode`、`FormalObservedFindingV1`、`FileGraphPageV1`、`LanguageCoverageV1`、`COVERAGE_ISSUES_MAX`。
 - `architecture-observation.ts` — 自动捕获：`AUTO_CAPTURE_TRIGGERS`、`isAutoCaptureTrigger`、`ArchitectureAutoCaptureRecordV1`、`ArchitectureObservationStateV1`。
 - `architecture-source.ts` — 架构源快照：`ArchitectureSourceSnapshotV1`、`compactUnresolvedLines`、`architectureSourceIssues`，并转出 `pathOwnershipOf`。
@@ -72,7 +72,7 @@
 - `actor-equality.ts` — actor 身份比较：`sameActorIdentity`（两个 unknown，只比 `kind`/`id`，不算 `runRef`）与 `sameActorKindAndId`（typed actor，只比 `kind`/`id`）。
 - `command-event.ts` — 命令/事件基线：`CommitCursor`、`CommandFingerprint`、`ActorRef`、`CommandIdentity`、`normalizeObjective`、`commandFingerprint`、`commandIdentityKey`。
 - `data-format.ts` — 字段表格式：字段只写一次的运行时描述（`f` 的封闭字段种类、`defineShape`/`defineRecord`/`defineEvent`），TS 类型由它推导（`InferShape`、`InferRecord`、`InferPending`、`InferEvent`）；描述在构造时校验，坏描述抛 `<what> description is invalid: <detail>`。值检查在 `validation/data-format.ts`，RecordStore 适配在 `src/core/work-graph/persistence/field-table-codec.ts`。
-- `data-format-refs.ts` — 字段表格式可复用的 ref 描述（16 种，每种与手写 ref 类型一致）：带 `aggregateType` 的聚合 ref 与不带标签的 `SessionRef`/`ModuleRef`/`TaskTriple` 各自一份。
+- `data-format-refs.ts` — 字段表格式可复用的 ref 描述（16 种，每种与手写 ref 类型一致）：带 `aggregateType` 的聚合 ref 与不带标签的 `SessionRef`/`ModuleRef`/`TaskTriple` 各自一份；另导出 `id`，即 ref 内字段的非空字符串描述（按码点计，至少 1）。
 - `error-message.ts` — `messageOf`：取 `Error.message`，否则 `String(error)`；转换本身抛错时不吞。
 - `fingerprint.ts` — JCS/SHA-256 原语：`canonicalJson`、`sameJson`、`canonicalKey`、`canonicalOf`、`sha256Hex`、`CanonicalJsonError`。
 - `goal-decisions.ts` — Goal/工作区决策设置、对象/选项/来源与 `decisionSourceKey`、默认设置常量。
@@ -100,6 +100,7 @@
 | `f` | `src/contracts/data-format.ts:129` | 字段表的封闭字段种类：字符串（字节/码点上限）、sha256、整数、有限数、revision、字面量（字符串、安全整数或布尔）、枚举、布尔、ref、游标、可绑定游标、ISO 时间、optional/nullable、数组、精确对象、判别联合。 | 新记录、事件或嵌套形状写字段表时；不在此列的是具名规则（`rules`）或留手写。 |
 | `defineShape`、`defineRecord`、`defineEvent` | `src/contracts/data-format.ts:244`、`src/contracts/data-format.ts:308`、`src/contracts/data-format.ts:340` | 构造并校验嵌套形状、存储记录（`ref` 是本 `aggregateType` 的完整带标签 ref，`revision` 是 `f.revision` 或 `f.literal(1)`，可带 lookup）和事件（字段不含四个信封键）。 | 新格式只写这一份字段表；类型用 `InferRecord`/`InferPending`/`InferEvent` 推导，不再手写一份。 |
 | `ProjectRefShape` 等 16 个 ref 描述 | `src/contracts/data-format-refs.ts:12` | `ProjectRefShape`、`WorkspaceRefShape`、`GoalRefShape`、`SessionRefShape`、`SessionAggregateRefShape`、`ModuleRefShape`、`QueryJobRefShape`、`QueryRunRefShape`、`QueryJobAnswerRefShape`、`SessionMessageRefShape`、`TaskTripleShape`、`RunRefShape`、`OperationRefShape`、`PlanProposalRefShape`、`TaskRequeueRefShape`、`VerificationRoundRefShape`。 | 字段表里的 `f.ref(...)`；不要另写只查 `aggregateType`/`projectId` 的通用 ref 检查。 |
+| `id` | `src/contracts/data-format-refs.ts:10` | ref 内字段的非空字符串描述（`min: 1`，按码点计）。 | 写 ref 的字段表时复用；不要另写 `f.string({ min: 1 })`。 |
 | `CanonicalJsonError` | `src/contracts/fingerprint.ts:18` | 规范 JSON 编码失败的错误类型。 | 需要捕获并区分不可编码值时。 |
 | `messageOf` **正本** | `src/contracts/error-message.ts:2` | 把 unknown 错误转成可读文本：`Error.message`，否则 `String(error)`；转换抛错不吞。 | 统一错误文本；不要再另写一份副本。 |
 | `sameActorIdentity` | `src/contracts/actor-equality.ts:4` | 两个 unknown 的 actor 身份：只比 `kind`/`id`，`runRef` 不参与。 | 宽容读入的历史 actor 比较。 |
@@ -153,6 +154,7 @@
 | `planValidationError` | `src/contracts/plan.ts:303` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
 | `revisionAssignments` | `src/contracts/plan.ts:309` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
 | `moduleMappingsOf` | `src/contracts/architecture-catalog.ts:81` | 从架构目录取模块到路径映射。 | 检查/比较架构归属。 |
+| `architectureBaselineRevisionRefShape`、`architectureCatalogRefShape`、`architectureCatalogPinShape` | `src/contracts/architecture-catalog.ts:93`、`src/contracts/architecture-catalog.ts:98`、`src/contracts/architecture-catalog.ts:112` | 架构 baseline/catalog 引用与完整 `ArchitectureCatalogPinV1` 的 R1 字段表形状；pin 形状要求 `catalogRef` 的 project/baseline/revision 与 `baseline.ref` 一致。 | 字段表里校验已存的架构 pin；不要另写形状或同源检查。 |
 | `isAutoCaptureTrigger` | `src/contracts/architecture-observation.ts:23` | 校验自动捕获触发名。 | 读记录或请求时。 |
 | `compactUnresolvedLines` | `src/contracts/architecture-source.ts:40` | 去重排序后压缩未解析行，遵守行数/字节上限。 | 保存架构源快照前。 |
 | `architectureSourceIssues` | `src/contracts/architecture-source.ts:55` | 架构源绑定的结构、重复项与容量校验。 | 接受/读回架构源时。 |
