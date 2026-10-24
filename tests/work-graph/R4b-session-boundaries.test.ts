@@ -191,7 +191,7 @@ describe.each(['memory', 'sqlite'] as const)('R4b %s scope and identity boundari
         ref: { aggregateType: 'CoreOperation', projectId, operationId: 'schema-scope-source' },
         revision: 1, action: { kind: 'create', plannedSessionRef: { projectId, sessionId: 'schema-source-session' },
           workspace, kernelStore: { adapterId: 'workspace-kernel', storeKey: 'workspace-key' }, role,
-          recommendedRefs: [], initialLinks: [] },
+          recommendedRefs: [], initialLinks: [], creation: null },
         phase: 'accepted', requestedAt: at, updatedAt: at, observation: null, failure: null,
       };
       const mismatches = [

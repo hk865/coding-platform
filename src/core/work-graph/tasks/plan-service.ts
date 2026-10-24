@@ -187,7 +187,7 @@ import {
 } from '../state/plan-machine.js';
 import { goalDecisionBasisMatches } from '../state/goal-settings-machine.js';
 import { decisionActionPolicy } from '../state/decision-policy.js';
-import { createCandidateRequestFactsReader } from './request-facts-reader.js';
+import { createCandidateRequestFactsReader } from './request-facts.js';
 import { taskMachineStateOf, transitionTask, type TaskPhaseFacts } from '../state/task-machine.js';
 import type { Rejected as MachineRefusal } from '../state/transition.js';
 

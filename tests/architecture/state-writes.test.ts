@@ -80,7 +80,8 @@ const WORKSPACE_USE = 'state/notice-settings-machine.ts buildWorkspaceDecisionSe
   + 'state/line-pin-machine.ts buildWorkspaceLineSettingsRecord';
 const PROPOSAL_USE = 'state/plan-machine.ts newCandidateProposal or acceptProposalRecord';
 const QUERY_USE = 'state/query-run-recovery.ts newPendingQueryRecords, advanceQueryExecutionRecord, '
-  + 'markQueryRunUnknownRecord or settleQueryRunRecord';
+  + 'markQueryRunUnknownRecord or settleQueryRunRecord; state/request-rounds.ts newRequestRound, newRoutingRound, '
+  + 'endUnstartedRound, newAttempt, absorbRound, recordAbsorbedRounds, setIntake or recordEntered';
 const PROJECTION_USE = 'state/task-machine.ts projectTaskPhase';
 
 /**
@@ -147,7 +148,9 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/contracts/query-job.ts', name: 'QueryExecutionStateV1', kind: 'record',
     fields: ['phase'], use: QUERY_USE },
   { file: 'src/contracts/query-job.ts', name: 'QueryJobV1', kind: 'record',
-    fields: ['status', 'closeReason'], use: QUERY_USE },
+    fields: ['status', 'closeReason', 'requestRoot', 'roundKind', 'requestGoalId', 'assignedSession', 'routing',
+      'relatedMessageRef', 'absorbedInto', 'absorbedRounds', 'selectedIdea', 'goalAttribution', 'relatedCardRefs',
+      'enteredSession', 'intakeSession', 'receipt'], use: QUERY_USE },
   // Projection: `CanonicalTaskState` and `TaskRow` carry the phase and its TD-1 cause
   // (`CanonicalTaskState.phaseCause` declared in A.2 step 5.3).
   { file: 'src/core/work-graph/tasks/plan-readers.ts', name: 'CanonicalTaskState', kind: 'projection',

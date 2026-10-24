@@ -279,6 +279,11 @@ async function readCore(
   const job = decodeOne(jobKey, present, missing, decodeQueryJobSnapshot);
   if (job.status === 'missing') return { status: 'not_found' };
   if (job.status === 'unavailable') return rejectedWithNonEmptyCurrent('unavailable', `the QueryJob is not readable: ${job.reason}`);
+  // A routing request round never runs a Query; refuse it as `invalid` BEFORE
+  // the missing Run is reported, for both claim and preparation.
+  if (job.value.job.roundKind === 'routing') {
+    return rejectedWithNonEmptyCurrent('invalid', 'a routing request round never reaches Query claim or preparation');
+  }
   const run = decodeOne(runKey, present, missing, decodeQueryRunSnapshotRecord);
   if (run.status === 'missing') return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun is missing');
   if (run.status === 'unavailable') return rejectedWithNonEmptyCurrent('unavailable', `the QueryRun is not readable: ${run.reason}`);
@@ -485,7 +490,14 @@ function loadQueryManifest(
 
 type QueryEventResult = QueryExecutionRecord | QueryEntryTicket | QueryRunSnapshot;
 
-function buildRecordedEvent(input: {
+/**
+ * The ONE `QueryExecutionRecorded` builder. The payload always projects the
+ * execution state of the QueryRun this commit writes. Only a pending round
+ * ended before any attempt (`endsUnstarted`) may have none: its event then
+ * reads `settled` with a null state. Exported so the request owner writes the
+ * same event shape.
+ */
+export function buildRecordedEvent(input: {
   eventId: string;
   identityKey: string;
   fingerprint: string;
@@ -498,9 +510,13 @@ function buildRecordedEvent(input: {
   result: QueryEventResult;
   /** The QueryRun this commit writes: the event carries its revision, phase and execution state. */
   run: QueryRunSnapshot;
+  /** True only when a pending round ends before any attempt; every other write carries the execution state. */
+  endsUnstarted?: true;
 }): QueryExecutionRecordedEventV1 {
-  const executionState = input.run.run.executionState;
-  if (executionState === undefined) throw new Error('a Query execution write always carries the execution state');
+  const executionState = input.run.run.executionState ?? null;
+  if (executionState === null && input.endsUnstarted !== true) {
+    throw new Error('a Query execution write always carries the execution state');
+  }
   return {
     eventId: input.eventId,
     eventType: 'QueryExecutionRecorded',
@@ -521,8 +537,8 @@ function buildRecordedEvent(input: {
       queryRunRef: { ...input.queryRunRef },
       operation: input.operation,
       result: input.result,
-      phase: executionState.phase,
-      executionState: structuredClone(executionState),
+      phase: executionState === null ? 'settled' : executionState.phase,
+      executionState: executionState === null ? null : structuredClone(executionState),
     },
   };
 }

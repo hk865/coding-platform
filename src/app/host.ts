@@ -93,6 +93,9 @@ import {
 } from './runtime-configuration.js';
 import { createWorkbenchServer, type WorkbenchAddress, type WorkbenchServer } from './server.js';
 import { createDiskPromptPackSource, isPathWithin } from './prompt-packs.js';
+import { createSecretaryProfiles } from './secretary-profiles.js';
+import { createSessionDutyResolver } from '../composition/session-duty.js';
+import type { SessionDutyResolver } from '../business/workflow/ports.js';
 
 /** One explicitly readable workspace. `root`, `workspaceRevision` and
  * `readPrefixes` are trusted startup facts, never request input. */
@@ -145,6 +148,15 @@ export type LocalWorkbenchHostOptions = {
   checks?: TargetPlatformOptions['checks'];
   /** Trusted Workflow advancement policy, forwarded unchanged. */
   workflow?: TargetPlatformOptions['workflow'];
+  /**
+   * Slice 6A §3.4.7 (book ruling 4.7): the open-secretary cap. Unset means no
+   * real cap in 6A (the production adapter always admits). A positive integer
+   * selects the adapter that counts the workspace's live secretary Sessions
+   * (lifecycle `active`, duty `secretary`) and refuses a new line at the cap.
+   * A change is a Host restart with a new option value (the next Host's own
+   * profile list and cap are what that open uses).
+   */
+  secretaryOpenCap?: number;
   /** Host-internal controlled-provider seam for the normal-chain acceptance.
    * It is never a CLI or HTTP field and never changes the product default. */
   runtimeProvider?: WorkbenchRuntimeProviderDependencies;
@@ -368,6 +380,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     ? undefined : structuredClone(options.runtimeConfiguration);
   const checks: TargetPlatformOptions['checks'] = options.checks === undefined ? undefined : structuredClone(options.checks);
   const workflow: TargetPlatformOptions['workflow'] = options.workflow === undefined ? undefined : structuredClone(options.workflow);
+  // Slice 6A §3.4.7: a cap is a positive integer or absent (no cap). A bad
+  // value fails startup instead of silently admitting everything.
+  if (options.secretaryOpenCap !== undefined
+    && (!Number.isSafeInteger(options.secretaryOpenCap) || options.secretaryOpenCap < 1)) {
+    throw new Error('secretaryOpenCap must be a positive integer when present');
+  }
+  // The live profile projection the request commands
+  // read. It is declared before the platform so the profile port's getter can
+  // see the settings rebuild that splices it in place.
+  const runtimeProfiles: WorkbenchQueryProfile[] = (runtimeConfiguration?.queryProfiles ?? []).map(profile => structuredClone(profile));
   const attentionScopes: AttentionScopeV1[] = options.attention === undefined ? [] : structuredClone(options.attention);
   const inputConsumers = structuredClone(options.inputConsumers ?? []);
   for (const entry of inputConsumers) {
@@ -538,6 +560,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const instanceLease = await acquireHostInstanceLease({ directory: storage.kind === 'sqlite' ? storage.directory : null,
     now: options.now ?? (() => new Date().toISOString()) });
   const leaseOwned = instanceLease.lease === 'owned';
+  // Slice 6A §3.4.1: the Host's `SecretaryProfilePort` over its live query
+  // profiles. The duty resolver is installed below, once the platform's role
+  // read exists; a command can only run after this function returns.
+  let hostDutyResolver: SessionDutyResolver | undefined;
+  const secretaryProfiles = createSecretaryProfiles({
+    profiles: () => runtimeProfiles,
+    duty: async (role, ctx) => hostDutyResolver === undefined
+      ? { status: 'rejected' as const, code: 'unavailable' as const, reason: 'the Host duty resolver is not ready' }
+      : await hostDutyResolver(role, ctx),
+  });
   let platform: Awaited<ReturnType<typeof createTargetPlatform>>;
   try {
     platform = await createTargetPlatform({
@@ -552,6 +584,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ...(runtime === undefined ? {} : { runtime }),
       ...(checks === undefined ? {} : { checks }),
       ...(workflow === undefined ? {} : { workflow }),
+      secretaryProfiles,
+      ...(options.secretaryOpenCap === undefined ? {} : { secretaryOpenCap: options.secretaryOpenCap }),
       sourcePolicyFor,
       resourceCaps,
       operatorActor: actor,
@@ -563,6 +597,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     await instanceLease.release().catch(() => undefined);
     throw error;
   }
+  // Slice 6A §3.4.1: the SAME resolver rule the composition's own instance
+  // applies, over this Host's platform role read and Workflow configuration.
+  hostDutyResolver = createSessionDutyResolver({
+    readRoleSpec: platform.roles.readRoleSpec.bind(platform.roles),
+    configuration: workflow,
+  });
 
   // L8 (book ruling 2): ONE automatic-capture driver for this Host, over the
   // platform's observed/catalog ports. Its detached work is the platform's own
@@ -625,7 +665,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   goalFanOutCommitted = notice => goalFanOut.committed(notice);
 
   // Live projections the Host rebuilds for every bootstrap read / settings open.
-  const runtimeProfiles: WorkbenchQueryProfile[] = (runtimeConfiguration?.queryProfiles ?? []).map(profile => structuredClone(profile));
+  // `runtimeProfiles` itself is declared before the platform (the request
+  // profile port reads it live through a getter).
   const publishedProfileIds = new Set(runtimeProfiles.map(profile => profile.id));
   const workflowScopes: CoreScope[] = workflow === undefined ? []
     : [...new Map(workflow.bindings.map(binding => [scopeKey(binding.workspace), { ...binding.workspace }])).values()];

@@ -770,16 +770,20 @@ describe('other step-1 decoders', () => {
     expect(decodeQueryRunSnapshotRecord(encodeQueryRunSnapshotRecord(queryRun))).toEqual({ status: 'decoded', value: queryRun });
     const queryJob: QueryJobSnapshot = { ref: queryJobRef, revision: 3, schemaVersion: 1,
       submission: { schemaVersion: 1, identityKey: 'query-submission-1', fingerprint: sha('a'), eventId: 'query-submit-event-1' },
+      since: 'c0000000001' as QueryJobSnapshot['since'],
       job: { schemaVersion: 1,
       queryJobId: 'query-1', projectId: P, workspaceId: W, goalId: G,
       intent: { schemaVersion: 1, intentId: 'intent-1', projectId: P, workspaceId: W, goalId: G, question: 'Which module owns X?',
         focusTaskRefs: [{ aggregateType: 'Task', ...task }], budget: { maxTokens: null, deadline: null }, multiTurn: { maxRounds: 1 }, correlationId: 'corr-1',
         execution: { kind: 'semantic_query', roleBinding, runtimeBudget: DEFAULT_RUNTIME_BUDGET } },
       status: 'closed', runRef: queryRunRef, answerRefs: [],
-      closeReason: { code: 'not_entered', message: 'settled at start-up without entering the Kernel' },
+      requestRoot: null, roundKind: null, requestGoalId: null, assignedSession: null, routing: null,
+      relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null, goalAttribution: null,
+      relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null,
+      closeReason: { code: 'not_entered', message: 'settled at start-up without entering the Kernel', detail: null },
       submittedAt: at, updatedAt: at } };
     expect(decodeQueryJobSnapshot(encodeQueryJobSnapshot(queryJob))).toEqual({ status: 'decoded', value: queryJob });
-    const unknownClose = { ...queryJob, job: { ...queryJob.job, closeReason: { code: 'vanished', message: '' } } } as unknown as QueryJobSnapshot;
+    const unknownClose = { ...queryJob, job: { ...queryJob.job, closeReason: { code: 'vanished', message: '', detail: null } } } as unknown as QueryJobSnapshot;
     expect(decodeQueryJobSnapshot(encodeQueryJobSnapshot(unknownClose)).status).toBe('invalid');
   });
 

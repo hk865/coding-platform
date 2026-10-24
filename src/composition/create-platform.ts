@@ -64,6 +64,18 @@ import { DEFAULT_SESSION_ARCHIVE_POLICY } from '../business/workflow/ports.js';
 import type {
   SessionArchivePolicyV1, SessionDutyResolver, WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort,
 } from '../business/workflow/ports.js';
+// The request commands and the one line-creation entry the composition wires
+// over its own records/Session/role owners.
+import { createRequestIntake, type RequestIntakePort } from '../business/workflow/request-intake.js';
+import {
+  createAlwaysAdmitCapacity, createLineCreation, type LineCapacityPort,
+} from '../business/workflow/line-creation.js';
+import { createRequestFacts } from '../core/work-graph/tasks/request-facts.js';
+import {
+  createRequestRoundService, type RequestFactsReader, type RequestRoundPort,
+} from '../core/work-graph/tasks/request-service.js';
+import { createProjectSecretaryScope, createSecretarySelection } from '../core/work-graph/tasks/secretary-selection.js';
+import type { SecretaryProfilePort } from '../core/work-graph/model/request-contracts.js';
 
 import { createEvidenceService } from '../core/work-graph/evidence/evidence-service.js';
 import type { AutomaticReverifyPolicyV1 } from '../core/work-graph/evidence/evidence-service.js';
@@ -300,6 +312,21 @@ export type TargetPlatformOptions = {
    * model input or a stored Session field.
    */
   sessionDutyResolver?: SessionDutyResolver;
+  /**
+   * The Host's `SecretaryProfilePort` over its LIVE query
+   * profile list. A direct platform that supplies none gets a port that answers
+   * null from both methods, so a request command answers
+   * `unavailable no_secretary_binding` instead of crashing; the composition
+   * never invents a profile.
+   */
+  secretaryProfiles?: SecretaryProfilePort;
+  /**
+   * The secretary open cap. Unset keeps `createAlwaysAdmitCapacity`: no
+   * reservation cap exists without it. A positive
+   * integer counts the workspace's live secretary Sessions (lifecycle `active`,
+   * duty `secretary`) and refuses a new line at the cap.
+   */
+  secretaryOpenCap?: number;
   /**
    * Slice 5 §3.2/§2.6: the exact configured operator of this Host. It is the
    * Host's real start actor (a human or system actor, never a platform
@@ -605,10 +632,60 @@ function createAuthorizeQueryConfiguration(host: RuntimeHostBindings): Authorize
   };
 }
 
+/**
+ * The Host's `secretaryOpenCap` adapter. It counts the workspace's LIVE
+ * secretary Sessions — lifecycle `active` and the trusted duty resolver says
+ * `secretary` — at admission time and refuses a fresh line at the cap. A replay
+ * never reaches this port (`createLineCreation` looks the operation up first);
+ * in-flight creations are not counted, because the directory cannot enumerate
+ * creation operations. Any read failure is `unavailable`, never an admitted line.
+ */
+export function createSecretaryOpenCapCapacity(deps: {
+  limit: number;
+  sessions: Pick<SessionDirectoryPort, 'findSessions'>;
+  duty: SessionDutyResolver;
+}): LineCapacityPort {
+  return {
+    async admit(ctx, input) {
+      // The option caps secretary lines only; a line of another duty is admitted.
+      if (input.duty !== 'secretary') return { status: 'admitted' };
+      if (!Number.isSafeInteger(deps.limit) || deps.limit < 1) {
+        return { status: 'unavailable', reason: 'the secretary open cap is not a positive integer' };
+      }
+      const workspace = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
+      let used = 0;
+      let cursor: string | null = null;
+      do {
+        const page = await deps.sessions.findSessions(ctx, {
+          workspace, includeArchived: false, page: { limit: 200, ...(cursor === null ? {} : { cursor }) },
+        });
+        if (page.status !== 'ready') {
+          return { status: 'unavailable', reason: page.status === 'rejected'
+            ? `the secretary line count could not be read: ${page.reason}`
+            : 'the secretary line count is not available' };
+        }
+        for (const card of page.value.items) {
+          if (card.record.lifecycle !== 'active') continue;
+          const duty = await deps.duty(card.record.role, ctx);
+          if (duty.status === 'ready' && duty.value === 'secretary') used += 1;
+        }
+        cursor = page.value.nextCursor;
+      } while (cursor !== null);
+      return used >= deps.limit ? { status: 'full', limit: deps.limit, used } : { status: 'admitted' };
+    },
+  };
+}
+
 /** Trusted local composition root. Old Ledger/Index/Vault instances cannot be
  * supplied. No business bootstrap/claim API is invented by the storage factory. */
 export async function createTargetPlatform(options: TargetPlatformOptions) {
   const now = options.now ?? (() => new Date().toISOString());
+  // A cap is a positive integer or absent. A malformed value
+  // fails the platform build instead of silently admitting every line.
+  if (options.secretaryOpenCap !== undefined
+    && (!Number.isSafeInteger(options.secretaryOpenCap) || options.secretaryOpenCap < 1)) {
+    throw new Error('secretaryOpenCap must be a positive integer when present');
+  }
   // Slice 1 (spec §2.8): the validated archive policy this Host runs with.
   const archivePolicy = sessionArchivePolicyOf(options.sessionArchivePolicy);
   const hostInstance: HostInstanceFacts | undefined = options.hostInstance === undefined ? undefined
@@ -2190,6 +2267,68 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       lines: workLines,
       readSessionHistory: (...args) => runtimePort.readSessionHistory(...args),
     });
+    // The request commands and the drain over the SAME records, Session owners
+    // and trusted duty resolver the platform already publishes. A direct
+    // platform that supplies no profile port gets the explicit null answer, never
+    // an invented profile.
+    const defaultSecretaryProfiles: SecretaryProfilePort = {
+      forSession: () => null,
+      forNewLine: async () => ({ status: 'ready', value: null }),
+    };
+    const rawSecretaryProfiles: SecretaryProfilePort = options.secretaryProfiles ?? defaultSecretaryProfiles;
+    const rawRequestFacts = createRequestFacts({ records: backend.records });
+    const requestSelection = createSecretarySelection({
+      records: backend.records,
+      sessionFacts,
+      profiles: rawSecretaryProfiles,
+      scope: createProjectSecretaryScope(),
+      duty: sessionDutyResolver,
+    });
+    const requestCapacity: LineCapacityPort = options.secretaryOpenCap === undefined
+      ? createAlwaysAdmitCapacity()
+      : createSecretaryOpenCapCapacity({ limit: options.secretaryOpenCap, sessions: sessionDirectory, duty: sessionDutyResolver });
+    const requestLineCreation = createLineCreation({
+      sessions: sessionOperations, operations: sessionDirectory, capacity: requestCapacity,
+    });
+    const rawRequestRounds = createRequestRoundService({
+      records: backend.records, facts: rawRequestFacts, sessionFacts, duty: sessionDutyResolver,
+      profiles: rawSecretaryProfiles, now, operationId: randomUUID,
+    });
+    const rawRequestIntake = createRequestIntake({
+      rounds: rawRequestRounds, facts: rawRequestFacts, selection: requestSelection,
+      lineCreation: requestLineCreation, profiles: rawSecretaryProfiles, sessionFacts,
+      // No Host driver consumes the request wake yet; the platform drops it.
+      wake: () => undefined,
+    });
+    // The published request owners drain through the same `trackedCall` set as
+    // every other owner: `close()` waits for an in-flight request.
+    const requestClosed = () =>
+      ({ status: 'rejected' as const, code: 'unavailable' as const, reason: 'platform is closing' });
+    // `forSession` is a synchronous lookup in the configured list and holds
+    // nothing open; `forNewLine` reads the duty resolver, so `close()` waits
+    // for it like any other owner call.
+    const secretaryProfiles: SecretaryProfilePort = {
+      forSession: (input) => rawSecretaryProfiles.forSession(input),
+      forNewLine: (ctx, input) => trackedCall(() => rawSecretaryProfiles.forNewLine(ctx, input), requestClosed),
+    };
+    const requestFacts: RequestFactsReader = {
+      readRequest: (ctx, input) => trackedCall(() => rawRequestFacts.readRequest(ctx, input), requestClosed),
+      ownerOf: (ctx, input) => trackedCall(() => rawRequestFacts.ownerOf(ctx, input), requestClosed),
+      effectiveGoalOf: (ctx, input) => trackedCall(() => rawRequestFacts.effectiveGoalOf(ctx, input), requestClosed),
+      readFacts: (ctx, input) => trackedCall(() => rawRequestFacts.readFacts(ctx, input), requestClosed),
+    };
+    const requestRounds: RequestRoundPort = {
+      precheck: (ctx, command) => trackedCall(() => rawRequestRounds.precheck(ctx, command), requestClosed),
+      append: (ctx, input) => trackedCall(() => rawRequestRounds.append(ctx, input), requestClosed),
+      unassigned: (ctx, scope, input) => trackedCall(() => rawRequestRounds.unassigned(ctx, scope, input), requestClosed),
+    };
+    const requestIntake: RequestIntakePort = {
+      submitRequest: (ctx, input) => trackedCall(() => rawRequestIntake.submitRequest(ctx, input), requestClosed),
+      route: (ctx, input) => trackedCall(() => rawRequestIntake.route(ctx, input), requestClosed),
+      selectIdea: (ctx, input) => trackedCall(() => rawRequestIntake.selectIdea(ctx, input), requestClosed),
+      drainUnassigned: (ctx, scope, input) =>
+        trackedCall(() => rawRequestIntake.drainUnassigned(ctx, scope, input), requestClosed),
+    };
     let closing: Promise<void> | undefined;
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, controls, evidence, checks, roles, architecture, projects, completionPolicies,
@@ -2213,6 +2352,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // Slice 2C (spec §2, L13): the line/detail read owners, the pin write
       // owner and the Host conversation. They are internal (non-enumerable).
       workLines, nodeDetail, lineSettings, workLineConversation,
+      // The request command owner, its round/facts readers and the Host profile
+      // port; internal like the other owner groups.
+      requestIntake, requestRounds, requestFacts, secretaryProfiles,
       reconcile,
       /** RUN-22 (U): the operator's attestation through the Host entry; drained like every write. */
       resolveUnknownRun: (...args: Parameters<typeof resolveUnknownRun>) => trackedCall(() => resolveUnknownRun(...args), unavailable),
@@ -2289,7 +2431,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     for (const key of ['sessionFacts', 'responsibilities', 'sessionAnomalies', 'graphContext', 'taskInputs',
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
       'runActivity', 'activity', 'timeline',
-      'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached'] as const) {
+      'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
+      'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

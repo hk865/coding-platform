@@ -33,6 +33,8 @@ import {
 } from '../../../contracts/validation/common.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
 import type {
+  PendingQueryJobSnapshot,
+  QueryCloseDetailV1,
   QueryExecutionStateV1,
   QueryJobAnswerRef,
   QueryJobAnswerSnapshot,
@@ -40,6 +42,8 @@ import type {
   QueryJobRef,
   QueryJobSnapshot,
   QueryJobSubmittedEvent,
+  QueryJobV1,
+  QueryRoundKind,
   QueryRunRef,
   QueryRunSnapshot,
 } from '../../../contracts/query-job.js';
@@ -54,7 +58,14 @@ import type {
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import { QUERY_RUN_RECORD_SCHEMA, validateQueryRunSnapshot } from '../materials/record-readers.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
+import { isPlatformCursor } from '../sessions/session-record-codecs.js';
+import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
+import { sessionRefProblem } from '../persistence/rework-codecs.js';
 import { QUERY_RUN_BY_SESSION_LOOKUP } from '../model/session-facts-contracts.js';
+import {
+  QUERY_BY_REQUEST_INDEX, QUERY_OPEN_BY_WORKSPACE_INDEX, QUERY_RAN_BY_SESSION_GOAL_INDEX,
+  REQUEST_ROOTS_BY_GOAL_INDEX,
+} from '../model/request-contracts.js';
 
 export const QUERY_JOB_SUBMITTED_EVENT = 'QueryJobSubmitted';
 export const QUERY_JOB_EVENT_SCHEMA_VERSION = 1;
@@ -152,6 +163,12 @@ function copyEvent(event: EncodedDomainEvent): EncodedDomainEvent {
 // --------------------------------------------------------------------------
 // Ref / intent shape helpers shared by the record and event validators
 // --------------------------------------------------------------------------
+
+const QUERY_ROUND_KINDS: readonly QueryRoundKind[] = ['request', 'followup', 'reply', 'expiry', 'explain', 'routing'];
+const CLOSE_CODES = ['timeout', 'gap', 'failed', 'stale_source', 'cancelled', 'not_entered', 'invalid_answer'] as const;
+const CLOSE_DETAILS: readonly QueryCloseDetailV1[] = ['too_long', 'empty', 'protocol', 'dropped', 'no_binding'];
+const INVALID_ANSWER_DETAILS: readonly (QueryCloseDetailV1 | null)[] = ['too_long', 'empty', 'protocol'];
+const CANCELLED_DETAILS: readonly (QueryCloseDetailV1 | null)[] = [null, 'dropped', 'no_binding'];
 
 function queryJobRefFromValue(value: unknown): QueryJobRef | null {
   if (!isRecord(value)) return null;
@@ -264,15 +281,115 @@ function answerRefIssues(value: unknown): string[] {
   return issues;
 }
 
+/** `SessionRef` is `{projectId, sessionId}`; one shape rule, shared with the other codecs. */
+function isSessionRef(value: unknown): boolean {
+  return sessionRefProblem(value, 'SessionRef') === null;
+}
+
+/** A `VersionedRef`: a complete aggregate ref plus a positive revision. */
+function versionedRefIssue(value: unknown): string | null {
+  if (!isRecord(value)) return 'must be an object';
+  const problem = aggregateRefProblem(value['ref']);
+  if (problem !== null) return problem;
+  return isPos(value['revision']) ? null : 'revision must be a positive safe integer';
+}
+
+function routingIssues(value: unknown): string[] {
+  if (value === null) return [];
+  if (!isRecord(value)) return ['job.routing must be null or an object'];
+  const issues: string[] = [];
+  if (!(value['from'] === null || isSessionRef(value['from']))) issues.push('job.routing.from must be null or a SessionRef');
+  if (!(value['to'] === null || isSessionRef(value['to']))) issues.push('job.routing.to must be null or a SessionRef');
+  if (!['handoff', 'manual', 'archived', 'dropped', 'assigned'].includes(value['reason'] as string)) {
+    issues.push('job.routing.reason is not a legal routing reason');
+  }
+  return issues;
+}
+
+function receiptIssues(value: unknown): string[] {
+  if (value === null) return [];
+  if (!isRecord(value)) return ['job.receipt must be null or an object'];
+  const kind = value['kind'];
+  if (kind === 'submit') {
+    const issues: string[] = [];
+    if (queryJobRefFromValue(value['requestRoot']) === null) issues.push('job.receipt.requestRoot is not a complete QueryJobRef');
+    if (queryJobRefFromValue(value['round']) === null) issues.push('job.receipt.round is not a complete QueryJobRef');
+    if (value['assignment'] === 'assigned') {
+      if (!isSessionRef(value['secretary'])) issues.push('job.receipt.secretary must be a SessionRef when assigned');
+      if (typeof value['created'] !== 'boolean') issues.push('job.receipt.created must be a boolean');
+    } else if (value['assignment'] === 'unassigned') {
+      if (value['secretary'] !== null) issues.push('job.receipt.secretary must be null when unassigned');
+      if (value['created'] !== false) issues.push('job.receipt.created must be false when unassigned');
+    } else {
+      issues.push('job.receipt.assignment must be assigned or unassigned');
+    }
+    return issues;
+  }
+  if (kind === 'route') {
+    return queryJobRefFromValue(value['routingRound']) === null
+      ? ['job.receipt.routingRound is not a complete QueryJobRef'] : [];
+  }
+  if (kind === 'select_idea' || kind === 'ask') {
+    const issues: string[] = [];
+    if (queryJobRefFromValue(value['followupRound']) === null) issues.push('job.receipt.followupRound is not a complete QueryJobRef');
+    if (!(value['secretary'] === null || isSessionRef(value['secretary']))) {
+      issues.push('job.receipt.secretary must be null or a SessionRef');
+    }
+    return issues;
+  }
+  return ['job.receipt.kind is not a legal receipt kind'];
+}
+
+function ideasIssues(value: unknown, path: string): string[] {
+  if (!Array.isArray(value)) return [`${path} must be an array`];
+  const issues: string[] = [];
+  value.forEach((idea, index) => {
+    if (!isRecord(idea) || typeof idea['title'] !== 'string' || typeof idea['detail'] !== 'string') {
+      issues.push(`${path}[${index}] must carry string title and detail`);
+    }
+  });
+  return issues;
+}
+
+function goalCardDraftIssues(value: unknown, path: string): string[] {
+  const issues: string[] = [];
+  if (!isRecord(value)) return [`${path} must be an object`];
+  if (typeof value['objective'] !== 'string') issues.push(`${path}.objective must be a string`);
+  const completion = value['completion'];
+  if (!Array.isArray(completion) || completion.some(entry => typeof entry !== 'string')) {
+    issues.push(`${path}.completion must be an array of strings`);
+  }
+  if (!['every_step', 'after_plan_confirmation'].includes(value['autonomy'] as string)) {
+    issues.push(`${path}.autonomy is not a legal GoalAutonomyV1`);
+  }
+  if (value['screening'] !== null) issues.push(`${path}.screening must be null in the 6A format`);
+  return issues;
+}
+
 function closeReasonIssues(value: unknown): string[] {
   if (value === null) return [];
   if (!isRecord(value)) return ['job.closeReason must be null or an object'];
   const issues: string[] = [];
+  const code = value['code'];
+  const detail = value['detail'];
   // `not_entered` (§8 SD-4): closed by reconciliation without ever entering the Kernel.
-  if (!['timeout', 'gap', 'failed', 'stale_source', 'cancelled', 'not_entered'].includes(value['code'] as string)) {
+  // `invalid_answer` (§3.1.8): the answer failed the secretary protocol.
+  if (!(CLOSE_CODES as readonly unknown[]).includes(code)) {
     issues.push('job.closeReason.code is not a legal close code');
   }
   if (typeof value['message'] !== 'string') issues.push('job.closeReason.message must be a string');
+  if (!Object.hasOwn(value, 'detail')) {
+    issues.push('job.closeReason.detail is required');
+  } else if (!(detail === null || CLOSE_DETAILS.includes(detail as QueryCloseDetailV1))) {
+    issues.push('job.closeReason.detail must be null or a legal close detail');
+  } else {
+    // §3.1.8: the detail is legal only together with its close code.
+    const detailsForCode = code === 'invalid_answer' ? INVALID_ANSWER_DETAILS
+      : code === 'cancelled' ? CANCELLED_DETAILS : [null];
+    if (!(detailsForCode as readonly unknown[]).includes(detail)) {
+      issues.push(`job.closeReason.detail is not legal for close code ${String(code)}`);
+    }
+  }
   return issues;
 }
 
@@ -337,6 +454,13 @@ function answerIssues(value: unknown, expectedRef: QueryJobAnswerRef | null): st
       !isSha256Hex(bodyRef['digest']) || !isPos(bodyRef['sizeBytes']) || !isRecord(bodyRef['source'])) {
     issues.push('answer.bodyRef is not a complete ArtifactRef');
   }
+  // §3.1.7: both arrays are required in the current format (decision 79).
+  issues.push(...ideasIssues(value['ideas'], 'answer.ideas'));
+  const drafts = value['goalCardDrafts'];
+  if (!Array.isArray(drafts)) issues.push('answer.goalCardDrafts must be an array');
+  else drafts.forEach((draft, index) => {
+    issues.push(...goalCardDraftIssues(draft, `answer.goalCardDrafts[${index}]`));
+  });
   return issues;
 }
 
@@ -501,9 +625,89 @@ function jobIssues(value: unknown, expectedRef: QueryJobRef | null): string[] {
   }
   issues.push(...answerRefIssues(value['answerRefs']));
   issues.push(...closeReasonIssues(value['closeReason']));
+  // 6A request fields: all required in the current format (decision 79).
+  if (!(value['requestRoot'] === null || queryJobRefFromValue(value['requestRoot']) !== null)) {
+    issues.push('job.requestRoot must be null or a complete QueryJobRef');
+  }
+  if (!(value['roundKind'] === null || QUERY_ROUND_KINDS.includes(value['roundKind'] as QueryRoundKind))) {
+    issues.push('job.roundKind is not null or a legal QueryRoundKind');
+  }
+  if (!(value['requestGoalId'] === null || nonEmpty(value['requestGoalId']))) {
+    issues.push('job.requestGoalId must be null or a non-empty string');
+  }
+  if (!(value['assignedSession'] === null || isSessionRef(value['assignedSession']))) {
+    issues.push('job.assignedSession must be null or a SessionRef');
+  }
+  issues.push(...routingIssues(value['routing']));
+  const relatedMessageRef = value['relatedMessageRef'];
+  if (!(relatedMessageRef === null || (isRecord(relatedMessageRef)
+      && relatedMessageRef['aggregateType'] === 'SessionMessage' && nonEmpty(relatedMessageRef['projectId'])
+      && nonEmpty(relatedMessageRef['workspaceId']) && nonEmpty(relatedMessageRef['messageId'])))) {
+    issues.push('job.relatedMessageRef must be null or a complete SessionMessageRef');
+  }
+  if (!(value['absorbedInto'] === null || queryJobRefFromValue(value['absorbedInto']) !== null)) {
+    issues.push('job.absorbedInto must be null or a complete QueryJobRef');
+  }
+  if (!Array.isArray(value['absorbedRounds'])) {
+    issues.push('job.absorbedRounds must be an array');
+  } else {
+    value['absorbedRounds'].forEach((round, index) => {
+      if (queryJobRefFromValue(round) === null) issues.push(`job.absorbedRounds[${index}] is not a complete QueryJobRef`);
+    });
+  }
+  const selectedIdea = value['selectedIdea'];
+  if (!(selectedIdea === null || (isRecord(selectedIdea) && queryJobRefFromValue(selectedIdea['round']) !== null
+      && Number.isSafeInteger(selectedIdea['index']) && (selectedIdea['index'] as number) >= 0))) {
+    issues.push('job.selectedIdea must be null or a { round, non-negative index } selection');
+  }
+  if (!(value['goalAttribution'] === null || nonEmpty(value['goalAttribution']))) {
+    issues.push('job.goalAttribution must be null or a non-empty string');
+  }
+  if (!Array.isArray(value['relatedCardRefs'])) {
+    issues.push('job.relatedCardRefs must be an array');
+  } else {
+    value['relatedCardRefs'].forEach((entry, index) => {
+      const problem = versionedRefIssue(entry);
+      if (problem !== null) issues.push(`job.relatedCardRefs[${index}] is not a complete VersionedRef: ${problem}`);
+    });
+  }
+  if (!(value['enteredSession'] === null || isSessionRef(value['enteredSession']))) {
+    issues.push('job.enteredSession must be null or a SessionRef');
+  }
+  if (!(value['intakeSession'] === null || isSessionRef(value['intakeSession']))) {
+    issues.push('job.intakeSession must be null or a SessionRef');
+  }
+  issues.push(...receiptIssues(value['receipt']));
   if (!nonEmpty(value['submittedAt'])) issues.push('job.submittedAt must be a non-empty string');
   if (!nonEmpty(value['updatedAt'])) issues.push('job.updatedAt must be a non-empty string');
   return issues;
+}
+
+// --------------------------------------------------------------------------
+// Index slots
+// --------------------------------------------------------------------------
+
+/**
+ * The internal index slots the store's scalar paths read. They are derived from
+ * the persisted Job only, so a client can never supply them; `decode` strips
+ * them so the frozen `QueryJobSnapshot` type keeps its shape.
+ */
+export function queryJobIndexSlots(job: QueryJobV1): {
+  rootKey: string;
+  requestMark: 'request' | 'none';
+  rootMark: 'root' | 'none';
+  goalSlot: string;
+  enteredSlot: string;
+} {
+  const request = job.requestRoot !== null;
+  return {
+    rootKey: job.requestRoot === null ? 'none' : canonicalJson(job.requestRoot as unknown as JsonValue),
+    requestMark: request ? 'request' : 'none',
+    rootMark: request && job.roundKind === 'request' ? 'root' : 'none',
+    goalSlot: !request ? 'none' : job.requestGoalId === null ? 'no-goal' : `g:${job.requestGoalId}`,
+    enteredSlot: job.enteredSession === null ? 'none'
+      : `s:${canonicalJson(job.enteredSession as unknown as JsonValue)}`,
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -528,29 +732,40 @@ function validateQueryJobSnapshot(record: EncodedRecord): DecodeResult<EncodedRe
     return invalid('QueryJob snapshot outer revision disagrees with the JSON revision');
   }
   if (parsed['schemaVersion'] !== 1) return invalid('QueryJob snapshot schemaVersion must be 1');
+  const since = parsed['since'];
+  if (!isPlatformCursor(since)) {
+    return invalid('QueryJob snapshot since must be the commit cursor the bound record carries');
+  }
   const jobProblems = jobIssues(parsed['job'], ref);
   if (jobProblems.length > 0) return invalid(`QueryJob snapshot job is invalid: ${jobProblems.join('; ')}`);
   const submissionProblems = submissionIssues(parsed['submission']);
   if (submissionProblems.length > 0) return invalid(`QueryJob snapshot submission is invalid: ${submissionProblems.join('; ')}`);
+  const slots = parsed['slots'];
+  const expectedSlots = queryJobIndexSlots(parsed['job'] as unknown as QueryJobV1);
+  if (!isRecord(slots) || canonicalJson(slots as unknown as JsonValue) !== canonicalJson(expectedSlots as unknown as JsonValue)) {
+    return invalid('QueryJob snapshot slots do not match the derived index slots');
+  }
   return { status: 'decoded', value: copyRecord(record) };
 }
 
-/** Pure QueryJob record encoding; writes nothing and registers nothing. */
-export function encodeQueryJobSnapshot(snapshot: QueryJobSnapshot): EncodedRecord {
+/** Pure QueryJob record encoding; derives the internal index slots and writes nothing. */
+export function encodeQueryJobSnapshot(snapshot: PendingQueryJobSnapshot): EncodedRecord {
   return {
     refKey: canonicalJson(snapshot.ref as unknown as JsonValue),
     schemaId: QUERY_JOB_SNAPSHOT_SCHEMA_ID,
     revision: snapshot.revision,
-    json: JSON.stringify(snapshot),
+    json: JSON.stringify({ ...snapshot, slots: queryJobIndexSlots(snapshot.job) }),
   };
 }
 
-/** Pure QueryJob record decoding; every current snapshot carries the submission locator. */
+/** Pure QueryJob record decoding; the internal slots are validated then stripped. */
 export function decodeQueryJobSnapshot(record: EncodedRecord): DecodeResult<QueryJobSnapshot> {
   const checked = validateQueryJobSnapshot(record);
   if (checked.status !== 'decoded') return checked;
   try {
-    return { status: 'decoded', value: JSON.parse(record.json) as QueryJobSnapshot };
+    const parsed = JSON.parse(record.json) as QueryJobSnapshot & { slots?: unknown };
+    delete parsed.slots;
+    return { status: 'decoded', value: parsed };
   } catch {
     return invalid('QueryJob snapshot JSON is not parseable');
   }
@@ -777,6 +992,7 @@ const QUERY_JOB_SNAPSHOT_SCHEMA: EncodedRecordSchema = {
   schemaId: QUERY_JOB_SNAPSHOT_SCHEMA_ID,
   aggregateType: 'QueryJob',
   validate: validateQueryJobSnapshot,
+  commitCursorFields: ['since'],
 };
 const QUERY_JOB_SUBMITTED_SCHEMA: EncodedEventSchema = {
   eventType: QUERY_JOB_SUBMITTED_EVENT,
@@ -810,6 +1026,36 @@ const QUERY_JOB_BY_WORKSPACE_GOAL_LOOKUP: RecordLookupIndex = {
 };
 
 /**
+ * The four index declarations on QueryJob snapshots. The equality
+ * values are non-empty strings; a non-request Query writes `none`.
+ * `s6-query-queued-by-session` is not built: nothing reads it.
+ */
+const QUERY_JOB_BY_REQUEST_LOOKUP: RecordLookupIndex = {
+  name: QUERY_BY_REQUEST_INDEX,
+  aggregateType: 'QueryJob',
+  paths: ['ref.projectId', 'ref.workspaceId', 'slots.rootKey'],
+  orderBy: { path: 'since' },
+};
+const QUERY_JOB_OPEN_BY_WORKSPACE_LOOKUP: RecordLookupIndex = {
+  name: QUERY_OPEN_BY_WORKSPACE_INDEX,
+  aggregateType: 'QueryJob',
+  paths: ['ref.projectId', 'ref.workspaceId', 'slots.requestMark', 'job.status'],
+  orderBy: { path: 'since' },
+};
+const REQUEST_ROOTS_BY_GOAL_LOOKUP: RecordLookupIndex = {
+  name: REQUEST_ROOTS_BY_GOAL_INDEX,
+  aggregateType: 'QueryJob',
+  paths: ['ref.projectId', 'ref.workspaceId', 'slots.rootMark', 'slots.goalSlot'],
+  orderBy: { path: 'since' },
+};
+const QUERY_JOB_RAN_BY_SESSION_GOAL_LOOKUP: RecordLookupIndex = {
+  name: QUERY_RAN_BY_SESSION_GOAL_INDEX,
+  aggregateType: 'QueryJob',
+  paths: ['ref.projectId', 'ref.workspaceId', 'slots.enteredSlot', 'slots.goalSlot'],
+  orderBy: { path: 'since' },
+};
+
+/**
  * Slice 2B L14: one Session's QueryRuns ordered by their end instant (track
  * bars). A `null` `executionState` row is not an ordered candidate (2A L1), so
  * a still-open query is read from the Session's current occupant instead.
@@ -832,6 +1078,10 @@ export const QUERY_JOB_RECORD_SCHEMAS: RecordBackendSchemas = {
       paths: ['ref.projectId', 'ref.workspaceId', 'run.executionState.sessionRef.sessionId'],
       orderBy: { path: 'run.executionState.sessionGeneration', valueType: 'integer' } },
     QUERY_JOB_BY_WORKSPACE_GOAL_LOOKUP,
+    QUERY_JOB_BY_REQUEST_LOOKUP,
+    QUERY_JOB_OPEN_BY_WORKSPACE_LOOKUP,
+    REQUEST_ROOTS_BY_GOAL_LOOKUP,
+    QUERY_JOB_RAN_BY_SESSION_GOAL_LOOKUP,
     QUERY_RUN_BY_SESSION_ENDED_LOOKUP,
   ],
 };

@@ -115,6 +115,9 @@ import type { SessionMessageRef } from './core/session-message.js';
 import type { RoleSpecResolutionV1 } from './role-spec-materials.js';
 import type { RunExecutionHistoryV1 } from './core/execution-history.js';
 import type { QueryRequestPromptFactsV1 } from './prompts/prompt-set.js';
+import type { GoalAutonomyV1 } from './goal-decisions.js';
+import type { CommitCursor } from './command-event.js';
+import type { VersionedRef } from './ledger.js';
 import { validMaterialSourcePin } from './material-access.js';
 export type QueryTaskRef = {
     aggregateType: "Task";
@@ -126,6 +129,19 @@ type TaskRef = QueryTaskRef;
 export function queryJobRefFor(projectId: string, workspaceId: string, queryJobId: string): QueryJobRef {
     return { aggregateType: "QueryJob", projectId, workspaceId, queryJobId };
 }
+// ------------------------------------------------------------------------ //
+// Request rounds                                                             //
+// ------------------------------------------------------------------------ //
+/** Created kinds: `request`, `followup`, `routing`; nothing creates `reply`, `expiry` or `explain` yet. */
+export type QueryRoundKind = 'request' | 'followup' | 'reply' | 'expiry' | 'explain' | 'routing';
+export type GoalCardDraftV1 = { objective: string; completion: string[]; autonomy: GoalAutonomyV1; screening: null };
+export type QueryCloseDetailV1 = 'too_long' | 'empty' | 'protocol' | 'dropped' | 'no_binding';
+/** The originating command's refs, written once on the created round. */
+export type RequestCommandReceiptV1 =
+  | { kind: 'submit'; requestRoot: QueryJobRef; round: QueryJobRef; assignment: 'assigned'; secretary: SessionRef; created: boolean }
+  | { kind: 'submit'; requestRoot: QueryJobRef; round: QueryJobRef; assignment: 'unassigned'; secretary: null; created: false }
+  | { kind: 'route'; routingRound: QueryJobRef }
+  | { kind: 'select_idea' | 'ask'; followupRound: QueryJobRef; secretary: SessionRef | null };
 // ------------------------------------------------------------------------ //
 // Value types                                                                 //
 // ------------------------------------------------------------------------ //
@@ -293,11 +309,32 @@ export type QueryJobV1 = {
     runRef: QueryRunRef | null;
     answerRefs: QueryJobAnswerRef[];
     closeReason: {
-        code: "timeout" | "gap" | "failed" | "stale_source" | "cancelled" | "not_entered";
+        code: "timeout" | "gap" | "failed" | "stale_source" | "cancelled" | "not_entered" | "invalid_answer";
         message: string;
+        detail: QueryCloseDetailV1 | null;
     } | null;
     submittedAt: string;
     updatedAt: string;
+    /** The request this round belongs to; a request's first round points to itself. */
+    requestRoot: QueryJobRef | null;
+    roundKind: QueryRoundKind | null;
+    requestGoalId: string | null;
+    assignedSession: SessionRef | null;
+    /** Explicit hand-off metadata of a `routing` round; null elsewhere. */
+    routing: {
+        from: SessionRef | null;
+        to: SessionRef | null;
+        reason: 'handoff' | 'manual' | 'archived' | 'dropped' | 'assigned';
+    } | null;
+    relatedMessageRef: SessionMessageRef | null;
+    absorbedInto: QueryJobRef | null;
+    absorbedRounds: QueryJobRef[];
+    selectedIdea: { round: QueryJobRef; index: number } | null;
+    goalAttribution: string | null;
+    relatedCardRefs: VersionedRef[];
+    enteredSession: SessionRef | null;
+    intakeSession: SessionRef | null;
+    receipt: RequestCommandReceiptV1 | null;
 };
 // ------------------------------------------------------------------------ //
 // Events (query v1)                                                         //
@@ -343,7 +380,11 @@ export type QueryJobSnapshot = {
     job: QueryJobV1;
     /** The locator written by the formal submit producer on every snapshot. */
     submission: QuerySubmissionBindingV1;
+    /** This record's creating commit cursor; bound by that commit from a null placeholder. */
+    since: CommitCursor;
 };
+/** The pre-bind form every creator builds; the creating commit fills `since`. */
+export type PendingQueryJobSnapshot = Omit<QueryJobSnapshot, 'since'> & { since: CommitCursor | null };
 
 // ------------------------------------------------------------------------ //
 // R5b.2 execution/claim + answer value types                                 //
@@ -419,6 +460,9 @@ export type QueryJobAnswerV1 = {
     staleReason: string | null;
     answeredAt: string;
     bodyRef: ArtifactRef;
+    /** 0 or 2–3 bounded ideas; the secretary answer's own check enforces the count. */
+    ideas: { title: string; detail: string }[];
+    goalCardDrafts: GoalCardDraftV1[];
 };
 export type QueryJobAnswerSnapshot = {
     ref: QueryJobAnswerRef;

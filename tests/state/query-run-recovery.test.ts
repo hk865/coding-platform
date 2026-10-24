@@ -8,7 +8,9 @@
 import { describe, expect, it } from 'vitest';
 import type { RunExecutionHistoryV1 } from '../../src/contracts/core/execution-history.js';
 import type { CoreError } from '../../src/contracts/core/results.js';
+import { makeCommitCursor } from '../../src/contracts/ledger.js';
 import type {
+  PendingQueryJobSnapshot,
   QueryExecutionStateV1,
   QueryJobAnswerRef,
   QueryJobAnswerV1,
@@ -59,6 +61,7 @@ function answer(overrides: Partial<QueryJobAnswerV1> = {}): QueryJobAnswerV1 {
   return {
     schemaVersion: 1, answerId: 'a1', queryJobRef: { ...JOB_REF }, runRef: { ...RUN_REF }, roundIndex: 0,
     answer: 'the answer', sources: [], followsAnswerRef: null, stale: false, staleReason: null,
+    ideas: [], goalCardDrafts: [],
     answeredAt: '2026-10-04T00:00:07.000Z',
     bodyRef: { kind: 'artifact', contentType: 'text/plain', digest: 'd'.repeat(64), sizeBytes: 10, source: { kind: 'query_run', ref: RUN_REF } } as unknown as QueryJobAnswerV1['bodyRef'],
     ...overrides,
@@ -457,7 +460,9 @@ const STEPS: { readonly [P in QueryExecutionStep['phase']]: QueryExecutionStep }
 };
 
 function pending(): QueryLifecycleRecords {
-  return newPendingQueryRecords({ queryRunRef: RUN_REF, goalId: 'g1', intent: INTENT, submittedAt: '2026-10-04T00:00:00.000Z', submission: SUBMISSION });
+  const records = newPendingQueryRecords({ queryRunRef: RUN_REF, goalId: 'g1', intent: INTENT, submittedAt: '2026-10-04T00:00:00.000Z', submission: SUBMISSION });
+  // A transition reads a record back; only the commit binds its creation cursor.
+  return { job: { ...records.job, since: makeCommitCursor(1) }, run: records.run };
 }
 function advancedTo(phase: QueryExecutionStep['phase']): QueryLifecycleRecords {
   const order: QueryExecutionStep['phase'][] = ['claimed', 'prepared', 'entering', 'entered'];
@@ -475,20 +480,24 @@ function stateOf(records: QueryLifecycleRecords): QueryRecoveryState | null {
 
 describe('newPendingQueryRecords', () => {
   it('builds the pending@1 pair of today (query-job-service.ts:758-789)', () => {
-    const records = pending();
+    const records = newPendingQueryRecords({ queryRunRef: RUN_REF, goalId: 'g1', intent: INTENT, submittedAt: '2026-10-04T00:00:00.000Z', submission: SUBMISSION });
     expect(records.job).toEqual({
-      ref: JOB_REF, revision: 1, schemaVersion: 1, submission: SUBMISSION,
+      ref: JOB_REF, revision: 1, schemaVersion: 1, submission: SUBMISSION, since: null,
       job: {
         schemaVersion: 1, queryJobId: 'qj1', projectId: 'p1', workspaceId: 'w1', goalId: 'g1', intent: INTENT, status: 'pending',
         runRef: RUN_REF, answerRefs: [], closeReason: null, submittedAt: '2026-10-04T00:00:00.000Z', updatedAt: '2026-10-04T00:00:00.000Z',
+        requestRoot: null, roundKind: null, requestGoalId: null, assignedSession: null, routing: null,
+        relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null,
+        goalAttribution: null, relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null,
       },
-    } satisfies QueryJobSnapshot);
+    } satisfies PendingQueryJobSnapshot);
     expect(records.run).toEqual({
       ref: RUN_REF, revision: 1, schemaVersion: 1,
       run: { schemaVersion: 1, queryJobRef: JOB_REF, runId: 'qr1', status: 'pending', startedAt: null, endedAt: null, outcome: null },
     } satisfies QueryRunSnapshot);
     expect(records.run.ref).not.toBe(RUN_REF);
-    expect(stateOf(records)).toBeNull();
+    // A transition reads a record back; only the creating commit binds the cursor.
+    expect(stateOf({ job: { ...records.job, since: makeCommitCursor(1) }, run: records.run })).toBeNull();
   });
 });
 
@@ -620,7 +629,7 @@ describe('settleQueryRunRecord', () => {
       const before = advancedTo(phase);
       const after = settleQueryRunRecord(before, { settlement: { outcome: 'not_entered', closeMessage: 'host_restart_before_entry' }, history: { kind: 'unchanged' }, occurredAt: at });
       expect(after.job.revision).toBe(before.job.revision + 1);
-      expect(after.job.job).toMatchObject({ status: 'closed', answerRefs: [], closeReason: { code: 'not_entered', message: 'host_restart_before_entry' }, updatedAt: at });
+      expect(after.job.job).toMatchObject({ status: 'closed', answerRefs: [], closeReason: { code: 'not_entered', message: 'host_restart_before_entry', detail: null }, updatedAt: at });
       expect(after.run.run).toMatchObject({ status: 'closed', outcome: 'not_entered', endedAt: at });
       expect(after.run.run.executionState?.phase).toBe('settled');
       expect(after.run.run.executionState?.history).toBeNull();
@@ -677,7 +686,7 @@ describe('settleQueryRunRecord', () => {
       if (settle?.kind !== 'settle_query') throw new Error('QRR-03 starts with settle_query');
       const after = settleQueryRunRecord(advancedTo('entered'), { settlement: settle.settlement, history: settle.history, occurredAt: at });
       expect(stateOf(after)).toEqual(result.next);
-      expect(after.job.job.closeReason).toEqual({ code: outcome, message: 'model failed' });
+      expect(after.job.job.closeReason).toEqual({ code: outcome, message: 'model failed', detail: null });
     }
   });
 

@@ -211,7 +211,7 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
       const stored = ready(await b2.bodies.put({ body: text, contentType: 'text/plain; charset=utf-8', sourceRefs: [],
         origin: { kind: 'run', owner: queryRunRef }, requestedAt: f.now() }));
       const answer: QueryJobAnswerV1 = { schemaVersion: 1, answerId: f.id(), queryJobRef, runRef: queryRunRef,
-        roundIndex: 0, answer: text, sources: [], followsAnswerRef: null, stale: false, staleReason: null, answeredAt: f.now(), bodyRef: stored.ref };
+        roundIndex: 0, answer: text, sources: [], followsAnswerRef: null, stale: false, staleReason: null, answeredAt: f.now(), bodyRef: stored.ref, ideas: [], goalCardDrafts: [] };
       const result = committed(await owner.recordQueryObservation(ctx, { input: { entry, history: { ...history, observedThroughPosition: 3, endPosition: 3 },
         source: { position: 3, cursor: 'wp2-query-answer' }, observation: { kind: 'terminal', occurredAt: f.now(), outcome: 'answered', answer, reason: null } },
         meta: { requestId: f.id(), expected: [await f.pin(queryRunRef)] } }));

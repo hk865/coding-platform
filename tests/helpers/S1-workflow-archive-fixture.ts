@@ -525,7 +525,7 @@ export async function beginConsultation(b2: B2ExecutionFixture, requestId: strin
     const answer: QueryJobAnswerV1 = {
       schemaVersion: 1, answerId: `s1-maintenance-answer-${requestId}`, queryJobRef, runRef: queryRunRef, roundIndex: 0,
       answer: answerText, sources: [], followsAnswerRef: null, stale: false, staleReason: null, answeredAt: now(),
-      bodyRef: answerBody.value.ref,
+      bodyRef: answerBody.value.ref, ideas: [], goalCardDrafts: [],
     };
     const settled = await queryExecution.recordQueryObservation(base.ctx, {
       input: { entry, source: { position: 3, cursor: `fx3-query-terminal-${requestId}` }, history: { ...baseHistory, observedThroughPosition: 3, endPosition: 3 },

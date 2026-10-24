@@ -24,9 +24,9 @@ import { join } from 'node:path';
 import { assertInvariants, cleanupScenarios, openPlatformScenario } from './harness.js';
 import { draftFrom } from './support/common.js';
 import {
-  S5_ANNOTATION_TEXT, S5_ANSWER_TEXT, S5_GOAL_A, S5_OPERATOR, adoptCandidate, answerDecision, applyCandidate,
-  controlGoal, proposeCandidate, queryDecisionQueue, readDecisionAnswer, readDecisionCard, readRequestCandidate,
-  recordDecisionApplication, s5AnnotatedObject, s5Annotation, s5CandidateKey, s5CommitReceipt,
+  S5_ANNOTATION_TEXT, S5_ANSWER_TEXT, S5_GOAL_A, S5_OPERATOR, S5_SECRETARY_PROFILES, adoptCandidate, answerDecision,
+  applyCandidate, controlGoal, proposeCandidate, queryDecisionQueue, readDecisionAnswer, readDecisionCard,
+  readRequestCandidate, recordDecisionApplication, s5AnnotatedObject, s5Annotation, s5CandidateKey, s5CommitReceipt,
   s5GoalPin, s5PlanAcceptances, s5StoreSnapshot, seedTwoRequestWorld,
 } from './support/S5-decisions.js';
 
@@ -35,7 +35,8 @@ afterEach(async () => {
 });
 
 it('SC01 two root requests: Q2 candidate@1 until replaced, the same card key, a free-text/annotation answer held by a pause, then the recorded application after a restart', async () => {
-  const h = await openPlatformScenario({ actor: S5_OPERATOR, script: { replies: [] } });
+  const h = await openPlatformScenario({ actor: S5_OPERATOR, script: { replies: [] },
+    secretaryProfiles: S5_SECRETARY_PROFILES });
   const world = await seedTwoRequestWorld(h);
   expect(h.modelCalls(), 'two root queries and two candidate writes add no provider call').toBe(0);
 

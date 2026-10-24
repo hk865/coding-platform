@@ -49,13 +49,43 @@ import type { GoalRef } from '../../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../../src/contracts/plan.js';
 import type { QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../../src/contracts/query-job.js';
 import type { PlanProposal } from '../../../src/core/work-graph/model/plan-contracts.js';
+import type { SecretaryProfilePort } from '../../../src/core/work-graph/model/request-contracts.js';
 import type { GraphWrite } from '../../../src/core/work-graph/model/task-contracts.js';
 import type { SubmitQueryJobInput } from '../../../src/core/work-graph/queries/contracts.js';
 import type { ScriptedReply } from '../../helpers/B2-runtime-fixture.js';
-import { AG2B_GOAL_REF, AG2B_QUERY_ROLE_BINDING, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_TASK_ID,
-  AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, ag2bPlanDraft, permissionRevision } from '../../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_BUDGET, AG2B_QUERY_ROLE_BINDING, AG2B_RUNTIME_BUDGET, AG2B_SCOPE,
+  AG2B_WORK_TASK_ID, AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, ag2bPlanDraft,
+  permissionRevision } from '../../helpers/AG2b-collaboration-fixture.js';
 import { draftFrom } from './common.js';
 import { preparationHost, prepareTaskForReal } from '../../helpers/task-claim-fixture.js';
+import type { RequestSubmitPort } from '../../../src/business/workflow/request-intake.js';
+import { createSecretaryProfiles } from '../../../src/app/secretary-profiles.js';
+import { createSessionDutyResolver } from '../../../src/composition/session-duty.js';
+import { platformRoleProfile } from '../../../src/core/agent-runtime/role-profiles.js';
+
+/** The platform's own secretary template: the one role the S5 requests run on. */
+const S5_SECRETARY_ROLE = platformRoleProfile('secretary').template;
+
+/**
+ * The Host configuration the S5 request scenario supplies: one secretary query
+ * profile over the platform secretary template (book §3.4.10). The template
+ * fixes its duty without a RoleSpec read, so the resolver needs no role owner
+ * here; a role_spec profile would resolve through the Host's real owner.
+ */
+export const S5_SECRETARY_PROFILES: SecretaryProfilePort = createSecretaryProfiles({
+  profiles: () => [{
+    id: 's5-secretary-profile', label: 'S5 secretary', scope: S5_SCOPE,
+    runtimeBindingId: 's5-secretary-binding', sessionRole: S5_SECRETARY_ROLE,
+    roleBinding: { schemaVersion: 1, bindingId: 's5-secretary-binding',
+      templateId: S5_SECRETARY_ROLE.templateId, templateRevision: S5_SECRETARY_ROLE.templateRevision,
+      bindingVersion: 1, policyRevision: 'legacy-template' },
+    runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID,
+  }],
+  duty: createSessionDutyResolver({
+    readRoleSpec: async () => ({ status: 'not_found' }),
+    configuration: undefined,
+  }),
+});
 
 /**
  * SC02's three business Runs. Run 2 really writes a new source basis before
@@ -223,25 +253,30 @@ export async function s5GoalPins(platform: Platform, ctx: CoreCallContext,
   return Promise.all(goalRefs.map(goalRef => s5GoalPin(platform, ctx, goalRef)));
 }
 
-/** One real root QueryJob submission on `goalRef` (a complete QueryJobRef on commit). */
+/** The narrower platform shape H wires: the request port beside the published owners. */
+type PlatformWithRequests = Platform & { requestIntake?: RequestSubmitPort };
+
+/**
+ * One real root request through Workflow's `RequestSubmitPort` (book §5.1's
+ * M2 "Moved" site). The port is wired on the platform by 6A-1 group H; until
+ * then the guard reports the seam instead of hand-writing a QueryJob. The
+ * scenario harness's platform also has no secretary profile, so H's wiring and
+ * a harness configuration with one are both needed before this returns.
+ */
 export async function submitRootQuery(platform: Platform, ctx: CoreCallContext,
   input: { goalRef: GoalRef; queryJobId: string; runId: string; question: string }): Promise<QueryJobRef> {
-  const pins = await s5Pins(platform, ctx, input.goalRef);
-  const queryJobRef: QueryJobRef = { aggregateType: 'QueryJob', ...S5_SCOPE, queryJobId: input.queryJobId };
-  const queryRunRef = s5QueryRun(input.queryJobId, input.runId);
-  const intent: QueryJobIntentV1 = {
-    schemaVersion: 1, intentId: input.queryJobId, projectId: S5_SCOPE.projectId, workspaceId: S5_SCOPE.workspaceId,
-    goalId: input.goalRef.goalId, question: input.question, focusTaskRefs: [],
-    budget: { maxTokens: null, deadline: null }, multiTurn: { maxRounds: 1 }, correlationId: `s5-${input.queryJobId}`,
-    execution: { kind: 'semantic_query', roleBinding: AG2B_QUERY_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET },
-  };
-  const request: GraphWrite<SubmitQueryJobInput> = {
-    input: { queryJobId: input.queryJobId, runId: input.runId, intent },
-    meta: { requestId: `s5-submit-${input.queryJobId}`,
-      expected: [pins.project, pins.workspace, pins.goal, { ref: queryJobRef, revision: 0 }, { ref: queryRunRef, revision: 0 }] },
-  };
-  mustCommit('S5 query submit', await platform.queries.submitQueryJob(ctx, request));
-  return queryJobRef;
+  const intake = (platform as PlatformWithRequests).requestIntake;
+  if (intake === undefined) {
+    throw new Error("S5: platform.requestIntake is not wired yet (6A-1 group H); the root request cannot go through submit");
+  }
+  const submitted = await intake.submitRequest(ctx, {
+    commandId: `s5-submit-${input.queryJobId}`, goalId: input.goalRef.goalId, text: input.question,
+    continues: null, recipient: null,
+  });
+  if (submitted.status !== 'queued') {
+    throw new Error(`S5 request submit failed (does the harness configuration publish a secretary profile?): ${JSON.stringify(submitted)}`);
+  }
+  return submitted.requestRoot;
 }
 
 /** The Goal's real active Plan snapshot. */

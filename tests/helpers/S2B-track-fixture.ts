@@ -616,7 +616,7 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
     if (answerBody.status !== 'ready') throw new Error(`S2B query answer store failed: ${JSON.stringify(answerBody)}`);
     const answer: QueryJobAnswerV1 = { schemaVersion: 1, answerId: `s2b-track-a-${suffix}`, queryJobRef: jobRef,
       runRef, roundIndex: 0, answer: answerText, sources: [], followsAnswerRef: null, stale: false,
-      staleReason: null, answeredAt: clock, bodyRef: answerBody.value.ref };
+      staleReason: null, answeredAt: clock, bodyRef: answerBody.value.ref, ideas: [], goalCardDrafts: [] };
     const done = await owner.recordQueryObservation(b2.ctx, { input: { entry,
       history: { schemaVersion: 1, sessionRef: entry.sessionRef, kernel: entry.kernel,
         startPosition: 1, observedThroughPosition: 3, endPosition: 3 },

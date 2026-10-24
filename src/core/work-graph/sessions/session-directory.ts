@@ -53,7 +53,7 @@ import {
   type HostActor, type TrustedContext,
 } from './trusted-context.js';
 import type {
-  GraphWrite, SessionCard, SessionCreationInput, SessionCreationResult, SessionDirectoryPort,
+  GraphWrite, SessionCard, SessionCreationInput, SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort,
   SessionOperationRecord, SessionPage,
 } from '../model/session-contracts.js';
 import {
@@ -62,7 +62,8 @@ import {
   SESSION_CREATED_EVENT_TYPE, SESSION_LINKS_BY_MODULE_LOOKUP, SESSION_LINKS_BY_TASK_LOOKUP,
   SESSION_LINKS_BY_WORK_LOOKUP, SESSION_WORK_LINK_RELATIONS,
   checkArtifactRef, checkOperationRef,
-  checkPlainSessionRef, checkRole, checkSessionProvenance, checkTarget, decodeSessionOperationRecord, decodeSessionRecord,
+  checkPlainSessionRef, checkRole, checkSessionCreationIntent, checkSessionProvenance, checkTarget,
+  decodeSessionOperationRecord, decodeSessionRecord,
   decodeSessionWorkLink, encodePendingSessionWorkLink, encodeSessionCreationAdmittedEvent,
   encodeSessionCreatedEvent, encodeSessionOperationRecord, encodeSessionRecord, isPlatformCursor,
   operationRefKey, plainSessionRefToAggregate, sessionAggregateRefKey, sessionCreatedPayloadFromEvent,
@@ -129,9 +130,15 @@ function ownRequest<T>(value: unknown, what: string): { ok: true; value: T } | {
 const SESSION_CREATE_IDENTITY_PREFIX = 'session-create:';
 const SESSION_REGISTER_IDENTITY_PREFIX = 'session-register:';
 
-function sessionCreateIdentityKey(actor: HostActor, projectId: string, requestId: string): string {
-  return SESSION_CREATE_IDENTITY_PREFIX +
-    sha256Hex(canonicalJson({ actor: actorIdentity(actor), projectId, requestId } as unknown as JsonValue));
+function sessionCreateIdentityKey(
+  actor: HostActor, projectId: string, requestId: string, creation: SessionCreationIntentV1 | null,
+): string {
+  return SESSION_CREATE_IDENTITY_PREFIX + sha256Hex(canonicalJson({
+    actor: actorIdentity(actor), projectId, requestId,
+    // Slice 6A §3.4.7: a non-line creation keeps the pre-6A payload byte for
+    // byte (no `creation: null` key); a line creation adds the intent.
+    ...(creation === null ? {} : { creation }),
+  } as unknown as JsonValue));
 }
 function sessionRegisterIdentityKey(actor: HostActor, projectId: string, requestId: string): string {
   return SESSION_REGISTER_IDENTITY_PREFIX +
@@ -140,6 +147,21 @@ function sessionRegisterIdentityKey(actor: HostActor, projectId: string, request
 function stableIds(actor: HostActor, projectId: string, requestId: string): { operationId: string; sessionId: string } {
   const digest = sha256Hex(canonicalJson({ actor: actorIdentity(actor), projectId, requestId } as unknown as JsonValue));
   return { operationId: `session-operation-${digest}`, sessionId: `session-${digest}` };
+}
+/**
+ * Slice 6A §3.4.7: the stable operation and planned-Session refs of one Session
+ * creation, derived exactly as `admitSessionCreation` derives them. The line
+ * entry reads the operation by this ref and passes the planned Session to the
+ * capacity port before any write.
+ */
+export function stableSessionCreationIdentity(
+  actor: HostActor, projectId: string, requestId: string,
+): { operationRef: OperationRef; plannedSessionRef: SessionRef } {
+  const { operationId, sessionId } = stableIds(actor, projectId, requestId);
+  return {
+    operationRef: { aggregateType: 'CoreOperation', projectId, operationId },
+    plannedSessionRef: { projectId, sessionId },
+  };
 }
 function deriveEventId(identityKey: string, suffix: string): string {
   return sha256Hex(`${identityKey}|${suffix}`);
@@ -211,6 +233,7 @@ type NormalizedCreation = {
   role: RoleConfigurationRef;
   recommendedRefs: ArtifactRef[];
   initialLinks: { target: WorkLinkTarget; relation: WorkLinkRelation }[];
+  creation: SessionCreationIntentV1 | null;
 };
 type NormalizeOutcome<T> = { ok: true; value: T } | { ok: false; code: CoreError; reason: string };
 
@@ -270,6 +293,15 @@ function normalizeCreationInput(raw: unknown, scope: WorkspaceScope): NormalizeO
     const scopeProblem = checkTargetScope(entry['target'], scope);
     if (scopeProblem !== null) return { ok: false, code: 'forbidden', reason: scopeProblem };
   }
+  // Slice 6A §3.4.7: absent and explicit null both mean "opens no line"; a
+  // present but malformed intent is refused before anything is written.
+  const rawCreation = raw['creation'];
+  let creation: SessionCreationIntentV1 | null = null;
+  if (rawCreation !== undefined && rawCreation !== null) {
+    const problem = checkSessionCreationIntent(rawCreation);
+    if (problem !== null) return { ok: false, code: 'invalid', reason: `session creation intent: ${problem}` };
+    creation = rawCreation as SessionCreationIntentV1;
+  }
   return {
     ok: true,
     value: {
@@ -278,6 +310,7 @@ function normalizeCreationInput(raw: unknown, scope: WorkspaceScope): NormalizeO
       role: raw['role'] as RoleConfigurationRef,
       recommendedRefs: refs as ArtifactRef[],
       initialLinks: links as { target: WorkLinkTarget; relation: WorkLinkRelation }[],
+      creation,
     },
   };
 }
@@ -689,9 +722,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     const pins = normalizeCallerPins(meta['expected'], scope);
     if (!pins.ok) return reject('invalid', pins.reason);
 
-    const identityKey = sessionCreateIdentityKey(actor, scope.projectId, requestId);
-    const { operationId, sessionId } = stableIds(actor, scope.projectId, requestId);
-    const plannedSessionRef: SessionRef = { projectId: scope.projectId, sessionId };
+    const identityKey = sessionCreateIdentityKey(actor, scope.projectId, requestId, input.creation);
+    const { operationRef, plannedSessionRef } = stableSessionCreationIdentity(actor, scope.projectId, requestId);
     // Slice 1 §2.2: the caller may name the new Session's provenance, but only
     // the accepted operation's normalized value is authoritative. A present but
     // malformed value is refused here with zero writes (SV05); an absent key is
@@ -707,7 +739,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     if (!hasProvenance) {
       createdProvenance = { schemaVersion: 1, kind: 'new' };
     } else {
-      const provenanceProblem = checkSessionProvenance(providedProvenance, scope.projectId, sessionId);
+      const provenanceProblem = checkSessionProvenance(providedProvenance, scope.projectId, plannedSessionRef.sessionId);
       if (provenanceProblem !== null) return reject('invalid', `session provenance: ${provenanceProblem}`);
       createdProvenance = providedProvenance as SessionProvenanceV1;
     }
@@ -720,11 +752,12 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       recommendedRefs: input.recommendedRefs,
       initialLinks: input.initialLinks,
       provenance: createdProvenance,
+      ...(input.creation === null ? {} : { creation: input.creation }),
     } as unknown as JsonValue));
 
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') {
-      const expectedRef = operationRefKey({ aggregateType: 'CoreOperation', projectId: scope.projectId, operationId });
+      const expectedRef = operationRefKey(operationRef);
       const restored = await readOriginalOperation(existing.value, expectedRef, scope, plannedSessionRef);
       if (!restored.ok) return restored.rejection;
       return { status: 'committed', value: restored.value, replayed: true, cursor: existing.value.cursor };
@@ -762,14 +795,14 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     let provenanceGuards: RecordGuard[] = [];
     if (providedProvenance !== undefined && (createdProvenance as { kind: string }).kind !== 'new') {
       const predecessor = (createdProvenance as { from: SessionRef }).from;
-      const chain = await provenanceChainGuards(predecessor, sessionId, scope);
+      const chain = await provenanceChainGuards(predecessor, plannedSessionRef.sessionId, scope);
       if (!chain.ok) return chain.rejection;
       provenanceGuards = chain.guards;
     }
 
     const now = new Date().toISOString();
     const operation: SessionOperationRecord = {
-      ref: { aggregateType: 'CoreOperation', projectId: scope.projectId, operationId },
+      ref: operationRef,
       revision: 1,
       action: {
         kind: 'create',
@@ -780,6 +813,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         recommendedRefs: input.recommendedRefs,
         initialLinks: input.initialLinks,
         provenance: createdProvenance,
+        creation: input.creation,
       },
       phase: 'accepted',
       requestedAt: now,

@@ -59,8 +59,13 @@ import {
 } from '../persistence/evidence-record-codecs.js';
 import { sessionResponsibilityChangedEventFromEvent } from '../sessions/lifecycle-record-codecs.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
+import type { ActiveCopies } from '../tasks/line-clock.js';
+import {
+  copyPhase, indexActiveCopies, latestActivityAt, readActiveCopies, readClaimedAtForRun, readLatestQueryRun,
+  readQueryJobGoal,
+} from '../tasks/line-clock.js';
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
-import { decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord, S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP } from '../queries/query-record-codecs.js';
+import { decodeQueryRunSnapshotRecord, S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP } from '../queries/query-record-codecs.js';
 import { canonicalRefKey, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import {
   S2C_CLOSED_TASK_LINKS_LOOKUP, S2C_OPEN_LINKS_BY_SESSION_LOOKUP, S2C_SESSION_ARCHIVED_AT_LOOKUP,
@@ -293,7 +298,7 @@ async function assembleLineRows(
   if (activeCopies !== undefined) copiesIndex = activeCopies;
   else {
     const read = await readActiveCopies(deps.records, workspace, deps.lookupPageLimit ?? 200);
-    if (read.status !== 'ready') return read;
+    if (read.status !== 'ready') return rejectionOf(read);
     copiesIndex = read.value;
   }
   const rows: LineRowV1[] = [];
@@ -1080,7 +1085,7 @@ async function readHolder(records: WorkLineStore, workspace: WorkspaceScope, hea
   // L10 (review item 4): a Run that never started and has not ended still has a
   // real activity time, its claim time; read the claim the same bounded way.
   const claimedAt = run.startedAt === null && run.endedAt === null
-    ? await readClaimedAtForRun(records, workspace, head, run.ref, state) : null;
+    ? await readClaimedAtForRun(records, workspace, head, run.ref, (failure) => noteProblem(state, failure)) : null;
   return { kind: 'run', run: lineRunFacts(run, await readPointerOf(records, run, state),
     await readContinuationConsumed(records, run, state), claimedAt) };
 }
@@ -1096,7 +1101,8 @@ async function readLatestWork(records: WorkLineStore, workspace: WorkspaceScope,
     // claim read that supplies `claimedAt`. When the Run has neither start nor
     // end time, read that claim (bounded: the generation-ordered index's top row).
     if (latest !== null && latest.run.startedAt === null && latest.run.endedAt === null) {
-      latest.claimedAt = await readClaimedAtForRun(records, workspace, head, head.lastExecutionRef, state);
+      latest.claimedAt = await readClaimedAtForRun(records, workspace, head, head.lastExecutionRef,
+        (failure) => noteProblem(state, failure));
     }
     return latest;
   }
@@ -1114,29 +1120,6 @@ async function readLatestWork(records: WorkLineStore, workspace: WorkspaceScope,
   // L10: the claim time is the last fallback when the Run has no start/end time.
   if (latest !== null) latest.claimedAt = decoded.value.claim.claimedAt ?? null;
   return latest;
-}
-
-/**
- * L10 (review item 4): the claim time recorded for a specific `lastExecutionRef`
- * Run, read only when the Run has neither `startedAt` nor `endedAt`. The
- * generation-ordered claim index's top row is that Run's claim when the Run is
- * the Session's latest work execution; it is trusted only when it names this Run
- * (bounded: one ordered page + one decode, no history scan).
- */
-async function readClaimedAtForRun(records: WorkLineStore, workspace: WorkspaceScope, head: SessionRecord,
-  runRef: RunRef, state: LineReadState): Promise<string | null> {
-  const page = await records.lookupOrdered({
-    index: S2C_WORK_CLAIM_BY_SESSION_GENERATION_LOOKUP,
-    values: [workspace.projectId, workspace.workspaceId, head.ref.sessionId],
-    direction: 'desc',
-    limit: 1,
-  });
-  if (page.status !== 'ready') { noteProblem(state, page); return null; }
-  if (page.value.records.length === 0) return null;
-  const decoded = decodeDispatchOutboxEntry(page.value.records[0]!);
-  if (decoded.status !== 'decoded') return null;
-  return refKeyOf(decoded.value.claim.runRef) === refKeyOf(runRef)
-    ? (decoded.value.claim.claimedAt ?? null) : null;
 }
 
 async function readRunByRef(records: WorkLineStore, workspace: WorkspaceScope, ref: RunRef,
@@ -1231,96 +1214,14 @@ function needsLatestQuery(duty: LineFactsV1['duty'], holder: LineFactsV1['holder
 
 async function readLatestQuery(records: WorkLineStore, workspace: WorkspaceScope, head: SessionRecord,
   state: LineReadState): Promise<LatestQuery | null> {
-  if (head.occupancy !== null && head.occupancy !== undefined && head.occupancy.kind === 'execution'
-    && head.occupancy.executionRef.aggregateType === 'QueryRun') {
-    return readQueryByRef(records, workspace, head.occupancy.executionRef, state);
-  }
-  if (head.lastExecutionRef !== null && head.lastExecutionRef !== undefined
-    && head.lastExecutionRef.aggregateType === 'QueryRun') {
-    return readQueryByRef(records, workspace, head.lastExecutionRef, state);
-  }
-  const page = await records.lookupOrdered({ index: S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP,
-    values: [workspace.projectId, workspace.workspaceId, head.ref.sessionId], direction: 'desc', limit: 1 });
-  if (page.status !== 'ready') { noteProblem(state, page); return null; }
-  if (page.value.records.length === 0) return null;
-  const decoded = decodeQueryRunSnapshotRecord(page.value.records[0]!);
-  if (decoded.status !== 'decoded') { noteProblem(state, { code: 'unavailable', reason: 'the latest QueryRun is not decodable' }); return null; }
-  return { query: decoded.value, goalId: await readQueryJobGoal(records, workspace, decoded.value, state) };
+  const query = await readLatestQueryRun(records, workspace, head, (failure) => noteProblem(state, failure));
+  if (query === null) return null;
+  return { query, goalId: await readQueryJobGoal(records, query, (failure) => noteProblem(state, failure)) };
 }
 
 type LatestQuery = { query: QueryRunSnapshot; goalId: string | null };
 
-async function readQueryByRef(records: WorkLineStore, workspace: WorkspaceScope, ref: { aggregateType: string },
-  state: LineReadState): Promise<LatestQuery | null> {
-  const key = refKeyOf(ref);
-  const read = await records.readMany([key]);
-  if (read.status !== 'ready') { noteProblem(state, read); return null; }
-  const record = read.value.records.find((entry) => entry.refKey === key);
-  if (record === undefined) { noteProblem(state, { code: 'not_found', reason: `the QueryRun record ${key} is absent` }); return null; }
-  const decoded = decodeQueryRunSnapshotRecord(record);
-  if (decoded.status !== 'decoded') { noteProblem(state, { code: 'unavailable', reason: 'the QueryRun is not decodable' }); return null; }
-  if (decoded.value.ref.workspaceId !== workspace.workspaceId) return null;
-  return { query: decoded.value, goalId: await readQueryJobGoal(records, workspace, decoded.value, state) };
-}
-
-async function readQueryJobGoal(records: WorkLineStore, workspace: WorkspaceScope, run: QueryRunSnapshot,
-  state: LineReadState): Promise<string | null> {
-  const jobRef = run.run.queryJobRef;
-  if (jobRef === undefined || jobRef === null) return null;
-  const key = refKeyOf(jobRef);
-  const read = await records.readMany([key]);
-  if (read.status !== 'ready') { noteProblem(state, read); return null; }
-  const record = read.value.records.find((entry) => entry.refKey === key);
-  if (record === undefined) return null;
-  const decoded = decodeQueryJobSnapshot(record);
-  if (decoded.status !== 'decoded') { noteProblem(state, { code: 'unavailable', reason: 'the QueryJob is not decodable' }); return null; }
-  const goalId = decoded.value.job.goalId;
-  return typeof goalId === 'string' ? goalId : null;
-}
-
 // --- copies (N1, M6) ------------------------------------------------------- //
-
-/**
- * L1/N1 (review item 4a): the ACTIVE copies of a workspace, indexed by the
- * source Session they were copied from. Active Sessions are set by current work,
- * not history, so this is bounded; the previous read paginated every historical
- * `readonly_copy` of a chain Session just to drop the archived ones. Used for
- * the M6 marker on every assembly path.
- */
-type ActiveCopies = Map<string, SessionRecord[]>;
-
-function indexActiveCopies(sessions: readonly SessionRecord[]): ActiveCopies {
-  const bySource: ActiveCopies = new Map();
-  for (const session of sessions) {
-    const provenance = session.provenance;
-    if (provenance.kind !== 'readonly_copy') continue;
-    if (session.lifecycle !== 'active') continue;
-    const source = provenance.from.sessionId;
-    const list = bySource.get(source);
-    if (list === undefined) bySource.set(source, [session]);
-    else list.push(session);
-  }
-  return bySource;
-}
-
-async function readActiveCopies(records: WorkLineStore, workspace: WorkspaceScope,
-  lookupPageLimit: number = 200): Promise<StoreRead<ActiveCopies>> {
-  const sessions: SessionRecord[] = [];
-  let after: string | undefined;
-  for (;;) {
-    const page = await records.lookup({ index: S2C_SESSION_BY_LIFECYCLE_KIND_LOOKUP,
-      values: [workspace.projectId, workspace.workspaceId, 'active', 'readonly_copy'], limit: lookupPageLimit,
-      ...(after === undefined ? {} : { after }) });
-    if (page.status !== 'ready') return rejectionOf(page);
-    for (const record of page.value.records) {
-      const decoded = decodeSessionRecord(record);
-      if (decoded.status === 'decoded') sessions.push(decoded.value);
-    }
-    if (page.value.next === null) break;
-    after = page.value.next;
-  }
-  return { status: 'ready', value: indexActiveCopies(sessions) };
-}
 
 async function readCopies(records: WorkLineStore, workspace: WorkspaceScope,
   chain: readonly LineChainEntryV1[], activeCopies: ActiveCopies, state: LineReadState): Promise<LineFactsV1['copies']> {
@@ -1333,19 +1234,12 @@ async function readCopies(records: WorkLineStore, workspace: WorkspaceScope,
       const key = refKey(copy.ref);
       if (seen.has(key)) continue;
       seen.add(key);
-      const info = await copyPhase(records, workspace, copy, state);
+      const info = await copyPhase(records, workspace, copy, (failure) => noteProblem(state, failure));
       copies.push({ session: { projectId: copy.ref.projectId, sessionId: copy.ref.sessionId },
         phase: info.phase, startedAt: info.startedAt });
     }
   }
   return copies;
-}
-
-async function copyPhase(records: WorkLineStore, workspace: WorkspaceScope, copy: SessionRecord,
-  state: LineReadState): Promise<{ phase: import('../../../contracts/query-job.js').QueryExecutionStateV1['phase'] | null;
-    startedAt: string | null }> {
-  const latest = await readLatestQuery(records, workspace, copy, state);
-  return { phase: latest?.query.run.executionState?.phase ?? null, startedAt: latest?.query.run.startedAt ?? null };
 }
 
 // --- workspace pins (L9) --------------------------------------------------- //
@@ -1827,19 +1721,17 @@ function deriveLastActivity(
   latestQuery: LatestQuery | null,
 ): string {
   // L10: the latest of the head's creation, the last execution's endedAt →
-  // startedAt → claim time, and each active copy's Query start.
-  const candidates: string[] = [head.createdAt];
-  const push = (at: string | null | undefined): void => {
-    if (at !== null && at !== undefined) candidates.push(at);
-  };
+  // startedAt → claim time, and each active copy's Query start. The one clock
+  // rule lives in tasks/line-clock.ts; this reader only gathers its instants.
+  const instants: (string | null | undefined)[] = [];
   const runFacts = holder !== null && holder.kind === 'run' ? holder.run : latestWork;
   if (runFacts !== null) {
-    push(runFacts.run.endedAt ?? runFacts.run.startedAt ?? runFacts.claimedAt ?? null);
+    instants.push(runFacts.run.endedAt ?? runFacts.run.startedAt ?? runFacts.claimedAt ?? null);
   }
-  if (holder !== null && holder.kind === 'query') push(holder.query.run.endedAt ?? holder.query.run.startedAt);
-  if (latestQuery !== null) push(latestQuery.query.run.endedAt ?? latestQuery.query.run.startedAt);
-  for (const copy of copies) push(copy.startedAt);
-  return candidates.sort().at(-1) ?? head.createdAt;
+  if (holder !== null && holder.kind === 'query') instants.push(holder.query.run.endedAt ?? holder.query.run.startedAt);
+  if (latestQuery !== null) instants.push(latestQuery.query.run.endedAt ?? latestQuery.query.run.startedAt);
+  for (const copy of copies) instants.push(copy.startedAt);
+  return latestActivityAt(head.createdAt, instants);
 }
 
 // -------------------------------------------------------------------------- //
@@ -2982,7 +2874,7 @@ async function readCopiesSection(
       const provenance = copy.provenance;
       if (provenance.kind !== 'readonly_copy') continue;
       items.push({ copy: sessionRefOf(copy), messageRef: provenance.messageRef, lifecycle: copy.lifecycle,
-        phase: (await copyPhase(records, workspace, copy, state)).phase });
+        phase: (await copyPhase(records, workspace, copy, (failure) => noteProblem(state, failure))).phase });
     }
     if (page.value.next !== null) {
       after = page.value.next;

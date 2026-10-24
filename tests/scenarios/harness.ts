@@ -72,6 +72,7 @@ import type { TrustedCheckConfiguration } from '../../src/contracts/verification
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import type { GoalDisplayRead, TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
+import type { SecretaryProfilePort } from '../../src/core/work-graph/model/request-contracts.js';
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import {
@@ -827,7 +828,9 @@ export function ag2bWorkRuntime(model: () => ScriptedModel,
 
 type CompositionSettings = { actor: WorkbenchActor; check: CheckBehaviour; checkRevision: number; tokenBudget: number;
   /** The work binding's tool grant (refreeze §5, Z02); absent keeps the fixture default. */
-  tools?: readonly string[] };
+  tools?: readonly string[];
+  /** The Host's configured secretary profile port (L5); kept across a reopen. */
+  secretaryProfiles?: SecretaryProfilePort };
 
 function workflowBinding(tokenBudget: number): WorkflowHostConfiguration['bindings'][number] {
   return { workspace: AG2B_SCOPE, sessionRole: AG2B_WORK_ROLE, roleBinding: AG2B_WORK_ROLE_BINDING,
@@ -846,6 +849,7 @@ async function openComposition(root: string, database: string, settings: Composi
     ...(model === null ? {} : { runtime: ag2bWorkRuntime(model, tools === undefined ? {} : { tools }) }),
     checks: checksConfiguration(settings.actor, settings.check, settings.checkRevision),
     workflow: { consumerId: AG2B_CONSUMER_ID, bindings: [workflowBinding(settings.tokenBudget)] },
+    ...(settings.secretaryProfiles === undefined ? {} : { secretaryProfiles: settings.secretaryProfiles }),
   });
   platform.registerAutomationPolicy(policy);
   return platform;
@@ -1220,6 +1224,12 @@ export type PlatformScenarioOptions = {
   workIds?: readonly string[] | null;
   /** The work binding's tool grant (refreeze §5, Z02); absent keeps `AG2B_WORK_TOOLS`. */
   tools?: readonly string[];
+  /**
+   * The Host's configured secretary profile port (L5). Absent keeps the
+   * composition's explicit null port, so only a scenario that supplies one has
+   * secretary requests; the same port is kept on every reopen.
+   */
+  secretaryProfiles?: SecretaryProfilePort;
 };
 
 export class PlatformScenario extends ScenarioBase {
@@ -1243,7 +1253,8 @@ export class PlatformScenario extends ScenarioBase {
     const models = new ScriptState(options.script ?? {});
     const settings: CompositionSettings = { actor: options.actor ?? SCENARIO_OPERATOR, check: options.check ?? 'result_file',
       checkRevision: 1, tokenBudget: options.tokenBudget ?? 1_000_000,
-      ...(options.tools === undefined ? {} : { tools: options.tools }) };
+      ...(options.tools === undefined ? {} : { tools: options.tools }),
+      ...(options.secretaryProfiles === undefined ? {} : { secretaryProfiles: options.secretaryProfiles }) };
     const policy = options.automation ?? DEFAULT_TASK_AUTOMATION_POLICY;
     const started = await PlatformScenario.start(root, database, models, settings, policy);
     const scenario = new PlatformScenario(root, database, models, started, settings, policy);

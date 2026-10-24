@@ -137,8 +137,11 @@ it('submits and reads a no-Plan pending pair on an empty SQLite database and sur
     const submitted = await platform.queries.submitQueryJob(hostCtx(), request);
     expect(submitted).toMatchObject({ status: 'committed', replayed: false });
     if (submitted.status !== 'committed') throw new Error('public pending submit failed');
-    expect(submitted.value.job).toMatchObject({ ref: queryJobRef, revision: 1,
-      job: { status: 'pending', goalId: goalRef.goalId, runRef: queryRunRef, answerRefs: [], closeReason: null } });
+    expect(submitted.value.job).toMatchObject({ ref: queryJobRef, revision: 1, since: expect.any(String),
+      job: { status: 'pending', goalId: goalRef.goalId, runRef: queryRunRef, answerRefs: [], closeReason: null,
+        requestRoot: null, roundKind: null, requestGoalId: null, assignedSession: null, routing: null,
+        relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null, goalAttribution: null,
+        relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null } });
     expect(submitted.value.run).toMatchObject({ ref: queryRunRef, revision: 1,
       run: { status: 'pending', startedAt: null, endedAt: null, outcome: null } });
     expect(await platform.queries.readQueryJob(hostCtx(), queryJobRef)).toMatchObject({ status: 'ready', value: submitted.value });

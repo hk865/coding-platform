@@ -55,6 +55,9 @@ import type {
 } from '../core/work-graph/model/decision-contracts.js';
 import type { StartupReconcileReportV1 } from './startup-reconcile.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
+import type {
+  RequestIntakePort, RequestRouteResultV1, RequestSelectIdeaResultV1, RequestSubmitResultV1,
+} from '../business/workflow/request-intake.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
 import type { GoalControlPort } from './goal-fan-out-driver.js';
 import type { WorkbenchToolsPort } from './workbench-tools.js';
@@ -77,6 +80,7 @@ import {
   type CoreRouteSuffix,
   type CoreScope,
   type K3CoreRouteDto,
+  type RequestCommandCoreRouteDto,
   type Slice1CoreRouteDto,
   type Slice2CCoreRouteDto,
   type UnknownCallReviewReleaseHoldValue,
@@ -246,6 +250,15 @@ export type CoreRouteBindings = {
     Promise<ReadResult<VersionListPageV1>>;
   listCatalogVersions: (ctx: CoreCallContext, input: { limit: number; cursor: string | null }) =>
     Promise<ReadResult<VersionListPageV1>>;
+  // The three person-only request commands. The Host layer
+  // owns the public-surface checks (person, `manual`/`dropped`) and returns the
+  // port's receipt/rejection body unchanged.
+  submitRequest: (ctx: CoreCallContext, input: Parameters<RequestIntakePort['submitRequest']>[1]) =>
+    Promise<RequestSubmitResultV1 | CoreRejection>;
+  routeRequest: (ctx: CoreCallContext, input: Parameters<RequestIntakePort['route']>[1]) =>
+    Promise<RequestRouteResultV1 | CoreRejection>;
+  selectRequestIdea: (ctx: CoreCallContext, input: Parameters<RequestIntakePort['selectIdea']>[1]) =>
+    Promise<RequestSelectIdeaResultV1 | CoreRejection>;
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -323,6 +336,9 @@ export type CoreRoutePlatform = {
   workLineConversation?: WorkLineConversationPort;
   nodeDetail?: NodeDetailReadPort;
   lineSettings?: WorkLineSettingsPort;
+  /** The request command owner, non-enumerable on the
+   * composed platform. A narrow platform without it answers `unsupported`. */
+  requestIntake?: RequestIntakePort;
   /** Slice 4C (spec §2/L15/L19): the non-enumerable `notes` owner group the six
    * notes/version-list routes bind. A narrow platform without it answers
    * `unsupported`. */
@@ -366,7 +382,8 @@ export type CoreRouteSpec = {
  * anchor for those type-only assemblies and every body/result alias in them.
  */
 export const CORE_ROUTE_SPECS: Record<
-  CoreRouteSuffix | keyof Slice1CoreRouteDto | keyof Slice2CCoreRouteDto | keyof K3CoreRouteDto,
+  CoreRouteSuffix | keyof Slice1CoreRouteDto | keyof Slice2CCoreRouteDto | keyof K3CoreRouteDto
+  | keyof RequestCommandCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -508,6 +525,11 @@ export const CORE_ROUTE_SPECS: Record<
   'notes/review': { kind: 'plain', binding: 'reviewNote', owner: 'notes.reviewNote' },
   'plans/versions': { kind: 'plain', binding: 'listPlanVersions', owner: 'notes.listPlanVersions' },
   'architecture/versions': { kind: 'plain', binding: 'listCatalogVersions', owner: 'notes.listCatalogVersions' },
+  // The three person-only request commands. `route` accepts
+  // `manual`/`dropped` publicly; `handoff`/`archived` stay internal.
+  'requests/submit': { kind: 'plain', binding: 'submitRequest', owner: 'requestIntake.submitRequest' },
+  'requests/route': { kind: 'plain', binding: 'routeRequest', owner: 'requestIntake.route' },
+  'requests/select-idea': { kind: 'plain', binding: 'selectRequestIdea', owner: 'requestIntake.selectIdea' },
 };
 
 export type ParsedCoreRequest =
@@ -646,6 +668,19 @@ export function createPlatformCoreRouteBindings(
     ctx.principal.kind === 'host' && ctx.principal.actor.kind === 'human';
   const forbiddenPerson = (): CoreRejection =>
     ({ status: 'rejected', code: 'forbidden', reason: 'only the person may call this notes route' });
+  // A request command is the person's; a member or system
+  // actor is `forbidden` BEFORE any read, pick or line. The route also refuses a
+  // non-object input body; every other input rule is the request service's
+  // precheck (one rule, one place).
+  const requestEntryProblem = (ctx: CoreCallContext, input: unknown): CoreRejection | null => {
+    if (!personOnly(ctx)) {
+      return { status: 'rejected', code: 'forbidden', reason: 'only the person may submit, route or select a request' };
+    }
+    if (!isPlainObject(input)) {
+      return { status: 'rejected', code: 'invalid', reason: 'the request input must be a JSON object' };
+    }
+    return null;
+  };
   /** R-03: write, then on success `checkNotes({ withSimilar: true })`; a failed
    *  check is `{ status: 'unavailable', reason }` and never undoes the write. */
   const writeNoteEnvelope = async (ctx: CoreCallContext,
@@ -904,6 +939,30 @@ export function createPlatformCoreRouteBindings(
       : platform.notes.listPlanVersions.bind(platform.notes),
     listCatalogVersions: platform.notes === undefined ? unsupported('the platform does not publish notes.listCatalogVersions')
       : platform.notes.listCatalogVersions.bind(platform.notes),
+    // One explicit wrapper per request command. The route
+    // layer owns the person check and the `manual`/`dropped` public surface; the
+    // port owns the command rules and returns the receipt/rejection body.
+    submitRequest: platform.requestIntake === undefined
+      ? unsupported('the platform does not publish the request command owner (submitRequest)')
+      : async (ctx, input) => {
+        const refusal = requestEntryProblem(ctx, input);
+        if (refusal !== null) return refusal;
+        return platform.requestIntake!.submitRequest(ctx, input);
+      },
+    routeRequest: platform.requestIntake === undefined
+      ? unsupported('the platform does not publish the request command owner (route)')
+      : async (ctx, input) => {
+        const refusal = requestEntryProblem(ctx, input);
+        if (refusal !== null) return refusal;
+        return platform.requestIntake!.route(ctx, input);
+      },
+    selectRequestIdea: platform.requestIntake === undefined
+      ? unsupported('the platform does not publish the request command owner (selectIdea)')
+      : async (ctx, input) => {
+        const refusal = requestEntryProblem(ctx, input);
+        if (refusal !== null) return refusal;
+        return platform.requestIntake!.selectIdea(ctx, input);
+      },
   };
 }
 
@@ -1152,6 +1211,10 @@ export async function dispatchCoreRoute(
       case 'notes/review': return bindings.reviewNote(ctx, plain.input as never);
       case 'plans/versions': return bindings.listPlanVersions(ctx, plain.input as never);
       case 'architecture/versions': return bindings.listCatalogVersions(ctx, plain.input as never);
+      // The three person-only request commands.
+      case 'requests/submit': return bindings.submitRequest(ctx, plain.input as never);
+      case 'requests/route': return bindings.routeRequest(ctx, plain.input as never);
+      case 'requests/select-idea': return bindings.selectRequestIdea(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

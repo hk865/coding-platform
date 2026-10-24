@@ -19,6 +19,7 @@ import type { CoreError } from '../../../contracts/core/results.js';
 import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-history.js';
 import { sameJson } from '../../../contracts/fingerprint.js';
 import type {
+  PendingQueryJobSnapshot,
   QueryExecutionBindingV1,
   QueryExecutionStateV1,
   QueryJobAnswerRef,
@@ -453,8 +454,17 @@ export function queryRecoveryStateOf(job: QueryJobV1, run: QueryRunV1): QueryRec
 export type QueryLifecycleRecords = { job: QueryJobSnapshot; run: QueryRunSnapshot };
 
 /**
+ * The pending pair a creator builds (§3.1.2, §3.12): the Job has no `since`
+ * until its creating commit binds it. Transitions read records back
+ * (`QueryLifecycleRecords`), where the cursor is bound.
+ */
+export type PendingQueryLifecycleRecords = { job: PendingQueryJobSnapshot; run: QueryRunSnapshot };
+
+/**
  * The pending@1 QueryJob and QueryRun of one submission (`query-job-service.ts:742`);
- * the receipt replay rebuilds the same pair (`:510`).
+ * the receipt replay rebuilds the same pair (`:510`). Every current-format
+ * request field is written here in its non-request form (§3.1.1); a request
+ * round starts from this pair and adds its own fields (`request-rounds.ts`).
  */
 export function newPendingQueryRecords(input: {
   queryRunRef: QueryRunRef;
@@ -462,7 +472,7 @@ export function newPendingQueryRecords(input: {
   intent: QueryJobIntentV1;
   submittedAt: string;
   submission: QuerySubmissionBindingV1;
-}): QueryLifecycleRecords {
+}): PendingQueryLifecycleRecords {
   const queryRunRef = input.queryRunRef;
   const queryJobRef = queryJobRefOf(queryRunRef);
   const job: QueryJobV1 = {
@@ -478,6 +488,20 @@ export function newPendingQueryRecords(input: {
     closeReason: null,
     submittedAt: input.submittedAt,
     updatedAt: input.submittedAt,
+    requestRoot: null,
+    roundKind: null,
+    requestGoalId: null,
+    assignedSession: null,
+    routing: null,
+    relatedMessageRef: null,
+    absorbedInto: null,
+    absorbedRounds: [],
+    selectedIdea: null,
+    goalAttribution: null,
+    relatedCardRefs: [],
+    enteredSession: null,
+    intakeSession: null,
+    receipt: null,
   };
   const run: QueryRunV1 = {
     schemaVersion: 1,
@@ -489,7 +513,7 @@ export function newPendingQueryRecords(input: {
     outcome: null,
   };
   return {
-    job: { ref: { ...queryJobRef }, revision: 1, schemaVersion: 1, job, submission: { ...input.submission } },
+    job: { ref: { ...queryJobRef }, revision: 1, schemaVersion: 1, job, submission: { ...input.submission }, since: null },
     run: { ref: { ...queryRunRef }, revision: 1, schemaVersion: 1, run },
   };
 }
@@ -619,7 +643,7 @@ export function settleQueryRunRecord(
   const status = settlement.outcome === 'answered' ? 'answered' : 'closed';
   const closeReason: QueryJobV1['closeReason'] = settlement.outcome === 'answered'
     ? null
-    : { code: settlement.outcome, message: settlement.closeMessage };
+    : { code: settlement.outcome, message: settlement.closeMessage, detail: null };
   const nextJob: QueryJobSnapshot = {
     ...job,
     revision: job.revision + 1,

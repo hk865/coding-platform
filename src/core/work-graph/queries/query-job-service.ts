@@ -34,6 +34,7 @@ import type { SessionMessageRef } from '../../../contracts/core/session-message.
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { consultationQueryRefs, validQueryExecution } from '../../../contracts/query-job.js';
 import type {
+  PendingQueryJobSnapshot,
   QueryJobIntentV1,
   QueryJobRef,
   QueryJobSnapshot,
@@ -75,6 +76,17 @@ export const QUERY_JOB_SUBMIT_IDENTITY_PREFIX = 'query-job-submit:';
 
 const MAX_QUESTION_BYTES = 16 * 1024;
 const MAX_FOCUS_REFS = 64;
+
+/**
+ * The ONE question-text rule of every Query entry: a non-empty string of at
+ * most 16 KiB of UTF-8, never trimmed. Returns the reason suffix, or null when
+ * the text is acceptable. Later Query commands (`submit`, `ask`) import this.
+ */
+export function queryTextProblem(text: unknown): string | null {
+  if (typeof text !== 'string' || text.length === 0) return 'must be non-empty';
+  if (Buffer.byteLength(text, 'utf8') > MAX_QUESTION_BYTES) return 'must be at most 16 KiB of UTF-8';
+  return null;
+}
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -245,11 +257,9 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
     return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.intentId must equal the actual queryJobId') };
   }
   const question = intent['question'];
-  if (typeof question !== 'string' || question.length === 0) {
-    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.question must be non-empty') };
-  }
-  if (Buffer.byteLength(question, 'utf8') > MAX_QUESTION_BYTES) {
-    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.question must be at most 16 KiB of UTF-8') };
+  const textProblem = queryTextProblem(question);
+  if (textProblem !== null) {
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', `intent.question ${textProblem}`) };
   }
   if (!nonEmpty(intent['correlationId'])) {
     return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.correlationId must be a non-empty string') };
@@ -406,14 +416,19 @@ type ReceiptLookup =
   | { status: 'invalid'; reason: string }
   | { status: 'unavailable'; reason: string };
 
-async function lookupReceipt(
-  deps: QueryJobDependencies,
+/**
+ * The ONE committed-receipt storage lookup: the exact identity/fingerprint
+ * `lookupCommit` with every failure classified, and a thrown lookup caught as
+ * `unavailable`. Each owner keeps its own error wording and projection.
+ */
+export async function lookupCommittedReceipt(
+  records: Pick<GoalRecordTransactionPort, 'lookupCommit'>,
   identityKey: string,
   fingerprint: string,
 ): Promise<ReceiptLookup> {
   let found: Awaited<ReturnType<GoalRecordTransactionPort['lookupCommit']>>;
   try {
-    found = await deps.records.lookupCommit({ identityKey, fingerprint });
+    found = await records.lookupCommit({ identityKey, fingerprint });
   } catch (error) {
     return { status: 'unavailable', reason: `the idempotency lookup failed: ${messageOf(error)}` };
   }
@@ -430,7 +445,15 @@ async function lookupReceipt(
   }
 }
 
-type Recovery = { status: 'recovered'; record: { job: QueryJobSnapshot; run: QueryRunSnapshot } } | { status: 'unavailable'; reason: string };
+async function lookupReceipt(
+  deps: QueryJobDependencies,
+  identityKey: string,
+  fingerprint: string,
+): Promise<ReceiptLookup> {
+  return lookupCommittedReceipt(deps.records, identityKey, fingerprint);
+}
+
+type Recovery = { status: 'recovered'; record: { job: PendingQueryJobSnapshot; run: QueryRunSnapshot } } | { status: 'unavailable'; reason: string };
 
 /**
  * Rebuilds the ORIGINAL receipt pair from the recorded event only. The receipt
@@ -506,7 +529,13 @@ async function committedFromReceipt(
 ): Promise<WriteResult<{ job: QueryJobSnapshot; run: QueryRunSnapshot }>> {
   const recovered = await recoverOriginalRecord(deps, receipt, identityKey, fingerprint, queryJobRef, queryRunRef);
   if (recovered.status !== 'recovered') return rejectedWithNonEmptyCurrent('unavailable', recovered.reason);
-  return { status: 'committed', value: recovered.record, replayed, cursor: receipt.cursor };
+  // §3.12: the created Job's `since` is its creating commit's cursor; a receipt
+  // replay reports the ORIGINAL receipt cursor, never a newer one.
+  const record = {
+    job: { ...recovered.record.job, since: receipt.cursor },
+    run: recovered.record.run,
+  };
+  return { status: 'committed', value: record, replayed, cursor: receipt.cursor };
 }
 
 // --------------------------------------------------------------------------
@@ -765,6 +794,8 @@ async function submit(
     indexGuards: [],
     indexChanges: [],
     events: [encodeQueryJobSubmittedEvent(event)],
+    // §3.1.2: the creating commit binds the Job's `since` from the null placeholder.
+    commitCursorBindings: [{ refKey: jobKey, field: 'since' }],
   };
 
   // (5) the store re-looks-up, CASes, writes and commits. A successful commit is

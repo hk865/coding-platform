@@ -143,9 +143,12 @@ describe('R5b.1 pending QueryJob submission', () => {
     if (submitted.status !== 'committed') throw new Error('public submit did not commit');
     const pair = submitted.value;
 
-    expect(pair.job).toMatchObject({ ref: queryJobRef(), revision: 1, schemaVersion: 1,
+    expect(pair.job).toMatchObject({ ref: queryJobRef(), revision: 1, schemaVersion: 1, since: expect.any(String),
       job: { schemaVersion: 1, queryJobId: 'r5b-query-job', projectId, workspaceId,
         goalId: goalRef.goalId, status: 'pending', runRef: queryRunRef(), answerRefs: [], closeReason: null,
+        requestRoot: null, roundKind: null, requestGoalId: null, assignedSession: null, routing: null,
+        relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null, goalAttribution: null,
+        relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null,
         intent: { intentId: request.input.queryJobId, question: request.input.intent.question, focusTaskRefs: [] } } });
     // The submission locator is written by the writer, never supplied by the caller.
     const locator = pair.job.submission;

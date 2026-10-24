@@ -626,6 +626,20 @@ function created(ctx: SessionGuardContext): SessionTransition {
 }
 
 /**
+ * SES-02/SES-03's availability checks (active, available): the two rules an
+ * occupancy claim and a request's secretary admission share. The occupancy
+ * guard keeps `absent` and its own holder checks; a caller that excludes a
+ * `busy` Session instead of refusing is the caller's decision.
+ */
+export function sessionAvailabilityAdmissionProblem(
+  state: Pick<ActiveState, 'lifecycle' | 'health'>,
+): Rejected | null {
+  if (state.lifecycle !== 'active') return reject('guard_failed', 'busy', 'the target Session is archived');
+  if (state.health !== 'available') return reject('guard_failed', 'busy', `the target Session health is ${state.health}`);
+  return null;
+}
+
+/**
  * SES-02/SES-03 admission. Guard order keeps today's codes
  * (`claim-service.ts:541-550`, `query-execution.ts:791`): lifecycle →
  * health → occupancy → revision → generation → pin (`null` = no pin to
@@ -637,8 +651,8 @@ function created(ctx: SessionGuardContext): SessionTransition {
  */
 export function occupancyAdmissionProblem(state: SessionMachineState, pin: number | null): Rejected | null {
   if (state === 'absent') return reject('illegal', 'not_found', 'the target Session does not exist');
-  if (state.lifecycle !== 'active') return reject('guard_failed', 'busy', 'the target Session is archived');
-  if (state.health !== 'available') return reject('guard_failed', 'busy', `the target Session health is ${state.health}`);
+  const availability = sessionAvailabilityAdmissionProblem(state);
+  if (availability !== null) return availability;
   if (state.occupancy !== null) return reject('guard_failed', 'busy', 'the target Session is already occupied');
   const next = nextOccupancyGeneration(state.revision);
   if (!next.ok) return reject('guard_failed', next.code, next.detail);

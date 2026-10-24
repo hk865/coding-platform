@@ -70,6 +70,9 @@ import type { ReadResult, WriteResult } from '../contracts/core/results.js';
 import type {
   NoteListRequestV1, NoteListResultV1, NoteMemoryReadResult, WriteNoteEnvelopeV1, NoteWritePort, VersionListPageV1,
 } from '../core/work-graph/model/note-contracts.js';
+// The three person-only request command routes. Their bodies and results are
+// derived from Workflow's `RequestSubmitPort`, never restated here.
+import type { RequestSubmitPort } from '../business/workflow/request-intake.js';
 
 /** The project/workspace navigation scope. It is a real domain scope, not a
  * second source of Project/Workspace registration truth. */
@@ -278,7 +281,11 @@ export type CoreRouteSuffix =
   | 'plans/versions'
   | 'architecture/versions'
   // L8 (book ruling 8): the one public observation state with computed pending.
-  | 'architecture/observation-state';
+  | 'architecture/observation-state'
+  // The three person-only request commands.
+  | 'requests/submit'
+  | 'requests/route'
+  | 'requests/select-idea';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -488,6 +495,26 @@ export type PlansVersionsBody = { scope: CoreScope; input: { goalId: string; lim
 export type PlansVersionsResponse = ReadResult<VersionListPageV1>;
 export type ArchitectureVersionsBody = { scope: CoreScope; input: { limit: number; cursor: string | null } };
 export type ArchitectureVersionsResponse = ReadResult<VersionListPageV1>;
+
+// ---------------------------------------------------------------------------
+// The three request command routes. All are `plain` (the service owns
+// identity/receipts/tail; the request carries no version pins) and person-only
+// at the Host layer. `route`'s public surface is `manual`/`dropped`;
+// `handoff`/`archived` stay internal.
+// ---------------------------------------------------------------------------
+export type RequestsSubmitBody = PlainBody<RequestSubmitPort['submitRequest']>;
+export type RequestsSubmitResponse = RouteResponse<RequestSubmitPort['submitRequest']>;
+export type RequestsRouteBody = PlainBody<RequestSubmitPort['route']>;
+export type RequestsRouteResponse = RouteResponse<RequestSubmitPort['route']>;
+export type RequestsSelectIdeaBody = PlainBody<RequestSubmitPort['selectIdea']>;
+export type RequestsSelectIdeaResponse = RouteResponse<RequestSubmitPort['selectIdea']>;
+
+/** The compile-time typed assembly of the three request command suffixes. */
+export type RequestCommandCoreRouteDto = {
+  'requests/submit': { body: RequestsSubmitBody; response: RequestsSubmitResponse };
+  'requests/route': { body: RequestsRouteBody; response: RequestsRouteResponse };
+  'requests/select-idea': { body: RequestsSelectIdeaBody; response: RequestsSelectIdeaResponse };
+};
 
 // ---------------------------------------------------------------------------
 // R6 execution-entry routes: each alias is derived from the exact public owner

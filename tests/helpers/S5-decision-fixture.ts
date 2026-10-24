@@ -79,6 +79,14 @@ import type { PlanProposal } from '../../src/core/work-graph/model/plan-contract
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { createRequestFacts } from '../../src/core/work-graph/tasks/request-facts.js';
+import { createRequestRoundService } from '../../src/core/work-graph/tasks/request-service.js';
+import { createProjectSecretaryScope, createSecretarySelection } from '../../src/core/work-graph/tasks/secretary-selection.js';
+import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
+import { createRequestIntake } from '../../src/business/workflow/request-intake.js';
+import { createAlwaysAdmitCapacity, createLineCreation } from '../../src/business/workflow/line-creation.js';
+import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
+import type { SecretaryProfilePort, SecretaryProfileV1 } from '../../src/core/work-graph/model/request-contracts.js';
 import type { SubmitQueryJobInput } from '../../src/core/work-graph/queries/contracts.js';
 import {
   SESSION_MESSAGE_RECORD_SCHEMAS,
@@ -1010,6 +1018,76 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const runRA = realRuntime ? await enterThroughRuntime(claimRA) : await enterClaim(claimRA);
   const claimRB = await claimRun({ requestId: 's5-claim-rb', goalRef: GOAL_B, planRef: PLAN_B1, taskId: 'b-work-2', sessionRef: sessionSecond });
   const runRB = (await readExecution(claimRB)).run;
+  const queryJobs = createQueryJobService({ records, now, eventId });
+  function queryIntent(queryJobId: string, question: string): QueryJobIntentV1 {
+    return { schemaVersion: 1, intentId: queryJobId, projectId: PROJECT_ID, workspaceId: WORKSPACE_ID,
+      goalId: GOAL_B.goalId, question, focusTaskRefs: [], budget: { maxTokens: null, deadline: null },
+      multiTurn: { maxRounds: 1 }, correlationId: `s5-${queryJobId}`,
+      execution: { kind: 'semantic_query', roleBinding, runtimeBudget: DEFAULT_RUNTIME_BUDGET } };
+  }
+  // ---- M2 (book §5.1 "Moved"): the two roots are real request roots --------
+  // Workflow's `RequestSubmitPort` writes them over a secretary profile and a
+  // real secretary Session; the candidate proposals and every later step below
+  // are unchanged. The refs (Q1/Q2) are the receipts' refs, so the shared
+  // request identities stay what the S5 rows name.
+  const requestSecretaryRole = platformRoleProfile('secretary').template;
+  const requestSecretary = await createRealS5Session('session-secretary', requestSecretaryRole);
+  const requestProfile: SecretaryProfileV1 = {
+    profileId: 's5-request-secretary',
+    sessionRole: requestSecretaryRole,
+    roleBinding: { schemaVersion: 1, bindingId: 's5-request-binding',
+      templateId: requestSecretaryRole.templateId, templateRevision: requestSecretaryRole.templateRevision,
+      bindingVersion: 1, policyRevision: 'legacy-template' },
+    runtimeBudget: DEFAULT_RUNTIME_BUDGET,
+    budget: { maxTokens: null, deadline: null },
+    consumerId: 's5-requests',
+  };
+  const requestProfiles: SecretaryProfilePort = {
+    forSession: ({ sessionRole }) => canonicalJson(sessionRole as never) === canonicalJson(requestSecretaryRole as never)
+      ? requestProfile : null,
+    forNewLine: async () => ({ status: 'ready', value: requestProfile }),
+  };
+  const requestFacts = createRequestFacts({ records });
+  const requestSessionFacts = createSessionFactsService({ records });
+  const requestSelection = createSecretarySelection({
+    records,
+    sessionFacts: requestSessionFacts,
+    profiles: requestProfiles,
+    scope: createProjectSecretaryScope(),
+    duty: createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec, configuration: undefined }),
+  });
+  const requestLineCreation = createLineCreation({
+    sessions: createSessionOperations({ sessions: sessionsPort, kernelStores }),
+    operations: sessionsPort,
+    capacity: createAlwaysAdmitCapacity(),
+  });
+  let requestSeedJobId: string | null = null;
+  let requestIdSeq = 0;
+  const requestRounds = createRequestRoundService({
+    records, facts: requestFacts, profiles: requestProfiles,
+    sessionFacts: requestSessionFacts,
+    duty: createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec, configuration: undefined }), now,
+    operationId: () => {
+      if (requestSeedJobId !== null) { const id = requestSeedJobId; requestSeedJobId = null; return id; }
+      return `s5-request-${++requestIdSeq}`;
+    },
+  });
+  const requestIntake = createRequestIntake({
+    rounds: requestRounds, facts: requestFacts, selection: requestSelection,
+    lineCreation: requestLineCreation, profiles: requestProfiles, sessionFacts: requestSessionFacts,
+  });
+  async function seedQueryJob(input: { requestId: string; queryJobId: string; runId: string; intent: QueryJobIntentV1 }): Promise<S5QuerySeed> {
+    requestSeedJobId = input.queryJobId;
+    const submitted = await requestIntake.submitRequest(ctx, { commandId: input.requestId, goalId: GOAL_B.goalId,
+      text: input.intent.question, continues: null, recipient: null });
+    if (submitted.status !== 'queued' || submitted.assignment !== 'assigned') {
+      throw new Error(`S5 request submit failed: ${JSON.stringify(submitted)}`);
+    }
+    return { ref: submitted.requestRoot, intent: input.intent };
+  }
+  const Q1 = await seedQueryJob({ requestId: 's5-submit-q1', queryJobId: 'Q1', runId: 'Q1-run', intent: queryIntent('Q1', 'What is the first question?') });
+  const Q2 = await seedQueryJob({ requestId: 's5-submit-q2', queryJobId: 'Q2', runId: 'Q2-run', intent: queryIntent('Q2', 'What is the second question?') });
+
   if (pausedB) {
     const paused = await setGoalControlFromHost({ records, now, eventId }, ctx, {
       input: { goalRef: GOAL_B, control: 'pause', reason: null },
@@ -1026,28 +1104,6 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   }
 
   // ---- two real root QueryJobs Q1/Q2 on Goal B -----------------------------
-  const queryJobs = createQueryJobService({ records, now, eventId });
-  function queryIntent(queryJobId: string, question: string): QueryJobIntentV1 {
-    return { schemaVersion: 1, intentId: queryJobId, projectId: PROJECT_ID, workspaceId: WORKSPACE_ID,
-      goalId: GOAL_B.goalId, question, focusTaskRefs: [], budget: { maxTokens: null, deadline: null },
-      multiTurn: { maxRounds: 1 }, correlationId: `s5-${queryJobId}`,
-      execution: { kind: 'semantic_query', roleBinding, runtimeBudget: DEFAULT_RUNTIME_BUDGET } };
-  }
-  async function seedQueryJob(input: { requestId: string; queryJobId: string; runId: string; intent: QueryJobIntentV1 }): Promise<S5QuerySeed> {
-    const ref: QueryJobRef = { aggregateType: 'QueryJob', projectId: PROJECT_ID, workspaceId: WORKSPACE_ID, queryJobId: input.queryJobId };
-    const runRef = { aggregateType: 'QueryRun' as const, projectId: PROJECT_ID, workspaceId: WORKSPACE_ID,
-      queryJobId: input.queryJobId, runId: input.runId };
-    const submit: GraphWrite<SubmitQueryJobInput> = { input: { queryJobId: input.queryJobId, runId: input.runId, intent: input.intent },
-      meta: { requestId: input.requestId, expected: [
-        { ref: PROJECT, revision: 1 }, { ref: WORKSPACE, revision: WORKSPACE_REVISION }, { ref: GOAL_B, revision: GOAL_REVISION },
-        { ref, revision: 0 }, { ref: runRef, revision: 0 },
-      ] } };
-    const committed = await queryJobs.submitQueryJob(ctx, submit);
-    if (committed.status !== 'committed') throw new Error(`S5 query submit failed: ${JSON.stringify(committed)}`);
-    return { ref, intent: input.intent };
-  }
-  const Q1 = await seedQueryJob({ requestId: 's5-submit-q1', queryJobId: 'Q1', runId: 'Q1-run', intent: queryIntent('Q1', 'What is the first question?') });
-  const Q2 = await seedQueryJob({ requestId: 's5-submit-q2', queryJobId: 'Q2', runId: 'Q2-run', intent: queryIntent('Q2', 'What is the second question?') });
 
   // ---- candidate proposals U1/U2 with the unique request-head claim --------
   async function proposeCandidate(requestRef: QueryJobRef, draft: PlanRevisionDraft,

@@ -1,0 +1,1590 @@
+/**
+ * The shared request-round entry (`RequestRoundPort`).
+ *
+ * One identity, one replay, one tail, one state and one commit path serve the
+ * person's commands (`submit`, `route`, `select_idea`, `ask`) and the trusted
+ * internal ones (`assigned`, `end_unbound`). A command never writes a round by
+ * hand: `state/request-rounds.ts` builds the records,
+ * `queries/request-rounds-read.ts` supplies the facts and their guards, and
+ * this file only decides which row applies and commits under `request-tail`
+ * and `secretary-intake`.
+ *
+ * Order (`precheck`): (1) only a person; (2) pure input checks, nothing
+ * read; (3) the identity/fingerprint; (4) the replay lookup, before any pick or
+ * line; (5) the fresh current-fact checks. `append` re-checks the facts it
+ * guards and retries a `request-tail` conflict `SECRETARY_TAIL_RETRIES` times,
+ * then answers `busy`.
+ *
+ * Nothing here is a Host route: the composition root wires the factory with the
+ * real store, the Session facts, the real duty resolver and the profile port
+ * (see `RequestRoundDependencies`).
+ */
+import type { ActorRef } from '../../../contracts/command-event.js';
+import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { ReadResult } from '../../../contracts/core/results.js';
+import type { SessionRecord } from '../../../contracts/core/session.js';
+import type { GoalRef, VersionedRef } from '../../../contracts/ledger.js';
+import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import {
+  queryJobRefFor, type PendingQueryJobSnapshot, type QueryJobIntentV1, type QueryJobRef, type QueryJobSnapshot,
+  type QueryRunRef, type QueryRunSnapshot, type QuerySubmissionBindingV1, type RequestCommandReceiptV1,
+} from '../../../contracts/query-job.js';
+import { rejected } from '../../../contracts/core/rejections.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+import type {
+  EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
+  UniqueClaimChange,
+} from '../../record-store/ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
+import {
+  QUERY_OPEN_BY_WORKSPACE_INDEX, REQUEST_PAGE_SIZE, SECRETARY_TAIL_RETRIES,
+  type RequestCoreViewV1, type RequestOwnerStateV1, type SecretaryProfilePort, type SecretaryProfileV1,
+} from '../model/request-contracts.js';
+import type { SessionFactsPort } from '../model/session-facts-contracts.js';
+import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
+import type { RequestFactsPort } from './request-facts.js';
+import { oldestPendingRound, type RequestRoundsFactsV1 } from '../queries/request-rounds-read.js';
+import {
+  decodeQueryJobSnapshot, decodeQueryJobSubmittedEvent, encodeQueryExecutionRecordedEvent, encodeQueryJobSnapshot,
+  encodeQueryJobSubmittedEvent, encodeQueryRunSnapshotRecord, type QueryJobSubmittedEventV1,
+} from '../queries/query-record-codecs.js';
+import { queryTextProblem, lookupCommittedReceipt } from '../queries/query-job-service.js';
+import { buildRecordedEvent } from '../queries/query-execution.js';
+import {
+  decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
+} from '../sessions/session-record-codecs.js';
+import {
+  endUnstartedRound, newRequestRound, newRoutingRound, setIntake,
+} from '../state/request-rounds.js';
+import {
+  ownsQuery, releaseSessionRecord, sessionMachineStateOf, transitionSession,
+} from '../state/session-availability.js';
+import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
+import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
+import { sessionRefProblem } from '../persistence/rework-codecs.js';
+import { readOwnerRecord } from './owner-record-read.js';
+import { mergeGuards as mergeGuardsChecked } from './execution-entry-service.js';
+import { ownerWriteStoreFailureToRejection } from '../persistence/read-result-failures.js';
+import { replayCommittedReceipt, type ReceiptReplayFailure } from './receipt-replay.js';
+import { admitRequestSecretary } from './secretary-selection.js';
+
+// ------------------------------------------------------------------------ //
+// The command, plan and result unions                                        //
+// ------------------------------------------------------------------------ //
+
+export type RequestPublicCommandV1 =
+  | { kind: 'submit'; commandId: string; goalId: string | null; text: string; continues: QueryJobRef | null;
+      recipient: SessionRef | null }
+  | { kind: 'route'; commandId: string; round: QueryJobRef; to: SessionRef | null; reason: 'manual' | 'dropped' }
+  | { kind: 'select_idea'; commandId: string; round: QueryJobRef; index: number }
+  | { kind: 'ask'; commandId: string; round: QueryJobRef; cardRefs: VersionedRef[]; regenerate: boolean; text: string };
+
+export type RequestInternalCommandV1 =
+  | { kind: 'assigned'; operationId: string; requestRoot: QueryJobRef; to: SessionRef; guard: VersionedRef }
+  | { kind: 'end_unbound'; operationId: string; round: QueryJobRef }
+  | { kind: 'handoff' | 'archived'; operationId: string; requestRoot: QueryJobRef; to: SessionRef };
+
+export type RequestPlanV1 = {
+  assignTo: { session: SessionRef; guard: VersionedRef; fresh: boolean } | null;
+  createdLine: boolean;
+  /** True only when Workflow's `ensureLine` answered `capacity_blocked`; a no-pick plan is not a blocked pick. */
+  capacityBlocked: boolean;
+};
+
+export type RequestRejectionV1 = {
+  status: 'rejected';
+  code: 'invalid' | 'forbidden' | 'unavailable' | 'busy' | 'not_found' | 'revision_conflict' | 'idempotency_conflict';
+  reason: string;
+};
+
+export type RequestAppendResultV1 =
+  | { status: 'appended'; receipt: RequestCommandReceiptV1; replayed: boolean }
+  | { status: 'ended'; round: QueryJobRef; replayed: boolean }
+  | RequestRejectionV1;
+
+export interface RequestRoundPort {
+  precheck(ctx: CoreCallContext, command: RequestPublicCommandV1):
+    Promise<{ status: 'replay'; result: RequestAppendResultV1 }
+      | { status: 'fresh'; command: RequestPublicCommandV1; facts: RequestCoreViewV1 | null }
+      | RequestRejectionV1>;
+  append(ctx: CoreCallContext,
+    input: { command: RequestPublicCommandV1; plan: RequestPlanV1 } | { command: RequestInternalCommandV1 }):
+    Promise<RequestAppendResultV1>;
+  unassigned(ctx: CoreCallContext, scope: WorkspaceScope, input: { limit: number; continuation: string | null }):
+    Promise<ReadResult<{ requests: QueryJobRef[]; continuation: string | null; wrapped: boolean }>>;
+}
+
+// ------------------------------------------------------------------------ //
+// Dependencies                                                              //
+// ------------------------------------------------------------------------ //
+
+/** The store surface every append reads and commits through (the three ports plus the ordered read). */
+export type RequestServiceStore = GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
+
+/**
+ * The request facts reader the composition passes: `createRequestFacts(...)`'s object. The
+ * extra `readFacts` is the facts owner's complete one-request read; this file never re-implements it.
+ */
+export type RequestFactsReader = RequestFactsPort & {
+  readFacts(ctx: CoreCallContext, input: { requestRoot: QueryJobRef }): Promise<ReadResult<RequestRoundsFactsV1>>;
+};
+
+export type RequestRoundDependencies = {
+  records: RequestServiceStore;
+  facts: RequestFactsReader;
+  /** The trusted Session facts read the one admission check uses. */
+  sessionFacts: Pick<SessionFactsPort, 'readSessionFacts'>;
+  /** The real `SessionDutyResolver` the Host composition passes. */
+  duty: SessionDutyReadPort;
+  profiles: SecretaryProfilePort;
+  now(): string;
+  /** A fresh QueryJob id (the run id is derived from it). */
+  operationId(): string;
+};
+
+// ------------------------------------------------------------------------ //
+// Claim keys and small helpers                                              //
+// ------------------------------------------------------------------------ //
+
+/** The one per-request tail slot: owner = the request's last round key. */
+export const REQUEST_TAIL_PREFIX = 'request-tail:';
+/** The one per-secretary intake slot: owner = the pending holder round key. */
+export const SECRETARY_INTAKE_PREFIX = 'secretary-intake:';
+
+export function requestTailKey(requestRoot: QueryJobRef): string {
+  return REQUEST_TAIL_PREFIX + canonicalJson(requestRoot as unknown as JsonValue);
+}
+
+export function secretaryIntakeKey(session: SessionRef): string {
+  return SECRETARY_INTAKE_PREFIX + sessionAggregateRefKey(plainSessionRefToAggregate(session));
+}
+
+function keyOf(value: unknown): string {
+  return canonicalJson(value as JsonValue);
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function unavailable(reason: string): RequestRejectionV1 {
+  return rejected('unavailable', reason);
+}
+
+function isPerson(ctx: CoreCallContext): boolean {
+  return ctx.principal.kind === 'host' && ctx.principal.actor.kind === 'human';
+}
+
+function isSystem(ctx: CoreCallContext): boolean {
+  return ctx.principal.kind === 'host' && ctx.principal.actor.kind === 'system';
+}
+
+/** The trusted principal folded into the identity (the notes pattern, `note-service.ts:247`). */
+function principalOf(ctx: CoreCallContext): JsonValue {
+  if (ctx.principal.kind !== 'host') throw new Error('a request command requires a trusted Host actor');
+  return { kind: 'host', actor: { kind: ctx.principal.actor.kind, id: ctx.principal.actor.id } };
+}
+
+/** `request.<kind>:<sha256(operation, project, workspace, principal, commandId)>`. */
+function commandIdentity(ctx: CoreCallContext, kind: string, commandId: string): string {
+  return `request.${kind}:` + sha256Hex(canonicalJson({ schemaVersion: 1, operation: `request.${kind}`,
+    projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null, principal: principalOf(ctx),
+    commandId } as unknown as JsonValue));
+}
+
+/**
+ * The normalized PUBLIC input only: never a pick, a read revision or a created
+ * line, so a line created between two attempts replays to the same receipt.
+ */
+function commandFingerprint(command: RequestPublicCommandV1): string {
+  let content: unknown;
+  switch (command.kind) {
+    case 'submit':
+      content = { kind: 'submit', goalId: command.goalId, text: command.text, continues: command.continues,
+        recipient: command.recipient };
+      break;
+    case 'route':
+      content = { kind: 'route', round: command.round, to: command.to, reason: command.reason };
+      break;
+    case 'select_idea':
+      content = { kind: 'select_idea', round: command.round, index: command.index };
+      break;
+    case 'ask':
+      content = { kind: 'ask', round: command.round, cardRefs: command.cardRefs, regenerate: command.regenerate,
+        text: command.text };
+      break;
+  }
+  return sha256Hex(canonicalJson(content as JsonValue));
+}
+
+/** The caller's workspace: the scope every request read, round and secretary check uses. */
+export function workspaceOf(ctx: CoreCallContext): WorkspaceScope {
+  return { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
+}
+
+// ------------------------------------------------------------------------ //
+// Pure input checks (shape, text, refs; nothing read)                       //
+// ------------------------------------------------------------------------ //
+
+function queryJobRefProblem(value: unknown, what: string): string | null {
+  if (!isRecord(value) || value['aggregateType'] !== 'QueryJob') return `${what} must name a complete QueryJobRef`;
+  return aggregateRefProblem(value) === null ? null : `${what} must name a complete QueryJobRef`;
+}
+
+function versionedRefProblem(value: unknown, what: string): string | null {
+  if (!isRecord(value)) return `${what} must be a VersionedRef`;
+  const refProblem = aggregateRefProblem(value['ref']);
+  if (refProblem !== null) return `${what}.ref ${refProblem}`;
+  if (!Number.isSafeInteger(value['revision']) || (value['revision'] as number) < 1) {
+    return `${what}.revision must be a positive safe integer`;
+  }
+  return null;
+}
+
+function publicCommandProblem(command: RequestPublicCommandV1): string | null {
+  if (!isRecord(command) || !nonEmpty(command.commandId)) return 'the command requires a commandId';
+  switch (command.kind) {
+    case 'submit': {
+      if (!(command.goalId === null || nonEmpty(command.goalId))) return 'goalId must be null or a non-empty string';
+      const text = queryTextProblem(command.text);
+      if (text !== null) return `text ${text}`;
+      if (command.continues !== null) {
+        const problem = queryJobRefProblem(command.continues, 'continues');
+        if (problem !== null) return problem;
+      }
+      if (command.recipient !== null) {
+        const problem = sessionRefProblem(command.recipient, 'recipient');
+        if (problem !== null) return problem;
+      }
+      return null;
+    }
+    case 'route': {
+      const problem = queryJobRefProblem(command.round, 'round');
+      if (problem !== null) return problem;
+      if (command.reason !== 'manual' && command.reason !== 'dropped') return 'reason must be manual or dropped';
+      if (command.reason === 'dropped' && command.to !== null) return 'a dropped route has no recipient';
+      if (command.reason === 'manual' && command.to === null) return 'a manual route requires a recipient';
+      return command.to === null ? null : sessionRefProblem(command.to, 'to');
+    }
+    case 'select_idea': {
+      const problem = queryJobRefProblem(command.round, 'round');
+      if (problem !== null) return problem;
+      if (!Number.isSafeInteger(command.index) || command.index < 0) return 'index must be a non-negative integer';
+      return null;
+    }
+    case 'ask': {
+      const problem = queryJobRefProblem(command.round, 'round');
+      if (problem !== null) return problem;
+      const text = queryTextProblem(command.text);
+      if (text !== null) return `text ${text}`;
+      if (!Array.isArray(command.cardRefs)) return 'cardRefs must be an array';
+      for (const [index, ref] of command.cardRefs.entries()) {
+        const refProblem = versionedRefProblem(ref, `cardRefs[${index}]`);
+        if (refProblem !== null) return refProblem;
+      }
+      if (typeof command.regenerate !== 'boolean') return 'regenerate must be a boolean';
+      return null;
+    }
+    default:
+      return `unknown request command ${String((command as { kind?: unknown }).kind)}`;
+  }
+}
+
+// ------------------------------------------------------------------------ //
+// Reads                                                                     //
+// ------------------------------------------------------------------------ //
+
+type OneRecord<T> =
+  | { status: 'ready'; value: T; guard: RecordGuard }
+  | { status: 'not_found' }
+  | { status: 'rejected'; reason: string };
+
+async function readOne<T>(
+  records: RequestServiceStore,
+  ref: unknown,
+  decode: (record: EncodedRecord) => { status: 'decoded'; value: T } | { status: 'invalid'; reason: string },
+): Promise<OneRecord<T>> {
+  const refKey = keyOf(ref);
+  let damage: string | null = null;
+  let guard: RecordGuard | null = null;
+  const read = await readOwnerRecord({
+    store: records,
+    refKey,
+    decode: (record) => {
+      const decoded = decode(record);
+      if (decoded.status !== 'decoded') { damage = decoded.reason; return decoded; }
+      guard = { refKey: record.refKey, expectedRevision: record.revision };
+      return decoded;
+    },
+    readError: (message) => rejected('unavailable', `the read failed: ${message}`),
+  });
+  if (!read.ok) {
+    if ('notFound' in read) return { status: 'not_found' };
+    if (damage !== null) return { status: 'rejected', reason: `the record is damaged: ${damage}` };
+    return { status: 'rejected', reason: `the read failed: ${read.rejection.code}: ${read.rejection.reason}` };
+  }
+  return { status: 'ready', value: read.value, guard: guard! };
+}
+
+const decodeJob = (record: EncodedRecord) => decodeQueryJobSnapshot(record);
+
+/** The request root a round belongs to; a plain Query (or a foreign ref) is `not_found`. */
+async function resolveRequestRoot(
+  records: RequestServiceStore, ctx: CoreCallContext, round: QueryJobRef,
+): Promise<{ status: 'ready'; root: QueryJobRef } | { status: 'not_found' } | { status: 'rejected'; reason: string }> {
+  if (round.projectId !== ctx.projectId || round.workspaceId !== (ctx.workspaceId ?? '')) return { status: 'not_found' };
+  const read = await readOne(records, round, decodeJob);
+  if (read.status === 'not_found') return { status: 'not_found' };
+  if (read.status === 'rejected') return { status: 'rejected', reason: read.reason };
+  const root = read.value.job.requestRoot;
+  if (root === null) return { status: 'not_found' };
+  return { status: 'ready', root: { ...root } };
+}
+
+async function readRequestFacts(
+  deps: RequestRoundDependencies, ctx: CoreCallContext, root: QueryJobRef,
+): Promise<{ status: 'ready'; facts: RequestRoundsFactsV1 } | RequestRejectionV1> {
+  let read: ReadResult<RequestRoundsFactsV1>;
+  try {
+    read = await deps.facts.readFacts(ctx, { requestRoot: root });
+  } catch (error) {
+    return unavailable(`the request facts could not be read: ${messageOf(error)}`);
+  }
+  if (read.status === 'not_found') return rejected('not_found', 'the ref is not a request root of this workspace');
+  if (read.status === 'rejected') return unavailable(`the request facts read failed: ${read.reason}`);
+  if (read.status !== 'ready') return unavailable('the request facts are not readable');
+  return { status: 'ready', facts: read.value };
+}
+
+async function readRequestView(
+  deps: RequestRoundDependencies, ctx: CoreCallContext, root: QueryJobRef,
+): Promise<{ status: 'ready'; view: RequestCoreViewV1 } | RequestRejectionV1> {
+  let read: ReadResult<RequestCoreViewV1>;
+  try {
+    read = await deps.facts.readRequest(ctx, { requestRoot: root });
+  } catch (error) {
+    return unavailable(`the request view could not be read: ${messageOf(error)}`);
+  }
+  if (read.status === 'not_found') return rejected('not_found', 'the ref is not a request root of this workspace');
+  if (read.status === 'rejected') return unavailable(`the request view read failed: ${read.reason}`);
+  if (read.status !== 'ready') return unavailable('the request view is not readable');
+  return { status: 'ready', view: read.value };
+}
+
+/** The workspace Goal must exist, be live and belong here (the `plan-service.ts:455` reading of live). */
+async function readLiveGoal(
+  deps: RequestRoundDependencies, ctx: CoreCallContext, goalId: string,
+): Promise<{ status: 'ready'; guard: RecordGuard } | RequestRejectionV1> {
+  const ref: GoalRef = { aggregateType: 'Goal', projectId: ctx.projectId, goalId };
+  const read = await readOne(deps.records, ref, decodeGoalSnapshot);
+  if (read.status === 'not_found') return rejected('not_found', 'the Goal does not exist');
+  if (read.status === 'rejected') return unavailable(`the Goal could not be read: ${read.reason}`);
+  if (read.value.workspaceRef.projectId !== ctx.projectId || read.value.workspaceRef.workspaceId !== ctx.workspaceId) {
+    return rejected('invalid', 'the Goal belongs to another workspace');
+  }
+  if (read.value.desiredState !== 'active') return rejected('invalid', 'the Goal is not live');
+  return { status: 'ready', guard: read.guard };
+}
+
+// ------------------------------------------------------------------------ //
+// The one secretary admission check and the profiles it returns             //
+// ------------------------------------------------------------------------ //
+
+type AdmittedTarget = { session: SessionRecord; profile: SecretaryProfileV1; guards: RecordGuard[] };
+
+/** A rule refusal, with the revision of the Session it judged (null when refused before the read). */
+type RefusedTarget = { status: 'refused'; reason: string; revision: number | null };
+
+/** Every target the service assigns, routes to or prepares must pass this one check. */
+async function admitTarget(
+  deps: RequestRoundDependencies, ctx: CoreCallContext, session: SessionRef,
+): Promise<{ status: 'ready'; value: AdmittedTarget } | RefusedTarget | RequestRejectionV1> {
+  let admission;
+  try {
+    admission = await admitRequestSecretary(deps, ctx, { caller: workspaceOf(ctx), session });
+  } catch (error) {
+    return unavailable(`the target Session facts could not be read: ${messageOf(error)}`);
+  }
+  if (admission.status === 'rejected') {
+    return unavailable(`the target Session could not be read: ${admission.code}: ${admission.reason}`);
+  }
+  if (admission.status !== 'ready') return unavailable('the target Session facts are not readable');
+  if (admission.value.status === 'refused') {
+    return { status: 'refused', reason: admission.value.reason, revision: admission.value.revision };
+  }
+  return { status: 'ready', value: {
+    session: admission.value.session, profile: admission.value.profile, guards: admission.value.guards,
+  } };
+}
+
+/** The submit-time profile of an existing owner: the one admission check, then its profile. */
+async function profileForOwner(
+  deps: RequestRoundDependencies, ctx: CoreCallContext, owner: SessionRef,
+): Promise<{ status: 'ready'; profile: SecretaryProfileV1; guards: RecordGuard[] } | RequestRejectionV1> {
+  const admitted = await admitTarget(deps, ctx, owner);
+  if (admitted.status === 'refused') return unavailable(admitted.reason);
+  if (admitted.status !== 'ready') return admitted;
+  return { status: 'ready', profile: admitted.value.profile, guards: admitted.value.guards };
+}
+
+/** The submit-time profile for a round that waits: the new line's profile builds its intent. */
+async function profileForWaiting(
+  deps: RequestRoundDependencies, ctx: CoreCallContext,
+): Promise<{ status: 'ready'; profile: SecretaryProfileV1 } | RequestRejectionV1> {
+  let read: ReadResult<SecretaryProfileV1 | null>;
+  try {
+    read = await deps.profiles.forNewLine(ctx, { workspace: workspaceOf(ctx) });
+  } catch (error) {
+    return unavailable(`the secretary profile could not be read: ${messageOf(error)}`);
+  }
+  if (read.status === 'rejected') return unavailable(`the secretary profile read failed: ${read.reason}`);
+  // Only a ready read that found no profile means "no binding"; any other
+  // answer is a failed read.
+  if (read.status !== 'ready') return unavailable(`the secretary profile read is not available (${read.status})`);
+  if (read.value === null) return unavailable('no_secretary_binding');
+  return { status: 'ready', profile: read.value };
+}
+
+// ------------------------------------------------------------------------ //
+// Commit plumbing                                                           //
+// ------------------------------------------------------------------------ //
+
+/** Where the round's new holder came from: this decides which conflict re-picks. */
+type AssignmentSource = 'fresh' | 'recipient' | 'none';
+
+/**
+ * A conflict on the target Session, classified by where the target came from:
+ * a fresh pick answers `revision_conflict`, so Workflow re-picks without it; a
+ * target the person or the drain named answers `busy`, because re-picking would
+ * override that choice.
+ */
+function targetConflict(source: AssignmentSource, reason: string): RequestRejectionV1 {
+  return rejected(source === 'fresh' ? 'revision_conflict' : 'busy', reason);
+}
+
+type PreparedAppend = {
+  receipt: RequestCommandReceiptV1 | null;
+  records: EncodedRecord[];
+  events: EncodedDomainEvent[];
+  guards: RecordGuard[];
+  claims: UniqueClaimChange[];
+  /** The created round, and its `since` binding target; `null` for `end_unbound`. */
+  round: QueryJobRef;
+  sinceRefKey: string | null;
+  /** The plan's source and every target-Session guard this commit writes. */
+  conflict: { source: AssignmentSource; sessionRefKeys: string[]; intakeKey: string | null };
+};
+
+type CommitOutcome =
+  | { status: 'done'; result: RequestAppendResultV1 }
+  | { status: 'tail_conflict' };
+
+type PreparedOutcome =
+  | { status: 'ready'; value: PreparedAppend }
+  | { status: 'retry' }
+  | RequestRejectionV1;
+
+/** A duplicate guard disagreement means the read window moved: re-read it, never pick a winner. */
+const RETRY_WINDOW = { status: 'retry' } as const;
+
+/** The one guard merge (`execution-entry-service.ts`); a conflicting duplicate rebuilds the read window. */
+function guardList(groups: readonly (readonly RecordGuard[])[]):
+  { status: 'ready'; guards: RecordGuard[] } | { status: 'retry' } {
+  const merged = mergeGuardsChecked(groups.flat());
+  if (!merged.ok) return RETRY_WINDOW;
+  return { status: 'ready', guards: merged.guards };
+}
+
+/**
+ * The guard merge of one prepared commit. A target Session read twice at two
+ * revisions (once among the request facts, once by the admission check) changed
+ * under this command and is classified by its source; any other disagreement
+ * only means the request window moved, and the window is re-read.
+ */
+function preparedGuards(
+  groups: readonly (readonly RecordGuard[])[],
+  target: { source: AssignmentSource; sessionRefKeys: readonly string[] },
+): { status: 'ready'; guards: RecordGuard[] } | { status: 'retry' } | RequestRejectionV1 {
+  if (target.source !== 'none') {
+    const all = groups.flat();
+    for (const refKey of target.sessionRefKeys) {
+      const revisions = new Set(all.filter((guard) => guard.refKey === refKey).map((guard) => guard.expectedRevision));
+      if (revisions.size > 1) return targetConflict(target.source, 'the target Session changed while the request was read');
+    }
+  }
+  return guardList(groups);
+}
+
+function nullGuard(refKey: string): RecordGuard {
+  return { refKey, expectedRevision: null };
+}
+
+// ------------------------------------------------------------------------ //
+// Replay                                                                    //
+// ------------------------------------------------------------------------ //
+
+/**
+ * The stored result of a committed public command: the receipt is inside the
+ * created round's `QueryJobSubmitted` event, so a replay never rebuilds it from
+ * the later snapshot and never runs a pick or a line.
+ */
+async function replayPublic(
+  deps: RequestRoundDependencies, identityKey: string, fingerprint: string,
+): Promise<{ status: 'ready'; result: RequestAppendResultV1 } | { status: 'none' } | RequestRejectionV1> {
+  const found = await lookupCommittedReceipt(deps.records, identityKey, fingerprint);
+  switch (found.status) {
+    case 'found': return { status: 'ready', result: await receiptOf(deps, found.receipt, identityKey, fingerprint) };
+    case 'missing': return { status: 'none' };
+    case 'conflict': return rejected('idempotency_conflict', found.reason);
+    case 'invalid': return rejected('invalid', found.reason);
+    default: return unavailable(`the idempotency lookup failed: ${found.reason}`);
+  }
+}
+
+/** The one committed-request replay: event type, decoder, identity, receipt projection and request wording. */
+function requestReplayFailure(failure: ReceiptReplayFailure): RequestRejectionV1 {
+  switch (failure.kind) {
+    case 'event_unreadable':
+      return unavailable(`the original request event could not be read: ${messageOf(failure.error)}`);
+    case 'event_rejected':
+      return unavailable(`the original request event is not readable: ${failure.rejection.code}: ${failure.rejection.reason}`);
+    case 'wrong_event_type':
+      return unavailable(`the original request event is damaged: not a ${failure.expectedEventType} event`);
+    case 'receipt_mismatch':
+      return unavailable('the original request event disagrees with its receipt');
+    case 'undecodable':
+      return unavailable(`the original request event is damaged: ${failure.reason}`);
+    case 'identity_mismatch':
+      return unavailable('the original request event carries another identity');
+  }
+}
+
+async function receiptOf(
+  deps: RequestRoundDependencies,
+  receipt: Extract<StoreCommitReceipt, { status: 'committed' }>,
+  identityKey: string, fingerprint: string,
+): Promise<RequestAppendResultV1> {
+  const replayed = await replayCommittedReceipt<QueryJobSubmittedEventV1, RequestAppendResultV1>({
+    receipt,
+    eventAt: (cursor) => deps.records.eventAt(cursor),
+    expectedEventType: 'QueryJobSubmitted',
+    decode: decodeQueryJobSubmittedEvent,
+    expected: { identityKey, fingerprint },
+    identityKey: (decoded) => decoded.identityKey,
+    fingerprint: (decoded) => decoded.fingerprint,
+    validate: (decoded) => decoded.payload.job.receipt === null
+      ? unavailable('the original request event carries no receipt') : null,
+    project: (decoded) => ({ status: 'appended', receipt: decoded.payload.job.receipt!, replayed: true }),
+    onFailure: requestReplayFailure,
+  });
+  return replayed.status === 'committed' ? replayed.value : unavailable(replayed.reason);
+}
+
+// ------------------------------------------------------------------------ //
+// Intake changes (the one-change-per-key rule)                              //
+// ------------------------------------------------------------------------ //
+
+type IntakeInput = {
+  /** The pending round that currently holds an intake, if any. */
+  holder: QueryJobSnapshot | null;
+  /** The Session whose intake this commit should take. */
+  desire: SessionRef;
+  /** Which round holds it after this commit: the new round, or an existing holder (the drain). */
+  next: { kind: 'new'; key: string } | { kind: 'existing'; job: QueryJobSnapshot };
+};
+
+type IntakeChanges = { claims: UniqueClaimChange[]; records: EncodedRecord[]; guards: RecordGuard[] };
+
+/**
+ * One change per intake key (`commit-extensions.ts:77`): a release and a take of
+ * the SAME Session merge into one move; only different Sessions get two changes.
+ * `setIntake` never rewrites a round whose field already matches.
+ */
+function intakeChanges(input: IntakeInput): IntakeChanges {
+  const claims: UniqueClaimChange[] = [];
+  const records: EncodedRecord[] = [];
+  const guards: RecordGuard[] = [];
+  const holder = input.holder;
+  const oldKey = holder === null || holder.job.intakeSession === null ? null : secretaryIntakeKey(holder.job.intakeSession);
+  const oldHolderKey = holder === null ? null : keyOf(holder.ref);
+  const desiredKey = secretaryIntakeKey(input.desire);
+  const nextKey = input.next.kind === 'new' ? input.next.key : keyOf(input.next.job.ref);
+
+  // The FINAL intakeSession of every round this commit touches, keyed by ref:
+  // a release and a take on the same holder round are ONE record, never two
+  // (the store refuses a ref twice; one change per intake key).
+  const writes: { job: QueryJobSnapshot; session: SessionRef | null }[] = [];
+  const queueWrite = (job: QueryJobSnapshot, session: SessionRef | null): void => {
+    const existing = writes.find((entry) => keyOf(entry.job.ref) === keyOf(job.ref));
+    if (existing !== undefined) {
+      existing.session = session;
+      return;
+    }
+    writes.push({ job, session });
+  };
+
+  const sameHolder = oldHolderKey !== null && oldHolderKey === nextKey;
+  if (oldKey === desiredKey && oldHolderKey !== null) {
+    // The same Session keeps the key: one move of one key, never release + take.
+    claims.push({ claimKey: desiredKey, expectedOwner: oldHolderKey, nextOwner: nextKey });
+    if (!sameHolder) {
+      // A different existing round becomes the holder: BOTH records change.
+      queueWrite(holder!, null);
+      if (input.next.kind === 'existing') queueWrite(input.next.job, input.desire);
+    }
+  } else {
+    if (oldKey !== null && oldHolderKey !== null) {
+      claims.push({ claimKey: oldKey, expectedOwner: oldHolderKey, nextOwner: null });
+      // The same holder round both releases X and takes S: one record with S.
+      queueWrite(holder!, sameHolder ? input.desire : null);
+    }
+    claims.push({ claimKey: desiredKey, expectedOwner: null, nextOwner: nextKey });
+    if (input.next.kind === 'existing' && !sameHolder) queueWrite(input.next.job, input.desire);
+  }
+
+  for (const entry of writes) {
+    const next = setIntake(entry.job, entry.session);
+    if (next.revision === entry.job.revision && sameJson(next.job, entry.job.job)) continue;
+    records.push(encodeQueryJobSnapshot(next));
+    guards.push({ refKey: keyOf(entry.job.ref), expectedRevision: entry.job.revision });
+  }
+  return { claims, records, guards };
+}
+
+/** A no-op tail CAS: `end_unbound` adds no round but still excludes a concurrent append. */
+function noopTailClaim(facts: RequestRoundsFactsV1): UniqueClaimChange {
+  const tailKey = keyOf(facts.tail.ref);
+  return { claimKey: requestTailKey(rootOfFacts(facts)), expectedOwner: tailKey, nextOwner: tailKey };
+}
+
+function moveTailClaim(facts: RequestRoundsFactsV1 | null, requestRoot: QueryJobRef, next: QueryJobRef): UniqueClaimChange {
+  const expected = facts === null ? null : keyOf(facts.tail.ref);
+  return { claimKey: requestTailKey(requestRoot), expectedOwner: expected, nextOwner: keyOf(next) };
+}
+
+function rootOfFacts(facts: RequestRoundsFactsV1): QueryJobRef {
+  const root = facts.rounds.find((round) => round.job.roundKind === 'request');
+  if (root === undefined) throw new Error('request-service: the facts name no request root');
+  return { ...root.ref };
+}
+
+/** The pending round that currently holds an intake, if any (the invariant allows at most one). */
+function intakeHolder(facts: RequestRoundsFactsV1): QueryJobSnapshot | null {
+  return facts.rounds.find((round) => round.job.intakeSession !== null) ?? null;
+}
+
+/** A round that has not entered the Kernel: pending or running Job, pending/claimed/prepared Run. */
+function unstarted(facts: RequestRoundsFactsV1): QueryJobSnapshot[] {
+  const runByKey = new Map(facts.runs.map((run) => [keyOf(run.ref), run]));
+  return facts.rounds.filter((round) => {
+    if (round.job.status !== 'pending' && round.job.status !== 'running') return false;
+    const runRef = round.job.runRef;
+    if (runRef === null) return false;
+    const run = runByKey.get(keyOf(runRef));
+    if (run === undefined) return false;
+    if (run.run.status === 'answered' || run.run.status === 'closed' || run.run.outcome !== null) return false;
+    const phase = run.run.executionState?.phase;
+    return phase === undefined || phase === 'claimed' || phase === 'prepared';
+  });
+}
+
+// ------------------------------------------------------------------------ //
+// Round and event builders                                                  //
+// ------------------------------------------------------------------------ //
+
+function intentOf(input: {
+  scope: WorkspaceScope; queryJobId: string; goalId: string | null; text: string;
+  profile: SecretaryProfileV1; correlationId: string;
+}): QueryJobIntentV1 {
+  return {
+    schemaVersion: 1,
+    intentId: input.queryJobId,
+    projectId: input.scope.projectId,
+    workspaceId: input.scope.workspaceId,
+    goalId: input.goalId,
+    question: input.text,
+    focusTaskRefs: [],
+    budget: structuredClone(input.profile.budget),
+    multiTurn: { maxRounds: 1 },
+    correlationId: input.correlationId,
+    execution: {
+      kind: 'semantic_query',
+      roleBinding: structuredClone(input.profile.roleBinding),
+      runtimeBudget: structuredClone(input.profile.runtimeBudget),
+    },
+  };
+}
+
+function submittedEvent(input: {
+  ctx: CoreCallContext; job: PendingQueryJobSnapshot; eventId: string; identityKey: string; fingerprint: string;
+  commandId: string; occurredAt: string;
+}): QueryJobSubmittedEventV1 {
+  if (input.ctx.principal.kind !== 'host') throw new Error('request-service: a request write requires a Host actor');
+  const actor = input.ctx.principal.actor;
+  return {
+    eventId: input.eventId,
+    eventType: 'QueryJobSubmitted',
+    schemaVersion: 1,
+    projectId: input.job.ref.projectId,
+    workspaceId: input.job.ref.workspaceId,
+    aggregateType: 'QueryJob',
+    aggregateId: input.job.ref.queryJobId,
+    aggregateRevision: 1,
+    causationId: input.identityKey,
+    correlationId: input.job.job.intent.correlationId,
+    idempotencyKey: input.commandId,
+    actor: { kind: actor.kind, id: actor.id } as ActorRef,
+    occurredAt: input.occurredAt,
+    identityKey: input.identityKey,
+    fingerprint: input.fingerprint,
+    payload: { job: structuredClone(input.job.job) },
+  };
+}
+
+function submissionOf(identityKey: string, fingerprint: string, eventId: string): QuerySubmissionBindingV1 {
+  return { schemaVersion: 1, identityKey, fingerprint, eventId };
+}
+
+// ------------------------------------------------------------------------ //
+// select_idea validation                                                   //
+// ------------------------------------------------------------------------ //
+
+function selectIdeaProblemOf(view: RequestCoreViewV1, round: QueryJobRef, index: number): RequestRejectionV1 | null {
+  const target = view.rounds.find((candidate) => sameJson(candidate.ref, round));
+  if (target === undefined) return rejected('not_found', 'the round does not belong to its request');
+  if (target.answer === null) return rejected('invalid', 'the round has no answer yet');
+  if (target.ideas.length < 2 || target.ideas.length > 3) {
+    return rejected('invalid', 'the answer does not carry 2-3 ideas');
+  }
+  if (index >= target.ideas.length) return rejected('invalid', 'index is outside the answer ideas');
+  const latest = [...view.rounds].reverse().find((candidate) => candidate.answer !== null);
+  if (latest === undefined || !sameJson(latest.ref, round)) {
+    return rejected('revision_conflict', 'the round is no longer the request latest answered round');
+  }
+  return null;
+}
+
+/**
+ * The one assignment-row decision (the submit rows and `route`'s
+ * from-state rows). Pure: the caller supplies the command and the facts this
+ * owner reads. Workflow calls it to decide whether to pick; `append` calls it
+ * to review the plan it was handed.
+ */
+export function requestAssignmentRow(
+  command: RequestPublicCommandV1,
+  facts: { ownerState: RequestOwnerStateV1 } | null,
+): 'follow_owner' | 'wait' | 'pick' | 'recipient' {
+  if (command.kind === 'route') return command.reason === 'dropped' ? 'wait' : 'recipient';
+  if (command.kind === 'submit' && command.recipient !== null) return 'recipient';
+  if (facts === null) return 'pick';
+  if (facts.ownerState === 'owned') return 'follow_owner';
+  if (facts.ownerState === 'waiting') return 'wait';
+  return 'pick';
+}
+
+// ------------------------------------------------------------------------ //
+// Ending a claimed or prepared attempt                                      //
+// ------------------------------------------------------------------------ //
+
+/** The Session a claimed or prepared QueryRun names: its read guard and, while it still holds it, the release. */
+type ClaimedSession = { guard: RecordGuard; released: SessionRecord | null };
+
+/**
+ * The Session a claimed or prepared QueryRun names. Ending the run reads it, so
+ * its guard always joins the commit; the released record is written only while
+ * the run still holds the occupancy. The release is the Query terminal's own
+ * Session rule (SES-08): the claim generation, the run's phase, and the same
+ * guard facts the terminal passes.
+ */
+async function readClaimedSession(
+  deps: RequestRoundDependencies, run: QueryRunSnapshot,
+): Promise<{ status: 'ready'; claimed: ClaimedSession | null } | RequestRejectionV1> {
+  const state = run.run.executionState;
+  if (state === undefined || (state.phase !== 'claimed' && state.phase !== 'prepared')) {
+    return { status: 'ready', claimed: null };
+  }
+  const read = await readOne(deps.records, plainSessionRefToAggregate(state.sessionRef), decodeSessionRecord);
+  if (read.status === 'not_found') return unavailable('the claimed Session does not exist');
+  if (read.status === 'rejected') return unavailable(`the claimed Session could not be read: ${read.reason}`);
+  if (!ownsQuery(read.value, run.ref, state)) return { status: 'ready', claimed: { guard: read.guard, released: null } };
+  const released = transitionSession(sessionMachineStateOf(read.value),
+    { kind: 'occupancy_released', cause: 'query_terminal_observed' }, {
+      caller: 'service', hostLease: null, pin: null,
+      holder: { ref: run.ref, claimGeneration: state.sessionGeneration, before: `query_${state.phase}`, after: 'query_settled',
+        kernelTurnSeen: true, inputsConfirmed: true, historyBoundaryCursor: null, kernelTurnOpen: false },
+      probe: null, kernelHeader: null, openResponsibleLink: null, creation: null, link: null,
+    });
+  if (!released.ok) return unavailable(`the claimed Session occupancy could not be released: ${released.detail}`);
+  for (const effect of released.effects) {
+    if (effect.kind === 'release_session') {
+      return { status: 'ready', claimed: { guard: read.guard, released: releaseSessionRecord(read.value, effect) } };
+    }
+  }
+  throw new Error('the admitted Session release writes no Session record');
+}
+
+// ------------------------------------------------------------------------ //
+// The factory                                                               //
+// ------------------------------------------------------------------------ //
+
+export function createRequestRoundService(deps: RequestRoundDependencies): RequestRoundPort {
+  // ---------------------------------------------------------------------- //
+  // precheck                                                               //
+  // ---------------------------------------------------------------------- //
+
+  async function precheck(ctx: CoreCallContext, command: RequestPublicCommandV1):
+    Promise<{ status: 'replay'; result: RequestAppendResultV1 }
+      | { status: 'fresh'; command: RequestPublicCommandV1; facts: RequestCoreViewV1 | null }
+      | RequestRejectionV1> {
+    // (1) only the person, before anything is read.
+    if (!isPerson(ctx)) return rejected('forbidden', 'only the person may issue a request command');
+    // (2) pure input checks, nothing read.
+    const shape = publicCommandProblem(command);
+    if (shape !== null) return rejected('invalid', shape);
+
+    // (3) identity and fingerprint.
+    const identityKey = commandIdentity(ctx, command.kind, command.commandId);
+    const fingerprint = commandFingerprint(command);
+
+    // (4) a committed receipt replays before any pick, line or time-dependent check.
+    const replay = await replayPublic(deps, identityKey, fingerprint);
+    if (replay.status === 'ready') return { status: 'replay', result: replay.result };
+    if (replay.status === 'rejected') return replay;
+
+    // (5) fresh current-fact checks.
+    if (command.kind === 'submit') {
+      if (command.goalId !== null) {
+        const goal = await readLiveGoal(deps, ctx, command.goalId);
+        if (goal.status !== 'ready') return goal;
+      }
+      if (command.continues === null) return { status: 'fresh', command, facts: null };
+      const facts = await readRequestFacts(deps, ctx, command.continues);
+      if (facts.status !== 'ready') return facts;
+      if (command.goalId !== null && command.goalId !== facts.facts.requestGoalId) {
+        return rejected('invalid', 'goalId must be null or the request goal');
+      }
+      const view = await readRequestView(deps, ctx, command.continues);
+      if (view.status !== 'ready') return view;
+      return { status: 'fresh', command, facts: view.view };
+    }
+
+    const resolved = await resolveRequestRoot(deps.records, ctx, command.round);
+    if (resolved.status === 'not_found') {
+      return rejected('not_found', 'the round is not a request round of this workspace');
+    }
+    if (resolved.status === 'rejected') return unavailable(resolved.reason);
+    const view = await readRequestView(deps, ctx, resolved.root);
+    if (view.status !== 'ready') return view;
+    if (command.kind === 'select_idea') {
+      const problem = selectIdeaProblemOf(view.view, command.round, command.index);
+      if (problem !== null) return problem;
+    }
+    return { status: 'fresh', command, facts: view.view };
+  }
+
+  // ---------------------------------------------------------------------- //
+  // append                                                                 //
+  // ---------------------------------------------------------------------- //
+
+  async function append(ctx: CoreCallContext,
+    input: { command: RequestPublicCommandV1; plan: RequestPlanV1 } | { command: RequestInternalCommandV1 },
+  ): Promise<RequestAppendResultV1> {
+    if ('plan' in input) {
+      if (!isPerson(ctx)) return rejected('forbidden', 'only the person may append a public request command');
+      const shape = publicCommandProblem(input.command);
+      if (shape !== null) return rejected('invalid', shape);
+      return appendPublic(ctx, input.command, input.plan);
+    }
+    // Internal commands are authorized by principal kind, not by a human actor.
+    if (!isSystem(ctx)) return rejected('forbidden', 'only the trusted system actor may append an internal request command');
+    return appendInternal(ctx, input.command);
+  }
+
+  async function appendPublic(ctx: CoreCallContext, command: RequestPublicCommandV1, plan: RequestPlanV1):
+    Promise<RequestAppendResultV1> {
+    const identityKey = commandIdentity(ctx, command.kind, command.commandId);
+    const fingerprint = commandFingerprint(command);
+    const replay = await replayPublic(deps, identityKey, fingerprint);
+    if (replay.status === 'ready') return replay.result;
+    if (replay.status === 'rejected') return replay;
+    return withTailRetries(() => preparePublic(ctx, command, plan, identityKey, fingerprint),
+      (prepared) => commitPrepared(identityKey, fingerprint, prepared));
+  }
+
+  async function appendInternal(ctx: CoreCallContext, command: RequestInternalCommandV1): Promise<RequestAppendResultV1> {
+    const identityKey = commandIdentity(ctx, command.kind, command.operationId);
+    const fingerprint = sha256Hex(canonicalJson({ kind: command.kind,
+      root: command.kind === 'assigned' ? command.requestRoot : null,
+      round: command.kind === 'end_unbound' ? command.round : null,
+      to: command.kind === 'assigned' ? command.to : null } as unknown as JsonValue));
+    const replay = await lookupCommittedReceipt(deps.records, identityKey, fingerprint);
+    if (replay.status === 'found') {
+      if (command.kind === 'end_unbound') return { status: 'ended', round: { ...command.round }, replayed: true };
+      return receiptOf(deps, replay.receipt, identityKey, fingerprint);
+    }
+    if (replay.status === 'conflict') return rejected('idempotency_conflict', replay.reason);
+    if (replay.status === 'invalid') return rejected('invalid', replay.reason);
+    if (replay.status !== 'missing') return unavailable(`the idempotency lookup failed: ${replay.reason}`);
+
+    if (command.kind === 'assigned') {
+      return withTailRetries(() => prepareAssigned(ctx, command, identityKey, fingerprint),
+        (prepared) => commitPrepared(identityKey, fingerprint, prepared));
+    }
+    if (command.kind !== 'end_unbound') {
+      return unavailable(`the ${command.kind} operation has no producer on this platform`);
+    }
+    return withTailRetries(() => prepareEndUnbound(ctx, command, identityKey, fingerprint),
+      (prepared) => commitPrepared(identityKey, fingerprint, prepared));
+  }
+
+  /** Re-read and re-commit on every tail conflict, up to SECRETARY_TAIL_RETRIES, then `busy`. */
+  async function withTailRetries(
+    prepare: () => Promise<PreparedOutcome>,
+    commit: (prepared: PreparedAppend) => Promise<CommitOutcome>,
+  ): Promise<RequestAppendResultV1> {
+    for (let attempt = 0; attempt <= SECRETARY_TAIL_RETRIES; attempt += 1) {
+      const prepared = await prepare();
+      // A conflict that re-picks or answers `busy` is final; a moved read window
+      // and a committed tail conflict re-read it.
+      if (prepared.status === 'retry') continue;
+      if (prepared.status !== 'ready') return prepared;
+      const outcome = await commit(prepared.value);
+      if (outcome.status === 'done') return outcome.result;
+    }
+    return rejected('busy', 'the request tail changed during the append');
+  }
+
+  async function preparePublic(
+    ctx: CoreCallContext, command: RequestPublicCommandV1, plan: RequestPlanV1,
+    identityKey: string, fingerprint: string,
+  ): Promise<PreparedOutcome> {
+    switch (command.kind) {
+      case 'submit': return prepareSubmit(ctx, command, plan, identityKey, fingerprint);
+      case 'route': return prepareRoute(ctx, command, identityKey, fingerprint);
+      case 'select_idea':
+      case 'ask':
+        return prepareFollowup(ctx, command, plan, identityKey, fingerprint);
+    }
+  }
+
+  // ---------------------------------------------------------------------- //
+  // submit                                                                 //
+  // ---------------------------------------------------------------------- //
+
+  async function prepareSubmit(
+    ctx: CoreCallContext, command: Extract<RequestPublicCommandV1, { kind: 'submit' }>, plan: RequestPlanV1,
+    identityKey: string, fingerprint: string,
+  ): Promise<PreparedOutcome> {
+    // The facts this command guards (a follow-up reads its request).
+    let facts: RequestRoundsFactsV1 | null = null;
+    if (command.continues !== null) {
+      const read = await readRequestFacts(deps, ctx, command.continues);
+      if (read.status !== 'ready') return read;
+      facts = read.facts;
+      if (command.goalId !== null && command.goalId !== facts.requestGoalId) {
+        return rejected('invalid', 'goalId must be null or the request goal');
+      }
+    }
+    // Every explicit non-null goalId (a follow-up's request goal included) is
+    // re-read, checked live/workspace and guarded at append.
+    let goalGuard: RecordGuard | null = null;
+    if (command.goalId !== null) {
+      const goal = await readLiveGoal(deps, ctx, command.goalId);
+      if (goal.status !== 'ready') return goal;
+      goalGuard = goal.guard;
+    }
+
+    const row = requestAssignmentRow(command, facts);
+    const assignment = await resolveAssignment(ctx, facts, plan, row, command.recipient);
+    if (assignment.status !== 'ready') return assignment;
+    return buildRound({
+      ctx, commandId: command.commandId, identityKey, fingerprint, occurredAt: deps.now(),
+      requestRoot: command.continues, kind: command.continues === null ? 'request' : 'followup',
+      requestGoalId: command.continues === null ? command.goalId : facts!.requestGoalId,
+      text: command.text, selectedIdea: null, relatedCardRefs: [], createdLine: plan.createdLine,
+      receiptKind: 'submit', facts, goalGuard, assignment: assignment.value,
+    });
+  }
+
+  type Assignment = {
+    assignedSession: SessionRef | null;
+    takesIntake: boolean;
+    /** Always present: a waiting round's intent uses the new line's profile. */
+    profile: SecretaryProfileV1;
+    guards: RecordGuard[];
+    source: AssignmentSource;
+    sessionRefKeys: string[];
+  };
+
+  async function resolveAssignment(
+    ctx: CoreCallContext, facts: RequestRoundsFactsV1 | null, plan: RequestPlanV1,
+    row: ReturnType<typeof requestAssignmentRow>, recipient: SessionRef | null,
+  ): Promise<{ status: 'ready'; value: Assignment } | RequestRejectionV1> {
+    if (row === 'recipient') {
+      if (recipient === null) return unavailable('the request command names no recipient');
+      // `@ S` on an owned request moves it without an intake; a new root or a
+      // waiting / archived / dropped one takes S's intake on the new round.
+      return assignTo(ctx, recipient, null, facts === null || facts.ownerState !== 'owned', 'recipient');
+    }
+    if (row === 'follow_owner') {
+      const owner = facts?.owner ?? null;
+      if (owner === null) return unavailable('the request has no owner');
+      const profile = await profileForOwner(deps, ctx, owner);
+      if (profile.status !== 'ready') return profile;
+      return { status: 'ready', value: { assignedSession: { ...owner }, takesIntake: false, profile: profile.profile,
+        guards: profile.guards, source: 'none', sessionRefKeys: [] } };
+    }
+    if (row === 'wait' || plan.capacityBlocked) {
+      const waiting = await profileForWaiting(deps, ctx);
+      if (waiting.status !== 'ready') return waiting;
+      return { status: 'ready', value: { assignedSession: null, takesIntake: false, profile: waiting.profile,
+        guards: [], source: 'none', sessionRefKeys: [] } };
+    }
+    // The `pick` row: a plan that made no pick is stale, never a capacity block.
+    if (plan.assignTo === null) return rejected('revision_conflict', 'the request changed since the plan');
+    return assignTo(ctx, plan.assignTo.session, plan.assignTo.guard, true, 'fresh');
+  }
+
+  async function assignTo(
+    ctx: CoreCallContext, session: SessionRef, guard: VersionedRef | null, takesIntake: boolean, source: AssignmentSource,
+  ): Promise<{ status: 'ready'; value: Assignment } | RequestRejectionV1> {
+    if (guard !== null && !sameJson(guard.ref, plainSessionRefToAggregate(session))) {
+      return rejected('invalid', 'the assignment guard names another Session');
+    }
+    const admitted = await admitTarget(deps, ctx, session);
+    if (admitted.status === 'rejected') return admitted;
+    // A target that changed since the pick (an archive included) is a conflict
+    // of its source before it is a refusal: the pick was made on facts that no
+    // longer hold.
+    const revision = admitted.status === 'ready' ? admitted.value.session.revision : admitted.revision;
+    if (guard !== null && revision !== null && guard.revision !== revision) {
+      return targetConflict(source, 'the target Session changed since the pick');
+    }
+    if (admitted.status === 'refused') return unavailable(admitted.reason);
+    return { status: 'ready', value: {
+      assignedSession: { ...session }, takesIntake, profile: admitted.value.profile, guards: admitted.value.guards,
+      source, sessionRefKeys: [sessionAggregateRefKey(plainSessionRefToAggregate(session))],
+    } };
+  }
+
+  type BuildRoundInput = {
+    ctx: CoreCallContext; commandId: string; identityKey: string; fingerprint: string; occurredAt: string;
+    requestRoot: QueryJobRef | null; kind: 'request' | 'followup'; requestGoalId: string | null;
+    text: string; selectedIdea: { round: QueryJobRef; index: number } | null; relatedCardRefs: VersionedRef[];
+    createdLine: boolean; receiptKind: 'submit' | 'select_idea' | 'ask';
+    facts: RequestRoundsFactsV1 | null; goalGuard: RecordGuard | null; assignment: Assignment;
+  };
+
+  /** The one round builder: submit and both follow-up commands build through it. */
+  async function buildRound(input: BuildRoundInput): Promise<PreparedOutcome> {
+    const scope = workspaceOf(input.ctx);
+    const queryJobId = deps.operationId();
+    const roundRef = queryJobRefFor(scope.projectId, scope.workspaceId, queryJobId);
+    const requestRoot = input.requestRoot ?? roundRef;
+    const assignment = input.assignment;
+    const intent = intentOf({ scope, queryJobId, goalId: input.requestGoalId, text: input.text,
+      profile: assignment.profile, correlationId: input.commandId });
+    const secretary = assignment.assignedSession === null ? null : { ...assignment.assignedSession };
+    const receipt: RequestCommandReceiptV1 = input.receiptKind === 'submit'
+      ? (secretary === null
+          ? { kind: 'submit', requestRoot: { ...requestRoot }, round: { ...roundRef }, assignment: 'unassigned',
+              secretary: null, created: false }
+          : { kind: 'submit', requestRoot: { ...requestRoot }, round: { ...roundRef }, assignment: 'assigned',
+              secretary, created: input.createdLine })
+      : input.receiptKind === 'select_idea'
+        ? { kind: 'select_idea', followupRound: { ...roundRef }, secretary }
+        : { kind: 'ask', followupRound: { ...roundRef }, secretary };
+    const eventId = deps.operationId();
+    const pair = newRequestRound({
+      queryJobId, runId: `run-${queryJobId}`, scope, intent, kind: input.kind, requestRoot: input.requestRoot,
+      requestGoalId: input.requestGoalId, assignedSession: assignment.assignedSession,
+      // A new pick takes S's intake on THIS round; a waiting round and an owner
+      // follow-up take none.
+      intakeSession: assignment.takesIntake && assignment.assignedSession !== null ? assignment.assignedSession : null,
+      selectedIdea: input.selectedIdea, relatedCardRefs: input.relatedCardRefs, receipt,
+      submission: submissionOf(input.identityKey, input.fingerprint, eventId), submittedAt: input.occurredAt,
+    });
+    const records: EncodedRecord[] = [encodeQueryJobSnapshot(pair.job), encodeQueryRunSnapshotRecord(pair.run)];
+    const claims: UniqueClaimChange[] = [moveTailClaim(input.facts, requestRoot, roundRef)];
+    const guardGroups: RecordGuard[][] = [input.facts === null ? [] : input.facts.guards, assignment.guards];
+    if (assignment.takesIntake && assignment.assignedSession !== null) {
+      const changes = intakeChanges({
+        holder: input.facts === null ? null : intakeHolder(input.facts),
+        desire: assignment.assignedSession,
+        next: { kind: 'new', key: keyOf(pair.job.ref) },
+      });
+      claims.push(...changes.claims);
+      records.push(...changes.records);
+      guardGroups.push(changes.guards);
+    }
+    if (input.goalGuard !== null) guardGroups.push([input.goalGuard]);
+    const guards = preparedGuards([...guardGroups, [nullGuard(keyOf(pair.job.ref)), nullGuard(keyOf(pair.run.ref))]],
+      assignment);
+    if (guards.status !== 'ready') return guards;
+    return {
+      status: 'ready',
+      value: {
+        receipt, records,
+        events: [encodeQueryJobSubmittedEvent(submittedEvent({ ctx: input.ctx, job: pair.job, eventId,
+          identityKey: input.identityKey, fingerprint: input.fingerprint, commandId: input.commandId,
+          occurredAt: input.occurredAt }))],
+        guards: guards.guards, claims, round: roundRef, sinceRefKey: keyOf(pair.job.ref),
+        conflict: { source: assignment.source, sessionRefKeys: assignment.sessionRefKeys,
+          intakeKey: assignment.takesIntake && assignment.assignedSession !== null
+            ? secretaryIntakeKey(assignment.assignedSession) : null },
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------------- //
+  // route                                                                  //
+  // ---------------------------------------------------------------------- //
+
+  async function prepareRoute(
+    ctx: CoreCallContext, command: Extract<RequestPublicCommandV1, { kind: 'route' }>,
+    identityKey: string, fingerprint: string,
+  ): Promise<PreparedOutcome> {
+    const resolved = await resolveRequestRoot(deps.records, ctx, command.round);
+    if (resolved.status === 'not_found') return rejected('not_found', 'the round is not a request round of this workspace');
+    if (resolved.status === 'rejected') return unavailable(resolved.reason);
+    const read = await readRequestFacts(deps, ctx, resolved.root);
+    if (read.status !== 'ready') return read;
+    const facts = read.facts;
+    if (!facts.rounds.some((round) => sameJson(round.ref, command.round))) {
+      return rejected('not_found', 'the round does not belong to the request it names');
+    }
+
+    const occurredAt = deps.now();
+    const requestRoot = resolved.root;
+    const roundRef = queryJobRefFor(ctx.projectId, ctx.workspaceId ?? '', deps.operationId());
+    const claims: UniqueClaimChange[] = [moveTailClaim(facts, requestRoot, roundRef)];
+    const records: EncodedRecord[] = [];
+    const guardGroups: RecordGuard[][] = [facts.guards];
+    const releasedSessions: SessionRecord[] = [];
+    let routing: NonNullable<QueryJobSnapshot['job']['routing']>;
+    let source: AssignmentSource = 'none';
+    let sessionRefKeys: string[] = [];
+    let intakeKey: string | null = null;
+
+    if (command.reason === 'dropped') {
+      if (facts.ownerState === 'dropped') return rejected('invalid', 'the request is already dropped');
+      routing = { from: facts.owner === null ? null : { ...facts.owner }, to: null, reason: 'dropped' };
+      const holder = intakeHolder(facts);
+      const endedRounds = unstarted(facts);
+      for (const round of endedRounds) {
+        const runRef = round.job.runRef;
+        if (runRef === null) return unavailable('an unstarted round names no QueryRun');
+        const run = facts.runs.find((candidate) => sameJson(candidate.ref, runRef));
+        if (run === undefined) return unavailable('an unstarted round names a missing QueryRun');
+        let ended = endUnstartedRound({ job: round as QueryJobSnapshot, run }, {
+          detail: 'dropped', message: 'request_dropped', occurredAt,
+        });
+        if (holder !== null && sameJson(holder.ref, round.ref)) {
+          ended = { job: setIntake(ended.job, null), run: ended.run };
+          claims.push({ claimKey: secretaryIntakeKey(holder.job.intakeSession!), expectedOwner: keyOf(round.ref),
+            nextOwner: null });
+        }
+        // A claimed or prepared attempt's Session is guarded; the occupancy its
+        // claim generation still holds is released in this commit.
+        const claimed = await readClaimedSession(deps, run);
+        if (claimed.status !== 'ready') return claimed;
+        if (claimed.claimed !== null) {
+          guardGroups.push([claimed.claimed.guard]);
+          const released = claimed.claimed.released;
+          if (released !== null && !releasedSessions.some((session) =>
+            sessionAggregateRefKey(session.ref) === sessionAggregateRefKey(released.ref))) {
+            releasedSessions.push(released);
+          }
+        }
+        records.push(encodeQueryJobSnapshot(ended.job), encodeQueryRunSnapshotRecord(ended.run));
+      }
+    } else {
+      if (command.to === null) return rejected('invalid', 'a manual route requires a recipient');
+      const target = await assignTo(ctx, command.to, null, false, 'recipient');
+      if (target.status !== 'ready') return target;
+      guardGroups.push(target.value.guards);
+      source = target.value.source;
+      sessionRefKeys = target.value.sessionRefKeys;
+      routing = { from: facts.owner === null ? null : { ...facts.owner }, to: { ...command.to }, reason: 'manual' };
+      // From `owned` a manual route takes no intake; otherwise it takes
+      // `secretary-intake:<to>` on the oldest pending round as holder when there is one.
+      if (facts.ownerState !== 'owned') {
+        const holder = oldestPendingRound(facts);
+        if (holder !== null) {
+          const intake = intakeChanges({ holder: intakeHolder(facts), desire: command.to,
+            next: { kind: 'existing', job: holder } });
+          claims.push(...intake.claims);
+          records.push(...intake.records);
+          guardGroups.push(intake.guards);
+          intakeKey = secretaryIntakeKey(command.to);
+        }
+      }
+    }
+    for (const released of releasedSessions) {
+      records.push(encodeSessionRecord(released));
+      sessionRefKeys = [...sessionRefKeys, sessionAggregateRefKey(released.ref)];
+    }
+
+    const eventId = deps.operationId();
+    const routingJob = newRoutingRound({
+      queryJobId: roundRef.queryJobId,
+      scope: workspaceOf(ctx),
+      root: facts.rounds.find((round) => sameJson(round.ref, rootOfFacts(facts))) ?? facts.tail,
+      routing,
+      receipt: { kind: 'route', routingRound: { ...roundRef } },
+      submission: submissionOf(identityKey, fingerprint, eventId),
+      submittedAt: occurredAt,
+    });
+    const receipt = routingJob.job.receipt;
+    if (receipt === null) return unavailable('the routing round carries no receipt');
+    records.push(encodeQueryJobSnapshot(routingJob));
+    const guards = preparedGuards([...guardGroups, [nullGuard(keyOf(routingJob.ref))]], { source, sessionRefKeys });
+    if (guards.status !== 'ready') return guards;
+    return {
+      status: 'ready',
+      value: {
+        receipt,
+        records,
+        events: [encodeQueryJobSubmittedEvent(submittedEvent({ ctx, job: routingJob, eventId, identityKey, fingerprint,
+          commandId: command.commandId, occurredAt }))],
+        guards: guards.guards, claims, round: roundRef, sinceRefKey: keyOf(routingJob.ref),
+        conflict: { source, sessionRefKeys, intakeKey },
+      },
+    };
+  }
+  // ---------------------------------------------------------------------- //
+  // select_idea and ask                                                    //
+  // ---------------------------------------------------------------------- //
+
+  /**
+   * A follow-up on the request of the round `select_idea` or `ask` names,
+   * through the same assignment and round builder as `submit` (`continues: R,
+   * recipient: null`): on the owner, waiting, or (with the caller's fresh pick)
+   * on a new secretary that then holds the intake.
+   */
+  async function prepareFollowup(
+    ctx: CoreCallContext,
+    command: Extract<RequestPublicCommandV1, { kind: 'select_idea' | 'ask' }>,
+    plan: RequestPlanV1, identityKey: string, fingerprint: string,
+  ): Promise<PreparedOutcome> {
+    const resolved = await resolveRequestRoot(deps.records, ctx, command.round);
+    if (resolved.status === 'not_found') return rejected('not_found', 'the round is not a request round of this workspace');
+    if (resolved.status === 'rejected') return unavailable(resolved.reason);
+    const requestRoot = resolved.root;
+    const read = await readRequestFacts(deps, ctx, requestRoot);
+    if (read.status !== 'ready') return read;
+    const facts = read.facts;
+    let text: string;
+    let selectedIdea: { round: QueryJobRef; index: number } | null = null;
+    if (command.kind === 'select_idea') {
+      // The view re-read and the latest-answered validation run inside this
+      // retried path, so every tail retry validates against the facts it then
+      // builds the follow-up on.
+      const view = await readRequestView(deps, ctx, requestRoot);
+      if (view.status !== 'ready') return view;
+      const problem = selectIdeaProblemOf(view.view, command.round, command.index);
+      if (problem !== null) return problem;
+      const answered = view.view.rounds.find((round) => sameJson(round.ref, command.round));
+      if (answered === undefined) return rejected('not_found', 'the round does not belong to its request');
+      text = `选了第 ${command.index + 1} 个思路：${answered.ideas[command.index]!.title}`;
+      selectedIdea = { round: { ...command.round }, index: command.index };
+    } else {
+      text = command.text;
+    }
+    const assignment = await resolveAssignment(ctx, facts, plan, requestAssignmentRow(command, facts), null);
+    if (assignment.status !== 'ready') return assignment;
+    return buildRound({
+      ctx, commandId: command.commandId, identityKey, fingerprint, occurredAt: deps.now(),
+      requestRoot, kind: 'followup', requestGoalId: facts.requestGoalId, text, selectedIdea,
+      relatedCardRefs: command.kind === 'ask' ? command.cardRefs.map((ref) => structuredClone(ref)) : [],
+      createdLine: plan.createdLine, receiptKind: command.kind, facts, goalGuard: null,
+      assignment: assignment.value,
+    });
+  }
+  // ---------------------------------------------------------------------- //
+  // Internal: assigned (the drain)                                         //
+  // ---------------------------------------------------------------------- //
+
+  async function prepareAssigned(
+    ctx: CoreCallContext, command: Extract<RequestInternalCommandV1, { kind: 'assigned' }>,
+    identityKey: string, fingerprint: string,
+  ): Promise<PreparedOutcome> {
+    const read = await readRequestFacts(deps, ctx, command.requestRoot);
+    if (read.status !== 'ready') return read;
+    const facts = read.facts;
+    if (facts.ownerState !== 'waiting' && facts.ownerState !== 'owner_archived') {
+      return rejected('invalid', `an assigned command requires a waiting or archived request (${facts.ownerState})`);
+    }
+    const holder = oldestPendingRound(facts);
+    if (holder === null) return rejected('invalid', 'the request has no pending round to hold the intake');
+    // The drain's target is the same single-pin target check `assignTo` runs.
+    const target = await assignTo(ctx, command.to, command.guard, false, 'recipient');
+    if (target.status !== 'ready') return target;
+    const occurredAt = deps.now();
+    const roundRef = queryJobRefFor(ctx.projectId, ctx.workspaceId ?? '', deps.operationId());
+    const eventId = deps.operationId();
+    const routingJob = newRoutingRound({
+      queryJobId: roundRef.queryJobId,
+      scope: workspaceOf(ctx),
+      root: facts.rounds.find((round) => sameJson(round.ref, rootOfFacts(facts))) ?? facts.tail,
+      routing: {
+        from: facts.ownerState === 'owner_archived'
+          ? (facts.lastOwner === null ? null : { ...facts.lastOwner })
+          : null,
+        to: { ...command.to },
+        reason: 'assigned',
+      },
+      receipt: { kind: 'route', routingRound: { ...roundRef } },
+      submission: submissionOf(identityKey, fingerprint, eventId),
+      submittedAt: occurredAt,
+    });
+    const receipt = routingJob.job.receipt;
+    if (receipt === null) return unavailable('the routing round carries no receipt');
+    // The intake is taken on the OLDEST PENDING ROUND, not on the routing round.
+    const intake = intakeChanges({ holder: intakeHolder(facts), desire: command.to,
+      next: { kind: 'existing', job: holder } });
+    const records: EncodedRecord[] = [encodeQueryJobSnapshot(routingJob), ...intake.records];
+    const guards = preparedGuards([facts.guards, target.value.guards, intake.guards, [nullGuard(keyOf(routingJob.ref))]],
+      target.value);
+    if (guards.status !== 'ready') return guards;
+    return {
+      status: 'ready',
+      value: {
+        receipt, records,
+        events: [encodeQueryJobSubmittedEvent(submittedEvent({ ctx, job: routingJob, eventId, identityKey, fingerprint,
+          commandId: command.operationId, occurredAt }))],
+        guards: guards.guards,
+        claims: [moveTailClaim(facts, command.requestRoot, roundRef), ...intake.claims],
+        round: roundRef, sinceRefKey: keyOf(routingJob.ref),
+        conflict: { source: 'recipient', sessionRefKeys: target.value.sessionRefKeys,
+          intakeKey: secretaryIntakeKey(command.to) },
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------------- //
+  // Internal: end_unbound (no round added)                                 //
+  // ---------------------------------------------------------------------- //
+
+  async function prepareEndUnbound(
+    ctx: CoreCallContext, command: Extract<RequestInternalCommandV1, { kind: 'end_unbound' }>,
+    identityKey: string, fingerprint: string,
+  ): Promise<PreparedOutcome> {
+    if (ctx.principal.kind !== 'host') return rejected('forbidden', 'end_unbound requires a trusted Host actor');
+    const resolved = await resolveRequestRoot(deps.records, ctx, command.round);
+    if (resolved.status === 'not_found') return rejected('not_found', 'the round is not a request round of this workspace');
+    if (resolved.status === 'rejected') return unavailable(resolved.reason);
+    const read = await readRequestFacts(deps, ctx, resolved.root);
+    if (read.status !== 'ready') return read;
+    const facts = read.facts;
+    const round = facts.rounds.find((candidate) => sameJson(candidate.ref, command.round));
+    if (round === undefined) return rejected('not_found', 'the round does not belong to its request');
+    const runRef = round.job.runRef;
+    const run = runRef === null ? undefined : facts.runs.find((candidate) => sameJson(candidate.ref, runRef));
+    if (run === undefined) return rejected('invalid', 'the round has no QueryRun');
+    if (round.job.status !== 'pending' && round.job.status !== 'running') {
+      return rejected('invalid', 'end_unbound requires an unstarted round');
+    }
+    const phase = run.run.executionState?.phase;
+    if (phase !== undefined && phase !== 'claimed' && phase !== 'prepared') {
+      return rejected('invalid', 'end_unbound requires a round that did not enter the Kernel');
+    }
+    const occurredAt = deps.now();
+    let ended = endUnstartedRound({ job: round as QueryJobSnapshot, run }, {
+      detail: 'no_binding', message: 'no_secretary_binding', occurredAt,
+    });
+    const claims: UniqueClaimChange[] = [noopTailClaim(facts)];
+    if (round.job.intakeSession !== null) {
+      claims.push({ claimKey: secretaryIntakeKey(round.job.intakeSession), expectedOwner: keyOf(round.ref),
+        nextOwner: null });
+      ended = { job: setIntake(ended.job, null), run: ended.run };
+    }
+    // A claimed or prepared attempt's Session is guarded; the occupancy it
+    // still holds is released in this commit.
+    const claimed = await readClaimedSession(deps, run);
+    if (claimed.status !== 'ready') return claimed;
+    const records: EncodedRecord[] = [encodeQueryJobSnapshot(ended.job), encodeQueryRunSnapshotRecord(ended.run)];
+    const guardGroups: RecordGuard[][] = [facts.guards, [{ refKey: keyOf(round.ref), expectedRevision: round.revision }]];
+    const sessionRefKeys: string[] = [];
+    if (claimed.claimed !== null) {
+      guardGroups.push([claimed.claimed.guard]);
+      if (claimed.claimed.released !== null) {
+        records.push(encodeSessionRecord(claimed.claimed.released));
+        sessionRefKeys.push(sessionAggregateRefKey(claimed.claimed.released.ref));
+      }
+    }
+    const guards = guardList(guardGroups);
+    if (guards.status !== 'ready') return guards;
+    const event = buildRecordedEvent({
+      eventId: deps.operationId(), identityKey, fingerprint, occurredAt,
+      actor: { kind: ctx.principal.actor.kind, id: ctx.principal.actor.id },
+      queryRunRef: ended.run.ref, requestId: command.operationId,
+      correlationId: round.job.intent.correlationId, operation: 'observed', result: ended.run, run: ended.run,
+      endsUnstarted: true,
+    });
+    return {
+      status: 'ready',
+      value: {
+        receipt: null, records,
+        events: [encodeQueryExecutionRecordedEvent(event)],
+        guards: guards.guards, claims, round: { ...round.ref }, sinceRefKey: null,
+        conflict: { source: 'none', sessionRefKeys, intakeKey: null },
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------------- //
+  // One commit                                                             //
+  // ---------------------------------------------------------------------- //
+
+  async function commitPrepared(
+    identityKey: string, fingerprint: string, prepared: PreparedAppend,
+  ): Promise<CommitOutcome> {
+    const guards = guardList([prepared.guards]);
+    if (guards.status !== 'ready') {
+      return { status: 'done', result: rejected('revision_conflict', 'the request read window changed during the append') };
+    }
+    const preparedCommit: PreparedCommit = {
+      identityKey,
+      fingerprint,
+      guards: guards.guards,
+      records: prepared.records,
+      claims: prepared.claims,
+      indexGuards: [],
+      indexChanges: [],
+      events: prepared.events,
+      commitCursorBindings: prepared.sinceRefKey === null ? []
+        : [{ refKey: prepared.sinceRefKey, field: 'since' }],
+    };
+    let committed: StoreCommitReceipt;
+    try {
+      committed = await deps.records.commit(preparedCommit);
+    } catch (error) {
+      // The recovery is the same command-kind dispatch as a replay, and a
+      // failed lookup is `unavailable`, never an escaping promise.
+      const recovered = await lookupCommittedReceipt(deps.records, identityKey, fingerprint);
+      if (recovered.status === 'found') {
+        if (prepared.receipt === null && prepared.sinceRefKey === null) {
+          return { status: 'done', result: { status: 'ended', round: { ...prepared.round }, replayed: true } };
+        }
+        return { status: 'done', result: await receiptOf(deps, recovered.receipt, identityKey, fingerprint) };
+      }
+      return { status: 'done', result: unavailable(
+        `the request commit failed and its receipt could not be confirmed: ${messageOf(error)}`) };
+    }
+    if (committed.status !== 'committed') {
+      if (committed.code === 'unique_conflict') {
+        if (committed.current.some((entry) => entry.claimKey.startsWith(REQUEST_TAIL_PREFIX))) {
+          return { status: 'tail_conflict' };
+        }
+        if (committed.current.some((entry) => entry.claimKey.startsWith(SECRETARY_INTAKE_PREFIX))) {
+          if (prepared.conflict.intakeKey !== null
+            && committed.current.some((entry) => entry.claimKey === prepared.conflict.intakeKey)) {
+            return { status: 'done', result: targetConflict(prepared.conflict.source,
+              `another request write holds the target secretary intake: ${committed.reason}`) };
+          }
+          // A release whose holder moved: re-read the request window.
+          return { status: 'tail_conflict' };
+        }
+        return { status: 'done', result: rejected('busy', `another request write holds a claim: ${committed.reason}`) };
+      }
+      if (committed.code === 'revision_conflict') {
+        const sessionKeys = new Set(prepared.conflict.sessionRefKeys);
+        if (committed.current.some((entry) => sessionKeys.has(entry.refKey))) {
+          return { status: 'done', result: targetConflict(prepared.conflict.source,
+            `the target Session changed during the append: ${committed.reason}`) };
+        }
+        if (committed.current.some((entry) => entry.revision !== null)) return { status: 'tail_conflict' };
+        return { status: 'done', result: rejected('revision_conflict', committed.reason) };
+      }
+      const mapped = ownerWriteStoreFailureToRejection(committed);
+      return { status: 'done', result: rejected(mapped.code as RequestRejectionV1['code'], mapped.reason) };
+    }
+    if (committed.replayed) {
+      if (prepared.sinceRefKey === null && prepared.receipt === null) {
+        return { status: 'done', result: { status: 'ended', round: { ...prepared.round }, replayed: true } };
+      }
+      return { status: 'done', result: await receiptOf(deps, committed, identityKey, fingerprint) };
+    }
+    if (prepared.sinceRefKey === null) {
+      return { status: 'done', result: { status: 'ended', round: { ...prepared.round }, replayed: false } };
+    }
+    if (prepared.receipt === null) {
+      return { status: 'done', result: unavailable('the appended round carries no receipt') };
+    }
+    return { status: 'done', result: { status: 'appended', receipt: prepared.receipt, replayed: false } };
+  }
+  // ---------------------------------------------------------------------- //
+  // The named read `s6-query-unassigned`                                   //
+  // ---------------------------------------------------------------------- //
+
+  async function unassigned(ctx: CoreCallContext, scope: WorkspaceScope,
+    input: { limit: number; continuation: string | null },
+  ): Promise<ReadResult<{ requests: QueryJobRef[]; continuation: string | null; wrapped: boolean }>> {
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1) {
+      return { status: 'rejected', code: 'invalid', reason: 'limit must be a positive integer' };
+    }
+    let after: { order: string | number; refKey: string } | undefined;
+    if (input.continuation !== null) {
+      try {
+        const parsed = JSON.parse(input.continuation) as { order?: unknown; refKey?: unknown };
+        if (typeof parsed.order !== 'string' || typeof parsed.refKey !== 'string') throw new Error('shape');
+        after = { order: parsed.order, refKey: parsed.refKey };
+      } catch {
+        return { status: 'rejected', code: 'invalid', reason: 'continuation is not a readable cursor' };
+      }
+    }
+    // One 200-row index page per call (a bounded traversal): the drain
+    // owns the page budget, so this read never fills `limit` across pages.
+    let page;
+    try {
+      page = await deps.records.lookupOrdered({
+        index: QUERY_OPEN_BY_WORKSPACE_INDEX,
+        values: [scope.projectId, scope.workspaceId, 'request', 'pending'],
+        direction: 'asc',
+        ...(after === undefined ? {} : { after }),
+        limit: REQUEST_PAGE_SIZE,
+      });
+    } catch (error) {
+      return unavailable(`the unassigned read failed: ${messageOf(error)}`);
+    }
+    if (page.status !== 'ready') return unavailable(`the unassigned read failed: ${page.code}: ${page.reason}`);
+
+    const requests: QueryJobRef[] = [];
+    let resume: { order: string | number; refKey: string } | null = after ?? null;
+    let stoppedAtLimit = false;
+    for (const record of page.value.records) {
+      let decoded;
+      try {
+        decoded = decodeQueryJobSnapshot(record);
+      } catch (error) {
+        return unavailable(`an unassigned candidate is damaged: ${messageOf(error)}`);
+      }
+      if (decoded.status !== 'decoded') return unavailable(`an unassigned candidate is damaged: ${decoded.reason}`);
+      resume = { order: String(decoded.value.since), refKey: record.refKey };
+      const root = decoded.value.job.requestRoot;
+      if (root === null) continue;
+      // A failed read is the whole read's failure: the queue backs off and keeps
+      // the dirty rows; only a successfully read, non-waiting owner is skipped.
+      const facts = await readRequestFacts(deps, ctx, root);
+      if (facts.status !== 'ready') {
+        return { status: 'rejected', code: 'unavailable', reason: facts.reason };
+      }
+      if (facts.facts.ownerState !== 'waiting' && facts.facts.ownerState !== 'owner_archived') continue;
+      // Output a request only for its oldest pending round; every other round
+      // only advances the cursor, so one request never appears twice.
+      const oldest = oldestPendingRound(facts.facts);
+      if (oldest === null || !sameJson(oldest.ref, decoded.value.ref)) continue;
+      requests.push({ ...root });
+      if (requests.length >= input.limit) { stoppedAtLimit = true; break; }
+    }
+    const exhaustedPage = !stoppedAtLimit;
+    const wrapped = exhaustedPage && page.value.next === null;
+    const continuation = wrapped ? null
+      : stoppedAtLimit ? JSON.stringify(resume) : JSON.stringify(page.value.next);
+    return { status: 'ready', value: { requests, continuation, wrapped } };
+  }
+
+  return { precheck, append, unassigned };
+}

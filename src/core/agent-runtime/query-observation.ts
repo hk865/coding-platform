@@ -472,6 +472,9 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
           staleReason: stale ? 'the recorded Goal/Workspace/Plan moved after this answer was observed' : null,
           answeredAt: occurredAt,
           bodyRef: stored.ref,
+          // §3.1.7: both arrays are required; a plain Query answer carries none.
+          ideas: [],
+          goalCardDrafts: [],
         };
       }
     }

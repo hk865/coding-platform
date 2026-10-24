@@ -7,7 +7,7 @@ import type { CommandMeta, RoleConfigurationRef, SessionRef, WorkspaceScope, Wor
 import type { CoreError, CoreRejection, OperationReceipt, Page, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { SessionProvenanceV1, SessionRecord } from '../../contracts/core/session.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
-import type { SessionCard, SessionCreationResult, SessionDirectoryPort, SessionOperationRecord } from '../work-graph/model/session-contracts.js';
+import type { SessionCard, SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort, SessionOperationRecord } from '../work-graph/model/session-contracts.js';
 import type { KernelStoreRegistry } from './kernel-store-locator.js';
 import { StoreError, sessionRecordSchema } from '../../../vendor/coding-agent/dist/public-api.js';
 import type {
@@ -29,6 +29,11 @@ export type CreateSessionRequest = {
    * continuation/handoff/readonly_copy carries its predecessor here.
    */
   provenance?: SessionProvenanceV1;
+  /**
+   * Slice 6A §3.4.7: the line-creation intent of the first-phase admission.
+   * Absent or null is a creation that opens no line.
+   */
+  creation?: SessionCreationIntentV1 | null;
 };
 /** Trusted locator from the task graph; positions are inclusive. */
 export type SessionHistoryRange = {
@@ -103,6 +108,8 @@ type CreateSessionValue = {
   meta: CommandMeta;
   /** Slice 1 §2.2: threaded through the isolated creation snapshot. */
   provenance?: SessionProvenanceV1;
+  /** Slice 6A §3.4.7: threaded through the isolated creation snapshot. */
+  creation?: SessionCreationIntentV1 | null;
 };
 
 type HistoryRequestValue = {
@@ -132,6 +139,7 @@ function ownCreateRequest(request: unknown): { ok: true; value: CreateSessionVal
     recommendedRefs: raw.recommendedRefs,
     initialLinks: raw.initialLinks,
     ...(raw.provenance === undefined ? {} : { provenance: raw.provenance }),
+    ...(raw.creation === undefined ? {} : { creation: raw.creation }),
     meta: raw.meta,
   };
   try {
@@ -599,6 +607,7 @@ export function createSessionOperations(deps: {
             // §2.2: a missing key normalizes to `new`; a continuation, handoff
             // or readonly_copy carries its predecessor.
             ...(value.provenance === undefined ? {} : { provenance: value.provenance }),
+            ...(value.creation === undefined ? {} : { creation: value.creation }),
           },
           meta: value.meta,
         });

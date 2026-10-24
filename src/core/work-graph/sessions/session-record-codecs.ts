@@ -32,6 +32,7 @@ import type {
 import type { SessionOperationRecord } from '../model/session-contracts.js';
 import { SESSION_BY_PROVENANCE_LOOKUP } from '../model/session-facts-contracts.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
+import { actorRefProblem } from '../persistence/rework-codecs.js';
 
 // --------------------------------------------------------------------------
 // Fixed registration identifiers
@@ -360,7 +361,7 @@ export function checkWorkLinkRef(value: unknown): Problem {
 const OPERATION_BODY_KEYS: readonly string[] = [
   'ref', 'revision', 'action', 'phase', 'requestedAt', 'updatedAt', 'observation', 'failure',
 ];
-const ACTION_KEYS: readonly string[] = ['kind', 'plannedSessionRef', 'workspace', 'kernelStore', 'role', 'recommendedRefs', 'initialLinks', 'provenance'];
+const ACTION_KEYS: readonly string[] = ['kind', 'plannedSessionRef', 'workspace', 'kernelStore', 'role', 'recommendedRefs', 'initialLinks', 'provenance', 'creation'];
 const OPERATION_PHASES: readonly string[] = ['accepted', 'running', 'completed', 'failed', 'unknown'];
 const SESSION_BODY_KEYS: readonly string[] = [
   'ref', 'revision', 'kernel', 'lifecycle', 'health', 'healthConclusion', 'role', 'workspaceId', 'lastExecutionRef',
@@ -433,6 +434,32 @@ export function checkSessionProvenance(value: unknown, ownProjectId: string, own
     default:
       return 'provenance kind is not recognized';
   }
+}
+
+/**
+ * Slice 6A §3.4.7: the first-phase admission's line-creation intent. `null` is
+ * the current-format value of every creation that opens no line; an object must
+ * carry exactly the frozen four fields.
+ */
+const SESSION_CREATION_DUTIES: readonly string[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
+
+export function checkSessionCreationIntent(value: unknown): Problem {
+  if (value === null) return null;
+  if (!isRecord(value) || !hasOnlyKeys(value, ['duty', 'scope', 'reason', 'creator'])) {
+    return 'creation must be null or {duty,scope,reason,creator}';
+  }
+  if (!SESSION_CREATION_DUTIES.includes(String(value['duty']))) return 'creation duty is not recognized';
+  const scope = value['scope'];
+  if (!isRecord(scope) || !hasOnlyKeys(scope, ['kind']) || scope['kind'] !== 'project') {
+    return 'creation scope must be {kind:project}';
+  }
+  if (!nonEmpty(value['reason'])) return 'creation requires a non-empty reason';
+  return checkCreationActor(value['creator']);
+}
+
+/** `ActorRef` shape (human/system, or agent with its RunRef): the shared actor check. */
+function checkCreationActor(value: unknown): Problem {
+  return actorRefProblem(value, 'creation creator');
 }
 
 function checkArchiveTaskChoice(value: unknown, ownProjectId: string): Problem {
@@ -663,6 +690,10 @@ function checkSessionOperationBody(body: UnknownRecord): Problem {
       plannedValue['sessionId'] as string);
     if (provenance !== null) return `operation provenance: ${provenance}`;
   }
+  // Slice 6A §3.4.7: the current format always records the line intent, `null`
+  // for a creation that opens no line.
+  const creationProblem = checkSessionCreationIntent(action['creation']);
+  if (creationProblem !== null) return `operation creation: ${creationProblem}`;
   const refs = action['recommendedRefs'];
   if (!Array.isArray(refs)) return 'operation recommendedRefs must be an array';
   for (const entry of refs) {
