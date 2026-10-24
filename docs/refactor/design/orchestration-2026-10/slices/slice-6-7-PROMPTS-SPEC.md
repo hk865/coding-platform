@@ -2,6 +2,11 @@
 
 **状态：已冻结（lead，2026-10-21）。** 经 Codex 两轮完整审查（第一轮 23 条、第二轮复核加 9 条新问题）和一次快速核对（7 条），都已照改，处理见 证据（已归档：`docs/refactor/reviews/evidence/prompts-context-d83-2026-10-21/handling.md`）；你 10-21 定了五件事（§0.1），并确认了测试入口（§3.1）。施工顺序：结构一轮（含 D3）→ PC-1、PC-2 → 6A（§5）。
 
+**后注（6A-3 合入，lead 2026-10-24）：** 6A-3 合入 lead 分支（`b4aef8f6`，10-24）。正文原样保留；6A-3 只定了一处提示词的读法：
+- **卡片在秘书上下文里的读法（裁定 U6）：** 一轮的材料有引用卡片时，在 `task` 段里、选中的思路之后，用新加的 `secretary.cardsHeading`（`## Cards`）作标题，每条引用一行。这是 `task` 段里的第二个标题，不是新段：§2 的段序和 F7 的合法段、P6 的三个 task 槽都不变，渲染器仍只回文字和段范围，卡片行不算段。`secretary.cardsHeading` 加在 `strings.json` 里（§3 的 S15：每段带今天渲染器给的标题），生成的平台包和 `runtime-assets.json` 一起重出；`secretary-round` 仍是 version 1，两份模板的文字不动。
+
+经过见证据（已归档：`D:\1.project\Software\agent-next-archive\docs\refactor\reviews\slice6a3-2026-10-24\`）。
+
 **后注（6A-2 合入，lead 2026-10-24）：** 6A-2 合入 lead 分支（`b95e018c`，10-24）。正文原样保留；和本节有关的读法：
 - **两份秘书模板：** `secretary-round` 和 `secretary-answer` 各 version 1，在平台包里（`mentionsTools: []`），用 §2 的包和渲染器装；准备时冻结选中的包和两份文字。
 - **段序：** 秘书的段序是 role、goal、notes、task（模板默认）；三个 task 槽相邻成一个 `task` 段，你的包可以换段序，不能拆开或重排这三个槽（解析器拒绝）。

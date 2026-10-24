@@ -1,5 +1,25 @@
 # 第 6 片规格：主对话上的秘书（服务端）
 
+**后注（6A-3 合入，lead 2026-10-24）：** 6A-3 合入 lead 分支（`b4aef8f6`，10-24；6A 的服务端到此做完，界面在 E3）。正文原样保留；施工中定下的读法按 HANDOFF 决定 90-5 和 6A 任务书 §3、§4.3 读，会影响本规格读法的几处：
+- **Goal 的创建游标：** Goal 记录加必需的 `since`（创建顺序），编解码拒绝缺游标和零游标；创建和重放的回执带回游标，后续写入原样带。读用新顺序查找 `s6-goal-by-workspace-created`（§3.2 第 1 条的“按创建顺序读”按它读，游标翻页）。
+- **`QueryActivity` 和 epoch：** 查询的活动记录有自己的类型、编解码、纯写入计划和索引。正常终态和 QRR-03/04/06 的关闭在同一次提交里写活动；QRR-01/02 不写；QRR-05 不写，也绝不按 0 算。`countQueryActivity` 数它们。
+- **`querySince`（U12）：** 新记录和 `since` 用同一个 `now()`；已有记录 `querySince: null` 时在自己的提交里写 `querySince = now()`（revision + 1、自己的事件、按自己的身份幂等），`since` 不动；Host 在今天的调用点调它，失败照今天抛。
+- **回填（§3.11 第 7 条，B1 的合入后注）：** 候选表是 Work 和 Query 两条已结束索引合成的，顺序按 `endedAt` **降序**（和 2B 一样）、`kindRank` 升序（run 0、query 1）、`refKey` 升序；正文写的 `(endedAt, kindRank, refKey)` 升序按这条读。R-16：在记录的 `querySince` 之前就结束、又没有活动记录的 Query 仍是候选。
+- **查询活动的三个读（§3.11 第 8、9 条）：** 日历按 `goal` 或 `workspace` 范围，格子的 `steps` 含查询步数、`querySteps` 单列，带 `uncountedQueries` 和 `inProgressQueries`，任一非 0 时 `complete` 不是 true；同一稳定窗口里未结束的 Query 也读进来。工作区范围按目标逐个枚举，再并进同一批格子（K-03）。逐 Query 读和轨道横条用同一份分类和归属（K-01）。
+- **轨道的副本归属（U8）：** `askedSessionRef` = 派生存在时 `intent.execution.consultation.derivation.sourceSessionRef`，否则 null；副本按被问的那条线归属，两个输入的先后给同一个答案；来源读不变。
+- **`QueryActivity.goalId`（U9）：** 终态提交不新读：请求轮取执行清单冻结的 `request.effectiveGoalId`，其他 Query 取 `job.intent.goalId`；无目标轮读 null，后一轮被路由轮归到某个目标就读那个目标。
+- **主对话读和已读令牌（U7、U13）：** 已读令牌的载荷加必需的 `issuer: 'queue' | 'main'`（队列发 `'queue'`）；`markNoticesSeen` 仍拒绝带目标过滤的队列令牌，接受带目标的 `'main'` 令牌；主对话读先在全量有序成员集上算 `seenThrough`、再按目标过滤，连续前缀规则照 §3.10.3。整页装配从 `decision-read-model.ts` 导出一个函数，主对话读和 `requests/read` 每次读调一次，不循环队列端口。
+- **`requests/read` 的卡片（U10）：** 和主对话读同一条规则（§3.10.1）：`requestRef` 是这个请求某一轮的卡，加上请求有有效目标时该目标的来源卡；整份视图。
+- **卡片渲染（§3.8“Rendering one round's material”，U6；裁定 10.6）：** 有卡片引用时，在 `task` 段里、选中的思路之后，用 `secretary.cardsHeading`（`## Cards`）作标题，每条引用一行；不加新段名，段序不变。
+- **`requests/ask`（§3.10，U15）：** 人就卡片问秘书或让秘书重出的路由，只认人；在这个请求后面加一轮，带上引用的卡片，回答和思路照常存；6A-1 没在端口上开的 `ask` 由它补上。
+- **秘书的名字（L6，U5）：** `秘书 N` 按这个工作区里秘书 Session 的创建顺序编（所有生命周期、归档的保留号、只读副本不算；职责用已有的解析器判），按 `(createdAt, canonical key)` 排，一次读算一次。正文写“项目里”，产品一个项目一个工作区，两者相等。
+- **本地秘书 profile（§3.11 第 10 条，U11）：** binding 用 `local-workbench-secretary-binding`，平台秘书模板作为 `legacy_template` 角色，只读工具、没有写范围，配置修订按本地那套算；本地 profile 仍排第一。普通 Query 的 profile 选择不列它，界面在 E3（E3-UI-ITEMS 的 D90-6）。
+- **路由归属（U15、U16）：** V1 加 `main/read`、`requests/read`，V2 加 `requests/ask`；B2 只留本地秘书 profile；K 加 `activity/queries` 和日历路由的 `scope` 输入；B1 在组合根接 `countQueryActivity`、`recordQueryActivity`。
+- **只改归属和旧测试的裁定：** U1（夹具冻结时改 helper 的旧测试）、U2（M1R-05、M1R-15 两项欠账）、U3（M1R-05 归 J3）、U4（M1R-15 归 V）、U14（V 拆 V1、V2）。行为不变。
+- **K3-03 的修法（`884bad3a`）：** revision 1 且 `querySince` 有值的记录不再查回执；revision ≥ 2 或 `querySince: null` 保留 Q-05 的顺序。
+
+经过见证据（已归档：`D:\1.project\Software\agent-next-archive\docs\refactor\reviews\slice6a3-2026-10-24\`）。
+
 **后注（6A-2 合入，lead 2026-10-24）：** 6A-2 合入 lead 分支（`b95e018c`，10-24）。正文原样保留；施工中定下的读法按 HANDOFF 决定 88-5 和 6A 任务书 §3 读，会影响本规格读法的几处：
 - **驱动和唤醒（S16）：** Host 起步选项 `requestDriver: 'on' | 'off'`，默认 `'on'`；`'off'` 不建唤醒循环，请求命令的唤醒和提交通知都不启动，轮停在命令留下的地方，等 `queries/claim`、`queries/prepare`、`queries/start` 或后一个开着驱动的 Host。没有设置路由和界面；产品默认不变。
 - **一次活尝试（L5）：** 驱动只派每个请求最老的 pending 轮；已领取、已准备、进入中、已进入的尝试按它的 Session 推进，`unknown` 只观察。每趟 5 页 × 200、50 个推进、20 个排空。
