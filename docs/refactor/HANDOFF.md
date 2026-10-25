@@ -958,6 +958,30 @@
       - **用量。** lead 的用量没有逐组记。Opus 的墙钟照回复写（没有 token 数）：W 00:14:31–05:03:46（WSL 时钟；光重跑集合 02:07–04:52），K 的返工 01:15:52–01:39:40（约 24 分钟）加改 K-03 的 01:41:56–01:43:41，W 的返工 05:21:36–约 05:45。
       - 证据在 `D:\1.project\Software\agent-next-archive\docs\refactor\reviews\slice8b1-2026-10-25\`（32 个文件：`books/` 8、`codex/` 4、`rulings/` 2、`replies/` 5、`checks/` 4、`lead/` 9；README 由 lead 复制）。
 
+    - **90-15 6B-1 合入记录（10-25，`62fe35f1`）。**
+      - **合入什么。** 6B-1 是第 6 片 6B 的第一段：工作线交接记录和服务（`CoreOperation` 作为三支联合，A1 的交接记录和 `acceptHandoff`；`acceptHandoff` 是 R2 的 `executeWriteCommand` 和 R1 的字段表的第一批生产调用），Session 活动记录，秘书查询轮的注记来源和范围，决定主体（一张卡属于一个 Goal **或项目**）的写和读两侧，以及第二部分的契约（查询作业、初始化绑定、初始计划、秘书回答、目标复制和请求契约、模板）。书是 6B 任务书 v4（`book-6b-frozen.md`，2026-10-24 冻结），开工裁定 SR1–SR16 和“定下”1–14（`6b1-start-rulings.md`，2026-10-25 00:53）。起点树 `6b1-fx` = `7eaf1502`（`lines-base` = `f930a089` 加冻结夹具 `tests/helpers/S6B1-fixture.ts` 306 行和 `tests/helpers/S6A-request-fixture.ts` 的 +44/−9）。
+      - **怎么做的（每组一行）。**
+        - **P-0（Opus，02:23 完）。** 共用契约：Goal 形状和每个写入者、`GoalCreated` 载荷、`NoteSourceV1.queryRunRef`、共用 ref 形状和 `id` 的导出、`AggregateRef`、principal 帮手；最终 `e85f13db`；Codex 会出错 0、违规 1、不整洁 0；P0-01 留给第 2 波的合并胶水。
+        - **AC（DSH，1,955 秒、约 1,060 万 token）。** `SessionActivity` 记录；最终 `57106276`；Codex 0/3/1；Opus 返工，生产 267、测试 268。
+        - **P-1（DSH，2,740 秒、约 2,070 万 token）。** 查询作业、初始化绑定、初始计划、秘书回答、目标复制和请求契约、模板；最终 `f8fc51e4`；Codex 2/3/2；Opus 返工，生产 290、测试 477。
+        - **N（DSH，3,063 秒、约 1,880 万 token）。** 秘书查询轮的注记来源和范围；最终 `37c69195`；Codex 3/5/2；Opus 返工，生产 272、测试 475。
+        - **A1-a（Opus，02:23–03:23）。** 交接记录和服务（`CoreOperation` 的三支联合；R1 的第一批臂和 R2 命令进生产）；最终 `1a5c54c9`；Codex 1/4/2；Opus 返工，生产 780、测试 475。
+        - **S1（DSH，6,208 秒、约 2,510 万 token）。** 决定主体写侧：每条来源的构造和比较、消息编解码和它的索引路径；最终 `a7f2de7d`；Codex 7/5/3；类型改动把白名单外的 21 个测试文件弄红，白名单 +23，两次 Opus 续做（`9765b059`、`c89d48b4`），再由 Opus 返工。
+        - **第 2 波合并 W2-glue（Opus）。** 五组、README 并集、豁免表；最终 `bf324e1b`（标签 `6b1-w2`，06:11）；Codex 0/3/2，都在胶水里改了。
+        - **A1-b（Opus，06:11–06:28）。** 组合：`schemas` 里的两个格式包、豁免表的最后一轮；最终 `f15f4f3b`；Codex 0/2/1，三条都按记录或合并胶水接受，不返工。
+        - **S2（DSH，4,480 秒、约 1,610 万 token；06:11–07:32）。** 项目路径：项目来源分支、项目待审桶和卡读、读模型、请知悉和按 `decisionSubjectKey` 的主读；最终 `49909ccd` → `4feb61c8`；Codex 4/9/4；Opus 逐条只读核对（`codex/S2-verify.md`）又查出 H-01…H-03；Opus 返工 13 个提交（08:06–09:02），两个只读 Opus agent 核对过。改了行为的六条：规范来源再从分支读到的目标取主体、不取请求（S2-01）；注记卡先比自己的主体再看开/关，项目主体读别的目标的已关注记不是卡（S2-02）；项目折叠项的键有自己的前缀（S2-03）；每张卡来源只声明一次 `serves`，带 Goal 过滤时不做项目读（S2-05、H-01）；Goal 卡的队列游标文字和以前逐字节相同（H-02）；项目卡的答复归属是项目范围（H-03，没有测试证明：两个并发答复已经是一个提交、一个 `source_stale`）。
+        - **6B-1 合并。** 第 3 波先合到 `6b1-w2`（`3174ae85`），再合到带 7B-0 和 8B-1 的 lead 树（`b8a16ca2`）；Opus，09:14–09:36；只读核对 0/0/1。
+      - **合到 lead 树。** 任务门里的六处 6B-1 改动搬进 `src/business/workflow/task-gate.ts`（`workflow.ts` 和 lead 侧逐字节相同）；提示词包重新生成，`runtime-assets.json:16` 重算；豁免表按探测 −33/+39（对 lead 侧），最后 281 条，UNLISTED 0、STALE 0；`tests/helpers/S5-decision-fixture.ts` 保留 8B-1、S1 和 W2-02 的改动；`tests/README.md` 是 lead 的版本加三行（`S6B1-fixture.ts`、`WP2-duties-fixture.ts`、`query-context-capture.ts`）和重算的计数。
+      - **篇幅。** `lines-base..3174ae85`：生产 3,008 行（书估 4,020–4,400），测试 3,981 行（SR16 的上限 2,970；1.32 倍生产；冻结夹具 359）。超测试预算也超生产；lead 在合入时接受并告诉了用户。
+      - **检查（10-25）。** 合并副本 `b8a16ca2`（bubblewrap，TMPDIR 在 tmpfs，6 个并行）：构建、类型检查、模块边界、Kernel 补丁检查都是 0；933 个测试文件全过，11,633 项过、3 项跳过，514 秒；规模批 13 个文件、40 项全过，519 秒（`checks/chain.log`、`checks/full-6b1m.txt`、`checks/scale-6b1m.txt`）。
+      - **落地。** 只放索引补丁 `65905ec6..b8a16ca2`（214 个文件，28 个新文件），减掉 `tests/README.md`（整份复制）；每个 `src`、`tests` 和别的 blob 和测过的树相同，只有 `tests/RULES.md` 是 lead 自己的更新文本。
+      - **留给后面的。** README 的引用两边本来就偏了（合并回复第 1、2 问）；`harness-checks` 报的两条：同名的 `legacyTemplateDutyOf`（还剩一处正本）和 `PC2-W` 注释里的“6B-1 SR7 / L-02”；项目卡的答复要能在整个项目读到（H-03；现在只有项目范围的答复占位）；卡来源端口改成显式主体（S2-05 的完整做法）；S2-08 的直接“更早的项目成员不显示”样例（R1）；第 10 行的索引路径反例没有证明（没有公开读能到那个索引）；`A8-host-restart-entry` 在 S1 检查时因负载失败一次（单独跑三次都过，这次全量也过）。以后的组欠：Session 活动记录的存取往返（6B-2 D）和初始化绑定（6B-3 C）；R2 的九条 `kept-for` 等 6B-2 H 接 `acceptHandoff`。
+      - **用量。** Claude 周额度（所有模型）：10-24 19:38 45%，10-25 09:30 76%（lead 会话，加做门、施工、返工和合并的 Opus 子 agent）。DSH 每组见表（AC 1,955 秒、P-1 2,740 秒、N 3,063 秒、S1 6,208 秒、S2 4,480 秒）。Codex 每组一次审查（10 次，`gpt-6.1-sol`）。
+      - 证据在 `D:\1.project\Software\agent-next-archive\docs\refactor\reviews\slice6b1-2026-10-25\`（lead 复制）。
+    - **90-16 10-25 的两项用户决定（~09:30）。**
+      - **到 10-27 15:00 返工交 DSH（改 90-1 的窗口）。** 到 Claude 周额度重置（周二 10-27 15:00 本地）之前，返工改回 DSH：最多三轮 DSH，然后 Codex 给补丁、lead 落地（决定 81）；Opus 只做合并和 DSH 卡住的地方。lead 也不再在 Codex 审查之上加 Opus 核对层，起草（裁定、审查套件、文档）交 DSH。原因：Claude 周额度 10-25 09:30 已到 76%（前一晚 19:38 是 45%）。
+      - **DSH 不再有钟点限制。** 运行准备好就开，什么时候都行；`AGENTS.md` 第 5 条的“只在 18:00 以后跑”删掉，`docs/refactor/DSH-WORKFLOW.md` 没有这句，`slices/README.md` 里的同一句也删了。
+
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 
 **2026-10-07 更正（简化删除 G3，决定 34）：** 材料授权的读取侧也已删除：授权的读取、M2 材料事实服务和 LA-2 的判断。现在一个 Run 只能读自己的材料，读别的 Run 的材料一律拒绝。取得已核实来源版本（source pin）的两个文件保留、不接线：编排设计第 3 片重建“消费时检查精确输入”（决定 11）时可能要用。下文历史记录里凡说材料授权“已接通”“可读取”的，按这一段理解。

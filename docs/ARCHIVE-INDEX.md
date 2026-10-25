@@ -110,3 +110,4 @@
 | `docs/refactor/reviews/cl2-d89-2026-10-24/` | 决定 89 小步和 CL-2 的任务书、草案、Codex 对 D89 和 CL-2 的只读审查、lead 的裁定、DSH 和 Opus 的回复与返工、CL-2 的证明脚本和输出、全量和规模批的检查日志（27 个文件）。lead 2026-10-24 复制进存档，不在上面 4,543 个文件的清单里。 |
 | `docs/refactor/reviews/slice7b0-2026-10-25/` | 7B-0（A2、D5-gate）的任务书、开工裁定、Codex 的只读审查和 lead 的裁定、DSH 和 Opus 的回复与返工、证明、全量和规模批的检查日志（30 个文件）。lead 2026-10-25 复制进存档，不在上面 4,543 个文件的清单里。 |
 | `docs/refactor/reviews/slice8b1-2026-10-25/` | 8B-1（K、W）的 8B 书 v3、开工裁定和夹具裁定、两份说明书、K 的返工说明书、两组白名单、Codex 对 K 和 W 的只读审查、lead 的裁定、DSH 和 Opus 的回复与返工、全量和规模批的检查日志、提交说明和 lead 的合并脚本（32 个文件）。lead 2026-10-25 复制进存档，不在上面 4,543 个文件的清单里。 |
+| `docs/refactor/reviews/slice6b1-2026-10-25/` | 6B-1 的任务书、开工裁定、各组说明书、运行单和白名单、Codex 对十组的只读审查和 Opus 的 S2 核对、lead 对各组审查的裁定、DSH 和 Opus 的回复与返工、全量和规模批的检查日志、提交说明、两份验收证明，以及 lead 的合并、探测和落地脚本（265 个文件：`books/` 30、`codex/` 21、`rulings/` 10、`replies/` 25、`checks/` 6、`acceptance/` 2、`lead/` 171，其中 `lead/merge/` 44）。lead 2026-10-25 复制进存档，不在上面 4,543 个文件的清单里。 |
